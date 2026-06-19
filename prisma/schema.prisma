@@ -1,0 +1,200 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  FACILITATOR
+  PARTICIPANT
+  OBSERVER
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum SessionStatus {
+  DRAFT
+  READY
+  IN_PROGRESS
+  COMPLETED
+  ANALYZED
+}
+
+enum ParticipantType {
+  PARTICIPANT
+  OBSERVER
+  FACILITATOR
+}
+
+enum RecordingStatus {
+  NOT_STARTED
+  STARTING
+  RECORDING
+  COMPLETED
+  FAILED
+}
+
+enum TranscriptSource {
+  MANUAL
+  GENERATED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         UserRole @default(PARTICIPANT)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  negotiationCases   NegotiationCase[]   @relation("CaseFacilitator")
+  facilitatedSessions Session[]          @relation("SessionFacilitator")
+  sessionParticipants SessionParticipant[]
+}
+
+model NegotiationCase {
+  id                 String     @id @default(cuid())
+  title              String
+  description        String     @db.Text
+  businessContext    String     @db.Text
+  publicInstructions String     @db.Text
+  targetSkills       String     @db.Text
+  difficulty         Difficulty @default(MEDIUM)
+  facilitatorId      String
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  facilitator User        @relation("CaseFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  roles       CaseRole[]
+  sessions    Session[]
+}
+
+model CaseRole {
+  id                  String   @id @default(cuid())
+  negotiationCaseId   String
+  name                String
+  privateInstructions String   @db.Text
+  objectives          String   @db.Text
+  constraints         String   @db.Text
+  hiddenInfo          String   @db.Text
+  fallbackPosition    String   @db.Text
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  negotiationCase     NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Cascade)
+  sessionParticipants SessionParticipant[]
+
+  @@index([negotiationCaseId])
+}
+
+model Session {
+  id                String        @id @default(cuid())
+  negotiationCaseId String
+  facilitatorId     String
+  title             String
+  status            SessionStatus @default(DRAFT)
+  startedAt         DateTime?
+  endedAt           DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  negotiationCase NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Cascade)
+  facilitator     User                 @relation("SessionFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  participants    SessionParticipant[]
+  observerNotes   ObserverNote[]
+  recording       Recording?
+  transcript      Transcript?
+  aiAnalysis      AiAnalysis?
+
+  @@index([negotiationCaseId])
+  @@index([facilitatorId])
+}
+
+model SessionParticipant {
+  id          String          @id @default(cuid())
+  sessionId   String
+  userId      String?
+  caseRoleId  String?
+  type        ParticipantType
+  joinToken   String          @unique
+  displayName String
+  joinedAt    DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  session       Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  caseRole      CaseRole?      @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+  observerNotes ObserverNote[]
+
+  @@index([sessionId])
+  @@index([userId])
+  @@index([caseRoleId])
+}
+
+model ObserverNote {
+  id          String   @id @default(cuid())
+  sessionId   String
+  observerId  String
+  content     String   @db.Text
+  occurredAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  session  Session            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  observer SessionParticipant @relation(fields: [observerId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([observerId])
+}
+
+model Recording {
+  id              String          @id @default(cuid())
+  sessionId       String          @unique
+  status          RecordingStatus @default(NOT_STARTED)
+  storagePath     String?
+  durationSeconds Int?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  session    Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  transcript Transcript?
+}
+
+model Transcript {
+  id          String           @id @default(cuid())
+  sessionId   String           @unique
+  recordingId String?          @unique
+  source      TranscriptSource
+  content     String           @db.Text
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  session   Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  recording Recording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+}
+
+model AiAnalysis {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  summary   String?  @db.Text
+  result    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
