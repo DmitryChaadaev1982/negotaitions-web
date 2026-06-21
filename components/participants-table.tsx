@@ -41,33 +41,19 @@ function OnlineStatus({ isOnline }: { isOnline: boolean }) {
   );
 }
 
-export function ParticipantsTable({
+type ParticipantsPresenceTableProps = {
+  sessionId: string;
+  participants: ParticipantRow[];
+  initialPresence: Map<string, ParticipantPresenceSnapshot>;
+};
+
+function ParticipantsPresenceTable({
   sessionId,
   participants,
-}: ParticipantsTableProps) {
-  const initialPresence = useMemo(() => {
-    const map = new Map<string, ParticipantPresenceSnapshot>();
-
-    for (const participant of participants) {
-      map.set(participant.id, {
-        id: participant.id,
-        joinedAt: participant.joinedAt,
-        lastSeenAt: participant.lastSeenAt,
-        isOnline: isParticipantOnline(
-          participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
-        ),
-      });
-    }
-
-    return map;
-  }, [participants]);
-
+  initialPresence,
+}: ParticipantsPresenceTableProps) {
   const [presenceById, setPresenceById] =
     useState<Map<string, ParticipantPresenceSnapshot>>(initialPresence);
-
-  useEffect(() => {
-    setPresenceById(initialPresence);
-  }, [initialPresence]);
 
   useEffect(() => {
     const source = new EventSource(
@@ -191,5 +177,47 @@ export function ParticipantsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+export function ParticipantsTable({
+  sessionId,
+  participants,
+}: ParticipantsTableProps) {
+  const initialPresence = useMemo(() => {
+    const map = new Map<string, ParticipantPresenceSnapshot>();
+
+    for (const participant of participants) {
+      map.set(participant.id, {
+        id: participant.id,
+        joinedAt: participant.joinedAt,
+        lastSeenAt: participant.lastSeenAt,
+        isOnline: isParticipantOnline(
+          participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
+        ),
+      });
+    }
+
+    return map;
+  }, [participants]);
+
+  const participantsKey = useMemo(
+    () =>
+      participants
+        .map(
+          (participant) =>
+            `${participant.id}:${participant.joinedAt}:${participant.lastSeenAt}`,
+        )
+        .join("|"),
+    [participants],
+  );
+
+  return (
+    <ParticipantsPresenceTable
+      key={participantsKey}
+      sessionId={sessionId}
+      participants={participants}
+      initialPresence={initialPresence}
+    />
   );
 }

@@ -1,8 +1,16 @@
 import { z } from "zod";
 
+import { negotiationDurationMinutesSchema } from "@/lib/validations/case";
+
 export const createSessionSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
   caseId: z.string().trim().min(1, "Case is required"),
+  negotiationDurationMinutes: negotiationDurationMinutesSchema,
+});
+
+export const updateSessionDurationSchema = z.object({
+  sessionId: z.string().trim().min(1, "Session is required"),
+  durationMinutes: negotiationDurationMinutesSchema,
 });
 
 export const addParticipantSchema = z

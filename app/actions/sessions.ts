@@ -5,17 +5,20 @@ import { redirect } from "next/navigation";
 
 import {
   ParticipantType,
+  NegotiationState,
   SessionStatus,
 } from "@/app/generated/prisma/client";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
+import { minutesToSeconds } from "@/lib/negotiation-duration";
 import { updateParticipantPresence } from "@/lib/participant-presence";
 import { prisma } from "@/lib/prisma";
 import {
   addParticipantSchema,
   createSessionSchema,
   saveParticipantNotesSchema,
+  updateSessionDurationSchema,
   updateSessionStatusSchema,
 } from "@/lib/validations/session";
 
@@ -70,6 +73,7 @@ export async function createSession(
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
     caseId: formData.get("caseId"),
+    negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
   });
 
   if (!parsed.success) {
@@ -78,18 +82,23 @@ export async function createSession(
       errors: {
         title: fieldErrors.title,
         caseId: fieldErrors.caseId,
+        negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
       },
     };
   }
 
   try {
     const facilitator = await getDemoFacilitator();
-    const { title, caseId } = parsed.data;
+    const { title, caseId, negotiationDurationMinutes } = parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.findFirst({
       where: {
         id: caseId,
         facilitatorId: facilitator.id,
+      },
+      select: {
+        id: true,
+        defaultDurationSeconds: true,
       },
     });
 
@@ -107,6 +116,7 @@ export async function createSession(
         negotiationCaseId: caseId,
         facilitatorId: facilitator.id,
         status: SessionStatus.DRAFT,
+        durationSeconds: minutesToSeconds(negotiationDurationMinutes),
       },
     });
 
@@ -256,6 +266,38 @@ export async function removeParticipant(formData: FormData) {
       where: {
         id: participantId,
         sessionId,
+      },
+    });
+
+    revalidatePath(`/sessions/${sessionId}`);
+  } catch {
+    // Silently fail for invalid requests.
+  }
+}
+
+export async function updateSessionDuration(formData: FormData) {
+  const parsed = updateSessionDurationSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    durationMinutes: formData.get("durationMinutes"),
+  });
+
+  if (!parsed.success) {
+    return;
+  }
+
+  const { sessionId, durationMinutes } = parsed.data;
+
+  try {
+    const session = await getFacilitatorSession(sessionId);
+
+    if (session.negotiationState !== NegotiationState.LOBBY) {
+      return;
+    }
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        durationSeconds: minutesToSeconds(durationMinutes),
       },
     });
 

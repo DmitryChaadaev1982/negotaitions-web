@@ -25,6 +25,7 @@ type CaseSeed = {
   publicInstructions: string;
   targetSkills: string;
   difficulty: Difficulty;
+  defaultDurationSeconds: number;
   roles: RoleSeed[];
 };
 
@@ -40,6 +41,7 @@ const demoCases: CaseSeed[] = [
     targetSkills:
       "Scope control, objection handling, value argumentation, escalation management.",
     difficulty: Difficulty.MEDIUM,
+    defaultDurationSeconds: 900,
     roles: [
       {
         name: "Client CFO",
@@ -96,6 +98,7 @@ const demoCases: CaseSeed[] = [
     targetSkills:
       "Interest-based negotiation, prioritization, conflict management, framing.",
     difficulty: Difficulty.EASY,
+    defaultDurationSeconds: 600,
     roles: [
       {
         name: "ERP Delivery Director",
@@ -191,6 +194,7 @@ async function main() {
         publicInstructions: caseSeed.publicInstructions,
         targetSkills: caseSeed.targetSkills,
         difficulty: caseSeed.difficulty,
+        defaultDurationSeconds: caseSeed.defaultDurationSeconds,
         facilitatorId: facilitator.id,
         roles: {
           create: caseSeed.roles.map((role, index) => ({

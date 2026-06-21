@@ -5,11 +5,13 @@ import { AddParticipantForm } from "@/components/add-participant-form";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { PageHeader } from "@/components/page-header";
 import { ParticipantsTable } from "@/components/participants-table";
+import { SessionDurationEditor } from "@/components/session-duration-editor";
 import { SessionStatusActions } from "@/components/session-status-actions";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { getJoinUrl } from "@/lib/config";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { formatDate } from "@/lib/format-date";
+import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { prisma } from "@/lib/prisma";
 
@@ -85,9 +87,40 @@ export default async function SessionDetailPage({
           </Link>
         </span>
         <span className="text-sm text-slate-500">
+          Negotiation duration: {secondsToDisplayMinutes(session.durationSeconds)}{" "}
+          minutes
+        </span>
+        <span className="text-sm text-slate-500">
           Created {formatDate(session.createdAt)}
         </span>
       </div>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-base font-semibold text-slate-900">
+            Negotiation settings
+          </h2>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <SessionDurationEditor
+            sessionId={session.id}
+            durationSeconds={session.durationSeconds}
+            negotiationState={session.negotiationState}
+          />
+          {facilitatorParticipant ? (
+            <Link
+              href={`/room/${session.id}?joinToken=${encodeURIComponent(facilitatorParticipant.joinToken)}`}
+              className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
+            >
+              Join Video Room
+            </Link>
+          ) : (
+            <p className="text-sm text-slate-600">
+              Add a facilitator participant to join the video room.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -100,13 +133,6 @@ export default async function SessionDetailPage({
             sessionId={session.id}
             status={session.status}
           />
-          <button
-            type="button"
-            disabled
-            className="inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-500"
-          >
-            Join Video Room — coming in Phase 3
-          </button>
         </CardContent>
       </Card>
 

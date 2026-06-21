@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
@@ -7,6 +8,7 @@ import { ParticipantPresenceHeartbeat } from "@/components/participant-presence-
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { getAppName } from "@/lib/config";
+import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -111,18 +113,22 @@ export default async function JoinPage({ params }: JoinPageProps) {
             <span>·</span>
             <span>{participant.type}</span>
             <SessionStatusBadge status={session.status} />
+            <span>·</span>
+            <span>
+              Negotiation duration:{" "}
+              {secondsToDisplayMinutes(session.durationSeconds)} minutes
+            </span>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6">
-        <button
-          type="button"
-          disabled
-          className="inline-flex w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-500"
+        <Link
+          href={`/room/${session.id}?joinToken=${encodeURIComponent(joinToken)}`}
+          className="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-slate-800"
         >
-          Join Video Room — coming in Phase 3
-        </button>
+          Join Video Room
+        </Link>
 
         <Card>
           <CardHeader>

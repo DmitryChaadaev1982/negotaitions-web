@@ -20,7 +20,11 @@ export default async function NewSessionPage({
   const cases = await prisma.negotiationCase.findMany({
     where: { facilitatorId: facilitator.id },
     orderBy: { title: "asc" },
-    select: { id: true, title: true },
+    select: {
+      id: true,
+      title: true,
+      defaultDurationSeconds: true,
+    },
   });
 
   const defaultCaseId =

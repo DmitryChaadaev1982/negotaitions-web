@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 
 import { Difficulty } from "@/app/generated/prisma/client";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import {
+  DEFAULT_NEGOTIATION_DURATION_SECONDS,
+  minutesToSeconds,
+} from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { createCaseSchema } from "@/lib/validations/case";
 
@@ -39,6 +43,7 @@ export async function createCase(
     title: formData.get("title"),
     businessContext: formData.get("businessContext"),
     publicInstructions: formData.get("publicInstructions"),
+    negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
     roles,
   });
 
@@ -52,6 +57,7 @@ export async function createCase(
       title: fieldErrors.title,
       businessContext: fieldErrors.businessContext,
       publicInstructions: fieldErrors.publicInstructions,
+      negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
     };
 
     if (roleErrors.length > 0) {
@@ -78,8 +84,13 @@ export async function createCase(
 
   try {
     const facilitator = await getDemoFacilitator();
-    const { title, businessContext, publicInstructions, roles: caseRoles } =
-      parsed.data;
+    const {
+      title,
+      businessContext,
+      publicInstructions,
+      negotiationDurationMinutes,
+      roles: caseRoles,
+    } = parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.create({
       data: {
@@ -89,6 +100,11 @@ export async function createCase(
         publicInstructions,
         targetSkills: "",
         difficulty: Difficulty.MEDIUM,
+        defaultDurationSeconds:
+          minutesToSeconds(
+            negotiationDurationMinutes ??
+              DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
+          ),
         facilitatorId: facilitator.id,
         roles: {
           create: caseRoles.map((role, index) => ({

@@ -107,6 +107,27 @@ export function NewCaseForm() {
               placeholder="Instructions visible to all participants before the session."
             />
           </Field>
+
+          <Field
+            label="Default negotiation duration (minutes)"
+            name="negotiationDurationMinutes"
+            error={state.errors?.negotiationDurationMinutes?.[0]}
+          >
+            <input
+              id="negotiationDurationMinutes"
+              name="negotiationDurationMinutes"
+              type="number"
+              min={1}
+              max={180}
+              defaultValue={15}
+              className={inputClassName(
+                !!state.errors?.negotiationDurationMinutes,
+              )}
+            />
+            <p className="mt-1.5 text-xs text-slate-500">
+              Default duration for sessions created from this case.
+            </p>
+          </Field>
         </div>
       </CardSection>
 

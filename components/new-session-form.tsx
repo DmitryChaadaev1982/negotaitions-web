@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import {
   createSession,
   type CreateSessionState,
 } from "@/app/actions/sessions";
+import { DEFAULT_NEGOTIATION_DURATION_SECONDS, secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 
 const initialState: CreateSessionState = {};
 
 type CaseOption = {
   id: string;
   title: string;
+  defaultDurationSeconds: number;
 };
 
 type NewSessionFormProps = {
@@ -24,6 +26,19 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
   const [state, formAction, isPending] = useActionState(
     createSession,
     initialState,
+  );
+  const initialCaseId = defaultCaseId ?? cases[0]?.id ?? "";
+  const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId);
+
+  const selectedCase = useMemo(
+    () => cases.find((negotiationCase) => negotiationCase.id === selectedCaseId),
+    [cases, selectedCaseId],
+  );
+
+  const [durationMinutes, setDurationMinutes] = useState(
+    selectedCase
+      ? secondsToDisplayMinutes(selectedCase.defaultDurationSeconds)
+      : secondsToDisplayMinutes(DEFAULT_NEGOTIATION_DURATION_SECONDS),
   );
 
   return (
@@ -71,7 +86,21 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
               id="caseId"
               name="caseId"
               required
-              defaultValue={defaultCaseId ?? ""}
+              value={selectedCaseId}
+              onChange={(event) => {
+                const caseId = event.target.value;
+                setSelectedCaseId(caseId);
+                const negotiationCase = cases.find(
+                  (negotiationCaseOption) => negotiationCaseOption.id === caseId,
+                );
+                if (negotiationCase) {
+                  setDurationMinutes(
+                    secondsToDisplayMinutes(
+                      negotiationCase.defaultDurationSeconds,
+                    ),
+                  );
+                }
+              }}
               className={inputClassName(!!state.errors?.caseId)}
             >
               <option value="" disabled>
@@ -83,6 +112,36 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
                 </option>
               ))}
             </select>
+          </Field>
+
+          <Field
+            label="Negotiation duration (minutes)"
+            name="negotiationDurationMinutes"
+            error={state.errors?.negotiationDurationMinutes?.[0]}
+            required
+          >
+            <input
+              id="negotiationDurationMinutes"
+              name="negotiationDurationMinutes"
+              type="number"
+              min={1}
+              max={180}
+              required
+              value={durationMinutes}
+              onChange={(event) =>
+                setDurationMinutes(Number(event.target.value))
+              }
+              className={inputClassName(
+                !!state.errors?.negotiationDurationMinutes,
+              )}
+            />
+            <p className="mt-1.5 text-xs text-slate-500">
+              Default from the selected case is{" "}
+              {selectedCase
+                ? secondsToDisplayMinutes(selectedCase.defaultDurationSeconds)
+                : secondsToDisplayMinutes(DEFAULT_NEGOTIATION_DURATION_SECONDS)}{" "}
+              minutes. You can adjust it for this session.
+            </p>
           </Field>
         </div>
       </section>

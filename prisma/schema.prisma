@@ -36,6 +36,13 @@ enum ParticipantType {
   FACILITATOR
 }
 
+enum NegotiationState {
+  LOBBY
+  RUNNING
+  PAUSED
+  FINISHED
+}
+
 enum RecordingStatus {
   NOT_STARTED
   STARTING
@@ -70,8 +77,9 @@ model NegotiationCase {
   businessContext    String     @db.Text
   publicInstructions String     @db.Text
   targetSkills       String     @db.Text
-  difficulty         Difficulty @default(MEDIUM)
-  facilitatorId      String
+  difficulty              Difficulty @default(MEDIUM)
+  defaultDurationSeconds  Int        @default(900)
+  facilitatorId           String
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
@@ -104,9 +112,17 @@ model Session {
   negotiationCaseId String
   facilitatorId     String
   title             String
-  status            SessionStatus @default(DRAFT)
-  startedAt         DateTime?
-  endedAt           DateTime?
+  status                SessionStatus     @default(DRAFT)
+  livekitRoomName       String?           @unique
+  negotiationState      NegotiationState  @default(LOBBY)
+  durationSeconds       Int
+  negotiationStartedAt  DateTime?
+  negotiationEndedAt    DateTime?
+  timerStartedAt        DateTime?
+  pausedAt              DateTime?
+  totalPausedSeconds    Int               @default(0)
+  startedAt             DateTime?
+  endedAt               DateTime?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 

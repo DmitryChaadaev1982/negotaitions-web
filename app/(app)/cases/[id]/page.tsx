@@ -5,6 +5,7 @@ import { Badge } from "@/components/badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { PageHeader } from "@/components/page-header";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,9 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           {negotiationCase.difficulty}
         </Badge>
         <Badge>{negotiationCase.roles.length} roles</Badge>
+        <Badge>
+          Default duration: {secondsToDisplayMinutes(negotiationCase.defaultDurationSeconds)} minutes
+        </Badge>
         <span className="text-sm text-slate-500">
           Created {formatDate(negotiationCase.createdAt)}
         </span>

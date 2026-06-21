@@ -1,5 +1,25 @@
 import { z } from "zod";
 
+import {
+  MAX_NEGOTIATION_DURATION_MINUTES,
+  MIN_NEGOTIATION_DURATION_MINUTES,
+} from "@/lib/negotiation-duration";
+
+export const negotiationDurationMinutesSchema = z.coerce
+  .number()
+  .int("Duration must be a whole number of minutes")
+  .min(
+    MIN_NEGOTIATION_DURATION_MINUTES,
+    `Duration must be at least ${MIN_NEGOTIATION_DURATION_MINUTES} minute`,
+  )
+  .max(
+    MAX_NEGOTIATION_DURATION_MINUTES,
+    `Duration must be at most ${MAX_NEGOTIATION_DURATION_MINUTES} minutes`,
+  );
+
+export const defaultNegotiationDurationMinutesSchema =
+  negotiationDurationMinutesSchema.optional();
+
 export const caseRoleSchema = z.object({
   name: z.string().trim().min(1, "Role name is required"),
   privateInstructions: z
@@ -15,6 +35,7 @@ export const createCaseSchema = z.object({
     .string()
     .trim()
     .min(1, "Public instructions are required"),
+  negotiationDurationMinutes: defaultNegotiationDurationMinutesSchema,
   roles: z
     .array(caseRoleSchema)
     .min(2, "At least two roles are required")
