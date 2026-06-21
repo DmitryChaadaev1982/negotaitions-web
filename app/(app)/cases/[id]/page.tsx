@@ -49,12 +49,20 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         title={negotiationCase.title}
         description="Case details and role briefings for facilitators."
         action={
-          <Link
-            href="/cases"
-            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-          >
-            Back to cases
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/sessions/new?caseId=${negotiationCase.id}`}
+              className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
+            >
+              Create session
+            </Link>
+            <Link
+              href="/cases"
+              className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              Back to cases
+            </Link>
+          </div>
         }
       />
 

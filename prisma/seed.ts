@@ -83,26 +83,6 @@ const demoCases: CaseSeed[] = [
         fallbackPosition:
           "Propose a change request with phased delivery: Phase 1 delivers statutory consolidation by go-live using reallocated capacity; Phase 2 delivers management dashboards within 60 days under a zero-fee acceleration plan funded by descoping agreed low-priority reports.",
       },
-      {
-        name: "Observer",
-        privateInstructions:
-          "Observe the negotiation without participating in the dialogue. Capture how each party frames interests, surfaces constraints, and moves toward a workable agreement. Note moments of escalation, concession, and reframing.",
-        objectives: [
-          "Document negotiation tactics used by each party.",
-          "Identify when interests align versus when positions harden.",
-          "Assess whether options are evaluated against clear decision criteria.",
-          "Prepare feedback on scope control and escalation management.",
-        ].join("\n"),
-        constraints: [
-          "Do not intervene or coach during the live negotiation.",
-          "Capture notes in real time for debrief.",
-          "Focus on behaviors, not personal judgments.",
-        ].join("\n"),
-        hiddenInfo:
-          "The facilitator may pause the session for a mid-point reflection. Use that moment to compare observed tactics against the case target skills.",
-        fallbackPosition:
-          "If the parties deadlock, record the unresolved issues, proposed options, and what evidence each side used so the facilitator can guide a structured debrief.",
-      },
     ],
   },
   {
@@ -158,26 +138,6 @@ const demoCases: CaseSeed[] = [
           "Most demo scenarios can run on pre-staged data if three specific real-time feeds are stable. A vendor partner offered 40 hours of senior support at cost for emergency pipeline fixes.",
         fallbackPosition:
           "Accept shared architect time with Analytics focusing on the three demo-critical feeds first, while ERP takes priority on cutover weekends and sev-1 incidents; commit to a steering review if either workstream misses a milestone.",
-      },
-      {
-        name: "Observer",
-        privateInstructions:
-          "Watch how the directors balance competing urgencies. Track whether they move from positional demands to interest-based problem solving, and whether they define clear decision criteria and escalation paths.",
-        objectives: [
-          "Record how each director frames business impact and risk.",
-          "Note whether alternatives beyond 'all or nothing' are explored.",
-          "Evaluate the quality of prioritization and conflict management behaviors.",
-          "Capture evidence for debrief on interest-based negotiation skills.",
-        ].join("\n"),
-        constraints: [
-          "Remain silent during the negotiation.",
-          "Do not signal agreement with either party.",
-          "Document specific quotes or turning points where possible.",
-        ].join("\n"),
-        hiddenInfo:
-          "The facilitator expects participants to end with explicit decision criteria even if full agreement is not reached.",
-        fallbackPosition:
-          "If no agreement is reached, summarize each party's stated interests, proposed options, and remaining gaps to support facilitator-led prioritization.",
       },
     ],
   },
