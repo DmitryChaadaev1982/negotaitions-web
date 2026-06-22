@@ -3,11 +3,19 @@ import { z } from "zod";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import {
+  handleNegotiationFinishRecording,
+  handleNegotiationStartRecording,
+} from "@/lib/livekit-egress";
+import {
   buildControlState,
   getControlUpdateData,
   shouldAutoFinish,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
+import {
+  closeLatestPauseInterval,
+  createPauseInterval,
+} from "@/lib/session-pause-intervals";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 
 const controlActionSchema = z.object({
@@ -18,6 +26,21 @@ const controlActionSchema = z.object({
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
+
+export const runtime = "nodejs";
+
+async function syncPauseIntervals(
+  sessionId: string,
+  action: "PAUSE" | "RESUME" | "FINISH",
+  now: Date,
+) {
+  if (action === "PAUSE") {
+    await createPauseInterval(sessionId, now);
+    return;
+  }
+
+  await closeLatestPauseInterval(sessionId, now);
+}
 
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
@@ -74,6 +97,9 @@ export async function POST(request: Request, context: RouteContext) {
         },
       });
 
+      await closeLatestPauseInterval(sessionId, now);
+      await handleNegotiationFinishRecording(sessionId);
+
       return NextResponse.json(buildControlState(session, participant.type, now));
     }
 
@@ -95,7 +121,39 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
-    return NextResponse.json(buildControlState(session, participant.type, now));
+    let recordingWarning: string | undefined;
+
+    if (action === "START") {
+      const recordingResult = await handleNegotiationStartRecording(sessionId);
+      if (recordingResult && !recordingResult.ok) {
+        recordingWarning = recordingResult.warning;
+      }
+    }
+
+    if (action === "PAUSE" || action === "RESUME" || action === "FINISH") {
+      await syncPauseIntervals(sessionId, action, now);
+    }
+
+    if (action === "FINISH") {
+      const stopResult = await handleNegotiationFinishRecording(sessionId);
+      recordingWarning = stopResult.warning;
+    }
+
+    const recording = await prisma.recording.findUnique({
+      where: { sessionId },
+      select: { status: true, errorMessage: true },
+    });
+
+    return NextResponse.json({
+      ...buildControlState(session, participant.type, now),
+      recordingWarning,
+      recording: recording
+        ? {
+            status: recording.status,
+            errorMessage: recording.errorMessage,
+          }
+        : null,
+    });
   } catch (error) {
     return NextResponse.json(
       {

@@ -13,6 +13,7 @@ import { FacilitatorRoomControls } from "@/components/facilitator-room-controls"
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { MicEnforcement } from "@/components/mic-enforcement";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
+import { RecordingIndicator } from "@/components/recording-indicator";
 import { RestrictedControlBar } from "@/components/restricted-control-bar";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { StructuredVideoLayout } from "@/components/structured-video-layout";
@@ -31,6 +32,14 @@ type LiveKitTokenResponse = {
   participantId: string;
   participantType: RoomSidebarData["participantType"];
   displayName: string;
+};
+
+type RoomControlPayload = ControlState & {
+  recording?: {
+    status: string;
+    errorMessage: string | null;
+  } | null;
+  recordingWarning?: string;
 };
 
 type VideoRoomPageProps = {
@@ -206,14 +215,18 @@ function ConnectedRoom({
   tokenResponse,
   sidebar,
   controlState,
+  recordingState,
   onControlStateChange,
+  onRecordingStateChange,
 }: {
   joinToken: string;
   sessionId: string;
   tokenResponse: LiveKitTokenResponse;
   sidebar: RoomSidebarData;
   controlState: ControlState;
+  recordingState: RoomControlPayload["recording"];
   onControlStateChange: (state: ControlState) => void;
+  onRecordingStateChange: (state: RoomControlPayload["recording"]) => void;
 }) {
   const router = useRouter();
   const { t } = useI18n();
@@ -240,13 +253,20 @@ function ConnectedRoom({
       <RoomAudioRenderer />
       <MicEnforcement controlState={controlState} />
       <header className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-2">
           <p className="truncate text-sm font-semibold text-slate-50">
             {sidebar.sessionTitle}
           </p>
           <p className="truncate text-xs text-slate-400">
             {tokenResponse.displayName} · {participantTypeLabel}
           </p>
+          <RecordingIndicator
+            status={recordingState?.status}
+            negotiationState={controlState.negotiationState}
+            participantType={tokenResponse.participantType}
+            isFacilitator={controlState.canControl}
+            errorMessage={recordingState?.errorMessage}
+          />
         </div>
         <div className="flex items-center gap-3">
           <LanguageSwitcher />
@@ -270,7 +290,10 @@ function ConnectedRoom({
                 sessionId={sessionId}
                 joinToken={joinToken}
                 controlState={controlState}
-                onControlStateChange={onControlStateChange}
+                onControlStateChange={(state) => {
+                  onControlStateChange(state);
+                }}
+                onRecordingStateChange={onRecordingStateChange}
               />
             </div>
           ) : null}
@@ -300,6 +323,8 @@ export default function VideoRoomPage({
   );
   const [sidebar, setSidebar] = useState<RoomSidebarData | null>(null);
   const [controlState, setControlState] = useState<ControlState | null>(null);
+  const [recordingState, setRecordingState] =
+    useState<RoomControlPayload["recording"]>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -330,7 +355,7 @@ export default function VideoRoomPage({
           | RoomSidebarData
           | { error?: string };
         const controlPayload = (await controlResult.json()) as
-          | ControlState
+          | RoomControlPayload
           | { error?: string };
 
         if (!tokenResult.ok) {
@@ -367,7 +392,9 @@ export default function VideoRoomPage({
         if (!cancelled) {
           setTokenResponse(tokenPayload);
           setSidebar(sidebarPayload as RoomSidebarData);
-          setControlState(controlPayload as ControlState);
+          const payload = controlPayload as RoomControlPayload;
+          setControlState(payload);
+          setRecordingState(payload.recording ?? null);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -406,8 +433,9 @@ export default function VideoRoomPage({
           return;
         }
 
-        const nextState = (await response.json()) as ControlState;
+        const nextState = (await response.json()) as RoomControlPayload;
         setControlState(nextState);
+        setRecordingState(nextState.recording ?? null);
       } catch {
         // Ignore transient polling errors.
       }
@@ -449,7 +477,9 @@ export default function VideoRoomPage({
       tokenResponse={tokenResponse}
       sidebar={sidebar}
       controlState={controlState}
+      recordingState={recordingState}
       onControlStateChange={setControlState}
+      onRecordingStateChange={setRecordingState}
     />
   );
 }

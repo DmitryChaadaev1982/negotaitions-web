@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 
+import { ParticipantType } from "@/app/generated/prisma/client";
+import { handleNegotiationFinishRecording } from "@/lib/livekit-egress";
 import {
   buildControlState,
-  shouldAutoFinish,
   getControlUpdateData,
+  shouldAutoFinish,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
+import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+
+export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -45,9 +50,28 @@ export async function GET(request: Request, context: RouteContext) {
         totalPausedSeconds: true,
       },
     });
+
+    await closeLatestPauseInterval(sessionId, now);
+    await handleNegotiationFinishRecording(sessionId);
   }
 
-  return NextResponse.json(
-    buildControlState(session, participant.type, now),
-  );
+  const recording = await prisma.recording.findUnique({
+    where: { sessionId },
+    select: {
+      status: true,
+      errorMessage: true,
+    },
+  });
+
+  const isFacilitator = participant.type === ParticipantType.FACILITATOR;
+
+  return NextResponse.json({
+    ...buildControlState(session, participant.type, now),
+    recording: recording
+      ? {
+          status: recording.status,
+          errorMessage: isFacilitator ? recording.errorMessage : null,
+        }
+      : null,
+  });
 }

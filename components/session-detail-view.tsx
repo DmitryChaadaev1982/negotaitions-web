@@ -14,6 +14,7 @@ import {
   ParticipantNotesModal,
   type ParticipantNotesModalParticipant,
 } from "@/components/participant-notes-modal";
+import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionDisplayStatusBadge } from "@/components/session-display-status-badge";
 import { SessionDurationEditor } from "@/components/session-duration-editor";
@@ -253,6 +254,14 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
           ) : null}
         </CardContent>
       </Card>
+
+      {session.facilitatorParticipant ? (
+        <RecordingTranscriptionSection
+          sessionId={session.id}
+          joinToken={session.facilitatorParticipant.joinToken}
+          readOnly={isReadOnly}
+        />
+      ) : null}
 
       {!isReadOnly ? (
         <Card>

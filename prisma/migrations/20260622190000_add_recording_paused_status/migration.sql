@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "RecordingStatus" ADD VALUE 'PAUSED' AFTER 'RECORDING';

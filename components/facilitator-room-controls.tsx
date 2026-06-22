@@ -14,6 +14,10 @@ type FacilitatorRoomControlsProps = {
   joinToken: string;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
+  onRecordingStateChange?: (state: {
+    status: string;
+    errorMessage: string | null;
+  } | null) => void;
 };
 
 type LobbyControlsProps = {
@@ -140,13 +144,16 @@ export function FacilitatorRoomControls({
   joinToken,
   controlState,
   onControlStateChange,
+  onRecordingStateChange,
 }: FacilitatorRoomControlsProps) {
   const { t } = useI18n();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
 
   const runAction = useCallback(
     async (action: ControlAction) => {
       setIsSubmitting(true);
+      setRecordingWarning(null);
 
       try {
         const response = await fetch(`/api/sessions/${sessionId}/control`, {
@@ -155,24 +162,31 @@ export function FacilitatorRoomControls({
           body: JSON.stringify({ joinToken, action }),
         });
 
-        const payload = (await response.json()) as ControlState | { error?: string };
+        const payload = (await response.json()) as ControlState & {
+          error?: string;
+          recordingWarning?: string;
+          recording?: { status: string; errorMessage: string | null } | null;
+        };
 
         if (!response.ok) {
           throw new Error(
-            "error" in payload && payload.error
-              ? payload.error
-              : "Unable to update negotiation state.",
+            payload.error ? payload.error : "Unable to update negotiation state.",
           );
         }
 
-        onControlStateChange(payload as ControlState);
+        onControlStateChange(payload);
+        onRecordingStateChange?.(payload.recording ?? null);
+
+        if (payload.recordingWarning) {
+          setRecordingWarning(payload.recordingWarning);
+        }
       } catch (actionError) {
         console.error(actionError);
       } finally {
         setIsSubmitting(false);
       }
     },
-    [joinToken, onControlStateChange, sessionId],
+    [joinToken, onControlStateChange, onRecordingStateChange, sessionId],
   );
 
   const { negotiationState } = controlState;
@@ -194,6 +208,9 @@ export function FacilitatorRoomControls({
           {t("room.facilitatorControls")}
         </p>
         <p className="mt-0.5 text-sm text-slate-300">{statusMessage}</p>
+        {recordingWarning ? (
+          <p className="mt-1 max-w-xl text-xs text-amber-300">{recordingWarning}</p>
+        ) : null}
       </div>
 
       {negotiationState === "LOBBY" ? (

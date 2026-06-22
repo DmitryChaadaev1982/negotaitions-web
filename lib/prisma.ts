@@ -5,7 +5,10 @@ import { PrismaClient } from "@/app/generated/prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  prismaClientVersion: string | undefined;
 };
+
+const PRISMA_CLIENT_VERSION = "20260622210000-session-pause-interval";
 
 function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;
@@ -19,8 +22,13 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+export const prisma =
+  globalForPrisma.prismaClientVersion === PRISMA_CLIENT_VERSION &&
+  globalForPrisma.prisma
+    ? globalForPrisma.prisma
+    : createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
+  globalForPrisma.prismaClientVersion = PRISMA_CLIENT_VERSION;
 }

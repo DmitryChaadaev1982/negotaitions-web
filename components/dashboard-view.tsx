@@ -22,6 +22,7 @@ import {
 import { FeatureCard } from "@/components/ui/feature-card";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { MetricCard } from "@/components/ui/metric-card";
+import { ServiceWarningBanner } from "@/components/service-warning-banner";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { useI18n } from "@/lib/i18n/useI18n";
 
@@ -94,6 +95,7 @@ export function DashboardView({
 
   return (
     <div className="space-y-10">
+      <ServiceWarningBanner />
       {/* Hero */}
       <section className="glass-hero relative overflow-hidden rounded-2xl p-8 sm:p-12">
         <div

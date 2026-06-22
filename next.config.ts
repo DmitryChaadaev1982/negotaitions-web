@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["ffmpeg-static", "fluent-ffmpeg"],
   turbopack: {
     root: projectRoot,
   },

@@ -16,6 +16,7 @@ export function AppHeader() {
     { href: "/dashboard", label: t("nav.dashboard") },
     { href: "/cases", label: t("nav.cases") },
     { href: "/sessions", label: t("nav.sessions") },
+    { href: "/admin", label: t("nav.admin") },
   ];
 
   return (
