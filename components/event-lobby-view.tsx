@@ -7,9 +7,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
+import { ConnectionStatusBadge } from "@/components/connection-status-badge";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { RejoinNavLink } from "@/components/rejoin-page-view";
 import {
   GradientButton,
   GradientButtonLink,
@@ -25,6 +27,7 @@ import {
 import { getJoinUrl } from "@/lib/config";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 import type { EventStateResponse } from "@/lib/event-state";
+import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type EventLobbyViewProps = {
@@ -153,10 +156,44 @@ export function EventLobbyView({
   useEffect(() => {
     const interval = window.setInterval(() => {
       void fetchState();
+      touchRecoveryContext();
     }, 2500);
 
     return () => window.clearInterval(interval);
   }, [fetchState]);
+
+  useEffect(() => {
+    if (!state) {
+      return;
+    }
+
+    const displayName =
+      state.currentParticipant?.displayName ?? liveKit?.displayName;
+
+    saveRecoveryContext({
+      type: "EVENT_LOBBY",
+      eventId,
+      hostToken,
+      participantToken,
+      displayName,
+    });
+
+    const assignment = state.currentParticipant
+      ? state.participants.find((participant) => participant.id === state.currentParticipant?.id)
+      : null;
+
+    if (assignment?.joinToken) {
+      saveRecoveryContext({
+        type: "SESSION_JOIN",
+        eventId,
+        sessionId: assignment.assignedSessionId ?? undefined,
+        hostToken,
+        participantToken,
+        joinToken: assignment.joinToken,
+        displayName,
+      });
+    }
+  }, [eventId, hostToken, liveKit?.displayName, participantToken, state]);
 
   const updateHost = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -260,8 +297,12 @@ export function EventLobbyView({
 
   return (
     <div className="flex min-h-screen flex-col bg-[#020617]">
-      {participantToken ? (
-        <EventLobbyPresence eventId={eventId} participantToken={participantToken} />
+      {participantToken || hostToken ? (
+        <EventLobbyPresence
+          eventId={eventId}
+          participantToken={participantToken}
+          hostToken={hostToken}
+        />
       ) : null}
       <header className="glass-header border-b border-slate-700/40 px-4 py-3 sm:px-6">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
@@ -281,6 +322,7 @@ export function EventLobbyView({
               </SecondaryButton>
             ) : null}
             <LanguageSwitcher />
+            <RejoinNavLink />
           </div>
         </div>
         {copyMessage ? (
@@ -372,7 +414,7 @@ export function EventLobbyView({
                 state.participants.map((participant) => (
                   <div
                     key={participant.id}
-                    className="flex items-center justify-between rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
                   >
                     <span className="text-sm font-medium text-slate-100">
                       {participant.displayName}
@@ -382,15 +424,21 @@ export function EventLobbyView({
                         </span>
                       ) : null}
                     </span>
-                    <Badge variant="default" className="text-[10px]">
-                      {participant.preference === "PLAY"
-                        ? t("events.wantToPlay")
-                        : participant.preference === "OBSERVE"
-                          ? t("events.wantToObserve")
-                          : participant.preference === "FACILITATE"
-                            ? t("events.canFacilitate")
-                            : t("events.undecided")}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1">
+                      <ConnectionStatusBadge
+                        lastSeenAt={participant.lastSeenAt}
+                        showLastSeen={isHost}
+                      />
+                      <Badge variant="default" className="text-[10px]">
+                        {participant.preference === "PLAY"
+                          ? t("events.wantToPlay")
+                          : participant.preference === "OBSERVE"
+                            ? t("events.wantToObserve")
+                            : participant.preference === "FACILITATE"
+                              ? t("events.canFacilitate")
+                              : t("events.undecided")}
+                      </Badge>
+                    </div>
                   </div>
                 ))
               )}

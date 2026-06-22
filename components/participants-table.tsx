@@ -9,6 +9,8 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import type { ParticipantNoteEntry } from "@/lib/participant-notes-types";
 import {
   isParticipantOnline,
+  resolveConnectionStatus,
+  type ParticipantConnectionStatus,
   type ParticipantPresenceSnapshot,
 } from "@/lib/presence";
 
@@ -31,20 +33,38 @@ type ParticipantsTableProps = {
   onViewNotes: (participant: ParticipantRow) => void;
 };
 
-function OnlineStatus({ isOnline }: { isOnline: boolean }) {
+function ConnectionStatus({
+  connectionStatus,
+}: {
+  connectionStatus: ParticipantConnectionStatus;
+}) {
   const { t } = useI18n();
+
+  const colorClass =
+    connectionStatus === "ONLINE"
+      ? "bg-emerald-500"
+      : connectionStatus === "RECENTLY_DISCONNECTED"
+        ? "bg-amber-500"
+        : "bg-slate-600";
+
+  const textClass =
+    connectionStatus === "ONLINE"
+      ? "text-emerald-300"
+      : connectionStatus === "RECENTLY_DISCONNECTED"
+        ? "text-amber-300"
+        : "text-slate-400";
+
+  const labelKey =
+    connectionStatus === "ONLINE"
+      ? "rejoin.online"
+      : connectionStatus === "RECENTLY_DISCONNECTED"
+        ? "rejoin.recentlyDisconnected"
+        : "rejoin.offline";
 
   return (
     <span className="inline-flex items-center gap-2 text-sm">
-      <span
-        aria-hidden="true"
-        className={`h-2 w-2 rounded-full ${
-          isOnline ? "bg-emerald-500" : "bg-slate-600"
-        }`}
-      />
-      <span className={isOnline ? "text-emerald-300" : "text-slate-400"}>
-        {isOnline ? t("common.online") : t("common.offline")}
-      </span>
+      <span aria-hidden="true" className={`h-2 w-2 rounded-full ${colorClass}`} />
+      <span className={textClass}>{t(labelKey)}</span>
     </span>
   );
 }
@@ -193,7 +213,18 @@ function ParticipantsPresenceTable({
                   )}
                 </td>
                 <td className="px-6 py-4">
-                  <OnlineStatus isOnline={presence?.isOnline ?? false} />
+                  <ConnectionStatus
+                    connectionStatus={
+                      presence?.connectionStatus ??
+                      resolveConnectionStatus(
+                        presence?.lastSeenAt
+                          ? new Date(presence.lastSeenAt)
+                          : participant.lastSeenAt
+                            ? new Date(participant.lastSeenAt)
+                            : null,
+                      )
+                    }
+                  />
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-300">
                   {formatNotesCountLabel(participant.notesCount, t)}
@@ -253,6 +284,9 @@ export function ParticipantsTable({
         joinedAt: participant.joinedAt,
         lastSeenAt: participant.lastSeenAt,
         isOnline: isParticipantOnline(
+          participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
+        ),
+        connectionStatus: resolveConnectionStatus(
           participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
         ),
       });

@@ -11,7 +11,10 @@ import { ParticipantType } from "@/app/generated/prisma/enums";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { FacilitatorRoomControls } from "@/components/facilitator-room-controls";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
 import { MicEnforcement } from "@/components/mic-enforcement";
+import { RejoinNavLink } from "@/components/rejoin-page-view";
+import { SessionRoomPresenceHeartbeat } from "@/components/session-room-presence-heartbeat";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RecordingIndicator } from "@/components/recording-indicator";
 import { RestrictedControlBar } from "@/components/restricted-control-bar";
@@ -21,6 +24,11 @@ import { GradientButtonLink } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
+import {
+  clearRecoveryContext,
+  saveRecoveryContext,
+  touchRecoveryContext,
+} from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -218,6 +226,7 @@ function ConnectedRoom({
   recordingState,
   onControlStateChange,
   onRecordingStateChange,
+  onInvalidToken,
 }: {
   joinToken: string;
   sessionId: string;
@@ -227,87 +236,96 @@ function ConnectedRoom({
   recordingState: RoomControlPayload["recording"];
   onControlStateChange: (state: ControlState) => void;
   onRecordingStateChange: (state: RoomControlPayload["recording"]) => void;
+  onInvalidToken: () => void;
 }) {
   const router = useRouter();
   const { t } = useI18n();
 
-  const handleDisconnected = useCallback(() => {
-    router.push(`/join/${joinToken}`);
-  }, [joinToken, router]);
+  const handleManualRejoin = useCallback(() => {
+    router.push(`/rejoin`);
+  }, [router]);
 
   const participantTypeLabel = t(
     `participantType.${tokenResponse.participantType}` as `participantType.${typeof tokenResponse.participantType}`,
   );
 
   return (
-    <LiveKitRoom
-      token={tokenResponse.token}
-      serverUrl={tokenResponse.serverUrl}
-      connect
-      audio
-      video
-      onDisconnected={handleDisconnected}
-      data-lk-theme="default"
-      className="flex h-dvh flex-col overflow-hidden bg-slate-950"
-    >
-      <RoomAudioRenderer />
-      <MicEnforcement controlState={controlState} />
-      <header className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3">
-        <div className="min-w-0 space-y-2">
-          <p className="truncate text-sm font-semibold text-slate-50">
-            {sidebar.sessionTitle}
-          </p>
-          <p className="truncate text-xs text-slate-400">
-            {tokenResponse.displayName} · {participantTypeLabel}
-          </p>
-          <RecordingIndicator
-            status={recordingState?.status}
-            negotiationState={controlState.negotiationState}
-            participantType={tokenResponse.participantType}
-            isFacilitator={controlState.canControl}
-            errorMessage={recordingState?.errorMessage}
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <LanguageSwitcher />
-          <LeaveRoomButton joinToken={joinToken} />
-        </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-hidden bg-[#0f172a]">
-            <StructuredVideoLayout
-              roster={sidebar.roster}
-              controlState={controlState}
+    <>
+      <SessionRoomPresenceHeartbeat
+        sessionId={sessionId}
+        joinToken={joinToken}
+        onInvalidToken={onInvalidToken}
+      />
+      <LiveKitRoom
+        token={tokenResponse.token}
+        serverUrl={tokenResponse.serverUrl}
+        connect
+        audio
+        video
+        data-lk-theme="default"
+        className="flex h-dvh flex-col overflow-hidden bg-slate-950"
+      >
+        <RoomAudioRenderer />
+        <MicEnforcement controlState={controlState} />
+        <header className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3">
+          <div className="min-w-0 space-y-2">
+            <p className="truncate text-sm font-semibold text-slate-50">
+              {sidebar.sessionTitle}
+            </p>
+            <p className="truncate text-xs text-slate-400">
+              {tokenResponse.displayName} · {participantTypeLabel}
+            </p>
+            <RecordingIndicator
+              status={recordingState?.status}
+              negotiationState={controlState.negotiationState}
               participantType={tokenResponse.participantType}
+              isFacilitator={controlState.canControl}
+              errorMessage={recordingState?.errorMessage}
             />
           </div>
+          <div className="flex items-center gap-3">
+            <RejoinNavLink />
+            <LanguageSwitcher />
+            <LeaveRoomButton joinToken={joinToken} />
+          </div>
+        </header>
 
-          {controlState.canControl ? (
-            <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3">
-              <FacilitatorRoomControls
-                sessionId={sessionId}
-                joinToken={joinToken}
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+          <LiveKitReconnectBanner onManualRejoin={handleManualRejoin} />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden bg-[#0f172a]">
+              <StructuredVideoLayout
+                roster={sidebar.roster}
                 controlState={controlState}
-                onControlStateChange={(state) => {
-                  onControlStateChange(state);
-                }}
-                onRecordingStateChange={onRecordingStateChange}
+                participantType={tokenResponse.participantType}
               />
             </div>
-          ) : null}
 
-          <div className="shrink-0 border-t border-slate-800 bg-slate-900">
-            <RestrictedControlBar micAllowed={controlState.micAllowed} />
+            {controlState.canControl ? (
+              <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3">
+                <FacilitatorRoomControls
+                  sessionId={sessionId}
+                  joinToken={joinToken}
+                  controlState={controlState}
+                  onControlStateChange={(state) => {
+                    onControlStateChange(state);
+                  }}
+                  onRecordingStateChange={onRecordingStateChange}
+                />
+              </div>
+            ) : null}
+
+            <div className="shrink-0 border-t border-slate-800 bg-slate-900">
+              <RestrictedControlBar micAllowed={controlState.micAllowed} />
+            </div>
+          </div>
+
+          <div className="hidden h-full min-h-0 w-96 shrink-0 overflow-hidden lg:block">
+            <RoomSidebar joinToken={joinToken} sidebar={sidebar} />
           </div>
         </div>
-
-        <div className="hidden h-full min-h-0 w-96 shrink-0 overflow-hidden lg:block">
-          <RoomSidebar joinToken={joinToken} sidebar={sidebar} />
-        </div>
-      </div>
-    </LiveKitRoom>
+      </LiveKitRoom>
+    </>
   );
 }
 
@@ -395,14 +413,30 @@ export default function VideoRoomPage({
           const payload = controlPayload as RoomControlPayload;
           setControlState(payload);
           setRecordingState(payload.recording ?? null);
+
+          saveRecoveryContext({
+            type: "SESSION_ROOM",
+            sessionId,
+            joinToken,
+            displayName: tokenPayload.displayName,
+          });
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(
+          const message =
             loadError instanceof Error
               ? loadError.message
-              : t("room.unableToJoinRoom"),
-          );
+              : t("room.unableToJoinRoom");
+
+          if (
+            message.includes("session") ||
+            message.includes("join") ||
+            message.includes("token")
+          ) {
+            clearRecoveryContext();
+          }
+
+          setError(message);
         }
       } finally {
         if (!cancelled) {
@@ -424,6 +458,8 @@ export default function VideoRoomPage({
     }
 
     const intervalId = window.setInterval(async () => {
+      touchRecoveryContext();
+
       try {
         const response = await fetch(
           `/api/sessions/${sessionId}/control-state?joinToken=${encodeURIComponent(joinToken)}`,
@@ -443,6 +479,11 @@ export default function VideoRoomPage({
 
     return () => window.clearInterval(intervalId);
   }, [error, isLoading, joinToken, sessionId]);
+
+  const handleInvalidToken = useCallback(() => {
+    clearRecoveryContext();
+    setError(t("rejoin.sessionNoLongerAvailable"));
+  }, [t]);
 
   if (isLoading) {
     return (
@@ -466,6 +507,7 @@ export default function VideoRoomPage({
         <GradientButtonLink href={`/join/${joinToken}`}>
           {t("room.backToSessionBriefing")}
         </GradientButtonLink>
+        <GradientButtonLink href="/rejoin">{t("rejoin.rejoin")}</GradientButtonLink>
       </div>
     );
   }
@@ -480,6 +522,7 @@ export default function VideoRoomPage({
       recordingState={recordingState}
       onControlStateChange={setControlState}
       onRecordingStateChange={setRecordingState}
+      onInvalidToken={handleInvalidToken}
     />
   );
 }

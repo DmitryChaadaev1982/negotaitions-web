@@ -4,6 +4,7 @@ import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { StatusBadge } from "@/components/badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionStatusBadge } from "@/components/session-status-badge";
@@ -96,7 +97,10 @@ export function JoinPageView({
         <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-center justify-between gap-4">
             <BrandLogo size="sm" href={undefined} />
-            <LanguageSwitcher />
+            <div className="flex items-center gap-4">
+              <RejoinNavLink />
+              <LanguageSwitcher />
+            </div>
           </div>
           <h1 className="text-xl font-semibold tracking-tight text-slate-50">
             {session.title}

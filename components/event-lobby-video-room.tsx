@@ -12,6 +12,7 @@ import {
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-core";
 import { isTrackReference } from "@livekit/components-core";
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
+import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const PARTICIPANT_TILE_CLASS =
@@ -215,6 +216,7 @@ export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
       <RoomAudioRenderer />
       <div className="lk-video-conference flex min-h-0 flex-1 flex-col">
         <div className="lk-video-conference-inner relative min-h-0 flex-1 overflow-hidden">
+          <LiveKitReconnectBanner onManualRejoin={() => window.location.reload()} />
           <EventLobbyVideoGrid />
         </div>
         <ControlBar

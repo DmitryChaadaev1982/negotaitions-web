@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { JoinPageView } from "@/components/join-page-view";
+import { JoinRecoverySync } from "@/components/join-recovery-sync";
 import { ParticipantPresenceHeartbeat } from "@/components/participant-presence-heartbeat";
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
@@ -72,6 +73,12 @@ export default async function JoinPage({ params }: JoinPageProps) {
 
   return (
     <>
+      <JoinRecoverySync
+        joinToken={joinToken}
+        sessionId={session.id}
+        displayName={participant.displayName}
+        eventId={session.eventId}
+      />
       <ParticipantPresenceHeartbeat joinToken={joinToken} />
       <JoinPageView
         joinToken={joinToken}

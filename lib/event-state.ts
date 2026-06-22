@@ -10,7 +10,7 @@ import {
 } from "@/lib/event-assignment";
 import { toPublicCaseSummary, type PublicCaseSummary } from "@/lib/event-case-public";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
-import { isParticipantOnline } from "@/lib/presence";
+import { resolveConnectionStatus } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 
@@ -25,6 +25,7 @@ export type EventStateParticipant = {
   wantsToFacilitate: boolean;
   joinedAt: string | null;
   lastSeenAt: string | null;
+  connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
   assignedSessionId: string | null;
   assignedSessionParticipantId: string | null;
   assignedType: string | null;
@@ -169,9 +170,7 @@ export async function buildEventState(
         }
       : null,
     isHost: input.isHost,
-    participants: participants
-      .filter((participant) => isParticipantOnline(participant.lastSeenAt))
-      .map(mapEventParticipant),
+    participants: participants.map(mapEventParticipant),
     selectedCase: selectedCaseRecord
       ? toPublicCaseSummary(selectedCaseRecord)
       : null,
@@ -205,6 +204,7 @@ function mapEventParticipant(
     wantsToFacilitate: participant.wantsToFacilitate,
     joinedAt: participant.joinedAt?.toISOString() ?? null,
     lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
+    connectionStatus: resolveConnectionStatus(participant.lastSeenAt),
     assignedSessionId: participant.assignedSessionId,
     assignedSessionParticipantId: participant.assignedSessionParticipantId,
     assignedType: assigned?.type ?? null,

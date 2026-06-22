@@ -3,38 +3,34 @@
 import { useEffect } from "react";
 
 import { PRESENCE_HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
-import { touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 
-type EventLobbyPresenceProps = {
-  eventId: string;
-  participantToken?: string;
-  hostToken?: string;
+type SessionRoomPresenceHeartbeatProps = {
+  sessionId: string;
+  joinToken: string;
+  onInvalidToken?: () => void;
 };
 
-export function EventLobbyPresence({
-  eventId,
-  participantToken,
-  hostToken,
-}: EventLobbyPresenceProps) {
+export function SessionRoomPresenceHeartbeat({
+  sessionId,
+  joinToken,
+  onInvalidToken,
+}: SessionRoomPresenceHeartbeatProps) {
   useEffect(() => {
     let cancelled = false;
 
-    const heartbeatUrl = `/api/events/${eventId}/heartbeat`;
+    const heartbeatUrl = `/api/sessions/${sessionId}/heartbeat`;
 
     const sendHeartbeat = async () => {
       try {
         const response = await fetch(heartbeatUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            participantToken: participantToken || undefined,
-            hostToken: hostToken || undefined,
-          }),
+          body: JSON.stringify({ joinToken }),
           keepalive: true,
         });
 
-        if (response.ok) {
-          touchRecoveryContext();
+        if (response.status === 403 && !cancelled) {
+          onInvalidToken?.();
         }
       } catch {
         // Ignore transient network errors; the next heartbeat will retry.
@@ -62,7 +58,7 @@ export function EventLobbyPresence({
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [eventId, hostToken, participantToken]);
+  }, [joinToken, onInvalidToken, sessionId]);
 
   return null;
 }

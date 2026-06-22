@@ -1,9 +1,12 @@
 "use client";
 
-import { useActionState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useState } from "react";
 
 import { joinTrainingEvent, type JoinEventState } from "@/app/actions/events";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { GradientButton } from "@/components/ui/buttons";
 import {
@@ -13,9 +16,18 @@ import {
   labelClassName,
 } from "@/components/ui/form-styles";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
+import {
+  getEventParticipantTokenForEvent,
+  getValidRecoveryContext,
+} from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 const initialState: JoinEventState = {};
+
+type StoredParticipant = {
+  participantToken: string;
+  displayName: string;
+};
 
 type JoinEventFormProps = {
   eventId: string;
@@ -23,17 +35,101 @@ type JoinEventFormProps = {
 };
 
 export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
+  const router = useRouter();
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     joinTrainingEvent,
     initialState,
   );
+  const [storedParticipant, setStoredParticipant] =
+    useState<StoredParticipant | null>(null);
+  const [isValidatingStored, setIsValidatingStored] = useState(true);
+  const [isRejoining, setIsRejoining] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function validateStoredParticipant() {
+      const recovery = getValidRecoveryContext();
+      const participantToken =
+        recovery?.eventId === eventId
+          ? recovery.participantToken
+          : getEventParticipantTokenForEvent(eventId);
+
+      if (!participantToken) {
+        if (!cancelled) {
+          setStoredParticipant(null);
+          setIsValidatingStored(false);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/rejoin/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "EVENT_LOBBY",
+            eventId,
+            participantToken,
+            hostToken: recovery?.hostToken,
+          }),
+        });
+
+        const payload = (await response.json()) as {
+          valid: boolean;
+          displayName?: string;
+        };
+
+        if (!cancelled) {
+          if (payload.valid && payload.displayName) {
+            setStoredParticipant({
+              participantToken,
+              displayName: payload.displayName,
+            });
+          } else {
+            setStoredParticipant(null);
+          }
+
+          setIsValidatingStored(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setStoredParticipant(null);
+          setIsValidatingStored(false);
+        }
+      }
+    }
+
+    void validateStoredParticipant();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId]);
+
+  const handleRejoinLobby = () => {
+    if (!storedParticipant) {
+      return;
+    }
+
+    setIsRejoining(true);
+
+    const params = new URLSearchParams({
+      participantToken: storedParticipant.participantToken,
+    });
+
+    router.push(`/events/${eventId}/lobby?${params.toString()}`);
+  };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#020617] px-4 py-12">
       <div className="mb-8 flex w-full max-w-md items-center justify-between">
         <BrandLogo size="md" href={undefined} />
-        <LanguageSwitcher />
+        <div className="flex items-center gap-4">
+          <RejoinNavLink />
+          <LanguageSwitcher />
+        </div>
       </div>
 
       <GlassCard elevated className="w-full max-w-md">
@@ -44,6 +140,29 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
             </p>
             <h1 className="text-xl font-bold text-slate-50">{eventTitle}</h1>
           </div>
+
+          {isValidatingStored ? (
+            <p className="text-center text-sm text-slate-400">{t("common.loading")}…</p>
+          ) : storedParticipant ? (
+            <div className="space-y-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+              <p className="text-sm text-slate-200">
+                {t("rejoin.alreadyJoinedEvent", {
+                  name: storedParticipant.displayName,
+                })}
+              </p>
+              <GradientButton
+                type="button"
+                className="w-full"
+                disabled={isRejoining}
+                onClick={handleRejoinLobby}
+              >
+                {isRejoining ? t("common.loading") : t("rejoin.rejoinLobby")}
+              </GradientButton>
+              <p className="text-center text-xs text-slate-500">
+                {t("rejoin.orJoinAsSomeoneElse")}
+              </p>
+            </div>
+          ) : null}
 
           {state.errors?.form ? (
             <div className={alertErrorClassName}>
@@ -61,7 +180,7 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
               <input
                 id="displayName"
                 name="displayName"
-                required
+                required={!storedParticipant}
                 autoComplete="name"
                 className={inputClassName(Boolean(state.errors?.displayName))}
               />
@@ -111,6 +230,12 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
               {isPending ? t("common.loading") : t("events.joinEvent")}
             </GradientButton>
           </form>
+
+          <p className="text-center text-xs text-slate-500">
+            <Link href="/rejoin" className="text-cyan-400 hover:text-cyan-300">
+              {t("rejoin.openRejoinPage")}
+            </Link>
+          </p>
         </GlassCardContent>
       </GlassCard>
     </div>

@@ -30,9 +30,26 @@ export const createEventSchema = z.object({
 
 export const joinEventSchema = z.object({
   eventId: z.string().min(1),
-  displayName: z.string().trim().min(1, "displayNameRequired"),
+  displayName: z.string().trim().min(1, "displayNameRequired").optional(),
   email: z.union([z.literal(""), z.string().email()]).optional(),
-  preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]),
+  preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]).optional(),
+  participantToken: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (!data.participantToken && !data.displayName) {
+    ctx.addIssue({
+      code: "custom",
+      message: "displayNameRequired",
+      path: ["displayName"],
+    });
+  }
+
+  if (!data.participantToken && !data.preference) {
+    ctx.addIssue({
+      code: "custom",
+      message: "preferenceRequired",
+      path: ["preference"],
+    });
+  }
 });
 
 export const eventAccessQuerySchema = z.object({

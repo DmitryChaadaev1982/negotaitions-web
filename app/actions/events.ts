@@ -141,9 +141,10 @@ export async function joinTrainingEvent(
 ): Promise<JoinEventState> {
   const parsed = joinEventSchema.safeParse({
     eventId: formData.get("eventId"),
-    displayName: formData.get("displayName"),
+    displayName: formData.get("displayName") || undefined,
     email: formData.get("email") || undefined,
-    preference: formData.get("preference"),
+    preference: formData.get("preference") || undefined,
+    participantToken: formData.get("participantToken") || undefined,
   });
 
   if (!parsed.success) {
@@ -156,7 +157,8 @@ export async function joinTrainingEvent(
     };
   }
 
-  const { eventId, displayName, email, preference } = parsed.data;
+  const { eventId, displayName, email, preference, participantToken } =
+    parsed.data;
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
@@ -175,7 +177,43 @@ export async function joinTrainingEvent(
     };
   }
 
-  const participantToken = generateParticipantToken();
+  if (participantToken) {
+    const existing = await prisma.eventParticipant.findFirst({
+      where: {
+        eventId,
+        participantToken,
+      },
+    });
+
+    if (existing) {
+      await prisma.eventParticipant.update({
+        where: { id: existing.id },
+        data: {
+          lastSeenAt: new Date(),
+          ...(preference
+            ? {
+                preference,
+                ...flagsFromPreference(preference),
+              }
+            : {}),
+          ...(email ? { email } : {}),
+        },
+      });
+
+      redirect(getEventLobbyUrl(eventId, { participantToken }));
+    }
+  }
+
+  if (!displayName || !preference) {
+    return {
+      errors: {
+        displayName: displayName ? undefined : ["displayNameRequired"],
+        preference: preference ? undefined : ["preferenceRequired"],
+      },
+    };
+  }
+
+  const newParticipantToken = generateParticipantToken();
   const preferenceFlags = flagsFromPreference(preference);
 
   await prisma.eventParticipant.create({
@@ -183,7 +221,7 @@ export async function joinTrainingEvent(
       eventId,
       displayName,
       email: email || null,
-      participantToken,
+      participantToken: newParticipantToken,
       preference,
       ...preferenceFlags,
       joinedAt: new Date(),
@@ -191,7 +229,7 @@ export async function joinTrainingEvent(
     },
   });
 
-  redirect(getEventLobbyUrl(eventId, { participantToken }));
+  redirect(getEventLobbyUrl(eventId, { participantToken: newParticipantToken }));
 }
 
 export async function cancelTrainingEvent(formData: FormData) {

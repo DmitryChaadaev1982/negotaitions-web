@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { cn } from "@/lib/cn";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -49,6 +50,7 @@ export function AppHeader() {
           </nav>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <RejoinNavLink />
           <LanguageSwitcher />
           <div className="rounded-full border border-slate-600/30 bg-slate-900/70 px-3.5 py-1.5 text-sm text-slate-400 backdrop-blur-sm">
             {t("common.signedInAs")}{" "}
