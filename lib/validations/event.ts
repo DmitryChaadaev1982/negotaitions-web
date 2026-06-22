@@ -1,0 +1,73 @@
+import { customAlphabet } from "nanoid";
+import { z } from "zod";
+
+import {
+  MAX_EVENT_DURATION_MINUTES,
+  MIN_EVENT_DURATION_MINUTES,
+} from "@/lib/negotiation-duration";
+
+const publicCodeAlphabet = customAlphabet(
+  "23456789ABCDEFGHJKLMNPQRSTUVWXYZ",
+  8,
+);
+
+export function generatePublicJoinCode() {
+  return publicCodeAlphabet();
+}
+
+export const createEventSchema = z.object({
+  title: z.string().trim().min(1, "titleRequired"),
+  hostDisplayName: z.string().trim().min(1, "displayNameRequired"),
+  description: z.string().trim().optional(),
+  scheduledAt: z.string().trim().optional(),
+  estimatedEventDurationMinutes: z.coerce
+    .number()
+    .int("durationWholeMinutes")
+    .min(MIN_EVENT_DURATION_MINUTES, "durationMin")
+    .max(MAX_EVENT_DURATION_MINUTES, "durationMax")
+    .optional(),
+});
+
+export const joinEventSchema = z.object({
+  eventId: z.string().min(1),
+  displayName: z.string().trim().min(1, "displayNameRequired"),
+  email: z.union([z.literal(""), z.string().email()]).optional(),
+  preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]),
+});
+
+export const eventAccessQuerySchema = z.object({
+  hostToken: z.string().optional(),
+  participantToken: z.string().optional(),
+});
+
+export const eventLiveKitTokenSchema = z.object({
+  hostToken: z.string().optional(),
+  participantToken: z.string().optional(),
+});
+
+export const updateEventHostSchema = z.object({
+  hostToken: z.string().min(1),
+  selectedCaseId: z.string().nullable().optional(),
+  assignmentDraft: z
+    .object({
+      facilitatorEventParticipantId: z.string().nullable(),
+      roleAssignments: z.record(z.string(), z.string()),
+      observerEventParticipantIds: z.array(z.string()),
+      preparationDurationMinutes: z.number().int().min(0).max(60),
+      negotiationDurationMinutes: z.number().int().min(1).max(180),
+    })
+    .optional(),
+});
+
+export const updateEventParticipantSchema = z.object({
+  participantToken: z.string().min(1),
+  preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]),
+});
+
+export const createEventSessionSchema = z.object({
+  hostToken: z.string().min(1),
+});
+
+export const eventPresenceSchema = z.object({
+  participantToken: z.string().min(1),
+});

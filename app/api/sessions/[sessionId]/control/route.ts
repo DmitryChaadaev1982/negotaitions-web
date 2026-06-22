@@ -8,8 +8,11 @@ import {
 } from "@/lib/livekit-egress";
 import {
   buildControlState,
+  getAutoFinishPreparationUpdateData,
   getControlUpdateData,
+  SESSION_CONTROL_SELECT,
   shouldAutoFinish,
+  shouldAutoFinishPreparation,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import {
@@ -20,7 +23,17 @@ import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1, "Join token is required"),
-  action: z.enum(["START", "PAUSE", "RESUME", "FINISH"]),
+  action: z.enum([
+    "START_PREPARATION",
+    "PAUSE_PREPARATION",
+    "RESUME_PREPARATION",
+    "STOP_PREPARATION",
+    "SKIP_PREPARATION",
+    "START",
+    "PAUSE",
+    "RESUME",
+    "FINISH",
+  ]),
 });
 
 type RouteContext = {
@@ -40,6 +53,34 @@ async function syncPauseIntervals(
   }
 
   await closeLatestPauseInterval(sessionId, now);
+}
+
+async function applyAutoTransitions(sessionId: string, now: Date) {
+  let session = await prisma.session.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: SESSION_CONTROL_SELECT,
+  });
+
+  if (shouldAutoFinishPreparation(session, now)) {
+    session = await prisma.session.update({
+      where: { id: sessionId },
+      data: getAutoFinishPreparationUpdateData(session, now),
+      select: SESSION_CONTROL_SELECT,
+    });
+  }
+
+  if (shouldAutoFinish(session, now)) {
+    session = await prisma.session.update({
+      where: { id: sessionId },
+      data: getControlUpdateData(session, "FINISH", now),
+      select: SESSION_CONTROL_SELECT,
+    });
+
+    await closeLatestPauseInterval(sessionId, now);
+    await handleNegotiationFinishRecording(sessionId);
+  }
+
+  return session;
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -78,29 +119,12 @@ export async function POST(request: Request, context: RouteContext) {
   const now = new Date();
 
   try {
-    let session = participant.session;
+    let session = await applyAutoTransitions(sessionId, now);
 
     if (shouldAutoFinish(session, now) && action !== "FINISH") {
-      const autoFinishData = getControlUpdateData(session, "FINISH", now);
-      session = await prisma.session.update({
-        where: { id: sessionId },
-        data: autoFinishData,
-        select: {
-          id: true,
-          negotiationState: true,
-          durationSeconds: true,
-          negotiationStartedAt: true,
-          negotiationEndedAt: true,
-          timerStartedAt: true,
-          pausedAt: true,
-          totalPausedSeconds: true,
-        },
-      });
-
-      await closeLatestPauseInterval(sessionId, now);
-      await handleNegotiationFinishRecording(sessionId);
-
-      return NextResponse.json(buildControlState(session, participant.type, now));
+      return NextResponse.json(
+        buildControlState(session, participant.type, now),
+      );
     }
 
     const updateData = getControlUpdateData(session, action, now);
@@ -108,17 +132,7 @@ export async function POST(request: Request, context: RouteContext) {
     session = await prisma.session.update({
       where: { id: sessionId },
       data: updateData,
-      select: {
-        id: true,
-        status: true,
-        negotiationState: true,
-        durationSeconds: true,
-        negotiationStartedAt: true,
-        negotiationEndedAt: true,
-        timerStartedAt: true,
-        pausedAt: true,
-        totalPausedSeconds: true,
-      },
+      select: SESSION_CONTROL_SELECT,
     });
 
     let recordingWarning: string | undefined;
@@ -138,6 +152,8 @@ export async function POST(request: Request, context: RouteContext) {
       const stopResult = await handleNegotiationFinishRecording(sessionId);
       recordingWarning = stopResult.warning;
     }
+
+    session = await applyAutoTransitions(sessionId, now);
 
     const recording = await prisma.recording.findUnique({
       where: { sessionId },

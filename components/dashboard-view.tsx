@@ -23,12 +23,14 @@ import { FeatureCard } from "@/components/ui/feature-card";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { ServiceWarningBanner } from "@/components/service-warning-banner";
+import { getEventLobbyUrl } from "@/lib/config";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type DashboardViewProps = {
   caseCount: number;
   sessionCount: number;
+  eventCount: number;
   recentCases: Array<{
     id: string;
     title: string;
@@ -43,6 +45,15 @@ type DashboardViewProps = {
     caseTitle: string;
     status: SessionDisplayStatus;
     createdAt: string;
+  }>;
+  recentEvents: Array<{
+    id: string;
+    title: string;
+    status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
+    participantCount: number;
+    createdAt: string;
+    hostToken: string;
+    hostParticipantToken: string | null;
   }>;
 };
 
@@ -81,8 +92,10 @@ function AiIcon() {
 export function DashboardView({
   caseCount,
   sessionCount,
+  eventCount,
   recentCases,
   recentSessions,
+  recentEvents,
 }: DashboardViewProps) {
   const { t, locale } = useI18n();
 
@@ -120,6 +133,9 @@ export function DashboardView({
             </GradientButtonLink>
             <SecondaryButtonLink href="/sessions/new">
               {t("sessions.newSession")}
+            </SecondaryButtonLink>
+            <SecondaryButtonLink href="/events/new">
+              {t("events.createEvent")}
             </SecondaryButtonLink>
           </div>
         </div>
@@ -162,24 +178,76 @@ export function DashboardView({
           accent="violet"
         />
         <MetricCard
-          label={t("dashboard.yourRole")}
-          value={<Badge variant="info">{t("common.facilitator")}</Badge>}
+          label={t("events.title")}
+          value={eventCount}
           accent="cyan"
         />
         <MetricCard
-          label={t("dashboard.quickActions")}
-          value={
-            <div className="flex flex-wrap gap-2 pt-1">
-              <GradientButtonLink href="/cases/new" className="px-3 py-1.5 text-xs">
-                {t("cases.newCase")}
-              </GradientButtonLink>
-              <SecondaryButtonLink href="/sessions/new" className="px-3 py-1.5 text-xs">
-                {t("sessions.newSession")}
-              </SecondaryButtonLink>
-            </div>
-          }
+          label={t("dashboard.yourRole")}
+          value={<Badge variant="info">{t("common.facilitator")}</Badge>}
           accent="default"
         />
+      </section>
+
+      {/* Recent events */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-bold text-slate-50">
+            {t("events.title")}
+          </h2>
+          <Link
+            href="/events"
+            className="text-sm font-semibold text-cyan-400 hover:text-cyan-300"
+          >
+            {t("common.viewAll")}
+          </Link>
+        </div>
+        {recentEvents.length === 0 ? (
+          <GlassCard elevated>
+            <GlassCardContent className="py-8 text-sm text-slate-400">
+              {t("events.noEvents")}{" "}
+              <Link href="/events/new" className="font-semibold text-cyan-400 hover:text-cyan-300">
+                {t("events.createEvent")}
+              </Link>
+              .
+            </GlassCardContent>
+          </GlassCard>
+        ) : (
+          <DataTable>
+            <DataTableElement>
+              <DataTableHead>
+                <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("events.participantsInLobby")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
+              </DataTableHead>
+              <DataTableBody>
+                {recentEvents.map((event) => (
+                  <DataTableRow key={event.id}>
+                    <DataTableCell>
+                      <Link
+                        href={getEventLobbyUrl(event.id, {
+                          hostToken: event.hostToken,
+                          participantToken: event.hostParticipantToken ?? undefined,
+                        })}
+                        className="font-medium text-slate-100 hover:text-cyan-300"
+                      >
+                        {event.title}
+                      </Link>
+                    </DataTableCell>
+                    <DataTableCell>
+                      <Badge variant="info">
+                        {t(`events.status.${event.status}`)}
+                      </Badge>
+                    </DataTableCell>
+                    <DataTableCell>{event.participantCount}</DataTableCell>
+                    <DataTableCell>{formatDate(event.createdAt)}</DataTableCell>
+                  </DataTableRow>
+                ))}
+              </DataTableBody>
+            </DataTableElement>
+          </DataTable>
+        )}
       </section>
 
       {/* Recent cases */}

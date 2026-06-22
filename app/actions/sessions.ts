@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 
 import {
   ParticipantType,
-  NegotiationState,
   SessionStatus,
 } from "@/app/generated/prisma/client";
+import { canEditSessionDurations } from "@/lib/negotiation-control";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
@@ -87,6 +87,7 @@ export async function createSession(
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
     caseId: formData.get("caseId"),
+    preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
   });
 
@@ -97,13 +98,15 @@ export async function createSession(
         title: fieldErrors.title,
         caseId: fieldErrors.caseId,
         negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
+        preparationDurationMinutes: fieldErrors.preparationDurationMinutes,
       },
     };
   }
 
   try {
     const facilitator = await getDemoFacilitator();
-    const { title, caseId, negotiationDurationMinutes } = parsed.data;
+    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes } =
+      parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.findFirst({
       where: {
@@ -141,6 +144,7 @@ export async function createSession(
         negotiationCaseId: caseId,
         facilitatorId: facilitator.id,
         status: SessionStatus.DRAFT,
+        preparationDurationSeconds: minutesToSeconds(preparationDurationMinutes),
         durationSeconds: minutesToSeconds(negotiationDurationMinutes),
         snapshotCaseTitle: negotiationCase.title,
         snapshotBusinessContext: negotiationCase.businessContext,
@@ -317,26 +321,37 @@ export async function removeParticipant(formData: FormData) {
 export async function updateSessionDuration(formData: FormData) {
   const parsed = updateSessionDurationSchema.safeParse({
     sessionId: formData.get("sessionId"),
-    durationMinutes: formData.get("durationMinutes"),
+    durationMinutes: formData.get("durationMinutes") || undefined,
+    preparationDurationMinutes:
+      formData.get("preparationDurationMinutes") || undefined,
   });
 
   if (!parsed.success) {
     return;
   }
 
-  const { sessionId, durationMinutes } = parsed.data;
+  const { sessionId, durationMinutes, preparationDurationMinutes } = parsed.data;
 
   try {
     const session = await getFacilitatorSession(sessionId);
 
-    if (session.negotiationState !== NegotiationState.LOBBY) {
+    if (!canEditSessionDurations(session.negotiationState)) {
       return;
     }
 
     await prisma.session.update({
       where: { id: sessionId },
       data: {
-        durationSeconds: minutesToSeconds(durationMinutes),
+        ...(durationMinutes !== undefined
+          ? { durationSeconds: minutesToSeconds(durationMinutes) }
+          : {}),
+        ...(preparationDurationMinutes !== undefined
+          ? {
+              preparationDurationSeconds: minutesToSeconds(
+                preparationDurationMinutes,
+              ),
+            }
+          : {}),
       },
     });
 

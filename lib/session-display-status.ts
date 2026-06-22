@@ -7,7 +7,10 @@ import {
 export const SESSION_DISPLAY_STATUSES = [
   "DRAFT",
   "READY",
-  "LOBBY",
+  "PREPARATION",
+  "PREPARATION_RUNNING",
+  "PREPARATION_PAUSED",
+  "READY_TO_START",
   "RUNNING",
   "PAUSED",
   "FINISHED",
@@ -64,7 +67,7 @@ export function resolveSessionDisplayStatus(
   session: SessionStatusInput,
   participants: SessionParticipantLike[],
 ): SessionDisplayStatus {
-  if (session.negotiationState !== NegotiationState.LOBBY) {
+  if (session.negotiationState !== NegotiationState.PREPARATION) {
     return session.negotiationState;
   }
 
@@ -76,5 +79,5 @@ export function resolveSessionDisplayStatus(
     return "READY";
   }
 
-  return "LOBBY";
+  return "PREPARATION";
 }

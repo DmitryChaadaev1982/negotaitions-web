@@ -9,13 +9,16 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const facilitator = await getDemoFacilitator();
 
-  const [caseCount, sessionCount, recentCases, recentSessions] =
+  const [caseCount, sessionCount, eventCount, recentCases, recentSessions, recentEvents] =
     await Promise.all([
       prisma.negotiationCase.count({
         where: { facilitatorId: facilitator.id, ...activeCaseWhere },
       }),
       prisma.session.count({
         where: { facilitatorId: facilitator.id, ...activeSessionWhere },
+      }),
+      prisma.trainingEvent.count({
+        where: { deletedAt: null },
       }),
       prisma.negotiationCase.findMany({
         where: { facilitatorId: facilitator.id, ...activeCaseWhere },
@@ -35,12 +38,26 @@ export default async function DashboardPage() {
           },
         },
       }),
+      prisma.trainingEvent.findMany({
+        where: { deletedAt: null },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: {
+          participants: {
+            where: { isHost: true },
+            take: 1,
+            select: { participantToken: true },
+          },
+          _count: { select: { participants: true } },
+        },
+      }),
     ]);
 
   return (
     <DashboardView
       caseCount={caseCount}
       sessionCount={sessionCount}
+      eventCount={eventCount}
       recentCases={recentCases.map((negotiationCase) => ({
         id: negotiationCase.id,
         title: negotiationCase.title,
@@ -55,6 +72,15 @@ export default async function DashboardPage() {
         caseTitle: session.snapshotCaseTitle,
         status: resolveSessionDisplayStatus(session, session.participants),
         createdAt: session.createdAt.toISOString(),
+      }))}
+      recentEvents={recentEvents.map((event) => ({
+        id: event.id,
+        title: event.title,
+        status: event.status,
+        participantCount: event._count.participants,
+        createdAt: event.createdAt.toISOString(),
+        hostToken: event.hostToken,
+        hostParticipantToken: event.participants[0]?.participantToken ?? null,
       }))}
     />
   );

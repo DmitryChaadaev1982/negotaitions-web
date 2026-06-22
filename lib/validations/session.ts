@@ -1,17 +1,24 @@
 import { z } from "zod";
 
-import { negotiationDurationMinutesSchema } from "@/lib/validations/case";
+import { negotiationDurationMinutesSchema, preparationDurationMinutesSchema } from "@/lib/validations/case";
 
 export const createSessionSchema = z.object({
   title: z.string().trim().min(1, "titleRequired"),
   caseId: z.string().trim().min(1, "caseIdRequired"),
+  preparationDurationMinutes: preparationDurationMinutesSchema,
   negotiationDurationMinutes: negotiationDurationMinutesSchema,
 });
 
 export const updateSessionDurationSchema = z.object({
   sessionId: z.string().trim().min(1, "sessionNotFound"),
-  durationMinutes: negotiationDurationMinutesSchema,
-});
+  durationMinutes: negotiationDurationMinutesSchema.optional(),
+  preparationDurationMinutes: preparationDurationMinutesSchema.optional(),
+}).refine(
+  (data) =>
+    data.durationMinutes !== undefined ||
+    data.preparationDurationMinutes !== undefined,
+  { message: "durationRequired" },
+);
 
 export const addParticipantSchema = z
   .object({

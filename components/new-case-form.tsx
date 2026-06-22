@@ -36,6 +36,7 @@ export type CaseFormInitialValues = {
   publicInstructions: string;
   caseLanguage: "RU" | "EN";
   defaultDurationMinutes: number;
+  defaultPreparationDurationMinutes: number;
   roles: RoleField[];
 };
 
@@ -155,6 +156,27 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
               <option value="EN">{t("cases.caseLanguageEn")}</option>
               <option value="RU">{t("cases.caseLanguageRu")}</option>
             </select>
+          </Field>
+
+          <Field
+            label={t("cases.defaultPreparationDuration")}
+            name="preparationDurationMinutes"
+            error={state.errors?.preparationDurationMinutes?.[0]}
+          >
+            <input
+              id="preparationDurationMinutes"
+              name="preparationDurationMinutes"
+              type="number"
+              min={0}
+              max={60}
+              defaultValue={initialValues?.defaultPreparationDurationMinutes ?? 5}
+              className={inputClassName(
+                !!state.errors?.preparationDurationMinutes,
+              )}
+            />
+            <p className={hintClassName}>
+              {t("cases.defaultPreparationDurationHint")}
+            </p>
           </Field>
 
           <Field

@@ -29,6 +29,9 @@ export default async function CasesPage() {
         defaultDurationMinutes: secondsToDisplayMinutes(
           negotiationCase.defaultDurationSeconds,
         ),
+        defaultPreparationDurationMinutes: secondsToDisplayMinutes(
+          negotiationCase.defaultPreparationDurationSeconds,
+        ),
         createdAt: negotiationCase.createdAt.toISOString(),
       }))}
     />

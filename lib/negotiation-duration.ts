@@ -1,7 +1,15 @@
 export const DEFAULT_NEGOTIATION_DURATION_SECONDS = 900;
+export const DEFAULT_PREPARATION_DURATION_SECONDS = 300;
 
 export const MIN_NEGOTIATION_DURATION_MINUTES = 1;
 export const MAX_NEGOTIATION_DURATION_MINUTES = 180;
+
+export const MIN_PREPARATION_DURATION_MINUTES = 0;
+export const MAX_PREPARATION_DURATION_MINUTES = 60;
+
+export const DEFAULT_EVENT_DURATION_SECONDS = 7200;
+export const MIN_EVENT_DURATION_MINUTES = 1;
+export const MAX_EVENT_DURATION_MINUTES = 480;
 
 export function minutesToSeconds(minutes: number) {
   return minutes * 60;

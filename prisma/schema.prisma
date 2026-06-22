@@ -39,10 +39,28 @@ enum ParticipantType {
 }
 
 enum NegotiationState {
-  LOBBY
+  PREPARATION
+  PREPARATION_RUNNING
+  PREPARATION_PAUSED
+  READY_TO_START
   RUNNING
   PAUSED
   FINISHED
+}
+
+enum TrainingEventStatus {
+  DRAFT
+  LOBBY_OPEN
+  SESSION_CREATED
+  COMPLETED
+  CANCELLED
+}
+
+enum EventParticipantPreference {
+  UNDECIDED
+  PLAY
+  OBSERVE
+  FACILITATE
 }
 
 enum RecordingStatus {
@@ -133,15 +151,17 @@ model NegotiationCase {
   targetSkills             String       @db.Text
   difficulty               Difficulty   @default(MEDIUM)
   caseLanguage             CaseLanguage @default(EN)
-  defaultDurationSeconds   Int          @default(900)
-  facilitatorId            String
+  defaultPreparationDurationSeconds Int @default(300)
+  defaultDurationSeconds            Int @default(900)
+  facilitatorId                     String
   deletedAt                DateTime?
   createdAt                DateTime     @default(now())
   updatedAt                DateTime     @updatedAt
 
-  facilitator User      @relation("CaseFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
-  roles       CaseRole[]
-  sessions    Session[]
+  facilitator    User            @relation("CaseFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  roles          CaseRole[]
+  sessions       Session[]
+  trainingEvents TrainingEvent[]
 }
 
 model CaseRole {
@@ -173,30 +193,40 @@ model Session {
   snapshotCaseLanguage       CaseLanguage
   status                     SessionStatus    @default(DRAFT)
   livekitRoomName            String?          @unique
-  negotiationState           NegotiationState @default(LOBBY)
-  durationSeconds            Int
-  negotiationStartedAt       DateTime?
-  negotiationEndedAt         DateTime?
-  timerStartedAt             DateTime?
-  pausedAt                   DateTime?
-  totalPausedSeconds         Int              @default(0)
+  negotiationState               NegotiationState @default(PREPARATION)
+  preparationDurationSeconds     Int              @default(300)
+  durationSeconds                  Int              @default(900)
+  preparationStartedAt             DateTime?
+  preparationEndedAt               DateTime?
+  preparationTimerStartedAt        DateTime?
+  preparationPausedAt              DateTime?
+  preparationTotalPausedSeconds    Int              @default(0)
+  negotiationStartedAt             DateTime?
+  negotiationEndedAt               DateTime?
+  timerStartedAt                   DateTime?
+  pausedAt                         DateTime?
+  totalPausedSeconds               Int              @default(0)
   startedAt                  DateTime?
   endedAt                    DateTime?
   deletedAt                  DateTime?
+  eventId                    String?
   createdAt                  DateTime         @default(now())
   updatedAt                  DateTime         @updatedAt
 
   negotiationCase NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Restrict)
   facilitator     User                 @relation("SessionFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  event           TrainingEvent?         @relation(fields: [eventId], references: [id], onDelete: SetNull)
   sessionRoles    SessionRole[]
   participants    SessionParticipant[]
   recording       Recording?
   transcript      Transcript?
   aiAnalysis      AiAnalysis?
   pauseIntervals  SessionPauseInterval[]
+  eventParticipants EventParticipant[]   @relation("EventAssignedSession")
 
   @@index([negotiationCaseId])
   @@index([facilitatorId])
+  @@index([eventId])
 }
 
 model SessionPauseInterval {
@@ -231,27 +261,80 @@ model SessionRole {
 }
 
 model SessionParticipant {
-  id            String          @id @default(cuid())
-  sessionId     String
-  userId        String?
-  sessionRoleId String?
-  type          ParticipantType
-  joinToken     String          @unique
-  displayName   String
-  notes         String          @default("") @db.Text
-  joinedAt      DateTime?
-  lastSeenAt    DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id                 String          @id @default(cuid())
+  sessionId          String
+  userId             String?
+  sessionRoleId      String?
+  eventParticipantId String?         @unique
+  type               ParticipantType
+  joinToken          String          @unique
+  displayName        String
+  notes              String          @default("") @db.Text
+  joinedAt           DateTime?
+  lastSeenAt         DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
   session            Session             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user               User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   sessionRole        SessionRole?        @relation(fields: [sessionRoleId], references: [id], onDelete: SetNull)
+  eventParticipant   EventParticipant?   @relation("EventParticipantLink", fields: [eventParticipantId], references: [id], onDelete: SetNull)
+  eventAssignment    EventParticipant?   @relation("EventParticipantAssignment")
   transcriptSegments TranscriptSegment[]
 
   @@index([sessionId])
   @@index([userId])
   @@index([sessionRoleId])
+}
+
+model TrainingEvent {
+  id                     String               @id @default(cuid())
+  title                  String
+  description            String?              @db.Text
+  scheduledAt            DateTime?
+  status                 TrainingEventStatus  @default(LOBBY_OPEN)
+  publicJoinCode         String               @unique
+  hostToken              String               @unique
+  lobbyRoomName          String?
+  selectedCaseId         String?
+  estimatedEventDurationSeconds Int?          @default(7200)
+  assignmentDraft        Json?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  deletedAt              DateTime?
+
+  selectedCase NegotiationCase?   @relation(fields: [selectedCaseId], references: [id], onDelete: SetNull)
+  participants EventParticipant[]
+  sessions     Session[]
+
+  @@index([selectedCaseId])
+}
+
+model EventParticipant {
+  id                           String                     @id @default(cuid())
+  eventId                      String
+  displayName                  String
+  email                        String?
+  participantToken             String                     @unique
+  preference                   EventParticipantPreference @default(UNDECIDED)
+  isHost                       Boolean                    @default(false)
+  wantsToPlay                  Boolean                    @default(false)
+  wantsToObserve               Boolean                    @default(false)
+  wantsToFacilitate            Boolean                    @default(false)
+  joinedAt                     DateTime?
+  lastSeenAt                   DateTime?
+  assignedSessionId            String?
+  assignedSessionParticipantId String?                    @unique
+  createdAt                    DateTime                   @default(now())
+  updatedAt                    DateTime                   @updatedAt
+
+  event                      TrainingEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignedSession            Session?            @relation("EventAssignedSession", fields: [assignedSessionId], references: [id], onDelete: SetNull)
+  assignedSessionParticipant SessionParticipant? @relation("EventParticipantAssignment", fields: [assignedSessionParticipantId], references: [id], onDelete: SetNull)
+  linkedSessionParticipant   SessionParticipant? @relation("EventParticipantLink")
+
+  @@index([eventId])
+  @@index([assignedSessionId])
 }
 
 model Recording {

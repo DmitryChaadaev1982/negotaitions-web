@@ -44,6 +44,9 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         defaultDurationMinutes: secondsToDisplayMinutes(
           negotiationCase.defaultDurationSeconds,
         ),
+        defaultPreparationDurationMinutes: secondsToDisplayMinutes(
+          negotiationCase.defaultPreparationDurationSeconds,
+        ),
         createdAt: negotiationCase.createdAt.toISOString(),
         isDeleted: negotiationCase.deletedAt != null,
         roles: negotiationCase.roles.map((role) => ({

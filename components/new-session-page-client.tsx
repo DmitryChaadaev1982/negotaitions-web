@@ -14,6 +14,7 @@ type NewSessionPageClientProps = {
     id: string;
     title: string;
     caseLanguage: "RU" | "EN";
+    defaultPreparationDurationSeconds: number;
     defaultDurationSeconds: number;
   }>;
   defaultCaseId?: string;

@@ -26,6 +26,7 @@ type CaseSeed = {
   targetSkills: string;
   difficulty: Difficulty;
   caseLanguage: CaseLanguage;
+  defaultPreparationDurationSeconds: number;
   defaultDurationSeconds: number;
   roles: RoleSeed[];
 };
@@ -43,6 +44,7 @@ const demoCases: CaseSeed[] = [
       "Scope control, objection handling, value argumentation, escalation management.",
     difficulty: Difficulty.MEDIUM,
     caseLanguage: CaseLanguage.EN,
+    defaultPreparationDurationSeconds: 300,
     defaultDurationSeconds: 900,
     roles: [
       {
@@ -101,6 +103,7 @@ const demoCases: CaseSeed[] = [
       "Interest-based negotiation, prioritization, conflict management, framing.",
     difficulty: Difficulty.EASY,
     caseLanguage: CaseLanguage.EN,
+    defaultPreparationDurationSeconds: 300,
     defaultDurationSeconds: 600,
     roles: [
       {
@@ -198,6 +201,7 @@ async function main() {
         targetSkills: caseSeed.targetSkills,
         difficulty: caseSeed.difficulty,
         caseLanguage: caseSeed.caseLanguage,
+        defaultPreparationDurationSeconds: caseSeed.defaultPreparationDurationSeconds,
         defaultDurationSeconds: caseSeed.defaultDurationSeconds,
         facilitatorId: facilitator.id,
         roles: {

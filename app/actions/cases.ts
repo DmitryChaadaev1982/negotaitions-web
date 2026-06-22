@@ -56,6 +56,8 @@ function mapCaseValidationErrors(
     title: fieldErrors.title,
     businessContext: fieldErrors.businessContext,
     publicInstructions: fieldErrors.publicInstructions,
+    defaultDurationMinutes: fieldErrors.negotiationDurationMinutes,
+    preparationDurationMinutes: fieldErrors.preparationDurationMinutes,
     negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
   };
 
@@ -93,6 +95,7 @@ export async function createCase(
     publicInstructions: formData.get("publicInstructions"),
     caseLanguage: formData.get("caseLanguage") ?? "EN",
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
+    preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     roles,
   });
 
@@ -108,6 +111,7 @@ export async function createCase(
       publicInstructions,
       caseLanguage,
       negotiationDurationMinutes,
+      preparationDurationMinutes,
       roles: caseRoles,
     } = parsed.data;
 
@@ -120,11 +124,13 @@ export async function createCase(
         targetSkills: "",
         difficulty: Difficulty.MEDIUM,
         caseLanguage: caseLanguage as CaseLanguage,
-        defaultDurationSeconds:
-          minutesToSeconds(
-            negotiationDurationMinutes ??
-              DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
-          ),
+        defaultPreparationDurationSeconds: minutesToSeconds(
+          preparationDurationMinutes ?? 5,
+        ),
+        defaultDurationSeconds: minutesToSeconds(
+          negotiationDurationMinutes ??
+            DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
+        ),
         facilitatorId: facilitator.id,
         roles: {
           create: caseRoles.map((role, index) => ({
@@ -178,6 +184,7 @@ export async function updateCase(
     publicInstructions: formData.get("publicInstructions"),
     caseLanguage: formData.get("caseLanguage") ?? "EN",
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
+    preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     roles,
   });
 
@@ -194,6 +201,7 @@ export async function updateCase(
       publicInstructions,
       caseLanguage,
       negotiationDurationMinutes,
+      preparationDurationMinutes,
       roles: caseRoles,
     } = parsed.data;
 
@@ -222,6 +230,9 @@ export async function updateCase(
           businessContext,
           publicInstructions,
           caseLanguage: caseLanguage as CaseLanguage,
+          defaultPreparationDurationSeconds: minutesToSeconds(
+            preparationDurationMinutes ?? 5,
+          ),
           defaultDurationSeconds: minutesToSeconds(
             negotiationDurationMinutes ??
               DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,

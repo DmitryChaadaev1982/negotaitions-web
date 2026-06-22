@@ -23,6 +23,7 @@ export default async function NewSessionPage({
       title: true,
       caseLanguage: true,
       defaultDurationSeconds: true,
+      defaultPreparationDurationSeconds: true,
     },
   });
 

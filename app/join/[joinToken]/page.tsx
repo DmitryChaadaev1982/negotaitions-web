@@ -78,7 +78,12 @@ export default async function JoinPage({ params }: JoinPageProps) {
         session={{
           id: session.id,
           title: session.title,
-          durationMinutes: secondsToDisplayMinutes(session.durationSeconds),
+          preparationDurationMinutes: secondsToDisplayMinutes(
+            session.preparationDurationSeconds,
+          ),
+          negotiationDurationMinutes: secondsToDisplayMinutes(
+            session.durationSeconds,
+          ),
           displayStatus,
           isDeleted: session.deletedAt != null,
         }}

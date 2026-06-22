@@ -4,30 +4,65 @@ import {
   type Session,
 } from "@/app/generated/prisma/client";
 
-export type ControlAction = "START" | "PAUSE" | "RESUME" | "FINISH";
+export type ControlAction =
+  | "START_PREPARATION"
+  | "PAUSE_PREPARATION"
+  | "RESUME_PREPARATION"
+  | "STOP_PREPARATION"
+  | "SKIP_PREPARATION"
+  | "START"
+  | "PAUSE"
+  | "RESUME"
+  | "FINISH";
 
 export type SessionControlFields = Pick<
   Session,
   | "id"
   | "negotiationState"
   | "durationSeconds"
+  | "preparationDurationSeconds"
   | "negotiationStartedAt"
   | "negotiationEndedAt"
   | "timerStartedAt"
   | "pausedAt"
   | "totalPausedSeconds"
+  | "preparationStartedAt"
+  | "preparationEndedAt"
+  | "preparationTimerStartedAt"
+  | "preparationPausedAt"
+  | "preparationTotalPausedSeconds"
 >;
 
 export type ControlState = {
   sessionId: string;
   negotiationState: NegotiationState;
   durationSeconds: number;
+  preparationDurationSeconds: number;
   remainingSeconds: number;
+  preparationRemainingSeconds: number;
+  preparationTimeOver: boolean;
   participantType: ParticipantType;
   canControl: boolean;
   micAllowed: boolean;
   cameraAllowed: boolean;
 };
+
+const PREPARATION_PHASE_STATES: NegotiationState[] = [
+  NegotiationState.PREPARATION,
+  NegotiationState.PREPARATION_RUNNING,
+  NegotiationState.PREPARATION_PAUSED,
+];
+
+export function isPreparationPhaseState(negotiationState: NegotiationState) {
+  return PREPARATION_PHASE_STATES.includes(negotiationState);
+}
+
+export function canEditSessionDurations(negotiationState: NegotiationState) {
+  return (
+    isPreparationPhaseState(negotiationState) ||
+    negotiationState === NegotiationState.READY_TO_START
+  );
+}
 
 export function isCameraAllowed() {
   return true;
@@ -38,7 +73,10 @@ export function isMicAllowed(
   participantType: ParticipantType,
 ) {
   switch (negotiationState) {
-    case NegotiationState.LOBBY:
+    case NegotiationState.PREPARATION:
+    case NegotiationState.PREPARATION_RUNNING:
+    case NegotiationState.PREPARATION_PAUSED:
+    case NegotiationState.READY_TO_START:
     case NegotiationState.PAUSED:
     case NegotiationState.FINISHED:
       return true;
@@ -49,14 +87,97 @@ export function isMicAllowed(
   }
 }
 
+function closePreparationPause(
+  session: SessionControlFields,
+  now: Date,
+): Pick<
+  SessionControlFields,
+  "preparationTotalPausedSeconds" | "preparationPausedAt"
+> {
+  if (!session.preparationPausedAt) {
+    return {
+      preparationTotalPausedSeconds: session.preparationTotalPausedSeconds,
+      preparationPausedAt: null,
+    };
+  }
+
+  const pauseDurationSeconds = Math.floor(
+    (now.getTime() - session.preparationPausedAt.getTime()) / 1000,
+  );
+
+  return {
+    preparationTotalPausedSeconds:
+      session.preparationTotalPausedSeconds + pauseDurationSeconds,
+    preparationPausedAt: null,
+  };
+}
+
+export function computePreparationRemainingSeconds(
+  session: SessionControlFields,
+  now: Date = new Date(),
+) {
+  const {
+    preparationDurationSeconds,
+    negotiationState,
+    preparationTimerStartedAt,
+    preparationPausedAt,
+    preparationTotalPausedSeconds,
+  } = session;
+
+  if (negotiationState === NegotiationState.PREPARATION) {
+    return preparationDurationSeconds;
+  }
+
+  if (
+    negotiationState === NegotiationState.READY_TO_START ||
+    negotiationState === NegotiationState.RUNNING ||
+    negotiationState === NegotiationState.PAUSED ||
+    negotiationState === NegotiationState.FINISHED
+  ) {
+    return 0;
+  }
+
+  if (!preparationTimerStartedAt) {
+    return preparationDurationSeconds;
+  }
+
+  const timerStartedMs = preparationTimerStartedAt.getTime();
+  const totalPausedMs = preparationTotalPausedSeconds * 1000;
+
+  if (negotiationState === NegotiationState.PREPARATION_RUNNING) {
+    const elapsedSeconds = Math.floor(
+      (now.getTime() - timerStartedMs - totalPausedMs) / 1000,
+    );
+    return Math.max(0, preparationDurationSeconds - elapsedSeconds);
+  }
+
+  if (negotiationState === NegotiationState.PREPARATION_PAUSED && preparationPausedAt) {
+    const pausedMs = preparationPausedAt.getTime();
+    const elapsedSeconds = Math.floor(
+      (pausedMs - timerStartedMs - totalPausedMs) / 1000,
+    );
+    return Math.max(0, preparationDurationSeconds - elapsedSeconds);
+  }
+
+  return preparationDurationSeconds;
+}
+
 export function computeRemainingSeconds(
   session: SessionControlFields,
   now: Date = new Date(),
 ) {
-  const { durationSeconds, negotiationState, timerStartedAt, pausedAt, totalPausedSeconds } =
-    session;
+  const {
+    durationSeconds,
+    negotiationState,
+    timerStartedAt,
+    pausedAt,
+    totalPausedSeconds,
+  } = session;
 
-  if (negotiationState === NegotiationState.LOBBY) {
+  if (
+    isPreparationPhaseState(negotiationState) ||
+    negotiationState === NegotiationState.READY_TO_START
+  ) {
     return durationSeconds;
   }
 
@@ -111,13 +232,23 @@ export function buildControlState(
   participantType: ParticipantType,
   now: Date = new Date(),
 ): ControlState {
+  const preparationRemainingSeconds = computePreparationRemainingSeconds(
+    session,
+    now,
+  );
   const remainingSeconds = computeRemainingSeconds(session, now);
+  const preparationTimeOver =
+    session.negotiationState === NegotiationState.PREPARATION_RUNNING &&
+    preparationRemainingSeconds <= 0;
 
   return {
     sessionId: session.id,
     negotiationState: session.negotiationState,
     durationSeconds: session.durationSeconds,
+    preparationDurationSeconds: session.preparationDurationSeconds,
     remainingSeconds,
+    preparationRemainingSeconds,
+    preparationTimeOver,
     participantType,
     canControl: participantType === ParticipantType.FACILITATOR,
     micAllowed: isMicAllowed(session.negotiationState, participantType),
@@ -135,21 +266,114 @@ function assertTransition(
   }
 }
 
+function getStopPreparationUpdateData(
+  session: SessionControlFields,
+  now: Date,
+) {
+  const pauseClosed = closePreparationPause(session, now);
+
+  return {
+    negotiationState: NegotiationState.READY_TO_START,
+    preparationEndedAt: now,
+    ...pauseClosed,
+  };
+}
+
+function getStartNegotiationUpdateData(
+  session: SessionControlFields,
+  now: Date,
+) {
+  return {
+    negotiationState: NegotiationState.RUNNING,
+    negotiationStartedAt: session.negotiationStartedAt ?? now,
+    timerStartedAt: session.timerStartedAt ?? now,
+    pausedAt: null,
+  };
+}
+
 export function getControlUpdateData(
   session: SessionControlFields,
   action: ControlAction,
   now: Date = new Date(),
 ) {
   switch (action) {
-    case "START": {
-      assertTransition(session.negotiationState, [NegotiationState.LOBBY], action);
+    case "START_PREPARATION": {
+      assertTransition(
+        session.negotiationState,
+        [NegotiationState.PREPARATION],
+        action,
+      );
 
       return {
-        negotiationState: NegotiationState.RUNNING,
-        negotiationStartedAt: session.negotiationStartedAt ?? now,
-        timerStartedAt: session.timerStartedAt ?? now,
-        pausedAt: null,
+        negotiationState: NegotiationState.PREPARATION_RUNNING,
+        preparationStartedAt: session.preparationStartedAt ?? now,
+        preparationTimerStartedAt: session.preparationTimerStartedAt ?? now,
+        preparationPausedAt: null,
       };
+    }
+    case "PAUSE_PREPARATION": {
+      assertTransition(
+        session.negotiationState,
+        [NegotiationState.PREPARATION_RUNNING],
+        action,
+      );
+
+      return {
+        negotiationState: NegotiationState.PREPARATION_PAUSED,
+        preparationPausedAt: now,
+      };
+    }
+    case "RESUME_PREPARATION": {
+      assertTransition(
+        session.negotiationState,
+        [NegotiationState.PREPARATION_PAUSED],
+        action,
+      );
+
+      if (!session.preparationPausedAt) {
+        throw new Error("Cannot RESUME_PREPARATION without preparationPausedAt.");
+      }
+
+      const pauseDurationSeconds = Math.floor(
+        (now.getTime() - session.preparationPausedAt.getTime()) / 1000,
+      );
+
+      return {
+        negotiationState: NegotiationState.PREPARATION_RUNNING,
+        preparationTotalPausedSeconds:
+          session.preparationTotalPausedSeconds + pauseDurationSeconds,
+        preparationPausedAt: null,
+      };
+    }
+    case "STOP_PREPARATION":
+    case "SKIP_PREPARATION": {
+      assertTransition(
+        session.negotiationState,
+        [
+          NegotiationState.PREPARATION,
+          NegotiationState.PREPARATION_RUNNING,
+          NegotiationState.PREPARATION_PAUSED,
+        ],
+        action,
+      );
+
+      return getStopPreparationUpdateData(session, now);
+    }
+    case "START": {
+      if (session.negotiationState === NegotiationState.PREPARATION) {
+        return {
+          ...getStopPreparationUpdateData(session, now),
+          ...getStartNegotiationUpdateData(session, now),
+        };
+      }
+
+      assertTransition(
+        session.negotiationState,
+        [NegotiationState.READY_TO_START],
+        action,
+      );
+
+      return getStartNegotiationUpdateData(session, now);
     }
     case "PAUSE": {
       assertTransition(session.negotiationState, [NegotiationState.RUNNING], action);
@@ -180,7 +404,10 @@ export function getControlUpdateData(
       assertTransition(
         session.negotiationState,
         [
-          NegotiationState.LOBBY,
+          NegotiationState.PREPARATION,
+          NegotiationState.PREPARATION_RUNNING,
+          NegotiationState.PREPARATION_PAUSED,
+          NegotiationState.READY_TO_START,
           NegotiationState.RUNNING,
           NegotiationState.PAUSED,
         ],
@@ -188,6 +415,7 @@ export function getControlUpdateData(
       );
 
       let totalPausedSeconds = session.totalPausedSeconds;
+      let preparationTotalPausedSeconds = session.preparationTotalPausedSeconds;
 
       if (session.pausedAt) {
         totalPausedSeconds += Math.floor(
@@ -195,11 +423,20 @@ export function getControlUpdateData(
         );
       }
 
+      if (session.preparationPausedAt) {
+        preparationTotalPausedSeconds += Math.floor(
+          (now.getTime() - session.preparationPausedAt.getTime()) / 1000,
+        );
+      }
+
       return {
         negotiationState: NegotiationState.FINISHED,
         negotiationEndedAt: now,
+        preparationEndedAt: session.preparationEndedAt ?? now,
         totalPausedSeconds,
+        preparationTotalPausedSeconds,
         pausedAt: null,
+        preparationPausedAt: null,
       };
     }
     default: {
@@ -207,6 +444,27 @@ export function getControlUpdateData(
       throw new Error(`Unknown action: ${exhaustiveCheck}`);
     }
   }
+}
+
+export function shouldAutoFinishPreparation(
+  session: SessionControlFields,
+  now: Date = new Date(),
+) {
+  if (session.negotiationState !== NegotiationState.PREPARATION_RUNNING) {
+    return false;
+  }
+
+  return computePreparationRemainingSeconds(session, now) <= 0;
+}
+
+export function getAutoFinishPreparationUpdateData(
+  session: SessionControlFields,
+  now: Date = new Date(),
+) {
+  return {
+    ...getStopPreparationUpdateData(session, now),
+    preparationEndedAt: now,
+  };
 }
 
 export function shouldAutoFinish(
@@ -219,3 +477,20 @@ export function shouldAutoFinish(
 
   return computeRemainingSeconds(session, now) <= 0;
 }
+
+export const SESSION_CONTROL_SELECT = {
+  id: true,
+  negotiationState: true,
+  durationSeconds: true,
+  preparationDurationSeconds: true,
+  negotiationStartedAt: true,
+  negotiationEndedAt: true,
+  timerStartedAt: true,
+  pausedAt: true,
+  totalPausedSeconds: true,
+  preparationStartedAt: true,
+  preparationEndedAt: true,
+  preparationTimerStartedAt: true,
+  preparationPausedAt: true,
+  preparationTotalPausedSeconds: true,
+} as const;

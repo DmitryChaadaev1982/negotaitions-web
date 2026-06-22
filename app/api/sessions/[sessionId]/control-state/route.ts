@@ -4,8 +4,11 @@ import { ParticipantType } from "@/app/generated/prisma/client";
 import { handleNegotiationFinishRecording } from "@/lib/livekit-egress";
 import {
   buildControlState,
+  getAutoFinishPreparationUpdateData,
   getControlUpdateData,
+  SESSION_CONTROL_SELECT,
   shouldAutoFinish,
+  shouldAutoFinishPreparation,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
@@ -34,21 +37,20 @@ export async function GET(request: Request, context: RouteContext) {
   const now = new Date();
   let session = participant.session;
 
+  if (shouldAutoFinishPreparation(session, now)) {
+    session = await prisma.session.update({
+      where: { id: sessionId },
+      data: getAutoFinishPreparationUpdateData(session, now),
+      select: SESSION_CONTROL_SELECT,
+    });
+  }
+
   if (shouldAutoFinish(session, now)) {
     const updateData = getControlUpdateData(session, "FINISH", now);
     session = await prisma.session.update({
       where: { id: sessionId },
       data: updateData,
-      select: {
-        id: true,
-        negotiationState: true,
-        durationSeconds: true,
-        negotiationStartedAt: true,
-        negotiationEndedAt: true,
-        timerStartedAt: true,
-        pausedAt: true,
-        totalPausedSeconds: true,
-      },
+      select: SESSION_CONTROL_SELECT,
     });
 
     await closeLatestPauseInterval(sessionId, now);

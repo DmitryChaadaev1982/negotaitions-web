@@ -27,7 +27,8 @@ type JoinPageViewProps = {
   session: {
     id: string;
     title: string;
-    durationMinutes: number;
+    preparationDurationMinutes: number;
+    negotiationDurationMinutes: number;
     displayStatus: SessionDisplayStatus;
     isDeleted?: boolean;
   };
@@ -115,8 +116,14 @@ export function JoinPageView({
             <SessionStatusBadge status={session.displayStatus} />
             <span>·</span>
             <span>
+              {t("common.preparationDurationValue", {
+                minutes: session.preparationDurationMinutes,
+              })}
+            </span>
+            <span>·</span>
+            <span>
               {t("common.negotiationDurationValue", {
-                minutes: session.durationMinutes,
+                minutes: session.negotiationDurationMinutes,
               })}
             </span>
           </div>

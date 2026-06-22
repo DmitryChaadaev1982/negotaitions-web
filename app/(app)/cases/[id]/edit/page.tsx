@@ -44,6 +44,9 @@ export default async function EditCasePage({ params }: EditCasePageProps) {
         defaultDurationMinutes: secondsToDisplayMinutes(
           negotiationCase.defaultDurationSeconds,
         ),
+        defaultPreparationDurationMinutes: secondsToDisplayMinutes(
+          negotiationCase.defaultPreparationDurationSeconds,
+        ),
         roles: negotiationCase.roles.map((role) => ({
           name: role.name,
           privateInstructions: role.privateInstructions,

@@ -1,4 +1,5 @@
 import type { ParticipantType } from "@/app/generated/prisma/client";
+import { SESSION_CONTROL_SELECT } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 
 export async function getSessionParticipantByJoinToken(
@@ -9,16 +10,7 @@ export async function getSessionParticipantByJoinToken(
     where: { joinToken },
     include: {
       session: {
-        select: {
-          id: true,
-          negotiationState: true,
-          durationSeconds: true,
-          negotiationStartedAt: true,
-          negotiationEndedAt: true,
-          timerStartedAt: true,
-          pausedAt: true,
-          totalPausedSeconds: true,
-        },
+        select: SESSION_CONTROL_SELECT,
       },
     },
   });

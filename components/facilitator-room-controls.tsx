@@ -1,9 +1,12 @@
 "use client";
 
 import type { ControlAction, ControlState } from "@/lib/negotiation-control";
+import { NegotiationState } from "@/app/generated/prisma/enums";
 import {
   MAX_NEGOTIATION_DURATION_MINUTES,
+  MAX_PREPARATION_DURATION_MINUTES,
   MIN_NEGOTIATION_DURATION_MINUTES,
+  MIN_PREPARATION_DURATION_MINUTES,
   secondsToDisplayMinutes,
 } from "@/lib/negotiation-duration";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -20,34 +23,35 @@ type FacilitatorRoomControlsProps = {
   } | null) => void;
 };
 
-type LobbyControlsProps = {
+type DurationControlsProps = {
   sessionId: string;
   joinToken: string;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
   isSubmitting: boolean;
   setIsSubmitting: (value: boolean) => void;
-  onStart: () => void;
   actionButtonClass: string;
 };
 
-function LobbyControls({
+function DurationControls({
   sessionId,
   joinToken,
   controlState,
   onControlStateChange,
   isSubmitting,
   setIsSubmitting,
-  onStart,
   actionButtonClass,
-}: LobbyControlsProps) {
+}: DurationControlsProps) {
   const { t } = useI18n();
-  const [durationMinutes, setDurationMinutes] = useState(
+  const [preparationDurationMinutes, setPreparationDurationMinutes] = useState(
+    secondsToDisplayMinutes(controlState.preparationDurationSeconds),
+  );
+  const [negotiationDurationMinutes, setNegotiationDurationMinutes] = useState(
     secondsToDisplayMinutes(controlState.durationSeconds),
   );
   const [durationError, setDurationError] = useState<string | null>(null);
 
-  const saveDuration = useCallback(async () => {
+  const saveDurations = useCallback(async () => {
     setDurationError(null);
     setIsSubmitting(true);
 
@@ -55,11 +59,19 @@ function LobbyControls({
       const response = await fetch(`/api/sessions/${sessionId}/duration`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, durationMinutes }),
+        body: JSON.stringify({
+          joinToken,
+          preparationDurationMinutes,
+          durationMinutes: negotiationDurationMinutes,
+        }),
       });
 
       const payload = (await response.json()) as
-        | { durationSeconds: number; error?: string }
+        | {
+            durationSeconds: number;
+            preparationDurationSeconds: number;
+            error?: string;
+          }
         | { error?: string };
 
       if (!response.ok) {
@@ -74,7 +86,9 @@ function LobbyControls({
         onControlStateChange({
           ...controlState,
           durationSeconds: payload.durationSeconds,
+          preparationDurationSeconds: payload.preparationDurationSeconds,
           remainingSeconds: payload.durationSeconds,
+          preparationRemainingSeconds: payload.preparationDurationSeconds,
         });
       }
     } catch (durationUpdateError) {
@@ -88,9 +102,10 @@ function LobbyControls({
     }
   }, [
     controlState,
-    durationMinutes,
     joinToken,
+    negotiationDurationMinutes,
     onControlStateChange,
+    preparationDurationMinutes,
     sessionId,
     setIsSubmitting,
     t,
@@ -99,26 +114,44 @@ function LobbyControls({
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex items-center gap-2">
-        <label htmlFor="room-duration-minutes" className="sr-only">
+        <label htmlFor="room-preparation-duration-minutes" className="sr-only">
+          {t("common.preparationDurationMinutes")}
+        </label>
+        <input
+          id="room-preparation-duration-minutes"
+          type="number"
+          min={MIN_PREPARATION_DURATION_MINUTES}
+          max={MAX_PREPARATION_DURATION_MINUTES}
+          value={preparationDurationMinutes}
+          onChange={(event) =>
+            setPreparationDurationMinutes(Number(event.target.value))
+          }
+          className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-2 text-sm text-white"
+          aria-label={t("common.preparationDurationMinutes")}
+        />
+        <span className="text-sm text-slate-400">{t("room.preparationMin")}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <label htmlFor="room-negotiation-duration-minutes" className="sr-only">
           {t("room.durationMinutesLabel")}
         </label>
         <input
-          id="room-duration-minutes"
+          id="room-negotiation-duration-minutes"
           type="number"
           min={MIN_NEGOTIATION_DURATION_MINUTES}
           max={MAX_NEGOTIATION_DURATION_MINUTES}
-          value={durationMinutes}
+          value={negotiationDurationMinutes}
           onChange={(event) =>
-            setDurationMinutes(Number(event.target.value))
+            setNegotiationDurationMinutes(Number(event.target.value))
           }
           className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-2 text-sm text-white"
           aria-label={t("room.durationMinutesLabel")}
         />
-        <span className="text-sm text-slate-400">{t("room.min")}</span>
+        <span className="text-sm text-slate-400">{t("room.negotiationMin")}</span>
         <button
           type="button"
           disabled={isSubmitting}
-          onClick={() => void saveDuration()}
+          onClick={() => void saveDurations()}
           className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
         >
           {t("room.save")}
@@ -127,14 +160,6 @@ function LobbyControls({
       {durationError ? (
         <p className="w-full text-xs text-rose-400 sm:w-auto">{durationError}</p>
       ) : null}
-      <button
-        type="button"
-        disabled={isSubmitting}
-        onClick={onStart}
-        className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
-      >
-        {t("room.startNegotiation")}
-      </button>
     </div>
   );
 }
@@ -195,7 +220,12 @@ export function FacilitatorRoomControls({
     "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60";
 
   const statusMessage = {
-    LOBBY: t("room.readyToStart"),
+    PREPARATION: t("room.participantsCanPrepare"),
+    PREPARATION_RUNNING: t("room.preparationRunning"),
+    PREPARATION_PAUSED: t("room.preparationPaused"),
+    READY_TO_START: controlState.preparationTimeOver
+      ? t("room.preparationTimeOver")
+      : t("room.readyToStartNegotiation"),
     RUNNING: t("room.negotiationInProgress"),
     PAUSED: t("room.negotiationPaused"),
     FINISHED: t("room.negotiationFinishedDebrief"),
@@ -208,26 +238,113 @@ export function FacilitatorRoomControls({
           {t("room.facilitatorControls")}
         </p>
         <p className="mt-0.5 text-sm text-slate-300">{statusMessage}</p>
+        {negotiationState === NegotiationState.PREPARATION ||
+        negotiationState === NegotiationState.PREPARATION_RUNNING ||
+        negotiationState === NegotiationState.PREPARATION_PAUSED ? (
+          <p className="mt-1 max-w-xl text-xs text-slate-400">
+            {t("room.manualCameraHint")}
+          </p>
+        ) : null}
         {recordingWarning ? (
           <p className="mt-1 max-w-xl text-xs text-amber-300">{recordingWarning}</p>
         ) : null}
       </div>
 
-      {negotiationState === "LOBBY" ? (
-        <LobbyControls
-          key={controlState.durationSeconds}
-          sessionId={sessionId}
-          joinToken={joinToken}
-          controlState={controlState}
-          onControlStateChange={onControlStateChange}
-          isSubmitting={isSubmitting}
-          setIsSubmitting={setIsSubmitting}
-          onStart={() => void runAction("START")}
-          actionButtonClass={actionButtonClass}
-        />
+      {negotiationState === NegotiationState.PREPARATION ? (
+        <div className="flex flex-col gap-2">
+          <DurationControls
+            key={`${controlState.durationSeconds}-${controlState.preparationDurationSeconds}`}
+            sessionId={sessionId}
+            joinToken={joinToken}
+            controlState={controlState}
+            onControlStateChange={onControlStateChange}
+            isSubmitting={isSubmitting}
+            setIsSubmitting={setIsSubmitting}
+            actionButtonClass={actionButtonClass}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => void runAction("START_PREPARATION")}
+              className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
+            >
+              {t("room.startPreparation")}
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => void runAction("SKIP_PREPARATION")}
+              className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+            >
+              {t("room.skipPreparation")}
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => void runAction("START")}
+              className={`${actionButtonClass} border border-slate-600 text-slate-200 hover:bg-slate-800`}
+            >
+              {t("room.startNegotiation")}
+            </button>
+          </div>
+        </div>
       ) : null}
 
-      {negotiationState === "RUNNING" ? (
+      {negotiationState === NegotiationState.PREPARATION_RUNNING ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void runAction("PAUSE_PREPARATION")}
+            className={`${actionButtonClass} bg-amber-600 text-white hover:bg-amber-500`}
+          >
+            {t("room.pausePreparation")}
+          </button>
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void runAction("STOP_PREPARATION")}
+            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+          >
+            {t("room.stopPreparation")}
+          </button>
+        </div>
+      ) : null}
+
+      {negotiationState === NegotiationState.PREPARATION_PAUSED ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void runAction("RESUME_PREPARATION")}
+            className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
+          >
+            {t("room.resumePreparation")}
+          </button>
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void runAction("STOP_PREPARATION")}
+            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+          >
+            {t("room.stopPreparation")}
+          </button>
+        </div>
+      ) : null}
+
+      {negotiationState === NegotiationState.READY_TO_START ? (
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => void runAction("START")}
+          className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
+        >
+          {t("room.startNegotiation")}
+        </button>
+      ) : null}
+
+      {negotiationState === NegotiationState.RUNNING ? (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -248,7 +365,7 @@ export function FacilitatorRoomControls({
         </div>
       ) : null}
 
-      {negotiationState === "PAUSED" ? (
+      {negotiationState === NegotiationState.PAUSED ? (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -269,7 +386,7 @@ export function FacilitatorRoomControls({
         </div>
       ) : null}
 
-      {negotiationState === "FINISHED" ? (
+      {negotiationState === NegotiationState.FINISHED ? (
         <p className="text-sm text-slate-400">{t("room.sessionCompleteDebrief")}</p>
       ) : null}
     </div>

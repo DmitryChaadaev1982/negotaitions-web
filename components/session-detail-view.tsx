@@ -33,7 +33,15 @@ type SessionDetailViewProps = {
     id: string;
     title: string;
     durationSeconds: number;
-    negotiationState: "LOBBY" | "RUNNING" | "PAUSED" | "FINISHED";
+    negotiationState:
+      | "PREPARATION"
+      | "PREPARATION_RUNNING"
+      | "PREPARATION_PAUSED"
+      | "READY_TO_START"
+      | "RUNNING"
+      | "PAUSED"
+      | "FINISHED";
+    preparationDurationSeconds: number;
     createdAt: string;
     displayStatus: SessionDisplayStatus;
     isDeleted: boolean;
@@ -71,6 +79,11 @@ type SessionDetailViewProps = {
     assignableRoles: Array<{ id: string; name: string }>;
     assignedRoleIds: string[];
     hasFacilitator: boolean;
+    linkedEvent: {
+      id: string;
+      title: string;
+      lobbyUrl: string;
+    } | null;
   };
 };
 
@@ -155,7 +168,10 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
       minute: "2-digit",
     }).format(new Date(iso));
 
-  const durationMinutes = Math.round(session.durationSeconds / 60);
+  const negotiationDurationMinutes = Math.round(session.durationSeconds / 60);
+  const preparationDurationMinutes = Math.round(
+    session.preparationDurationSeconds / 60,
+  );
   const isReadOnly = session.isDeleted;
 
   return (
@@ -174,6 +190,24 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
           </div>
         }
       />
+
+      {session.linkedEvent ? (
+        <GlassCard elevated>
+          <GlassCardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-cyan-400/80">
+                {t("events.linkedEvent")}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-100">
+                {session.linkedEvent.title}
+              </p>
+            </div>
+            <SecondaryButtonLink href={session.linkedEvent.lobbyUrl}>
+              {t("events.returnToEventLobby")}
+            </SecondaryButtonLink>
+          </GlassCardContent>
+        </GlassCard>
+      ) : null}
 
       {isReadOnly ? (
         <div className="space-y-3">
@@ -219,7 +253,14 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
             </span>
             <CaseLanguageBadge caseLanguage={session.caseSnapshot.caseLanguage} />
             <span className="text-sm text-slate-400">
-              {t("common.negotiationDurationValue", { minutes: durationMinutes })}
+              {t("common.preparationDurationValue", {
+                minutes: preparationDurationMinutes,
+              })}
+            </span>
+            <span className="text-sm text-slate-400">
+              {t("common.negotiationDurationValue", {
+                minutes: negotiationDurationMinutes,
+              })}
             </span>
             <span className="text-sm text-slate-400">
               {t("common.created")} {formatDate(session.createdAt)}
@@ -238,6 +279,7 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
           <SessionDurationEditor
             sessionId={session.id}
             durationSeconds={session.durationSeconds}
+            preparationDurationSeconds={session.preparationDurationSeconds}
             negotiationState={session.negotiationState}
             readOnly={isReadOnly}
           />

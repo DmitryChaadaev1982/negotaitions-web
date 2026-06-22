@@ -190,13 +190,33 @@ function SizedVideoFrame({
 function getStateMessage(
   negotiationState: NegotiationState,
   participantType: ParticipantType,
+  controlState: ControlState,
   t: ReturnType<typeof useI18n>["t"],
 ) {
   switch (negotiationState) {
-    case NegotiationState.LOBBY:
+    case NegotiationState.PREPARATION:
       return {
-        title: t("room.lobbyPreparation"),
-        subtitle: t("room.waitingForFacilitatorStart"),
+        title: t("room.preparation"),
+        subtitle: t("room.participantsCanPrepare"),
+      };
+    case NegotiationState.PREPARATION_RUNNING:
+      return {
+        title: t("room.preparation"),
+        subtitle: controlState.preparationTimeOver
+          ? t("room.preparationTimeOver")
+          : null,
+      };
+    case NegotiationState.PREPARATION_PAUSED:
+      return {
+        title: t("room.preparationPaused"),
+        subtitle: null,
+      };
+    case NegotiationState.READY_TO_START:
+      return {
+        title: controlState.preparationTimeOver
+          ? t("room.preparationTimeOver")
+          : t("room.readyToStartNegotiation"),
+        subtitle: null,
       };
     case NegotiationState.RUNNING:
       return {
@@ -223,44 +243,92 @@ function getStateMessage(
 
 function CenterTimer({ controlState }: { controlState: ControlState }) {
   const { t } = useI18n();
-  const { negotiationState, remainingSeconds, durationSeconds } = controlState;
-  const isExpired =
+  const {
+    negotiationState,
+    remainingSeconds,
+    durationSeconds,
+    preparationRemainingSeconds,
+    preparationDurationSeconds,
+  } = controlState;
+  const isNegotiationExpired =
     negotiationState === NegotiationState.RUNNING && remainingSeconds === 0;
 
-  let timerLabel: string;
-  if (negotiationState === NegotiationState.LOBBY) {
-    timerLabel = t("room.timerNotStarted", {
-      time: formatSecondsAsMmSs(durationSeconds),
-    });
-  } else if (negotiationState === NegotiationState.FINISHED) {
-    timerLabel = formatSecondsAsMmSs(remainingSeconds);
-  } else {
-    timerLabel = isExpired ? "00:00" : formatSecondsAsMmSs(remainingSeconds);
+  const showPreparationTimer =
+    negotiationState === NegotiationState.PREPARATION ||
+    negotiationState === NegotiationState.PREPARATION_RUNNING ||
+    negotiationState === NegotiationState.PREPARATION_PAUSED;
+
+  const showNegotiationTimer =
+    negotiationState === NegotiationState.READY_TO_START ||
+    negotiationState === NegotiationState.RUNNING ||
+    negotiationState === NegotiationState.PAUSED ||
+    negotiationState === NegotiationState.FINISHED;
+
+  let preparationLabel: string | null = null;
+  if (showPreparationTimer) {
+    if (negotiationState === NegotiationState.PREPARATION) {
+      preparationLabel = formatSecondsAsMmSs(preparationDurationSeconds);
+    } else {
+      preparationLabel = formatSecondsAsMmSs(preparationRemainingSeconds);
+    }
+  }
+
+  let negotiationLabel: string | null = null;
+  if (showNegotiationTimer) {
+    if (negotiationState === NegotiationState.READY_TO_START) {
+      negotiationLabel = formatSecondsAsMmSs(durationSeconds);
+    } else if (negotiationState === NegotiationState.FINISHED) {
+      negotiationLabel = formatSecondsAsMmSs(remainingSeconds);
+    } else {
+      negotiationLabel = isNegotiationExpired
+        ? "00:00"
+        : formatSecondsAsMmSs(remainingSeconds);
+    }
   }
 
   const stateMessage = getStateMessage(
     negotiationState,
     controlState.participantType,
+    controlState,
     t,
   );
 
   return (
     <div className="w-full shrink-0 rounded-xl bg-slate-800/90 px-3 py-2 text-center shadow-lg sm:rounded-2xl sm:px-4 sm:py-3">
-      <div
-        className={`font-mono text-2xl font-semibold tabular-nums sm:text-3xl lg:text-4xl ${
-          isExpired
-            ? "text-rose-400"
-            : remainingSeconds <= 60 &&
-                negotiationState === NegotiationState.RUNNING
-              ? "text-amber-400"
-              : negotiationState === NegotiationState.LOBBY
-                ? "text-slate-300"
-                : "text-emerald-400"
-        }`}
-      >
-        {timerLabel}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {preparationLabel ? (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 sm:text-xs">
+              {t("room.preparation")}
+            </p>
+            <div className="font-mono text-xl font-semibold tabular-nums text-slate-300 sm:text-2xl">
+              {preparationLabel}
+            </div>
+          </div>
+        ) : null}
+        {negotiationLabel ? (
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 sm:text-xs">
+              {t("room.negotiation")}
+            </p>
+            <div
+              className={`font-mono text-xl font-semibold tabular-nums sm:text-2xl ${
+                isNegotiationExpired
+                  ? "text-rose-400"
+                  : remainingSeconds <= 60 &&
+                      negotiationState === NegotiationState.RUNNING
+                    ? "text-amber-400"
+                    : negotiationState === NegotiationState.READY_TO_START
+                      ? "text-slate-300"
+                      : "text-emerald-400"
+              }`}
+            >
+              {negotiationLabel}
+            </div>
+          </div>
+        ) : null}
       </div>
-      <p className="mt-1 text-xs font-medium text-white/90 sm:text-sm">
+      <p className="mt-2 text-xs font-medium text-white/90 sm:text-sm">
         {stateMessage.title}
       </p>
       {stateMessage.subtitle ? (

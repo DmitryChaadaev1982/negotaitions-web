@@ -28,6 +28,7 @@ type CaseDetailViewProps = {
     difficulty: "EASY" | "MEDIUM" | "HARD";
     caseLanguage: "RU" | "EN";
     defaultDurationMinutes: number;
+    defaultPreparationDurationMinutes: number;
     createdAt: string;
     isDeleted: boolean;
     roles: CaseRole[];
@@ -87,7 +88,12 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
           {t("common.rolesCount", { count: negotiationCase.roles.length })}
         </Badge>
         <Badge>
-          {t("common.defaultDuration", {
+          {t("common.preparationDurationValue", {
+            minutes: negotiationCase.defaultPreparationDurationMinutes,
+          })}
+        </Badge>
+        <Badge>
+          {t("common.negotiationDurationValue", {
             minutes: negotiationCase.defaultDurationMinutes,
           })}
         </Badge>

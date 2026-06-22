@@ -26,6 +26,27 @@ export function buildLiveKitRoomName(sessionId: string) {
   return `negotiations-${sessionId}`;
 }
 
+export function buildEventLobbyRoomName(eventId: string) {
+  return `event-lobby-${eventId}`;
+}
+
+export async function ensureEventLobbyRoomName(
+  event: Pick<{ id: string; lobbyRoomName: string | null }, "id" | "lobbyRoomName">,
+) {
+  if (event.lobbyRoomName) {
+    return event.lobbyRoomName;
+  }
+
+  const lobbyRoomName = buildEventLobbyRoomName(event.id);
+
+  await prisma.trainingEvent.update({
+    where: { id: event.id },
+    data: { lobbyRoomName },
+  });
+
+  return lobbyRoomName;
+}
+
 export async function ensureSessionLiveKitRoomName(
   session: Pick<Session, "id" | "livekitRoomName">,
 ) {
@@ -70,4 +91,35 @@ export async function createLiveKitAccessToken(
   });
 
   return token.toJwt();
+}
+
+export async function createEventLobbyLiveKitAccessToken(
+  input: {
+    identity: string;
+    displayName: string;
+    eventId: string;
+    lobbyRoomName: string | null;
+  },
+  config: LiveKitConfig,
+) {
+  const roomName = await ensureEventLobbyRoomName({
+    id: input.eventId,
+    lobbyRoomName: input.lobbyRoomName,
+  });
+
+  const token = new AccessToken(config.apiKey, config.apiSecret, {
+    identity: input.identity,
+    name: input.displayName,
+    metadata: JSON.stringify({ kind: "event-lobby" }),
+  });
+
+  token.addGrant({
+    room: roomName,
+    roomJoin: true,
+    canPublish: true,
+    canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE],
+    canSubscribe: true,
+  });
+
+  return { token: await token.toJwt(), roomName };
 }

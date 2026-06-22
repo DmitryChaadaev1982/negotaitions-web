@@ -31,6 +31,7 @@ type CaseOption = {
   id: string;
   title: string;
   caseLanguage: "RU" | "EN";
+  defaultPreparationDurationSeconds: number;
   defaultDurationSeconds: number;
 };
 
@@ -53,6 +54,11 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
     [cases, selectedCaseId],
   );
 
+  const [preparationDurationMinutes, setPreparationDurationMinutes] = useState(
+    selectedCase
+      ? secondsToDisplayMinutes(selectedCase.defaultPreparationDurationSeconds)
+      : 5,
+  );
   const [durationMinutes, setDurationMinutes] = useState(
     selectedCase
       ? secondsToDisplayMinutes(selectedCase.defaultDurationSeconds)
@@ -111,6 +117,11 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
                   (negotiationCaseOption) => negotiationCaseOption.id === caseId,
                 );
                 if (negotiationCase) {
+                  setPreparationDurationMinutes(
+                    secondsToDisplayMinutes(
+                      negotiationCase.defaultPreparationDurationSeconds,
+                    ),
+                  );
                   setDurationMinutes(
                     secondsToDisplayMinutes(
                       negotiationCase.defaultDurationSeconds,
@@ -134,6 +145,38 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
                 <CaseLanguageBadge caseLanguage={selectedCase.caseLanguage} />
               </div>
             ) : null}
+          </Field>
+
+          <Field
+            label={t("common.preparationDurationMinutes")}
+            name="preparationDurationMinutes"
+            error={state.errors?.preparationDurationMinutes?.[0]}
+            required
+          >
+            <input
+              id="preparationDurationMinutes"
+              name="preparationDurationMinutes"
+              type="number"
+              min={0}
+              max={60}
+              required
+              value={preparationDurationMinutes}
+              onChange={(event) =>
+                setPreparationDurationMinutes(Number(event.target.value))
+              }
+              className={inputClassName(
+                !!state.errors?.preparationDurationMinutes,
+              )}
+            />
+            <p className={hintClassName}>
+              {t("sessions.defaultPreparationFromCase", {
+                minutes: selectedCase
+                  ? secondsToDisplayMinutes(
+                      selectedCase.defaultPreparationDurationSeconds,
+                    )
+                  : 5,
+              })}
+            </p>
           </Field>
 
           <Field

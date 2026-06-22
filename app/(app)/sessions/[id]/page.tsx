@@ -30,6 +30,13 @@ export default async function SessionDetailPage({
       facilitatorId: facilitator.id,
     },
     include: {
+      event: {
+        select: {
+          id: true,
+          title: true,
+          hostToken: true,
+        },
+      },
       negotiationCase: {
         select: {
           deletedAt: true,
@@ -67,6 +74,7 @@ export default async function SessionDetailPage({
         id: session.id,
         title: session.title,
         durationSeconds: session.durationSeconds,
+        preparationDurationSeconds: session.preparationDurationSeconds,
         negotiationState: session.negotiationState,
         createdAt: session.createdAt.toISOString(),
         displayStatus,
@@ -119,6 +127,13 @@ export default async function SessionDetailPage({
         hasFacilitator: session.participants.some(
           (participant) => participant.type === "FACILITATOR",
         ),
+        linkedEvent: session.event
+          ? {
+              id: session.event.id,
+              title: session.event.title,
+              lobbyUrl: `/events/${session.event.id}/lobby?hostToken=${session.event.hostToken}`,
+            }
+          : null,
       }}
     />
   );

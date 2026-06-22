@@ -2,7 +2,9 @@ import { z } from "zod";
 
 import {
   MAX_NEGOTIATION_DURATION_MINUTES,
+  MAX_PREPARATION_DURATION_MINUTES,
   MIN_NEGOTIATION_DURATION_MINUTES,
+  MIN_PREPARATION_DURATION_MINUTES,
 } from "@/lib/negotiation-duration";
 
 export const negotiationDurationMinutesSchema = z.coerce
@@ -11,8 +13,17 @@ export const negotiationDurationMinutesSchema = z.coerce
   .min(MIN_NEGOTIATION_DURATION_MINUTES, "durationMin")
   .max(MAX_NEGOTIATION_DURATION_MINUTES, "durationMax");
 
+export const preparationDurationMinutesSchema = z.coerce
+  .number()
+  .int("durationWholeMinutes")
+  .min(MIN_PREPARATION_DURATION_MINUTES, "preparationDurationMin")
+  .max(MAX_PREPARATION_DURATION_MINUTES, "preparationDurationMax");
+
 export const defaultNegotiationDurationMinutesSchema =
   negotiationDurationMinutesSchema.optional();
+
+export const defaultPreparationDurationMinutesSchema =
+  preparationDurationMinutesSchema.optional();
 
 export const caseRoleSchema = z.object({
   name: z.string().trim().min(1, "roleNameRequired"),
@@ -30,6 +41,7 @@ export const createCaseSchema = z.object({
     .trim()
     .min(1, "publicInstructionsRequired"),
   caseLanguage: z.enum(["RU", "EN"]).default("EN"),
+  preparationDurationMinutes: defaultPreparationDurationMinutesSchema,
   negotiationDurationMinutes: defaultNegotiationDurationMinutesSchema,
   roles: z
     .array(caseRoleSchema)

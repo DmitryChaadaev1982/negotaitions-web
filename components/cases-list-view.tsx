@@ -27,6 +27,7 @@ type CaseRow = {
   caseLanguage: "RU" | "EN";
   roleCount: number;
   defaultDurationMinutes: number;
+  defaultPreparationDurationMinutes: number;
   createdAt: string;
 };
 
@@ -73,7 +74,7 @@ export function CasesListView({ cases }: CasesListViewProps) {
               <DataTableHeaderCell>{t("cases.difficulty")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("cases.caseLanguage")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("cases.roles")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("cases.defaultDuration")}</DataTableHeaderCell>
+              <DataTableHeaderCell>{t("common.negotiationDuration")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
               <DataTableHeaderCell align="right">{t("common.actions")}</DataTableHeaderCell>
             </DataTableHead>
@@ -96,7 +97,7 @@ export function CasesListView({ cases }: CasesListViewProps) {
                   </DataTableCell>
                   <DataTableCell>{negotiationCase.roleCount}</DataTableCell>
                   <DataTableCell>
-                    {t("common.defaultDuration", {
+                    {t("common.negotiationDurationValue", {
                       minutes: negotiationCase.defaultDurationMinutes,
                     })}
                   </DataTableCell>
