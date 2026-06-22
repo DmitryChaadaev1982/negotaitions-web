@@ -1,4 +1,6 @@
 import VideoRoomPage from "@/components/video-room-page";
+import { getServerDictionary } from "@/lib/i18n/server";
+import { translate } from "@/lib/i18n/translate";
 
 type RoomPageProps = {
   params: Promise<{ sessionId: string }>;
@@ -12,16 +14,16 @@ export default async function RoomPage({
   const { sessionId } = await params;
   const { joinToken = "" } = await searchParams;
   const trimmedJoinToken = joinToken.trim();
+  const { dictionary } = await getServerDictionary();
 
   if (!trimmedJoinToken) {
     return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-slate-50 px-4 text-center">
-        <h1 className="text-lg font-semibold text-slate-900">
-          Missing join link
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 app-gradient-bg px-4 text-center">
+        <h1 className="text-lg font-bold text-slate-50">
+          {translate(dictionary, "room.missingJoinLink")}
         </h1>
-        <p className="max-w-md text-sm text-slate-600">
-          Open the video room from your session join page so your access token
-          is included.
+        <p className="max-w-md text-sm text-slate-400">
+          {translate(dictionary, "room.missingJoinLinkDescription")}
         </p>
       </div>
     );

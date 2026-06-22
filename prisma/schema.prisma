@@ -22,12 +22,14 @@ enum Difficulty {
   HARD
 }
 
+enum CaseLanguage {
+  RU
+  EN
+}
+
 enum SessionStatus {
   DRAFT
   READY
-  IN_PROGRESS
-  COMPLETED
-  ANALYZED
 }
 
 enum ParticipantType {
@@ -78,8 +80,10 @@ model NegotiationCase {
   publicInstructions String     @db.Text
   targetSkills       String     @db.Text
   difficulty              Difficulty @default(MEDIUM)
+  caseLanguage            CaseLanguage @default(EN)
   defaultDurationSeconds  Int        @default(900)
   facilitatorId           String
+  deletedAt          DateTime?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
@@ -101,8 +105,7 @@ model CaseRole {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  negotiationCase     NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Cascade)
-  sessionParticipants SessionParticipant[]
+  negotiationCase NegotiationCase @relation(fields: [negotiationCaseId], references: [id], onDelete: Cascade)
 
   @@index([negotiationCaseId])
 }
@@ -112,6 +115,10 @@ model Session {
   negotiationCaseId String
   facilitatorId     String
   title             String
+  snapshotCaseTitle          String
+  snapshotBusinessContext    String       @db.Text
+  snapshotPublicInstructions String       @db.Text
+  snapshotCaseLanguage       CaseLanguage
   status                SessionStatus     @default(DRAFT)
   livekitRoomName       String?           @unique
   negotiationState      NegotiationState  @default(LOBBY)
@@ -123,11 +130,13 @@ model Session {
   totalPausedSeconds    Int               @default(0)
   startedAt             DateTime?
   endedAt               DateTime?
+  deletedAt             DateTime?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  negotiationCase NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Cascade)
+  negotiationCase NegotiationCase      @relation(fields: [negotiationCaseId], references: [id], onDelete: Restrict)
   facilitator     User                 @relation("SessionFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  sessionRoles    SessionRole[]
   participants    SessionParticipant[]
   recording       Recording?
   transcript      Transcript?
@@ -137,11 +146,30 @@ model Session {
   @@index([facilitatorId])
 }
 
+model SessionRole {
+  id                  String   @id @default(cuid())
+  sessionId           String
+  name                String
+  privateInstructions String   @db.Text
+  objectives          String   @db.Text
+  constraints         String   @db.Text
+  hiddenInfo          String   @db.Text
+  fallbackPosition    String   @db.Text
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  session             Session              @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionParticipants SessionParticipant[]
+
+  @@index([sessionId])
+}
+
 model SessionParticipant {
   id          String          @id @default(cuid())
   sessionId   String
   userId      String?
-  caseRoleId  String?
+  sessionRoleId String?
   type        ParticipantType
   joinToken   String          @unique
   displayName String
@@ -151,13 +179,13 @@ model SessionParticipant {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  session  Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  caseRole CaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+  session     Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sessionRole SessionRole? @relation(fields: [sessionRoleId], references: [id], onDelete: SetNull)
 
   @@index([sessionId])
   @@index([userId])
-  @@index([caseRoleId])
+  @@index([sessionRoleId])
 }
 
 model Recording {

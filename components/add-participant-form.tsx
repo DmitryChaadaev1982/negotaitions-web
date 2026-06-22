@@ -6,29 +6,40 @@ import {
   addParticipant,
   type AddParticipantState,
 } from "@/app/actions/sessions";
+import { GradientButton } from "@/components/ui/buttons";
+import {
+  alertErrorClassName,
+  alertSuccessClassName,
+  errorClassName,
+  hintClassName,
+  inputClassName,
+  labelClassName,
+} from "@/components/ui/form-styles";
+import { useI18n } from "@/lib/i18n/useI18n";
 
 const initialState: AddParticipantState = {};
 
 type ParticipantTypeOption = "PARTICIPANT" | "OBSERVER" | "FACILITATOR";
 
-type CaseRole = {
+type SessionRoleOption = {
   id: string;
   name: string;
 };
 
 type AddParticipantFormProps = {
   sessionId: string;
-  caseRoles: CaseRole[];
+  sessionRoles: SessionRoleOption[];
   assignedRoleIds: string[];
   hasFacilitator: boolean;
 };
 
 export function AddParticipantForm({
   sessionId,
-  caseRoles,
+  sessionRoles,
   assignedRoleIds,
   hasFacilitator,
 }: AddParticipantFormProps) {
+  const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     addParticipant,
     initialState,
@@ -41,7 +52,7 @@ export function AddParticipantForm({
       ? "PARTICIPANT"
       : participantType;
   const isParticipant = effectiveType === "PARTICIPANT";
-  const availableRoles = caseRoles.filter(
+  const availableRoles = sessionRoles.filter(
     (role) => !assignedRoleIds.includes(role.id),
   );
 
@@ -50,20 +61,20 @@ export function AddParticipantForm({
       <input type="hidden" name="sessionId" value={sessionId} />
 
       {state.errors?.form ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {state.errors.form.join(", ")}
+        <div className={alertErrorClassName}>
+          {state.errors.form.map((message) => tv(message)).join(", ")}
         </div>
       ) : null}
 
       {state.success ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          Participant added.
+        <div className={alertSuccessClassName}>
+          {t("common.participantAdded")}
         </div>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field
-          label="Display name"
+          label={t("common.displayName")}
           name="displayName"
           error={state.errors?.displayName?.[0]}
           required
@@ -79,7 +90,7 @@ export function AddParticipantForm({
         </Field>
 
         <Field
-          label="Type"
+          label={t("common.type")}
           name="type"
           error={state.errors?.type?.[0]}
           required
@@ -98,39 +109,40 @@ export function AddParticipantForm({
             }}
             className={inputClassName(!!state.errors?.type)}
           >
-            <option value="PARTICIPANT">Participant</option>
-            <option value="OBSERVER">Observer</option>
+            <option value="PARTICIPANT">{t("common.participant")}</option>
+            <option value="OBSERVER">{t("common.observer")}</option>
             <option value="FACILITATOR" disabled={hasFacilitator}>
-              Facilitator{hasFacilitator ? " (already added)" : ""}
+              {t("common.facilitator")}
+              {hasFacilitator ? t("common.facilitatorAlreadyAdded") : ""}
             </option>
           </select>
         </Field>
 
         <Field
-          label="Assigned role"
-          name="caseRoleId"
-          error={state.errors?.caseRoleId?.[0]}
+          label={t("common.assignedRole")}
+          name="sessionRoleId"
+          error={state.errors?.sessionRoleId?.[0]}
           required={isParticipant}
           description={
             isParticipant
-              ? "Required for participants. Each role can only be assigned once."
-              : "Not applicable for observers or facilitators."
+              ? t("sessions.assignedRoleRequired")
+              : t("sessions.assignedRoleNotApplicable")
           }
         >
           {isParticipant ? (
             <select
-              id="caseRoleId"
-              name="caseRoleId"
+              id="sessionRoleId"
+              name="sessionRoleId"
               required
               defaultValue=""
-              className={inputClassName(!!state.errors?.caseRoleId)}
+              className={inputClassName(!!state.errors?.sessionRoleId)}
             >
               <option value="" disabled>
-                Select a role
+                {t("common.selectRole")}
               </option>
               {availableRoles.length === 0 ? (
                 <option value="" disabled>
-                  All roles are already assigned
+                  {t("common.allRolesAssigned")}
                 </option>
               ) : (
                 availableRoles.map((role) => (
@@ -142,26 +154,26 @@ export function AddParticipantForm({
             </select>
           ) : (
             <select
-              id="caseRoleId"
+              id="sessionRoleId"
               disabled
               value=""
-              className={`${inputClassName(false)} cursor-not-allowed bg-slate-100 text-slate-500`}
+              className={`${inputClassName(false)} cursor-not-allowed opacity-60`}
             >
-              <option value="">Not applicable</option>
+              <option value="">{t("common.notApplicable")}</option>
             </select>
           )}
         </Field>
 
         <div className="flex items-end">
-          <button
+          <GradientButton
             type="submit"
             disabled={
               isPending || (isParticipant && availableRoles.length === 0)
             }
-            className="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full"
           >
-            {isPending ? "Adding..." : "Add participant"}
-          </button>
+            {isPending ? t("common.adding") : t("common.addParticipant")}
+          </GradientButton>
         </div>
       </div>
     </form>
@@ -183,28 +195,21 @@ function Field({
   description?: string;
   children: React.ReactNode;
 }) {
+  const { tv } = useI18n();
+
   return (
     <div>
-      <label
-        htmlFor={name}
-        className="mb-1.5 block text-sm font-medium text-slate-700"
-      >
+      <label htmlFor={name} className={labelClassName}>
         {label}
-        {required ? <span className="text-rose-500"> *</span> : null}
+        {required ? <span className="text-rose-400"> *</span> : null}
       </label>
       {description ? (
-        <p className="mb-1.5 text-xs text-slate-500">{description}</p>
+        <p className={hintClassName}>{description}</p>
       ) : null}
       {children}
-      {error ? <p className="mt-1.5 text-sm text-rose-600">{error}</p> : null}
+      {error ? (
+        <p className={errorClassName}>{tv(error)}</p>
+      ) : null}
     </div>
   );
-}
-
-function inputClassName(hasError: boolean) {
-  return `block w-full rounded-md border px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
-    hasError
-      ? "border-rose-300 focus:border-rose-500 focus:ring-rose-500/20"
-      : "border-slate-300 focus:border-slate-500 focus:ring-slate-500/20"
-  }`;
 }

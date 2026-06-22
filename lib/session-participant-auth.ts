@@ -11,7 +11,6 @@ export async function getSessionParticipantByJoinToken(
       session: {
         select: {
           id: true,
-          status: true,
           negotiationState: true,
           durationSeconds: true,
           negotiationStartedAt: true,

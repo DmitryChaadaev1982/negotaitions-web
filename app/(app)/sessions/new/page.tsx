@@ -1,9 +1,7 @@
-import Link from "next/link";
-
-import { NewSessionForm } from "@/components/new-session-form";
-import { PageHeader } from "@/components/page-header";
+import { NewSessionPageClient } from "@/components/new-session-page-client";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { prisma } from "@/lib/prisma";
+import { activeCaseWhere } from "@/lib/soft-delete";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +16,27 @@ export default async function NewSessionPage({
   const facilitator = await getDemoFacilitator();
 
   const cases = await prisma.negotiationCase.findMany({
-    where: { facilitatorId: facilitator.id },
+    where: { facilitatorId: facilitator.id, ...activeCaseWhere },
     orderBy: { title: "asc" },
     select: {
       id: true,
       title: true,
+      caseLanguage: true,
       defaultDurationSeconds: true,
     },
   });
+
+  const requestedDeletedCase =
+    caseId != null
+      ? await prisma.negotiationCase.findFirst({
+          where: {
+            id: caseId,
+            facilitatorId: facilitator.id,
+            deletedAt: { not: null },
+          },
+          select: { id: true },
+        })
+      : null;
 
   const defaultCaseId =
     caseId && cases.some((negotiationCase) => negotiationCase.id === caseId)
@@ -33,31 +44,10 @@ export default async function NewSessionPage({
       : cases[0]?.id;
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        title="New session"
-        description="Create a practice session from an existing case."
-        action={
-          <Link
-            href="/sessions"
-            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-          >
-            Back to sessions
-          </Link>
-        }
-      />
-
-      {cases.length === 0 ? (
-        <div className="rounded-lg border border-slate-200 bg-white px-6 py-8 text-sm text-slate-600 shadow-sm">
-          You need at least one case before creating a session.{" "}
-          <Link href="/cases/new" className="font-medium text-slate-900">
-            Create a case
-          </Link>{" "}
-          first.
-        </div>
-      ) : (
-        <NewSessionForm cases={cases} defaultCaseId={defaultCaseId} />
-      )}
-    </div>
+    <NewSessionPageClient
+      cases={cases}
+      defaultCaseId={defaultCaseId}
+      deletedCaseError={requestedDeletedCase != null}
+    />
   );
 }

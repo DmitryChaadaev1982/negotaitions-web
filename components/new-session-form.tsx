@@ -1,19 +1,36 @@
 "use client";
 
-import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
 
 import {
   createSession,
   type CreateSessionState,
 } from "@/app/actions/sessions";
-import { DEFAULT_NEGOTIATION_DURATION_SECONDS, secondsToDisplayMinutes } from "@/lib/negotiation-duration";
+import { CaseLanguageBadge } from "@/components/case-language-badge";
+import {
+  GradientButton,
+  SecondaryButtonLink,
+} from "@/components/ui/buttons";
+import {
+  alertErrorClassName,
+  errorClassName,
+  hintClassName,
+  inputClassName,
+  labelClassName,
+} from "@/components/ui/form-styles";
+import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
+import {
+  DEFAULT_NEGOTIATION_DURATION_SECONDS,
+  secondsToDisplayMinutes,
+} from "@/lib/negotiation-duration";
+import { useI18n } from "@/lib/i18n/useI18n";
 
 const initialState: CreateSessionState = {};
 
 type CaseOption = {
   id: string;
   title: string;
+  caseLanguage: "RU" | "EN";
   defaultDurationSeconds: number;
 };
 
@@ -23,6 +40,7 @@ type NewSessionFormProps = {
 };
 
 export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
+  const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     createSession,
     initialState,
@@ -44,24 +62,23 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
   return (
     <form action={formAction} className="space-y-6">
       {state.errors?.form ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {state.errors.form.join(", ")}
+        <div className={alertErrorClassName}>
+          {state.errors.form.map((message) => tv(message)).join(", ")}
         </div>
       ) : null}
 
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-6 py-4">
-          <h2 className="text-base font-semibold text-slate-900">
-            Session details
+      <GlassCard>
+        <GlassCardHeader>
+          <h2 className="text-base font-semibold text-slate-50">
+            {t("sessions.sessionDetails")}
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Create a session from an existing case. You can add participants
-            after the session is created.
+          <p className="mt-1 text-sm text-slate-400">
+            {t("sessions.sessionDetailsSectionDescription")}
           </p>
-        </div>
-        <div className="space-y-4 px-6 py-4">
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-4">
           <Field
-            label="Title"
+            label={t("common.title")}
             name="title"
             error={state.errors?.title?.[0]}
             required
@@ -72,12 +89,12 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
               type="text"
               required
               className={inputClassName(!!state.errors?.title)}
-              placeholder="e.g. Team A practice session — March 2026"
+              placeholder={t("sessions.titlePlaceholder")}
             />
           </Field>
 
           <Field
-            label="Case"
+            label={t("common.caseLabel")}
             name="caseId"
             error={state.errors?.caseId?.[0]}
             required
@@ -104,7 +121,7 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
               className={inputClassName(!!state.errors?.caseId)}
             >
               <option value="" disabled>
-                Select a case
+                {t("common.selectCase")}
               </option>
               {cases.map((negotiationCase) => (
                 <option key={negotiationCase.id} value={negotiationCase.id}>
@@ -112,10 +129,15 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
                 </option>
               ))}
             </select>
+            {selectedCase ? (
+              <div className="mt-2">
+                <CaseLanguageBadge caseLanguage={selectedCase.caseLanguage} />
+              </div>
+            ) : null}
           </Field>
 
           <Field
-            label="Negotiation duration (minutes)"
+            label={t("common.negotiationDurationMinutes")}
             name="negotiationDurationMinutes"
             error={state.errors?.negotiationDurationMinutes?.[0]}
             required
@@ -135,31 +157,24 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
                 !!state.errors?.negotiationDurationMinutes,
               )}
             />
-            <p className="mt-1.5 text-xs text-slate-500">
-              Default from the selected case is{" "}
-              {selectedCase
-                ? secondsToDisplayMinutes(selectedCase.defaultDurationSeconds)
-                : secondsToDisplayMinutes(DEFAULT_NEGOTIATION_DURATION_SECONDS)}{" "}
-              minutes. You can adjust it for this session.
+            <p className={hintClassName}>
+              {t("sessions.defaultFromCase", {
+                minutes: selectedCase
+                  ? secondsToDisplayMinutes(selectedCase.defaultDurationSeconds)
+                  : secondsToDisplayMinutes(DEFAULT_NEGOTIATION_DURATION_SECONDS),
+              })}
             </p>
           </Field>
-        </div>
-      </section>
+        </GlassCardContent>
+      </GlassCard>
 
       <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={isPending || cases.length === 0}
-          className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isPending ? "Creating..." : "Create session"}
-        </button>
-        <Link
-          href="/sessions"
-          className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-        >
-          Cancel
-        </Link>
+        <GradientButton type="submit" disabled={isPending || cases.length === 0}>
+          {isPending ? t("common.creating") : t("sessions.createSession")}
+        </GradientButton>
+        <SecondaryButtonLink href="/sessions">
+          {t("common.cancel")}
+        </SecondaryButtonLink>
       </div>
     </form>
   );
@@ -178,25 +193,18 @@ function Field({
   required?: boolean;
   children: React.ReactNode;
 }) {
+  const { tv } = useI18n();
+
   return (
     <div>
-      <label
-        htmlFor={name}
-        className="mb-1.5 block text-sm font-medium text-slate-700"
-      >
+      <label htmlFor={name} className={labelClassName}>
         {label}
-        {required ? <span className="text-rose-500"> *</span> : null}
+        {required ? <span className="text-rose-400"> *</span> : null}
       </label>
       {children}
-      {error ? <p className="mt-1.5 text-sm text-rose-600">{error}</p> : null}
+      {error ? (
+        <p className={errorClassName}>{tv(error)}</p>
+      ) : null}
     </div>
   );
-}
-
-function inputClassName(hasError: boolean) {
-  return `block w-full rounded-md border px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
-    hasError
-      ? "border-rose-300 focus:border-rose-500 focus:ring-rose-500/20"
-      : "border-slate-300 focus:border-slate-500 focus:ring-slate-500/20"
-  }`;
 }

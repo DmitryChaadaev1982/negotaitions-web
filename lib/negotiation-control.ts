@@ -1,7 +1,6 @@
 import {
   NegotiationState,
   ParticipantType,
-  SessionStatus,
   type Session,
 } from "@/app/generated/prisma/client";
 
@@ -10,7 +9,6 @@ export type ControlAction = "START" | "PAUSE" | "RESUME" | "FINISH";
 export type SessionControlFields = Pick<
   Session,
   | "id"
-  | "status"
   | "negotiationState"
   | "durationSeconds"
   | "negotiationStartedAt"
@@ -23,7 +21,6 @@ export type SessionControlFields = Pick<
 export type ControlState = {
   sessionId: string;
   negotiationState: NegotiationState;
-  status: SessionStatus;
   durationSeconds: number;
   remainingSeconds: number;
   participantType: ParticipantType;
@@ -119,7 +116,6 @@ export function buildControlState(
   return {
     sessionId: session.id,
     negotiationState: session.negotiationState,
-    status: session.status,
     durationSeconds: session.durationSeconds,
     remainingSeconds,
     participantType,
@@ -150,7 +146,6 @@ export function getControlUpdateData(
 
       return {
         negotiationState: NegotiationState.RUNNING,
-        status: SessionStatus.IN_PROGRESS,
         negotiationStartedAt: session.negotiationStartedAt ?? now,
         timerStartedAt: session.timerStartedAt ?? now,
         pausedAt: null,
@@ -202,7 +197,6 @@ export function getControlUpdateData(
 
       return {
         negotiationState: NegotiationState.FINISHED,
-        status: SessionStatus.COMPLETED,
         negotiationEndedAt: now,
         totalPausedSeconds,
         pausedAt: null,

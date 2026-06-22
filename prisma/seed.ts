@@ -4,7 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { hash } from "bcryptjs";
 import { Pool } from "pg";
 
-import { Difficulty, PrismaClient, UserRole } from "../app/generated/prisma/client";
+import { Difficulty, PrismaClient, UserRole, CaseLanguage } from "../app/generated/prisma/client";
 
 const DEMO_FACILITATOR_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "demo1234";
@@ -25,6 +25,7 @@ type CaseSeed = {
   publicInstructions: string;
   targetSkills: string;
   difficulty: Difficulty;
+  caseLanguage: CaseLanguage;
   defaultDurationSeconds: number;
   roles: RoleSeed[];
 };
@@ -41,6 +42,7 @@ const demoCases: CaseSeed[] = [
     targetSkills:
       "Scope control, objection handling, value argumentation, escalation management.",
     difficulty: Difficulty.MEDIUM,
+    caseLanguage: CaseLanguage.EN,
     defaultDurationSeconds: 900,
     roles: [
       {
@@ -98,6 +100,7 @@ const demoCases: CaseSeed[] = [
     targetSkills:
       "Interest-based negotiation, prioritization, conflict management, framing.",
     difficulty: Difficulty.EASY,
+    caseLanguage: CaseLanguage.EN,
     defaultDurationSeconds: 600,
     roles: [
       {
@@ -194,6 +197,7 @@ async function main() {
         publicInstructions: caseSeed.publicInstructions,
         targetSkills: caseSeed.targetSkills,
         difficulty: caseSeed.difficulty,
+        caseLanguage: caseSeed.caseLanguage,
         defaultDurationSeconds: caseSeed.defaultDurationSeconds,
         facilitatorId: facilitator.id,
         roles: {

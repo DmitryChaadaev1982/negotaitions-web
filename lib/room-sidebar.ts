@@ -1,17 +1,9 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { prisma } from "@/lib/prisma";
+import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
 export type { RoomSidebarData } from "@/lib/room-sidebar-types";
-
-const roleBriefingSelect = {
-  name: true,
-  privateInstructions: true,
-  objectives: true,
-  constraints: true,
-  hiddenInfo: true,
-  fallbackPosition: true,
-} as const;
 
 export async function getRoomSidebarData(
   joinToken: string,
@@ -19,22 +11,20 @@ export async function getRoomSidebarData(
   const participant = await prisma.sessionParticipant.findUnique({
     where: { joinToken },
     include: {
-      caseRole: {
-        select: roleBriefingSelect,
+      sessionRole: {
+        select: sessionRoleBriefingSelect,
       },
       session: {
         select: {
           title: true,
           durationSeconds: true,
-          negotiationCase: {
-            select: {
-              defaultDurationSeconds: true,
-            },
-          },
+          snapshotBusinessContext: true,
+          snapshotPublicInstructions: true,
+          snapshotCaseLanguage: true,
           participants: {
             include: {
-              caseRole: {
-                select: roleBriefingSelect,
+              sessionRole: {
+                select: sessionRoleBriefingSelect,
               },
             },
             orderBy: { createdAt: "asc" },
@@ -52,18 +42,18 @@ export async function getRoomSidebarData(
     .filter(
       (sessionParticipant) =>
         sessionParticipant.type === ParticipantType.PARTICIPANT &&
-        sessionParticipant.caseRole,
+        sessionParticipant.sessionRole,
     )
     .map((sessionParticipant) => ({
       displayName: sessionParticipant.displayName,
-      role: sessionParticipant.caseRole!,
+      role: sessionParticipant.sessionRole!,
     }));
 
   const roster = participant.session.participants.map((sessionParticipant) => ({
     id: sessionParticipant.id,
     displayName: sessionParticipant.displayName,
     participantType: sessionParticipant.type,
-    caseRoleName: sessionParticipant.caseRole?.name ?? null,
+    caseRoleName: sessionParticipant.sessionRole?.name ?? null,
   }));
 
   return {
@@ -72,7 +62,12 @@ export async function getRoomSidebarData(
     displayName: participant.displayName,
     notes: participant.notes,
     durationSeconds: participant.session.durationSeconds,
-    caseRole: participant.caseRole,
+    publicContext: {
+      description: participant.session.snapshotBusinessContext,
+      publicInstructions: participant.session.snapshotPublicInstructions,
+      caseLanguage: participant.session.snapshotCaseLanguage,
+    },
+    caseRole: participant.sessionRole,
     facilitatorBriefings,
     roster,
   };

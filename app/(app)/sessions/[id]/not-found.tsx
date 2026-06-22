@@ -1,20 +1,21 @@
-import Link from "next/link";
+"use client";
 
+import { GradientButtonLink } from "@/components/ui/buttons";
 import { PageHeader } from "@/components/page-header";
+import { useI18n } from "@/lib/i18n/useI18n";
 
 export default function SessionNotFound() {
+  const { t } = useI18n();
+
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Session not found"
-        description="This session does not exist or you do not have access to it."
+        title={t("sessions.sessionNotFound")}
+        description={t("sessions.sessionNotFoundDescription")}
       />
-      <Link
-        href="/sessions"
-        className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
-      >
-        Back to sessions
-      </Link>
+      <GradientButtonLink href="/sessions">
+        {t("sessions.backToSessions")}
+      </GradientButtonLink>
     </div>
   );
 }

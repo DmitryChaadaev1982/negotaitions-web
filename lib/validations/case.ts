@@ -7,40 +7,40 @@ import {
 
 export const negotiationDurationMinutesSchema = z.coerce
   .number()
-  .int("Duration must be a whole number of minutes")
-  .min(
-    MIN_NEGOTIATION_DURATION_MINUTES,
-    `Duration must be at least ${MIN_NEGOTIATION_DURATION_MINUTES} minute`,
-  )
-  .max(
-    MAX_NEGOTIATION_DURATION_MINUTES,
-    `Duration must be at most ${MAX_NEGOTIATION_DURATION_MINUTES} minutes`,
-  );
+  .int("durationWholeMinutes")
+  .min(MIN_NEGOTIATION_DURATION_MINUTES, "durationMin")
+  .max(MAX_NEGOTIATION_DURATION_MINUTES, "durationMax");
 
 export const defaultNegotiationDurationMinutesSchema =
   negotiationDurationMinutesSchema.optional();
 
 export const caseRoleSchema = z.object({
-  name: z.string().trim().min(1, "Role name is required"),
+  name: z.string().trim().min(1, "roleNameRequired"),
   privateInstructions: z
     .string()
     .trim()
-    .min(1, "Private instructions are required"),
+    .min(1, "privateInstructionsRequired"),
 });
 
 export const createCaseSchema = z.object({
-  title: z.string().trim().min(1, "Title is required"),
-  businessContext: z.string().trim().min(1, "Business context is required"),
+  title: z.string().trim().min(1, "titleRequired"),
+  businessContext: z.string().trim().min(1, "businessContextRequired"),
   publicInstructions: z
     .string()
     .trim()
-    .min(1, "Public instructions are required"),
+    .min(1, "publicInstructionsRequired"),
+  caseLanguage: z.enum(["RU", "EN"]).default("EN"),
   negotiationDurationMinutes: defaultNegotiationDurationMinutesSchema,
   roles: z
     .array(caseRoleSchema)
-    .min(2, "At least two roles are required")
-    .max(4, "A case can have at most four roles"),
+    .min(2, "atLeastTwoRoles")
+    .max(4, "atMostFourRoles"),
+});
+
+export const updateCaseSchema = createCaseSchema.extend({
+  caseId: z.string().trim().min(1, "caseIdRequired"),
 });
 
 export type CreateCaseInput = z.infer<typeof createCaseSchema>;
+export type UpdateCaseInput = z.infer<typeof updateCaseSchema>;
 export type CaseRoleInput = z.infer<typeof caseRoleSchema>;

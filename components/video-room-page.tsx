@@ -8,15 +8,19 @@ import {
   useRoomContext,
 } from "@livekit/components-react";
 import { ParticipantType } from "@/app/generated/prisma/enums";
+import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { FacilitatorRoomControls } from "@/components/facilitator-room-controls";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { MicEnforcement } from "@/components/mic-enforcement";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RestrictedControlBar } from "@/components/restricted-control-bar";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { StructuredVideoLayout } from "@/components/structured-video-layout";
+import { GradientButtonLink } from "@/components/ui/buttons";
+import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
-import Link from "next/link";
+import { useI18n } from "@/lib/i18n/useI18n";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -41,44 +45,76 @@ function RoomSidebar({
   joinToken: string;
   sidebar: RoomSidebarData;
 }) {
+  const { t } = useI18n();
+
   const notesConfig =
     sidebar.participantType === ParticipantType.PARTICIPANT
       ? {
-          title: "Preparation",
-          description:
-            "Capture your negotiation plan, opening moves, and priorities during the session.",
-          placeholder: "Your strategy, target outcomes, walk-away points...",
+          title: t("join.preparation"),
+          description: t("join.preparationDescription"),
+          placeholder: t("join.preparationPlaceholder"),
         }
       : sidebar.participantType === ParticipantType.OBSERVER
         ? {
-            title: "Observer notes",
-            description:
-              "Record your observations and notes for this session.",
-            placeholder: "Record observations about the negotiation...",
+            title: t("join.observerNotes"),
+            description: t("join.observerNotesDescription"),
+            placeholder: t("join.observerNotesPlaceholder"),
           }
         : {
-            title: "Facilitator notes",
-            description:
-              "Capture guidance, debrief points, and session observations.",
-            placeholder: "Session guidance, debrief points, observations...",
+            title: t("join.facilitatorNotes"),
+            description: t("join.facilitatorNotesDescription"),
+            placeholder: t("join.facilitatorNotesPlaceholder"),
           };
 
+  const participantTypeLabel = t(
+    `participantType.${sidebar.participantType}` as `participantType.${typeof sidebar.participantType}`,
+  );
+
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
-      <div className="shrink-0 border-b border-slate-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-slate-900">Session panel</h2>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {sidebar.displayName} · {sidebar.participantType}
+    <aside className="glass-panel flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-600/25 bg-[#020617]/90">
+      <div className="shrink-0 border-b border-slate-600/25 px-4 py-3.5">
+        <h2 className="text-sm font-bold text-slate-50">
+          {t("room.sessionPanel")}
+        </h2>
+        <p className="mt-0.5 text-xs text-slate-400">
+          {sidebar.displayName} · {participantTypeLabel}
         </p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         <div className="space-y-4">
+          <GlassCard elevated>
+            <GlassCardContent className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-50">
+                  {t("join.publicContext")}
+                </h3>
+                <CaseLanguageBadge caseLanguage={sidebar.publicContext.caseLanguage} />
+              </div>
+              <div>
+                <h4 className="text-sm font-medium text-slate-300">
+                  {t("join.caseDescription")}
+                </h4>
+                <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-400">
+                  {sidebar.publicContext.description}
+                </p>
+              </div>
+              <div>
+                <h4 className="text-sm font-medium text-slate-300">
+                  {t("join.publicInstructions")}
+                </h4>
+                <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-400">
+                  {sidebar.publicContext.publicInstructions}
+                </p>
+              </div>
+            </GlassCardContent>
+          </GlassCard>
+
         {sidebar.participantType === ParticipantType.PARTICIPANT &&
         sidebar.caseRole ? (
           <RoleBriefingCard
-            title={`Your role: ${sidebar.caseRole.name}`}
-            subtitle="Private briefing — visible only to you."
+            title={t("join.yourRoleTitle", { name: sidebar.caseRole.name })}
+            subtitle={t("join.privateBriefingVisible")}
             role={sidebar.caseRole}
           />
         ) : null}
@@ -86,23 +122,26 @@ function RoomSidebar({
         {sidebar.participantType === ParticipantType.FACILITATOR ? (
           <div className="space-y-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">
-                Facilitator panel
+              <h3 className="text-sm font-semibold text-slate-50">
+                {t("room.facilitatorPanel")}
               </h3>
-              <p className="mt-1 text-sm text-slate-600">
-                Participant role briefings for this session.
+              <p className="mt-1 text-sm text-slate-400">
+                {t("room.participantRoleBriefingsDescription")}
               </p>
             </div>
             {sidebar.facilitatorBriefings.length === 0 ? (
-              <p className="text-sm text-slate-600">
-                No participant roles assigned yet.
+              <p className="text-sm text-slate-400">
+                {t("room.noParticipantRolesAssigned")}
               </p>
             ) : (
               sidebar.facilitatorBriefings.map((briefing) => (
                 <RoleBriefingCard
                   key={`${briefing.displayName}-${briefing.role.name}`}
-                  title={`${briefing.displayName} — ${briefing.role.name}`}
-                  subtitle="Private briefing for this participant."
+                  title={t("join.participantBriefingTitle", {
+                    name: briefing.displayName,
+                    role: briefing.role.name,
+                  })}
+                  subtitle={t("join.privateBriefingForParticipant")}
                   role={briefing.role}
                 />
               ))
@@ -112,26 +151,28 @@ function RoomSidebar({
 
         {sidebar.participantType === ParticipantType.OBSERVER ? (
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">
-              Observer notes
+            <h3 className="text-sm font-semibold text-slate-50">
+              {t("join.observerNotes")}
             </h3>
-            <p className="mt-1 text-sm text-slate-600">
-              Record observations during the live session.
+            <p className="mt-1 text-sm text-slate-400">
+              {t("room.observerNotesLive")}
             </p>
           </div>
         ) : null}
 
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-900">
-            {notesConfig.title}
-          </h3>
-          <ParticipantNotesPanel
-            joinToken={joinToken}
-            initialNotes={sidebar.notes}
-            description={notesConfig.description}
-            placeholder={notesConfig.placeholder}
-          />
-        </div>
+        <GlassCard elevated>
+          <GlassCardContent>
+            <h3 className="mb-3 text-sm font-semibold text-slate-50">
+              {notesConfig.title}
+            </h3>
+            <ParticipantNotesPanel
+              joinToken={joinToken}
+              initialNotes={sidebar.notes}
+              description={notesConfig.description}
+              placeholder={notesConfig.placeholder}
+            />
+          </GlassCardContent>
+        </GlassCard>
         </div>
       </div>
     </aside>
@@ -141,6 +182,7 @@ function RoomSidebar({
 function LeaveRoomButton({ joinToken }: { joinToken: string }) {
   const router = useRouter();
   const room = useRoomContext();
+  const { t } = useI18n();
 
   const handleLeave = useCallback(async () => {
     await room.disconnect();
@@ -151,9 +193,9 @@ function LeaveRoomButton({ joinToken }: { joinToken: string }) {
     <button
       type="button"
       onClick={() => void handleLeave()}
-      className="inline-flex items-center justify-center rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+      className="btn-secondary inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-sm font-semibold transition-all hover:brightness-110"
     >
-      Leave Room
+      {t("room.leaveRoom")}
     </button>
   );
 }
@@ -174,10 +216,15 @@ function ConnectedRoom({
   onControlStateChange: (state: ControlState) => void;
 }) {
   const router = useRouter();
+  const { t } = useI18n();
 
   const handleDisconnected = useCallback(() => {
     router.push(`/join/${joinToken}`);
   }, [joinToken, router]);
+
+  const participantTypeLabel = t(
+    `participantType.${tokenResponse.participantType}` as `participantType.${typeof tokenResponse.participantType}`,
+  );
 
   return (
     <LiveKitRoom
@@ -192,14 +239,19 @@ function ConnectedRoom({
     >
       <RoomAudioRenderer />
       <MicEnforcement controlState={controlState} />
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-4 py-3 text-white">
+      <header className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{sidebar.sessionTitle}</p>
+          <p className="truncate text-sm font-semibold text-slate-50">
+            {sidebar.sessionTitle}
+          </p>
           <p className="truncate text-xs text-slate-400">
-            {tokenResponse.displayName} · {tokenResponse.participantType}
+            {tokenResponse.displayName} · {participantTypeLabel}
           </p>
         </div>
-        <LeaveRoomButton joinToken={joinToken} />
+        <div className="flex items-center gap-3">
+          <LanguageSwitcher />
+          <LeaveRoomButton joinToken={joinToken} />
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -240,6 +292,7 @@ export default function VideoRoomPage({
   sessionId,
   joinToken,
 }: VideoRoomPageProps) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [tokenResponse, setTokenResponse] = useState<LiveKitTokenResponse | null>(
@@ -284,7 +337,7 @@ export default function VideoRoomPage({
           throw new Error(
             "error" in tokenPayload && tokenPayload.error
               ? tokenPayload.error
-              : "Unable to join the video room.",
+              : t("room.unableToJoinRoom"),
           );
         }
 
@@ -292,7 +345,7 @@ export default function VideoRoomPage({
           throw new Error(
             "error" in sidebarPayload && sidebarPayload.error
               ? sidebarPayload.error
-              : "Unable to load session panel.",
+              : t("room.unableToLoadSessionPanel"),
           );
         }
 
@@ -300,7 +353,7 @@ export default function VideoRoomPage({
           throw new Error(
             "error" in controlPayload && controlPayload.error
               ? controlPayload.error
-              : "Unable to load negotiation state.",
+              : t("room.unableToLoadNegotiationState"),
           );
         }
 
@@ -308,7 +361,7 @@ export default function VideoRoomPage({
           !("token" in tokenPayload) ||
           tokenPayload.sessionId !== sessionId
         ) {
-          throw new Error("This join link does not match the session room.");
+          throw new Error(t("room.joinLinkMismatch"));
         }
 
         if (!cancelled) {
@@ -321,7 +374,7 @@ export default function VideoRoomPage({
           setError(
             loadError instanceof Error
               ? loadError.message
-              : "Unable to join the video room.",
+              : t("room.unableToJoinRoom"),
           );
         }
       } finally {
@@ -336,7 +389,7 @@ export default function VideoRoomPage({
     return () => {
       cancelled = true;
     };
-  }, [joinToken, sessionId]);
+  }, [joinToken, sessionId, t]);
 
   useEffect(() => {
     if (isLoading || error) {
@@ -366,28 +419,25 @@ export default function VideoRoomPage({
   if (isLoading) {
     return (
       <div className="flex h-dvh items-center justify-center bg-slate-950 text-white">
-        <p className="text-sm text-slate-300">Connecting to video room...</p>
+        <p className="text-sm text-slate-300">{t("room.connectingToVideoRoom")}</p>
       </div>
     );
   }
 
   if (error || !tokenResponse || !sidebar || !controlState) {
     return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-slate-50 px-4 text-center">
+      <div className="flex h-dvh flex-col items-center justify-center gap-4 app-gradient-bg px-4 text-center">
         <div>
-          <h1 className="text-lg font-semibold text-slate-900">
-            Unable to join video room
+          <h1 className="text-lg font-bold text-slate-50">
+            {t("room.unableToJoinVideoRoom")}
           </h1>
-          <p className="mt-2 max-w-md text-sm text-slate-600">
-            {error ?? "Something went wrong while connecting."}
+          <p className="mt-2 max-w-md text-sm text-slate-400">
+            {error ?? t("room.somethingWentWrongConnecting")}
           </p>
         </div>
-        <Link
-          href={`/join/${joinToken}`}
-          className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
-        >
-          Back to session briefing
-        </Link>
+        <GradientButtonLink href={`/join/${joinToken}`}>
+          {t("room.backToSessionBriefing")}
+        </GradientButtonLink>
       </div>
     );
   }

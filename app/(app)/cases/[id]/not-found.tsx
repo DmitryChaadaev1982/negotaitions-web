@@ -1,20 +1,21 @@
-import Link from "next/link";
+"use client";
 
+import { GradientButtonLink } from "@/components/ui/buttons";
 import { PageHeader } from "@/components/page-header";
+import { useI18n } from "@/lib/i18n/useI18n";
 
 export default function CaseNotFound() {
+  const { t } = useI18n();
+
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Case not found"
-        description="The case you are looking for does not exist or is not available."
+        title={t("cases.caseNotFound")}
+        description={t("cases.caseNotFoundDescription")}
       />
-      <Link
-        href="/cases"
-        className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
-      >
-        Back to cases
-      </Link>
+      <GradientButtonLink href="/cases">
+        {t("cases.backToCases")}
+      </GradientButtonLink>
     </div>
   );
 }

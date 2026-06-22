@@ -1,5 +1,5 @@
 export function getAppName() {
-  return process.env.APP_NAME?.trim() || "Negotaitions";
+  return process.env.APP_NAME?.trim() || "NegotAItions";
 }
 
 export function getAppUrl() {

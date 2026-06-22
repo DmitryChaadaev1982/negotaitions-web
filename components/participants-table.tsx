@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { removeParticipant } from "@/app/actions/sessions";
 import { CopyJoinLinkButton } from "@/components/copy-join-link-button";
 import { formatDateFromIso } from "@/lib/format-date";
+import { useI18n } from "@/lib/i18n/useI18n";
+import type { ParticipantNoteEntry } from "@/lib/participant-notes-types";
 import {
   isParticipantOnline,
   type ParticipantPresenceSnapshot,
@@ -18,24 +20,30 @@ type ParticipantRow = {
   joinUrl: string;
   joinedAt: string | null;
   lastSeenAt: string | null;
+  notesCount: number;
+  notes: ParticipantNoteEntry[];
 };
 
 type ParticipantsTableProps = {
   sessionId: string;
   participants: ParticipantRow[];
+  readOnly?: boolean;
+  onViewNotes: (participant: ParticipantRow) => void;
 };
 
 function OnlineStatus({ isOnline }: { isOnline: boolean }) {
+  const { t } = useI18n();
+
   return (
     <span className="inline-flex items-center gap-2 text-sm">
       <span
         aria-hidden="true"
         className={`h-2 w-2 rounded-full ${
-          isOnline ? "bg-emerald-500" : "bg-slate-300"
+          isOnline ? "bg-emerald-500" : "bg-slate-600"
         }`}
       />
-      <span className={isOnline ? "text-emerald-700" : "text-slate-500"}>
-        {isOnline ? "Online" : "Offline"}
+      <span className={isOnline ? "text-emerald-300" : "text-slate-400"}>
+        {isOnline ? t("common.online") : t("common.offline")}
       </span>
     </span>
   );
@@ -45,13 +53,33 @@ type ParticipantsPresenceTableProps = {
   sessionId: string;
   participants: ParticipantRow[];
   initialPresence: Map<string, ParticipantPresenceSnapshot>;
+  readOnly?: boolean;
+  onViewNotes: (participant: ParticipantRow) => void;
 };
+
+function formatNotesCountLabel(
+  count: number,
+  t: (key: "sessions.notesCountZero" | "sessions.notesCountOne" | "sessions.notesCountMany", params?: Record<string, string | number>) => string,
+) {
+  if (count === 0) {
+    return t("sessions.notesCountZero");
+  }
+
+  if (count === 1) {
+    return t("sessions.notesCountOne");
+  }
+
+  return t("sessions.notesCountMany", { count });
+}
 
 function ParticipantsPresenceTable({
   sessionId,
   participants,
   initialPresence,
+  readOnly = false,
+  onViewNotes,
 }: ParticipantsPresenceTableProps) {
+  const { t, locale } = useI18n();
   const [presenceById, setPresenceById] =
     useState<Map<string, ParticipantPresenceSnapshot>>(initialPresence);
 
@@ -87,48 +115,54 @@ function ParticipantsPresenceTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200">
-        <thead className="bg-slate-50">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Name
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Type
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Assigned role
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Join link
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              First joined
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Last seen
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              Online now
-            </th>
-            <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-200 bg-white">
+        <table className="min-w-full divide-y divide-slate-700/40">
+          <thead className="bg-slate-900/80">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.name")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.type")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.assignedRole")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.joinLink")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.firstJoined")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.lastSeen")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.onlineNow")}
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("sessions.notes")}
+              </th>
+              <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("common.actions")}
+              </th>
+            </tr>
+          </thead>
+        <tbody className="divide-y divide-slate-700/40">
           {participants.map((participant) => {
             const presence = presenceById.get(participant.id);
+            const typeLabel = t(
+              `participantType.${participant.type}` as `participantType.PARTICIPANT`,
+            );
 
             return (
-              <tr key={participant.id}>
-                <td className="px-6 py-4 text-sm font-medium text-slate-900">
+              <tr key={participant.id} className="hover:bg-slate-800/50">
+                <td className="px-6 py-4 text-sm font-medium text-slate-50">
                   {participant.displayName}
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600">
-                  {participant.type}
+                <td className="px-6 py-4 text-sm text-slate-300">
+                  {typeLabel}
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600">
+                <td className="px-6 py-4 text-sm text-slate-300">
                   {participant.caseRoleName ?? "—"}
                 </td>
                 <td className="px-6 py-4">
@@ -137,39 +171,63 @@ function ParticipantsPresenceTable({
                       href={participant.joinUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="max-w-xs truncate text-sm text-slate-700 hover:text-slate-900"
+                      className="max-w-xs truncate text-sm text-cyan-400 hover:text-cyan-300"
                     >
                       {participant.joinUrl}
                     </a>
                     <CopyJoinLinkButton joinUrl={participant.joinUrl} />
                   </div>
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600">
-                  {formatDateFromIso(presence?.joinedAt ?? participant.joinedAt)}
+                <td className="px-6 py-4 text-sm text-slate-300">
+                  {formatDateFromIso(
+                    presence?.joinedAt ?? participant.joinedAt,
+                    t("common.notYet"),
+                    locale,
+                  )}
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600">
+                <td className="px-6 py-4 text-sm text-slate-300">
                   {formatDateFromIso(
                     presence?.lastSeenAt ?? participant.lastSeenAt,
+                    t("common.notYet"),
+                    locale,
                   )}
                 </td>
                 <td className="px-6 py-4">
                   <OnlineStatus isOnline={presence?.isOnline ?? false} />
                 </td>
+                <td className="px-6 py-4 text-sm text-slate-300">
+                  {formatNotesCountLabel(participant.notesCount, t)}
+                </td>
                 <td className="px-6 py-4 text-right">
-                  <form action={removeParticipant}>
-                    <input
-                      type="hidden"
-                      name="participantId"
-                      value={participant.id}
-                    />
-                    <input type="hidden" name="sessionId" value={sessionId} />
+                  <div className="flex flex-wrap items-center justify-end gap-3">
                     <button
-                      type="submit"
-                      className="text-sm font-medium text-rose-600 hover:text-rose-700"
+                      type="button"
+                      onClick={() => onViewNotes(participant)}
+                      className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
                     >
-                      Remove
+                      {t("sessions.viewNotes")}
                     </button>
-                  </form>
+                    {!readOnly ? (
+                      <form action={removeParticipant}>
+                        <input
+                          type="hidden"
+                          name="participantId"
+                          value={participant.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="sessionId"
+                          value={sessionId}
+                        />
+                        <button
+                          type="submit"
+                          className="text-sm font-medium text-rose-400 hover:text-rose-300"
+                        >
+                          {t("common.remove")}
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             );
@@ -183,6 +241,8 @@ function ParticipantsPresenceTable({
 export function ParticipantsTable({
   sessionId,
   participants,
+  readOnly = false,
+  onViewNotes,
 }: ParticipantsTableProps) {
   const initialPresence = useMemo(() => {
     const map = new Map<string, ParticipantPresenceSnapshot>();
@@ -218,6 +278,8 @@ export function ParticipantsTable({
       sessionId={sessionId}
       participants={participants}
       initialPresence={initialPresence}
+      readOnly={readOnly}
+      onViewNotes={onViewNotes}
     />
   );
 }

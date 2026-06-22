@@ -14,12 +14,14 @@ import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
 import { updateParticipantPresence } from "@/lib/participant-presence";
 import { prisma } from "@/lib/prisma";
+import { resolvePrepStatus } from "@/lib/session-display-status";
+import { mapCaseRolesToSessionRoleCreate } from "@/lib/session-role";
+import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
 import {
   addParticipantSchema,
   createSessionSchema,
   saveParticipantNotesSchema,
   updateSessionDurationSchema,
-  updateSessionStatusSchema,
 } from "@/lib/validations/session";
 
 type ActionErrors = {
@@ -45,12 +47,8 @@ async function getFacilitatorSession(sessionId: string) {
       facilitatorId: facilitator.id,
     },
     include: {
-      negotiationCase: {
-        include: {
-          roles: {
-            orderBy: { sortOrder: "asc" },
-          },
-        },
+      sessionRoles: {
+        orderBy: { sortOrder: "asc" },
       },
     },
   });
@@ -59,7 +57,23 @@ async function getFacilitatorSession(sessionId: string) {
     throw new Error("Session not found.");
   }
 
+  if (session.deletedAt) {
+    throw new Error("Session has been deleted.");
+  }
+
   return session;
+}
+
+async function syncSessionPrepStatus(sessionId: string) {
+  const participants = await prisma.sessionParticipant.findMany({
+    where: { sessionId },
+    select: { type: true },
+  });
+
+  await prisma.session.update({
+    where: { id: sessionId },
+    data: { status: resolvePrepStatus(participants) },
+  });
 }
 
 export type CreateSessionState = {
@@ -95,17 +109,28 @@ export async function createSession(
       where: {
         id: caseId,
         facilitatorId: facilitator.id,
+        ...activeCaseWhere,
       },
-      select: {
-        id: true,
-        defaultDurationSeconds: true,
+      include: {
+        roles: {
+          orderBy: { sortOrder: "asc" },
+        },
       },
     });
 
     if (!negotiationCase) {
+      const deletedCase = await prisma.negotiationCase.findFirst({
+        where: {
+          id: caseId,
+          facilitatorId: facilitator.id,
+          deletedAt: { not: null },
+        },
+        select: { id: true },
+      });
+
       return {
         errors: {
-          caseId: ["Selected case was not found."],
+          caseId: [deletedCase ? "caseDeleted" : "caseNotFound"],
         },
       };
     }
@@ -117,6 +142,13 @@ export async function createSession(
         facilitatorId: facilitator.id,
         status: SessionStatus.DRAFT,
         durationSeconds: minutesToSeconds(negotiationDurationMinutes),
+        snapshotCaseTitle: negotiationCase.title,
+        snapshotBusinessContext: negotiationCase.businessContext,
+        snapshotPublicInstructions: negotiationCase.publicInstructions,
+        snapshotCaseLanguage: negotiationCase.caseLanguage,
+        sessionRoles: {
+          create: mapCaseRolesToSessionRoleCreate(negotiationCase.roles),
+        },
       },
     });
 
@@ -133,7 +165,7 @@ export async function createSession(
         form: [
           error instanceof Error
             ? error.message
-            : "Unable to create session. Please try again.",
+            : "createSessionFailed",
         ],
       },
     };
@@ -153,7 +185,7 @@ export async function addParticipant(
     sessionId: formData.get("sessionId"),
     displayName: formData.get("displayName"),
     type: formData.get("type"),
-    caseRoleId: formData.get("caseRoleId") || undefined,
+    sessionRoleId: formData.get("sessionRoleId") || undefined,
   });
 
   if (!parsed.success) {
@@ -162,24 +194,24 @@ export async function addParticipant(
       errors: {
         displayName: fieldErrors.displayName,
         type: fieldErrors.type,
-        caseRoleId: fieldErrors.caseRoleId,
+        sessionRoleId: fieldErrors.sessionRoleId,
       },
     };
   }
 
   try {
-    const { sessionId, displayName, type, caseRoleId } = parsed.data;
+    const { sessionId, displayName, type, sessionRoleId } = parsed.data;
     const session = await getFacilitatorSession(sessionId);
 
     if (type === ParticipantType.PARTICIPANT) {
-      const assignedRole = session.negotiationCase.roles.find(
-        (role) => role.id === caseRoleId,
+      const assignedRole = session.sessionRoles.find(
+        (role) => role.id === sessionRoleId,
       );
 
       if (!assignedRole) {
         return {
           errors: {
-            caseRoleId: ["Selected role does not belong to this case."],
+            sessionRoleId: ["Selected role does not belong to this session."],
           },
         };
       }
@@ -187,7 +219,7 @@ export async function addParticipant(
       if (!isAssignableCaseRole(assignedRole.name)) {
         return {
           errors: {
-            caseRoleId: ["This role cannot be assigned to a participant."],
+            sessionRoleId: ["This role cannot be assigned to a participant."],
           },
         };
       }
@@ -196,14 +228,16 @@ export async function addParticipant(
         where: {
           sessionId,
           type: ParticipantType.PARTICIPANT,
-          caseRoleId,
+          sessionRoleId,
         },
       });
 
       if (existingAssignment) {
         return {
           errors: {
-            caseRoleId: ["This role is already assigned to another participant."],
+            sessionRoleId: [
+              "This role is already assigned to another participant.",
+            ],
           },
         };
       }
@@ -231,10 +265,13 @@ export async function addParticipant(
         sessionId,
         displayName,
         type: type as ParticipantType,
-        caseRoleId: type === ParticipantType.PARTICIPANT ? caseRoleId : null,
+        sessionRoleId:
+          type === ParticipantType.PARTICIPANT ? sessionRoleId : null,
         joinToken: generateJoinToken(),
       },
     });
+
+    await syncSessionPrepStatus(sessionId);
 
     revalidatePath(`/sessions/${sessionId}`);
     return { success: true };
@@ -268,6 +305,8 @@ export async function removeParticipant(formData: FormData) {
         sessionId,
       },
     });
+
+    await syncSessionPrepStatus(sessionId);
 
     revalidatePath(`/sessions/${sessionId}`);
   } catch {
@@ -307,56 +346,6 @@ export async function updateSessionDuration(formData: FormData) {
   }
 }
 
-export async function updateSessionStatus(formData: FormData) {
-  const parsed = updateSessionStatusSchema.safeParse({
-    sessionId: formData.get("sessionId"),
-    status: formData.get("status"),
-  });
-
-  if (!parsed.success) {
-    return;
-  }
-
-  const { sessionId, status } = parsed.data;
-
-  try {
-    await getFacilitatorSession(sessionId);
-
-    const updateData: {
-      status: SessionStatus;
-      startedAt?: Date;
-      endedAt?: Date;
-    } = {
-      status: status as SessionStatus,
-    };
-
-    if (status === SessionStatus.IN_PROGRESS) {
-      const existing = await prisma.session.findUnique({
-        where: { id: sessionId },
-        select: { startedAt: true },
-      });
-
-      if (!existing?.startedAt) {
-        updateData.startedAt = new Date();
-      }
-    }
-
-    if (status === SessionStatus.COMPLETED) {
-      updateData.endedAt = new Date();
-    }
-
-    await prisma.session.update({
-      where: { id: sessionId },
-      data: updateData,
-    });
-
-    revalidatePath(`/sessions/${sessionId}`);
-    revalidatePath("/sessions");
-  } catch {
-    // Silently fail for invalid requests.
-  }
-}
-
 export type SaveParticipantNotesState = {
   errors?: ActionErrors;
   success?: boolean;
@@ -385,13 +374,28 @@ export async function saveParticipantNotes(
 
   const participant = await prisma.sessionParticipant.findUnique({
     where: { joinToken },
-    select: { id: true },
+    select: {
+      id: true,
+      session: {
+        select: {
+          deletedAt: true,
+        },
+      },
+    },
   });
 
   if (!participant) {
     return {
       errors: {
         form: ["Invalid join link."],
+      },
+    };
+  }
+
+  if (participant.session.deletedAt) {
+    return {
+      errors: {
+        form: ["Session has been deleted."],
       },
     };
   }
@@ -417,4 +421,30 @@ export async function recordParticipantPresence(joinToken: string) {
 /** @deprecated Use recordParticipantPresence */
 export async function markParticipantJoined(joinToken: string) {
   await recordParticipantPresence(joinToken);
+}
+
+export async function deleteSession(sessionId: string) {
+  const facilitator = await getDemoFacilitator();
+
+  const session = await prisma.session.findFirst({
+    where: {
+      id: sessionId,
+      facilitatorId: facilitator.id,
+      ...activeSessionWhere,
+    },
+  });
+
+  if (!session) {
+    return;
+  }
+
+  await prisma.session.update({
+    where: { id: sessionId },
+    data: { deletedAt: new Date() },
+  });
+
+  revalidatePath("/sessions");
+  revalidatePath(`/sessions/${sessionId}`);
+  revalidatePath("/dashboard");
+  redirect("/sessions");
 }

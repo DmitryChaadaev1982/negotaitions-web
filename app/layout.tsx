@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-import { getAppName } from "@/lib/config";
+import { ClientI18nProvider } from "@/components/client-i18n-provider";
+import { getServerLocale } from "@/lib/i18n/server";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,28 +15,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const appName = getAppName();
-
 export const metadata: Metadata = {
   title: {
-    default: appName,
-    template: `%s | ${appName}`,
+    default: "NegotAItions",
+    template: "%s | NegotAItions",
   },
-  description: "Negotiation training platform for facilitators",
+  description: "AI-powered negotiation training platform for facilitators",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getServerLocale();
+
   return (
     <html
-      lang="en"
+      lang={locale}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      style={{ colorScheme: "dark" }}
     >
-      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
-        {children}
+      <body className="min-h-full flex flex-col bg-[#020617] text-slate-50">
+        <ClientI18nProvider initialLocale={locale}>{children}</ClientI18nProvider>
       </body>
     </html>
   );

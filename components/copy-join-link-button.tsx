@@ -1,16 +1,19 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/useI18n";
+
 type CopyJoinLinkButtonProps = {
   joinUrl: string;
 };
 
 export function CopyJoinLinkButton({ joinUrl }: CopyJoinLinkButtonProps) {
+  const { t } = useI18n();
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(joinUrl);
     } catch {
-      // Fallback for older browsers.
-      window.prompt("Copy join link:", joinUrl);
+      window.prompt(t("common.copyJoinLinkPrompt"), joinUrl);
     }
   };
 
@@ -18,9 +21,9 @@ export function CopyJoinLinkButton({ joinUrl }: CopyJoinLinkButtonProps) {
     <button
       type="button"
       onClick={handleCopy}
-      className="text-sm font-medium text-slate-700 hover:text-slate-900"
+      className="text-sm font-medium text-blue-400 hover:text-blue-300"
     >
-      Copy link
+      {t("common.copyLink")}
     </button>
   );
 }

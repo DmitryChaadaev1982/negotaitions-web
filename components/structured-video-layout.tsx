@@ -10,12 +10,13 @@ import {
 import { NegotiationState, ParticipantType } from "@/app/generated/prisma/enums";
 import type { ControlState } from "@/lib/negotiation-control";
 import { formatSecondsAsMmSs } from "@/lib/negotiation-duration";
+import { useI18n } from "@/lib/i18n/useI18n";
 import { parseLiveKitParticipantMetadata } from "@/lib/livekit-participant-metadata";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-core";
 import type { Participant } from "livekit-client";
 import { Track } from "livekit-client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type LayoutParticipant = SessionRosterEntry & {
   livekitParticipant: Participant | null;
@@ -27,69 +28,192 @@ type StructuredVideoLayoutProps = {
   participantType: ParticipantType;
 };
 
-/** Height:width = 3:4 → CSS aspect-ratio width/height = 4/3 */
-function AspectVideoFrame({ children }: { children: React.ReactNode }) {
+type TileSizes = {
+  participant: number;
+  observer: number;
+  facilitator: number;
+  observerRowHeight: number;
+};
+
+const TILE_GAP_PX = 8;
+const LAYOUT_PADDING_PX = 16;
+const TIMER_HEIGHT_PX = 88;
+const MIN_TILE_HEIGHT_PX = 80;
+const OBSERVER_SCALE = 0.55;
+const FACILITATOR_SCALE = 0.75;
+
+/** Height:width = 3:4 */
+function tileWidth(height: number) {
+  return Math.round((height * 4) / 3);
+}
+
+function computeTileSizes(
+  width: number,
+  height: number,
+  leftCount: number,
+  rightCount: number,
+  observerCount: number,
+): TileSizes {
+  const innerWidth = Math.max(width - LAYOUT_PADDING_PX, 0);
+  const innerHeight = Math.max(height - LAYOUT_PADDING_PX, 0);
+  const maxPerSide = Math.max(leftCount, rightCount, 1);
+
+  // Column width ratio: sides 1.2, center 0.9
+  const sideColumnWidth = (innerWidth * 1.2) / 3.3;
+  const participantHeightFromWidth = (sideColumnWidth * 3) / 4;
+
+  const computeParticipantHeight = (tableHeight: number) => {
+    const verticalGaps = TILE_GAP_PX * Math.max(maxPerSide - 1, 0);
+    const fromHeight = (tableHeight - verticalGaps) / maxPerSide;
+    return Math.max(
+      MIN_TILE_HEIGHT_PX,
+      Math.min(fromHeight, participantHeightFromWidth),
+    );
+  };
+
+  if (observerCount === 0) {
+    const participant = computeParticipantHeight(innerHeight);
+    const facilitatorArea = innerHeight - TIMER_HEIGHT_PX - TILE_GAP_PX;
+    const facilitator = Math.max(
+      MIN_TILE_HEIGHT_PX * FACILITATOR_SCALE,
+      Math.min(participant * FACILITATOR_SCALE, facilitatorArea),
+    );
+
+    return {
+      participant,
+      observer: participant * OBSERVER_SCALE,
+      facilitator,
+      observerRowHeight: 0,
+    };
+  }
+
+  let participant = computeParticipantHeight(innerHeight);
+  let observer = participant * OBSERVER_SCALE;
+  let observerRowHeight = observer + TILE_GAP_PX;
+  let tableHeight = innerHeight - observerRowHeight - TILE_GAP_PX;
+
+  participant = computeParticipantHeight(tableHeight);
+  observer = participant * OBSERVER_SCALE;
+  observerRowHeight = observer + TILE_GAP_PX;
+  tableHeight = innerHeight - observerRowHeight - TILE_GAP_PX;
+  participant = computeParticipantHeight(tableHeight);
+
+  const facilitatorArea = tableHeight - TIMER_HEIGHT_PX - TILE_GAP_PX;
+  const facilitator = Math.max(
+    MIN_TILE_HEIGHT_PX * FACILITATOR_SCALE,
+    Math.min(participant * FACILITATOR_SCALE, facilitatorArea),
+  );
+
+  return {
+    participant,
+    observer: participant * OBSERVER_SCALE,
+    facilitator,
+    observerRowHeight,
+  };
+}
+
+function useVideoTileSizes(
+  leftCount: number,
+  rightCount: number,
+  observerCount: number,
+) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [sizes, setSizes] = useState<TileSizes>({
+    participant: MIN_TILE_HEIGHT_PX,
+    observer: MIN_TILE_HEIGHT_PX * OBSERVER_SCALE,
+    facilitator: MIN_TILE_HEIGHT_PX * FACILITATOR_SCALE,
+    observerRowHeight: MIN_TILE_HEIGHT_PX * OBSERVER_SCALE + TILE_GAP_PX,
+  });
+  const [layoutGeneration, setLayoutGeneration] = useState(0);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateSizes = () => {
+      const rect = element.getBoundingClientRect();
+      setSizes(
+        computeTileSizes(
+          rect.width,
+          rect.height,
+          leftCount,
+          rightCount,
+          observerCount,
+        ),
+      );
+      setLayoutGeneration((value) => value + 1);
+    };
+
+    updateSizes();
+
+    const observer = new ResizeObserver(() => {
+      updateSizes();
+    });
+
+    observer.observe(element);
+    window.addEventListener("resize", updateSizes);
+    document.addEventListener("visibilitychange", updateSizes);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSizes);
+      document.removeEventListener("visibilitychange", updateSizes);
+    };
+  }, [leftCount, observerCount, rightCount]);
+
+  return { containerRef, sizes, layoutGeneration };
+}
+
+function SizedVideoFrame({
+  heightPx,
+  children,
+}: {
+  heightPx: number;
+  children: React.ReactNode;
+}) {
+  const widthPx = tileWidth(heightPx);
+
   return (
-    <div className="flex h-full w-full min-h-0 min-w-0 items-center justify-center overflow-hidden [container-type:size]">
-      <div className="aspect-[4/3] w-[min(100cqw,calc(100cqh*4/3))] max-w-full shrink-0">
-        <div className="h-full w-full min-h-0 min-w-0">{children}</div>
+    <div className="flex shrink-0 items-center justify-center">
+      <div
+        className="overflow-hidden"
+        style={{ width: widthPx, height: heightPx }}
+      >
+        {children}
       </div>
     </div>
   );
 }
 
-function useLayoutGeneration() {
-  const [generation, setGeneration] = useState(0);
-
-  useEffect(() => {
-    let frameId = 0;
-
-    const scheduleUpdate = () => {
-      cancelAnimationFrame(frameId);
-      frameId = requestAnimationFrame(() => {
-        setGeneration((value) => value + 1);
-      });
-    };
-
-    window.addEventListener("resize", scheduleUpdate);
-    document.addEventListener("visibilitychange", scheduleUpdate);
-
-    return () => {
-      cancelAnimationFrame(frameId);
-      window.removeEventListener("resize", scheduleUpdate);
-      document.removeEventListener("visibilitychange", scheduleUpdate);
-    };
-  }, []);
-
-  return generation;
-}
-
 function getStateMessage(
   negotiationState: NegotiationState,
   participantType: ParticipantType,
+  t: ReturnType<typeof useI18n>["t"],
 ) {
   switch (negotiationState) {
     case NegotiationState.LOBBY:
       return {
-        title: "Lobby / preparation",
-        subtitle: "Waiting for facilitator to start negotiation",
+        title: t("room.lobbyPreparation"),
+        subtitle: t("room.waitingForFacilitatorStart"),
       };
     case NegotiationState.RUNNING:
       return {
-        title: "Negotiation in progress",
+        title: t("room.negotiationInProgress"),
         subtitle:
           participantType === ParticipantType.PARTICIPANT
             ? null
-            : "Your microphone is muted during negotiation",
+            : t("room.microphoneMutedDuringNegotiation"),
       };
     case NegotiationState.PAUSED:
       return {
-        title: "Paused by facilitator",
+        title: t("room.pausedByFacilitator"),
         subtitle: null,
       };
     case NegotiationState.FINISHED:
       return {
-        title: "Negotiation finished — debrief mode",
+        title: t("room.negotiationFinishedDebrief"),
         subtitle: null,
       };
     default:
@@ -98,13 +222,16 @@ function getStateMessage(
 }
 
 function CenterTimer({ controlState }: { controlState: ControlState }) {
+  const { t } = useI18n();
   const { negotiationState, remainingSeconds, durationSeconds } = controlState;
   const isExpired =
     negotiationState === NegotiationState.RUNNING && remainingSeconds === 0;
 
   let timerLabel: string;
   if (negotiationState === NegotiationState.LOBBY) {
-    timerLabel = `${formatSecondsAsMmSs(durationSeconds)} — not started`;
+    timerLabel = t("room.timerNotStarted", {
+      time: formatSecondsAsMmSs(durationSeconds),
+    });
   } else if (negotiationState === NegotiationState.FINISHED) {
     timerLabel = formatSecondsAsMmSs(remainingSeconds);
   } else {
@@ -114,6 +241,7 @@ function CenterTimer({ controlState }: { controlState: ControlState }) {
   const stateMessage = getStateMessage(
     negotiationState,
     controlState.participantType,
+    t,
   );
 
   return (
@@ -155,14 +283,15 @@ function RoleVideoTile({
   trackRef?: TrackReferenceOrPlaceholder;
   layoutGeneration: number;
 }) {
+  const { t } = useI18n();
   const { livekitParticipant, displayName, caseRoleName } = layoutParticipant;
 
   const placeholderLabel =
     layoutParticipant.participantType === ParticipantType.OBSERVER
-      ? "Observer"
+      ? t("participantType.OBSERVER")
       : layoutParticipant.participantType === ParticipantType.FACILITATOR
-        ? "Facilitator"
-        : "Participant";
+        ? t("participantType.FACILITATOR")
+        : t("participantType.PARTICIPANT");
 
   if (!livekitParticipant || !trackRef) {
     return (
@@ -180,7 +309,9 @@ function RoleVideoTile({
           </span>
         )}
         <span className="mt-1 text-[10px] text-white/30 sm:text-xs">
-          {livekitParticipant ? "Connecting video..." : "Waiting to join..."}
+          {livekitParticipant
+            ? t("room.connectingVideo")
+            : t("room.waitingToJoin")}
         </span>
       </div>
     );
@@ -277,32 +408,29 @@ function ParticipantColumn({
   speakingIds,
   trackRefByIdentity,
   layoutGeneration,
+  tileHeight,
 }: {
   participants: LayoutParticipant[];
   speakingIds: Set<string>;
   trackRefByIdentity: Map<string, TrackReferenceOrPlaceholder>;
   layoutGeneration: number;
+  tileHeight: number;
 }) {
   if (participants.length === 0) {
-    return <div className="h-full min-h-0 min-w-[5rem]" />;
+    return <div className="h-full min-h-0 min-w-0" />;
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-[5rem] flex-col items-stretch justify-center gap-2">
+    <div className="flex h-full min-h-0 min-w-0 flex-col items-center justify-center gap-2">
       {participants.map((participant) => (
-        <div
-          key={participant.id}
-          className="flex min-h-[5rem] flex-1 items-center justify-center"
-        >
-          <AspectVideoFrame>
-            <RoleVideoTile
-              layoutParticipant={participant}
-              isSpeaking={speakingIds.has(participant.id)}
-              trackRef={trackRefByIdentity.get(participant.id)}
-              layoutGeneration={layoutGeneration}
-            />
-          </AspectVideoFrame>
-        </div>
+        <SizedVideoFrame key={participant.id} heightPx={tileHeight}>
+          <RoleVideoTile
+            layoutParticipant={participant}
+            isSpeaking={speakingIds.has(participant.id)}
+            trackRef={trackRefByIdentity.get(participant.id)}
+            layoutGeneration={layoutGeneration}
+          />
+        </SizedVideoFrame>
       ))}
     </div>
   );
@@ -313,7 +441,7 @@ export function StructuredVideoLayout({
   controlState,
   participantType,
 }: StructuredVideoLayoutProps) {
-  const layoutGeneration = useLayoutGeneration();
+  const { t } = useI18n();
   const layoutParticipants = useLayoutParticipants(roster);
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
@@ -349,75 +477,85 @@ export function StructuredVideoLayout({
   const { left: leftParticipants, right: rightParticipants } =
     splitParticipants(negotiators);
 
+  const { containerRef, sizes, layoutGeneration } = useVideoTileSizes(
+    leftParticipants.length,
+    rightParticipants.length,
+    observers.length,
+  );
+
   const layoutControlState = {
     ...controlState,
     participantType,
   };
 
   const hasObservers = observers.length > 0;
+  const centerColumnWidth = tileWidth(sizes.facilitator);
 
   return (
     <div
-      className={`grid h-full min-h-0 overflow-hidden p-2 sm:p-3 ${
-        hasObservers
-          ? "grid-rows-[minmax(4rem,22%)_minmax(0,1fr)] gap-2 sm:gap-3"
-          : "grid-rows-[minmax(0,1fr)]"
-      }`}
+      ref={containerRef}
+      className="flex h-full min-h-0 flex-col overflow-hidden p-2 sm:p-3"
+      style={{ gap: TILE_GAP_PX }}
     >
       {hasObservers ? (
         <section
-          aria-label="Observers"
-          className="flex h-full min-h-0 items-stretch justify-center gap-2 overflow-hidden sm:gap-3"
+          aria-label={t("room.observersSection")}
+          className="flex shrink-0 items-center justify-center overflow-hidden"
+          style={{
+            height: sizes.observerRowHeight,
+            gap: TILE_GAP_PX,
+          }}
         >
           {observers.map((observer) => (
-            <div
-              key={observer.id}
-              className="flex h-full min-h-0 min-w-[4rem] flex-1 items-center justify-center"
-            >
-              <AspectVideoFrame>
-                <RoleVideoTile
-                  layoutParticipant={observer}
-                  isSpeaking={speakingIds.has(observer.id)}
-                  trackRef={trackRefByIdentity.get(observer.id)}
-                  layoutGeneration={layoutGeneration}
-                />
-              </AspectVideoFrame>
-            </div>
+            <SizedVideoFrame key={observer.id} heightPx={sizes.observer}>
+              <RoleVideoTile
+                layoutParticipant={observer}
+                isSpeaking={speakingIds.has(observer.id)}
+                trackRef={trackRefByIdentity.get(observer.id)}
+                layoutGeneration={layoutGeneration}
+              />
+            </SizedVideoFrame>
           ))}
         </section>
       ) : null}
 
       <section
-        aria-label="Negotiation table"
-        className="grid h-full min-h-0 grid-cols-[minmax(5rem,1fr)_minmax(10rem,14rem)_minmax(5rem,1fr)] items-stretch gap-2 overflow-hidden sm:gap-3"
+        aria-label={t("room.negotiationTableSection")}
+        className="grid min-h-0 flex-1 items-center overflow-hidden"
+        style={{
+          gap: TILE_GAP_PX,
+          gridTemplateColumns: `minmax(0, 1.2fr) ${centerColumnWidth}px minmax(0, 1.2fr)`,
+        }}
       >
         <ParticipantColumn
           participants={leftParticipants}
           speakingIds={speakingIds}
           trackRefByIdentity={trackRefByIdentity}
           layoutGeneration={layoutGeneration}
+          tileHeight={sizes.participant}
         />
 
-        <div className="flex h-full min-h-0 min-w-[10rem] flex-col items-stretch justify-center gap-2 overflow-hidden">
+        <div
+          className="flex h-full min-h-0 flex-col items-center justify-center overflow-hidden"
+          style={{ width: centerColumnWidth, gap: TILE_GAP_PX }}
+        >
           <CenterTimer controlState={layoutControlState} />
-          <div className="flex min-h-[5rem] flex-1 items-center justify-center">
-            {facilitator ? (
-              <AspectVideoFrame>
-                <RoleVideoTile
-                  layoutParticipant={facilitator}
-                  isSpeaking={speakingIds.has(facilitator.id)}
-                  trackRef={trackRefByIdentity.get(facilitator.id)}
-                  layoutGeneration={layoutGeneration}
-                />
-              </AspectVideoFrame>
-            ) : (
-              <AspectVideoFrame>
-                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/30 text-xs text-slate-500 sm:rounded-2xl sm:text-sm">
-                  Facilitator
-                </div>
-              </AspectVideoFrame>
-            )}
-          </div>
+          {facilitator ? (
+            <SizedVideoFrame heightPx={sizes.facilitator}>
+              <RoleVideoTile
+                layoutParticipant={facilitator}
+                isSpeaking={speakingIds.has(facilitator.id)}
+                trackRef={trackRefByIdentity.get(facilitator.id)}
+                layoutGeneration={layoutGeneration}
+              />
+            </SizedVideoFrame>
+          ) : (
+            <SizedVideoFrame heightPx={sizes.facilitator}>
+              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/30 text-xs text-slate-500 sm:rounded-2xl sm:text-sm">
+                {t("room.noFacilitatorPlaceholder")}
+              </div>
+            </SizedVideoFrame>
+          )}
         </div>
 
         <ParticipantColumn
@@ -425,6 +563,7 @@ export function StructuredVideoLayout({
           speakingIds={speakingIds}
           trackRefByIdentity={trackRefByIdentity}
           layoutGeneration={layoutGeneration}
+          tileHeight={sizes.participant}
         />
       </section>
     </div>

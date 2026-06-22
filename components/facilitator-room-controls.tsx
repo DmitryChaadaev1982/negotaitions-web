@@ -6,6 +6,7 @@ import {
   MIN_NEGOTIATION_DURATION_MINUTES,
   secondsToDisplayMinutes,
 } from "@/lib/negotiation-duration";
+import { useI18n } from "@/lib/i18n/useI18n";
 import { useCallback, useState } from "react";
 
 type FacilitatorRoomControlsProps = {
@@ -36,6 +37,7 @@ function LobbyControls({
   onStart,
   actionButtonClass,
 }: LobbyControlsProps) {
+  const { t } = useI18n();
   const [durationMinutes, setDurationMinutes] = useState(
     secondsToDisplayMinutes(controlState.durationSeconds),
   );
@@ -60,7 +62,7 @@ function LobbyControls({
         throw new Error(
           "error" in payload && payload.error
             ? payload.error
-            : "Unable to update duration.",
+            : t("room.unableToUpdateDuration"),
         );
       }
 
@@ -75,7 +77,7 @@ function LobbyControls({
       setDurationError(
         durationUpdateError instanceof Error
           ? durationUpdateError.message
-          : "Unable to update duration.",
+          : t("room.unableToUpdateDuration"),
       );
     } finally {
       setIsSubmitting(false);
@@ -87,13 +89,14 @@ function LobbyControls({
     onControlStateChange,
     sessionId,
     setIsSubmitting,
+    t,
   ]);
 
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex items-center gap-2">
         <label htmlFor="room-duration-minutes" className="sr-only">
-          Negotiation duration in minutes
+          {t("room.durationMinutesLabel")}
         </label>
         <input
           id="room-duration-minutes"
@@ -105,16 +108,16 @@ function LobbyControls({
             setDurationMinutes(Number(event.target.value))
           }
           className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-2 text-sm text-white"
-          aria-label="Negotiation duration in minutes"
+          aria-label={t("room.durationMinutesLabel")}
         />
-        <span className="text-sm text-slate-400">min</span>
+        <span className="text-sm text-slate-400">{t("room.min")}</span>
         <button
           type="button"
           disabled={isSubmitting}
           onClick={() => void saveDuration()}
           className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
         >
-          Save
+          {t("room.save")}
         </button>
       </div>
       {durationError ? (
@@ -126,7 +129,7 @@ function LobbyControls({
         onClick={onStart}
         className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
       >
-        Start negotiation
+        {t("room.startNegotiation")}
       </button>
     </div>
   );
@@ -138,6 +141,7 @@ export function FacilitatorRoomControls({
   controlState,
   onControlStateChange,
 }: FacilitatorRoomControlsProps) {
+  const { t } = useI18n();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const runAction = useCallback(
@@ -176,18 +180,20 @@ export function FacilitatorRoomControls({
   const actionButtonClass =
     "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60";
 
+  const statusMessage = {
+    LOBBY: t("room.readyToStart"),
+    RUNNING: t("room.negotiationInProgress"),
+    PAUSED: t("room.negotiationPaused"),
+    FINISHED: t("room.negotiationFinishedDebrief"),
+  }[negotiationState];
+
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Facilitator controls
+          {t("room.facilitatorControls")}
         </p>
-        <p className="mt-0.5 text-sm text-slate-300">
-          {negotiationState === "LOBBY" && "Ready to start the negotiation"}
-          {negotiationState === "RUNNING" && "Negotiation in progress"}
-          {negotiationState === "PAUSED" && "Negotiation paused"}
-          {negotiationState === "FINISHED" && "Negotiation finished — debrief mode"}
-        </p>
+        <p className="mt-0.5 text-sm text-slate-300">{statusMessage}</p>
       </div>
 
       {negotiationState === "LOBBY" ? (
@@ -212,7 +218,7 @@ export function FacilitatorRoomControls({
             onClick={() => void runAction("PAUSE")}
             className={`${actionButtonClass} bg-amber-600 text-white hover:bg-amber-500`}
           >
-            Pause negotiation
+            {t("room.pauseNegotiation")}
           </button>
           <button
             type="button"
@@ -220,7 +226,7 @@ export function FacilitatorRoomControls({
             onClick={() => void runAction("FINISH")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
           >
-            Finish early
+            {t("room.finishEarly")}
           </button>
         </div>
       ) : null}
@@ -233,7 +239,7 @@ export function FacilitatorRoomControls({
             onClick={() => void runAction("RESUME")}
             className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
           >
-            Resume negotiation
+            {t("room.resumeNegotiation")}
           </button>
           <button
             type="button"
@@ -241,15 +247,13 @@ export function FacilitatorRoomControls({
             onClick={() => void runAction("FINISH")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
           >
-            Finish early
+            {t("room.finishEarly")}
           </button>
         </div>
       ) : null}
 
       {negotiationState === "FINISHED" ? (
-        <p className="text-sm text-slate-400">
-          Session complete. Use the video controls below for debrief.
-        </p>
+        <p className="text-sm text-slate-400">{t("room.sessionCompleteDebrief")}</p>
       ) : null}
     </div>
   );

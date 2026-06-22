@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   const participant = await prisma.sessionParticipant.findUnique({
     where: { joinToken: parsed.data.joinToken },
     include: {
-      caseRole: {
+      sessionRole: {
         select: { name: true },
       },
       session: {
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     participant,
     participant.session,
     config,
-    participant.caseRole?.name ?? null,
+    participant.sessionRole?.name ?? null,
   );
 
   return NextResponse.json({

@@ -36,7 +36,6 @@ export async function GET(request: Request, context: RouteContext) {
       data: updateData,
       select: {
         id: true,
-        status: true,
         negotiationState: true,
         durationSeconds: true,
         negotiationStartedAt: true,

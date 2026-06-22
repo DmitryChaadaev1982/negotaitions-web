@@ -64,7 +64,6 @@ export async function POST(request: Request, context: RouteContext) {
         data: autoFinishData,
         select: {
           id: true,
-          status: true,
           negotiationState: true,
           durationSeconds: true,
           negotiationStartedAt: true,

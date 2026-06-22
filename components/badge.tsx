@@ -1,27 +1,60 @@
-import type { Difficulty } from "@/app/generated/prisma/client";
+"use client";
 
-const difficultyStyles: Record<Difficulty, string> = {
-  EASY: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  MEDIUM: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  HARD: "bg-rose-50 text-rose-700 ring-rose-600/20",
+import type { Difficulty } from "@/app/generated/prisma/client";
+import { useI18n } from "@/lib/i18n/useI18n";
+import { cn } from "@/lib/cn";
+
+const variantStyles: Record<Difficulty | "default" | "info" | "success" | "warning" | "danger", string> = {
+  EASY: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+  MEDIUM: "bg-amber-500/15 text-amber-300 ring-amber-500/25",
+  HARD: "bg-rose-500/15 text-rose-300 ring-rose-500/25",
+  default: "bg-slate-800/80 text-slate-300 ring-slate-600/30",
+  info: "bg-blue-500/15 text-blue-300 ring-blue-500/25",
+  success: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
+  warning: "bg-amber-500/15 text-amber-300 ring-amber-500/25",
+  danger: "bg-rose-500/15 text-rose-300 ring-rose-500/25",
 };
 
 type BadgeProps = {
   children: React.ReactNode;
-  variant?: "default" | Difficulty;
+  variant?: Difficulty | "default" | "info" | "success" | "warning" | "danger";
+  className?: string;
 };
 
-export function Badge({ children, variant = "default" }: BadgeProps) {
-  const className =
-    variant === "default"
-      ? "bg-slate-100 text-slate-700 ring-slate-500/10"
-      : difficultyStyles[variant];
-
+export function Badge({ children, variant = "default", className }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}
+      className={cn(
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset",
+        variantStyles[variant],
+        className,
+      )}
     >
       {children}
     </span>
   );
+}
+
+type DifficultyBadgeProps = {
+  difficulty: Difficulty;
+};
+
+export function DifficultyBadge({ difficulty }: DifficultyBadgeProps) {
+  const { t } = useI18n();
+
+  return (
+    <Badge variant={difficulty}>
+      {t(`difficulty.${difficulty}` as `difficulty.${Difficulty}`)}
+    </Badge>
+  );
+}
+
+export function StatusBadge({
+  children,
+  variant = "default",
+}: {
+  children: React.ReactNode;
+  variant?: "default" | "info" | "success" | "warning" | "danger";
+}) {
+  return <Badge variant={variant}>{children}</Badge>;
 }

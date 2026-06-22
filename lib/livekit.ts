@@ -1,4 +1,4 @@
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, TrackSource } from "livekit-server-sdk";
 
 import type { Session, SessionParticipant } from "@/app/generated/prisma/client";
 import { buildLiveKitParticipantMetadata } from "@/lib/livekit-participant-metadata";
@@ -65,6 +65,7 @@ export async function createLiveKitAccessToken(
     room: roomName,
     roomJoin: true,
     canPublish,
+    canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE],
     canSubscribe: true,
   });
 
