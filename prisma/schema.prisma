@@ -93,6 +93,22 @@ enum TranscriptSource {
   GENERATED
 }
 
+enum TranscriptStatus {
+  QUEUED
+  DOWNLOADING_RECORDING
+  COMPRESSING_AUDIO
+  TRANSCRIBING
+  COMPLETED
+  FAILED
+}
+
+enum AiAnalysisStatus {
+  QUEUED
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
 enum ExternalService {
   LIVEKIT
   OPENAI
@@ -382,7 +398,8 @@ model Transcript {
   sessionId            String           @unique
   recordingId          String?          @unique
   source               TranscriptSource
-  text                 String           @db.Text
+  status               TranscriptStatus @default(COMPLETED)
+  text                 String           @default("") @db.Text
   diarizedText         String?          @db.Text
   language             String?
   originalFileName     String?
@@ -390,6 +407,9 @@ model Transcript {
   transcriptionModel   String?
   hasSpeakerDiarization Boolean         @default(false)
   speakerMapping       Json?
+  errorMessage         String?
+  startedAt            DateTime?
+  completedAt          DateTime?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
@@ -418,12 +438,28 @@ model TranscriptSegment {
 }
 
 model AiAnalysis {
-  id        String   @id @default(cuid())
-  sessionId String   @unique
-  summary   String?  @db.Text
-  result    Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                     String           @id @default(cuid())
+  sessionId              String           @unique
+  transcriptId           String?
+  status                 AiAnalysisStatus @default(QUEUED)
+  model                  String?
+  language               String?
+  executiveSummary       String?          @db.Text
+  overallScore           Int?
+  analysisJson           Json?
+  rawModelOutput         Json?
+  errorMessage           String?          @db.Text
+  startedAt              DateTime?
+  completedAt            DateTime?
+  // Sharing / visibility
+  visibility             String           @default("FACILITATOR_ONLY")
+  sharedAnalysisJson     Json?
+  sharedExecutiveSummary String?          @db.Text
+  sharedAt               DateTime?
+  sharedBy               String?
+  unsharedAt             DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

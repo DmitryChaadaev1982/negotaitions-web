@@ -7,15 +7,19 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
+import { SessionMaterialsDashboard } from "@/components/session-materials-dashboard";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { AppShell } from "@/components/ui/app-shell";
 import { BrandLogo } from "@/components/ui/brand-logo";
-import {
-  SecondaryButtonLink,
-} from "@/components/ui/buttons";
+import { SecondaryButtonLink } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath, buildSessionRoomPath } from "@/lib/config";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
+import type {
+  SessionMaterialsProcessingSnapshot,
+  SessionMaterialsRecordingSnapshot,
+  SessionMaterialsTranscriptSnapshot,
+} from "@/lib/session-materials-processing";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type RoleBriefing = {
@@ -32,6 +36,7 @@ type JoinPageViewProps = {
   session: {
     id: string;
     title: string;
+    caseTitle: string;
     roomLabel: string | null;
     preparationDurationMinutes: number;
     negotiationDurationMinutes: number;
@@ -75,45 +80,10 @@ type JoinPageViewProps = {
   }>;
   showNotes: boolean;
   notesVariant: "preparation" | "observer" | "facilitator";
+  recording: SessionMaterialsRecordingSnapshot;
+  transcript: SessionMaterialsTranscriptSnapshot;
+  processing?: SessionMaterialsProcessingSnapshot;
 };
-
-function SessionResultsPlaceholder() {
-  const { t } = useI18n();
-
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-base font-semibold text-slate-50">
-          {t("join.resultsSection")}
-        </h2>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="recording-section">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            {t("recording.recording")}
-          </p>
-          <p className="mt-1 text-sm text-slate-400">
-            {t("join.recordingNotAvailableYet")}
-          </p>
-        </div>
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="transcript-section">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            {t("recording.transcript")}
-          </p>
-          <p className="mt-1 text-sm text-slate-400">
-            {t("join.transcriptNotAvailableYet")}
-          </p>
-        </div>
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="ai-analysis-placeholder">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            AI
-          </p>
-          <p className="mt-1 text-sm text-slate-400">{t("join.aiAnalysisLater")}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 export function JoinPageView({
   joinToken,
@@ -126,6 +96,9 @@ export function JoinPageView({
   assignedParticipants,
   showNotes,
   notesVariant,
+  recording,
+  transcript,
+  processing,
 }: JoinPageViewProps) {
   const { t } = useI18n();
 
@@ -165,8 +138,8 @@ export function JoinPageView({
   const roomHref = buildSessionRoomPath(session.id, joinToken);
 
   return (
-    <div className="min-h-full app-gradient-bg">
-      <header className="glass-header sticky top-0 z-50" data-testid="session-materials-page">
+    <div className="min-h-full app-gradient-bg" data-testid="session-materials-page">
+      <header className="glass-header sticky top-0 z-50" data-testid="session-materials-header">
         <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-center justify-between gap-4">
             <BrandLogo size="sm" href={undefined} />
@@ -183,14 +156,14 @@ export function JoinPageView({
               {event.title}
             </p>
           ) : null}
-          <p className="text-base text-slate-300" data-testid="session-case-title">
-            {session.title}
-          </p>
           {session.roomLabel ? (
             <p className="text-sm font-medium text-cyan-300" data-testid="session-room-label">
               {session.roomLabel}
             </p>
           ) : null}
+          <p className="text-base text-slate-300" data-testid="session-case-title">
+            {session.caseTitle}
+          </p>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
             <span>{t("common.welcome", { name: participant.displayName })}</span>
             <span>·</span>
@@ -219,6 +192,26 @@ export function JoinPageView({
               })}
             </span>
           </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            {event ? (
+              <SecondaryButtonLink
+                href={event.lobbyUrl}
+                className="w-full text-center sm:w-auto"
+                data-testid="back-to-event-lobby-link"
+              >
+                {t("events.returnToEventLobby")}
+              </SecondaryButtonLink>
+            ) : null}
+            {!session.isDeleted && roomActive ? (
+              <SecondaryButtonLink
+                href={roomHref}
+                className="w-full text-center sm:w-auto"
+                data-testid="join-video-room-button"
+              >
+                {t("join.joinVideoRoom")}
+              </SecondaryButtonLink>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -243,72 +236,6 @@ export function JoinPageView({
           <div className="rounded-lg border border-slate-600/30 bg-slate-900/60 px-4 py-3">
             <p className="text-sm text-slate-300">{t("join.sessionFinishedMessage")}</p>
           </div>
-        ) : (
-          <SecondaryButtonLink
-            href={roomHref}
-            className="w-full py-3 text-center"
-            data-testid="join-video-room-button"
-          >
-            {t("join.joinVideoRoom")}
-          </SecondaryButtonLink>
-        )}
-
-        {isFinishedSession ? <SessionResultsPlaceholder /> : null}
-
-        {event ? (
-          <SecondaryButtonLink
-            href={event.lobbyUrl}
-            className="w-full text-center"
-            data-testid="back-to-event-lobby-link"
-          >
-            {t("events.returnToEventLobby")}
-          </SecondaryButtonLink>
-        ) : null}
-
-        {eventSessions.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <h2 className="text-base font-semibold text-slate-50" data-testid="my-sessions-in-event-section">
-                {isFacilitator
-                  ? t("events.sessionsInThisEvent")
-                  : t("events.mySessionsInThisEvent")}
-              </h2>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {eventSessions.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-slate-100">
-                      {item.roomLabel ?? item.title}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {item.caseTitle}
-                      {item.roleName ? ` · ${item.roleName}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {item.isActive ? (
-                      <SecondaryButtonLink
-                        href={buildSessionRoomPath(item.id, item.joinToken)}
-                        data-testid="join-video-room-button"
-                      >
-                        {t("events.openRoom")}
-                      </SecondaryButtonLink>
-                    ) : null}
-                    <SecondaryButtonLink
-                      href={buildSessionMaterialsPath(item.joinToken)}
-                      data-testid="open-session-materials-button"
-                    >
-                      {t("events.openMaterials")}
-                    </SecondaryButtonLink>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
         ) : null}
 
         <Card>
@@ -325,7 +252,7 @@ export function JoinPageView({
               <h3 className="text-sm font-medium text-slate-50">
                 {t("join.caseDescription")}
               </h3>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">
                 {negotiationCase.description}
               </p>
             </div>
@@ -333,10 +260,18 @@ export function JoinPageView({
               <h3 className="text-sm font-medium text-slate-50">
                 {t("join.publicInstructions")}
               </h3>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">
                 {negotiationCase.publicInstructions}
               </p>
             </div>
+            {isParticipant && caseRole ? (
+              <div>
+                <h3 className="text-sm font-medium text-slate-50">
+                  {t("join.yourRole")}
+                </h3>
+                <p className="mt-2 text-sm text-slate-300">{caseRole.name}</p>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -352,7 +287,7 @@ export function JoinPageView({
         ) : null}
 
         {isFacilitator ? (
-          <Card>
+          <Card data-testid="private-role-section">
             <CardHeader>
               <h2 className="text-base font-semibold text-slate-50">
                 {t("join.participantRoleBriefings")}
@@ -383,6 +318,74 @@ export function JoinPageView({
           </Card>
         ) : null}
 
+        <SessionMaterialsDashboard
+          sessionId={session.id}
+          joinToken={joinToken}
+          recording={recording}
+          transcript={transcript}
+          processing={processing}
+        />
+
+        {eventSessions.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <h2 className="text-base font-semibold text-slate-50" data-testid="my-sessions-in-event-section">
+                {isFacilitator
+                  ? t("events.sessionsInThisEvent")
+                  : t("events.mySessionsInThisEvent")}
+              </h2>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {eventSessions.map((item) => {
+                const isCurrentSession = item.joinToken === joinToken;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${
+                      isCurrentSession
+                        ? "border-cyan-500/40 bg-cyan-950/20"
+                        : "border-slate-700/40 bg-slate-900/40"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="break-words text-sm font-medium text-slate-100">
+                        {item.roomLabel ?? item.title}
+                      </p>
+                      <p className="break-words text-xs text-slate-400">
+                        {item.caseTitle}
+                        {item.roleName ? ` · ${item.roleName}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {item.isActive ? (
+                        <SecondaryButtonLink
+                          href={buildSessionRoomPath(item.id, item.joinToken)}
+                          data-testid="join-video-room-button"
+                        >
+                          {t("events.openRoom")}
+                        </SecondaryButtonLink>
+                      ) : null}
+                      {isCurrentSession ? (
+                        <span className="inline-flex items-center rounded-lg border border-cyan-500/30 bg-cyan-950/30 px-3 py-2 text-sm text-cyan-200">
+                          {t("join.sessionMaterials")}
+                        </span>
+                      ) : (
+                        <SecondaryButtonLink
+                          href={buildSessionMaterialsPath(item.joinToken)}
+                          data-testid="open-session-materials-link"
+                        >
+                          {t("events.openMaterials")}
+                        </SecondaryButtonLink>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        ) : null}
+
         {showNotes ? (
           <Card data-testid="notes-section">
             <CardHeader>
@@ -400,7 +403,6 @@ export function JoinPageView({
             </CardContent>
           </Card>
         ) : null}
-
       </AppShell>
     </div>
   );

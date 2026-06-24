@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { ExternalService } from "@/app/generated/prisma/client";
 import { handleExternalServiceFailure } from "@/lib/services/external-service-events";
@@ -309,6 +310,27 @@ export async function checkStorageHealth() {
 
 export function buildRecordingFileKey(sessionId: string, timestamp: number) {
   return `recordings/${sessionId}/${timestamp}-audio.mp4`;
+}
+
+export async function getSignedDownloadUrl(
+  fileKey: string,
+  expiresInSeconds = 900,
+): Promise<string | null> {
+  const config = getS3Config();
+  if (!config) {
+    return null;
+  }
+
+  try {
+    const client = getS3Client();
+    return await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: config.bucket, Key: fileKey }),
+      { expiresIn: expiresInSeconds },
+    );
+  } catch {
+    return null;
+  }
 }
 
 export function buildCompressedFileKey(

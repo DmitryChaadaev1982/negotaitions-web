@@ -30,6 +30,11 @@ export type SessionListItem = {
   onlineParticipantCount: number;
   durationMinutes: number;
   createdAt: string;
+  // AI analysis pipeline status for sessions page
+  recordingStage: string | null;
+  transcriptStage: string | null;
+  aiStage: string | null;
+  aiVisibility: string;
 };
 
 export function isSessionActiveForPresence(session: {

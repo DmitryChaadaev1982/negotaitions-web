@@ -9,6 +9,7 @@ import {
 } from "@livekit/components-react";
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
+import { DebriefPanel } from "@/components/debrief-panel";
 import { FacilitatorRoomControls } from "@/components/facilitator-room-controls";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
@@ -330,9 +331,18 @@ function ConnectedRoom({
     `participantType.${tokenResponse.participantType}` as `participantType.${typeof tokenResponse.participantType}`,
   );
 
+  // Normal session FINISH → debrief mode (stay in room, show debrief panel)
+  const isDebriefMode =
+    sessionCloseState.isClosed &&
+    sessionCloseState.closeMessageKey === "join.sessionFinishedMessage";
+
+  // Event-closed or other closures → blocking overlay
+  const isEventClosed =
+    sessionCloseState.isClosed && !isDebriefMode;
+
   return (
     <>
-      {sessionCloseState.isClosed && sessionCloseState.closeMessageKey ? (
+      {isEventClosed && sessionCloseState.closeMessageKey ? (
         <SessionClosedOverlay
           joinToken={joinToken}
           closeMessageKey={sessionCloseState.closeMessageKey}
@@ -370,22 +380,33 @@ function ConnectedRoom({
             <p className="truncate text-xs text-slate-400">
               {tokenResponse.displayName} · {participantTypeLabel}
             </p>
-            <RecordingIndicator
-              status={recordingState?.status}
-              negotiationState={controlState.negotiationState}
-              participantType={tokenResponse.participantType}
-              isFacilitator={controlState.canControl}
-              errorMessage={recordingState?.errorMessage}
-            />
+            {isDebriefMode ? (
+              <span
+                className="inline-block rounded-full border border-amber-500/40 bg-amber-900/20 px-2 py-0.5 text-xs text-amber-300"
+                data-testid="debrief-mode-badge"
+              >
+                {t("room.debriefTitle")}
+              </span>
+            ) : (
+              <RecordingIndicator
+                status={recordingState?.status}
+                negotiationState={controlState.negotiationState}
+                participantType={tokenResponse.participantType}
+                isFacilitator={controlState.canControl}
+                errorMessage={recordingState?.errorMessage}
+              />
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <GradientButtonLink
-              href={buildSessionMaterialsPath(joinToken)}
-              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
-              data-testid="session-materials-link"
-            >
-              {t("room.sessionMaterials")}
-            </GradientButtonLink>
+            {!isDebriefMode ? (
+              <GradientButtonLink
+                href={buildSessionMaterialsPath(joinToken)}
+                className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+                data-testid="session-materials-link"
+              >
+                {t("room.sessionMaterials")}
+              </GradientButtonLink>
+            ) : null}
             <RejoinNavLink />
             <LanguageSwitcher />
             <LeaveRoomButton joinToken={joinToken} />
@@ -403,6 +424,7 @@ function ConnectedRoom({
               />
             </div>
 
+            {/* Facilitator controls — hidden in debrief mode */}
             {controlState.canControl && !sessionCloseState.isClosed ? (
               <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3">
                 <FacilitatorRoomControls
@@ -425,8 +447,18 @@ function ConnectedRoom({
             </div>
           </div>
 
-          <div className="hidden h-full min-h-0 w-96 shrink-0 overflow-hidden lg:block">
-            <RoomSidebar joinToken={joinToken} sidebar={sidebar} />
+          {/* Right sidebar: debrief panel when finished, regular sidebar otherwise */}
+          <div className="hidden h-full min-h-0 w-96 shrink-0 overflow-hidden border-l border-slate-800 lg:block">
+            {isDebriefMode ? (
+              <DebriefPanel
+                sessionId={sessionId}
+                joinToken={joinToken}
+                participantType={tokenResponse.participantType}
+                eventLobbyUrl={sidebar.event?.lobbyUrl}
+              />
+            ) : (
+              <RoomSidebar joinToken={joinToken} sidebar={sidebar} />
+            )}
           </div>
         </div>
       </LiveKitRoom>

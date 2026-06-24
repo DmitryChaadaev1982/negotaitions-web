@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
+import { ParticipantType } from "@/app/generated/prisma/client";
+import { refreshRecordingStatus } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 
 export const runtime = "nodejs";
 
-const transcriptSchema = z.object({
+const schema = z.object({
   joinToken: z.string().trim().min(1, "Join token is required"),
-  text: z.string(),
 });
 
 type RouteContext = {
@@ -26,7 +26,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const parsed = transcriptSchema.safeParse(body);
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid request." },
@@ -34,51 +34,35 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const session = await prisma.session.findFirst({
-    where: {
-      id: sessionId,
-      deletedAt: null,
-    },
-    include: {
-      recording: true,
-    },
-  });
-
-  if (!session) {
-    return NextResponse.json({ error: "Session not found." }, { status: 404 });
-  }
-
   const participant = await getSessionParticipantByJoinToken(
     parsed.data.joinToken,
     sessionId,
   );
+
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const transcript = await prisma.transcript.upsert({
+  const recording = await prisma.recording.findUnique({
     where: { sessionId },
-    create: {
-      sessionId,
-      source: TranscriptSource.MANUAL,
-      text: parsed.data.text,
-      recordingId: session.recording?.id,
-    },
-    update: {
-      source: TranscriptSource.MANUAL,
-      text: parsed.data.text,
-      recordingId: session.recording?.id,
-    },
   });
 
+  if (!recording) {
+    return NextResponse.json({ error: "No recording available yet." }, { status: 404 });
+  }
+
+  const updated = await refreshRecordingStatus(recording);
+
   return NextResponse.json({
-    transcript: {
-      id: transcript.id,
-      source: transcript.source,
-      text: transcript.text,
-      diarizedText: transcript.diarizedText,
-      hasSpeakerDiarization: transcript.hasSpeakerDiarization,
-      updatedAt: transcript.updatedAt.toISOString(),
+    recording: {
+      id: updated.id,
+      status: updated.status,
+      fileKey: updated.fileKey,
+      fileName: updated.fileName,
+      originalSizeBytes: updated.originalSizeBytes,
+      startedAt: updated.startedAt?.toISOString() ?? null,
+      endedAt: updated.endedAt?.toISOString() ?? null,
+      errorMessage: updated.errorMessage,
     },
   });
 }

@@ -203,7 +203,9 @@ test("role privacy, preparation, negotiation recording, transcription, notes, an
   );
   expect(saveTranscriptResponse.ok()).toBeTruthy();
 
-  const recordingResponse = await request.get(`/api/sessions/${session.id}/recording`);
+  const recordingResponse = await request.get(
+    `/api/sessions/${session.id}/recording?joinToken=${facilitator.joinToken}`,
+  );
   expect(await recordingResponse.text()).toContain(editedText);
 
   await updateParticipantNotes(igor.id, "E2E_NOTE_IGOR");

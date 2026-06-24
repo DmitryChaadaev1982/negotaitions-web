@@ -102,7 +102,11 @@ function resolveDisplayRecordingStatus(
 }
 
 function isRecordingReadyForTranscription(recording: RecordingData) {
-  return recording.status === "COMPLETED" || Boolean(recording.fileKey);
+  return recording.status === "COMPLETED" && Boolean(recording.fileKey);
+}
+
+function hasUsableTranscript(transcript: TranscriptData | null) {
+  return Boolean(transcript?.text?.trim() || transcript?.diarizedText?.trim());
 }
 
 function resolveSegmentSpeakerName(
@@ -230,7 +234,9 @@ export function RecordingTranscriptionSection({
 
   const loadData = useCallback(async () => {
     try {
-      const response = await fetch(`/api/sessions/${sessionId}/recording`);
+      const response = await fetch(
+        `/api/sessions/${sessionId}/recording?joinToken=${encodeURIComponent(joinToken)}`,
+      );
       const rawBody = await response.text();
 
       if (!rawBody) {
@@ -264,7 +270,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [joinToken, sessionId]);
 
   const pollRecordingStatus = useCallback(async () => {
     try {
@@ -494,7 +500,7 @@ export function RecordingTranscriptionSection({
     !readOnly &&
     sessionStatus === "FINISHED" &&
     Boolean(recording) &&
-    !transcript &&
+    !hasUsableTranscript(transcript) &&
     isRecordingReadyForTranscription(recording!);
 
   useEffect(() => {
@@ -529,7 +535,7 @@ export function RecordingTranscriptionSection({
       const response = await fetch(`/api/sessions/${sessionId}/transcript`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: transcriptText }),
+        body: JSON.stringify({ joinToken, text: transcriptText }),
       });
 
       const payload = (await response.json()) as {

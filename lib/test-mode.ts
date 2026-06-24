@@ -20,6 +20,13 @@ export function isTranscriptionMockMode() {
   );
 }
 
+export function isAiAnalysisMockMode() {
+  return (
+    process.env.AI_ANALYSIS_MODE === "mock" ||
+    process.env.EXTERNAL_SERVICES_MODE === "mock"
+  );
+}
+
 export function getMockExternalServiceError() {
   return (
     globalForMockServices.mockExternalServiceError ??

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { getDemoFacilitator } from "@/lib/demo-user";
+import { ParticipantType } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import {
   getDisplaySpeakerLabel,
   getUniqueSpeakerLabels,
@@ -16,14 +17,23 @@ type RouteContext = {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
+  const joinToken = new URL(_request.url).searchParams.get("joinToken")?.trim();
+
+  if (!joinToken) {
+    return NextResponse.json({ error: "Join token is required." }, { status: 400 });
+  }
 
   try {
-    const facilitator = await getDemoFacilitator();
+    const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+
+    if (!participant || participant.type !== ParticipantType.FACILITATOR) {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
 
     const session = await prisma.session.findFirst({
       where: {
         id: sessionId,
-        facilitatorId: facilitator.id,
+        deletedAt: null,
       },
       include: {
         recording: true,

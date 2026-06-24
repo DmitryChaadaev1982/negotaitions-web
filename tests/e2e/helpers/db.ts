@@ -495,6 +495,55 @@ export async function getExternalServiceNames(sessionId: string) {
   return rows.map((row) => row.service);
 }
 
+export async function getTranscriptStatus(sessionId: string) {
+  const rows = await query<{ status: string; errorMessage: string | null }>(
+    `SELECT "status", "errorMessage" FROM "Transcript" WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function clearTranscript(sessionId: string) {
+  await query(`DELETE FROM "Transcript" WHERE "sessionId" = $1`, [sessionId]);
+}
+
+export async function getAiAnalysis(sessionId: string) {
+  const rows = await query<{
+    id: string;
+    status: string;
+    executiveSummary: string | null;
+    overallScore: number | null;
+    errorMessage: string | null;
+    model: string | null;
+    completedAt: string | null;
+  }>(
+    `SELECT "id", "status", "executiveSummary", "overallScore", "errorMessage", "model", "completedAt"
+     FROM "AiAnalysis"
+     WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function clearAiAnalysis(sessionId: string) {
+  await query(`DELETE FROM "AiAnalysis" WHERE "sessionId" = $1`, [sessionId]);
+}
+
+export async function createCompletedTranscript(sessionId: string) {
+  const rows = await query<{ id: string }>(
+    `INSERT INTO "Transcript" ("id", "sessionId", "recordingId", "source", "status", "text", "updatedAt", "completedAt")
+     VALUES ($1, $2, NULL, 'MANUAL', 'COMPLETED', 'Mock transcript for AI analysis test.', NOW(), NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "text" = 'Mock transcript for AI analysis test.',
+           "completedAt" = NOW(),
+           "updatedAt" = NOW()
+     RETURNING "id"`,
+    [id("transcript"), sessionId],
+  );
+  return rows[0]!;
+}
+
 export async function createSnapshotJoinFixture() {
   const facilitator = await ensureDemoFacilitator();
   const negotiationCase = await createE2eCase();

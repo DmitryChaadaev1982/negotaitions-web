@@ -7,6 +7,7 @@ import {
   ExternalServiceEventSeverity,
   ParticipantType,
   Prisma,
+  RecordingStatus,
   TranscriptSource,
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
@@ -145,7 +146,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Recording not found." }, { status: 404 });
   }
 
-  if (!recording.fileKey) {
+  if (recording.status !== RecordingStatus.COMPLETED || !recording.fileKey) {
     return NextResponse.json(
       { error: "No recording file available yet." },
       { status: 400 },

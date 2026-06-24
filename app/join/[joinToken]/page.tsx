@@ -34,6 +34,21 @@ export default async function JoinPage({ params }: JoinPageProps) {
       },
       session: {
         include: {
+          recording: {
+            select: {
+              status: true,
+              fileUrl: true,
+              updatedAt: true,
+              errorMessage: true,
+            },
+          },
+          transcript: {
+            select: {
+              text: true,
+              diarizedText: true,
+              updatedAt: true,
+            },
+          },
           event: {
             select: {
               id: true,
@@ -160,6 +175,7 @@ export default async function JoinPage({ params }: JoinPageProps) {
         session={{
           id: session.id,
           title: session.title,
+          caseTitle: session.snapshotCaseTitle,
           roomLabel: session.roomLabel,
           preparationDurationMinutes: secondsToDisplayMinutes(
             session.preparationDurationSeconds,
@@ -207,6 +223,25 @@ export default async function JoinPage({ params }: JoinPageProps) {
         assignedParticipants={assignedParticipants}
         showNotes={showNotes}
         notesVariant={notesVariant}
+        recording={
+          session.recording
+            ? {
+                status: session.recording.status,
+                fileUrl: session.recording.fileUrl,
+                updatedAt: session.recording.updatedAt.toISOString(),
+                errorMessage: session.recording.errorMessage,
+              }
+            : null
+        }
+        transcript={
+          session.transcript
+            ? {
+                text: session.transcript.text,
+                diarizedText: session.transcript.diarizedText,
+                updatedAt: session.transcript.updatedAt.toISOString(),
+              }
+            : null
+        }
       />
     </>
   );

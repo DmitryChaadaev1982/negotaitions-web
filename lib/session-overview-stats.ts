@@ -11,6 +11,13 @@ import {
 } from "@/lib/session-overview-shared";
 import { activeSessionWhere } from "@/lib/soft-delete";
 
+export type SessionAiStatus = {
+  recordingStage: string | null;
+  transcriptStage: string | null;
+  aiStage: string | null;
+  aiVisibility: string;
+};
+
 export type { SessionListItem, SessionOverviewStats } from "@/lib/session-overview-shared";
 export {
   applySessionOverviewStats,
@@ -61,6 +68,15 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
       _count: {
         select: { participants: true },
       },
+      recording: {
+        select: { status: true },
+      },
+      transcript: {
+        select: { status: true },
+      },
+      aiAnalysis: {
+        select: { status: true, visibility: true },
+      },
     },
   });
 
@@ -69,6 +85,39 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
     const facilitatorJoinToken =
       session.participants.find((participant) => participant.type === "FACILITATOR")
         ?.joinToken ?? null;
+
+    // Derive pipeline stages for sessions-page display
+    const recStatus = session.recording?.status ?? null;
+    const txStatus = session.transcript?.status ?? null;
+    const aiStatus = session.aiAnalysis?.status ?? null;
+
+    const recordingStage = recStatus
+      ? recStatus === "COMPLETED"
+        ? "ready"
+        : recStatus === "FAILED"
+          ? "failed"
+          : ["STARTING", "RECORDING", "PAUSED"].includes(recStatus)
+            ? "in_progress"
+            : recStatus === "STOPPED" || recStatus === "PROCESSING"
+              ? "processing"
+              : "not_available"
+      : null;
+
+    const transcriptStage = txStatus
+      ? txStatus === "COMPLETED"
+        ? "ready"
+        : txStatus === "FAILED"
+          ? "failed"
+          : "in_progress"
+      : null;
+
+    const aiStage = aiStatus
+      ? aiStatus === "COMPLETED"
+        ? "ready"
+        : aiStatus === "FAILED"
+          ? "failed"
+          : "in_progress"
+      : null;
 
     return {
       id: session.id,
@@ -95,6 +144,12 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
         : 0,
       durationMinutes: secondsToDisplayMinutes(session.durationSeconds),
       createdAt: session.createdAt.toISOString(),
+      recordingStage,
+      transcriptStage,
+      aiStage: aiStage === "ready" && session.aiAnalysis?.visibility === "SHARED_WITH_SESSION"
+        ? "shared"
+        : aiStage,
+      aiVisibility: session.aiAnalysis?.visibility ?? "FACILITATOR_ONLY",
     };
   });
 }
