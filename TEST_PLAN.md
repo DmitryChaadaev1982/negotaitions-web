@@ -7,6 +7,10 @@ This plan covers automated regression and user-flow testing for the currently im
 - Cases, soft delete, and case snapshots for historical sessions.
 - Sessions, participants, observers, facilitators, notes, and facilitator review.
 - Training Events, public join flow, event lobby, assignment draft, and session creation from events.
+- Multi-session Events where participants can finish one Session, return to the Event lobby, and later join another Session.
+- Compact Dashboard/Events/Sessions cross-page Event statistics and navigation.
+- Case Library selection flow in the Event lobby; the old primary case dropdown flow is obsolete.
+- Session Materials as the `/join/[joinToken]` destination; live room entry is direct from the lobby via `/room/[sessionId]`.
 - Session preparation and negotiation control state.
 - LiveKit token and room entry logic, using fake browser media devices for e2e tests.
 - Audio-only recording lifecycle and transcription entry points.
@@ -19,8 +23,7 @@ Out of scope for this test phase:
 
 - AI negotiation analysis/report generation.
 - Long-running or paid live external service tests by default.
-- New product features or large behavior changes.
-- Renaming technical models or changing product logic unless a confirmed defect clearly violates current requirements.
+- Paid live provider calls in default CI/local e2e runs.
 
 ## Architecture Notes From Inspection
 
@@ -33,7 +36,7 @@ Out of scope for this test phase:
 - Transcription is handled by `app/api/sessions/[sessionId]/transcribe-recording/route.ts` and `lib/services/openai-transcription.ts`.
 - Rejoin validation is handled by `lib/rejoin/validate.ts`.
 - i18n dictionaries live in `lib/i18n/dictionaries`.
-- No Playwright config or automated tests were found during inspection.
+- Playwright is configured under `playwright.config.ts` with Chromium fake media devices and mock external service env.
 
 ## Assumptions
 
@@ -59,6 +62,9 @@ Primary generated entities:
 - Host/facilitator: `Dmitry`
 - Participants: `Igor`, `Alex`
 - Observer: `Serg`
+- Multi-session fixtures also use `Maria`, `Olga`, and `Ivan` where a workflow needs more participants.
+- Case A: `E2E Case A — Scope Change` with `Client CFO` and `Vendor Project Director`.
+- Case B: `E2E Case B — Resource Conflict` with `ERP Delivery Director` and `Analytics Delivery Director`.
 - Private role markers:
   - Igor role marker: `E2E_PRIVATE_IGOR_ONLY`
   - Alex role marker: `E2E_PRIVATE_ALEX_ONLY`
@@ -100,7 +106,7 @@ Optional live smoke tests:
 
 1. Case duration separation: event duration stays independent from session preparation and negotiation durations.
 2. Event lobby join and rejoin: same browser context does not create duplicate `EventParticipant` records.
-3. Event assignment to session: host selects case, assigns facilitator/roles/observer, creates a linked session with snapshots.
+3. Event assignment to session: host selects a case from Case Library, clicks Use this case, configures session, assigns facilitator/roles/observer, and creates a linked session with snapshots.
 4. Role privacy in session: participants and observers do not receive other users' private role instructions; facilitator-only access is explicit.
 5. Preparation phase: session begins in `PREPARATION`; preparation controls do not start recording or negotiation timer.
 6. Negotiation phase and recording lifecycle: start/pause/resume/finish behavior preserves one recording and delays transcription until explicit action.
@@ -111,6 +117,13 @@ Optional live smoke tests:
 11. Transcription: completed mock recording can be transcribed, edited, saved, and reloaded.
 12. i18n: RU/EN labels switch while case, notes, transcript, and product spelling remain unchanged.
 13. Header/sticky layout: important pages remain usable when scrolled.
+14. Events compact UI: no horizontal overflow at 1366px, readable stats, completed Events do not show active controls.
+15. Multi-session creation: one Event can contain multiple active and finished Sessions with consistent stats.
+16. Sequential participant workflow: a participant can finish Session 1, return to lobby, see Session 1 materials, then join Session 2.
+17. Duplicate active assignment prevention: participant cannot be assigned to two active Sessions, but can be reassigned after finishing.
+18. Event completion across Sessions: all active Sessions close, recordings are preserved, and materials links remain available.
+19. Rejoin routing: active assignment opens room; finished/latest assignment opens materials; completed Event does not reopen a live room.
+20. Recording/transcription isolation: per-session recordings and transcripts do not leak across Sessions.
 
 ## Stable Selector Strategy
 
@@ -123,13 +136,16 @@ Use `data-testid` for critical controls and state assertions. Add missing test i
 - Recording status and transcription controls.
 - Transcript textarea and save button.
 - Admin diagnostics link.
+- Multi-session Event stats: `event-total-sessions`, `event-active-sessions`, `event-finished-sessions`, `event-participants-in-lobby`.
+- Event lobby: `case-library-section`, `sessions-board`, `event-session-card`, `my-sessions-in-event-section`, `go-to-session-room-button`.
+- Session room and materials: `session-room-page`, `session-finished-message`, `session-materials-page`, `private-role-section`.
 
 Where a `data-testid` would be awkward, use accessible labels or roles, but avoid relying only on localized text for core logic.
 
 ## Risks
 
-- The current LiveKit token endpoint returns `503` when LiveKit env is missing; default e2e tests need an opt-in mock mode to avoid real service requirements.
-- The room sidebar API currently returns facilitator briefing data in the payload for any valid join token, even though the client only renders it for facilitators. This should be tested as a server-side privacy assertion.
+- Live room rendering depends on mock LiveKit token/config behavior; default e2e uses mock env and fake media.
+- Privacy must be checked at API and UI levels because DOM hiding alone is insufficient.
 - Existing forms have few stable selectors, so tests may need safe `data-testid` additions.
 - Playwright installation may add package lock changes and browser binaries.
 - Test database setup may need local environment alignment; `.env` must not be committed or exposed.
@@ -139,8 +155,6 @@ Where a `data-testid` would be awkward, use accessible labels or roles, but avoi
 Planned commands:
 
 ```bash
-npm install -D @playwright/test
-npx playwright install chromium
 npm run lint
 npm run build
 npx prisma validate

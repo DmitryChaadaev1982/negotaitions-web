@@ -4,7 +4,6 @@ import {
   isEventActiveForPresence,
   type TrainingEventListItem,
 } from "@/lib/event-overview-shared";
-import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 
 export type { EventOverviewStats, TrainingEventListItem } from "@/lib/event-overview-shared";
@@ -13,26 +12,35 @@ export {
   isEventActiveForPresence,
 } from "@/lib/event-overview-shared";
 
-function isOnline(lastSeenAt: Date | null, onlineThreshold: Date) {
-  return lastSeenAt != null && lastSeenAt >= onlineThreshold;
-}
-
 function isActiveSession(session: {
   closedByEventAt: Date | null;
   negotiationState: NegotiationState;
+  status?: string;
 }) {
   return (
     session.closedByEventAt == null &&
-    session.negotiationState !== NegotiationState.FINISHED
+    session.negotiationState !== NegotiationState.FINISHED &&
+    session.status !== "COMPLETED"
   );
 }
 
-function countTotalSessionParticipants(
+function isFinishedSession(session: {
+  closedByEventAt: Date | null;
+  negotiationState: NegotiationState;
+  status?: string;
+}) {
+  return (
+    session.closedByEventAt != null ||
+    session.negotiationState === NegotiationState.FINISHED ||
+    session.status === "COMPLETED"
+  );
+}
+
+function countUniqueSessionParticipants(
   sessions: Array<{
     participants: Array<{
       id: string;
       eventParticipantId: string | null;
-      joinedAt: Date | null;
     }>;
   }>,
 ) {
@@ -40,49 +48,65 @@ function countTotalSessionParticipants(
 
   for (const session of sessions) {
     for (const participant of session.participants) {
-      if (participant.joinedAt != null) {
-        participated.add(participant.eventParticipantId ?? participant.id);
-      }
+      participated.add(participant.eventParticipantId ?? participant.id);
     }
   }
 
   return participated.size;
 }
 
-function countLobbyParticipants(
-  participants: Array<{ lastSeenAt: Date | null }>,
-  onlineThreshold: Date,
+function countParticipantsInLobby(
+  participants: Array<{ id: string }>,
+  sessions: Array<{
+    closedByEventAt: Date | null;
+    negotiationState: NegotiationState;
+    status: string;
+    participants: Array<{ eventParticipantId: string | null }>;
+  }>,
 ) {
-  return participants.filter((participant) =>
-    isOnline(participant.lastSeenAt, onlineThreshold),
-  ).length;
+  const activeAssignmentIds = new Set<string>();
+
+  for (const session of sessions.filter(isActiveSession)) {
+    for (const participant of session.participants) {
+      if (participant.eventParticipantId) {
+        activeAssignmentIds.add(participant.eventParticipantId);
+      }
+    }
+  }
+
+  return participants.filter((participant) => !activeAssignmentIds.has(participant.id)).length;
 }
 
 function countActiveSessionParticipants(
   sessions: Array<{
     closedByEventAt: Date | null;
     negotiationState: NegotiationState;
-    participants: Array<{ lastSeenAt: Date | null }>;
+    status: string;
+    participants: Array<{ eventParticipantId: string | null; id: string }>;
   }>,
-  onlineThreshold: Date,
 ) {
-  return sessions
-    .filter(isActiveSession)
-    .reduce(
-      (total, session) =>
-        total +
-        session.participants.filter((participant) =>
-          isOnline(participant.lastSeenAt, onlineThreshold),
-        ).length,
-      0,
-    );
+  const activeParticipantIds = new Set<string>();
+
+  for (const session of sessions.filter(isActiveSession)) {
+    for (const participant of session.participants) {
+      activeParticipantIds.add(participant.eventParticipantId ?? participant.id);
+    }
+  }
+
+  return activeParticipantIds.size;
+}
+
+function latestActivityIso(dates: Array<Date | null | undefined>) {
+  const latest = dates
+    .filter((date): date is Date => date instanceof Date)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+
+  return latest?.toISOString() ?? null;
 }
 
 export async function getTrainingEventsForList(
   limit?: number,
 ): Promise<TrainingEventListItem[]> {
-  const onlineThreshold = new Date(Date.now() - PRESENCE_ONLINE_THRESHOLD_MS);
-
   const events = await prisma.trainingEvent.findMany({
     where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
@@ -97,6 +121,7 @@ export async function getTrainingEventsForList(
       createdAt: true,
       participants: {
         select: {
+          id: true,
           participantToken: true,
           isHost: true,
           lastSeenAt: true,
@@ -109,6 +134,15 @@ export async function getTrainingEventsForList(
           id: true,
           closedByEventAt: true,
           negotiationState: true,
+          status: true,
+          updatedAt: true,
+          createdAt: true,
+          recording: {
+            select: { id: true, updatedAt: true },
+          },
+          transcript: {
+            select: { id: true, updatedAt: true },
+          },
           participants: {
             select: {
               id: true,
@@ -125,6 +159,27 @@ export async function getTrainingEventsForList(
   return events.map((event) => {
     const hostParticipant = event.participants.find((participant) => participant.isHost);
     const presenceActive = isEventActiveForPresence(event.status);
+    const activeSessions = event.sessions.filter(isActiveSession).length;
+    const finishedSessions = event.sessions.filter(isFinishedSession).length;
+    const participantsInLobby = countParticipantsInLobby(
+      event.participants,
+      event.sessions,
+    );
+    const participantsInActiveSessions = countActiveSessionParticipants(event.sessions);
+    const uniqueParticipantsWithSessions = countUniqueSessionParticipants(event.sessions);
+    const recordingsCount = event.sessions.filter((session) => session.recording).length;
+    const transcriptsCount = event.sessions.filter((session) => session.transcript).length;
+    const latestActivityAt = latestActivityIso([
+      event.createdAt,
+      ...event.participants.map((participant) => participant.lastSeenAt),
+      ...event.sessions.flatMap((session) => [
+        session.createdAt,
+        session.updatedAt,
+        session.recording?.updatedAt,
+        session.transcript?.updatedAt,
+        ...session.participants.map((participant) => participant.lastSeenAt),
+      ]),
+    ]);
 
     return {
       id: event.id,
@@ -137,13 +192,24 @@ export async function getTrainingEventsForList(
       primarySessionId: event.sessions[0]?.id ?? null,
       createdAt: event.createdAt.toISOString(),
       lobbyParticipantCount: presenceActive
-        ? countLobbyParticipants(event.participants, onlineThreshold)
+        ? participantsInLobby
         : 0,
       sessionCount: event.sessions.length,
-      activeSessionParticipantCount: presenceActive
-        ? countActiveSessionParticipants(event.sessions, onlineThreshold)
+      totalSessions: event.sessions.length,
+      activeSessions,
+      finishedSessions,
+      participantsInLobby: presenceActive ? participantsInLobby : 0,
+      participantsInActiveSessions: presenceActive
+        ? participantsInActiveSessions
         : 0,
-      totalSessionParticipantCount: countTotalSessionParticipants(event.sessions),
+      uniqueParticipantsWithSessions,
+      recordingsCount,
+      transcriptsCount,
+      latestActivityAt,
+      activeSessionParticipantCount: presenceActive
+        ? participantsInActiveSessions
+        : 0,
+      totalSessionParticipantCount: uniqueParticipantsWithSessions,
     };
   });
 }
@@ -155,6 +221,15 @@ export async function getEventOverviewStats(): Promise<EventOverviewStats[]> {
     id: event.id,
     lobbyParticipantCount: event.lobbyParticipantCount,
     sessionCount: event.sessionCount,
+    totalSessions: event.totalSessions,
+    activeSessions: event.activeSessions,
+    finishedSessions: event.finishedSessions,
+    participantsInLobby: event.participantsInLobby,
+    participantsInActiveSessions: event.participantsInActiveSessions,
+    uniqueParticipantsWithSessions: event.uniqueParticipantsWithSessions,
+    recordingsCount: event.recordingsCount,
+    transcriptsCount: event.transcriptsCount,
+    latestActivityAt: event.latestActivityAt,
     activeSessionParticipantCount: event.activeSessionParticipantCount,
     totalSessionParticipantCount: event.totalSessionParticipantCount,
   }));

@@ -60,6 +60,13 @@ type DashboardViewProps = {
     status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
     lobbyParticipantCount: number;
     sessionCount: number;
+    totalSessions: number;
+    activeSessions: number;
+    finishedSessions: number;
+    participantsInLobby: number;
+    participantsInActiveSessions: number;
+    uniqueParticipantsWithSessions: number;
+    latestActivityAt: string | null;
     activeSessionParticipantCount: number;
     totalSessionParticipantCount: number;
     createdAt: string;
@@ -267,54 +274,80 @@ export function DashboardView({
             </GlassCardContent>
           </GlassCard>
         ) : (
-          <DataTable>
-            <DataTableElement>
-              <DataTableHead>
-                <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("events.participantsInLobby")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("events.sessions")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("events.participantsInSessions")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("events.totalSessionParticipants")}</DataTableHeaderCell>
-                <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
-              </DataTableHead>
-              <DataTableBody>
-                {recentEvents.map((event) => (
-                  <DataTableRow key={event.id}>
-                    <DataTableCell>
-                      <Link
-                        href={getEventLobbyUrl(event.id, {
-                          hostToken: event.hostToken,
-                          participantToken: event.hostParticipantToken ?? undefined,
-                        })}
-                        className="font-medium text-slate-100 hover:text-cyan-300"
-                      >
-                        {event.title}
-                      </Link>
-                    </DataTableCell>
-                    <DataTableCell>
-                      <Badge variant="info">
+          <div className="grid gap-3 lg:grid-cols-2">
+            {recentEvents.map((event) => {
+              const eventActive = isEventActiveForPresence(event.status);
+
+              return (
+                <GlassCard key={event.id} elevated className="p-4" data-testid="event-card">
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link
+                          href={getEventLobbyUrl(event.id, {
+                            hostToken: event.hostToken,
+                            participantToken: event.hostParticipantToken ?? undefined,
+                          })}
+                          className="font-medium text-slate-100 hover:text-cyan-300"
+                          data-testid="event-title"
+                        >
+                          {event.title}
+                        </Link>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {t("events.latestActivity")}:{" "}
+                          {formatDate(event.latestActivityAt ?? event.createdAt)}
+                        </p>
+                      </div>
+                      <Badge variant={event.status === "COMPLETED" ? "success" : "info"} data-testid="event-status-badge">
                         {t(`events.status.${event.status}`)}
                       </Badge>
-                    </DataTableCell>
-                    <DataTableCell>
-                      {isEventActiveForPresence(event.status)
-                        ? event.lobbyParticipantCount
-                        : "—"}
-                    </DataTableCell>
-                    <DataTableCell>{event.sessionCount}</DataTableCell>
-                    <DataTableCell>
-                      {isEventActiveForPresence(event.status)
-                        ? event.activeSessionParticipantCount
-                        : "—"}
-                    </DataTableCell>
-                    <DataTableCell>{event.totalSessionParticipantCount}</DataTableCell>
-                    <DataTableCell>{formatDate(event.createdAt)}</DataTableCell>
-                  </DataTableRow>
-                ))}
-              </DataTableBody>
-            </DataTableElement>
-          </DataTable>
+                    </div>
+                    <div className="flex flex-wrap gap-1" data-testid="event-stats-summary">
+                      {[
+                        [t("events.activitySessions"), event.totalSessions, "event-total-sessions"],
+                        [t("events.activeSession"), event.activeSessions, "event-active-sessions"],
+                        [t("events.finishedSession"), event.finishedSessions, "event-finished-sessions"],
+                        [t("events.activityLobby"), eventActive ? event.participantsInLobby : "—", "event-participants-in-lobby"],
+                        [t("events.activityInSessions"), eventActive ? event.participantsInActiveSessions : "—", "event-participants-in-active-sessions"],
+                      ].map(([label, value, testId]) => (
+                        <span
+                          key={String(testId)}
+                          data-testid={String(testId)}
+                          className="inline-flex items-center gap-1 rounded-md bg-slate-800/70 px-2 py-0.5 text-xs text-slate-300 ring-1 ring-inset ring-slate-600/25"
+                        >
+                          <span className="text-slate-500">{label}</span>
+                          <span className="font-medium text-slate-200">{value}</span>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {eventActive ? (
+                        <SecondaryButtonLink
+                          href={getEventLobbyUrl(event.id, {
+                            hostToken: event.hostToken,
+                            participantToken: event.hostParticipantToken ?? undefined,
+                          })}
+                          data-testid="open-event-lobby-button"
+                        >
+                          {t("events.openLobby")}
+                        </SecondaryButtonLink>
+                      ) : (
+                        <SecondaryButtonLink href="/sessions" data-testid="open-event-results-button">
+                          {t("events.materials")}
+                        </SecondaryButtonLink>
+                      )}
+                      <SecondaryButtonLink
+                        href="/events"
+                        data-testid="view-event-sessions-button"
+                      >
+                        {t("events.sessionsInThisEvent")}
+                      </SecondaryButtonLink>
+                    </div>
+                  </div>
+                </GlassCard>
+              );
+            })}
+          </div>
         )}
       </section>
 

@@ -70,6 +70,7 @@ export const updateEventHostSchema = z.object({
       facilitatorEventParticipantId: z.string().nullable(),
       roleAssignments: z.record(z.string(), z.string()),
       observerEventParticipantIds: z.array(z.string()),
+      roomLabel: z.string().trim().max(80).optional(),
       preparationDurationMinutes: z.number().int().min(0).max(60),
       negotiationDurationMinutes: z.number().int().min(1).max(180),
     })
@@ -83,6 +84,20 @@ export const updateEventParticipantSchema = z.object({
 
 export const createEventSessionSchema = z.object({
   hostToken: z.string().min(1),
+  caseId: z.string().min(1).optional(),
+  roomLabel: z.string().trim().max(80).optional(),
+  preparationDurationSeconds: z.number().int().min(0).max(60 * 60).optional(),
+  negotiationDurationSeconds: z.number().int().min(60).max(180 * 60).optional(),
+  facilitatorEventParticipantId: z.string().min(1).optional(),
+  roleAssignments: z
+    .array(
+      z.object({
+        caseRoleId: z.string().min(1),
+        eventParticipantId: z.string().min(1),
+      }),
+    )
+    .optional(),
+  observerEventParticipantIds: z.array(z.string().min(1)).optional(),
 });
 
 export const completeEventSchema = z.object({

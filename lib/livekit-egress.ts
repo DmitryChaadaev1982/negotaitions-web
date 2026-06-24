@@ -227,6 +227,27 @@ export async function startAudioOnlyRoomRecording(
 
 export async function stopRecording(recording: Pick<Recording, "id" | "sessionId" | "egressId" | "startedAt">) {
   if (isRecordingMockMode()) {
+    const simulatedError = getMockExternalServiceError();
+
+    if (simulatedError === "NETWORK_ERROR") {
+      const classified = await handleExternalServiceFailure(
+        ExternalService.LIVEKIT,
+        new Error("Mock LiveKit network failure"),
+        {
+          sessionId: recording.sessionId,
+          recordingId: recording.id,
+          context: "stop",
+        },
+      );
+      const updated = await upsertRecording(recording.sessionId, {
+        status: RecordingStatus.PROCESSING,
+        endedAt: new Date(),
+        errorMessage: classified.message,
+      });
+
+      return { ok: false as const, recording: updated, warning: classified.message };
+    }
+
     const timestamp = Date.now();
     const updated = await upsertRecording(recording.sessionId, {
       status: RecordingStatus.COMPLETED,

@@ -1,4 +1,5 @@
 export type EventAssignmentDraft = {
+  roomLabel: string;
   facilitatorEventParticipantId: string | null;
   roleAssignments: Record<string, string>;
   observerEventParticipantIds: string[];
@@ -15,6 +16,7 @@ export function createFreshAssignmentDraft(
   defaults: EventAssignmentDurationDefaults,
 ): EventAssignmentDraft {
   return {
+    roomLabel: "",
     facilitatorEventParticipantId: null,
     roleAssignments: {},
     observerEventParticipantIds: [],
@@ -29,6 +31,7 @@ export function parseAssignmentDraft(
 ): EventAssignmentDraft {
   if (!value || typeof value !== "object") {
     return {
+      roomLabel: "",
       facilitatorEventParticipantId: null,
       roleAssignments: {},
       observerEventParticipantIds: [],
@@ -45,6 +48,7 @@ export function parseAssignmentDraft(
       : null;
 
   return {
+    roomLabel: typeof draft.roomLabel === "string" ? draft.roomLabel : "",
     facilitatorEventParticipantId:
       typeof draft.facilitatorEventParticipantId === "string"
         ? draft.facilitatorEventParticipantId

@@ -1,8 +1,16 @@
 import type {
   EventParticipant,
+  ParticipantType,
   SessionParticipant,
   TrainingEvent,
 } from "@/app/generated/prisma/client";
+import {
+  buildSessionMaterialsPath,
+  buildSessionRoomPath,
+} from "@/lib/config";
+import {
+  isSessionActiveForAssignment,
+} from "@/lib/event-active-assignment";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import {
   parseAssignmentDraft,
@@ -31,6 +39,40 @@ export type EventStateParticipant = {
   assignedType: string | null;
   assignedRoleName: string | null;
   joinToken: string | null;
+  activeAssignmentLabel: string | null;
+};
+
+export type EventStateSession = {
+  id: string;
+  title: string;
+  roomLabel: string | null;
+  sequenceNumber: number | null;
+  caseTitle: string;
+  caseLanguage: string;
+  status: string;
+  negotiationState: string;
+  preparationDuration: number;
+  negotiationDuration: number;
+  participantCount: number;
+  observerCount: number;
+  facilitatorName: string | null;
+  isActive: boolean;
+  isFinished: boolean;
+  roomUrl: string | null;
+  materialsUrl: string | null;
+  createdAt: string;
+  recordingStatus: string | null;
+  closeReason: string | null;
+  closedByEventAt: string | null;
+  participants: Array<{
+    id: string;
+    eventParticipantId: string | null;
+    displayName: string;
+    participantType: ParticipantType;
+    roleName: string | null;
+    roomUrl: string | null;
+    materialsUrl: string | null;
+  }>;
 };
 
 export type EventStateResponse = {
@@ -54,6 +96,8 @@ export type EventStateResponse = {
   } | null;
   isHost: boolean;
   participants: EventStateParticipant[];
+  sessions: EventStateSession[];
+  availableParticipants: EventStateParticipant[];
   selectedCase: PublicCaseSummary | null;
   availableCases: PublicCaseSummary[];
   assignmentDraft: EventAssignmentDraft;
@@ -64,6 +108,8 @@ export type EventStateResponse = {
   linkedSessions: Array<{
     id: string;
     title: string;
+    roomLabel: string | null;
+    sequenceNumber: number | null;
     negotiationState: string;
     closeReason: string | null;
     closedByEventAt: string | null;
@@ -104,18 +150,11 @@ export async function buildEventState(
 ): Promise<EventStateResponse> {
   const facilitator = await getDemoFacilitator();
 
-  const [participants, cases, selectedCaseRecord, createdSession, linkedSessions] =
+  const [participants, cases, selectedCaseRecord, createdSession, linkedSessions, sessionParticipantAssignments] =
     await Promise.all([
       prisma.eventParticipant.findMany({
         where: { eventId: input.event.id },
         orderBy: { createdAt: "asc" },
-        include: {
-          assignedSessionParticipant: {
-            include: {
-              sessionRole: { select: { name: true } },
-            },
-          },
-        },
       }),
       prisma.negotiationCase.findMany({
         where: {
@@ -152,20 +191,96 @@ export async function buildEventState(
       }),
       prisma.session.findMany({
         where: { eventId: input.event.id, deletedAt: null },
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ sequenceNumber: "asc" }, { createdAt: "asc" }],
         select: {
           id: true,
           title: true,
+          roomLabel: true,
+          sequenceNumber: true,
+          snapshotCaseTitle: true,
+          snapshotCaseLanguage: true,
+          status: true,
           negotiationState: true,
+          preparationDurationSeconds: true,
+          durationSeconds: true,
+          createdAt: true,
           closeReason: true,
           closedByEventAt: true,
+          deletedAt: true,
+          recording: {
+            select: { status: true },
+          },
+          participants: {
+            orderBy: { createdAt: "asc" },
+            include: {
+              sessionRole: { select: { name: true } },
+            },
+          },
         },
+      }),
+      prisma.sessionParticipant.findMany({
+        where: {
+          eventParticipantId: { not: null },
+          eventParticipant: { eventId: input.event.id },
+        },
+        include: {
+          sessionRole: { select: { name: true } },
+          session: {
+            select: {
+              id: true,
+              title: true,
+              roomLabel: true,
+              sequenceNumber: true,
+              negotiationState: true,
+              status: true,
+              deletedAt: true,
+              closedByEventAt: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
       }),
     ]);
 
   const assignmentDraft = parseAssignmentDraft(
     input.event.assignmentDraft,
     getAssignmentDurationDefaults(selectedCaseRecord),
+  );
+  const activeAssignmentsByEventParticipantId = new Map<
+    string,
+    (typeof sessionParticipantAssignments)[number]
+  >();
+
+  for (const assignment of sessionParticipantAssignments) {
+    if (
+      assignment.eventParticipantId &&
+      isSessionActiveForAssignment(assignment.session) &&
+      !activeAssignmentsByEventParticipantId.has(assignment.eventParticipantId)
+    ) {
+      activeAssignmentsByEventParticipantId.set(
+        assignment.eventParticipantId,
+        assignment,
+      );
+    }
+  }
+
+  const currentParticipantId = input.currentParticipant?.id ?? null;
+  const mappedParticipants = participants.map((participant) =>
+    mapEventParticipant({
+      participant,
+      activeAssignment:
+        activeAssignmentsByEventParticipantId.get(participant.id) ?? null,
+      isHost: input.isHost,
+      currentParticipantId,
+    }),
+  );
+  const sessions = linkedSessions.map((session) =>
+    mapEventSession({
+      session,
+      isHost: input.isHost,
+      currentParticipantId,
+    }),
   );
 
   return {
@@ -192,7 +307,11 @@ export async function buildEventState(
         }
       : null,
     isHost: input.isHost,
-    participants: participants.map(mapEventParticipant),
+    participants: mappedParticipants,
+    sessions,
+    availableParticipants: mappedParticipants.filter(
+      (participant) => !participant.assignedSessionId,
+    ),
     selectedCase: selectedCaseRecord
       ? toPublicCaseSummary(selectedCaseRecord)
       : null,
@@ -204,6 +323,8 @@ export async function buildEventState(
     linkedSessions: linkedSessions.map((session) => ({
       id: session.id,
       title: session.title,
+      roomLabel: session.roomLabel,
+      sequenceNumber: session.sequenceNumber,
       negotiationState: session.negotiationState,
       closeReason: session.closeReason,
       closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
@@ -211,16 +332,31 @@ export async function buildEventState(
   };
 }
 
-function mapEventParticipant(
-  participant: EventParticipant & {
-    assignedSessionParticipant:
-      | (SessionParticipant & {
-          sessionRole: { name: string } | null;
-        })
-      | null;
-  },
-): EventStateParticipant {
-  const assigned = participant.assignedSessionParticipant;
+function mapEventParticipant({
+  participant,
+  activeAssignment,
+  isHost,
+  currentParticipantId,
+}: {
+  participant: EventParticipant;
+  activeAssignment:
+    | (SessionParticipant & {
+        sessionRole: { name: string } | null;
+        session: {
+          id: string;
+          title: string;
+          roomLabel: string | null;
+          sequenceNumber: number | null;
+        };
+      })
+    | null;
+  isHost: boolean;
+  currentParticipantId: string | null;
+}): EventStateParticipant {
+  const canSeeJoinToken = isHost || participant.id === currentParticipantId;
+  const assignmentLabel = activeAssignment?.session.roomLabel
+    ?? activeAssignment?.session.title
+    ?? null;
 
   return {
     id: participant.id,
@@ -234,10 +370,110 @@ function mapEventParticipant(
     joinedAt: participant.joinedAt?.toISOString() ?? null,
     lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
     connectionStatus: resolveConnectionStatus(participant.lastSeenAt),
-    assignedSessionId: participant.assignedSessionId,
-    assignedSessionParticipantId: participant.assignedSessionParticipantId,
-    assignedType: assigned?.type ?? null,
-    assignedRoleName: assigned?.sessionRole?.name ?? null,
-    joinToken: assigned?.joinToken ?? null,
+    assignedSessionId: activeAssignment?.sessionId ?? null,
+    assignedSessionParticipantId: activeAssignment?.id ?? null,
+    assignedType: activeAssignment?.type ?? null,
+    assignedRoleName: activeAssignment?.sessionRole?.name ?? null,
+    joinToken: canSeeJoinToken ? (activeAssignment?.joinToken ?? null) : null,
+    activeAssignmentLabel: assignmentLabel,
+  };
+}
+
+function mapEventSession({
+  session,
+  isHost,
+  currentParticipantId,
+}: {
+  session: {
+    id: string;
+    title: string;
+    roomLabel: string | null;
+    sequenceNumber: number | null;
+    snapshotCaseTitle: string;
+    snapshotCaseLanguage: string;
+    status: string;
+    negotiationState: string;
+    preparationDurationSeconds: number;
+    durationSeconds: number;
+    createdAt: Date;
+    closeReason: string | null;
+    closedByEventAt: Date | null;
+    deletedAt: Date | null;
+    recording: { status: string } | null;
+    participants: Array<
+      SessionParticipant & {
+        sessionRole: { name: string } | null;
+      }
+    >;
+  };
+  isHost: boolean;
+  currentParticipantId: string | null;
+}): EventStateSession {
+  const facilitator = session.participants.find(
+    (participant) => participant.type === "FACILITATOR",
+  );
+  const currentParticipant = currentParticipantId
+    ? session.participants.find(
+        (participant) => participant.eventParticipantId === currentParticipantId,
+      )
+    : null;
+  const linkParticipant = isHost ? facilitator ?? session.participants[0] : currentParticipant;
+  const isActive = isSessionActiveForAssignment(session);
+  const isFinished = !isActive;
+  const canOpenMaterials = Boolean(isHost || currentParticipant);
+
+  return {
+    id: session.id,
+    title: session.title,
+    roomLabel: session.roomLabel,
+    sequenceNumber: session.sequenceNumber,
+    caseTitle: session.snapshotCaseTitle,
+    caseLanguage: session.snapshotCaseLanguage,
+    status: session.status,
+    negotiationState: session.negotiationState,
+    preparationDuration: session.preparationDurationSeconds,
+    negotiationDuration: session.durationSeconds,
+    participantCount: session.participants.filter(
+      (participant) => participant.type === "PARTICIPANT",
+    ).length,
+    observerCount: session.participants.filter(
+      (participant) => participant.type === "OBSERVER",
+    ).length,
+    facilitatorName: facilitator?.displayName ?? null,
+    isActive,
+    isFinished,
+    roomUrl:
+      isActive && linkParticipant
+        ? buildSessionRoomPath(session.id, linkParticipant.joinToken)
+        : null,
+    materialsUrl: canOpenMaterials
+      ? isHost
+        ? `/sessions/${session.id}`
+        : currentParticipant
+          ? buildSessionMaterialsPath(currentParticipant.joinToken)
+          : null
+      : null,
+    createdAt: session.createdAt.toISOString(),
+    recordingStatus: session.recording?.status ?? null,
+    closeReason: session.closeReason,
+    closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
+    participants: session.participants.map((participant) => {
+      const canSeeLink = isHost || participant.eventParticipantId === currentParticipantId;
+
+      return {
+        id: participant.id,
+        eventParticipantId: participant.eventParticipantId,
+        displayName: participant.displayName,
+        participantType: participant.type,
+        roleName: participant.sessionRole?.name ?? null,
+        roomUrl:
+          isActive && canSeeLink
+            ? buildSessionRoomPath(session.id, participant.joinToken)
+            : null,
+        materialsUrl: canSeeLink
+          ? buildSessionMaterialsPath(participant.joinToken)
+          : null,
+      };
+    }),
   };
 }

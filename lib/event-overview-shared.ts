@@ -2,6 +2,15 @@ export type EventOverviewStats = {
   id: string;
   lobbyParticipantCount: number;
   sessionCount: number;
+  totalSessions: number;
+  activeSessions: number;
+  finishedSessions: number;
+  participantsInLobby: number;
+  participantsInActiveSessions: number;
+  uniqueParticipantsWithSessions: number;
+  recordingsCount: number;
+  transcriptsCount: number;
+  latestActivityAt: string | null;
   activeSessionParticipantCount: number;
   totalSessionParticipantCount: number;
 };
@@ -24,6 +33,15 @@ export type TrainingEventListItem = {
   primarySessionId: string | null;
   lobbyParticipantCount: number;
   sessionCount: number;
+  totalSessions: number;
+  activeSessions: number;
+  finishedSessions: number;
+  participantsInLobby: number;
+  participantsInActiveSessions: number;
+  uniqueParticipantsWithSessions: number;
+  recordingsCount: number;
+  transcriptsCount: number;
+  latestActivityAt: string | null;
   activeSessionParticipantCount: number;
   totalSessionParticipantCount: number;
   createdAt?: string;
@@ -53,6 +71,17 @@ export function applyEventOverviewStats<
     return {
       ...event,
       sessionCount: eventStats.sessionCount,
+      totalSessions: eventStats.totalSessions,
+      activeSessions: eventStats.activeSessions,
+      finishedSessions: eventStats.finishedSessions,
+      participantsInLobby: presenceActive ? eventStats.participantsInLobby : 0,
+      participantsInActiveSessions: presenceActive
+        ? eventStats.participantsInActiveSessions
+        : 0,
+      uniqueParticipantsWithSessions: eventStats.uniqueParticipantsWithSessions,
+      recordingsCount: eventStats.recordingsCount,
+      transcriptsCount: eventStats.transcriptsCount,
+      latestActivityAt: eventStats.latestActivityAt,
       totalSessionParticipantCount: eventStats.totalSessionParticipantCount,
       lobbyParticipantCount: presenceActive ? eventStats.lobbyParticipantCount : 0,
       activeSessionParticipantCount: presenceActive

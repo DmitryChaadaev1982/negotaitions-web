@@ -95,6 +95,31 @@ test("sticky headers do not overlap first visible content on core pages", async 
   }
 });
 
+test("RU/EN terminology and navigation order match current product", async ({
+  page,
+}) => {
+  await page.goto("/dashboard");
+
+  await expect(page.getByTestId("nav-dashboard")).toHaveText("Dashboard");
+  await expect(page.getByTestId("nav-cases")).toHaveText("Cases");
+  await expect(page.getByTestId("nav-events")).toHaveText("Events");
+  await expect(page.getByTestId("nav-sessions")).toHaveText("Sessions");
+  await expect(page.getByTestId("nav-admin")).toHaveText("Admin diagnostics");
+  await expect(page.getByText("Signed in as Facilitator")).toHaveCount(0);
+
+  await page.getByTestId("language-switch-ru").click();
+  await expect(page.getByTestId("nav-dashboard")).toHaveText("Панель");
+  await expect(page.getByTestId("nav-cases")).toHaveText("Кейсы");
+  await expect(page.getByTestId("nav-events")).toHaveText("Встречи");
+  await expect(page.getByTestId("nav-sessions")).toHaveText("Сессии");
+  await expect(page.getByTestId("nav-admin")).toHaveText("Административная диагностика");
+
+  await page.goto("/events");
+  await expect(page.getByRole("heading", { name: "Встречи" })).toBeVisible();
+  await expect(page.getByText("Тренировки")).toHaveCount(0);
+  await expect(page.getByText("Вход выполнен как Фасилитатор")).toHaveCount(0);
+});
+
 test("live smoke tests are skipped by default", async () => {
   test.skip(
     process.env.RUN_LIVE_SMOKE_TESTS !== "true",

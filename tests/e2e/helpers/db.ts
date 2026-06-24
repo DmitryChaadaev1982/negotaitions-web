@@ -151,6 +151,104 @@ export async function createE2eCase() {
   };
 }
 
+export async function createTestCase(input?: {
+  title?: string;
+  difficulty?: "EASY" | "MEDIUM" | "HARD";
+  preparationSeconds?: number;
+  negotiationSeconds?: number;
+  roles?: [string, string];
+}) {
+  const facilitator = await ensureDemoFacilitator();
+  const caseId = id("case");
+  const title = input?.title ?? "E2E Case A — Scope Change";
+  const [roleA, roleB] = input?.roles ?? ["Client CFO", "Vendor Project Director"];
+
+  await query(
+    `INSERT INTO "NegotiationCase"
+       ("id", "title", "description", "businessContext", "publicInstructions",
+        "targetSkills", "difficulty", "caseLanguage",
+        "defaultPreparationDurationSeconds", "defaultDurationSeconds",
+        "facilitatorId", "updatedAt")
+     VALUES ($1, $2, 'E2E case description', $3,
+        'E2E public instructions', 'E2E target skills', $4, 'EN',
+        $5, $6, $7, NOW())`,
+    [
+      caseId,
+      title,
+      `${title} public business context`,
+      input?.difficulty ?? "EASY",
+      input?.preparationSeconds ?? 5 * 60,
+      input?.negotiationSeconds ?? 10 * 60,
+      facilitator.id,
+    ],
+  );
+
+  const roleRows = await query<E2eCaseRole>(
+    `INSERT INTO "CaseRole"
+       ("id", "negotiationCaseId", "name", "privateInstructions", "objectives",
+        "constraints", "hiddenInfo", "fallbackPosition", "sortOrder", "updatedAt")
+     VALUES
+       ($1, $3, $4, $6, 'Role A objective', 'Role A constraints', 'Role A hidden info', 'Role A fallback', 0, NOW()),
+       ($2, $3, $5, $7, 'Role B objective', 'Role B constraints', 'Role B hidden info', 'Role B fallback', 1, NOW())
+     RETURNING "id", "name", "privateInstructions", "objectives", "constraints", "hiddenInfo", "fallbackPosition", "sortOrder"`,
+    [
+      id("role"),
+      id("role"),
+      caseId,
+      roleA,
+      roleB,
+      `E2E_PRIVATE_${roleA.replace(/\W+/g, "_").toUpperCase()}_ONLY`,
+      `E2E_PRIVATE_${roleB.replace(/\W+/g, "_").toUpperCase()}_ONLY`,
+    ],
+  );
+
+  return {
+    id: caseId,
+    title,
+    businessContext: `${title} public business context`,
+    publicInstructions: "E2E public instructions",
+    caseLanguage: "EN" as const,
+    roles: roleRows.sort((a, b) => a.sortOrder - b.sortOrder),
+  };
+}
+
+export async function createTestEvent(input?: {
+  withParticipants?: boolean;
+  title?: string;
+}) {
+  return createE2eEvent(input);
+}
+
+export async function joinEventAsParticipant(
+  eventId: string,
+  name: string,
+  preference: "PLAY" | "OBSERVE" | "FACILITATE" = "PLAY",
+) {
+  const token = `${name.toLowerCase()}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+
+  await query(
+    `INSERT INTO "EventParticipant"
+      ("id", "eventId", "displayName", "participantToken", "preference",
+       "isHost", "wantsToPlay", "wantsToObserve", "wantsToFacilitate",
+       "joinedAt", "lastSeenAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8, NOW(), NOW(), NOW())`,
+    [
+      id("ep"),
+      eventId,
+      name,
+      token,
+      preference,
+      preference === "PLAY",
+      preference === "OBSERVE",
+      preference === "FACILITATE",
+    ],
+  );
+
+  return participantByName(await getEventParticipants(eventId), name);
+}
+
 export async function createE2eEvent(input?: {
   withParticipants?: boolean;
   title?: string;

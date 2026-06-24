@@ -54,6 +54,7 @@ type RoomControlPayload = ControlState &
   closeMessageKey?:
     | "events.sessionClosedByEvent"
     | "events.sessionClosedBeforeNegotiation"
+    | "join.sessionFinishedMessage"
     | null;
 };
 
@@ -228,11 +229,15 @@ function SessionClosedOverlay({
   joinToken,
   closeMessageKey,
   recordingStatus,
+  eventLobbyUrl,
+  eventCompleted,
   onLeave,
 }: {
   joinToken: string;
   closeMessageKey: NonNullable<RoomControlPayload["closeMessageKey"]>;
   recordingStatus?: string | null;
+  eventLobbyUrl?: string | null;
+  eventCompleted?: boolean;
   onLeave: () => void;
 }) {
   const { t } = useI18n();
@@ -244,12 +249,27 @@ function SessionClosedOverlay({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
       <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-600/40 bg-slate-900 p-6 text-center shadow-xl">
-        <h2 className="text-lg font-bold text-slate-50">{t(closeMessageKey)}</h2>
+        <h2 className="text-lg font-bold text-slate-50" data-testid="session-finished-message">
+          {t(closeMessageKey)}
+        </h2>
         {hadRecording && closeMessageKey === "events.sessionClosedByEvent" ? (
           <p className="text-sm text-slate-400">{t("events.recordingFinalizing")}</p>
         ) : null}
         <div className="flex flex-wrap justify-center gap-3 pt-2">
-          <GradientButtonLink href={buildSessionMaterialsPath(joinToken)}>
+          {eventLobbyUrl ? (
+            <GradientButtonLink
+              href={eventLobbyUrl}
+              data-testid="return-to-event-lobby-button"
+              className={eventCompleted ? "pointer-events-none opacity-60" : undefined}
+              aria-disabled={eventCompleted}
+            >
+              {t("events.returnToEventLobby")}
+            </GradientButtonLink>
+          ) : null}
+          <GradientButtonLink
+            href={buildSessionMaterialsPath(joinToken)}
+            data-testid="open-session-materials-button"
+          >
             {t("room.backToSessionMaterials")}
           </GradientButtonLink>
           <button
@@ -317,6 +337,8 @@ function ConnectedRoom({
           joinToken={joinToken}
           closeMessageKey={sessionCloseState.closeMessageKey}
           recordingStatus={recordingState?.status}
+          eventLobbyUrl={sidebar.event?.lobbyUrl}
+          eventCompleted={sidebar.event?.status === "COMPLETED"}
           onLeave={handleLeaveClosed}
         />
       ) : null}
@@ -333,10 +355,14 @@ function ConnectedRoom({
         video
         data-lk-theme="default"
         className="flex h-dvh flex-col overflow-hidden bg-slate-950"
+        data-testid="session-room-page"
       >
         <RoomAudioRenderer />
         <MicEnforcement controlState={controlState} />
-        <header className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3">
+        <header
+          className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3"
+          data-testid="session-room-header"
+        >
           <div className="min-w-0 space-y-2">
             <p className="truncate text-sm font-semibold text-slate-50">
               {sidebar.sessionTitle}
@@ -356,6 +382,7 @@ function ConnectedRoom({
             <GradientButtonLink
               href={buildSessionMaterialsPath(joinToken)}
               className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+              data-testid="session-materials-link"
             >
               {t("room.sessionMaterials")}
             </GradientButtonLink>

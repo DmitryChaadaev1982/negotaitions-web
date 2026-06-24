@@ -30,6 +30,15 @@ type EventRow = {
   scheduledAt: string | null;
   lobbyParticipantCount: number;
   sessionCount: number;
+  totalSessions: number;
+  activeSessions: number;
+  finishedSessions: number;
+  participantsInLobby: number;
+  participantsInActiveSessions: number;
+  uniqueParticipantsWithSessions: number;
+  recordingsCount: number;
+  transcriptsCount: number;
+  latestActivityAt: string | null;
   activeSessionParticipantCount: number;
   totalSessionParticipantCount: number;
   hostToken: string;
@@ -76,30 +85,45 @@ function EventActivitySummary({ event }: { event: EventRow }) {
   const chips = [
     {
       label: t("events.activityLobby"),
-      value: active ? event.lobbyParticipantCount : "—",
+      value: active ? event.participantsInLobby : "—",
+      testId: "event-participants-in-lobby",
     },
     {
       label: t("events.activitySessions"),
-      value: event.sessionCount,
+      value: event.totalSessions,
+      testId: "event-total-sessions",
+    },
+    {
+      label: t("events.activeSession"),
+      value: event.activeSessions,
+      testId: "event-active-sessions",
+    },
+    {
+      label: t("events.finishedSession"),
+      value: event.finishedSessions,
+      testId: "event-finished-sessions",
     },
     {
       label: t("events.activityInSessions"),
-      value: active ? event.activeSessionParticipantCount : "—",
+      value: active ? event.participantsInActiveSessions : "—",
+      testId: "event-participants-in-active-sessions",
     },
     {
       label: t("events.activityTotal"),
       value: event.totalSessionParticipantCount,
+      testId: "event-total-assigned-participants",
     },
   ];
 
   return (
     <div
       className="flex flex-wrap gap-1"
-      data-testid="event-activity-summary"
+      data-testid="event-stats-summary"
     >
       {chips.map((chip) => (
         <span
           key={chip.label}
+          data-testid={chip.testId}
           className="inline-flex items-center gap-1 rounded-md bg-slate-800/70 px-2 py-0.5 text-xs text-slate-300 ring-1 ring-inset ring-slate-600/25"
         >
           <span className="text-slate-500">{chip.label}</span>
@@ -143,9 +167,23 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           )}
           title={t("events.openLobby")}
           aria-label={t("events.openLobby")}
-          data-testid="open-lobby-button"
+          data-testid="open-event-lobby-button"
         >
           {t("events.actionOpen")}
+        </Link>
+      ) : null}
+      {event.sessionCount > 0 && event.primarySessionId ? (
+        <Link
+          href={`/sessions?eventId=${event.id}`}
+          className={cn(
+            compactButtonClass,
+            "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
+          )}
+          title={t("events.sessionsInThisEvent")}
+          aria-label={t("events.sessionsInThisEvent")}
+          data-testid="view-event-sessions-button"
+        >
+          {t("events.sessions")}
         </Link>
       ) : null}
       {event.sessionCount > 0 && event.primarySessionId ? (
@@ -157,7 +195,11 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           )}
           title={t("events.materials")}
           aria-label={t("events.materials")}
-          data-testid="event-materials-button"
+          data-testid={
+            event.status === "COMPLETED"
+              ? "open-event-results-button"
+              : "event-materials-button"
+          }
         >
           {t("events.materials")}
         </Link>
@@ -341,8 +383,12 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                         >
                           {event.title}
                         </p>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                           {formatDate(event.scheduledAt)}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          {t("events.latestActivity")}:{" "}
+                          {formatDate(event.latestActivityAt)}
                         </p>
                       </div>
                     </td>
@@ -368,7 +414,7 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
           <div className="space-y-3 md:hidden">
             {events.map((event) => (
               <div key={event.id} data-testid="event-row">
-                <GlassCard elevated className="p-4">
+                <GlassCard elevated className="p-4" data-testid="event-card">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
@@ -378,8 +424,12 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                       >
                         {event.title}
                       </p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                         {formatDate(event.scheduledAt)}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        {t("events.latestActivity")}:{" "}
+                        {formatDate(event.latestActivityAt)}
                       </p>
                     </div>
                     <EventStatusBadge status={event.status} />

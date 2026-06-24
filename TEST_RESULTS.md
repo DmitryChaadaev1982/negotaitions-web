@@ -2,25 +2,23 @@
 
 ## Executed Commands
 
-- `npm install -D @playwright/test`
-- `npx playwright install chromium`
 - `npm run lint` — passed
 - `npm run build` — passed
 - `npx prisma validate` — passed
 - `npm run test:e2e` — passed
-- `npm run test:all` — passed
 
 ## Automated Test Summary
 
-Playwright result:
+Latest Playwright result:
 
-- 7 passed
+- 25 passed
 - 1 skipped
 - 0 failed
 
 Skipped:
 
 - Optional live external-service smoke placeholder is skipped by default unless `RUN_LIVE_SMOKE_TESTS=true`.
+- Any live provider tests remain skipped unless explicitly enabled; default e2e does not call real OpenAI, LiveKit Egress, or Yandex Object Storage.
 
 Covered default mock-mode flows:
 
@@ -39,6 +37,12 @@ Covered default mock-mode flows:
 - RU/EN UI rendering with dynamic content preserved.
 - Product spelling `NegotAItions`.
 - Sticky header smoke coverage on core pages.
+- Old e2e expectations for mandatory `/join/[joinToken]` briefing-before-room flow were rewritten: `/join/[joinToken]` is Session Materials, while Event lobby room buttons target `/room/[sessionId]` directly.
+- Obsolete one-session Event assumptions were removed from new coverage; the current suite includes multi-session Event creation, sequential participant reassignment, and duplicate active-assignment blocking.
+- Case Library and Configure session flow are covered instead of a simple primary case dropdown.
+- Dashboard and Events page multi-session stats are covered with compact UI/no-horizontal-overflow assertions.
+- Session Materials, Rejoin routing, completed Event state, privacy, and mocked recording/transcription lifecycle remain covered.
+- External services run in mock mode by default: `RECORDING_MODE=mock`, `TRANSCRIPTION_MODE=mock`, and `EXTERNAL_SERVICES_MODE=mock`.
 
 ## Fixed Defects
 
@@ -48,7 +52,7 @@ Covered default mock-mode flows:
 
 - Live external service smoke tests were not run because `RUN_LIVE_SMOKE_TESTS` was not enabled.
 - Next dev server logs an `allowedDevOrigins` warning for `127.0.0.1` during Playwright runs. It does not fail tests.
-- Public event join/lobby UI bootstrapping can remain in a loading state under the Playwright dev harness while LiveKit lobby video initializes; default tests assert the durable join/rejoin behavior through DB state and validation APIs.
+- Mock LiveKit room setup still logs expected client disconnect noise when tests navigate away from lobby/room pages. It does not fail tests.
 
 ## How To Run Again
 

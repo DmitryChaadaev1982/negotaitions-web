@@ -32,6 +32,10 @@ type SessionRow = {
   id: string;
   title: string;
   caseTitle: string;
+  eventId: string | null;
+  eventTitle: string | null;
+  eventStatus: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED" | null;
+  eventLobbyUrl: string | null;
   status: SessionDisplayStatus;
   negotiationState: "PREPARATION" | "PREPARATION_RUNNING" | "PREPARATION_PAUSED" | "READY_TO_START" | "RUNNING" | "PAUSED" | "FINISHED";
   closedByEventAt: string | null;
@@ -125,6 +129,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
             <DataTableHead>
               <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.caseLabel")}</DataTableHeaderCell>
+              <DataTableHeaderCell>{t("events.eventColumn")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("sessions.participants")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.onlineNow")}</DataTableHeaderCell>
@@ -144,6 +149,22 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                     </Link>
                   </DataTableCell>
                   <DataTableCell>{session.caseTitle}</DataTableCell>
+                  <DataTableCell>
+                    {session.eventTitle ? (
+                      <div className="max-w-[14rem]">
+                        <p className="truncate text-sm text-slate-200">
+                          {session.eventTitle}
+                        </p>
+                        {session.eventStatus ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            {t(`events.status.${session.eventStatus}`)}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </DataTableCell>
                   <DataTableCell>
                     <SessionStatusBadge status={session.status} />
                   </DataTableCell>
@@ -165,6 +186,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                         <Link
                           href={buildSessionMaterialsPath(session.facilitatorJoinToken)}
                           className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          data-testid="open-session-materials-button"
                         >
                           {t("sessions.openMaterials")}
                         </Link>
@@ -177,8 +199,27 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                             session.facilitatorJoinToken,
                           )}
                           className="text-sm font-medium text-emerald-400 hover:text-emerald-300"
+                          data-testid="open-session-room-button"
                         >
                           {t("sessions.openRoom")}
+                        </Link>
+                      ) : null}
+                      {session.eventLobbyUrl && session.eventStatus !== "COMPLETED" ? (
+                        <Link
+                          href={session.eventLobbyUrl}
+                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          data-testid="open-event-lobby-button"
+                        >
+                          {t("events.openLobby")}
+                        </Link>
+                      ) : null}
+                      {session.eventStatus === "COMPLETED" && session.eventId ? (
+                        <Link
+                          href={session.eventLobbyUrl ?? `/events/${session.eventId}/lobby`}
+                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          data-testid="open-event-results-button"
+                        >
+                          {t("events.materials")}
                         </Link>
                       ) : null}
                       <Link

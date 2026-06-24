@@ -19,6 +19,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
         <button
           key={option}
           type="button"
+          data-testid={`language-switch-${option}`}
           onClick={() => setLocale(option)}
           className={cn(
             "rounded-md px-3 py-1 uppercase transition-all duration-200",

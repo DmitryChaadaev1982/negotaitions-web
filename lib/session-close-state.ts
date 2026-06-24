@@ -23,6 +23,7 @@ export type SessionCloseState = {
   closeMessageKey:
     | "events.sessionClosedByEvent"
     | "events.sessionClosedBeforeNegotiation"
+    | "join.sessionFinishedMessage"
     | null;
 };
 
@@ -36,17 +37,19 @@ export function buildSessionCloseState(
   const isClosed =
     closedByEvent ||
     eventCompleted ||
-    (session.negotiationState === NegotiationState.FINISHED && closedByEvent);
+    session.negotiationState === NegotiationState.FINISHED;
 
   const closedBeforeNegotiation =
     isClosed && session.negotiationStartedAt == null;
 
   let closeMessageKey: SessionCloseState["closeMessageKey"] = null;
 
-  if (isClosed) {
+  if (closedByEvent || eventCompleted) {
     closeMessageKey = closedBeforeNegotiation
       ? "events.sessionClosedBeforeNegotiation"
       : "events.sessionClosedByEvent";
+  } else if (session.negotiationState === NegotiationState.FINISHED) {
+    closeMessageKey = "join.sessionFinishedMessage";
   }
 
   return {

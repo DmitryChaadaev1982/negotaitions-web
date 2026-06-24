@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { buildSessionRoomPath } from "@/lib/config";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 import { AddParticipantForm } from "@/components/add-participant-form";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -84,6 +85,7 @@ type SessionDetailViewProps = {
     linkedEvent: {
       id: string;
       title: string;
+      status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
       lobbyUrl: string;
     } | null;
   };
@@ -175,6 +177,12 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
     session.preparationDurationSeconds / 60,
   );
   const isReadOnly = session.isDeleted;
+  const roomActive = isSessionActiveForRoom({
+    negotiationState: session.negotiationState,
+    closedByEventAt:
+      session.linkedEvent?.status === "COMPLETED" ? new Date().toISOString() : null,
+    deletedAt: session.isDeleted ? new Date().toISOString() : null,
+  });
 
   return (
     <div className="space-y-8">
@@ -204,8 +212,17 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
                 {session.linkedEvent.title}
               </p>
             </div>
-            <SecondaryButtonLink href={session.linkedEvent.lobbyUrl}>
-              {t("events.returnToEventLobby")}
+            <SecondaryButtonLink
+              href={session.linkedEvent.lobbyUrl}
+              data-testid={
+                session.linkedEvent.status === "COMPLETED"
+                  ? "open-event-results-button"
+                  : "open-event-lobby-button"
+              }
+            >
+              {session.linkedEvent.status === "COMPLETED"
+                ? t("events.materials")
+                : t("events.returnToEventLobby")}
             </SecondaryButtonLink>
           </GlassCardContent>
         </GlassCard>
@@ -285,16 +302,17 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
             negotiationState={session.negotiationState}
             readOnly={isReadOnly}
           />
-          {!isReadOnly && session.facilitatorParticipant ? (
+          {!isReadOnly && roomActive && session.facilitatorParticipant ? (
             <GradientButtonLink
               href={buildSessionRoomPath(
                 session.id,
                 session.facilitatorParticipant.joinToken,
               )}
+              data-testid="open-session-room-button"
             >
               {t("sessions.joinVideoRoom")}
             </GradientButtonLink>
-          ) : !isReadOnly ? (
+          ) : !isReadOnly && !session.facilitatorParticipant ? (
             <p className="text-sm text-slate-400">
               {t("sessions.addFacilitatorToJoin")}
             </p>

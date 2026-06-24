@@ -68,6 +68,7 @@ export function EventLobbyView({
   const [liveKit, setLiveKit] = useState<LiveKitTokenResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [deviceWarning, setDeviceWarning] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -138,24 +139,26 @@ export function EventLobbyView({
           return;
         }
 
-        const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            hostToken: hostToken || undefined,
-            participantToken: participantToken || undefined,
-          }),
-        });
+        void (async () => {
+          const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              hostToken: hostToken || undefined,
+              participantToken: participantToken || undefined,
+            }),
+          });
 
-        if (!active) return;
+          if (!active) return;
 
-        if (tokenResponse.ok) {
-          setLiveKit((await tokenResponse.json()) as LiveKitTokenResponse);
-        } else if (tokenResponse.status === 410) {
-          setError("eventUnavailable");
-        } else {
-          setLiveKit(null);
-        }
+          if (tokenResponse.ok) {
+            setLiveKit((await tokenResponse.json()) as LiveKitTokenResponse);
+          } else if (tokenResponse.status === 410) {
+            setError("eventUnavailable");
+          } else {
+            setLiveKit(null);
+          }
+        })();
       } catch {
         if (active) {
           setError("invalidAccess");
@@ -256,22 +259,54 @@ export function EventLobbyView({
     if (!hostToken || !state) return;
 
     setIsCreatingSession(true);
+    setCreateSessionError(null);
 
     try {
+      const selectedCase = state.selectedCase;
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostToken }),
+        body: JSON.stringify({
+          hostToken,
+          caseId: selectedCase?.id,
+          roomLabel: state.assignmentDraft.roomLabel || undefined,
+          preparationDurationSeconds:
+            state.assignmentDraft.preparationDurationMinutes * 60,
+          negotiationDurationSeconds:
+            state.assignmentDraft.negotiationDurationMinutes * 60,
+          facilitatorEventParticipantId:
+            state.assignmentDraft.facilitatorEventParticipantId ?? undefined,
+          roleAssignments: Object.entries(
+            state.assignmentDraft.roleAssignments,
+          ).map(([caseRoleId, eventParticipantId]) => ({
+            caseRoleId,
+            eventParticipantId,
+          })),
+          observerEventParticipantIds:
+            state.assignmentDraft.observerEventParticipantIds,
+        }),
       });
 
       if (response.ok) {
         const data = await response.json();
         setState(data.state as EventStateResponse);
+      } else {
+        const data = (await response.json()) as {
+          error?: string;
+          participantName?: string;
+        };
+        setCreateSessionError(
+          data.error === "participantAlreadyAssigned" && data.participantName
+            ? t("events.participantAlreadyAssignedName", {
+                name: data.participantName,
+              })
+            : t("validation.createSessionFailed"),
+        );
       }
     } finally {
       setIsCreatingSession(false);
     }
-  }, [eventId, hostToken, state]);
+  }, [eventId, hostToken, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
@@ -303,6 +338,7 @@ export function EventLobbyView({
         setCompleteWarnings(result.warnings ?? []);
         setShowCompleteDialog(false);
         await fetchState();
+        setIsBootstrapping(false);
       }
     } finally {
       setIsCompletingEvent(false);
@@ -324,8 +360,50 @@ export function EventLobbyView({
 
   if (isBootstrapping && !error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#020617] px-4">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#020617] px-4">
         <p className="text-sm text-slate-400">{t("common.loading")}…</p>
+        {hostToken ? (
+          <button
+            type="button"
+            data-testid="complete-event-button"
+            className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20"
+            onClick={() => setShowCompleteDialog(true)}
+          >
+            {t("events.completeEvent")}
+          </button>
+        ) : null}
+        {showCompleteDialog ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-600/40 bg-slate-900 p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-slate-50">
+                {t("events.completeEventTitle")}
+              </h3>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                {t("events.completeEventWarning")}
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <SecondaryButton
+                  type="button"
+                  onClick={() => setShowCompleteDialog(false)}
+                  disabled={isCompletingEvent}
+                >
+                  {t("common.cancel")}
+                </SecondaryButton>
+                <button
+                  type="button"
+                  data-testid="confirm-complete-event-button"
+                  className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
+                  disabled={isCompletingEvent}
+                  onClick={() => void completeEvent()}
+                >
+                  {isCompletingEvent
+                    ? t("common.loading")
+                    : t("events.completeEventConfirm")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -341,22 +419,31 @@ export function EventLobbyView({
   }
 
   const draft = state.assignmentDraft;
-  const isHost = state.isHost;
+  const isHost = state.isHost || Boolean(hostToken);
   const currentAssignment = state.currentParticipant
     ? state.participants.find((p) => p.id === state.currentParticipant?.id)
     : null;
   const assignedSession = currentAssignment?.assignedSessionId
-    ? state.linkedSessions.find(
+    ? state.sessions.find(
         (session) => session.id === currentAssignment.assignedSessionId,
       )
     : null;
   const sessionRoomActive =
     currentAssignment?.joinToken && currentAssignment.assignedSessionId
-      ? isSessionActiveForRoom({
+      ? Boolean(assignedSession?.isActive) ||
+        isSessionActiveForRoom({
           negotiationState: assignedSession?.negotiationState ?? "PREPARATION",
           closedByEventAt: assignedSession?.closedByEventAt ?? null,
         })
       : false;
+  const participantHistoricalSessions = state.currentParticipant
+    ? state.sessions.filter((session) =>
+        session.participants.some(
+          (participant) =>
+            participant.eventParticipantId === state.currentParticipant?.id,
+        ),
+      )
+    : [];
 
   if (isEventCompleted) {
     return (
@@ -370,7 +457,7 @@ export function EventLobbyView({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#020617]" data-testid="event-lobby-ready">
+    <div className="flex min-h-screen flex-col bg-[#020617]" data-testid="event-lobby-page">
       {participantToken || hostToken ? (
         <EventLobbyPresence
           eventId={eventId}
@@ -405,7 +492,10 @@ export function EventLobbyView({
       </header>
 
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-4 lg:flex-row lg:overflow-hidden">
-        <section className="glass-panel flex min-h-[420px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25 lg:min-h-0">
+        <section
+          className="glass-panel flex min-h-[420px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25 lg:min-h-0"
+          data-testid="event-lobby-video-area"
+        >
           <div className="shrink-0 border-b border-slate-600/25 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-50">{t("events.commonLobby")}</h2>
             <p className="text-xs text-slate-400">
@@ -475,7 +565,7 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          <GlassCard elevated>
+          <GlassCard elevated data-testid="participant-list">
             <GlassCardHeader>
               <h3 className="text-sm font-semibold text-slate-50">
                 {t("events.participantsInLobby")}
@@ -488,6 +578,7 @@ export function EventLobbyView({
                 state.participants.map((participant) => (
                   <div
                     key={participant.id}
+                    data-testid="participant-card"
                     className="flex items-center justify-between gap-2 rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
                   >
                     <span className="text-sm font-medium text-slate-100">
@@ -495,6 +586,11 @@ export function EventLobbyView({
                       {participant.isHost ? (
                         <span className="ml-1.5 text-xs font-normal text-cyan-400">
                           ({t("events.hostLabel")})
+                        </span>
+                      ) : null}
+                      {participant.activeAssignmentLabel ? (
+                        <span className="mt-1 block text-xs font-normal text-cyan-300">
+                          {t("events.activeSession")}: {participant.activeAssignmentLabel}
                         </span>
                       ) : null}
                     </span>
@@ -566,13 +662,17 @@ export function EventLobbyView({
               onCompleteEvent={() => void completeEvent()}
               onUpdateHost={updateHost}
               onCreateSession={() => void createSession()}
+              createSessionError={createSessionError}
             />
           ) : null}
 
           {currentAssignment?.joinToken ? (
-            <GlassCard elevated className="border-emerald-500/30">
+            <GlassCard elevated className="border-emerald-500/30" data-testid="assigned-session-card">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm text-emerald-200">{t("events.assignedToRoom")}</p>
+                <p className="text-base font-semibold text-slate-50">
+                  {assignedSession?.roomLabel ?? assignedSession?.title}
+                </p>
                 <p className="text-xs text-slate-400">
                   {currentAssignment.assignedType === "FACILITATOR"
                     ? t("participantType.FACILITATOR")
@@ -590,14 +690,14 @@ export function EventLobbyView({
                         currentAssignment.assignedSessionId,
                         currentAssignment.joinToken,
                       )}
-                      data-testid="go-to-negotiation-room-button"
+                      data-testid="go-to-session-room-button"
                     >
                       {t("events.goToNegotiationRoom")}
                     </GradientButtonLink>
                     <SecondaryButtonLink
                       href={buildSessionMaterialsPath(currentAssignment.joinToken)}
                       className="w-full text-center"
-                      data-testid="session-materials-button"
+                      data-testid="open-session-materials-button"
                     >
                       {t("events.sessionMaterials")}
                     </SecondaryButtonLink>
@@ -612,10 +712,67 @@ export function EventLobbyView({
                 )}
               </GlassCardContent>
             </GlassCard>
-          ) : state.createdSession && !currentAssignment?.joinToken ? (
+          ) : null}
+
+          {participantHistoricalSessions.length > 0 ? (
+            <GlassCard data-testid="my-sessions-in-event-section">
+              <GlassCardContent className="space-y-3">
+                <p className="text-sm font-semibold text-slate-100">
+                  {isHost ? t("events.sessionsInThisEvent") : t("events.mySessionsInThisEvent")}
+                </p>
+                <div className="space-y-2">
+                  {participantHistoricalSessions.map((session) => {
+                    const participantLink = session.participants.find(
+                      (participant) =>
+                        participant.eventParticipantId ===
+                        state.currentParticipant?.id,
+                    );
+
+                    return (
+                      <div
+                        key={session.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-slate-100">
+                            {session.roomLabel ?? session.title}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {session.isActive
+                              ? t("events.activeSession")
+                              : t("events.finishedSession")}
+                          </p>
+                        </div>
+                        {participantLink?.roomUrl ? (
+                          <SecondaryButtonLink
+                            href={participantLink.roomUrl}
+                            data-testid="go-to-session-room-button"
+                          >
+                            {t("events.openRoom")}
+                          </SecondaryButtonLink>
+                        ) : null}
+                        {participantLink?.materialsUrl ? (
+                          <SecondaryButtonLink
+                            href={participantLink.materialsUrl}
+                            data-testid="open-session-materials-button"
+                          >
+                            {t("events.openSessionMaterials")}
+                          </SecondaryButtonLink>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
+
+          {state.sessions.length > 0 &&
+          !currentAssignment?.joinToken &&
+          participantHistoricalSessions.length === 0 ? (
             <GlassCard>
               <GlassCardContent>
-                <p className="text-sm text-slate-400">{t("events.notAssignedYet")}</p>
+                <p className="text-sm text-slate-400">{t("events.waitingForAssignment")}</p>
               </GlassCardContent>
             </GlassCard>
           ) : null}
@@ -641,6 +798,22 @@ function EventCompletedOverlay({
   const currentAssignment = state.currentParticipant
     ? state.participants.find((participant) => participant.id === state.currentParticipant?.id)
     : null;
+  const latestParticipantSession = state.currentParticipant
+    ? state.sessions
+        .filter((session) =>
+          session.participants.some(
+            (participant) =>
+              participant.eventParticipantId === state.currentParticipant?.id,
+          ),
+        )
+        .at(-1)
+    : hostToken
+      ? state.sessions.at(-1)
+      : null;
+  const latestParticipantMaterialsUrl = latestParticipantSession?.participants.find(
+    (participant) =>
+      participant.eventParticipantId === state.currentParticipant?.id,
+  )?.materialsUrl;
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#020617] px-4 py-12 text-center">
@@ -672,9 +845,13 @@ function EventCompletedOverlay({
           >
             {t("events.openSessionMaterials")}
           </GradientButtonLink>
+        ) : latestParticipantMaterialsUrl ? (
+          <GradientButtonLink href={latestParticipantMaterialsUrl}>
+            {t("events.openSessionMaterials")}
+          </GradientButtonLink>
         ) : null}
-        {hostToken && state.createdSession ? (
-          <SecondaryButtonLink href={`/sessions/${state.createdSession.id}`}>
+        {hostToken && latestParticipantSession ? (
+          <SecondaryButtonLink href={`/sessions/${latestParticipantSession.id}`}>
             {t("events.materials")}
           </SecondaryButtonLink>
         ) : state.createdSession && !currentAssignment?.joinToken ? (

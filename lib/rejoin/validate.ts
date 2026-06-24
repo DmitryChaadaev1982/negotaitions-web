@@ -8,6 +8,7 @@ import {
   isEventCompleted,
   resolveEventAccess,
 } from "@/lib/event-auth";
+import { getActiveSessionAssignment } from "@/lib/event-active-assignment";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import { buildSessionCloseState } from "@/lib/session-close-state";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
@@ -60,6 +61,63 @@ export async function validateRejoinContext(
     }
 
     const displayName = access.currentParticipant?.displayName;
+
+    if (access.currentParticipant && input.participantToken) {
+      const activeAssignment = await getActiveSessionAssignment(
+        access.currentParticipant.id,
+        input.eventId,
+      );
+
+      if (activeAssignment) {
+        return {
+          valid: true,
+          primaryAction: "room",
+          targetUrl: buildSessionRoomUrl(
+            activeAssignment.sessionId,
+            activeAssignment.joinToken,
+          ),
+          title:
+            activeAssignment.session.roomLabel ??
+            activeAssignment.session.title,
+          subtitle: displayName,
+          participantType: activeAssignment.type,
+          displayName,
+        };
+      }
+
+      const latestAssignment = await prisma.sessionParticipant.findFirst({
+        where: {
+          eventParticipantId: access.currentParticipant.id,
+          session: {
+            eventId: input.eventId,
+            deletedAt: null,
+          },
+        },
+        include: {
+          session: {
+            select: {
+              title: true,
+              roomLabel: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (latestAssignment) {
+        return {
+          valid: true,
+          primaryAction: "materials",
+          targetUrl: buildSessionMaterialsUrl(latestAssignment.joinToken),
+          title:
+            latestAssignment.session.roomLabel ??
+            latestAssignment.session.title,
+          subtitle: displayName,
+          participantType: latestAssignment.type,
+          displayName,
+        };
+      }
+    }
 
     return {
       valid: true,

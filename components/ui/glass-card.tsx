@@ -5,16 +5,18 @@ type GlassCardProps = {
   className?: string;
   elevated?: boolean;
   glow?: boolean;
-};
+} & React.HTMLAttributes<HTMLDivElement>;
 
 export function GlassCard({
   children,
   className,
   elevated = false,
   glow = false,
+  ...props
 }: GlassCardProps) {
   return (
     <div
+      {...props}
       className={cn(
         "rounded-xl",
         elevated ? "glass-panel-elevated" : "glass-panel",

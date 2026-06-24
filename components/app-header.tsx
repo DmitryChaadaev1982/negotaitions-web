@@ -14,11 +14,11 @@ export function AppHeader() {
   const { t } = useI18n();
 
   const navItems = [
-    { href: "/dashboard", label: t("nav.dashboard"), testId: "dashboard-nav-link" },
-    { href: "/cases", label: t("nav.cases"), testId: "cases-nav-link" },
-    { href: "/events", label: t("nav.events"), testId: "events-nav-link" },
-    { href: "/sessions", label: t("nav.sessions"), testId: "sessions-nav-link" },
-    { href: "/admin", label: t("nav.admin"), testId: "admin-nav-link" },
+    { href: "/dashboard", label: t("nav.dashboard"), testId: "nav-dashboard" },
+    { href: "/cases", label: t("nav.cases"), testId: "nav-cases" },
+    { href: "/events", label: t("nav.events"), testId: "nav-events" },
+    { href: "/sessions", label: t("nav.sessions"), testId: "nav-sessions" },
+    { href: "/admin", label: t("nav.admin"), testId: "nav-admin" },
   ];
 
   return (

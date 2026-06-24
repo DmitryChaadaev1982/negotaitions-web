@@ -64,6 +64,7 @@ export function EventCaseDetailsModal({
       />
       <div
         role="dialog"
+        data-testid="case-details-modal"
         aria-modal="true"
         aria-labelledby={titleId}
         className={cn(

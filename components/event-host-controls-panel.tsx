@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useState } from "react";
 
 import { DifficultyBadge } from "@/components/badge";
@@ -33,6 +32,7 @@ type EventHostControlsPanelProps = {
   onCompleteEvent: () => void;
   onUpdateHost: (payload: Record<string, unknown>) => Promise<void>;
   onCreateSession: () => void;
+  createSessionError: string | null;
 };
 
 export function EventHostControlsPanel({
@@ -45,13 +45,14 @@ export function EventHostControlsPanel({
   onCompleteEvent,
   onUpdateHost,
   onCreateSession,
+  createSessionError,
 }: EventHostControlsPanelProps) {
   const { t } = useI18n();
   const selectedCase = state.selectedCase;
-  const hasSession = Boolean(state.createdSession);
 
   const [libraryMode, setLibraryMode] = useState(!selectedCase);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const showLibrary = !selectedCase || libraryMode;
 
   const saveDraft = useCallback(
@@ -89,6 +90,46 @@ export function EventHostControlsPanel({
     setShowSessionSetup(true);
     setLibraryMode(false);
   }, [selectedCase]);
+
+  const copyRoomLinks = useCallback(
+    async (sessionId: string) => {
+      const session = state.sessions.find((item) => item.id === sessionId);
+      if (!session) return;
+
+      const links = session.participants
+        .filter((participant) => participant.materialsUrl || participant.roomUrl)
+        .map((participant) => {
+          const url = participant.roomUrl ?? participant.materialsUrl;
+          return `${participant.displayName}: ${window.location.origin}${url}`;
+        })
+        .join("\n");
+
+      await navigator.clipboard.writeText(links);
+      setCopyMessage(t("events.linkCopied"));
+      window.setTimeout(() => setCopyMessage(null), 2000);
+    },
+    [state.sessions, t],
+  );
+
+  const finishSession = useCallback(
+    async (sessionId: string) => {
+      const session = state.sessions.find((item) => item.id === sessionId);
+      const roomUrl = session?.roomUrl;
+      if (!roomUrl) return;
+
+      const params = new URLSearchParams(roomUrl.split("?")[1] ?? "");
+      const joinToken = params.get("joinToken");
+      if (!joinToken) return;
+
+      await fetch(`/api/sessions/${sessionId}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ joinToken, action: "FINISH" }),
+      });
+      await onUpdateHost({});
+    },
+    [onUpdateHost, state.sessions],
+  );
 
   return (
     <div data-testid="host-controls-panel">
@@ -162,38 +203,166 @@ export function EventHostControlsPanel({
           </div>
         ) : null}
 
-        {state.linkedSessions.length > 0 ? (
-          <div className="space-y-2" data-testid="existing-sessions-section">
+        <div className="space-y-3" data-testid="sessions-board">
+          <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {t("events.existingSessions")}
+              {t("events.sessionsBoard")}
             </p>
-            <ul className="space-y-1">
-              {state.linkedSessions.map((session) => (
-                <li key={session.id}>
-                  <Link
-                    href={`/sessions/${session.id}`}
-                    className="block rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2 text-sm text-cyan-400 transition hover:border-cyan-500/30 hover:text-cyan-300"
-                  >
-                    {session.title}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            {hasSession ? (
-              <p className="text-xs text-slate-500">{t("events.sessionAlreadyCreated")}</p>
+            {selectedCase ? (
+              <SecondaryButton
+                type="button"
+                data-testid="create-another-session-button"
+                className="px-2 py-1 text-xs"
+                onClick={openSessionSetup}
+              >
+                {state.sessions.length > 0
+                  ? t("events.createAnotherSession")
+                  : t("events.createFirstSession")}
+              </SecondaryButton>
             ) : null}
           </div>
-        ) : null}
+          {copyMessage ? (
+            <p className="text-xs text-emerald-400">{copyMessage}</p>
+          ) : null}
+          {state.sessions.length === 0 ? (
+            <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
+          ) : (
+            <div className="space-y-2">
+              {state.sessions.map((session) => (
+                <div
+                  key={session.id}
+                  data-testid="event-session-card"
+                  className="space-y-3 rounded-xl border border-slate-600/30 bg-slate-900/50 px-3 py-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-50">
+                        {session.roomLabel ?? session.title}
+                      </p>
+                      <p className="text-xs text-slate-400">{session.caseTitle}</p>
+                    </div>
+                    <span className="rounded-full border border-slate-600/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                      {session.isActive
+                        ? t("events.activeSession")
+                        : t("events.finishedSession")}
+                    </span>
+                  </div>
+                  <div className="grid gap-1 text-xs text-slate-400">
+                    <p>
+                      {t("events.assignFacilitator")}:{" "}
+                      <span className="text-slate-200">
+                        {session.facilitatorName ?? t("common.notYet")}
+                      </span>
+                    </p>
+                    <p>
+                      {t("sessions.participants")}: {session.participantCount} ·{" "}
+                      {t("sessions.observers")}: {session.observerCount}
+                    </p>
+                    <p>
+                      {t("common.preparationDurationValue", {
+                        minutes: Math.round(session.preparationDuration / 60),
+                      })}
+                      {" · "}
+                      {t("common.negotiationDurationValue", {
+                        minutes: Math.round(session.negotiationDuration / 60),
+                      })}
+                    </p>
+                    {session.recordingStatus === "RECORDING" ? (
+                      <p className="text-rose-300">{t("recording.recordingInProgress")}</p>
+                    ) : session.recordingStatus ? (
+                      <p>{t("recording.recordingStatus")}: {session.recordingStatus}</p>
+                    ) : null}
+                    <div className="mt-1 space-y-1">
+                      {session.participants.map((participant) => (
+                        <p key={participant.id}>
+                          {participant.displayName} ·{" "}
+                          {t(`participantType.${participant.participantType}`)}
+                          {participant.roleName ? ` · ${participant.roleName}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {session.roomUrl && session.isActive ? (
+                      <SecondaryButton
+                        type="button"
+                        data-testid="open-session-room-button"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => {
+                          window.location.href = session.roomUrl!;
+                        }}
+                      >
+                        {t("events.openRoom")}
+                      </SecondaryButton>
+                    ) : null}
+                    {session.materialsUrl ? (
+                      <SecondaryButton
+                        type="button"
+                        data-testid="open-session-materials-button"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => {
+                          window.location.href = session.materialsUrl!;
+                        }}
+                      >
+                        {t("events.openMaterials")}
+                      </SecondaryButton>
+                    ) : null}
+                    <SecondaryButton
+                      type="button"
+                      data-testid="copy-room-links-button"
+                      className="px-2 py-1 text-xs"
+                      onClick={() => void copyRoomLinks(session.id)}
+                    >
+                      {t("events.copyRoomLinks")}
+                    </SecondaryButton>
+                    {session.isActive && session.roomUrl ? (
+                      <button
+                        type="button"
+                        data-testid="finish-session-button"
+                        className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20"
+                        onClick={() => void finishSession(session.id)}
+                      >
+                        {t("room.finishEarly")}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {selectedCase && showSessionSetup ? (
           <div className="space-y-4 border-t border-slate-600/30 pt-4" data-testid="session-setup-section">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {t("events.sessionSetup")}
+              {t("events.newSession")}
             </p>
+
+            {createSessionError ? (
+              <div
+                data-testid="active-assignment-warning"
+                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+              >
+                {createSessionError}
+              </div>
+            ) : null}
+
+            <div>
+              <label className={labelClassName}>{t("events.roomName")}</label>
+              <input
+                data-testid="room-label-input"
+                type="text"
+                className={inputClassName(false)}
+                placeholder={t("events.roomNamePlaceholder")}
+                value={draft.roomLabel}
+                onChange={(event) => saveDraft({ roomLabel: event.target.value })}
+              />
+            </div>
 
             <div>
               <label className={labelClassName}>{t("common.preparationTime")}</label>
               <input
+                data-testid="preparation-time-input"
                 type="number"
                 min={0}
                 max={60}
@@ -210,6 +379,7 @@ export function EventHostControlsPanel({
             <div>
               <label className={labelClassName}>{t("common.negotiationTime")}</label>
               <input
+                data-testid="negotiation-time-input"
                 type="number"
                 min={1}
                 max={180}
@@ -239,6 +409,9 @@ export function EventHostControlsPanel({
                 {state.participants.map((participant) => (
                   <option key={participant.id} value={participant.id}>
                     {participant.displayName}
+                    {participant.activeAssignmentLabel
+                      ? ` · ${participant.activeAssignmentLabel}`
+                      : ""}
                   </option>
                 ))}
               </select>
@@ -250,7 +423,7 @@ export function EventHostControlsPanel({
                 <div key={role.id}>
                   <label className="mb-1 block text-xs text-slate-400">{role.name}</label>
                   <select
-                    data-testid={`assign-role-control-${role.id}`}
+                    data-testid="assign-role-control"
                     className={inputClassName(false)}
                     value={draft.roleAssignments[role.id] ?? ""}
                     onChange={(event) => {
@@ -266,6 +439,9 @@ export function EventHostControlsPanel({
                     {state.participants.map((participant) => (
                       <option key={participant.id} value={participant.id}>
                         {participant.displayName}
+                        {participant.activeAssignmentLabel
+                          ? ` · ${participant.activeAssignmentLabel}`
+                          : ""}
                       </option>
                     ))}
                   </select>
@@ -275,7 +451,7 @@ export function EventHostControlsPanel({
 
             <div>
               <label className={labelClassName}>{t("events.assignObservers")}</label>
-              <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-slate-600/30 p-2">
+              <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-slate-600/30 p-2" data-testid="assign-observer-control">
                 {state.participants.map((participant) => {
                   const isRolePlayer = Object.values(draft.roleAssignments).includes(
                     participant.id,
@@ -307,6 +483,9 @@ export function EventHostControlsPanel({
                         }}
                       />
                       {participant.displayName}
+                      {participant.activeAssignmentLabel
+                        ? ` · ${participant.activeAssignmentLabel}`
+                        : ""}
                     </label>
                   );
                 })}
@@ -316,14 +495,12 @@ export function EventHostControlsPanel({
             <GradientButton
               type="button"
               data-testid="create-session-button"
-              disabled={isCreatingSession || hasSession}
+              disabled={isCreatingSession}
               onClick={onCreateSession}
             >
-              {hasSession
-                ? t("events.negotiationSessionCreated")
-                : state.linkedSessions.length > 0
-                  ? t("events.createAnotherSession")
-                  : t("events.createSession")}
+              {state.sessions.length > 0
+                ? t("events.createAnotherSession")
+                : t("events.createSession")}
             </GradientButton>
           </div>
         ) : null}

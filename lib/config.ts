@@ -47,5 +47,6 @@ export function getEventLobbyUrl(
   if (token.participantToken) {
     params.set("participantToken", token.participantToken);
   }
-  return `${getAppUrl()}/events/${eventId}/lobby?${params.toString()}`;
+  const query = params.toString();
+  return `/events/${eventId}/lobby${query ? `?${query}` : ""}`;
 }

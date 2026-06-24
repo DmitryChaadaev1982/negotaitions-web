@@ -9,6 +9,8 @@ import { prisma } from "@/lib/prisma";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import { buildSessionCloseState } from "@/lib/session-close-state";
+import { getEventLobbyUrl } from "@/lib/config";
+import { isSessionActiveForAssignment } from "@/lib/event-active-assignment";
 
 export const dynamic = "force-dynamic";
 
@@ -25,8 +27,21 @@ export default async function JoinPage({ params }: JoinPageProps) {
       sessionRole: {
         select: sessionRoleBriefingSelect,
       },
+      eventParticipant: {
+        select: {
+          participantToken: true,
+        },
+      },
       session: {
         include: {
+          event: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              hostToken: true,
+            },
+          },
           participants: {
             select: {
               id: true,
@@ -83,6 +98,53 @@ export default async function JoinPage({ params }: JoinPageProps) {
     : isObserver
       ? "observer"
       : "facilitator";
+  const eventSessions = session.eventId
+    ? await prisma.sessionParticipant.findMany({
+        where: isFacilitator
+          ? {
+              session: {
+                eventId: session.eventId,
+                deletedAt: null,
+              },
+              type: ParticipantType.FACILITATOR,
+            }
+          : {
+              eventParticipantId: participant.eventParticipantId,
+              session: {
+                eventId: session.eventId,
+                deletedAt: null,
+              },
+            },
+        include: {
+          sessionRole: {
+            select: {
+              name: true,
+            },
+          },
+          session: {
+            select: {
+              id: true,
+              title: true,
+              roomLabel: true,
+              snapshotCaseTitle: true,
+              negotiationState: true,
+              status: true,
+              deletedAt: true,
+              closedByEventAt: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const eventLobbyUrl =
+    session.event && session.eventId
+      ? getEventLobbyUrl(session.eventId, {
+          hostToken: isFacilitator ? session.event.hostToken : undefined,
+          participantToken: participant.eventParticipant?.participantToken,
+        })
+      : null;
 
   return (
     <>
@@ -98,6 +160,7 @@ export default async function JoinPage({ params }: JoinPageProps) {
         session={{
           id: session.id,
           title: session.title,
+          roomLabel: session.roomLabel,
           preparationDurationMinutes: secondsToDisplayMinutes(
             session.preparationDurationSeconds,
           ),
@@ -111,6 +174,25 @@ export default async function JoinPage({ params }: JoinPageProps) {
           closedBeforeNegotiation: sessionCloseState.closedBeforeNegotiation,
           closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
         }}
+        event={
+          session.event && eventLobbyUrl
+            ? {
+                title: session.event.title,
+                lobbyUrl: eventLobbyUrl,
+              }
+            : null
+        }
+        eventSessions={eventSessions.map((item) => ({
+          id: item.session.id,
+          roomLabel: item.session.roomLabel,
+          title: item.session.title,
+          caseTitle: item.session.snapshotCaseTitle,
+          roleName: item.sessionRole?.name ?? null,
+          status: item.session.status,
+          createdAt: item.session.createdAt.toISOString(),
+          joinToken: item.joinToken,
+          isActive: isSessionActiveForAssignment(item.session),
+        }))}
         participant={{
           displayName: participant.displayName,
           type: participant.type,

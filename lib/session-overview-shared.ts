@@ -18,6 +18,10 @@ export type SessionListItem = {
   id: string;
   title: string;
   caseTitle: string;
+  eventId: string | null;
+  eventTitle: string | null;
+  eventStatus: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED" | null;
+  eventLobbyUrl: string | null;
   status: SessionDisplayStatus;
   negotiationState: SessionNegotiationState;
   closedByEventAt: string | null;

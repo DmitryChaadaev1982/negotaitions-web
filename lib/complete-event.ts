@@ -9,6 +9,7 @@ import {
   findActiveRecordingForSession,
   stopRecording,
 } from "@/lib/livekit-egress";
+import { isSessionActiveForAssignment } from "@/lib/event-active-assignment";
 import { getControlUpdateData } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
@@ -68,16 +69,7 @@ function buildSessionCloseUpdate(
   now: Date,
 ) {
   if (session.negotiationState === NegotiationState.FINISHED) {
-    if (session.closedByEventAt) {
-      return null;
-    }
-
-    return {
-      closedByEventAt: now,
-      closedByEventId: eventId,
-      closeReason: "EVENT_COMPLETED",
-      status: SessionStatus.COMPLETED,
-    };
+    return null;
   }
 
   return {
@@ -164,9 +156,7 @@ export async function completeTrainingEvent(
   }
 
   const now = new Date();
-  const sessionsToClose = event.sessions.filter(
-    (session) => session.negotiationState !== NegotiationState.FINISHED || !session.closedByEventAt,
-  );
+  const sessionsToClose = event.sessions.filter(isSessionActiveForAssignment);
 
   await prisma.$transaction(async (tx) => {
     await tx.trainingEvent.update({

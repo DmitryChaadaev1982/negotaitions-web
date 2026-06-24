@@ -186,6 +186,7 @@ test("rejoin after event completed shows completed message", async ({
     data: { hostToken: event.hostToken },
   });
 
+  await page.goto("/");
   await page.evaluate(
     ({ eventId, participantToken }) => {
       window.localStorage.setItem(

@@ -127,10 +127,35 @@ export async function POST(request: Request, context: RouteContext) {
       : 15,
   });
 
-  const result = await createSessionFromEvent(eventId, assignmentDraft);
+  const hasExplicitSessionInput = Boolean(
+    parsed.data.caseId ||
+      parsed.data.facilitatorEventParticipantId ||
+      parsed.data.roleAssignments,
+  );
+  const explicitSessionInput = hasExplicitSessionInput
+    ? {
+        caseId: parsed.data.caseId,
+        roomLabel: parsed.data.roomLabel,
+        preparationDurationSeconds: parsed.data.preparationDurationSeconds,
+        negotiationDurationSeconds: parsed.data.negotiationDurationSeconds,
+        facilitatorEventParticipantId:
+          parsed.data.facilitatorEventParticipantId ?? null,
+        roleAssignments: parsed.data.roleAssignments ?? [],
+        observerEventParticipantIds:
+          parsed.data.observerEventParticipantIds ?? [],
+      }
+    : null;
+
+  const result = await createSessionFromEvent(
+    eventId,
+    explicitSessionInput ?? assignmentDraft,
+  );
 
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 400 });
+    return NextResponse.json(
+      { error: result.error, participantName: result.participantName },
+      { status: 400 },
+    );
   }
 
   const state = await buildEventState({
@@ -145,7 +170,9 @@ export async function POST(request: Request, context: RouteContext) {
     session: {
       id: result.sessionId,
       title: result.sessionTitle,
+      roomLabel: result.roomLabel,
     },
+    links: result.participants,
     state,
   });
 }

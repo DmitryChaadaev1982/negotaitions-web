@@ -134,7 +134,7 @@ export function RejoinPageView() {
       : t("rejoin.returnToSameRoom");
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-[#020617] px-4 py-12">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#020617] px-4 py-12" data-testid="rejoin-page">
       <div className="mb-8 flex w-full max-w-md items-center justify-between">
         <BrandLogo size="md" href={undefined} />
         <LanguageSwitcher />
@@ -146,7 +146,7 @@ export function RejoinPageView() {
             <p className="text-center text-sm text-slate-400">{t("common.loading")}…</p>
           ) : !context || !validation?.valid ? (
             <div className="space-y-4 text-center">
-              <h1 className="text-xl font-bold text-slate-50">
+              <h1 className="text-xl font-bold text-slate-50" data-testid="rejoin-expired-message">
                 {validation?.reason === "eventCompleted"
                   ? t("rejoin.eventCompletedMessage")
                   : validation?.reason === "sessionClosedByEvent"
@@ -191,6 +191,13 @@ export function RejoinPageView() {
               <GradientButton
                 type="button"
                 className="w-full"
+                data-testid={
+                  validation.primaryAction === "materials"
+                    ? "rejoin-materials-button"
+                    : validation.primaryAction === "lobby"
+                      ? "rejoin-lobby-button"
+                      : "rejoin-room-button"
+                }
                 disabled={isRejoining}
                 onClick={handleRejoin}
               >
@@ -215,6 +222,7 @@ export function RejoinNavLink({ className }: { className?: string }) {
   return (
     <Link
       href="/rejoin"
+      data-testid="rejoin-link"
       className={
         className ??
         "text-sm font-semibold text-cyan-400 transition hover:text-cyan-300"

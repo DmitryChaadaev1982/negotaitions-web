@@ -4,6 +4,9 @@ import {
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
 import { isAssignableCaseRole } from "@/lib/case-roles";
+import {
+  ACTIVE_SESSION_ASSIGNMENT_SESSION_WHERE,
+} from "@/lib/event-active-assignment";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 import { generateJoinToken } from "@/lib/join-token";
@@ -18,15 +21,67 @@ export type CreateEventSessionResult =
       ok: true;
       sessionId: string;
       sessionTitle: string;
+      roomLabel: string;
+      participants: Array<{
+        eventParticipantId: string;
+        sessionParticipantId: string;
+        joinToken: string;
+        type: ParticipantType;
+        displayName: string;
+      }>;
     }
   | {
       ok: false;
       error: string;
+      participantName?: string;
     };
+
+export type CreateEventSessionInput = {
+  caseId?: string;
+  roomLabel?: string;
+  preparationDurationSeconds?: number;
+  negotiationDurationSeconds?: number;
+  facilitatorEventParticipantId: string | null;
+  roleAssignments: Array<{
+    caseRoleId: string;
+    eventParticipantId: string;
+  }>;
+  observerEventParticipantIds: string[];
+};
+
+function inputFromDraft(
+  eventSelectedCaseId: string | null,
+  assignmentDraft: EventAssignmentDraft,
+): CreateEventSessionInput {
+  return {
+    caseId: eventSelectedCaseId ?? undefined,
+    roomLabel: assignmentDraft.roomLabel,
+    preparationDurationSeconds: minutesToSeconds(
+      assignmentDraft.preparationDurationMinutes,
+    ),
+    negotiationDurationSeconds: minutesToSeconds(
+      assignmentDraft.negotiationDurationMinutes,
+    ),
+    facilitatorEventParticipantId: assignmentDraft.facilitatorEventParticipantId,
+    roleAssignments: Object.entries(assignmentDraft.roleAssignments).map(
+      ([caseRoleId, eventParticipantId]) => ({
+        caseRoleId,
+        eventParticipantId,
+      }),
+    ),
+    observerEventParticipantIds: assignmentDraft.observerEventParticipantIds,
+  };
+}
+
+function isCreateEventSessionInput(
+  input: CreateEventSessionInput | EventAssignmentDraft,
+): input is CreateEventSessionInput {
+  return Array.isArray(input.roleAssignments);
+}
 
 export async function createSessionFromEvent(
   eventId: string,
-  assignmentDraft: EventAssignmentDraft,
+  inputOrDraft: CreateEventSessionInput | EventAssignmentDraft,
 ): Promise<CreateEventSessionResult> {
   const facilitator = await getDemoFacilitator();
 
@@ -34,7 +89,7 @@ export async function createSessionFromEvent(
     where: {
       id: eventId,
       deletedAt: null,
-      status: { in: [TrainingEventStatus.LOBBY_OPEN, TrainingEventStatus.DRAFT] },
+      status: { in: [TrainingEventStatus.LOBBY_OPEN, TrainingEventStatus.DRAFT, TrainingEventStatus.SESSION_CREATED] },
     },
     include: {
       participants: true,
@@ -45,13 +100,19 @@ export async function createSessionFromEvent(
     return { ok: false, error: "eventNotFound" };
   }
 
-  if (!event.selectedCaseId) {
+  const input = isCreateEventSessionInput(inputOrDraft)
+    ? inputOrDraft
+    : inputFromDraft(event.selectedCaseId, inputOrDraft);
+
+  const caseId = input.caseId ?? event.selectedCaseId;
+
+  if (!caseId) {
     return { ok: false, error: "caseNotSelected" };
   }
 
   const negotiationCase = await prisma.negotiationCase.findFirst({
     where: {
-      id: event.selectedCaseId,
+      id: caseId,
       facilitatorId: facilitator.id,
       ...activeCaseWhere,
     },
@@ -70,13 +131,13 @@ export async function createSessionFromEvent(
     isAssignableCaseRole(role.name),
   );
 
-  if (!assignmentDraft.facilitatorEventParticipantId) {
+  if (!input.facilitatorEventParticipantId) {
     return { ok: false, error: "facilitatorRequired" };
   }
 
   const facilitatorParticipant = event.participants.find(
     (participant) =>
-      participant.id === assignmentDraft.facilitatorEventParticipantId,
+      participant.id === input.facilitatorEventParticipantId,
   );
 
   if (!facilitatorParticipant) {
@@ -89,9 +150,15 @@ export async function createSessionFromEvent(
     caseRoleName: string;
     eventParticipantId: string;
   }> = [];
+  const inputRoleAssignments = new Map(
+    input.roleAssignments.map((assignment) => [
+      assignment.caseRoleId,
+      assignment.eventParticipantId,
+    ]),
+  );
 
   for (const caseRole of assignableRoles) {
-    const eventParticipantId = assignmentDraft.roleAssignments[caseRole.id];
+    const eventParticipantId = inputRoleAssignments.get(caseRole.id);
 
     if (!eventParticipantId) {
       return { ok: false, error: "rolesIncomplete" };
@@ -117,30 +184,93 @@ export async function createSessionFromEvent(
     });
   }
 
-  const observerIds = assignmentDraft.observerEventParticipantIds.filter(
-    (id) => {
-      if (id === assignmentDraft.facilitatorEventParticipantId) return false;
-      if (assignedRolePlayerIds.has(id)) return false;
-      return event.participants.some((participant) => participant.id === id);
-    },
+  const eventParticipantIds = new Set(
+    event.participants.map((participant) => participant.id),
   );
+  const observerIds: string[] = [];
+
+  for (const observerId of input.observerEventParticipantIds) {
+    if (!eventParticipantIds.has(observerId)) {
+      return { ok: false, error: "observerInvalid" };
+    }
+
+    if (assignedRolePlayerIds.has(observerId)) {
+      return { ok: false, error: "participantObserverConflict" };
+    }
+
+    if (observerId === input.facilitatorEventParticipantId) {
+      return { ok: false, error: "facilitatorObserverConflict" };
+    }
+
+    if (!observerIds.includes(observerId)) {
+      observerIds.push(observerId);
+    }
+  }
+
+  const activeAssignmentIds = [
+    input.facilitatorEventParticipantId,
+    ...roleAssignments.map((assignment) => assignment.eventParticipantId),
+    ...observerIds,
+  ].filter((id): id is string => typeof id === "string");
+  const activeAssignments = await prisma.sessionParticipant.findMany({
+    where: {
+      eventParticipantId: { in: activeAssignmentIds },
+      session: {
+        eventId: event.id,
+        ...ACTIVE_SESSION_ASSIGNMENT_SESSION_WHERE,
+      },
+    },
+    include: {
+      eventParticipant: {
+        select: { displayName: true },
+      },
+    },
+  });
+
+  if (activeAssignments.length > 0) {
+    return {
+      ok: false,
+      error: "participantAlreadyAssigned",
+      participantName:
+        activeAssignments[0]?.eventParticipant?.displayName ??
+        activeAssignments[0]?.displayName,
+    };
+  }
 
   const sessionTitle = `${event.title} — ${negotiationCase.title}`;
 
   const session = await prisma.$transaction(async (tx) => {
+    const sequence = await tx.session.aggregate({
+      where: { eventId: event.id },
+      _max: { sequenceNumber: true },
+    });
+    const sequenceNumber = (sequence._max.sequenceNumber ?? 0) + 1;
+    const roomLabel = input.roomLabel?.trim() || `Room ${sequenceNumber}`;
+    const createdFromEventAt = new Date();
+    const createdSessionParticipants: Array<{
+      eventParticipantId: string;
+      sessionParticipantId: string;
+      joinToken: string;
+      type: ParticipantType;
+      displayName: string;
+    }> = [];
+
     const createdSession = await tx.session.create({
       data: {
         title: sessionTitle,
+        roomLabel,
+        sequenceNumber,
+        createdFromEventAt,
         negotiationCaseId: negotiationCase.id,
         facilitatorId: facilitator.id,
         eventId: event.id,
         status: SessionStatus.DRAFT,
-        preparationDurationSeconds: minutesToSeconds(
-          assignmentDraft.preparationDurationMinutes,
-        ),
-        durationSeconds: minutesToSeconds(
-          assignmentDraft.negotiationDurationMinutes,
-        ),
+        preparationDurationSeconds:
+          input.preparationDurationSeconds ??
+          negotiationCase.defaultPreparationDurationSeconds,
+        durationSeconds:
+          input.negotiationDurationSeconds ??
+          negotiationCase.defaultDurationSeconds,
         snapshotCaseTitle: negotiationCase.title,
         snapshotBusinessContext: negotiationCase.businessContext,
         snapshotPublicInstructions: negotiationCase.publicInstructions,
@@ -168,6 +298,13 @@ export async function createSessionFromEvent(
         joinToken: generateJoinToken(),
         eventParticipantId: facilitatorParticipant.id,
       },
+    });
+    createdSessionParticipants.push({
+      eventParticipantId: facilitatorParticipant.id,
+      sessionParticipantId: facilitatorSessionParticipant.id,
+      joinToken: facilitatorSessionParticipant.joinToken,
+      type: facilitatorSessionParticipant.type,
+      displayName: facilitatorSessionParticipant.displayName,
     });
 
     await tx.eventParticipant.update({
@@ -203,6 +340,13 @@ export async function createSessionFromEvent(
           eventParticipantId: eventParticipant.id,
         },
       });
+      createdSessionParticipants.push({
+        eventParticipantId: eventParticipant.id,
+        sessionParticipantId: sessionParticipant.id,
+        joinToken: sessionParticipant.joinToken,
+        type: sessionParticipant.type,
+        displayName: sessionParticipant.displayName,
+      });
 
       await tx.eventParticipant.update({
         where: { id: eventParticipant.id },
@@ -231,6 +375,13 @@ export async function createSessionFromEvent(
           eventParticipantId: eventParticipant.id,
         },
       });
+      createdSessionParticipants.push({
+        eventParticipantId: eventParticipant.id,
+        sessionParticipantId: sessionParticipant.id,
+        joinToken: sessionParticipant.joinToken,
+        type: sessionParticipant.type,
+        displayName: sessionParticipant.displayName,
+      });
 
       await tx.eventParticipant.update({
         where: { id: eventParticipant.id },
@@ -256,12 +407,18 @@ export async function createSessionFromEvent(
       data: { status: TrainingEventStatus.SESSION_CREATED },
     });
 
-    return createdSession;
+    return {
+      ...createdSession,
+      roomLabel,
+      createdSessionParticipants,
+    };
   });
 
   return {
     ok: true,
     sessionId: session.id,
     sessionTitle: session.title,
+    roomLabel: session.roomLabel,
+    participants: session.createdSessionParticipants,
   };
 }

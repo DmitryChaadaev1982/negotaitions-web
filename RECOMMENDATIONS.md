@@ -36,6 +36,24 @@ Risk/impact:
 
 - Low if limited to mock/test mode.
 
+## P2: Promote Multi-Session API Helpers To App-Level Test Fixtures
+
+Issue:
+
+- The e2e suite now has deterministic helpers for multi-session Events, but several workflows still set up state through direct API calls for speed.
+
+Why it matters:
+
+- UI-first tests are valuable for a small number of critical flows, while API setup keeps the suite fast. Shared fixtures should make that distinction explicit.
+
+Suggested change:
+
+- Keep `createTestCase`, `createTestEvent`, `joinEventAsParticipant`, and session workflow helpers in one fixture module and document which helpers are setup-only versus behavior-under-test.
+
+Risk/impact:
+
+- Low; this is test maintenance work and does not change product behavior.
+
 ## P2: Add Explicit Live Smoke Specs
 
 Issue:

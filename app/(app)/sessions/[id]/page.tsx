@@ -35,6 +35,7 @@ export default async function SessionDetailPage({
           id: true,
           title: true,
           hostToken: true,
+          status: true,
         },
       },
       negotiationCase: {
@@ -131,6 +132,7 @@ export default async function SessionDetailPage({
           ? {
               id: session.event.id,
               title: session.event.title,
+              status: session.event.status,
               lobbyUrl: `/events/${session.event.id}/lobby?hostToken=${session.event.hostToken}`,
             }
           : null,

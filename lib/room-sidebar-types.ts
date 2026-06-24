@@ -16,6 +16,12 @@ export type SessionRosterEntry = {
 
 export type RoomSidebarData = {
   sessionTitle: string;
+  event: {
+    id: string;
+    title: string;
+    status: string;
+    lobbyUrl: string;
+  } | null;
   participantType: ParticipantType;
   displayName: string;
   notes: string;

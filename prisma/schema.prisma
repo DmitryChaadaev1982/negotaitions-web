@@ -211,6 +211,9 @@ model Session {
   endedAt                    DateTime?
   deletedAt                  DateTime?
   eventId                    String?
+  sequenceNumber            Int?
+  roomLabel                 String?
+  createdFromEventAt        DateTime?
   closedByEventAt            DateTime?
   closedByEventId            String?
   closeReason                String?
@@ -269,7 +272,7 @@ model SessionParticipant {
   sessionId          String
   userId             String?
   sessionRoleId      String?
-  eventParticipantId String?         @unique
+  eventParticipantId String?
   type               ParticipantType
   joinToken          String          @unique
   displayName        String
@@ -289,6 +292,7 @@ model SessionParticipant {
   @@index([sessionId])
   @@index([userId])
   @@index([sessionRoleId])
+  @@index([eventParticipantId])
 }
 
 model TrainingEvent {
@@ -339,7 +343,7 @@ model EventParticipant {
   event                      TrainingEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
   assignedSession            Session?            @relation("EventAssignedSession", fields: [assignedSessionId], references: [id], onDelete: SetNull)
   assignedSessionParticipant SessionParticipant? @relation("EventParticipantAssignment", fields: [assignedSessionParticipantId], references: [id], onDelete: SetNull)
-  linkedSessionParticipant   SessionParticipant? @relation("EventParticipantLink")
+  linkedSessionParticipants  SessionParticipant[] @relation("EventParticipantLink")
 
   @@index([eventId])
   @@index([assignedSessionId])

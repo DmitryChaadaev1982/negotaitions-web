@@ -13,7 +13,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import {
   SecondaryButtonLink,
 } from "@/components/ui/buttons";
-import { buildSessionRoomPath } from "@/lib/config";
+import { buildSessionMaterialsPath, buildSessionRoomPath } from "@/lib/config";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -32,6 +32,7 @@ type JoinPageViewProps = {
   session: {
     id: string;
     title: string;
+    roomLabel: string | null;
     preparationDurationMinutes: number;
     negotiationDurationMinutes: number;
     displayStatus: SessionDisplayStatus;
@@ -41,6 +42,21 @@ type JoinPageViewProps = {
     closedBeforeNegotiation?: boolean;
     closedByEventAt?: string | null;
   };
+  event: {
+    title: string;
+    lobbyUrl: string;
+  } | null;
+  eventSessions: Array<{
+    id: string;
+    roomLabel: string | null;
+    title: string;
+    caseTitle: string;
+    roleName: string | null;
+    status: string;
+    createdAt: string;
+    joinToken: string;
+    isActive: boolean;
+  }>;
   participant: {
     displayName: string;
     type: "PARTICIPANT" | "OBSERVER" | "FACILITATOR";
@@ -72,7 +88,7 @@ function SessionResultsPlaceholder() {
         </h2>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="recording-section">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
             {t("recording.recording")}
           </p>
@@ -80,7 +96,7 @@ function SessionResultsPlaceholder() {
             {t("join.recordingNotAvailableYet")}
           </p>
         </div>
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="transcript-section">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
             {t("recording.transcript")}
           </p>
@@ -88,7 +104,7 @@ function SessionResultsPlaceholder() {
             {t("join.transcriptNotAvailableYet")}
           </p>
         </div>
-        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3" data-testid="ai-analysis-placeholder">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
             AI
           </p>
@@ -104,6 +120,8 @@ export function JoinPageView({
   session,
   participant,
   negotiationCase,
+  event,
+  eventSessions,
   caseRole,
   assignedParticipants,
   showNotes,
@@ -148,7 +166,7 @@ export function JoinPageView({
 
   return (
     <div className="min-h-full app-gradient-bg">
-      <header className="glass-header sticky top-0 z-50">
+      <header className="glass-header sticky top-0 z-50" data-testid="session-materials-page">
         <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-center justify-between gap-4">
             <BrandLogo size="sm" href={undefined} />
@@ -160,7 +178,19 @@ export function JoinPageView({
           <h1 className="text-xl font-semibold tracking-tight text-slate-50">
             {t("join.sessionMaterials")}
           </h1>
-          <p className="text-base text-slate-300">{session.title}</p>
+          {event ? (
+            <p className="text-sm text-cyan-300" data-testid="session-event-title">
+              {event.title}
+            </p>
+          ) : null}
+          <p className="text-base text-slate-300" data-testid="session-case-title">
+            {session.title}
+          </p>
+          {session.roomLabel ? (
+            <p className="text-sm font-medium text-cyan-300" data-testid="session-room-label">
+              {session.roomLabel}
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
             <span>{t("common.welcome", { name: participant.displayName })}</span>
             <span>·</span>
@@ -173,7 +203,9 @@ export function JoinPageView({
                 <span>{t("join.joiningAsObserver")}</span>
               </>
             ) : null}
-            <SessionStatusBadge status={session.displayStatus} />
+            <span data-testid="session-status">
+              <SessionStatusBadge status={session.displayStatus} />
+            </span>
             <span>·</span>
             <span>
               {t("common.preparationDurationValue", {
@@ -212,17 +244,77 @@ export function JoinPageView({
             <p className="text-sm text-slate-300">{t("join.sessionFinishedMessage")}</p>
           </div>
         ) : (
-          <SecondaryButtonLink href={roomHref} className="w-full py-3 text-center">
+          <SecondaryButtonLink
+            href={roomHref}
+            className="w-full py-3 text-center"
+            data-testid="join-video-room-button"
+          >
             {t("join.joinVideoRoom")}
           </SecondaryButtonLink>
         )}
 
         {isFinishedSession ? <SessionResultsPlaceholder /> : null}
 
+        {event ? (
+          <SecondaryButtonLink
+            href={event.lobbyUrl}
+            className="w-full text-center"
+            data-testid="back-to-event-lobby-link"
+          >
+            {t("events.returnToEventLobby")}
+          </SecondaryButtonLink>
+        ) : null}
+
+        {eventSessions.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <h2 className="text-base font-semibold text-slate-50" data-testid="my-sessions-in-event-section">
+                {isFacilitator
+                  ? t("events.sessionsInThisEvent")
+                  : t("events.mySessionsInThisEvent")}
+              </h2>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {eventSessions.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-slate-100">
+                      {item.roomLabel ?? item.title}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {item.caseTitle}
+                      {item.roleName ? ` · ${item.roleName}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {item.isActive ? (
+                      <SecondaryButtonLink
+                        href={buildSessionRoomPath(item.id, item.joinToken)}
+                        data-testid="join-video-room-button"
+                      >
+                        {t("events.openRoom")}
+                      </SecondaryButtonLink>
+                    ) : null}
+                    <SecondaryButtonLink
+                      href={buildSessionMaterialsPath(item.joinToken)}
+                      data-testid="open-session-materials-button"
+                    >
+                      {t("events.openMaterials")}
+                    </SecondaryButtonLink>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-slate-50">
+              <h2 className="text-base font-semibold text-slate-50" data-testid="public-context-section">
                 {t("join.publicContext")}
               </h2>
               <CaseLanguageBadge caseLanguage={negotiationCase.caseLanguage} />
@@ -249,12 +341,14 @@ export function JoinPageView({
         </Card>
 
         {isParticipant && caseRole ? (
-          <RoleBriefingCard
-            title={t("join.yourRoleTitle", { name: caseRole.name })}
-            subtitle={t("join.privateBriefingVisible")}
-            warning={t("join.privateBriefingWarning")}
-            role={caseRole}
-          />
+          <div data-testid="private-role-section">
+            <RoleBriefingCard
+              title={t("join.yourRoleTitle", { name: caseRole.name })}
+              subtitle={t("join.privateBriefingVisible")}
+              warning={t("join.privateBriefingWarning")}
+              role={caseRole}
+            />
+          </div>
         ) : null}
 
         {isFacilitator ? (
@@ -290,7 +384,7 @@ export function JoinPageView({
         ) : null}
 
         {showNotes ? (
-          <Card>
+          <Card data-testid="notes-section">
             <CardHeader>
               <h2 className="text-base font-semibold text-slate-50">
                 {notesConfig.title}
