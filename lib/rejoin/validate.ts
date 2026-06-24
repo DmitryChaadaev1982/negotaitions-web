@@ -1,55 +1,34 @@
-import { getAppUrl } from "@/lib/config";
-import { isEventUnavailable, resolveEventAccess } from "@/lib/event-auth";
+import {
+  buildSessionMaterialsUrl,
+  buildSessionRoomUrl,
+  getEventLobbyUrl,
+} from "@/lib/config";
+import {
+  isEventDeletedOrCancelled,
+  isEventCompleted,
+  resolveEventAccess,
+} from "@/lib/event-auth";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { buildSessionCloseState } from "@/lib/session-close-state";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { prisma } from "@/lib/prisma";
 import type { rejoinValidateSchema } from "@/lib/validations/rejoin";
 import type { z } from "zod";
 
 export type RejoinValidateInput = z.infer<typeof rejoinValidateSchema>;
 
+export type RejoinPrimaryAction = "room" | "materials" | "lobby";
+
 export type RejoinValidateResult = {
   valid: boolean;
   targetUrl?: string;
+  primaryAction?: RejoinPrimaryAction;
   title?: string;
   subtitle?: string;
   participantType?: string;
   displayName?: string;
   reason?: string;
 };
-
-function buildEventLobbyTargetUrl(
-  eventId: string,
-  tokens: { hostToken?: string; participantToken?: string },
-) {
-  const params = new URLSearchParams();
-
-  if (tokens.hostToken) {
-    params.set("hostToken", tokens.hostToken);
-  }
-
-  if (tokens.participantToken) {
-    params.set("participantToken", tokens.participantToken);
-  }
-
-  return `${getAppUrl()}/events/${eventId}/lobby?${params.toString()}`;
-}
-
-function buildSessionRoomTargetUrl(sessionId: string, joinToken: string) {
-  const params = new URLSearchParams({ joinToken });
-  return `${getAppUrl()}/room/${sessionId}?${params.toString()}`;
-}
-
-function buildSessionJoinTargetUrl(joinToken: string) {
-  return `${getAppUrl()}/join/${joinToken}`;
-}
-
-function isSessionRoomAvailable(negotiationState: string, deletedAt: Date | null) {
-  if (deletedAt) {
-    return false;
-  }
-
-  return true;
-}
 
 export async function validateRejoinContext(
   input: RejoinValidateInput,
@@ -72,15 +51,20 @@ export async function validateRejoinContext(
       return { valid: false, reason: "invalidToken" };
     }
 
-    if (isEventUnavailable(access.event)) {
+    if (isEventDeletedOrCancelled(access.event)) {
       return { valid: false, reason: "eventUnavailable" };
+    }
+
+    if (isEventCompleted(access.event)) {
+      return { valid: false, reason: "eventCompleted" };
     }
 
     const displayName = access.currentParticipant?.displayName;
 
     return {
       valid: true,
-      targetUrl: buildEventLobbyTargetUrl(input.eventId, {
+      primaryAction: "lobby",
+      targetUrl: getEventLobbyUrl(input.eventId, {
         hostToken: input.hostToken,
         participantToken: input.participantToken,
       }),
@@ -111,6 +95,14 @@ export async function validateRejoinContext(
         title: true,
         deletedAt: true,
         negotiationState: true,
+        negotiationStartedAt: true,
+        closedByEventAt: true,
+        closeReason: true,
+        event: {
+          select: {
+            status: true,
+          },
+        },
       },
     });
 
@@ -122,18 +114,26 @@ export async function validateRejoinContext(
       return { valid: false, reason: "sessionDeleted" };
     }
 
-    const roomAvailable = isSessionRoomAvailable(
-      sessionRecord.negotiationState,
-      sessionRecord.deletedAt,
-    );
+    const closeState = buildSessionCloseState(sessionRecord);
+    const materialsUrl = buildSessionMaterialsUrl(input.joinToken);
+    const roomActive = isSessionActiveForRoom(sessionRecord);
 
-    const targetUrl = roomAvailable
-      ? buildSessionRoomTargetUrl(sessionRecord.id, input.joinToken)
-      : buildSessionJoinTargetUrl(input.joinToken);
+    if (closeState.isClosed || !roomActive) {
+      return {
+        valid: true,
+        primaryAction: "materials",
+        targetUrl: materialsUrl,
+        title: sessionRecord.title,
+        subtitle: participant.displayName,
+        participantType: participant.type,
+        displayName: participant.displayName,
+      };
+    }
 
     return {
       valid: true,
-      targetUrl,
+      primaryAction: "room",
+      targetUrl: buildSessionRoomUrl(sessionRecord.id, input.joinToken),
       title: sessionRecord.title,
       subtitle: participant.displayName,
       participantType: participant.type,
@@ -152,7 +152,11 @@ export async function validateEventParticipantToken(
     where: { id: eventId },
   });
 
-  if (!event || isEventUnavailable(event)) {
+  if (!event || isEventDeletedOrCancelled(event)) {
+    return null;
+  }
+
+  if (isEventCompleted(event)) {
     return null;
   }
 

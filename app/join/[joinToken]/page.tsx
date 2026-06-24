@@ -8,6 +8,7 @@ import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
+import { buildSessionCloseState } from "@/lib/session-close-state";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,18 @@ export default async function JoinPage({ params }: JoinPageProps) {
   const showNotes = isParticipant || isObserver || isFacilitator;
 
   const { session } = participant;
+  const sessionCloseState = buildSessionCloseState({
+    negotiationState: session.negotiationState,
+    negotiationStartedAt: session.negotiationStartedAt,
+    closedByEventAt: session.closedByEventAt,
+    closeReason: session.closeReason,
+    event: session.eventId
+      ? await prisma.trainingEvent.findUnique({
+          where: { id: session.eventId },
+          select: { status: true },
+        })
+      : null,
+  });
   const displayStatus = resolveSessionDisplayStatus(
     session,
     session.participants,
@@ -92,7 +105,11 @@ export default async function JoinPage({ params }: JoinPageProps) {
             session.durationSeconds,
           ),
           displayStatus,
+          negotiationState: session.negotiationState,
           isDeleted: session.deletedAt != null,
+          closedByEvent: sessionCloseState.isClosed,
+          closedBeforeNegotiation: sessionCloseState.closedBeforeNegotiation,
+          closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
         }}
         participant={{
           displayName: participant.displayName,

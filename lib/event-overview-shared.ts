@@ -1,0 +1,63 @@
+export type EventOverviewStats = {
+  id: string;
+  lobbyParticipantCount: number;
+  sessionCount: number;
+  activeSessionParticipantCount: number;
+  totalSessionParticipantCount: number;
+};
+
+export type TrainingEventStatus =
+  | "DRAFT"
+  | "LOBBY_OPEN"
+  | "SESSION_CREATED"
+  | "COMPLETED"
+  | "CANCELLED";
+
+export type TrainingEventListItem = {
+  id: string;
+  title: string;
+  status: TrainingEventStatus;
+  scheduledAt: string | null;
+  hostToken: string;
+  hostParticipantToken: string | null;
+  publicJoinCode: string;
+  primarySessionId: string | null;
+  lobbyParticipantCount: number;
+  sessionCount: number;
+  activeSessionParticipantCount: number;
+  totalSessionParticipantCount: number;
+  createdAt?: string;
+};
+
+export function isEventActiveForPresence(status: TrainingEventStatus) {
+  return status !== "COMPLETED" && status !== "CANCELLED";
+}
+
+export function applyEventOverviewStats<
+  T extends {
+    id: string;
+    status: TrainingEventStatus;
+  },
+>(events: T[], stats: EventOverviewStats[]): T[] {
+  const statsById = new Map(stats.map((event) => [event.id, event]));
+
+  return events.map((event) => {
+    const eventStats = statsById.get(event.id);
+
+    if (!eventStats) {
+      return event;
+    }
+
+    const presenceActive = isEventActiveForPresence(event.status);
+
+    return {
+      ...event,
+      sessionCount: eventStats.sessionCount,
+      totalSessionParticipantCount: eventStats.totalSessionParticipantCount,
+      lobbyParticipantCount: presenceActive ? eventStats.lobbyParticipantCount : 0,
+      activeSessionParticipantCount: presenceActive
+        ? eventStats.activeSessionParticipantCount
+        : 0,
+    };
+  });
+}

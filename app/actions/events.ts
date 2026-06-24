@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { TrainingEventStatus } from "@/app/generated/prisma/client";
+import { completeTrainingEvent } from "@/lib/complete-event";
 import { getEventLobbyUrl } from "@/lib/config";
 import {
   generateHostToken,
@@ -93,8 +94,6 @@ export async function createTrainingEvent(
             displayName: hostDisplayName,
             participantToken: hostParticipantToken,
             isHost: true,
-            joinedAt: new Date(),
-            lastSeenAt: new Date(),
           },
         },
       },
@@ -108,12 +107,19 @@ export async function createTrainingEvent(
 
     revalidatePath("/events");
     revalidatePath("/dashboard");
-    redirect(
-      getEventLobbyUrl(event.id, {
-        hostToken,
-        participantToken: hostParticipantToken,
-      }),
-    );
+
+    const afterCreate = String(formData.get("afterCreate") ?? "list");
+
+    if (afterCreate === "lobby") {
+      redirect(
+        getEventLobbyUrl(event.id, {
+          hostToken,
+          participantToken: hostParticipantToken,
+        }),
+      );
+    }
+
+    redirect("/events");
   } catch (error) {
     if (isRedirectError(error)) {
       throw error;
@@ -230,6 +236,20 @@ export async function joinTrainingEvent(
   });
 
   redirect(getEventLobbyUrl(eventId, { participantToken: newParticipantToken }));
+}
+
+export async function completeTrainingEventFromList(formData: FormData) {
+  const eventId = String(formData.get("eventId") ?? "");
+  const hostToken = String(formData.get("hostToken") ?? "");
+
+  if (!eventId || !hostToken) {
+    return;
+  }
+
+  await completeTrainingEvent(eventId, hostToken);
+
+  revalidatePath("/events");
+  revalidatePath("/dashboard");
 }
 
 export async function cancelTrainingEvent(formData: FormData) {

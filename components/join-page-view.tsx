@@ -10,8 +10,12 @@ import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { AppShell } from "@/components/ui/app-shell";
 import { BrandLogo } from "@/components/ui/brand-logo";
-import { GradientButtonLink } from "@/components/ui/buttons";
+import {
+  SecondaryButtonLink,
+} from "@/components/ui/buttons";
+import { buildSessionRoomPath } from "@/lib/config";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type RoleBriefing = {
@@ -31,7 +35,11 @@ type JoinPageViewProps = {
     preparationDurationMinutes: number;
     negotiationDurationMinutes: number;
     displayStatus: SessionDisplayStatus;
+    negotiationState: string;
     isDeleted?: boolean;
+    closedByEvent?: boolean;
+    closedBeforeNegotiation?: boolean;
+    closedByEventAt?: string | null;
   };
   participant: {
     displayName: string;
@@ -53,6 +61,44 @@ type JoinPageViewProps = {
   notesVariant: "preparation" | "observer" | "facilitator";
 };
 
+function SessionResultsPlaceholder() {
+  const { t } = useI18n();
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("join.resultsSection")}
+        </h2>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            {t("recording.recording")}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">
+            {t("join.recordingNotAvailableYet")}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            {t("recording.transcript")}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">
+            {t("join.transcriptNotAvailableYet")}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            AI
+          </p>
+          <p className="mt-1 text-sm text-slate-400">{t("join.aiAnalysisLater")}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function JoinPageView({
   joinToken,
   session,
@@ -68,6 +114,13 @@ export function JoinPageView({
   const isParticipant = participant.type === "PARTICIPANT";
   const isObserver = participant.type === "OBSERVER";
   const isFacilitator = participant.type === "FACILITATOR";
+
+  const roomActive = isSessionActiveForRoom({
+    negotiationState: session.negotiationState,
+    closedByEventAt: session.closedByEventAt ?? null,
+    deletedAt: session.isDeleted ? new Date() : null,
+  });
+  const isFinishedSession = !roomActive && !session.isDeleted;
 
   const notesConfig = {
     preparation: {
@@ -91,6 +144,8 @@ export function JoinPageView({
     `participantType.${participant.type}` as `participantType.${typeof participant.type}`,
   );
 
+  const roomHref = buildSessionRoomPath(session.id, joinToken);
+
   return (
     <div className="min-h-full app-gradient-bg">
       <header className="glass-header sticky top-0 z-50">
@@ -103,8 +158,9 @@ export function JoinPageView({
             </div>
           </div>
           <h1 className="text-xl font-semibold tracking-tight text-slate-50">
-            {session.title}
+            {t("join.sessionMaterials")}
           </h1>
+          <p className="text-base text-slate-300">{session.title}</p>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
             <span>{t("common.welcome", { name: participant.displayName })}</span>
             <span>·</span>
@@ -135,21 +191,33 @@ export function JoinPageView({
       </header>
 
       <AppShell narrow className="space-y-6">
-        {session.isDeleted ? (
+        {session.closedByEvent ? (
+          <div className="space-y-2 rounded-lg border border-slate-600/30 bg-slate-900/60 px-4 py-3">
+            <StatusBadge variant="default">{t("events.closedByEventCompletion")}</StatusBadge>
+            <p className="text-sm text-slate-300">
+              {session.closedBeforeNegotiation
+                ? t("events.sessionClosedBeforeNegotiation")
+                : t("events.sessionClosedByEventJoin")}
+            </p>
+          </div>
+        ) : session.isDeleted ? (
           <div className="space-y-2">
             <StatusBadge variant="danger">{t("sessions.deletedBadge")}</StatusBadge>
             <p className="text-sm text-slate-400">
               {t("sessions.deletedSessionReadOnly")}
             </p>
           </div>
+        ) : isFinishedSession ? (
+          <div className="rounded-lg border border-slate-600/30 bg-slate-900/60 px-4 py-3">
+            <p className="text-sm text-slate-300">{t("join.sessionFinishedMessage")}</p>
+          </div>
         ) : (
-          <GradientButtonLink
-            href={`/room/${session.id}?joinToken=${encodeURIComponent(joinToken)}`}
-            className="w-full py-3"
-          >
+          <SecondaryButtonLink href={roomHref} className="w-full py-3 text-center">
             {t("join.joinVideoRoom")}
-          </GradientButtonLink>
+          </SecondaryButtonLink>
         )}
+
+        {isFinishedSession ? <SessionResultsPlaceholder /> : null}
 
         <Card>
           <CardHeader>
@@ -238,6 +306,7 @@ export function JoinPageView({
             </CardContent>
           </Card>
         ) : null}
+
       </AppShell>
     </div>
   );

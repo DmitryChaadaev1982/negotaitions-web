@@ -6,8 +6,26 @@ export function getAppUrl() {
   return process.env.APP_URL?.trim() || "http://localhost:3000";
 }
 
+export function buildSessionMaterialsPath(joinToken: string) {
+  return `/join/${joinToken}`;
+}
+
+export function buildSessionMaterialsUrl(joinToken: string) {
+  return `${getAppUrl()}${buildSessionMaterialsPath(joinToken)}`;
+}
+
+/** @deprecated Use buildSessionMaterialsUrl */
 export function getJoinUrl(joinToken: string) {
-  return `${getAppUrl()}/join/${joinToken}`;
+  return buildSessionMaterialsUrl(joinToken);
+}
+
+export function buildSessionRoomPath(sessionId: string, joinToken: string) {
+  const params = new URLSearchParams({ joinToken });
+  return `/room/${sessionId}?${params.toString()}`;
+}
+
+export function buildSessionRoomUrl(sessionId: string, joinToken: string) {
+  return `${getAppUrl()}${buildSessionRoomPath(sessionId, joinToken)}`;
 }
 
 export function getEventJoinUrl(eventId: string) {

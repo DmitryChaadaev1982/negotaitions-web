@@ -14,11 +14,11 @@ export function AppHeader() {
   const { t } = useI18n();
 
   const navItems = [
-    { href: "/dashboard", label: t("nav.dashboard") },
-    { href: "/cases", label: t("nav.cases") },
-    { href: "/sessions", label: t("nav.sessions") },
-    { href: "/events", label: t("nav.events") },
-    { href: "/admin", label: t("nav.admin") },
+    { href: "/dashboard", label: t("nav.dashboard"), testId: "dashboard-nav-link" },
+    { href: "/cases", label: t("nav.cases"), testId: "cases-nav-link" },
+    { href: "/events", label: t("nav.events"), testId: "events-nav-link" },
+    { href: "/sessions", label: t("nav.sessions"), testId: "sessions-nav-link" },
+    { href: "/admin", label: t("nav.admin"), testId: "admin-nav-link" },
   ];
 
   return (
@@ -36,6 +36,7 @@ export function AppHeader() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  data-testid={item.testId}
                   className={cn(
                     "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
                     isActive
@@ -52,12 +53,6 @@ export function AppHeader() {
         <div className="flex flex-wrap items-center gap-3">
           <RejoinNavLink />
           <LanguageSwitcher />
-          <div className="rounded-full border border-slate-600/30 bg-slate-900/70 px-3.5 py-1.5 text-sm text-slate-400 backdrop-blur-sm">
-            {t("common.signedInAs")}{" "}
-            <span className="font-semibold text-slate-200">
-              {t("common.facilitator")}
-            </span>
-          </div>
         </div>
       </div>
     </header>

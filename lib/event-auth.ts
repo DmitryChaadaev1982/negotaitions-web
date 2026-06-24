@@ -16,12 +16,23 @@ export type EventAccessTokens = {
   participantToken?: string | null;
 };
 
+export function isEventDeletedOrCancelled(
+  event: Pick<TrainingEvent, "status" | "deletedAt">,
+) {
+  return (
+    event.deletedAt != null || event.status === TrainingEventStatus.CANCELLED
+  );
+}
+
 export function isEventUnavailable(event: Pick<TrainingEvent, "status" | "deletedAt">) {
   return (
-    event.deletedAt != null ||
-    event.status === TrainingEventStatus.CANCELLED ||
+    isEventDeletedOrCancelled(event) ||
     event.status === TrainingEventStatus.COMPLETED
   );
+}
+
+export function isEventCompleted(event: Pick<TrainingEvent, "status">) {
+  return event.status === TrainingEventStatus.COMPLETED;
 }
 
 export async function resolveEventAccess(

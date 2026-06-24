@@ -30,6 +30,7 @@ enum CaseLanguage {
 enum SessionStatus {
   DRAFT
   READY
+  COMPLETED
 }
 
 enum ParticipantType {
@@ -210,6 +211,9 @@ model Session {
   endedAt                    DateTime?
   deletedAt                  DateTime?
   eventId                    String?
+  closedByEventAt            DateTime?
+  closedByEventId            String?
+  closeReason                String?
   createdAt                  DateTime         @default(now())
   updatedAt                  DateTime         @updatedAt
 
@@ -299,6 +303,10 @@ model TrainingEvent {
   selectedCaseId         String?
   estimatedEventDurationSeconds Int?          @default(7200)
   assignmentDraft        Json?
+  completedAt            DateTime?
+  completedBy            String?
+  completionReason       String?
+  endedMessage           String?
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
   deletedAt              DateTime?

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -25,7 +26,13 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { ContinueLastActivityCard } from "@/components/rejoin-page-view";
 import { ServiceWarningBanner } from "@/components/service-warning-banner";
 import { getEventLobbyUrl } from "@/lib/config";
+import {
+  applyEventOverviewStats,
+  isEventActiveForPresence,
+  type EventOverviewStats,
+} from "@/lib/event-overview-shared";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import { PRESENCE_OVERVIEW_POLL_INTERVAL_MS } from "@/lib/presence";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type DashboardViewProps = {
@@ -51,7 +58,10 @@ type DashboardViewProps = {
     id: string;
     title: string;
     status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
-    participantCount: number;
+    lobbyParticipantCount: number;
+    sessionCount: number;
+    activeSessionParticipantCount: number;
+    totalSessionParticipantCount: number;
     createdAt: string;
     hostToken: string;
     hostParticipantToken: string | null;
@@ -96,9 +106,51 @@ export function DashboardView({
   eventCount,
   recentCases,
   recentSessions,
-  recentEvents,
+  recentEvents: initialRecentEvents,
 }: DashboardViewProps) {
   const { t, locale } = useI18n();
+  const [eventStats, setEventStats] = useState<EventOverviewStats[]>([]);
+  const recentEvents = useMemo(
+    () => applyEventOverviewStats(initialRecentEvents, eventStats),
+    [eventStats, initialRecentEvents],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshStats = async () => {
+      try {
+        const response = await fetch("/api/events/overview", {
+          cache: "no-store",
+        });
+
+        if (!response.ok || cancelled) {
+          return;
+        }
+
+        const data = (await response.json()) as {
+          events: EventOverviewStats[];
+        };
+
+        setEventStats(data.events);
+      } catch {
+        // Ignore transient network errors; the next poll will retry.
+      }
+    };
+
+    void refreshStats();
+
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) {
+        void refreshStats();
+      }
+    }, PRESENCE_OVERVIEW_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const formatDate = (iso: string) =>
     new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
@@ -221,6 +273,9 @@ export function DashboardView({
                 <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
                 <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
                 <DataTableHeaderCell>{t("events.participantsInLobby")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("events.sessions")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("events.participantsInSessions")}</DataTableHeaderCell>
+                <DataTableHeaderCell>{t("events.totalSessionParticipants")}</DataTableHeaderCell>
                 <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
               </DataTableHead>
               <DataTableBody>
@@ -242,7 +297,18 @@ export function DashboardView({
                         {t(`events.status.${event.status}`)}
                       </Badge>
                     </DataTableCell>
-                    <DataTableCell>{event.participantCount}</DataTableCell>
+                    <DataTableCell>
+                      {isEventActiveForPresence(event.status)
+                        ? event.lobbyParticipantCount
+                        : "—"}
+                    </DataTableCell>
+                    <DataTableCell>{event.sessionCount}</DataTableCell>
+                    <DataTableCell>
+                      {isEventActiveForPresence(event.status)
+                        ? event.activeSessionParticipantCount
+                        : "—"}
+                    </DataTableCell>
+                    <DataTableCell>{event.totalSessionParticipantCount}</DataTableCell>
                     <DataTableCell>{formatDate(event.createdAt)}</DataTableCell>
                   </DataTableRow>
                 ))}

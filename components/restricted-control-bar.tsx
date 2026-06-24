@@ -14,9 +14,13 @@ import { useI18n } from "@/lib/i18n/useI18n";
 
 type RestrictedControlBarProps = {
   micAllowed: boolean;
+  onLeave: () => void;
 };
 
-export function RestrictedControlBar({ micAllowed }: RestrictedControlBarProps) {
+export function RestrictedControlBar({
+  micAllowed,
+  onLeave,
+}: RestrictedControlBarProps) {
   const { t } = useI18n();
   const localPermissions = useLocalParticipantPermissions();
   const { saveAudioInputEnabled, saveVideoInputEnabled, saveAudioInputDeviceId, saveVideoInputDeviceId } =
@@ -96,7 +100,7 @@ export function RestrictedControlBar({ micAllowed }: RestrictedControlBarProps) 
       ) : null}
 
       {visibleControls.leave ? (
-        <DisconnectButton>{t("room.leave")}</DisconnectButton>
+        <DisconnectButton onClick={onLeave}>{t("room.leave")}</DisconnectButton>
       ) : null}
     </div>
   );

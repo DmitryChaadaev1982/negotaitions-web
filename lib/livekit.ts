@@ -1,4 +1,5 @@
 import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { randomUUID } from "node:crypto";
 
 import type { Session, SessionParticipant } from "@/app/generated/prisma/client";
 import { buildLiveKitParticipantMetadata } from "@/lib/livekit-participant-metadata";
@@ -72,11 +73,13 @@ export async function createLiveKitAccessToken(
 ) {
   const roomName = await ensureSessionLiveKitRoomName(session);
   const canPublish = true;
+  const liveKitIdentity = `${sessionParticipant.id}-${randomUUID()}`;
 
   const token = new AccessToken(config.apiKey, config.apiSecret, {
-    identity: sessionParticipant.id,
+    identity: liveKitIdentity,
     name: sessionParticipant.displayName,
     metadata: buildLiveKitParticipantMetadata(
+      sessionParticipant.id,
       sessionParticipant.type,
       caseRoleName,
     ),
@@ -106,11 +109,12 @@ export async function createEventLobbyLiveKitAccessToken(
     id: input.eventId,
     lobbyRoomName: input.lobbyRoomName,
   });
+  const liveKitIdentity = `${input.identity}-${randomUUID()}`;
 
   const token = new AccessToken(config.apiKey, config.apiSecret, {
-    identity: input.identity,
+    identity: liveKitIdentity,
     name: input.displayName,
-    metadata: JSON.stringify({ kind: "event-lobby" }),
+    metadata: JSON.stringify({ kind: "event-lobby", participantId: input.identity }),
   });
 
   token.addGrant({

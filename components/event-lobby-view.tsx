@@ -2,7 +2,6 @@
 
 import "@livekit/components-styles";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
@@ -12,21 +11,23 @@ import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { RejoinNavLink } from "@/components/rejoin-page-view";
+import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
 import {
-  GradientButton,
   GradientButtonLink,
   SecondaryButton,
+  SecondaryButtonLink,
 } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import {
   alertErrorClassName,
-  inputClassName,
-  labelClassName,
 } from "@/components/ui/form-styles";
-import { getJoinUrl } from "@/lib/config";
-import type { EventAssignmentDraft } from "@/lib/event-assignment";
+import {
+  buildSessionMaterialsPath,
+  buildSessionRoomPath,
+} from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 
@@ -70,6 +71,10 @@ export function EventLobbyView({
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [deviceWarning, setDeviceWarning] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [showCompleteDialog, setShowCompleteDialog] = useState(false);
+  const [isCompletingEvent, setIsCompletingEvent] = useState(false);
+  const [completeMessage, setCompleteMessage] = useState<string | null>(null);
+  const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
 
   const accessQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -105,39 +110,55 @@ export function EventLobbyView({
 
     async function bootstrap() {
       try {
-        const [nextState, tokenResponse] = await Promise.all([
-          fetch(`/api/events/${eventId}/state?${accessQuery}`, { cache: "no-store" }),
-          fetch(`/api/events/${eventId}/livekit-token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              hostToken: hostToken || undefined,
-              participantToken: participantToken || undefined,
-            }),
-          }),
-        ]);
+        const stateResponse = await fetch(`/api/events/${eventId}/state?${accessQuery}`, {
+          cache: "no-store",
+        });
 
         if (!active) return;
 
-        if (nextState.status === 410) {
+        if (stateResponse.status === 410) {
           setError("eventUnavailable");
           return;
         }
 
-        if (!nextState.ok) {
+        if (!stateResponse.ok) {
           setError("invalidAccess");
           return;
         }
 
-        setState((await nextState.json()) as EventStateResponse);
+        const stateData = (await stateResponse.json()) as EventStateResponse;
+        setState(stateData);
         setError(null);
+
+        if (active) {
+          setIsBootstrapping(false);
+        }
+
+        if (stateData.event.status === "COMPLETED") {
+          return;
+        }
+
+        const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            hostToken: hostToken || undefined,
+            participantToken: participantToken || undefined,
+          }),
+        });
+
+        if (!active) return;
 
         if (tokenResponse.ok) {
           setLiveKit((await tokenResponse.json()) as LiveKitTokenResponse);
+        } else if (tokenResponse.status === 410) {
+          setError("eventUnavailable");
         } else {
-          setError(
-            tokenResponse.status === 410 ? "eventUnavailable" : "livekitTokenFailed",
-          );
+          setLiveKit(null);
+        }
+      } catch {
+        if (active) {
+          setError("invalidAccess");
         }
       } finally {
         if (active) {
@@ -260,6 +281,36 @@ export function EventLobbyView({
     window.setTimeout(() => setCopyMessage(null), 2000);
   }, [state, t]);
 
+  const completeEvent = useCallback(async () => {
+    if (!hostToken) return;
+
+    setIsCompletingEvent(true);
+    setCompleteMessage(null);
+    setCompleteWarnings([]);
+
+    try {
+      const response = await fetch(`/api/events/${eventId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostToken }),
+      });
+
+      if (response.ok) {
+        const result = (await response.json()) as {
+          warnings?: string[];
+        };
+        setCompleteMessage(t("events.trainingEventCompleted"));
+        setCompleteWarnings(result.warnings ?? []);
+        setShowCompleteDialog(false);
+        await fetchState();
+      }
+    } finally {
+      setIsCompletingEvent(false);
+    }
+  }, [eventId, fetchState, hostToken, t]);
+
+  const isEventCompleted = state?.event.status === "COMPLETED";
+
   if (error === "eventUnavailable") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#020617] px-4 text-center">
@@ -294,9 +345,32 @@ export function EventLobbyView({
   const currentAssignment = state.currentParticipant
     ? state.participants.find((p) => p.id === state.currentParticipant?.id)
     : null;
+  const assignedSession = currentAssignment?.assignedSessionId
+    ? state.linkedSessions.find(
+        (session) => session.id === currentAssignment.assignedSessionId,
+      )
+    : null;
+  const sessionRoomActive =
+    currentAssignment?.joinToken && currentAssignment.assignedSessionId
+      ? isSessionActiveForRoom({
+          negotiationState: assignedSession?.negotiationState ?? "PREPARATION",
+          closedByEventAt: assignedSession?.closedByEventAt ?? null,
+        })
+      : false;
+
+  if (isEventCompleted) {
+    return (
+      <EventCompletedOverlay
+        state={state}
+        hostToken={hostToken}
+        completeMessage={completeMessage}
+        completeWarnings={completeWarnings}
+      />
+    );
+  }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#020617]">
+    <div className="flex min-h-screen flex-col bg-[#020617]" data-testid="event-lobby-ready">
       {participantToken || hostToken ? (
         <EventLobbyPresence
           eventId={eventId}
@@ -445,7 +519,7 @@ export function EventLobbyView({
             </GlassCardContent>
           </GlassCard>
 
-          {state.selectedCase ? (
+          {state.selectedCase && !isHost ? (
             <GlassCard elevated>
               <GlassCardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -482,10 +556,14 @@ export function EventLobbyView({
           ) : null}
 
           {isHost ? (
-            <HostControlsPanel
+            <EventHostControlsPanel
               state={state}
               draft={draft}
               isCreatingSession={isCreatingSession}
+              showCompleteDialog={showCompleteDialog}
+              isCompletingEvent={isCompletingEvent}
+              onShowCompleteDialog={setShowCompleteDialog}
+              onCompleteEvent={() => void completeEvent()}
               onUpdateHost={updateHost}
               onCreateSession={() => void createSession()}
             />
@@ -505,9 +583,33 @@ export function EventLobbyView({
                     ? ` · ${currentAssignment.assignedRoleName}`
                     : ""}
                 </p>
-                <GradientButtonLink href={getJoinUrl(currentAssignment.joinToken)}>
-                  {t("events.goToNegotiationRoom")}
-                </GradientButtonLink>
+                {sessionRoomActive && currentAssignment.assignedSessionId ? (
+                  <>
+                    <GradientButtonLink
+                      href={buildSessionRoomPath(
+                        currentAssignment.assignedSessionId,
+                        currentAssignment.joinToken,
+                      )}
+                      data-testid="go-to-negotiation-room-button"
+                    >
+                      {t("events.goToNegotiationRoom")}
+                    </GradientButtonLink>
+                    <SecondaryButtonLink
+                      href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+                      className="w-full text-center"
+                      data-testid="session-materials-button"
+                    >
+                      {t("events.sessionMaterials")}
+                    </SecondaryButtonLink>
+                  </>
+                ) : (
+                  <GradientButtonLink
+                    href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+                    data-testid="open-session-materials-button"
+                  >
+                    {t("events.openSessionMaterials")}
+                  </GradientButtonLink>
+                )}
               </GlassCardContent>
             </GlassCard>
           ) : state.createdSession && !currentAssignment?.joinToken ? (
@@ -523,214 +625,71 @@ export function EventLobbyView({
   );
 }
 
-function HostControlsPanel({
+function EventCompletedOverlay({
   state,
-  draft,
-  isCreatingSession,
-  onUpdateHost,
-  onCreateSession,
+  hostToken,
+  completeMessage,
+  completeWarnings,
 }: {
   state: EventStateResponse;
-  draft: EventAssignmentDraft;
-  isCreatingSession: boolean;
-  onUpdateHost: (payload: Record<string, unknown>) => Promise<void>;
-  onCreateSession: () => void;
+  hostToken?: string;
+  completeMessage: string | null;
+  completeWarnings: string[];
 }) {
   const { t } = useI18n();
-  const selectedCase = state.selectedCase;
 
-  const saveDraft = (next: Partial<EventAssignmentDraft>) => {
-    const merged: EventAssignmentDraft = {
-      ...draft,
-      ...next,
-    };
-    void onUpdateHost({ assignmentDraft: merged });
-  };
+  const currentAssignment = state.currentParticipant
+    ? state.participants.find((participant) => participant.id === state.currentParticipant?.id)
+    : null;
 
   return (
-    <GlassCard elevated>
-      <GlassCardHeader>
-        <h3 className="text-sm font-semibold text-slate-50">{t("events.hostControls")}</h3>
-      </GlassCardHeader>
-      <GlassCardContent className="space-y-4">
-        <div>
-          <label className={labelClassName}>{t("events.selectCase")}</label>
-          <select
-            className={inputClassName(false)}
-            value={selectedCase?.id ?? ""}
-            onChange={(event) => {
-              const caseId = event.target.value || null;
-              const selected = state.availableCases.find(
-                (negotiationCase) => negotiationCase.id === caseId,
-              );
-              if (selected) {
-                saveDraft({
-                  preparationDurationMinutes:
-                    selected.defaultPreparationDurationMinutes,
-                  negotiationDurationMinutes: selected.defaultDurationMinutes,
-                });
-              }
-              void onUpdateHost({ selectedCaseId: caseId });
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#020617] px-4 py-12 text-center">
+      <BrandLogo size="lg" href={hostToken ? "/events" : undefined} />
+      <div className="max-w-lg space-y-3">
+        <h1 className="text-2xl font-bold text-slate-50">
+          {t("events.eventCompletedTitle")}
+        </h1>
+        {state.event.completionReason ? (
+          <p className="text-sm text-slate-400">{state.event.completionReason}</p>
+        ) : null}
+        {completeMessage ? (
+          <p className="text-sm text-emerald-400">{completeMessage}</p>
+        ) : null}
+        {completeWarnings.length > 0 ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-200">
+            <p className="font-medium">{t("events.eventCompletionWarning")}</p>
+            <p className="mt-1">{t("events.recordingStopWarning")}</p>
+          </div>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap justify-center gap-3">
+        {hostToken ? (
+          <GradientButtonLink href="/events">{t("events.backToEvents")}</GradientButtonLink>
+        ) : null}
+        {currentAssignment?.joinToken ? (
+          <GradientButtonLink
+            href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+          >
+            {t("events.openSessionMaterials")}
+          </GradientButtonLink>
+        ) : null}
+        {hostToken && state.createdSession ? (
+          <SecondaryButtonLink href={`/sessions/${state.createdSession.id}`}>
+            {t("events.materials")}
+          </SecondaryButtonLink>
+        ) : state.createdSession && !currentAssignment?.joinToken ? (
+          <SecondaryButton
+            type="button"
+            onClick={() => {
+              window.location.href = `/sessions/${state.createdSession!.id}`;
             }}
           >
-            <option value="">{t("common.selectCase")}</option>
-            {state.availableCases.map((negotiationCase) => (
-              <option key={negotiationCase.id} value={negotiationCase.id}>
-                {negotiationCase.title}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {selectedCase ? (
-          <>
-            <div>
-              <label className={labelClassName}>
-                {t("common.preparationTime")}
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={60}
-                className={inputClassName(false)}
-                value={draft.preparationDurationMinutes}
-                onChange={(event) => {
-                  const minutes = Number(event.target.value);
-                  if (!Number.isFinite(minutes)) return;
-                  saveDraft({ preparationDurationMinutes: minutes });
-                }}
-              />
-            </div>
-
-            <div>
-              <label className={labelClassName}>
-                {t("common.negotiationTime")}
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={180}
-                className={inputClassName(false)}
-                value={draft.negotiationDurationMinutes}
-                onChange={(event) => {
-                  const minutes = Number(event.target.value);
-                  if (!Number.isFinite(minutes)) return;
-                  saveDraft({ negotiationDurationMinutes: minutes });
-                }}
-              />
-            </div>
-
-            <div>
-              <label className={labelClassName}>{t("events.assignFacilitator")}</label>
-              <select
-                className={inputClassName(false)}
-                value={draft.facilitatorEventParticipantId ?? ""}
-                onChange={(event) => {
-                  saveDraft({
-                    facilitatorEventParticipantId: event.target.value || null,
-                  });
-                }}
-              >
-                <option value="">{t("common.selectRole")}</option>
-                {state.participants.map((participant) => (
-                  <option key={participant.id} value={participant.id}>
-                    {participant.displayName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <p className={labelClassName}>{t("events.assignRoles")}</p>
-              {selectedCase.roles.map((role) => (
-                <div key={role.id}>
-                  <label className="mb-1 block text-xs text-slate-400">{role.name}</label>
-                  <select
-                    className={inputClassName(false)}
-                    value={draft.roleAssignments[role.id] ?? ""}
-                    onChange={(event) => {
-                      saveDraft({
-                        roleAssignments: {
-                          ...draft.roleAssignments,
-                          [role.id]: event.target.value,
-                        },
-                      });
-                    }}
-                  >
-                    <option value="">{t("common.selectRole")}</option>
-                    {state.participants.map((participant) => (
-                      <option key={participant.id} value={participant.id}>
-                        {participant.displayName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <label className={labelClassName}>{t("events.assignObservers")}</label>
-              <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-slate-600/30 p-2">
-                {state.participants.map((participant) => {
-                  const isRolePlayer = Object.values(draft.roleAssignments).includes(
-                    participant.id,
-                  );
-                  const isFacilitator =
-                    draft.facilitatorEventParticipantId === participant.id;
-                  const checked = draft.observerEventParticipantIds.includes(participant.id);
-
-                  return (
-                    <label
-                      key={participant.id}
-                      className={`flex items-center gap-2 text-sm ${
-                        isRolePlayer || isFacilitator
-                          ? "text-slate-500"
-                          : "text-slate-200"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={isRolePlayer || isFacilitator}
-                        checked={checked}
-                        onChange={(event) => {
-                          const ids = event.target.checked
-                            ? [...draft.observerEventParticipantIds, participant.id]
-                            : draft.observerEventParticipantIds.filter(
-                                (id) => id !== participant.id,
-                              );
-                          saveDraft({ observerEventParticipantIds: ids });
-                        }}
-                      />
-                      {participant.displayName}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <GradientButton
-              type="button"
-              disabled={isCreatingSession || Boolean(state.createdSession)}
-              onClick={onCreateSession}
-            >
-              {state.createdSession
-                ? t("events.negotiationSessionCreated")
-                : t("events.createNegotiationSession")}
-            </GradientButton>
-
-            {state.createdSession ? (
-              <p className="text-xs text-slate-400">
-                <Link
-                  href={`/sessions/${state.createdSession.id}`}
-                  className="text-cyan-400 hover:text-cyan-300"
-                >
-                  {state.createdSession.title}
-                </Link>
-              </p>
-            ) : null}
-          </>
+            {state.createdSession.title}
+          </SecondaryButton>
         ) : null}
-      </GlassCardContent>
-    </GlassCard>
+        <GradientButtonLink href="/">{t("common.goToHome")}</GradientButtonLink>
+      </div>
+      <LanguageSwitcher />
+    </div>
   );
 }

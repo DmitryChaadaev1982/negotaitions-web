@@ -152,6 +152,7 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
               </p>
               <GradientButton
                 type="button"
+                data-testid="rejoin-button"
                 className="w-full"
                 disabled={isRejoining}
                 onClick={handleRejoinLobby}
@@ -180,6 +181,7 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
               <input
                 id="displayName"
                 name="displayName"
+                data-testid="event-join-name-input"
                 required={!storedParticipant}
                 autoComplete="name"
                 className={inputClassName(Boolean(state.errors?.displayName))}
@@ -226,7 +228,12 @@ export function JoinEventForm({ eventId, eventTitle }: JoinEventFormProps) {
               </div>
             </div>
 
-            <GradientButton type="submit" disabled={isPending} className="w-full">
+            <GradientButton
+              type="submit"
+              data-testid="join-event-button"
+              disabled={isPending}
+              className="w-full"
+            >
               {isPending ? t("common.loading") : t("events.joinEvent")}
             </GradientButton>
           </form>

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { buildSessionRoomPath } from "@/lib/config";
+
 import { AddParticipantForm } from "@/components/add-participant-form";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { StatusBadge } from "@/components/badge";
@@ -285,7 +287,10 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
           />
           {!isReadOnly && session.facilitatorParticipant ? (
             <GradientButtonLink
-              href={`/room/${session.id}?joinToken=${encodeURIComponent(session.facilitatorParticipant.joinToken)}`}
+              href={buildSessionRoomPath(
+                session.id,
+                session.facilitatorParticipant.joinToken,
+              )}
             >
               {t("sessions.joinVideoRoom")}
             </GradientButtonLink>

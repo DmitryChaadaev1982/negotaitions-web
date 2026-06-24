@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createSessionFromEvent } from "@/lib/create-event-session";
 import { parseAssignmentDraft } from "@/lib/event-assignment";
-import { resolveEventAccess } from "@/lib/event-auth";
+import { resolveEventAccess, isEventDeletedOrCancelled } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -37,6 +37,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  if (isEventDeletedOrCancelled(access.event)) {
+    return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
+  }
+
+  if (access.event.status === "COMPLETED") {
+    return NextResponse.json({ error: "eventCompleted" }, { status: 409 });
   }
 
   const updateData: {
@@ -89,6 +97,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  if (isEventDeletedOrCancelled(access.event)) {
+    return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
+  }
+
+  if (access.event.status === "COMPLETED") {
+    return NextResponse.json({ error: "eventCompleted" }, { status: 409 });
   }
 
   const event = await prisma.trainingEvent.findUnique({

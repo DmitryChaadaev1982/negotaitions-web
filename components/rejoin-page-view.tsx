@@ -19,6 +19,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type RejoinValidation = {
   valid: boolean;
   targetUrl?: string;
+  primaryAction?: "room" | "materials" | "lobby";
   title?: string;
   subtitle?: string;
   participantType?: string;
@@ -120,6 +121,18 @@ export function RejoinPageView() {
 
   const typeLabel = participantTypeLabel(validation?.participantType, t);
 
+  const rejoinButtonLabel =
+    validation?.primaryAction === "materials"
+      ? t("rejoin.openSessionMaterials")
+      : validation?.primaryAction === "room"
+        ? t("rejoin.rejoinRoom")
+        : t("rejoin.rejoin");
+
+  const rejoinDescription =
+    validation?.primaryAction === "materials"
+      ? t("join.sessionFinishedMessage")
+      : t("rejoin.returnToSameRoom");
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#020617] px-4 py-12">
       <div className="mb-8 flex w-full max-w-md items-center justify-between">
@@ -134,12 +147,18 @@ export function RejoinPageView() {
           ) : !context || !validation?.valid ? (
             <div className="space-y-4 text-center">
               <h1 className="text-xl font-bold text-slate-50">
-                {validation?.reason === "sessionDeleted" ||
-                validation?.reason === "eventUnavailable"
-                  ? t("rejoin.sessionNoLongerAvailable")
-                  : context && validation?.reason
-                    ? t("rejoin.recoveryLinkExpired")
-                    : t("rejoin.noRecentSession")}
+                {validation?.reason === "eventCompleted"
+                  ? t("rejoin.eventCompletedMessage")
+                  : validation?.reason === "sessionClosedByEvent"
+                    ? t("rejoin.sessionClosedByEventMessage")
+                    : validation?.reason === "sessionClosedBeforeNegotiation"
+                      ? t("rejoin.sessionClosedBeforeNegotiationMessage")
+                      : validation?.reason === "sessionDeleted" ||
+                          validation?.reason === "eventUnavailable"
+                        ? t("rejoin.sessionNoLongerAvailable")
+                        : context && validation?.reason
+                          ? t("rejoin.recoveryLinkExpired")
+                          : t("rejoin.noRecentSession")}
               </h1>
               <div className="flex flex-wrap justify-center gap-3">
                 <SecondaryButtonLink href="/dashboard">
@@ -166,7 +185,7 @@ export function RejoinPageView() {
               </div>
 
               <p className="text-center text-sm text-slate-400">
-                {t("rejoin.returnToSameRoom")}
+                {rejoinDescription}
               </p>
 
               <GradientButton
@@ -175,7 +194,7 @@ export function RejoinPageView() {
                 disabled={isRejoining}
                 onClick={handleRejoin}
               >
-                {isRejoining ? t("common.loading") : t("rejoin.rejoin")}
+                {isRejoining ? t("common.loading") : rejoinButtonLabel}
               </GradientButton>
             </div>
           )}

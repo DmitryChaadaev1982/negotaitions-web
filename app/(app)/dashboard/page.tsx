@@ -1,7 +1,8 @@
 import { DashboardView } from "@/components/dashboard-view";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import { getTrainingEventsForList } from "@/lib/event-overview-stats";
 import { prisma } from "@/lib/prisma";
-import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
+import { getSessionsForList } from "@/lib/session-overview-stats";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const facilitator = await getDemoFacilitator();
 
-  const [caseCount, sessionCount, eventCount, recentCases, recentSessions, recentEvents] =
+  const [caseCount, sessionCount, eventCount, recentCases, allSessions, recentEvents] =
     await Promise.all([
       prisma.negotiationCase.count({
         where: { facilitatorId: facilitator.id, ...activeCaseWhere },
@@ -28,30 +29,11 @@ export default async function DashboardPage() {
           _count: { select: { roles: true } },
         },
       }),
-      prisma.session.findMany({
-        where: { facilitatorId: facilitator.id, ...activeSessionWhere },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: {
-          participants: {
-            select: { type: true, joinedAt: true },
-          },
-        },
-      }),
-      prisma.trainingEvent.findMany({
-        where: { deletedAt: null },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: {
-          participants: {
-            where: { isHost: true },
-            take: 1,
-            select: { participantToken: true },
-          },
-          _count: { select: { participants: true } },
-        },
-      }),
+      getSessionsForList(),
+      getTrainingEventsForList(5),
     ]);
+
+  const recentSessions = allSessions.slice(0, 5);
 
   return (
     <DashboardView
@@ -69,18 +51,21 @@ export default async function DashboardPage() {
       recentSessions={recentSessions.map((session) => ({
         id: session.id,
         title: session.title,
-        caseTitle: session.snapshotCaseTitle,
-        status: resolveSessionDisplayStatus(session, session.participants),
-        createdAt: session.createdAt.toISOString(),
+        caseTitle: session.caseTitle,
+        status: session.status,
+        createdAt: session.createdAt,
       }))}
       recentEvents={recentEvents.map((event) => ({
         id: event.id,
         title: event.title,
         status: event.status,
-        participantCount: event._count.participants,
-        createdAt: event.createdAt.toISOString(),
+        lobbyParticipantCount: event.lobbyParticipantCount,
+        sessionCount: event.sessionCount,
+        activeSessionParticipantCount: event.activeSessionParticipantCount,
+        totalSessionParticipantCount: event.totalSessionParticipantCount,
+        createdAt: event.createdAt ?? new Date().toISOString(),
         hostToken: event.hostToken,
-        hostParticipantToken: event.participants[0]?.participantToken ?? null,
+        hostParticipantToken: event.hostParticipantToken,
       }))}
     />
   );

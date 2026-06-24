@@ -21,8 +21,10 @@ import { RestrictedControlBar } from "@/components/restricted-control-bar";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { StructuredVideoLayout } from "@/components/structured-video-layout";
 import { GradientButtonLink } from "@/components/ui/buttons";
+import { buildSessionMaterialsPath } from "@/lib/config";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import type { ControlState } from "@/lib/negotiation-control";
+import type { SessionCloseState } from "@/lib/session-close-state";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import {
   clearRecoveryContext,
@@ -42,12 +44,17 @@ type LiveKitTokenResponse = {
   displayName: string;
 };
 
-type RoomControlPayload = ControlState & {
+type RoomControlPayload = ControlState &
+  SessionCloseState & {
   recording?: {
     status: string;
     errorMessage: string | null;
   } | null;
   recordingWarning?: string;
+  closeMessageKey?:
+    | "events.sessionClosedByEvent"
+    | "events.sessionClosedBeforeNegotiation"
+    | null;
 };
 
 type VideoRoomPageProps = {
@@ -201,9 +208,9 @@ function LeaveRoomButton({ joinToken }: { joinToken: string }) {
   const room = useRoomContext();
   const { t } = useI18n();
 
-  const handleLeave = useCallback(async () => {
-    await room.disconnect();
-    router.push(`/join/${joinToken}`);
+  const handleLeave = useCallback(() => {
+    router.push(buildSessionMaterialsPath(joinToken));
+    void room.disconnect();
   }, [joinToken, room, router]);
 
   return (
@@ -217,6 +224,47 @@ function LeaveRoomButton({ joinToken }: { joinToken: string }) {
   );
 }
 
+function SessionClosedOverlay({
+  joinToken,
+  closeMessageKey,
+  recordingStatus,
+  onLeave,
+}: {
+  joinToken: string;
+  closeMessageKey: NonNullable<RoomControlPayload["closeMessageKey"]>;
+  recordingStatus?: string | null;
+  onLeave: () => void;
+}) {
+  const { t } = useI18n();
+  const hadRecording =
+    recordingStatus &&
+    recordingStatus !== "NOT_STARTED" &&
+    recordingStatus !== "FAILED";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+      <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-600/40 bg-slate-900 p-6 text-center shadow-xl">
+        <h2 className="text-lg font-bold text-slate-50">{t(closeMessageKey)}</h2>
+        {hadRecording && closeMessageKey === "events.sessionClosedByEvent" ? (
+          <p className="text-sm text-slate-400">{t("events.recordingFinalizing")}</p>
+        ) : null}
+        <div className="flex flex-wrap justify-center gap-3 pt-2">
+          <GradientButtonLink href={buildSessionMaterialsPath(joinToken)}>
+            {t("room.backToSessionMaterials")}
+          </GradientButtonLink>
+          <button
+            type="button"
+            className="btn-secondary rounded-lg px-4 py-2 text-sm font-semibold"
+            onClick={onLeave}
+          >
+            {t("events.leaveRoom")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConnectedRoom({
   joinToken,
   sessionId,
@@ -224,6 +272,7 @@ function ConnectedRoom({
   sidebar,
   controlState,
   recordingState,
+  sessionCloseState,
   onControlStateChange,
   onRecordingStateChange,
   onInvalidToken,
@@ -234,12 +283,24 @@ function ConnectedRoom({
   sidebar: RoomSidebarData;
   controlState: ControlState;
   recordingState: RoomControlPayload["recording"];
+  sessionCloseState: Pick<
+    RoomControlPayload,
+    "isClosed" | "closeMessageKey" | "closedBeforeNegotiation"
+  >;
   onControlStateChange: (state: ControlState) => void;
   onRecordingStateChange: (state: RoomControlPayload["recording"]) => void;
   onInvalidToken: () => void;
 }) {
   const router = useRouter();
   const { t } = useI18n();
+
+  const handleLeaveClosed = useCallback(() => {
+    router.push(buildSessionMaterialsPath(joinToken));
+  }, [joinToken, router]);
+
+  const handleLeaveRoom = useCallback(() => {
+    router.push(buildSessionMaterialsPath(joinToken));
+  }, [joinToken, router]);
 
   const handleManualRejoin = useCallback(() => {
     router.push(`/rejoin`);
@@ -251,6 +312,14 @@ function ConnectedRoom({
 
   return (
     <>
+      {sessionCloseState.isClosed && sessionCloseState.closeMessageKey ? (
+        <SessionClosedOverlay
+          joinToken={joinToken}
+          closeMessageKey={sessionCloseState.closeMessageKey}
+          recordingStatus={recordingState?.status}
+          onLeave={handleLeaveClosed}
+        />
+      ) : null}
       <SessionRoomPresenceHeartbeat
         sessionId={sessionId}
         joinToken={joinToken}
@@ -284,6 +353,12 @@ function ConnectedRoom({
             />
           </div>
           <div className="flex items-center gap-3">
+            <GradientButtonLink
+              href={buildSessionMaterialsPath(joinToken)}
+              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+            >
+              {t("room.sessionMaterials")}
+            </GradientButtonLink>
             <RejoinNavLink />
             <LanguageSwitcher />
             <LeaveRoomButton joinToken={joinToken} />
@@ -301,7 +376,7 @@ function ConnectedRoom({
               />
             </div>
 
-            {controlState.canControl ? (
+            {controlState.canControl && !sessionCloseState.isClosed ? (
               <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3">
                 <FacilitatorRoomControls
                   sessionId={sessionId}
@@ -316,7 +391,10 @@ function ConnectedRoom({
             ) : null}
 
             <div className="shrink-0 border-t border-slate-800 bg-slate-900">
-              <RestrictedControlBar micAllowed={controlState.micAllowed} />
+              <RestrictedControlBar
+                micAllowed={controlState.micAllowed}
+                onLeave={handleLeaveRoom}
+              />
             </div>
           </div>
 
@@ -343,6 +421,13 @@ export default function VideoRoomPage({
   const [controlState, setControlState] = useState<ControlState | null>(null);
   const [recordingState, setRecordingState] =
     useState<RoomControlPayload["recording"]>(null);
+  const [sessionCloseState, setSessionCloseState] = useState<
+    Pick<RoomControlPayload, "isClosed" | "closeMessageKey" | "closedBeforeNegotiation">
+  >({
+    isClosed: false,
+    closeMessageKey: null,
+    closedBeforeNegotiation: false,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -413,6 +498,11 @@ export default function VideoRoomPage({
           const payload = controlPayload as RoomControlPayload;
           setControlState(payload);
           setRecordingState(payload.recording ?? null);
+          setSessionCloseState({
+            isClosed: payload.isClosed,
+            closeMessageKey: payload.closeMessageKey,
+            closedBeforeNegotiation: payload.closedBeforeNegotiation,
+          });
 
           saveRecoveryContext({
             type: "SESSION_ROOM",
@@ -472,6 +562,11 @@ export default function VideoRoomPage({
         const nextState = (await response.json()) as RoomControlPayload;
         setControlState(nextState);
         setRecordingState(nextState.recording ?? null);
+        setSessionCloseState({
+          isClosed: nextState.isClosed,
+          closeMessageKey: nextState.closeMessageKey,
+          closedBeforeNegotiation: nextState.closedBeforeNegotiation,
+        });
       } catch {
         // Ignore transient polling errors.
       }
@@ -504,8 +599,8 @@ export default function VideoRoomPage({
             {error ?? t("room.somethingWentWrongConnecting")}
           </p>
         </div>
-        <GradientButtonLink href={`/join/${joinToken}`}>
-          {t("room.backToSessionBriefing")}
+        <GradientButtonLink href={buildSessionMaterialsPath(joinToken)}>
+          {t("room.backToSessionMaterials")}
         </GradientButtonLink>
         <GradientButtonLink href="/rejoin">{t("rejoin.rejoin")}</GradientButtonLink>
       </div>
@@ -520,6 +615,7 @@ export default function VideoRoomPage({
       sidebar={sidebar}
       controlState={controlState}
       recordingState={recordingState}
+      sessionCloseState={sessionCloseState}
       onControlStateChange={setControlState}
       onRecordingStateChange={setRecordingState}
       onInvalidToken={handleInvalidToken}

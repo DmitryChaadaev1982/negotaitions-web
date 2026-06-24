@@ -11,6 +11,10 @@ import {
   shouldAutoFinishPreparation,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
+import {
+  buildSessionCloseState,
+  SESSION_CLOSE_SELECT,
+} from "@/lib/session-close-state";
 import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 
@@ -37,24 +41,40 @@ export async function GET(request: Request, context: RouteContext) {
   const now = new Date();
   let session = participant.session;
 
-  if (shouldAutoFinishPreparation(session, now)) {
-    session = await prisma.session.update({
-      where: { id: sessionId },
-      data: getAutoFinishPreparationUpdateData(session, now),
-      select: SESSION_CONTROL_SELECT,
-    });
-  }
+  const closeInfo = buildSessionCloseState({
+    negotiationState: session.negotiationState,
+    negotiationStartedAt: session.negotiationStartedAt,
+    closedByEventAt: session.closedByEventAt,
+    closeReason: session.closeReason,
+    event: session.event,
+  });
 
-  if (shouldAutoFinish(session, now)) {
-    const updateData = getControlUpdateData(session, "FINISH", now);
-    session = await prisma.session.update({
-      where: { id: sessionId },
-      data: updateData,
-      select: SESSION_CONTROL_SELECT,
-    });
+  if (!closeInfo.isClosed) {
+    if (shouldAutoFinishPreparation(session, now)) {
+      session = await prisma.session.update({
+        where: { id: sessionId },
+        data: getAutoFinishPreparationUpdateData(session, now),
+        select: {
+          ...SESSION_CONTROL_SELECT,
+          ...SESSION_CLOSE_SELECT,
+        },
+      });
+    }
 
-    await closeLatestPauseInterval(sessionId, now);
-    await handleNegotiationFinishRecording(sessionId);
+    if (shouldAutoFinish(session, now)) {
+      const updateData = getControlUpdateData(session, "FINISH", now);
+      session = await prisma.session.update({
+        where: { id: sessionId },
+        data: updateData,
+        select: {
+          ...SESSION_CONTROL_SELECT,
+          ...SESSION_CLOSE_SELECT,
+        },
+      });
+
+      await closeLatestPauseInterval(sessionId, now);
+      await handleNegotiationFinishRecording(sessionId);
+    }
   }
 
   const recording = await prisma.recording.findUnique({
@@ -66,9 +86,11 @@ export async function GET(request: Request, context: RouteContext) {
   });
 
   const isFacilitator = participant.type === ParticipantType.FACILITATOR;
+  const sessionCloseState = buildSessionCloseState(session);
 
   return NextResponse.json({
     ...buildControlState(session, participant.type, now),
+    ...sessionCloseState,
     recording: recording
       ? {
           status: recording.status,

@@ -106,6 +106,8 @@ export function RecordingIndicator({
   return (
     <div className="space-y-1">
       <span
+        data-testid="recording-status"
+        data-status={effectiveStatus}
         className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${getIndicatorClass(effectiveStatus)}`}
       >
         <span className="h-2 w-2 rounded-full bg-current opacity-80" aria-hidden="true" />

@@ -85,6 +85,11 @@ export const createEventSessionSchema = z.object({
   hostToken: z.string().min(1),
 });
 
+export const completeEventSchema = z.object({
+  hostToken: z.string().min(1),
+  reason: z.string().trim().optional(),
+});
+
 export const eventPresenceSchema = z.object({
   participantToken: z.string().min(1),
 });

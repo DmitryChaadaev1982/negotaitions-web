@@ -11,13 +11,13 @@ type ButtonProps = {
   disabled?: boolean;
   type?: "button" | "submit";
   onClick?: () => void;
-};
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "className" | "disabled" | "type" | "onClick">;
 
 type LinkButtonProps = {
   children: React.ReactNode;
   className?: string;
   href: string;
-};
+} & Omit<React.ComponentProps<typeof Link>, "className" | "href" | "children">;
 
 export function GradientButton({
   children,
@@ -25,9 +25,11 @@ export function GradientButton({
   disabled,
   type = "button",
   onClick,
+  ...props
 }: ButtonProps) {
   return (
     <button
+      {...props}
       type={type}
       disabled={disabled}
       onClick={onClick}
@@ -44,9 +46,11 @@ export function SecondaryButton({
   disabled,
   type = "button",
   onClick,
+  ...props
 }: ButtonProps) {
   return (
     <button
+      {...props}
       type={type}
       disabled={disabled}
       onClick={onClick}
@@ -63,9 +67,11 @@ export function DangerButton({
   disabled,
   type = "button",
   onClick,
+  ...props
 }: ButtonProps) {
   return (
     <button
+      {...props}
       type={type}
       disabled={disabled}
       onClick={onClick}
@@ -84,9 +90,14 @@ export function GradientButtonLink({
   children,
   className,
   href,
+  ...props
 }: LinkButtonProps) {
   return (
-    <Link href={href} className={cn(baseButton, "btn-gradient", className)}>
+    <Link
+      {...props}
+      href={href}
+      className={cn(baseButton, "btn-gradient", className)}
+    >
       {children}
     </Link>
   );
@@ -96,9 +107,14 @@ export function SecondaryButtonLink({
   children,
   className,
   href,
+  ...props
 }: LinkButtonProps) {
   return (
-    <Link href={href} className={cn(baseButton, "btn-secondary", className)}>
+    <Link
+      {...props}
+      href={href}
+      className={cn(baseButton, "btn-secondary", className)}
+    >
       {children}
     </Link>
   );

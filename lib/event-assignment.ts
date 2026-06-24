@@ -11,6 +11,18 @@ export type EventAssignmentDurationDefaults = {
   negotiationDurationMinutes: number;
 };
 
+export function createFreshAssignmentDraft(
+  defaults: EventAssignmentDurationDefaults,
+): EventAssignmentDraft {
+  return {
+    facilitatorEventParticipantId: null,
+    roleAssignments: {},
+    observerEventParticipantIds: [],
+    preparationDurationMinutes: defaults.preparationDurationMinutes,
+    negotiationDurationMinutes: defaults.negotiationDurationMinutes,
+  };
+}
+
 export function parseAssignmentDraft(
   value: unknown,
   fallback: EventAssignmentDurationDefaults,

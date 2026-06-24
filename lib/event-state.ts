@@ -40,6 +40,8 @@ export type EventStateResponse = {
     description: string | null;
     scheduledAt: string | null;
     status: string;
+    completedAt: string | null;
+    completionReason: string | null;
     estimatedEventDurationSeconds: number | null;
     estimatedEventDurationMinutes: number | null;
     lobbyRoomName: string | null;
@@ -59,6 +61,13 @@ export type EventStateResponse = {
     id: string;
     title: string;
   } | null;
+  linkedSessions: Array<{
+    id: string;
+    title: string;
+    negotiationState: string;
+    closeReason: string | null;
+    closedByEventAt: string | null;
+  }>;
 };
 
 type BuildEventStateInput = {
@@ -95,7 +104,7 @@ export async function buildEventState(
 ): Promise<EventStateResponse> {
   const facilitator = await getDemoFacilitator();
 
-  const [participants, cases, selectedCaseRecord, createdSession] =
+  const [participants, cases, selectedCaseRecord, createdSession, linkedSessions] =
     await Promise.all([
       prisma.eventParticipant.findMany({
         where: { eventId: input.event.id },
@@ -119,7 +128,7 @@ export async function buildEventState(
             select: { id: true, name: true, sortOrder: true },
           },
         },
-        orderBy: { title: "asc" },
+        orderBy: [{ updatedAt: "desc" }, { title: "asc" }],
       }),
       input.event.selectedCaseId
         ? prisma.negotiationCase.findFirst({
@@ -141,6 +150,17 @@ export async function buildEventState(
         orderBy: { createdAt: "desc" },
         select: { id: true, title: true },
       }),
+      prisma.session.findMany({
+        where: { eventId: input.event.id, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          title: true,
+          negotiationState: true,
+          closeReason: true,
+          closedByEventAt: true,
+        },
+      }),
     ]);
 
   const assignmentDraft = parseAssignmentDraft(
@@ -155,6 +175,8 @@ export async function buildEventState(
       description: input.event.description,
       scheduledAt: input.event.scheduledAt?.toISOString() ?? null,
       status: input.event.status,
+      completedAt: input.event.completedAt?.toISOString() ?? null,
+      completionReason: input.event.completionReason,
       estimatedEventDurationSeconds: input.event.estimatedEventDurationSeconds,
       estimatedEventDurationMinutes: input.event.estimatedEventDurationSeconds
         ? secondsToDisplayMinutes(input.event.estimatedEventDurationSeconds)
@@ -174,11 +196,18 @@ export async function buildEventState(
     selectedCase: selectedCaseRecord
       ? toPublicCaseSummary(selectedCaseRecord)
       : null,
-    availableCases: cases.map(toPublicCaseSummary),
+    availableCases: input.isHost ? cases.map(toPublicCaseSummary) : [],
     assignmentDraft,
     createdSession: createdSession
       ? { id: createdSession.id, title: createdSession.title }
       : null,
+    linkedSessions: linkedSessions.map((session) => ({
+      id: session.id,
+      title: session.title,
+      negotiationState: session.negotiationState,
+      closeReason: session.closeReason,
+      closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
+    })),
   };
 }
 

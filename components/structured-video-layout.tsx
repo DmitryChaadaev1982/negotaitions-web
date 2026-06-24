@@ -415,6 +415,12 @@ function RoleVideoTile({
   );
 }
 
+function getSessionParticipantId(participant: Participant) {
+  const metadata = parseLiveKitParticipantMetadata(participant.metadata);
+
+  return metadata?.participantId ?? participant.identity;
+}
+
 function useLayoutParticipants(roster: SessionRosterEntry[]): LayoutParticipant[] {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
@@ -422,12 +428,12 @@ function useLayoutParticipants(roster: SessionRosterEntry[]): LayoutParticipant[
   return useMemo(() => {
     const connected = new Map<string, Participant>();
 
-    if (localParticipant) {
-      connected.set(localParticipant.identity, localParticipant);
+    for (const participant of remoteParticipants) {
+      connected.set(getSessionParticipantId(participant), participant);
     }
 
-    for (const participant of remoteParticipants) {
-      connected.set(participant.identity, participant);
+    if (localParticipant) {
+      connected.set(getSessionParticipantId(localParticipant), localParticipant);
     }
 
     const rosterIds = new Set(roster.map((entry) => entry.id));
@@ -437,13 +443,15 @@ function useLayoutParticipants(roster: SessionRosterEntry[]): LayoutParticipant[
     }));
 
     for (const participant of connected.values()) {
-      if (rosterIds.has(participant.identity)) {
+      const participantId = getSessionParticipantId(participant);
+
+      if (rosterIds.has(participantId)) {
         continue;
       }
 
       const metadata = parseLiveKitParticipantMetadata(participant.metadata);
       layoutEntries.push({
-        id: participant.identity,
+        id: participantId,
         displayName: participant.name || participant.identity,
         participantType:
           metadata?.participantType ?? ParticipantType.PARTICIPANT,
@@ -519,7 +527,7 @@ export function StructuredVideoLayout({
     const map = new Map<string, TrackReferenceOrPlaceholder>();
 
     for (const trackRef of cameraTracks) {
-      map.set(trackRef.participant.identity, trackRef);
+      map.set(getSessionParticipantId(trackRef.participant), trackRef);
     }
 
     return map;
@@ -527,7 +535,12 @@ export function StructuredVideoLayout({
 
   const speakingParticipants = useSpeakingParticipants();
   const speakingIds = useMemo(
-    () => new Set(speakingParticipants.map((participant) => participant.identity)),
+    () =>
+      new Set(
+        speakingParticipants.map((participant) =>
+          getSessionParticipantId(participant),
+        ),
+      ),
     [speakingParticipants],
   );
 

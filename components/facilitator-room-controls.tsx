@@ -265,6 +265,7 @@ export function FacilitatorRoomControls({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              data-testid="start-preparation-button"
               disabled={isSubmitting}
               onClick={() => void runAction("START_PREPARATION")}
               className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
@@ -273,6 +274,7 @@ export function FacilitatorRoomControls({
             </button>
             <button
               type="button"
+              data-testid="skip-preparation-button"
               disabled={isSubmitting}
               onClick={() => void runAction("SKIP_PREPARATION")}
               className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
@@ -281,6 +283,7 @@ export function FacilitatorRoomControls({
             </button>
             <button
               type="button"
+              data-testid="start-negotiation-button"
               disabled={isSubmitting}
               onClick={() => void runAction("START")}
               className={`${actionButtonClass} border border-slate-600 text-slate-200 hover:bg-slate-800`}
@@ -295,6 +298,7 @@ export function FacilitatorRoomControls({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="pause-preparation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("PAUSE_PREPARATION")}
             className={`${actionButtonClass} bg-amber-600 text-white hover:bg-amber-500`}
@@ -303,6 +307,7 @@ export function FacilitatorRoomControls({
           </button>
           <button
             type="button"
+            data-testid="stop-preparation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("STOP_PREPARATION")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
@@ -316,6 +321,7 @@ export function FacilitatorRoomControls({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="resume-preparation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("RESUME_PREPARATION")}
             className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
@@ -324,6 +330,7 @@ export function FacilitatorRoomControls({
           </button>
           <button
             type="button"
+            data-testid="stop-preparation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("STOP_PREPARATION")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
@@ -336,6 +343,7 @@ export function FacilitatorRoomControls({
       {negotiationState === NegotiationState.READY_TO_START ? (
         <button
           type="button"
+          data-testid="start-negotiation-button"
           disabled={isSubmitting}
           onClick={() => void runAction("START")}
           className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
@@ -348,6 +356,7 @@ export function FacilitatorRoomControls({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="pause-negotiation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("PAUSE")}
             className={`${actionButtonClass} bg-amber-600 text-white hover:bg-amber-500`}
@@ -356,6 +365,7 @@ export function FacilitatorRoomControls({
           </button>
           <button
             type="button"
+            data-testid="finish-negotiation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("FINISH")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
@@ -369,6 +379,7 @@ export function FacilitatorRoomControls({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="resume-negotiation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("RESUME")}
             className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
@@ -377,6 +388,7 @@ export function FacilitatorRoomControls({
           </button>
           <button
             type="button"
+            data-testid="finish-negotiation-button"
             disabled={isSubmitting}
             onClick={() => void runAction("FINISH")}
             className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}

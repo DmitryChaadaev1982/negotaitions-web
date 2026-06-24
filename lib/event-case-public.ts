@@ -9,6 +9,7 @@ export type PublicCaseSummary = {
   difficulty: Difficulty;
   businessContext: string;
   publicInstructions: string;
+  targetSkills: string;
   defaultPreparationDurationSeconds: number;
   defaultPreparationDurationMinutes: number;
   defaultDurationSeconds: number;
@@ -25,6 +26,7 @@ export function toPublicCaseSummary(
     difficulty: Difficulty;
     businessContext: string;
     publicInstructions: string;
+    targetSkills: string;
     defaultPreparationDurationSeconds: number;
     defaultDurationSeconds: number;
     roles: Array<{ id: string; name: string; sortOrder: number }>;
@@ -43,6 +45,7 @@ export function toPublicCaseSummary(
     difficulty: negotiationCase.difficulty,
     businessContext: negotiationCase.businessContext,
     publicInstructions: negotiationCase.publicInstructions,
+    targetSkills: negotiationCase.targetSkills,
     defaultPreparationDurationSeconds:
       negotiationCase.defaultPreparationDurationSeconds,
     defaultPreparationDurationMinutes: secondsToDisplayMinutes(

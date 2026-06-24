@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isEventUnavailable, resolveEventAccess } from "@/lib/event-auth";
+import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
 import { eventAccessQuerySchema } from "@/lib/validations/event";
 
@@ -27,7 +27,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });
   }
 
-  if (isEventUnavailable(access.event)) {
+  if (isEventDeletedOrCancelled(access.event)) {
     return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
   }
 

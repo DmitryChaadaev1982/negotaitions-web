@@ -752,7 +752,11 @@ export function RecordingTranscriptionSection({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
                 <p className="text-xs text-slate-500">{t("recording.recordingStatus")}</p>
-                <p className="text-sm font-medium text-slate-100">
+                <p
+                  data-testid="recording-status"
+                  data-status={displayRecordingStatus ?? "NOT_STARTED"}
+                  className="text-sm font-medium text-slate-100"
+                >
                   {recording && displayRecordingStatus
                     ? recordingStatusLabel(
                         displayRecordingStatus,
@@ -844,6 +848,7 @@ export function RecordingTranscriptionSection({
                       {t("recording.autoTranscribeFailedHint")}
                     </p>
                     <SecondaryButton
+                      data-testid="transcribe-recording-button"
                       disabled={busyAction != null}
                       onClick={() => {
                         autoTranscribeStartedForSessionRef.current = null;
@@ -998,6 +1003,7 @@ export function RecordingTranscriptionSection({
                 </p>
               ) : null}
               <textarea
+                data-testid="transcript-textarea"
                 value={transcriptText}
                 onChange={(event) => setTranscriptText(event.target.value)}
                 readOnly={readOnly}
@@ -1007,6 +1013,7 @@ export function RecordingTranscriptionSection({
               />
               {!readOnly ? (
                 <SecondaryButton
+                  data-testid="save-transcript-button"
                   disabled={busyAction != null}
                   onClick={() => void saveTranscript()}
                 >

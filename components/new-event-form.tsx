@@ -9,6 +9,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import {
   GradientButton,
+  SecondaryButton,
   SecondaryButtonLink,
 } from "@/components/ui/buttons";
 import {
@@ -76,6 +77,7 @@ export function NewEventForm() {
               <input
                 id="title"
                 name="title"
+                data-testid="event-title-input"
                 required
                 className={inputClassName(Boolean(state.errors?.title))}
               />
@@ -138,10 +140,25 @@ export function NewEventForm() {
           </GlassCardContent>
         </GlassCard>
 
-        <div className="flex gap-3">
-          <GradientButton type="submit" disabled={isPending}>
+        <div className="flex flex-wrap gap-3">
+          <GradientButton
+            type="submit"
+            name="afterCreate"
+            value="list"
+            data-testid="create-event-button"
+            disabled={isPending}
+          >
             {isPending ? t("common.creating") : t("events.createEvent")}
           </GradientButton>
+          <SecondaryButton
+            type="submit"
+            name="afterCreate"
+            value="lobby"
+            data-testid="create-event-open-lobby-button"
+            disabled={isPending}
+          >
+            {isPending ? t("common.creating") : t("events.createAndOpenLobby")}
+          </SecondaryButton>
           <SecondaryButtonLink href="/events">{t("common.cancel")}</SecondaryButtonLink>
         </div>
       </form>

@@ -16,6 +16,10 @@ import {
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import {
+  buildSessionCloseState,
+  SESSION_CLOSE_SELECT,
+} from "@/lib/session-close-state";
+import {
   closeLatestPauseInterval,
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
@@ -58,14 +62,24 @@ async function syncPauseIntervals(
 async function applyAutoTransitions(sessionId: string, now: Date) {
   let session = await prisma.session.findUniqueOrThrow({
     where: { id: sessionId },
-    select: SESSION_CONTROL_SELECT,
+    select: {
+      ...SESSION_CONTROL_SELECT,
+      ...SESSION_CLOSE_SELECT,
+    },
   });
+
+  if (buildSessionCloseState(session).isClosed) {
+    return session;
+  }
 
   if (shouldAutoFinishPreparation(session, now)) {
     session = await prisma.session.update({
       where: { id: sessionId },
       data: getAutoFinishPreparationUpdateData(session, now),
-      select: SESSION_CONTROL_SELECT,
+      select: {
+        ...SESSION_CONTROL_SELECT,
+        ...SESSION_CLOSE_SELECT,
+      },
     });
   }
 
@@ -73,7 +87,10 @@ async function applyAutoTransitions(sessionId: string, now: Date) {
     session = await prisma.session.update({
       where: { id: sessionId },
       data: getControlUpdateData(session, "FINISH", now),
-      select: SESSION_CONTROL_SELECT,
+      select: {
+        ...SESSION_CONTROL_SELECT,
+        ...SESSION_CLOSE_SELECT,
+      },
     });
 
     await closeLatestPauseInterval(sessionId, now);
@@ -121,6 +138,13 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     let session = await applyAutoTransitions(sessionId, now);
 
+    if (buildSessionCloseState(session).isClosed) {
+      return NextResponse.json(
+        { error: "sessionClosedByEvent" },
+        { status: 409 },
+      );
+    }
+
     if (shouldAutoFinish(session, now) && action !== "FINISH") {
       return NextResponse.json(
         buildControlState(session, participant.type, now),
@@ -132,7 +156,10 @@ export async function POST(request: Request, context: RouteContext) {
     session = await prisma.session.update({
       where: { id: sessionId },
       data: updateData,
-      select: SESSION_CONTROL_SELECT,
+      select: {
+        ...SESSION_CONTROL_SELECT,
+        ...SESSION_CLOSE_SELECT,
+      },
     });
 
     let recordingWarning: string | undefined;

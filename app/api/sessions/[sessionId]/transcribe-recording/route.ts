@@ -34,6 +34,10 @@ import {
   applySpeakerMapping,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import {
+  getMockExternalServiceError,
+  isTranscriptionMockMode,
+} from "@/lib/test-mode";
 
 export const runtime = "nodejs";
 
@@ -126,7 +130,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session is read-only." }, { status: 403 });
   }
 
-  if (!isOpenAiConfigured()) {
+  if (!isTranscriptionMockMode() && !isOpenAiConfigured()) {
     return NextResponse.json(
       { error: "OpenAI API key is missing." },
       { status: 503 },
@@ -146,6 +150,128 @@ export async function POST(request: Request, context: RouteContext) {
       { error: "No recording file available yet." },
       { status: 400 },
     );
+  }
+
+  if (isTranscriptionMockMode()) {
+    const simulatedError = getMockExternalServiceError();
+
+    if (simulatedError === "YANDEX_STORAGE_DOWNLOAD_FAILED") {
+      const classified = classifyExternalServiceError(
+        ExternalService.YANDEX_OBJECT_STORAGE,
+        new Error("Mock storage download failure"),
+        "download",
+      );
+
+      await logExternalServiceEvent({
+        service: classified.service,
+        severity: classified.severity,
+        errorCode: classified.errorCode,
+        title: classified.title,
+        message: classified.message,
+        rawError: classified.rawError,
+        sessionId,
+        recordingId: recording.id,
+      });
+
+      return NextResponse.json({ error: classified.message }, { status: 500 });
+    }
+
+    if (
+      simulatedError === "OPENAI_QUOTA_EXCEEDED" ||
+      simulatedError === "OPENAI_BILLING_LIMIT" ||
+      simulatedError === "OPENAI_RATE_LIMIT"
+    ) {
+      const classified = classifyExternalServiceError(
+        ExternalService.OPENAI,
+        {
+          status: 429,
+          message:
+            simulatedError === "OPENAI_RATE_LIMIT"
+              ? "Mock OpenAI rate limit"
+              : simulatedError === "OPENAI_BILLING_LIMIT"
+                ? "Mock OpenAI billing payment limit"
+                : "Mock OpenAI quota exceeded",
+        },
+        "transcription",
+      );
+
+      await logExternalServiceEvent({
+        service: classified.service,
+        severity: classified.severity,
+        errorCode: classified.errorCode,
+        title: classified.title,
+        message: classified.message,
+        rawError: classified.rawError,
+        sessionId,
+        recordingId: recording.id,
+      });
+
+      return NextResponse.json({ error: classified.message }, { status: 500 });
+    }
+
+    const transcript = await prisma.$transaction(async (tx) => {
+      const saved = await tx.transcript.upsert({
+        where: { sessionId },
+        create: {
+          sessionId,
+          recordingId: recording.id,
+          source: TranscriptSource.GENERATED,
+          text: "Mock transcript for NegotAItions regression test.",
+          diarizedText: "[Speaker 1] Mock transcript for NegotAItions regression test.",
+          language: languageHint === "auto" ? "en" : languageHint,
+          originalFileName: recording.fileName ?? "mock-audio.mp4",
+          originalMimeType: recording.mimeType ?? "audio/mp4",
+          transcriptionModel: "mock-transcription",
+          hasSpeakerDiarization: true,
+          speakerMapping: Prisma.JsonNull,
+        },
+        update: {
+          recordingId: recording.id,
+          source: TranscriptSource.GENERATED,
+          text: "Mock transcript for NegotAItions regression test.",
+          diarizedText: "[Speaker 1] Mock transcript for NegotAItions regression test.",
+          language: languageHint === "auto" ? "en" : languageHint,
+          originalFileName: recording.fileName ?? "mock-audio.mp4",
+          originalMimeType: recording.mimeType ?? "audio/mp4",
+          transcriptionModel: "mock-transcription",
+          hasSpeakerDiarization: true,
+          speakerMapping: Prisma.JsonNull,
+        },
+      });
+
+      await tx.transcriptSegment.deleteMany({
+        where: { transcriptId: saved.id },
+      });
+
+      await tx.transcriptSegment.create({
+        data: {
+          transcriptId: saved.id,
+          speakerLabel: "speaker_1",
+          startSeconds: 0,
+          endSeconds: 3,
+          text: "Mock transcript for NegotAItions regression test.",
+          orderIndex: 0,
+        },
+      });
+
+      return tx.transcript.findUniqueOrThrow({
+        where: { id: saved.id },
+        include: {
+          segments: {
+            orderBy: { orderIndex: "asc" },
+          },
+        },
+      });
+    });
+
+    return NextResponse.json({
+      transcript: serializeTranscript(transcript),
+      warnings: [],
+      recording: {
+        compressedSizeBytes: 1024,
+        compressionStatus: CompressionStatus.SKIPPED,
+      },
+    });
   }
 
   try {

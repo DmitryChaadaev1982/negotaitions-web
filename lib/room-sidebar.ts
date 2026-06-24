@@ -38,16 +38,19 @@ export async function getRoomSidebarData(
     return null;
   }
 
-  const facilitatorBriefings = participant.session.participants
-    .filter(
-      (sessionParticipant) =>
-        sessionParticipant.type === ParticipantType.PARTICIPANT &&
-        sessionParticipant.sessionRole,
-    )
-    .map((sessionParticipant) => ({
-      displayName: sessionParticipant.displayName,
-      role: sessionParticipant.sessionRole!,
-    }));
+  const facilitatorBriefings =
+    participant.type === ParticipantType.FACILITATOR
+      ? participant.session.participants
+          .filter(
+            (sessionParticipant) =>
+              sessionParticipant.type === ParticipantType.PARTICIPANT &&
+              sessionParticipant.sessionRole,
+          )
+          .map((sessionParticipant) => ({
+            displayName: sessionParticipant.displayName,
+            role: sessionParticipant.sessionRole!,
+          }))
+      : [];
 
   const roster = participant.session.participants.map((sessionParticipant) => ({
     id: sessionParticipant.id,

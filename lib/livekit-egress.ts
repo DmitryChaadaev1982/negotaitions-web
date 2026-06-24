@@ -18,6 +18,10 @@ import { ensureSessionLiveKitRoomName, getLiveKitConfig } from "@/lib/livekit";
 import { prisma } from "@/lib/prisma";
 import { handleExternalServiceFailure } from "@/lib/services/external-service-events";
 import {
+  getMockExternalServiceError,
+  isRecordingMockMode,
+} from "@/lib/test-mode";
+import {
   trackLiveKitRecordingMinutes,
   trackRecordingCreated,
   trackStorageObjectWritten,
@@ -75,6 +79,47 @@ function buildS3Upload() {
 export async function startAudioOnlyRoomRecording(
   session: Pick<Session, "id" | "livekitRoomName">,
 ) {
+  if (isRecordingMockMode()) {
+    const simulatedError = getMockExternalServiceError();
+
+    if (
+      simulatedError === "LIVEKIT_QUOTA_EXCEEDED" ||
+      simulatedError === "LIVEKIT_BILLING_LIMIT"
+    ) {
+      const classified = await handleExternalServiceFailure(
+        ExternalService.LIVEKIT,
+        new Error(
+          simulatedError === "LIVEKIT_BILLING_LIMIT"
+            ? "Mock LiveKit billing limit reached"
+            : "Mock LiveKit Egress quota exceeded",
+        ),
+        { sessionId: session.id, context: "start" },
+      );
+
+      const recording = await upsertRecording(session.id, {
+        status: RecordingStatus.FAILED,
+        errorMessage: classified.message,
+        startedAt: new Date(),
+      });
+
+      return { ok: false as const, recording, warning: classified.message };
+    }
+
+    const timestamp = Date.now();
+    const recording = await upsertRecording(session.id, {
+      status: RecordingStatus.RECORDING,
+      egressId: `mock-egress-${session.id}`,
+      fileKey: null,
+      fileName: `${timestamp}-mock-audio.mp4`,
+      mimeType: "audio/mp4",
+      startedAt: new Date(),
+      endedAt: null,
+      errorMessage: null,
+    });
+
+    return { ok: true as const, recording };
+  }
+
   const livekitConfig = getLiveKitConfig();
   const s3Config = getS3Config();
 
@@ -181,6 +226,21 @@ export async function startAudioOnlyRoomRecording(
 }
 
 export async function stopRecording(recording: Pick<Recording, "id" | "sessionId" | "egressId" | "startedAt">) {
+  if (isRecordingMockMode()) {
+    const timestamp = Date.now();
+    const updated = await upsertRecording(recording.sessionId, {
+      status: RecordingStatus.COMPLETED,
+      egressId: recording.egressId,
+      fileKey: buildRecordingFileKey(recording.sessionId, timestamp),
+      fileName: `${timestamp}-mock-audio.mp4`,
+      mimeType: "audio/mp4",
+      endedAt: new Date(),
+      errorMessage: null,
+    });
+
+    return { ok: true as const, recording: updated };
+  }
+
   if (!recording.egressId) {
     const updated = await upsertRecording(recording.sessionId, {
       status: RecordingStatus.STOPPED,
@@ -353,6 +413,22 @@ async function upsertRecording(
 
 export async function getSessionRecording(sessionId: string) {
   return prisma.recording.findUnique({ where: { sessionId } });
+}
+
+export function isStoppableRecordingStatus(status: RecordingStatus) {
+  return (
+    status === RecordingStatus.STARTING || status === RecordingStatus.RECORDING
+  );
+}
+
+export async function findActiveRecordingForSession(sessionId: string) {
+  const recording = await getSessionRecording(sessionId);
+
+  if (!recording || !isStoppableRecordingStatus(recording.status)) {
+    return null;
+  }
+
+  return recording;
 }
 
 function isActiveRecordingStatus(status: RecordingStatus) {
