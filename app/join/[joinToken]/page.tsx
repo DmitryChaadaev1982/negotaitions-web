@@ -194,10 +194,12 @@ export default async function JoinPage({ params }: JoinPageProps) {
     : [];
   const eventLobbyUrl =
     session.event && session.eventId
-      ? getEventLobbyUrl(session.eventId, {
-          hostToken: isFacilitator ? session.event.hostToken : undefined,
-          participantToken: participant.eventParticipant?.participantToken,
-        })
+      ? participant.userId || participant.eventParticipant?.userId
+        ? `/events/${session.eventId}/lobby`
+        : getEventLobbyUrl(session.eventId, {
+            hostToken: isFacilitator ? session.event.hostToken : undefined,
+            participantToken: participant.eventParticipant?.participantToken,
+          })
       : null;
 
   return (

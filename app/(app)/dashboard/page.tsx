@@ -1,15 +1,22 @@
-import { DashboardView } from "@/components/dashboard-view";
-import { getDemoFacilitator } from "@/lib/demo-user";
+import { AccountDashboardView } from "@/components/account-dashboard-view";
 import { getEventsForUser } from "@/lib/event-overview-stats";
-import { prisma } from "@/lib/prisma";
 import { getSessionsForUser } from "@/lib/session-overview-stats";
-import { activeCaseWhere } from "@/lib/soft-delete";
 import { requireActiveUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  type ActionLabelKey =
+    | "dashboard.openLobby"
+    | "dashboard.continueSession"
+    | "dashboard.openRoom"
+    | "dashboard.openMaterials";
+  type ContinueItem = {
+    title: string;
+    subtitle: string;
+    action: { href: string; labelKey: ActionLabelKey };
+  };
   const user = await requireActiveUser("/dashboard");
   const isAdminUser = isAdmin(user);
 
@@ -17,71 +24,112 @@ export default async function DashboardPage() {
     getEventsForUser(user),
     getSessionsForUser(user),
   ]);
-  const recentEvents = allEvents.slice(0, 5);
+  const activeEvents = allEvents.filter(
+    (event) => event.status !== "COMPLETED" && event.status !== "CANCELLED",
+  );
+  const activeSessions = allSessions.filter(
+    (session) => session.negotiationState !== "FINISHED" && !session.closedByEventAt,
+  );
+  const completedSessions = allSessions.filter(
+    (session) => session.negotiationState === "FINISHED" || Boolean(session.closedByEventAt),
+  );
+  const hostedEvents = allEvents.filter((event) => event.canManage);
+  const toRoleKey = (role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null) =>
+    role === "HOST"
+      ? "dashboard.roleHost"
+      : role === "FACILITATOR"
+        ? "dashboard.roleFacilitator"
+        : role === "OBSERVER"
+          ? "dashboard.roleObserver"
+          : "dashboard.roleParticipant";
 
-  const [caseCount, recentCases] = isAdminUser
-    ? await (async () => {
-        const facilitator = await getDemoFacilitator();
-        const [count, cases] = await Promise.all([
-          prisma.negotiationCase.count({
-            where: { facilitatorId: facilitator.id, ...activeCaseWhere },
-          }),
-          prisma.negotiationCase.findMany({
-            where: { facilitatorId: facilitator.id, ...activeCaseWhere },
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            include: {
-              _count: { select: { roles: true } },
-            },
-          }),
-        ]);
-        return [count, cases] as const;
-      })()
-    : ([0, []] as const);
-
-  const sessionCount = allSessions.length;
-  const eventCount = allEvents.length;
-
-  const recentSessions = allSessions.slice(0, 5);
+  const continueItem: ContinueItem | null =
+    activeSessions[0]
+      ? {
+          title: activeSessions[0].title,
+          subtitle: activeSessions[0].eventTitle ?? "",
+          action: { href: activeSessions[0].roomUrl, labelKey: "dashboard.openRoom" },
+        }
+      : activeEvents[0]
+        ? {
+            title: activeEvents[0].title,
+            subtitle: "",
+            action: { href: `/events/${activeEvents[0].id}/lobby`, labelKey: "dashboard.openLobby" },
+          }
+        : completedSessions[0]
+          ? {
+              title: completedSessions[0].title,
+              subtitle: completedSessions[0].eventTitle ?? "",
+              action: { href: completedSessions[0].materialsUrl, labelKey: "dashboard.openMaterials" },
+            }
+          : null;
 
   return (
-    <DashboardView
-      caseCount={caseCount}
-      sessionCount={sessionCount}
-      eventCount={eventCount}
-      recentCases={recentCases.map((negotiationCase) => ({
-        id: negotiationCase.id,
-        title: negotiationCase.title,
-        difficulty: negotiationCase.difficulty,
-        caseLanguage: negotiationCase.caseLanguage,
-        roleCount: negotiationCase._count.roles,
-        createdAt: negotiationCase.createdAt.toISOString(),
-      }))}
-      recentSessions={recentSessions.map((session) => ({
-        id: session.id,
-        title: session.title,
-        caseTitle: session.caseTitle,
-        status: session.status,
-        createdAt: session.createdAt,
-      }))}
-      recentEvents={recentEvents.map((event) => ({
+    <AccountDashboardView
+      continueItem={continueItem}
+      activeEvents={activeEvents.map((event) => ({
         id: event.id,
         title: event.title,
         status: event.status,
-        canManage: event.canManage,
-        lobbyParticipantCount: event.lobbyParticipantCount,
-        sessionCount: event.sessionCount,
+        roleKey: event.canManage ? "dashboard.roleHost" : "dashboard.roleParticipant",
+        scheduledAt: event.scheduledAt,
         totalSessions: event.totalSessions,
         activeSessions: event.activeSessions,
         finishedSessions: event.finishedSessions,
-        participantsInLobby: event.participantsInLobby,
-        participantsInActiveSessions: event.participantsInActiveSessions,
-        uniqueParticipantsWithSessions: event.uniqueParticipantsWithSessions,
-        latestActivityAt: event.latestActivityAt,
-        activeSessionParticipantCount: event.activeSessionParticipantCount,
-        totalSessionParticipantCount: event.totalSessionParticipantCount,
-        createdAt: event.createdAt ?? new Date().toISOString(),
+        primaryAction: {
+          href:
+            event.activeSessions > 0 && event.primarySessionId
+              ? `/room/${event.primarySessionId}`
+              : `/events/${event.id}/lobby`,
+          labelKey:
+            event.activeSessions > 0
+              ? "dashboard.continueSession"
+              : "dashboard.openLobby",
+        },
       }))}
+      activeSessions={activeSessions.map((session) => ({
+        id: session.id,
+        title: session.title,
+        eventTitle: session.eventTitle,
+        status: session.status,
+        roleKey: toRoleKey(session.userRole),
+        recordingStage: session.recordingStage,
+        transcriptStage: session.transcriptStage,
+        speakerMappingStage: session.speakerMappingStage,
+        aiStage: session.aiStage,
+        openRoomHref: session.roomUrl,
+        openMaterialsHref: session.materialsUrl,
+        eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
+      }))}
+      completedSessions={completedSessions.map((session) => ({
+        id: session.id,
+        title: session.title,
+        eventTitle: session.eventTitle,
+        status: session.status,
+        roleKey: toRoleKey(session.userRole),
+        recordingStage: session.recordingStage,
+        transcriptStage: session.transcriptStage,
+        speakerMappingStage: session.speakerMappingStage,
+        aiStage: session.aiStage,
+        openRoomHref: session.roomUrl,
+        openMaterialsHref: session.materialsUrl,
+        eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
+      }))}
+      hostedEvents={hostedEvents.map((event) => ({
+        id: event.id,
+        title: event.title,
+        status: event.status,
+        roleKey: "dashboard.roleHost",
+        scheduledAt: event.scheduledAt,
+        totalSessions: event.totalSessions,
+        activeSessions: event.activeSessions,
+        finishedSessions: event.finishedSessions,
+        primaryAction: {
+          href: `/events/${event.id}/lobby`,
+          labelKey: "dashboard.openLobby",
+        },
+      }))}
+      isAdmin={isAdminUser}
     />
   );
 }

@@ -23,10 +23,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import {
   alertErrorClassName,
 } from "@/components/ui/form-styles";
-import {
-  buildSessionMaterialsPath,
-  buildSessionRoomPath,
-} from "@/lib/config";
+import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
@@ -426,7 +423,7 @@ export function EventLobbyView({
       )
     : null;
   const sessionRoomActive =
-    currentAssignment?.joinToken && currentAssignment.assignedSessionId
+    currentAssignment?.assignedSessionId
       ? Boolean(assignedSession?.isActive) ||
         isSessionActiveForRoom({
           negotiationState: assignedSession?.negotiationState ?? "PREPARATION",
@@ -663,7 +660,7 @@ export function EventLobbyView({
             />
           ) : null}
 
-          {currentAssignment?.joinToken ? (
+          {currentAssignment?.assignedSessionId ? (
             <GlassCard elevated className="border-emerald-500/30" data-testid="assigned-session-card">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm text-emerald-200">{t("events.assignedToRoom")}</p>
@@ -683,16 +680,13 @@ export function EventLobbyView({
                 {sessionRoomActive && currentAssignment.assignedSessionId ? (
                   <>
                     <GradientButtonLink
-                      href={buildSessionRoomPath(
-                        currentAssignment.assignedSessionId,
-                        currentAssignment.joinToken,
-                      )}
+                      href={currentAssignment.roomUrl ?? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)}
                       data-testid="go-to-session-room-button"
                     >
                       {t("events.goToNegotiationRoom")}
                     </GradientButtonLink>
                     <SecondaryButtonLink
-                      href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+                      href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
                       className="w-full text-center"
                       data-testid="open-session-materials-button"
                     >
@@ -701,7 +695,7 @@ export function EventLobbyView({
                   </>
                 ) : (
                   <GradientButtonLink
-                    href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+                    href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
                     data-testid="open-session-materials-button"
                   >
                     {t("events.openSessionMaterials")}
@@ -765,7 +759,7 @@ export function EventLobbyView({
           ) : null}
 
           {state.sessions.length > 0 &&
-          !currentAssignment?.joinToken &&
+          !currentAssignment?.assignedSessionId &&
           participantHistoricalSessions.length === 0 ? (
             <GlassCard>
               <GlassCardContent>
@@ -836,9 +830,9 @@ function EventCompletedOverlay({
         {hostToken || state.isHost ? (
           <GradientButtonLink href="/events">{t("events.backToEvents")}</GradientButtonLink>
         ) : null}
-        {currentAssignment?.joinToken ? (
+        {currentAssignment?.assignedSessionId ? (
           <GradientButtonLink
-            href={buildSessionMaterialsPath(currentAssignment.joinToken)}
+            href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
           >
             {t("events.openSessionMaterials")}
           </GradientButtonLink>

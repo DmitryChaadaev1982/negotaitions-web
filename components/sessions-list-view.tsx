@@ -29,6 +29,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type SessionRow = {
   id: string;
   title: string;
+  userRole: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | "HOST" | null;
   canManage: boolean;
   caseTitle: string;
   eventId: string | null;
@@ -49,6 +50,8 @@ type SessionRow = {
   speakerMappingStage: string | null;
   aiStage: string | null;
   aiVisibility: string;
+  roomUrl: string;
+  materialsUrl: string;
 };
 
 type SessionsListViewProps = {
@@ -188,7 +191,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
 
       {sessions.length === 0 ? (
         <EmptyState
-          message={t("sessions.noSessions")}
+          message={t("dashboard.noSessionsYetAccount")}
           action={
             <GradientButtonLink href="/sessions/new">
               {t("sessions.createSession")}
@@ -267,15 +270,18 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           {t("events.openLobby")}
                         </Link>
                       ) : null}
-                      {session.eventStatus === "COMPLETED" && session.eventId ? (
-                        <Link
-                          href={session.eventLobbyUrl ?? `/events/${session.eventId}/lobby`}
-                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
-                          data-testid="open-event-results-button"
-                        >
-                          {t("events.materials")}
-                        </Link>
-                      ) : null}
+                      <Link
+                        href={session.roomUrl}
+                        className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                      >
+                        {t("dashboard.openRoom")}
+                      </Link>
+                      <Link
+                        href={session.materialsUrl}
+                        className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                      >
+                        {t("dashboard.openMaterials")}
+                      </Link>
                       {session.canManage ? (
                         <>
                           <Link

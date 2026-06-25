@@ -9,7 +9,6 @@ import {
 } from "@/app/generated/prisma/client";
 import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { canEditSessionDurations } from "@/lib/negotiation-control";
-import { getDemoFacilitator } from "@/lib/demo-user";
 import { requireActiveUser } from "@/lib/auth";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
@@ -112,14 +111,13 @@ export async function createSession(
   }
 
   try {
-    const facilitator = await getDemoFacilitator();
     const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes } =
       parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.findFirst({
       where: {
         id: caseId,
-        facilitatorId: facilitator.id,
+        facilitatorId: user.id,
         ...activeCaseWhere,
       },
       include: {
@@ -133,7 +131,7 @@ export async function createSession(
       const deletedCase = await prisma.negotiationCase.findFirst({
         where: {
           id: caseId,
-          facilitatorId: facilitator.id,
+          facilitatorId: user.id,
           deletedAt: { not: null },
         },
         select: { id: true },
@@ -150,7 +148,7 @@ export async function createSession(
       data: {
         title,
         negotiationCaseId: caseId,
-        facilitatorId: facilitator.id,
+        facilitatorId: user.id,
         status: SessionStatus.DRAFT,
         preparationDurationSeconds: minutesToSeconds(preparationDurationMinutes),
         durationSeconds: minutesToSeconds(negotiationDurationMinutes),

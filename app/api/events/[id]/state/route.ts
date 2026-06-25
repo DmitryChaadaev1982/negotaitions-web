@@ -33,7 +33,10 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
   }
 
-  const state = await buildEventState(access);
+  const state = await buildEventState({
+    ...access,
+    accountMode: Boolean(user),
+  });
 
   return NextResponse.json(state);
 }

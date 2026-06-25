@@ -17,6 +17,7 @@ export type SessionNegotiationState =
 export type SessionListItem = {
   id: string;
   title: string;
+  userRole: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | "HOST" | null;
   canManage: boolean;
   caseTitle: string;
   eventId: string | null;
@@ -38,6 +39,8 @@ export type SessionListItem = {
   speakerMappingStage: string | null;
   aiStage: string | null;
   aiVisibility: string;
+  roomUrl: string;
+  materialsUrl: string;
 };
 
 export function isSessionActiveForPresence(session: {

@@ -168,6 +168,7 @@ export function RejoinPageView() {
                   {t("nav.events")}
                 </SecondaryButtonLink>
               </div>
+              <p className="text-xs text-slate-500">{t("dashboard.signInRecoverSessions")}</p>
             </div>
           ) : (
             <div className="space-y-5">

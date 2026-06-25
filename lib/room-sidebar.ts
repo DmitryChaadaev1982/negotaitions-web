@@ -18,6 +18,7 @@ export async function getRoomSidebarData(
       eventParticipant: {
         select: {
           participantToken: true,
+          userId: true,
         },
       },
       session: {
@@ -80,13 +81,16 @@ export async function getRoomSidebarData(
           id: participant.session.event.id,
           title: participant.session.event.title,
           status: participant.session.event.status,
-          lobbyUrl: getEventLobbyUrl(participant.session.event.id, {
-            hostToken:
-              participant.type === ParticipantType.FACILITATOR
-                ? participant.session.event.hostToken
-                : undefined,
-            participantToken: participant.eventParticipant?.participantToken,
-          }),
+          lobbyUrl:
+            participant.userId || participant.eventParticipant?.userId
+              ? `/events/${participant.session.event.id}/lobby`
+              : getEventLobbyUrl(participant.session.event.id, {
+                  hostToken:
+                    participant.type === ParticipantType.FACILITATOR
+                      ? participant.session.event.hostToken
+                      : undefined,
+                  participantToken: participant.eventParticipant?.participantToken,
+                }),
         }
       : null,
     participantType: participant.type,

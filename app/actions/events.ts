@@ -350,7 +350,7 @@ export async function cancelTrainingEvent(formData: FormData) {
   const userIsAdmin = user !== null && isAdmin(user);
 
   if (!hostToken && !user) {
-    throw new Error("cancelTrainingEvent: host token or account access required.");
+    return;
   }
 
   const event = await prisma.trainingEvent.findUnique({
@@ -363,13 +363,13 @@ export async function cancelTrainingEvent(formData: FormData) {
   }
 
   if (hostToken && event.hostToken !== hostToken) {
-    throw new Error("cancelTrainingEvent: invalid hostToken.");
+    return;
   }
 
   if (!hostToken) {
     const ownerAccess = Boolean(user && event.hostUserId === user.id);
     if (!userIsAdmin && !ownerAccess) {
-      throw new Error("cancelTrainingEvent: forbidden.");
+      return;
     }
   }
 

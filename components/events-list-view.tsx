@@ -158,7 +158,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
     <div className="flex flex-wrap items-center justify-end gap-1">
       {canEnterEventLobby(event.status) ? (
         <Link
-          href={`/events/${event.id}/join`}
+          href={`/events/${event.id}/lobby`}
           className={cn(
             compactButtonClass,
             "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-500/25 hover:bg-cyan-500/25 hover:text-cyan-200",
@@ -186,7 +186,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
       ) : null}
       {event.sessionCount > 0 && event.primarySessionId ? (
         <Link
-          href={`/sessions/${event.primarySessionId}`}
+          href={`/sessions/${event.primarySessionId}/materials`}
           className={cn(
             compactButtonClass,
             "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
@@ -331,17 +331,17 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
         description={t("events.description")}
         action={
           <GradientButtonLink href="/events/new" data-testid="create-event-button">
-            {t("events.createEvent")}
+            {t("dashboard.createNewEvent")}
           </GradientButtonLink>
         }
       />
 
       {events.length === 0 ? (
         <EmptyState
-          message={t("events.noEvents")}
+          message={t("dashboard.noEventsYetAccount")}
           action={
             <GradientButtonLink href="/events/new" data-testid="create-event-button">
-              {t("events.createEvent")}
+              {t("dashboard.createNewEvent")}
             </GradientButtonLink>
           }
         />

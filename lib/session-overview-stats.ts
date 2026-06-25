@@ -137,6 +137,18 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
     return {
       id: session.id,
       title: session.title,
+      userRole: (() => {
+        const current = user
+          ? session.participants.find((participant) => participant.userId === user.id)
+          : null;
+        if (current?.type) {
+          return current.type;
+        }
+        if (user && session.event?.hostUserId === user.id) {
+          return "HOST";
+        }
+        return null;
+      })(),
       canManage: Boolean(
         user &&
           (isAdmin(user) ||
@@ -151,9 +163,9 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       eventId: session.event?.id ?? null,
       eventTitle: session.event?.title ?? null,
       eventStatus: session.event?.status ?? null,
-      // eventLobbyUrl: tokens omitted from list data. Use /events/[id]/join for lobby access.
+      // eventLobbyUrl: tokens omitted from list data. Use account-authorized /events/[id]/lobby.
       eventLobbyUrl: session.event
-        ? `/events/${session.event.id}/join`
+        ? `/events/${session.event.id}/lobby`
         : null,
       status: resolveSessionDisplayStatus(session, session.participants),
       negotiationState: session.negotiationState,
@@ -173,6 +185,8 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         ? "shared"
         : aiStage,
       aiVisibility: session.aiAnalysis?.visibility ?? "FACILITATOR_ONLY",
+      roomUrl: `/room/${session.id}`,
+      materialsUrl: `/sessions/${session.id}/materials`,
     };
   });
 }

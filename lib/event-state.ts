@@ -5,6 +5,8 @@ import type {
   TrainingEvent,
 } from "@/app/generated/prisma/client";
 import {
+  buildAccountSessionMaterialsPath,
+  buildAccountSessionRoomPath,
   buildSessionMaterialsPath,
   buildSessionRoomPath,
 } from "@/lib/config";
@@ -39,6 +41,8 @@ export type EventStateParticipant = {
   assignedType: string | null;
   assignedRoleName: string | null;
   joinToken: string | null;
+  roomUrl: string | null;
+  materialsUrl: string | null;
   activeAssignmentLabel: string | null;
 };
 
@@ -120,6 +124,7 @@ type BuildEventStateInput = {
   event: TrainingEvent;
   isHost: boolean;
   currentParticipant: EventParticipant | null;
+  accountMode?: boolean;
 };
 
 function getAssignmentDurationDefaults(
@@ -273,6 +278,7 @@ export async function buildEventState(
         activeAssignmentsByEventParticipantId.get(participant.id) ?? null,
       isHost: input.isHost,
       currentParticipantId,
+      accountMode: Boolean(input.accountMode),
     }),
   );
   const sessions = linkedSessions.map((session) =>
@@ -280,6 +286,7 @@ export async function buildEventState(
       session,
       isHost: input.isHost,
       currentParticipantId,
+      accountMode: Boolean(input.accountMode),
     }),
   );
 
@@ -337,6 +344,7 @@ function mapEventParticipant({
   activeAssignment,
   isHost,
   currentParticipantId,
+  accountMode,
 }: {
   participant: EventParticipant;
   activeAssignment:
@@ -352,8 +360,9 @@ function mapEventParticipant({
     | null;
   isHost: boolean;
   currentParticipantId: string | null;
+  accountMode: boolean;
 }): EventStateParticipant {
-  const canSeeJoinToken = isHost || participant.id === currentParticipantId;
+  const canSeeJoinToken = !accountMode && (isHost || participant.id === currentParticipantId);
   const assignmentLabel = activeAssignment?.session.roomLabel
     ?? activeAssignment?.session.title
     ?? null;
@@ -375,6 +384,16 @@ function mapEventParticipant({
     assignedType: activeAssignment?.type ?? null,
     assignedRoleName: activeAssignment?.sessionRole?.name ?? null,
     joinToken: canSeeJoinToken ? (activeAssignment?.joinToken ?? null) : null,
+    roomUrl: activeAssignment
+      ? accountMode
+        ? buildAccountSessionRoomPath(activeAssignment.sessionId)
+        : buildSessionRoomPath(activeAssignment.sessionId, activeAssignment.joinToken)
+      : null,
+    materialsUrl: activeAssignment
+      ? accountMode
+        ? buildAccountSessionMaterialsPath(activeAssignment.sessionId)
+        : buildSessionMaterialsPath(activeAssignment.joinToken)
+      : null,
     activeAssignmentLabel: assignmentLabel,
   };
 }
@@ -383,6 +402,7 @@ function mapEventSession({
   session,
   isHost,
   currentParticipantId,
+  accountMode,
 }: {
   session: {
     id: string;
@@ -408,6 +428,7 @@ function mapEventSession({
   };
   isHost: boolean;
   currentParticipantId: string | null;
+  accountMode: boolean;
 }): EventStateSession {
   const facilitator = session.participants.find(
     (participant) => participant.type === "FACILITATOR",
@@ -444,13 +465,19 @@ function mapEventSession({
     isFinished,
     roomUrl:
       isActive && linkParticipant
-        ? buildSessionRoomPath(session.id, linkParticipant.joinToken)
+        ? accountMode
+          ? buildAccountSessionRoomPath(session.id)
+          : buildSessionRoomPath(session.id, linkParticipant.joinToken)
         : null,
     materialsUrl: canOpenMaterials
       ? isHost
-        ? `/sessions/${session.id}`
+        ? accountMode
+          ? buildAccountSessionMaterialsPath(session.id)
+          : `/sessions/${session.id}`
         : currentParticipant
-          ? buildSessionMaterialsPath(currentParticipant.joinToken)
+          ? accountMode
+            ? buildAccountSessionMaterialsPath(session.id)
+            : buildSessionMaterialsPath(currentParticipant.joinToken)
           : null
       : null,
     createdAt: session.createdAt.toISOString(),
@@ -468,10 +495,14 @@ function mapEventSession({
         roleName: participant.sessionRole?.name ?? null,
         roomUrl:
           isActive && canSeeLink
-            ? buildSessionRoomPath(session.id, participant.joinToken)
+            ? accountMode
+              ? buildAccountSessionRoomPath(session.id)
+              : buildSessionRoomPath(session.id, participant.joinToken)
             : null,
         materialsUrl: canSeeLink
-          ? buildSessionMaterialsPath(participant.joinToken)
+          ? accountMode
+            ? buildAccountSessionMaterialsPath(session.id)
+            : buildSessionMaterialsPath(participant.joinToken)
           : null,
       };
     }),

@@ -10,6 +10,10 @@ export function buildSessionMaterialsPath(joinToken: string) {
   return `/join/${joinToken}`;
 }
 
+export function buildAccountSessionMaterialsPath(sessionId: string) {
+  return `/sessions/${sessionId}/materials`;
+}
+
 export function buildSessionMaterialsUrl(joinToken: string) {
   return `${getAppUrl()}${buildSessionMaterialsPath(joinToken)}`;
 }
@@ -22,6 +26,10 @@ export function getJoinUrl(joinToken: string) {
 export function buildSessionRoomPath(sessionId: string, joinToken: string) {
   const params = new URLSearchParams({ joinToken });
   return `/room/${sessionId}?${params.toString()}`;
+}
+
+export function buildAccountSessionRoomPath(sessionId: string) {
+  return `/room/${sessionId}`;
 }
 
 export function buildSessionRoomUrl(sessionId: string, joinToken: string) {
