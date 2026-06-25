@@ -100,14 +100,16 @@ export default async function JoinPage({ params }: JoinPageProps) {
     if (!participant.userId || !participant.eventParticipant?.userId) {
       await prisma.$transaction(async (tx) => {
         if (!participant.userId) {
-          await tx.sessionParticipant.update({
-            where: { id: participant.id },
+          // Conditional WHERE prevents a concurrent request from overwriting
+          // a userId that was just bound by a racing request (TOCTOU guard).
+          await tx.sessionParticipant.updateMany({
+            where: { id: participant.id, userId: null },
             data: { userId: currentUser!.id },
           });
         }
         if (participant.eventParticipant?.id && !participant.eventParticipant.userId) {
-          await tx.eventParticipant.update({
-            where: { id: participant.eventParticipant.id },
+          await tx.eventParticipant.updateMany({
+            where: { id: participant.eventParticipant.id, userId: null },
             data: { userId: currentUser!.id },
           });
         }

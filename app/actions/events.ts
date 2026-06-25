@@ -47,8 +47,6 @@ export async function createTrainingEvent(
   _prevState: CreateEventState,
   formData: FormData,
 ): Promise<CreateEventState> {
-  // Require active account to create events from the app.
-  // TODO: Set event.hostUserId = user.id once TrainingEvent.hostUserId field is added (Phase C).
   const user = await requireActiveUser("/events/new");
 
   const parsed = createEventSchema.safeParse({

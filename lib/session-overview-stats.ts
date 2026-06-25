@@ -1,6 +1,5 @@
 import type { AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { ParticipantType } from "@/app/generated/prisma/client";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
@@ -42,14 +41,6 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
           OR: [
             { event: { hostUserId: user.id } },
             { participants: { some: { userId: user.id } } },
-            {
-              participants: {
-                some: {
-                  userId: user.id,
-                  type: ParticipantType.FACILITATOR,
-                },
-              },
-            },
           ],
         }
       : activeSessionWhere;
