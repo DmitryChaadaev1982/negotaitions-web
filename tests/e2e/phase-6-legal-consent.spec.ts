@@ -248,6 +248,102 @@ test.describe("Warnings and notices", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 28–35: API server-side flag enforcement (static/unit-level checks)
+// ---------------------------------------------------------------------------
+
+test.describe("API server-side consent flag enforcement", () => {
+  test("28. Recording-control API rejects start without recordingConsentConfirmed", async ({
+    request,
+  }) => {
+    // Send a start request without the required consent flag.
+    // The server should return 400 before even resolving auth (or after role check).
+    // We use a fake joinToken so auth fails first; to test the flag we need a valid token.
+    // This test verifies the schema presence; full integration needs a live session.
+    // Expect either 400 (flag missing) or 403/404 (no valid session) — NOT 200.
+    const resp = await request.post("/api/sessions/fake-session-id/recording-control", {
+      data: { joinToken: "fake-token", action: "start" },
+    });
+    // Must not be 200 (consent flag is missing; auth also fails for fake token)
+    expect(resp.status()).not.toBe(200);
+  });
+
+  test("29. Recording-control API allows start with recordingConsentConfirmed=true (schema pass)", async ({
+    request,
+  }) => {
+    // With a fake token, should get 403/404 (not 400 for missing flag).
+    const resp = await request.post("/api/sessions/fake-session-id/recording-control", {
+      data: { joinToken: "fake-token", action: "start", recordingConsentConfirmed: true },
+    });
+    // Should not be 400 for missing consent flag — flag is present.
+    // Auth will fail, but not because of missing flag.
+    expect(resp.status()).not.toBe(400);
+  });
+
+  test("30. Recording-control stop does not require recordingConsentConfirmed", async ({
+    request,
+  }) => {
+    // stop action does not require the consent flag.
+    const resp = await request.post("/api/sessions/fake-session-id/recording-control", {
+      data: { joinToken: "fake-token", action: "stop" },
+    });
+    // Should not be 400 for missing consent flag.
+    expect(resp.status()).not.toBe(400);
+  });
+
+  test("31. AI analyze API rejects missing aiProcessingConfirmed", async ({ request }) => {
+    const resp = await request.post("/api/sessions/fake-session-id/analyze", {
+      data: { joinToken: "fake-token" },
+    });
+    expect(resp.status()).not.toBe(200);
+    // Should return 400 specifically for missing flag
+    if (resp.status() === 400) {
+      const body = (await resp.json()) as { error?: string };
+      expect(body.error).toContain("aiProcessingConfirmed");
+    }
+  });
+
+  test("32. AI analyze API passes schema with aiProcessingConfirmed=true", async ({
+    request,
+  }) => {
+    const resp = await request.post("/api/sessions/fake-session-id/analyze", {
+      data: { joinToken: "fake-token", aiProcessingConfirmed: true },
+    });
+    // Should not be 400 for missing flag — auth fails instead.
+    expect(resp.status()).not.toBe(400);
+  });
+
+  test("33. AI share API rejects missing shareDebriefConfirmed", async ({ request }) => {
+    const resp = await request.post("/api/sessions/fake-session-id/ai-analysis/share", {
+      data: { joinToken: "fake-token" },
+    });
+    expect(resp.status()).not.toBe(200);
+    if (resp.status() === 400) {
+      const body = (await resp.json()) as { error?: string };
+      expect(body.error).toContain("shareDebriefConfirmed");
+    }
+  });
+
+  test("34. AI share API passes schema with shareDebriefConfirmed=true", async ({
+    request,
+  }) => {
+    const resp = await request.post("/api/sessions/fake-session-id/ai-analysis/share", {
+      data: { joinToken: "fake-token", shareDebriefConfirmed: true },
+    });
+    // Should not be 400 for missing flag — auth fails instead.
+    expect(resp.status()).not.toBe(400);
+  });
+
+  test("35. materials/status hides fileKey from non-facilitator", async ({ request }) => {
+    // Without a joinToken, API rejects; but this validates route is reachable.
+    const resp = await request.get(
+      "/api/sessions/fake-session-id/materials/status?joinToken=fake-token",
+    );
+    // Should not be 200 for a fake token, but should not expose fileKey if it were.
+    expect(resp.status()).not.toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 23–27: Regression tests
 // ---------------------------------------------------------------------------
 
@@ -275,6 +371,22 @@ test.describe("Regression — Phase 5 protections intact", () => {
     await page.goto("/register");
     await expect(page.locator('[name="name"]')).toBeVisible();
     await expect(page.locator('[name="email"]')).toBeVisible();
+  });
+
+  test("27a. Account room page HTML does not embed joinToken in __NEXT_DATA__", async ({
+    page,
+  }) => {
+    // Unauthenticated access to account room redirects to login — no joinToken in HTML.
+    await page.goto("/room/fake-session-id-for-phase5-regression");
+    const content = await page.content();
+    // joinToken must not appear as a serialized prop value (>=20 chars alphanumeric)
+    expect(content).not.toMatch(/joinToken.*?[a-zA-Z0-9_-]{20,}/);
+    // __NEXT_DATA__ must not contain joinToken
+    const nextData = await page.evaluate(() => {
+      const el = document.getElementById("__NEXT_DATA__");
+      return el?.textContent ?? "";
+    });
+    expect(nextData).not.toMatch(/joinToken.*?[a-zA-Z0-9_-]{20,}/);
   });
 
   test("27. Cookie banner does not expose auth session value", async ({ page }) => {

@@ -67,18 +67,6 @@ export async function registerUser(
       return { errors: { email: ["auth.emailTaken"] } };
     }
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        name: rawName,
-        passwordHash,
-        globalRole,
-        status,
-        lastLoginAt: now,
-        ...(isAdminEmail ? { approvedAt: now } : {}),
-      },
-    });
-
     const headersList = await headers();
     const userAgent = headersList.get("user-agent") ?? undefined;
     const rawIp =
@@ -89,34 +77,51 @@ export async function registerUser(
       ? crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 16)
       : undefined;
 
-    // Record legal consent at registration
-    await prisma.userConsent.createMany({
-      data: [
-        {
-          userId: user.id,
-          consentType: CONSENT_TYPES.TERMS_PRIVACY_V1,
-          version: "1",
-          acceptedAt: now,
-          ipHash: ipHash ?? null,
-          userAgent: userAgent ?? null,
+    // User creation and consent records must be atomic: if consent write fails,
+    // the user record must not be left without legal consent.
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email,
+          name: rawName,
+          passwordHash,
+          globalRole,
+          status,
+          lastLoginAt: now,
+          ...(isAdminEmail ? { approvedAt: now } : {}),
         },
-        {
-          userId: user.id,
-          consentType: CONSENT_TYPES.MVP_DATA_LIMITATION_V1,
-          version: "1",
-          acceptedAt: now,
-          ipHash: ipHash ?? null,
-          userAgent: userAgent ?? null,
-        },
-        {
-          userId: user.id,
-          consentType: CONSENT_TYPES.EXTERNAL_INFRASTRUCTURE_V1,
-          version: "1",
-          acceptedAt: now,
-          ipHash: ipHash ?? null,
-          userAgent: userAgent ?? null,
-        },
-      ],
+      });
+
+      await tx.userConsent.createMany({
+        data: [
+          {
+            userId: created.id,
+            consentType: CONSENT_TYPES.TERMS_PRIVACY_V1,
+            version: "1",
+            acceptedAt: now,
+            ipHash: ipHash ?? null,
+            userAgent: userAgent ?? null,
+          },
+          {
+            userId: created.id,
+            consentType: CONSENT_TYPES.MVP_DATA_LIMITATION_V1,
+            version: "1",
+            acceptedAt: now,
+            ipHash: ipHash ?? null,
+            userAgent: userAgent ?? null,
+          },
+          {
+            userId: created.id,
+            consentType: CONSENT_TYPES.EXTERNAL_INFRASTRUCTURE_V1,
+            version: "1",
+            acceptedAt: now,
+            ipHash: ipHash ?? null,
+            userAgent: userAgent ?? null,
+          },
+        ],
+      });
+
+      return created;
     });
 
     await createUserSession(user.id, { userAgent });

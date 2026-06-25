@@ -40,14 +40,27 @@ function sanitizeAnalysisForParticipants(
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
 
-  let body: { joinToken?: string; participantId?: string; aiAnalysisId?: string };
+  let body: {
+    joinToken?: string;
+    participantId?: string;
+    aiAnalysisId?: string;
+    // Caller must explicitly confirm share-debrief consent in UI.
+    shareDebriefConfirmed?: boolean;
+  };
   try {
-    body = (await request.json()) as { joinToken?: string; participantId?: string; aiAnalysisId?: string };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { joinToken, participantId, aiAnalysisId } = body;
+  const { joinToken, participantId, aiAnalysisId, shareDebriefConfirmed } = body;
+
+  if (!shareDebriefConfirmed) {
+    return NextResponse.json(
+      { error: "shareDebriefConfirmed is required to share AI analysis." },
+      { status: 400 },
+    );
+  }
 
   if (!joinToken && !participantId) {
     return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });

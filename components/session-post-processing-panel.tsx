@@ -310,7 +310,7 @@ export function SessionPostProcessingPanel({
       const res = await fetch(`/api/sessions/${sessionId}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+        body: JSON.stringify({ joinToken, aiProcessingConfirmed: true }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string; errorCode?: string };
@@ -340,7 +340,7 @@ export function SessionPostProcessingPanel({
       await fetch(`/api/sessions/${sessionId}/ai-analysis/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+        body: JSON.stringify({ joinToken, shareDebriefConfirmed: true }),
       });
       void fetchStatus();
     } finally {

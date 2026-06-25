@@ -33,6 +33,8 @@ export const runtime = "nodejs";
 const schema = z.object({
   joinToken: z.string().trim().min(1, "Join token is required"),
   language: z.string().optional(),
+  // Caller must explicitly confirm AI processing consent in UI.
+  aiProcessingConfirmed: z.boolean().optional(),
 });
 
 type RouteContext = {
@@ -62,7 +64,14 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, language } = parsed.data;
+  const { joinToken, language, aiProcessingConfirmed } = parsed.data;
+
+  if (!aiProcessingConfirmed) {
+    return NextResponse.json(
+      { error: "aiProcessingConfirmed is required to run AI analysis." },
+      { status: 400 },
+    );
+  }
 
   const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {

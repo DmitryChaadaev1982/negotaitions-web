@@ -16,6 +16,9 @@ const actionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
   action: z.enum(["start", "stop", "refresh"]),
+  // Required for start action: caller must explicitly confirm recording consent in UI.
+  // Absent or false → 400 for start; ignored for stop/refresh.
+  recordingConsentConfirmed: z.boolean().optional(),
 });
 
 type RouteContext = {
@@ -59,6 +62,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (parsed.data.action === "start") {
+    if (!parsed.data.recordingConsentConfirmed) {
+      return NextResponse.json(
+        { error: "recordingConsentConfirmed is required to start recording." },
+        { status: 400 },
+      );
+    }
     const result = await startAudioOnlyRoomRecording(session);
     return NextResponse.json({
       ok: result.ok,
