@@ -167,7 +167,7 @@ test("materials: facilitator can share AI analysis with participants", async ({
 
   // Run AI analysis via API
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
 
@@ -218,7 +218,7 @@ test("materials: participant cannot see AI report before facilitator shares it",
 
   // Run AI analysis (stays facilitator-only by default)
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
 
@@ -258,7 +258,7 @@ test("multi-session: sharing analysis in session 1 does not affect session 2", a
 
   // Run AI for session 1 only
   const analyzeRes = await request.post(`/api/sessions/${setup1.session.id}/analyze`, {
-    data: { joinToken: setup1.facilitator.joinToken },
+    data: { joinToken: setup1.facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
   await expect(async () => {
@@ -269,7 +269,7 @@ test("multi-session: sharing analysis in session 1 does not affect session 2", a
   // Share session 1 analysis
   const shareRes = await request.post(
     `/api/sessions/${setup1.session.id}/ai-analysis/share`,
-    { data: { joinToken: setup1.facilitator.joinToken } },
+    { data: { joinToken: setup1.facilitator.joinToken, shareDebriefConfirmed: true } },
   );
   expect(shareRes.ok()).toBeTruthy();
 
@@ -299,7 +299,7 @@ test("observer: shared report does not expose private participant instructions",
   await createCompletedTranscript(session.id);
 
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
   await expect(async () => {
@@ -309,7 +309,7 @@ test("observer: shared report does not expose private participant instructions",
 
   // Share the analysis
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
 
   // Open as observer
@@ -337,7 +337,7 @@ test("materials/status API: returns safe shared data to participants, not full a
   await createCompletedTranscript(session.id);
 
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
   await expect(async () => {
@@ -363,7 +363,7 @@ test("materials/status API: returns safe shared data to participants, not full a
 
   // Share the analysis
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
 
   // After sharing: participant can see shared (sanitized) analysis

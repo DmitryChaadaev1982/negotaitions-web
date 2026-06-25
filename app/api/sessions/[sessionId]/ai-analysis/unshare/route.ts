@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,25 +16,43 @@ type RouteContext = {
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
 
-  let body: { joinToken?: string };
+  let body: { joinToken?: string; participantId?: string };
   try {
-    body = (await request.json()) as { joinToken?: string };
+    body = (await request.json()) as { joinToken?: string; participantId?: string };
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { joinToken } = body;
+  const { joinToken, participantId } = body;
 
-  if (!joinToken) {
-    return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
+  if (!joinToken && !participantId) {
+    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
   }
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  let adminUser = false;
+  let isEventHostOwner = false;
+  if (participantId) {
+    const user = await getOptionalCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+    adminUser = isAdmin(user);
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { event: { select: { hostUserId: true } } },
+    });
+    isEventHostOwner = session?.event?.hostUserId === user.id;
+  }
+
+  const participant = await resolveRoomParticipantFromParsedBody(
+    { joinToken: joinToken ?? null, participantId: participantId ?? null },
+    sessionId,
+  );
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  if (participant.type !== ParticipantType.FACILITATOR) {
+  if (participant.type !== ParticipantType.FACILITATOR && !adminUser && !isEventHostOwner) {
     return NextResponse.json(
       { error: "Only facilitators can change AI analysis visibility." },
       { status: 403 },

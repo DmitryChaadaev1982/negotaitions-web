@@ -4,12 +4,15 @@ import { z } from "zod";
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { refreshRecordingStatus } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
 export const runtime = "nodejs";
 
 const refreshSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -34,10 +37,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const participant = await getSessionParticipantByJoinToken(
-    parsed.data.joinToken,
-    sessionId,
-  );
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
 
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });

@@ -324,7 +324,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       {session.facilitatorParticipant ? (
         <SessionPostProcessingPanel
           sessionId={session.id}
-          joinToken={session.facilitatorParticipant.joinToken}
+          roomAuth={{ type: "joinToken", value: session.facilitatorParticipant.joinToken }}
           readOnly={isReadOnly}
           autoTranscribeEnabled={autoTranscribeEnabled}
           variant="page"

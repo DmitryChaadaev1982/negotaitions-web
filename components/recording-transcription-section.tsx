@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels";
 
@@ -67,7 +69,7 @@ type TranscriptionWarningCode =
 
 type RecordingTranscriptionSectionProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   readOnly?: boolean;
   autoTranscribeEnabled?: boolean;
   /** When true, renders without outer Card wrapper (for embedding in a parent panel). */
@@ -280,7 +282,7 @@ const RECORDING_STATUS_STALL_MS = 45_000;
 
 export function RecordingTranscriptionSection({
   sessionId,
-  joinToken,
+  roomAuth,
   readOnly = false,
   autoTranscribeEnabled = false,
   embedded = false,
@@ -364,7 +366,7 @@ export function RecordingTranscriptionSection({
   const loadData = useCallback(async () => {
     try {
       const response = await fetch(
-        `/api/sessions/${sessionId}/recording?joinToken=${encodeURIComponent(joinToken)}`,
+        `/api/sessions/${sessionId}/recording?${roomAuthQuery(roomAuth)}`,
       );
       const rawBody = await response.text();
 
@@ -399,7 +401,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setLoading(false);
     }
-  }, [joinToken, sessionId]);
+  }, [roomAuth, sessionId]);
 
   const pollRecordingStatus = useCallback(async () => {
     try {
@@ -408,7 +410,7 @@ export function RecordingTranscriptionSection({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ joinToken }),
+          body: JSON.stringify(roomAuthBody(roomAuth)),
         },
       );
 
@@ -432,7 +434,7 @@ export function RecordingTranscriptionSection({
     } catch {
       // Ignore transient polling errors.
     }
-  }, [joinToken, loadData, sessionId]);
+  }, [roomAuth, loadData, sessionId]);
 
   const refreshRecordingStatus = useCallback(async () => {
     setBusyAction("refresh");
@@ -573,7 +575,7 @@ export function RecordingTranscriptionSection({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            joinToken,
+            ...roomAuthBody(roomAuth),
             recordingId: recording.id,
             languageHint,
           }),
@@ -619,7 +621,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setBusyAction(null);
     }
-  }, [applyTranscriptPayload, joinToken, languageHint, notifyProcessingChange, recording, sessionId, t]);
+  }, [applyTranscriptPayload, roomAuth, languageHint, notifyProcessingChange, recording, sessionId, t]);
 
   const rerunTranscription = useCallback(async () => {
     setRerunConfirmOpen(false);
@@ -633,7 +635,7 @@ export function RecordingTranscriptionSection({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ joinToken, language: languageHint }),
+          body: JSON.stringify({ ...roomAuthBody(roomAuth), language: languageHint }),
         },
       );
 
@@ -657,7 +659,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setBusyAction((current) => (current === "rerun" ? null : current));
     }
-  }, [joinToken, languageHint, loadData, notifyProcessingChange, sessionId, t]);
+  }, [roomAuth, languageHint, loadData, notifyProcessingChange, sessionId, t]);
 
   const isWaitingForRecordingReady =
     sessionStatus === "FINISHED" &&
@@ -706,7 +708,7 @@ export function RecordingTranscriptionSection({
       const response = await fetch(`/api/sessions/${sessionId}/transcript`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, text: transcriptText }),
+        body: JSON.stringify({ ...roomAuthBody(roomAuth), text: transcriptText }),
       });
 
       const payload = (await response.json()) as {
@@ -759,7 +761,7 @@ export function RecordingTranscriptionSection({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            joinToken,
+            ...roomAuthBody(roomAuth),
             mapping: speakerMappingDraft,
             applyOnly,
             confirm,
@@ -834,7 +836,7 @@ export function RecordingTranscriptionSection({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            joinToken,
+            ...roomAuthBody(roomAuth),
             turns: normalizedTurns,
           }),
         },
@@ -863,7 +865,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setBusyAction(null);
     }
-  }, [applyTranscriptPayload, joinToken, manualSpeakerTurns, notifyProcessingChange, sessionId, t]);
+  }, [applyTranscriptPayload, roomAuth, manualSpeakerTurns, notifyProcessingChange, sessionId, t]);
 
   const copyDiarizedTranscript = async () => {
     const textToCopy = diarizedPreviewText || diarizedTurns

@@ -3,7 +3,10 @@ import { z } from "zod";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import {
+  resolveRoomParticipantFromParsedBody,
+  resolveRoomParticipantFromQuery,
+} from "@/lib/room-participant-resolver";
 import {
   applySpeakerMapping,
   buildDiarizedText,
@@ -25,12 +28,13 @@ export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(request.url);
   const joinToken = url.searchParams.get("joinToken");
+  const participantId = url.searchParams.get("participantId");
 
-  if (!joinToken) {
-    return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
+  if (!joinToken && !participantId) {
+    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
   }
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const participant = await resolveRoomParticipantFromQuery(url, sessionId);
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
@@ -102,7 +106,8 @@ export async function GET(request: Request, context: RouteContext) {
 // ── POST ─────────────────────────────────────────────────────────────────────
 
 const speakerMappingSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   transcriptId: z.string().optional(),
   mapping: z.record(z.string(), z.string().nullable()).optional().default({}),
   confirm: z.boolean().optional().default(false),
@@ -112,6 +117,8 @@ const speakerMappingSchema = z.object({
   forceOverrideLocked: z.boolean().optional().default(false),
   /** Legacy: applyOnly means re-apply existing saved mapping, not save new one */
   applyOnly: z.boolean().optional(),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 export async function POST(request: Request, context: RouteContext) {
@@ -132,9 +139,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, mapping, confirm, applyToTranscript, applyOnly, suggestAutomatically, forceOverrideLocked } = parsed.data;
+  const { mapping, confirm, applyToTranscript, applyOnly, suggestAutomatically, forceOverrideLocked } = parsed.data;
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

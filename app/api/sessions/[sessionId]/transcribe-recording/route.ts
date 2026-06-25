@@ -38,7 +38,7 @@ import {
   downloadObjectToBuffer,
   uploadBufferToS3,
 } from "@/lib/storage/s3";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import {
   applySpeakerMapping,
@@ -52,9 +52,12 @@ import {
 export const runtime = "nodejs";
 
 const transcribeSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   recordingId: z.string().trim().min(1, "Recording id is required"),
   languageHint: z.enum(["ru", "en", "auto"]).default("auto"),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -124,9 +127,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, recordingId, languageHint } = parsed.data;
+  const { recordingId, languageHint } = parsed.data;
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

@@ -445,7 +445,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
 
   // Run AI analysis on v0
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
 

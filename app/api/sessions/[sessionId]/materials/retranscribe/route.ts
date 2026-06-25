@@ -10,20 +10,23 @@ import {
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isOpenAiConfigured } from "@/lib/services/openai-transcription";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import {
   isTranscriptionActive,
   runMockTranscription,
   runRealTranscription,
 } from "@/lib/services/transcription-runner";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   language: z.enum(["ru", "en", "auto"]).optional().default("auto"),
   reason: z.string().optional(),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -56,9 +59,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, language, reason } = parsed.data;
+  const { language, reason } = parsed.data;
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

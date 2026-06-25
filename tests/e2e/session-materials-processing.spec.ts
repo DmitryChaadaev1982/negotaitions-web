@@ -460,7 +460,7 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
 
   const analyzeResponse = await request.post(
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken } },
+    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
   const analyzeBody = (await analyzeResponse.json()) as {
@@ -526,7 +526,7 @@ test("AI Test 2 — AI analysis unavailable without transcript", async ({
 
   const analyzeResponse = await request.post(
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken } },
+    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
   );
   expect(analyzeResponse.ok()).toBeFalsy();
   expect(analyzeResponse.status()).toBe(400);
@@ -549,7 +549,7 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
 
   const analyzeResponse = await request.post(
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken } },
+    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
   );
   expect(analyzeResponse.ok()).toBeFalsy();
 
@@ -597,7 +597,7 @@ test("AI Test 4 — Participant does not see facilitator-only analysis", async (
 
   const analyzeResponse = await request.post(
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken } },
+    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
 
@@ -652,7 +652,7 @@ test("AI Test 5 — Multi-session isolation: Session 1 analysis not visible in S
 
   const analyzeResponse = await request.post(
     `/api/sessions/${session1Id}/analyze`,
-    { data: { joinToken: facilitator1.joinToken } },
+    { data: { joinToken: facilitator1.joinToken, aiProcessingConfirmed: true } },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
 
@@ -838,7 +838,7 @@ test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping requir
 
   // AI analysis must be blocked
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.status()).toBe(422);
   const analyzeBody = (await analyzeRes.json()) as { errorCode: string };
@@ -862,7 +862,7 @@ test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping requir
 
   // AI analysis must now be allowed
   const analyzeAfterConfirm = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeAfterConfirm.ok()).toBeTruthy();
 

@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader } from "@/components/card";
 import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
   NegotiationAnalysisOutputSchema,
   type NegotiationAnalysisOutput,
@@ -55,7 +57,7 @@ type MaterialsStatusResponse = {
 
 type SessionPostProcessingPanelProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   readOnly?: boolean;
   autoTranscribeEnabled?: boolean;
   /** Full-width session page vs narrow video-room sidebar */
@@ -155,7 +157,7 @@ function StepBadge({ step, done, active }: { step: number; done: boolean; active
 
 export function SessionPostProcessingPanel({
   sessionId,
-  joinToken,
+  roomAuth,
   readOnly = false,
   autoTranscribeEnabled: autoTranscribeProp = false,
   variant = "page",
@@ -166,6 +168,10 @@ export function SessionPostProcessingPanel({
   const { t } = useI18n();
   const isFacilitator = participantType === "FACILITATOR";
   const isSidebar = variant === "sidebar";
+  const materialsPath =
+    roomAuth.type === "joinToken"
+      ? buildSessionMaterialsPath(roomAuth.value)
+      : `/sessions/${sessionId}/materials`;
 
   const [statusData, setStatusData] = useState<MaterialsStatusResponse | null>(null);
   const [transcriptionBusy, setTranscriptionBusy] = useState(false);
@@ -188,7 +194,7 @@ export function SessionPostProcessingPanel({
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/sessions/${sessionId}/materials/status?joinToken=${encodeURIComponent(joinToken)}`,
+        `/api/sessions/${sessionId}/materials/status?${roomAuthQuery(roomAuth)}`,
         { cache: "no-store" },
       );
       if (!res.ok || !mountedRef.current) return;
@@ -197,7 +203,7 @@ export function SessionPostProcessingPanel({
     } catch {
       // ignore
     }
-  }, [joinToken, sessionId]);
+  }, [roomAuth, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -249,7 +255,7 @@ export function SessionPostProcessingPanel({
       const res = await fetch(`/api/sessions/${sessionId}/materials/transcribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+        body: JSON.stringify(roomAuthBody(roomAuth)),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
@@ -261,7 +267,7 @@ export function SessionPostProcessingPanel({
     } finally {
       setTranscriptionBusy(false);
     }
-  }, [fetchStatus, joinToken, sessionId]);
+  }, [fetchStatus, roomAuth, sessionId]);
 
   const handleRerunTranscription = useCallback(async () => {
     setRerunConfirmOpen(false);
@@ -271,7 +277,7 @@ export function SessionPostProcessingPanel({
       const res = await fetch(`/api/sessions/${sessionId}/materials/retranscribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, reason: "manual_rerun" }),
+        body: JSON.stringify({ ...roomAuthBody(roomAuth), reason: "manual_rerun" }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
@@ -283,7 +289,7 @@ export function SessionPostProcessingPanel({
     } finally {
       setRerunBusy(false);
     }
-  }, [fetchStatus, joinToken, sessionId]);
+  }, [fetchStatus, roomAuth, sessionId]);
 
   useEffect(() => {
     if (!autoTranscribeEnabled || !canStartTranscription || transcriptionBusy) return;
@@ -310,7 +316,7 @@ export function SessionPostProcessingPanel({
       const res = await fetch(`/api/sessions/${sessionId}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, aiProcessingConfirmed: true }),
+        body: JSON.stringify({ ...roomAuthBody(roomAuth), aiProcessingConfirmed: true }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string; errorCode?: string };
@@ -340,7 +346,7 @@ export function SessionPostProcessingPanel({
       await fetch(`/api/sessions/${sessionId}/ai-analysis/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, shareDebriefConfirmed: true }),
+        body: JSON.stringify({ ...roomAuthBody(roomAuth), shareDebriefConfirmed: true }),
       });
       void fetchStatus();
     } finally {
@@ -358,7 +364,7 @@ export function SessionPostProcessingPanel({
       await fetch(`/api/sessions/${sessionId}/ai-analysis/unshare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+        body: JSON.stringify(roomAuthBody(roomAuth)),
       });
       void fetchStatus();
     } finally {
@@ -718,7 +724,7 @@ export function SessionPostProcessingPanel({
     <div className={`flex flex-wrap gap-2 ${isSidebar ? "flex-col" : ""}`}>
       {isFacilitator || canViewAi ? (
         <GradientButtonLink
-          href={buildSessionMaterialsPath(joinToken)}
+          href={materialsPath}
           className={isSidebar ? "w-full justify-center" : undefined}
           data-testid={
             isSidebar ? "debrief-open-materials-button" : "post-processing-open-materials-button"
@@ -833,7 +839,7 @@ export function SessionPostProcessingPanel({
                   <RecordingTranscriptionSection
                     key={transcriptionStage}
                     sessionId={sessionId}
-                    joinToken={joinToken}
+                    roomAuth={roomAuth}
                     autoTranscribeEnabled={autoTranscribeEnabled}
                     embedded
                     compact
@@ -916,7 +922,7 @@ export function SessionPostProcessingPanel({
                 <RecordingTranscriptionSection
                   key={transcriptionStage === "ready" ? "ready" : "idle"}
                   sessionId={sessionId}
-                  joinToken={joinToken}
+                  roomAuth={roomAuth}
                   autoTranscribeEnabled={autoTranscribeEnabled}
                   embedded
                   hideRerunControls

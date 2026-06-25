@@ -525,7 +525,7 @@ test("Two-pass Test 7 — AI analysis uses latest active enhanced transcript", a
 
   // Run AI analysis
   const analysisRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken },
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   // Mock mode should succeed
   expect(analysisRes.status()).not.toBe(500);

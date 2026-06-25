@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
 
 export const runtime = "nodejs";
@@ -16,8 +16,11 @@ const turnSchema = z.object({
 });
 
 const schema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   turns: z.array(turnSchema).min(1, "At least one turn is required"),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -42,9 +45,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, turns } = parsed.data;
+  const { turns } = parsed.data;
 
-  const facilitator = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const facilitator = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!facilitator || facilitator.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

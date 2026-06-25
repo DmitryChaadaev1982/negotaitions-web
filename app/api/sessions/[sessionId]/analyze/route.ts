@@ -18,24 +18,30 @@ import {
   isOpenAiConfiguredForAnalysis,
   runNegotiationAnalysis,
 } from "@/lib/ai/negotiation-analysis";
+import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 import {
   getMockExternalServiceError,
   isAiAnalysisMockMode,
 } from "@/lib/test-mode";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   language: z.string().optional(),
   // Caller must explicitly confirm AI processing consent in UI.
   aiProcessingConfirmed: z.boolean().optional(),
-});
+}).refine(
+  (data) => Boolean(data.joinToken || data.participantId),
+  { message: "joinToken or participantId is required." },
+);
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -64,7 +70,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, language, aiProcessingConfirmed } = parsed.data;
+  const { language, aiProcessingConfirmed } = parsed.data;
 
   if (!aiProcessingConfirmed) {
     return NextResponse.json(
@@ -73,8 +79,26 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
-  if (!participant || participant.type !== ParticipantType.FACILITATOR) {
+  let adminUser = false;
+  let isEventHostOwner = false;
+  if (parsed.data.participantId) {
+    const user = await getOptionalCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+    adminUser = isAdmin(user);
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { event: { select: { hostUserId: true } } },
+    });
+    isEventHostOwner = session?.event?.hostUserId === user.id;
+  }
+
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
+  if (!participant) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+  if (participant.type !== ParticipantType.FACILITATOR && !adminUser && !isEventHostOwner) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 

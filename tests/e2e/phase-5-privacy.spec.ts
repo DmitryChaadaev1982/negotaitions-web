@@ -84,6 +84,55 @@ async function createUserSession(userId: string): Promise<string> {
   return rawToken;
 }
 
+async function getParticipantByToken(sessionId: string, joinToken: string) {
+  const rows = await query<{ id: string; type: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" }>(
+    `SELECT "id", "type" FROM "SessionParticipant"
+     WHERE "sessionId" = $1 AND "joinToken" = $2
+     LIMIT 1`,
+    [sessionId, joinToken],
+  );
+  return rows[0] ?? null;
+}
+
+async function bindParticipantToUser(participantId: string, userId: string) {
+  await query(
+    `UPDATE "SessionParticipant"
+     SET "userId" = $2, "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [participantId, userId],
+  );
+}
+
+async function ensureCompletedTranscript(sessionId: string) {
+  await query(
+    `INSERT INTO "Transcript"
+       ("id", "sessionId", "source", "status", "text", "hasSpeakerDiarization", "updatedAt", "completedAt")
+     VALUES ($1, $2, 'MANUAL', 'COMPLETED', 'Phase 6.2 transcript', false, NOW(), NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "text" = 'Phase 6.2 transcript',
+           "hasSpeakerDiarization" = false,
+           "updatedAt" = NOW(),
+           "completedAt" = NOW()`,
+    [uid("tr"), sessionId],
+  );
+}
+
+async function ensureCompletedRecording(sessionId: string) {
+  await query(
+    `INSERT INTO "Recording"
+      ("id", "sessionId", "status", "fileKey", "fileName", "originalSizeBytes", "updatedAt")
+     VALUES ($1, $2, 'COMPLETED', $3, 'phase62.mp4', 2048, NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "fileKey" = $3,
+           "fileName" = 'phase62.mp4',
+           "originalSizeBytes" = 2048,
+           "updatedAt" = NOW()`,
+    [uid("rec"), sessionId, `recordings/${sessionId}/phase62.mp4`],
+  );
+}
+
 type PrivacyFixture = {
   sessionId: string;
   roleAToken: string;
@@ -650,7 +699,7 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
   }) => {
     // First share the analysis (as facilitator — ignore result, may fail if session not in right state)
     await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
-      data: { joinToken: fixture.facilitatorToken },
+      data: { joinToken: fixture.facilitatorToken, shareDebriefConfirmed: true },
     });
 
     // Now check what participant receives
@@ -722,6 +771,210 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
 
     // Facilitator should see the visibility field
     expect(data.aiAnalysis?.visibility).toBeTruthy();
+  });
+});
+
+test.describe("Phase 6.2 — account post-processing recovery (API)", () => {
+  let fixture: PrivacyFixture;
+  let facilitatorParticipantId: string;
+  let observerParticipantId: string;
+  let facilitatorUserId: string;
+  let participantUserId: string;
+  let observerUserId: string;
+  let unrelatedUserId: string;
+  let facilitatorCookie: string;
+  let participantCookie: string;
+  let observerCookie: string;
+  let unrelatedCookie: string;
+
+  test.beforeAll(async () => {
+    fixture = await createPrivacyTestSession();
+
+    const facilitatorParticipant = await getParticipantByToken(
+      fixture.sessionId,
+      fixture.facilitatorToken,
+    );
+    const observerParticipant = await getParticipantByToken(
+      fixture.sessionId,
+      fixture.observerToken,
+    );
+    facilitatorParticipantId = facilitatorParticipant!.id;
+    observerParticipantId = observerParticipant!.id;
+
+    facilitatorUserId = await createActiveUser(`phase62-facilitator@phase5-privacy.test`);
+    participantUserId = await createActiveUser(`phase62-participant@phase5-privacy.test`);
+    observerUserId = await createActiveUser(`phase62-observer@phase5-privacy.test`);
+    unrelatedUserId = await createActiveUser(`phase62-unrelated@phase5-privacy.test`);
+
+    facilitatorCookie = await createUserSession(facilitatorUserId);
+    participantCookie = await createUserSession(participantUserId);
+    observerCookie = await createUserSession(observerUserId);
+    unrelatedCookie = await createUserSession(unrelatedUserId);
+
+    await bindParticipantToUser(facilitatorParticipantId, facilitatorUserId);
+    await bindParticipantToUser(fixture.roleAParticipantId, participantUserId);
+    await bindParticipantToUser(observerParticipantId, observerUserId);
+
+    await ensureCompletedTranscript(fixture.sessionId);
+    await ensureCompletedRecording(fixture.sessionId);
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState" = 'FINISHED', "status" = 'ACTIVE', "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+  });
+
+  test.afterAll(async () => {
+    await cleanupPrivacyTestData();
+  });
+
+  test("account facilitator can analyze with participantId + confirmation", async ({ request }) => {
+    const res = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: {
+        participantId: facilitatorParticipantId,
+        aiProcessingConfirmed: true,
+      },
+      headers: { Cookie: authSessionCookie(facilitatorCookie) },
+    });
+    expect(res.ok()).toBeTruthy();
+  });
+
+  test("account room renders debrief controls without joinToken in HTML", async ({ page }) => {
+    await page.context().addCookies([
+      {
+        name: "session",
+        value: facilitatorCookie,
+        domain: "localhost",
+        path: "/",
+        httpOnly: true,
+      },
+    ]);
+    await page.goto(`/room/${fixture.sessionId}`);
+    await expect(page.getByTestId("debrief-panel")).toBeVisible();
+    await expect(page.getByTestId("session-post-processing-panel")).toBeVisible();
+
+    const html = await page.content();
+    expect(html).not.toContain(fixture.facilitatorToken);
+    const nextData = await page.evaluate(() => {
+      const el = document.getElementById("__NEXT_DATA__");
+      return el?.textContent ?? "";
+    });
+    expect(nextData).not.toContain(fixture.facilitatorToken);
+  });
+
+  test("analyze rejects missing aiProcessingConfirmed", async ({ request }) => {
+    const res = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { participantId: facilitatorParticipantId },
+      headers: { Cookie: authSessionCookie(facilitatorCookie) },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  test("account participant and observer cannot analyze", async ({ request }) => {
+    const participantRes = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { participantId: fixture.roleAParticipantId, aiProcessingConfirmed: true },
+      headers: { Cookie: authSessionCookie(participantCookie) },
+    });
+    expect(participantRes.status()).toBe(403);
+
+    const observerRes = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { participantId: observerParticipantId, aiProcessingConfirmed: true },
+      headers: { Cookie: authSessionCookie(observerCookie) },
+    });
+    expect(observerRes.status()).toBe(403);
+  });
+
+  test("unrelated active user cannot spoof facilitator participantId", async ({ request }) => {
+    const res = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { participantId: facilitatorParticipantId, aiProcessingConfirmed: true },
+      headers: { Cookie: authSessionCookie(unrelatedCookie) },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("account facilitator can share with confirmation", async ({ request }) => {
+    const res = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { participantId: facilitatorParticipantId, shareDebriefConfirmed: true },
+      headers: { Cookie: authSessionCookie(facilitatorCookie) },
+    });
+    expect(res.ok()).toBeTruthy();
+  });
+
+  test("share rejects missing shareDebriefConfirmed", async ({ request }) => {
+    const res = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { participantId: facilitatorParticipantId },
+      headers: { Cookie: authSessionCookie(facilitatorCookie) },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  test("participant and observer cannot share", async ({ request }) => {
+    const participantRes = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { participantId: fixture.roleAParticipantId, shareDebriefConfirmed: true },
+      headers: { Cookie: authSessionCookie(participantCookie) },
+    });
+    expect(participantRes.status()).toBe(403);
+
+    const observerRes = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { participantId: observerParticipantId, shareDebriefConfirmed: true },
+      headers: { Cookie: authSessionCookie(observerCookie) },
+    });
+    expect(observerRes.status()).toBe(403);
+  });
+
+  test("account participant/observer materials status hides fileKey", async ({ request }) => {
+    const participantStatus = await request.get(
+      `/api/sessions/${fixture.sessionId}/materials/status?participantId=${fixture.roleAParticipantId}`,
+      { headers: { Cookie: authSessionCookie(participantCookie) } },
+    );
+    expect(participantStatus.ok()).toBeTruthy();
+    const participantBody = (await participantStatus.json()) as { recording?: { fileKey?: unknown } | null };
+    expect(participantBody.recording?.fileKey ?? null).toBeNull();
+
+    const observerStatus = await request.get(
+      `/api/sessions/${fixture.sessionId}/materials/status?participantId=${observerParticipantId}`,
+      { headers: { Cookie: authSessionCookie(observerCookie) } },
+    );
+    expect(observerStatus.ok()).toBeTruthy();
+    const observerBody = (await observerStatus.json()) as { recording?: { fileKey?: unknown } | null };
+    expect(observerBody.recording?.fileKey ?? null).toBeNull();
+  });
+
+  test("shared account response stays sanitized", async ({ request }) => {
+    const status = await request.get(
+      `/api/sessions/${fixture.sessionId}/materials/status?participantId=${fixture.roleAParticipantId}`,
+      { headers: { Cookie: authSessionCookie(participantCookie) } },
+    );
+    expect(status.ok()).toBeTruthy();
+    const body = (await status.json()) as { aiAnalysis?: { analysisJson?: unknown } };
+    const serialized = JSON.stringify(body.aiAnalysis?.analysisJson ?? {});
+    expect(serialized).not.toContain("roleObjectivesAnalysis");
+    expect(serialized).not.toContain("rawPrompt");
+    expect(serialized).not.toContain("analysisContext");
+    expect(serialized).not.toContain("facilitatorNotes");
+  });
+
+  test("guest participant/observer cannot call facilitator-only analyze/share", async ({ request }) => {
+    const participantAnalyze = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { joinToken: fixture.roleAToken, aiProcessingConfirmed: true },
+    });
+    expect(participantAnalyze.status()).toBe(403);
+
+    const observerAnalyze = await request.post(`/api/sessions/${fixture.sessionId}/analyze`, {
+      data: { joinToken: fixture.observerToken, aiProcessingConfirmed: true },
+    });
+    expect(observerAnalyze.status()).toBe(403);
+
+    const participantShare = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { joinToken: fixture.roleAToken, shareDebriefConfirmed: true },
+    });
+    expect(participantShare.status()).toBe(403);
+
+    const observerShare = await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
+      data: { joinToken: fixture.observerToken, shareDebriefConfirmed: true },
+    });
+    expect(observerShare.status()).toBe(403);
   });
 });
 

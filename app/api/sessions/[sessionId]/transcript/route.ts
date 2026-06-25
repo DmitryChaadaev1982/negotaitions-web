@@ -3,13 +3,16 @@ import { z } from "zod";
 
 import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
 export const runtime = "nodejs";
 
 const transcriptSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   text: z.string(),
+}).refine((data) => Boolean(data.joinToken || data.participantId), {
+  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -48,10 +51,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  const participant = await getSessionParticipantByJoinToken(
-    parsed.data.joinToken,
-    sessionId,
-  );
+  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

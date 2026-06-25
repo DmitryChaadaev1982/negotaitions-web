@@ -4,7 +4,7 @@ import { AiAnalysisStatus, ParticipantType } from "@/app/generated/prisma/client
 import { prisma } from "@/lib/prisma";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { sanitizeSharedAiReport } from "@/lib/privacy/serializers";
 
@@ -66,33 +66,29 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
   }
 
-  let participant: Awaited<ReturnType<typeof getSessionParticipantByJoinToken>> | null = null;
+  let participant: Awaited<ReturnType<typeof resolveRoomParticipantFromParsedBody>> | null = null;
   let isEventHostOwner = false;
   let adminUser = false;
 
-  if (joinToken) {
-    participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
-  } else {
+  if (participantId) {
     // Account mode: verify cookie ownership
     const user = await getOptionalCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
     adminUser = isAdmin(user);
-    const { resolveRoomParticipantFromBody } = await import("@/lib/room-participant-resolver");
-    participant = await resolveRoomParticipantFromBody(
-      body as Record<string, unknown>,
-      sessionId,
-    );
-    if (participant) {
-      // Check if user is event host (can manage even without FACILITATOR participant type)
-      const session = await prisma.session.findUnique({
-        where: { id: sessionId },
-        select: { event: { select: { hostUserId: true } } },
-      });
-      isEventHostOwner = session?.event?.hostUserId === user.id;
-    }
+    // Check if user is event host (can manage even without FACILITATOR participant type)
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { event: { select: { hostUserId: true } } },
+    });
+    isEventHostOwner = session?.event?.hostUserId === user.id;
   }
+
+  participant = await resolveRoomParticipantFromParsedBody(
+    { joinToken: joinToken ?? null, participantId: participantId ?? null },
+    sessionId,
+  );
 
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });

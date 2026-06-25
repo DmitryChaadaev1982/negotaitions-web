@@ -19,11 +19,6 @@ export function DebriefPanel({
 }: DebriefPanelProps) {
   const { t } = useI18n();
 
-  // Derive joinToken for SessionPostProcessingPanel (guest flow only).
-  // For account mode, SessionPostProcessingPanel uses materialsUrl from roomAuth.
-  const joinTokenForPanel =
-    roomAuth.type === "joinToken" ? roomAuth.value : null;
-
   return (
     <div
       className="flex h-full flex-col overflow-y-auto bg-slate-900 p-4 text-slate-100"
@@ -38,18 +33,14 @@ export function DebriefPanel({
         </p>
       </div>
 
-      {joinTokenForPanel ? (
-        <SessionPostProcessingPanel
-          sessionId={sessionId}
-          joinToken={joinTokenForPanel}
-          variant="sidebar"
-          participantType={participantType}
-          showNavigation={participantType === "FACILITATOR"}
-          eventLobbyUrl={eventLobbyUrl}
-        />
-      ) : (
-        <p className="text-sm text-slate-400">{t("room.debriefMessage")}</p>
-      )}
+      <SessionPostProcessingPanel
+        sessionId={sessionId}
+        roomAuth={roomAuth}
+        variant="sidebar"
+        participantType={participantType}
+        showNavigation={participantType === "FACILITATOR"}
+        eventLobbyUrl={eventLobbyUrl}
+      />
     </div>
   );
 }
