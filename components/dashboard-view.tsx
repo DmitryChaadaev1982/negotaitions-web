@@ -57,6 +57,7 @@ type DashboardViewProps = {
     id: string;
     title: string;
     status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
+    canManage: boolean;
     lobbyParticipantCount: number;
     sessionCount: number;
     totalSessions: number;

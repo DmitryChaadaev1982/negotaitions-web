@@ -1,4 +1,6 @@
-import { getDemoFacilitator } from "@/lib/demo-user";
+import type { AuthUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
+import { ParticipantType } from "@/app/generated/prisma/client";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
@@ -28,11 +30,32 @@ function isOnline(lastSeenAt: Date | null, onlineThreshold: Date) {
 }
 
 export async function getSessionsForList(): Promise<SessionListItem[]> {
-  const facilitator = await getDemoFacilitator();
+  return getSessionsForUser(null);
+}
+
+export async function getSessionsForUser(user: AuthUser | null): Promise<SessionListItem[]> {
   const onlineThreshold = new Date(Date.now() - PRESENCE_ONLINE_THRESHOLD_MS);
+  const where =
+    user && !isAdmin(user)
+      ? {
+          ...activeSessionWhere,
+          OR: [
+            { event: { hostUserId: user.id } },
+            { participants: { some: { userId: user.id } } },
+            {
+              participants: {
+                some: {
+                  userId: user.id,
+                  type: ParticipantType.FACILITATOR,
+                },
+              },
+            },
+          ],
+        }
+      : activeSessionWhere;
 
   const sessions = await prisma.session.findMany({
-    where: { facilitatorId: facilitator.id, ...activeSessionWhere },
+    where,
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -47,12 +70,14 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
         select: {
           id: true,
           title: true,
+          hostUserId: true,
           status: true,
           // hostToken and participantToken intentionally omitted — do not expose in list data.
         },
       },
       participants: {
         select: {
+          userId: true,
           type: true,
           joinedAt: true,
           lastSeenAt: true,
@@ -121,6 +146,16 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
     return {
       id: session.id,
       title: session.title,
+      canManage: Boolean(
+        user &&
+          (isAdmin(user) ||
+            session.event?.hostUserId === user.id ||
+            session.participants.some(
+              (participant) =>
+                participant.userId === user.id &&
+                participant.type === "FACILITATOR",
+            )),
+      ),
       caseTitle: session.snapshotCaseTitle,
       eventId: session.event?.id ?? null,
       eventTitle: session.event?.title ?? null,
@@ -152,7 +187,13 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
 }
 
 export async function getSessionOverviewStats(): Promise<SessionOverviewStats[]> {
-  const sessions = await getSessionsForList();
+  return getSessionOverviewStatsForUser(null);
+}
+
+export async function getSessionOverviewStatsForUser(
+  user: AuthUser | null,
+): Promise<SessionOverviewStats[]> {
+  const sessions = await getSessionsForUser(user);
 
   return sessions.map((session) => ({
     id: session.id,

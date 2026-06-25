@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getOptionalCurrentUser } from "@/lib/auth";
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
 import { eventAccessQuerySchema } from "@/lib/validations/event";
@@ -21,7 +22,8 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 400 });
   }
 
-  const access = await resolveEventAccess(eventId, parsed.data);
+  const user = await getOptionalCurrentUser();
+  const access = await resolveEventAccess(eventId, parsed.data, user);
 
   if (!access) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });

@@ -27,6 +27,7 @@ type EventRow = {
   id: string;
   title: string;
   status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
+  canManage: boolean;
   scheduledAt: string | null;
   lobbyParticipantCount: number;
   sessionCount: number;
@@ -54,8 +55,8 @@ function canEnterEventLobby(status: EventRow["status"]) {
   return status !== "COMPLETED" && status !== "CANCELLED";
 }
 
-function canCompleteEvent(status: EventRow["status"]) {
-  return status !== "COMPLETED" && status !== "CANCELLED";
+function canCompleteEvent(event: EventRow) {
+  return event.canManage && event.status !== "COMPLETED" && event.status !== "CANCELLED";
 }
 
 function eventStatusBadgeVariant(
@@ -211,7 +212,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
       >
         {copyId === event.id ? t("events.linkCopied") : t("events.actionLink")}
       </button>
-      {canCompleteEvent(event.status) ? (
+      {canCompleteEvent(event) ? (
         <form
           action={completeTrainingEventFromList}
           onSubmit={(submitEvent) => {
@@ -239,7 +240,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           </button>
         </form>
       ) : null}
-      {canCompleteEvent(event.status) ? (
+      {canCompleteEvent(event) ? (
         <form action={cancelTrainingEvent}>
           <input type="hidden" name="eventId" value={event.id} />
           <button

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
-  getParticipantNotesWithJoinToken,
+  getParticipantNotesForActiveUser,
   getSessionParticipantsNotesForFacilitatorByUserId,
 } from "@/lib/participant-notes-access";
 import { apiRequireSessionJoinTokenOrAdmin } from "@/lib/auth/api-guards";
@@ -20,8 +20,7 @@ export async function GET(request: Request, context: RouteContext) {
   const access = await apiRequireSessionJoinTokenOrAdmin(sessionId, joinToken);
   if (!access.ok) return access.response;
 
-  if (access.isAdminAccess) {
-    // Admin: pull notes via facilitator helper (no token required).
+  if (access.isAdminAccess || access.canManageSession) {
     const snapshot = await getSessionParticipantsNotesForFacilitatorByUserId(sessionId);
     if (!snapshot.ok) {
       return NextResponse.json({ error: "Not found." }, { status: snapshot.status });
@@ -37,15 +36,19 @@ export async function GET(request: Request, context: RouteContext) {
     });
   }
 
-  const result = await getParticipantNotesWithJoinToken(sessionId, participantId, joinToken!);
+  if (access.participantId !== participantId) {
+    return NextResponse.json(
+      { error: "You do not have permission to view these notes." },
+      { status: 403 },
+    );
+  }
+
+  const result = await getParticipantNotesForActiveUser(sessionId, participantId);
 
   if (!result.ok) {
     return NextResponse.json(
       {
-        error:
-          result.status === 403
-            ? "You do not have permission to view these notes."
-            : "Not found.",
+        error: result.status === 403 ? "You do not have permission to view these notes." : "Not found.",
       },
       { status: result.status },
     );

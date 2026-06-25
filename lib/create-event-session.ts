@@ -237,6 +237,27 @@ export async function createSessionFromEvent(
     };
   }
 
+  const assignedUsers = new Set<string>();
+  const allAssignedEventParticipantIds = [
+    input.facilitatorEventParticipantId,
+    ...roleAssignments.map((assignment) => assignment.eventParticipantId),
+    ...observerIds,
+  ];
+  for (const participantId of allAssignedEventParticipantIds) {
+    const participant = event.participants.find((item) => item.id === participantId);
+    if (!participant?.userId) {
+      continue;
+    }
+    if (assignedUsers.has(participant.userId)) {
+      return {
+        ok: false,
+        error: "duplicateUserAssignment",
+        participantName: participant.displayName,
+      };
+    }
+    assignedUsers.add(participant.userId);
+  }
+
   const sessionTitle = `${event.title} — ${negotiationCase.title}`;
 
   const session = await prisma.$transaction(async (tx) => {
@@ -293,6 +314,7 @@ export async function createSessionFromEvent(
     const facilitatorSessionParticipant = await tx.sessionParticipant.create({
       data: {
         sessionId: createdSession.id,
+        userId: facilitatorParticipant.userId,
         displayName: facilitatorParticipant.displayName,
         type: ParticipantType.FACILITATOR,
         joinToken: generateJoinToken(),
@@ -333,6 +355,7 @@ export async function createSessionFromEvent(
       const sessionParticipant = await tx.sessionParticipant.create({
         data: {
           sessionId: createdSession.id,
+          userId: eventParticipant.userId,
           displayName: eventParticipant.displayName,
           type: ParticipantType.PARTICIPANT,
           sessionRoleId: sessionRole.id,
@@ -369,6 +392,7 @@ export async function createSessionFromEvent(
       const sessionParticipant = await tx.sessionParticipant.create({
         data: {
           sessionId: createdSession.id,
+          userId: eventParticipant.userId,
           displayName: eventParticipant.displayName,
           type: ParticipantType.OBSERVER,
           joinToken: generateJoinToken(),

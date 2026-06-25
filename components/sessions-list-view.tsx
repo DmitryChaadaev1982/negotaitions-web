@@ -29,6 +29,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type SessionRow = {
   id: string;
   title: string;
+  canManage: boolean;
   caseTitle: string;
   eventId: string | null;
   eventTitle: string | null;
@@ -275,13 +276,17 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           {t("events.materials")}
                         </Link>
                       ) : null}
-                      <Link
-                        href={`/sessions/${session.id}`}
-                        className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
-                      >
-                        {t("common.manage")}
-                      </Link>
-                      <DeleteSessionButton sessionId={session.id} />
+                      {session.canManage ? (
+                        <>
+                          <Link
+                            href={`/sessions/${session.id}`}
+                            className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          >
+                            {t("common.manage")}
+                          </Link>
+                          <DeleteSessionButton sessionId={session.id} />
+                        </>
+                      ) : null}
                     </div>
                   </DataTableCell>
                 </DataTableRow>

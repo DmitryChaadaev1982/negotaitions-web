@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getOptionalCurrentUser } from "@/lib/auth";
 import { flagsFromPreference } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventUnavailable } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
@@ -27,9 +28,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidPayload" }, { status: 400 });
   }
 
+  const user = await getOptionalCurrentUser();
   const access = await resolveEventAccess(eventId, {
     participantToken: parsed.data.participantToken,
-  });
+  }, user);
 
   if (!access?.currentParticipant) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });

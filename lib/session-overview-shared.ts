@@ -17,6 +17,7 @@ export type SessionNegotiationState =
 export type SessionListItem = {
   id: string;
   title: string;
+  canManage: boolean;
   caseTitle: string;
   eventId: string | null;
   eventTitle: string | null;

@@ -3,11 +3,17 @@ import {
   type EventParticipant,
   type TrainingEvent,
 } from "@/app/generated/prisma/client";
+import type { AuthUser } from "@/lib/auth";
+import {
+  canAccessEvent,
+  getCurrentUserEventAccess,
+} from "@/lib/access-control";
 import { prisma } from "@/lib/prisma";
 
 export type EventAccessContext = {
   event: TrainingEvent;
   isHost: boolean;
+  isAdmin: boolean;
   currentParticipant: EventParticipant | null;
 };
 
@@ -38,53 +44,19 @@ export function isEventCompleted(event: Pick<TrainingEvent, "status">) {
 export async function resolveEventAccess(
   eventId: string,
   tokens: EventAccessTokens,
+  user?: AuthUser | null,
 ): Promise<EventAccessContext | null> {
-  const hostToken = tokens.hostToken?.trim();
-  const participantToken = tokens.participantToken?.trim();
-
-  if (!hostToken && !participantToken) {
+  const access = await getCurrentUserEventAccess(eventId, user ?? null, tokens);
+  if (!access || !canAccessEvent(access)) {
     return null;
   }
 
-  const event = await prisma.trainingEvent.findUnique({
-    where: { id: eventId },
-  });
-
-  if (!event) {
-    return null;
-  }
-
-  const isHost = Boolean(hostToken && hostToken === event.hostToken);
-
-  if (!isHost && !participantToken) {
-    return null;
-  }
-
-  let currentParticipant: EventParticipant | null = null;
-
-  if (participantToken) {
-    currentParticipant = await prisma.eventParticipant.findFirst({
-      where: {
-        eventId,
-        participantToken,
-      },
-    });
-
-    if (!currentParticipant && !isHost) {
-      return null;
-    }
-  }
-
-  if (isHost && !currentParticipant) {
-    currentParticipant = await prisma.eventParticipant.findFirst({
-      where: {
-        eventId,
-        isHost: true,
-      },
-    });
-  }
-
-  return { event, isHost, currentParticipant };
+  return {
+    event: access.event,
+    isHost: access.isHost,
+    isAdmin: access.isAdmin,
+    currentParticipant: access.currentParticipant,
+  };
 }
 
 export async function findEventByPublicJoinCode(publicJoinCode: string) {

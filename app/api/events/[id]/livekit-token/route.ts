@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getOptionalCurrentUser } from "@/lib/auth";
 import {
   createEventLobbyLiveKitAccessToken,
   getLiveKitConfig,
@@ -39,7 +40,8 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 400 });
   }
 
-  const access = await resolveEventAccess(eventId, parsed.data);
+  const user = await getOptionalCurrentUser();
+  const access = await resolveEventAccess(eventId, parsed.data, user);
 
   if (!access) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });

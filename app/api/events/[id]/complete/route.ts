@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { completeTrainingEvent } from "@/lib/complete-event";
+import { getOptionalCurrentUser } from "@/lib/auth";
 import { completeEventSchema } from "@/lib/validations/event";
 
 type RouteContext = {
@@ -24,9 +25,12 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidPayload" }, { status: 400 });
   }
 
+  const user = await getOptionalCurrentUser();
   const result = await completeTrainingEvent(
     eventId,
-    parsed.data.hostToken,
+    user
+      ? { actorUser: user, hostToken: parsed.data.hostToken }
+      : { hostToken: parsed.data.hostToken ?? "" },
     parsed.data.reason,
   );
 

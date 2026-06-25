@@ -5,6 +5,8 @@ import {
   type Recording,
   type Session,
 } from "@/app/generated/prisma/client";
+import type { AuthUser } from "@/lib/auth";
+import { canManageEvent, getCurrentUserEventAccess } from "@/lib/access-control";
 import {
   findActiveRecordingForSession,
   stopRecording,
@@ -118,12 +120,24 @@ async function stopSessionRecordingIfActive(
 
 export async function completeTrainingEvent(
   eventId: string,
-  hostToken: string,
+  access:
+    | { hostToken: string; actorUser?: null }
+    | { hostToken?: string; actorUser: AuthUser },
   completionReason?: string,
 ): Promise<
   | { ok: true; result: CompleteEventResult }
   | { ok: false; error: string; status: number }
 > {
+  const eventAccess = await getCurrentUserEventAccess(
+    eventId,
+    access.actorUser ?? null,
+    { hostToken: access.hostToken },
+  );
+
+  if (!eventAccess || !canManageEvent(eventAccess)) {
+    return { ok: false, error: "forbidden", status: 403 };
+  }
+
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
     include: {
@@ -138,10 +152,6 @@ export async function completeTrainingEvent(
 
   if (!event || event.deletedAt) {
     return { ok: false, error: "eventNotFound", status: 404 };
-  }
-
-  if (hostToken !== event.hostToken) {
-    return { ok: false, error: "forbidden", status: 403 };
   }
 
   if (event.status === TrainingEventStatus.COMPLETED) {
@@ -164,7 +174,7 @@ export async function completeTrainingEvent(
       data: {
         status: TrainingEventStatus.COMPLETED,
         completedAt: now,
-        completedBy: hostToken,
+        completedBy: access.actorUser?.id ?? access.hostToken ?? null,
         completionReason: completionReason?.trim() || null,
       },
     });

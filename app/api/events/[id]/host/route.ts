@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getOptionalCurrentUser } from "@/lib/auth";
 import { createSessionFromEvent } from "@/lib/create-event-session";
 import { parseAssignmentDraft } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventDeletedOrCancelled } from "@/lib/event-auth";
@@ -31,9 +32,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidPayload" }, { status: 400 });
   }
 
+  const user = await getOptionalCurrentUser();
   const access = await resolveEventAccess(eventId, {
     hostToken: parsed.data.hostToken,
-  });
+  }, user);
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
@@ -91,9 +93,10 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "invalidPayload" }, { status: 400 });
   }
 
+  const user = await getOptionalCurrentUser();
   const access = await resolveEventAccess(eventId, {
     hostToken: parsed.data.hostToken,
-  });
+  }, user);
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });

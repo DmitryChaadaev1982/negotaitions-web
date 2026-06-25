@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
+import {
+  canAccessSession,
+  canManageSession,
+  getCurrentUserSessionAccess,
+} from "@/lib/access-control";
 
 import { getOptionalCurrentUser } from "./session";
 import { isAdmin } from "./admin";
@@ -43,40 +47,39 @@ export async function apiRequireSessionJoinTokenOrAdmin(
   sessionId: string,
   joinToken: string | null,
 ): Promise<
-  | { ok: true; isAdminAccess: true; participantId: null; participantType: null }
-  | { ok: true; isAdminAccess: false; participantId: string; participantType: string }
+  | {
+      ok: true;
+      isAdminAccess: boolean;
+      isEventHostOwner: boolean;
+      canManageSession: boolean;
+      participantId: string | null;
+      participantType: string | null;
+    }
   | { ok: false; response: NextResponse }
 > {
   const user = await getOptionalCurrentUser();
-
-  if (user && isAdmin(user)) {
-    return { ok: true, isAdminAccess: true, participantId: null, participantType: null };
-  }
-
-  if (!joinToken) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Unauthorized." }, { status: 401 }),
-    };
-  }
-
-  const participant = await prisma.sessionParticipant.findUnique({
-    where: { joinToken },
-    select: { id: true, sessionId: true, type: true },
+  const access = await getCurrentUserSessionAccess(sessionId, user, {
+    joinToken,
   });
-
-  if (!participant || participant.sessionId !== sessionId) {
+  if (!access || !canAccessSession(access)) {
     return {
       ok: false,
-      response: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
+      response: NextResponse.json(
+        { error: user ? "Forbidden." : "Unauthorized." },
+        { status: user ? 403 : 401 },
+      ),
     };
   }
+
+  const participant = access.tokenParticipant ?? access.userParticipant;
 
   return {
     ok: true,
-    isAdminAccess: false,
-    participantId: participant.id,
-    participantType: participant.type,
+    isAdminAccess: access.isAdmin,
+    isEventHostOwner: access.isEventHostOwner,
+    canManageSession: canManageSession(access),
+    participantId: participant?.id ?? null,
+    participantType: participant?.type ?? null,
   };
 }
 

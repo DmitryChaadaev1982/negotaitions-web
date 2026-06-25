@@ -26,6 +26,7 @@ export type TrainingEventListItem = {
   id: string;
   title: string;
   status: TrainingEventStatus;
+  canManage: boolean;
   scheduledAt: string | null;
   publicJoinCode: string;
   primarySessionId: string | null;

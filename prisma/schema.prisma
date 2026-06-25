@@ -172,6 +172,8 @@ model User {
 
   negotiationCases    NegotiationCase[]    @relation("CaseFacilitator")
   facilitatedSessions Session[]            @relation("SessionFacilitator")
+  hostedTrainingEvents TrainingEvent[]     @relation("TrainingEventHost")
+  eventParticipants   EventParticipant[]
   sessionParticipants SessionParticipant[]
   userSessions        UserSession[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
@@ -341,6 +343,7 @@ model SessionParticipant {
 
   @@index([sessionId])
   @@index([userId])
+  @@index([sessionId, userId])
   @@index([sessionRoleId])
   @@index([eventParticipantId])
 }
@@ -350,6 +353,7 @@ model TrainingEvent {
   title                  String
   description            String?              @db.Text
   scheduledAt            DateTime?
+  hostUserId             String?
   status                 TrainingEventStatus  @default(LOBBY_OPEN)
   publicJoinCode         String               @unique
   hostToken              String               @unique
@@ -366,15 +370,18 @@ model TrainingEvent {
   deletedAt              DateTime?
 
   selectedCase NegotiationCase?   @relation(fields: [selectedCaseId], references: [id], onDelete: SetNull)
+  hostUser     User?              @relation("TrainingEventHost", fields: [hostUserId], references: [id], onDelete: SetNull)
   participants EventParticipant[]
   sessions     Session[]
 
+  @@index([hostUserId])
   @@index([selectedCaseId])
 }
 
 model EventParticipant {
   id                           String                     @id @default(cuid())
   eventId                      String
+  userId                       String?
   displayName                  String
   email                        String?
   participantToken             String                     @unique
@@ -391,11 +398,14 @@ model EventParticipant {
   updatedAt                    DateTime                   @updatedAt
 
   event                      TrainingEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user                       User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   assignedSession            Session?            @relation("EventAssignedSession", fields: [assignedSessionId], references: [id], onDelete: SetNull)
   assignedSessionParticipant SessionParticipant? @relation("EventParticipantAssignment", fields: [assignedSessionParticipantId], references: [id], onDelete: SetNull)
   linkedSessionParticipants  SessionParticipant[] @relation("EventParticipantLink")
 
   @@index([eventId])
+  @@index([userId])
+  @@index([eventId, userId])
   @@index([assignedSessionId])
 }
 

@@ -1,9 +1,9 @@
 import { DashboardView } from "@/components/dashboard-view";
 import { getDemoFacilitator } from "@/lib/demo-user";
-import { getTrainingEventsForList } from "@/lib/event-overview-stats";
+import { getEventsForUser } from "@/lib/event-overview-stats";
 import { prisma } from "@/lib/prisma";
-import { getSessionsForList } from "@/lib/session-overview-stats";
-import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
+import { getSessionsForUser } from "@/lib/session-overview-stats";
+import { activeCaseWhere } from "@/lib/soft-delete";
 import { requireActiveUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 
@@ -11,47 +11,36 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const user = await requireActiveUser("/dashboard");
+  const isAdminUser = isAdmin(user);
 
-  // Non-admin users see zero counts and empty lists until user binding is
-  // implemented (Phase C). The demo facilitator data must not leak to every
-  // approved account — it belongs to the seed identity, not the viewer.
-  if (!isAdmin(user)) {
-    return (
-      <DashboardView
-        caseCount={0}
-        sessionCount={0}
-        eventCount={0}
-        recentCases={[]}
-        recentSessions={[]}
-        recentEvents={[]}
-      />
-    );
-  }
+  const [allEvents, allSessions] = await Promise.all([
+    getEventsForUser(user),
+    getSessionsForUser(user),
+  ]);
+  const recentEvents = allEvents.slice(0, 5);
 
-  const facilitator = await getDemoFacilitator();
+  const [caseCount, recentCases] = isAdminUser
+    ? await (async () => {
+        const facilitator = await getDemoFacilitator();
+        const [count, cases] = await Promise.all([
+          prisma.negotiationCase.count({
+            where: { facilitatorId: facilitator.id, ...activeCaseWhere },
+          }),
+          prisma.negotiationCase.findMany({
+            where: { facilitatorId: facilitator.id, ...activeCaseWhere },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            include: {
+              _count: { select: { roles: true } },
+            },
+          }),
+        ]);
+        return [count, cases] as const;
+      })()
+    : ([0, []] as const);
 
-  const [caseCount, sessionCount, eventCount, recentCases, allSessions, recentEvents] =
-    await Promise.all([
-      prisma.negotiationCase.count({
-        where: { facilitatorId: facilitator.id, ...activeCaseWhere },
-      }),
-      prisma.session.count({
-        where: { facilitatorId: facilitator.id, ...activeSessionWhere },
-      }),
-      prisma.trainingEvent.count({
-        where: { deletedAt: null },
-      }),
-      prisma.negotiationCase.findMany({
-        where: { facilitatorId: facilitator.id, ...activeCaseWhere },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: {
-          _count: { select: { roles: true } },
-        },
-      }),
-      getSessionsForList(),
-      getTrainingEventsForList(5),
-    ]);
+  const sessionCount = allSessions.length;
+  const eventCount = allEvents.length;
 
   const recentSessions = allSessions.slice(0, 5);
 
@@ -79,6 +68,7 @@ export default async function DashboardPage() {
         id: event.id,
         title: event.title,
         status: event.status,
+        canManage: event.canManage,
         lobbyParticipantCount: event.lobbyParticipantCount,
         sessionCount: event.sessionCount,
         totalSessions: event.totalSessions,

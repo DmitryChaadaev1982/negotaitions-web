@@ -222,12 +222,10 @@ export function EventLobbyView({
 
   const updateHost = useCallback(
     async (payload: Record<string, unknown>) => {
-      if (!hostToken) return;
-
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostToken, ...payload }),
+        body: JSON.stringify({ hostToken: hostToken || undefined, ...payload }),
       });
 
       if (response.ok) {
@@ -257,7 +255,7 @@ export function EventLobbyView({
   );
 
   const createSession = useCallback(async () => {
-    if (!hostToken || !state) return;
+    if (!state) return;
 
     setIsCreatingSession(true);
     setCreateSessionError(null);
@@ -268,7 +266,7 @@ export function EventLobbyView({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          hostToken,
+          hostToken: hostToken || undefined,
           caseId: selectedCase?.id,
           roomLabel: state.assignmentDraft.roomLabel || undefined,
           preparationDurationSeconds:
@@ -318,8 +316,6 @@ export function EventLobbyView({
   }, [state, t]);
 
   const completeEvent = useCallback(async () => {
-    if (!hostToken) return;
-
     setIsCompletingEvent(true);
     setCompleteMessage(null);
     setCompleteWarnings([]);
@@ -328,7 +324,7 @@ export function EventLobbyView({
       const response = await fetch(`/api/events/${eventId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostToken }),
+        body: JSON.stringify({ hostToken: hostToken || undefined }),
       });
 
       if (response.ok) {
@@ -363,7 +359,7 @@ export function EventLobbyView({
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#020617] px-4">
         <p className="text-sm text-slate-400">{t("common.loading")}…</p>
-        {hostToken ? (
+        {state?.isHost ? (
           <button
             type="button"
             data-testid="complete-event-button"
@@ -837,7 +833,7 @@ function EventCompletedOverlay({
         ) : null}
       </div>
       <div className="flex flex-wrap justify-center gap-3">
-        {hostToken ? (
+        {hostToken || state.isHost ? (
           <GradientButtonLink href="/events">{t("events.backToEvents")}</GradientButtonLink>
         ) : null}
         {currentAssignment?.joinToken ? (
@@ -851,7 +847,7 @@ function EventCompletedOverlay({
             {t("events.openSessionMaterials")}
           </GradientButtonLink>
         ) : null}
-        {hostToken && latestParticipantSession ? (
+        {(hostToken || state.isHost) && latestParticipantSession ? (
           <SecondaryButtonLink href={`/sessions/${latestParticipantSession.id}`}>
             {t("events.materials")}
           </SecondaryButtonLink>

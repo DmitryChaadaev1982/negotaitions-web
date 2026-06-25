@@ -49,7 +49,7 @@ export async function createTrainingEvent(
 ): Promise<CreateEventState> {
   // Require active account to create events from the app.
   // TODO: Set event.hostUserId = user.id once TrainingEvent.hostUserId field is added (Phase C).
-  await requireActiveUser("/events/new");
+  const user = await requireActiveUser("/events/new");
 
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
@@ -71,14 +71,14 @@ export async function createTrainingEvent(
   }
 
   try {
-    const {
-      title,
-      hostDisplayName,
-      description,
-      scheduledAt,
-      estimatedEventDurationMinutes,
-    } = parsed.data;
+    const { title, hostDisplayName, description, scheduledAt, estimatedEventDurationMinutes } =
+      parsed.data;
 
+    const hostDisplayNameResolved =
+      hostDisplayName?.trim() ||
+      user.name?.trim() ||
+      user.email.split("@")[0] ||
+      "Host";
     const hostToken = generateHostToken();
     const hostParticipantToken = generateParticipantToken();
     const publicJoinCode = generatePublicJoinCode();
@@ -88,6 +88,7 @@ export async function createTrainingEvent(
         description: description || null,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: TrainingEventStatus.LOBBY_OPEN,
+        hostUserId: user.id,
         publicJoinCode,
         hostToken,
         lobbyRoomName: null,
@@ -97,9 +98,10 @@ export async function createTrainingEvent(
         ),
         participants: {
           create: {
-            displayName: hostDisplayName,
+            displayName: hostDisplayNameResolved,
             participantToken: hostParticipantToken,
             isHost: true,
+            userId: user.id,
           },
         },
       },
@@ -169,8 +171,19 @@ export async function joinTrainingEvent(
     };
   }
 
-  const { eventId, displayName, email, preference, participantToken } =
-    parsed.data;
+  const { eventId, displayName, email, preference, participantToken } = parsed.data;
+
+  const currentUser = await getOptionalCurrentUser();
+  const accountJoinAllowed = Boolean(
+    currentUser && (isAdmin(currentUser) || currentUser.status === "ACTIVE"),
+  );
+  if (currentUser && !accountJoinAllowed) {
+    return {
+      errors: {
+        form: ["accountStatusRestricted"],
+      },
+    };
+  }
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
@@ -198,9 +211,24 @@ export async function joinTrainingEvent(
     });
 
     if (existing) {
+      if (
+        accountJoinAllowed &&
+        existing.userId &&
+        existing.userId !== currentUser!.id
+      ) {
+        return {
+          errors: {
+            form: ["participantTokenAlreadyLinked"],
+          },
+        };
+      }
+
       await prisma.eventParticipant.update({
         where: { id: existing.id },
         data: {
+          ...(accountJoinAllowed && !existing.userId
+            ? { userId: currentUser!.id }
+            : {}),
           lastSeenAt: new Date(),
           ...(preference
             ? {
@@ -216,7 +244,36 @@ export async function joinTrainingEvent(
     }
   }
 
-  if (!displayName || !preference) {
+  if (accountJoinAllowed) {
+    const existingByUser = await prisma.eventParticipant.findFirst({
+      where: {
+        eventId,
+        userId: currentUser!.id,
+      },
+    });
+
+    if (existingByUser) {
+      await prisma.eventParticipant.update({
+        where: { id: existingByUser.id },
+        data: {
+          ...(email ? { email } : {}),
+          ...(preference
+            ? {
+                preference,
+                ...flagsFromPreference(preference),
+              }
+            : {}),
+          lastSeenAt: new Date(),
+        },
+      });
+
+      redirect(
+        getEventLobbyUrl(eventId, { participantToken: existingByUser.participantToken }),
+      );
+    }
+  }
+
+  if (!accountJoinAllowed && (!displayName || !preference)) {
     return {
       errors: {
         displayName: displayName ? undefined : ["displayNameRequired"],
@@ -226,16 +283,23 @@ export async function joinTrainingEvent(
   }
 
   const newParticipantToken = generateParticipantToken();
-  const preferenceFlags = flagsFromPreference(preference);
+  const resolvedPreference = preference ?? "UNDECIDED";
+  const preferenceFlags = flagsFromPreference(resolvedPreference);
+  const resolvedDisplayName =
+    displayName?.trim() ||
+    currentUser?.name?.trim() ||
+    currentUser?.email.split("@")[0] ||
+    "Guest";
 
   await prisma.eventParticipant.create({
     data: {
       eventId,
-      displayName,
+      displayName: resolvedDisplayName,
       email: email || null,
       participantToken: newParticipantToken,
-      preference,
+      preference: resolvedPreference,
       ...preferenceFlags,
+      userId: accountJoinAllowed ? currentUser!.id : null,
       joinedAt: new Date(),
       lastSeenAt: new Date(),
     },
@@ -251,23 +315,26 @@ export async function completeTrainingEventFromList(formData: FormData) {
     return;
   }
 
-  // Only admin may complete events from the list view until TrainingEvent.hostUserId
-  // is implemented (Phase C). Generic active users must not complete arbitrary events.
   const user = await getOptionalCurrentUser();
-  if (!user || !isAdmin(user)) {
+  if (!user) {
     return;
   }
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
-    select: { hostToken: true, deletedAt: true },
+    select: { hostToken: true, deletedAt: true, hostUserId: true },
   });
 
   if (!event || event.deletedAt) {
     return;
   }
 
-  await completeTrainingEvent(eventId, event.hostToken);
+  const ownerAccess = event.hostUserId === user.id;
+  if (!isAdmin(user) && !ownerAccess) {
+    return;
+  }
+
+  await completeTrainingEvent(eventId, { actorUser: user });
 
   revalidatePath("/events");
   revalidatePath("/dashboard");
@@ -281,20 +348,16 @@ export async function cancelTrainingEvent(formData: FormData) {
     return;
   }
 
-  // Accept either: valid hostToken (lobby/guest host flow) OR admin user.
-  // Generic ACTIVE users must not cancel arbitrary events they do not own.
-  // TODO: When TrainingEvent.hostUserId is added (Phase C), also allow the
-  //       owning user (event.hostUserId === currentUser.id).
   const user = await getOptionalCurrentUser();
   const userIsAdmin = user !== null && isAdmin(user);
 
-  if (!hostToken && !userIsAdmin) {
-    throw new Error("cancelTrainingEvent: hostToken or admin access required.");
+  if (!hostToken && !user) {
+    throw new Error("cancelTrainingEvent: host token or account access required.");
   }
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
-    select: { hostToken: true, deletedAt: true },
+    select: { hostToken: true, deletedAt: true, hostUserId: true },
   });
 
   if (!event || event.deletedAt) {
@@ -303,6 +366,13 @@ export async function cancelTrainingEvent(formData: FormData) {
 
   if (hostToken && event.hostToken !== hostToken) {
     throw new Error("cancelTrainingEvent: invalid hostToken.");
+  }
+
+  if (!hostToken) {
+    const ownerAccess = Boolean(user && event.hostUserId === user.id);
+    if (!userIsAdmin && !ownerAccess) {
+      throw new Error("cancelTrainingEvent: forbidden.");
+    }
   }
 
   await prisma.trainingEvent.update({

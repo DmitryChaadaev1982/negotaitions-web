@@ -1,4 +1,6 @@
 import { NegotiationState } from "@/app/generated/prisma/client";
+import type { AuthUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import {
   type EventOverviewStats,
   isEventActiveForPresence,
@@ -107,13 +109,33 @@ function latestActivityIso(dates: Array<Date | null | undefined>) {
 export async function getTrainingEventsForList(
   limit?: number,
 ): Promise<TrainingEventListItem[]> {
+  return getEventsForUser(null, limit);
+}
+
+export async function getEventsForUser(
+  user: AuthUser | null,
+  limit?: number,
+): Promise<TrainingEventListItem[]> {
+  const where =
+    user && !isAdmin(user)
+      ? {
+          deletedAt: null,
+          OR: [
+            { hostUserId: user.id },
+            { participants: { some: { userId: user.id } } },
+            { sessions: { some: { participants: { some: { userId: user.id } } } } },
+          ],
+        }
+      : { deletedAt: null };
+
   const events = await prisma.trainingEvent.findMany({
-    where: { deletedAt: null },
+    where,
     orderBy: { createdAt: "desc" },
     ...(limit ? { take: limit } : {}),
     select: {
       id: true,
       title: true,
+      hostUserId: true,
       status: true,
       scheduledAt: true,
       publicJoinCode: true,
@@ -183,6 +205,7 @@ export async function getTrainingEventsForList(
       id: event.id,
       title: event.title,
       status: event.status,
+      canManage: Boolean(user && (isAdmin(user) || event.hostUserId === user.id)),
       scheduledAt: event.scheduledAt?.toISOString() ?? null,
       publicJoinCode: event.publicJoinCode,
       primarySessionId: event.sessions[0]?.id ?? null,
@@ -211,7 +234,13 @@ export async function getTrainingEventsForList(
 }
 
 export async function getEventOverviewStats(): Promise<EventOverviewStats[]> {
-  const events = await getTrainingEventsForList();
+  return getEventOverviewStatsForUser(null);
+}
+
+export async function getEventOverviewStatsForUser(
+  user: AuthUser | null,
+): Promise<EventOverviewStats[]> {
+  const events = await getEventsForUser(user);
 
   return events.map((event) => ({
     id: event.id,

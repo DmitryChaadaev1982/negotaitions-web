@@ -63,7 +63,7 @@ export const eventLiveKitTokenSchema = z.object({
 });
 
 export const updateEventHostSchema = z.object({
-  hostToken: z.string().min(1),
+  hostToken: z.string().min(1).optional(),
   selectedCaseId: z.string().nullable().optional(),
   assignmentDraft: z
     .object({
@@ -85,7 +85,7 @@ export const updateEventParticipantSchema = z.object({
 });
 
 export const createEventSessionSchema = z.object({
-  hostToken: z.string().min(1),
+  hostToken: z.string().min(1).optional(),
   caseId: z.string().min(1).optional(),
   roomLabel: z.string().trim().max(80).optional(),
   preparationDurationSeconds: z.number().int().min(0).max(60 * 60).optional(),
@@ -103,7 +103,7 @@ export const createEventSessionSchema = z.object({
 });
 
 export const completeEventSchema = z.object({
-  hostToken: z.string().min(1),
+  hostToken: z.string().min(1).optional(),
   reason: z.string().trim().optional(),
 });
 

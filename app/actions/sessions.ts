@@ -7,6 +7,7 @@ import {
   ParticipantType,
   SessionStatus,
 } from "@/app/generated/prisma/client";
+import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { canEditSessionDurations } from "@/lib/negotiation-control";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { requireActiveUser } from "@/lib/auth";
@@ -39,13 +40,17 @@ function isRedirectError(error: unknown) {
   );
 }
 
-async function getFacilitatorSession(sessionId: string) {
-  const facilitator = await getDemoFacilitator();
-
+async function getFacilitatorSession(
+  sessionId: string,
+  user: Awaited<ReturnType<typeof requireActiveUser>>,
+) {
+  const access = await getCurrentUserSessionAccess(sessionId, user, {});
+  if (!access || !canManageSession(access)) {
+    throw new Error("Session not found.");
+  }
   const session = await prisma.session.findFirst({
     where: {
       id: sessionId,
-      facilitatorId: facilitator.id,
     },
     include: {
       sessionRoles: {
@@ -85,7 +90,7 @@ export async function createSession(
   _prevState: CreateSessionState,
   formData: FormData,
 ): Promise<CreateSessionState> {
-  await requireActiveUser("/sessions/new");
+  const user = await requireActiveUser("/sessions/new");
 
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
@@ -156,6 +161,14 @@ export async function createSession(
         sessionRoles: {
           create: mapCaseRolesToSessionRoleCreate(negotiationCase.roles),
         },
+        participants: {
+          create: {
+            userId: user.id,
+            displayName: user.name?.trim() || user.email.split("@")[0] || "Facilitator",
+            type: ParticipantType.FACILITATOR,
+            joinToken: generateJoinToken(),
+          },
+        },
       },
     });
 
@@ -188,7 +201,7 @@ export async function addParticipant(
   _prevState: AddParticipantState,
   formData: FormData,
 ): Promise<AddParticipantState> {
-  await requireActiveUser();
+  const user = await requireActiveUser();
 
   const parsed = addParticipantSchema.safeParse({
     sessionId: formData.get("sessionId"),
@@ -210,7 +223,7 @@ export async function addParticipant(
 
   try {
     const { sessionId, displayName, type, sessionRoleId } = parsed.data;
-    const session = await getFacilitatorSession(sessionId);
+    const session = await getFacilitatorSession(sessionId, user);
 
     if (type === ParticipantType.PARTICIPANT) {
       const assignedRole = session.sessionRoles.find(
@@ -298,7 +311,7 @@ export async function addParticipant(
 }
 
 export async function removeParticipant(formData: FormData) {
-  await requireActiveUser();
+  const user = await requireActiveUser();
   const participantId = String(formData.get("participantId") ?? "");
   const sessionId = String(formData.get("sessionId") ?? "");
 
@@ -307,7 +320,7 @@ export async function removeParticipant(formData: FormData) {
   }
 
   try {
-    await getFacilitatorSession(sessionId);
+    await getFacilitatorSession(sessionId, user);
 
     await prisma.sessionParticipant.deleteMany({
       where: {
@@ -325,7 +338,7 @@ export async function removeParticipant(formData: FormData) {
 }
 
 export async function updateSessionDuration(formData: FormData) {
-  await requireActiveUser();
+  const user = await requireActiveUser();
 
   const parsed = updateSessionDurationSchema.safeParse({
     sessionId: formData.get("sessionId"),
@@ -341,7 +354,7 @@ export async function updateSessionDuration(formData: FormData) {
   const { sessionId, durationMinutes, preparationDurationMinutes } = parsed.data;
 
   try {
-    const session = await getFacilitatorSession(sessionId);
+    const session = await getFacilitatorSession(sessionId, user);
 
     if (!canEditSessionDurations(session.negotiationState)) {
       return;
@@ -447,16 +460,13 @@ export async function markParticipantJoined(joinToken: string) {
 }
 
 export async function deleteSession(sessionId: string) {
-  await requireActiveUser();
-  const facilitator = await getDemoFacilitator();
+  const user = await requireActiveUser();
 
-  const session = await prisma.session.findFirst({
-    where: {
-      id: sessionId,
-      facilitatorId: facilitator.id,
-      ...activeSessionWhere,
-    },
-  });
+  const access = await getCurrentUserSessionAccess(sessionId, user, {});
+  if (!access || !canManageSession(access)) {
+    return;
+  }
+  const session = await prisma.session.findFirst({ where: { id: sessionId, ...activeSessionWhere } });
 
   if (!session) {
     return;

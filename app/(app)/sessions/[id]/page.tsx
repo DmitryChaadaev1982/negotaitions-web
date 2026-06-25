@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 
 import { SessionDetailView } from "@/components/session-detail-view";
 import { getJoinUrl } from "@/lib/config";
+import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { isAssignableCaseRole } from "@/lib/case-roles";
-import { getDemoFacilitator } from "@/lib/demo-user";
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
@@ -24,20 +24,21 @@ export default async function SessionDetailPage({
   params,
 }: SessionDetailPageProps) {
   const { id } = await params;
-  await requireActiveUser(`/sessions/${id}`);
-  const facilitator = await getDemoFacilitator();
+  const user = await requireActiveUser(`/sessions/${id}`);
+  const access = await getCurrentUserSessionAccess(id, user, {});
+  if (!access || !canManageSession(access)) {
+    notFound();
+  }
 
   const session = await prisma.session.findFirst({
     where: {
       id,
-      facilitatorId: facilitator.id,
     },
     include: {
       event: {
         select: {
           id: true,
           title: true,
-          hostToken: true,
           status: true,
         },
       },
@@ -136,7 +137,7 @@ export default async function SessionDetailPage({
               id: session.event.id,
               title: session.event.title,
               status: session.event.status,
-              lobbyUrl: `/events/${session.event.id}/lobby?hostToken=${session.event.hostToken}`,
+              lobbyUrl: `/events/${session.event.id}/lobby`,
             }
           : null,
       }}

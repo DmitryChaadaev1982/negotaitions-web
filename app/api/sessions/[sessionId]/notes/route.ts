@@ -17,8 +17,7 @@ export async function GET(request: Request, context: RouteContext) {
   const access = await apiRequireSessionJoinTokenOrAdmin(sessionId, joinToken);
   if (!access.ok) return access.response;
 
-  // If authenticated via joinToken, enforce facilitator type.
-  if (!access.isAdminAccess && access.participantType !== "FACILITATOR") {
+  if (!access.canManageSession) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 

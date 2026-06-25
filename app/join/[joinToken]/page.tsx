@@ -4,6 +4,8 @@ import { JoinPageView } from "@/components/join-page-view";
 import { JoinRecoverySync } from "@/components/join-recovery-sync";
 import { ParticipantPresenceHeartbeat } from "@/components/participant-presence-heartbeat";
 import { ParticipantType } from "@/app/generated/prisma/client";
+import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
@@ -29,6 +31,8 @@ export default async function JoinPage({ params }: JoinPageProps) {
       },
       eventParticipant: {
         select: {
+          id: true,
+          userId: true,
           participantToken: true,
         },
       },
@@ -76,6 +80,39 @@ export default async function JoinPage({ params }: JoinPageProps) {
 
   if (!participant) {
     notFound();
+  }
+
+  const currentUser = await getOptionalCurrentUser();
+  const currentUserCanBind = Boolean(
+    currentUser && (isAdmin(currentUser) || currentUser.status === "ACTIVE"),
+  );
+  if (currentUserCanBind) {
+    const sessionOwnedByAnotherUser =
+      participant.userId &&
+      participant.userId !== currentUser!.id;
+    const eventOwnedByAnotherUser =
+      participant.eventParticipant?.userId &&
+      participant.eventParticipant.userId !== currentUser!.id;
+    if (sessionOwnedByAnotherUser || eventOwnedByAnotherUser) {
+      notFound();
+    }
+
+    if (!participant.userId || !participant.eventParticipant?.userId) {
+      await prisma.$transaction(async (tx) => {
+        if (!participant.userId) {
+          await tx.sessionParticipant.update({
+            where: { id: participant.id },
+            data: { userId: currentUser!.id },
+          });
+        }
+        if (participant.eventParticipant?.id && !participant.eventParticipant.userId) {
+          await tx.eventParticipant.update({
+            where: { id: participant.eventParticipant.id },
+            data: { userId: currentUser!.id },
+          });
+        }
+      });
+    }
   }
 
   const isParticipant = participant.type === ParticipantType.PARTICIPANT;
