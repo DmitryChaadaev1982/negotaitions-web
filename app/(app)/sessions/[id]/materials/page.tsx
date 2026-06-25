@@ -1,7 +1,8 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
+import { AccountSessionMaterialsView } from "@/components/account-session-materials-view";
 import { requireActiveUser } from "@/lib/auth";
-import { resolveJoinTokenForAccountSession } from "@/lib/account-session-access";
+import { getAccountMaterialsData } from "@/lib/account-session-materials";
 
 type SessionMaterialsAccountPageProps = {
   params: Promise<{ id: string }>;
@@ -9,16 +10,27 @@ type SessionMaterialsAccountPageProps = {
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Account-authorized materials page for /sessions/[id]/materials.
+ *
+ * Access is validated by userId relation (no joinToken required or exposed).
+ * The joinToken is resolved server-side only and never appears in:
+ *   - browser URL / history
+ *   - HTTP Location / Redirect header
+ *   - HTML response body / client props
+ *
+ * Guest access continues through /join/[joinToken] unchanged.
+ */
 export default async function SessionMaterialsAccountPage({
   params,
 }: SessionMaterialsAccountPageProps) {
   const { id } = await params;
   const user = await requireActiveUser(`/sessions/${id}/materials`);
-  const joinToken = await resolveJoinTokenForAccountSession(id, user);
+  const data = await getAccountMaterialsData(id, user);
 
-  if (!joinToken) {
+  if (!data) {
     notFound();
   }
 
-  redirect(`/join/${joinToken}`);
+  return <AccountSessionMaterialsView {...data} />;
 }

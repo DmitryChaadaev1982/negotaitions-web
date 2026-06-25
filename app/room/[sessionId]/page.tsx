@@ -45,6 +45,13 @@ export default async function RoomPage({
       );
     }
 
+    // KNOWN REMAINING EXPOSURE (Phase 4.1 doc): accountJoinToken is server-resolved
+    // from userId relation and never appears in the browser URL. However, VideoRoomPage
+    // is a "use client" component that receives joinToken as a prop, so it will be
+    // present in Next.js serialized page HTML (__NEXT_DATA__). A full elimination
+    // requires refactoring VideoRoomPage and all LiveKit/control/presence APIs to
+    // use account-based auth rather than joinToken. Planned for Phase 5.
+    // Improvement vs pre-Phase-4: URL is tokenless; token is one indirection from DB.
     return <VideoRoomPage sessionId={sessionId} joinToken={accountJoinToken} />;
   }
 

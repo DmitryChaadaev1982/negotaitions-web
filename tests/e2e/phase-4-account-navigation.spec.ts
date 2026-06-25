@@ -166,4 +166,141 @@ test.describe("Phase 4 account dashboard and tokenless navigation", () => {
     });
     expect(response.status()).toBe(403);
   });
+
+  // ── Phase 4.1 — Materials token-leakage patch ──────────────────────────────
+
+  test("account materials page does not redirect to joinToken URL", async ({ request }) => {
+    // NOTE: Playwright webServer is not auto-started; this test requires a
+    // manually running dev/preview server. Run: npm run dev
+    // The test validates HTTP behaviour, not a browser render.
+    const resp = await request.get(`/sessions/${sessionId}/materials`, {
+      headers: { Cookie: hostCookie },
+      maxRedirects: 0,
+    });
+    // Must not redirect to /join/... (which would expose joinToken)
+    if (resp.status() === 307 || resp.status() === 302 || resp.status() === 301) {
+      const location = resp.headers()["location"] ?? "";
+      expect(location).not.toContain(joinToken);
+      expect(location).not.toContain("/join/");
+    }
+    // If page renders (200), joinToken must not appear in HTML
+    if (resp.status() === 200) {
+      const html = await resp.text();
+      expect(html).not.toContain(joinToken);
+    }
+  });
+
+  test("account materials page for unrelated active user is denied (404/403)", async ({ request }) => {
+    const resp = await request.get(`/sessions/${sessionId}/materials`, {
+      headers: { Cookie: userBCookie },
+    });
+    // Unrelated user has no participant row — should 404 (notFound()) or 403
+    expect([403, 404]).toContain(resp.status());
+  });
+
+  test("guest materials with joinToken still works", async ({ request }) => {
+    const resp = await request.get(`/join/${joinToken}`);
+    expect(resp.status()).toBe(200);
+    const html = await resp.text();
+    // Guest join page renders (join token is expected in the path here, not leaking)
+    expect(html.length).toBeGreaterThan(100);
+  });
+
+  test("account room page does not expose joinToken in URL", async ({ request }) => {
+    const resp = await request.get(`/room/${sessionId}`, {
+      headers: { Cookie: hostCookie },
+      maxRedirects: 0,
+    });
+    // If there's a redirect, the Location must not contain joinToken
+    if (resp.status() === 307 || resp.status() === 302 || resp.status() === 301) {
+      const location = resp.headers()["location"] ?? "";
+      expect(location).not.toContain(joinToken);
+      expect(location).not.toContain("joinToken=");
+    }
+    // URL itself must not contain joinToken (no query-param token in account mode)
+    // Room renders normally for related user
+    expect([200, 307]).toContain(resp.status());
+  });
+
+  test("rejoin chooser links contain no tokens", async ({ request }) => {
+    // Add a second active session so multiple room targets exist for host
+    const sessionId2 = uid("sess2");
+    const joinToken2 = `phase4-join2-${Date.now()}`;
+    await query(
+      `INSERT INTO "Session"
+        ("id", "negotiationCaseId", "facilitatorId", "eventId", "title", "snapshotCaseTitle",
+         "snapshotCaseLanguage", "preparationDurationSeconds", "durationSeconds", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'E2E Phase 4 Session 2', 'E2E Phase 4 Case', 'EN', 300, 900, NOW())`,
+      [sessionId2, (await query<{id:string}>(`SELECT id FROM "NegotiationCase" LIMIT 1`))[0]!.id,
+       (await query<{id:string}>(`SELECT id FROM "User" WHERE email='host@phase4.negotaitions'`))[0]!.id,
+       eventId],
+    );
+    const hostEventParticipantId2 = uid("ep2");
+    await query(
+      `INSERT INTO "EventParticipant"
+        ("id", "eventId", "userId", "displayName", "participantToken", "preference",
+         "isHost", "wantsToPlay", "wantsToObserve", "wantsToFacilitate", "joinedAt", "lastSeenAt", "updatedAt")
+       VALUES ($1, $2, $3, 'Phase4 Host 2', $4, 'FACILITATE', false, false, false, true, NOW(), NOW(), NOW())`,
+      [hostEventParticipantId2, eventId,
+       (await query<{id:string}>(`SELECT id FROM "User" WHERE email='host@phase4.negotaitions'`))[0]!.id,
+       `phase4-pt2-${Date.now()}`],
+    );
+    await query(
+      `INSERT INTO "SessionParticipant"
+        ("id", "sessionId", "userId", "eventParticipantId", "type", "joinToken", "displayName", "notes", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'FACILITATOR', $5, 'Phase4 Host', '', NOW())`,
+      [uid("sp2"), sessionId2,
+       (await query<{id:string}>(`SELECT id FROM "User" WHERE email='host@phase4.negotaitions'`))[0]!.id,
+       hostEventParticipantId2, joinToken2],
+    );
+
+    const resp = await request.get("/rejoin", {
+      headers: { Cookie: hostCookie },
+      maxRedirects: 0,
+    });
+    // With multiple active sessions, rejoin renders chooser (200) or redirects (307)
+    if (resp.status() === 200) {
+      const html = await resp.text();
+      // Chooser links must be tokenless (/room/[id] only)
+      expect(html).not.toContain("joinToken");
+      expect(html).not.toContain(joinToken);
+      expect(html).not.toContain(joinToken2);
+      expect(html).not.toContain(hostToken);
+      expect(html).not.toContain(participantToken);
+    }
+    // If single redirect, Location must not contain tokens
+    if (resp.status() === 307) {
+      const location = resp.headers()["location"] ?? "";
+      expect(location).not.toContain("joinToken");
+      expect(location).not.toContain(joinToken);
+    }
+
+    // Cleanup second session
+    await query(`DELETE FROM "SessionParticipant" WHERE "sessionId" = $1`, [sessionId2]);
+    await query(`DELETE FROM "Session" WHERE "id" = $1`, [sessionId2]);
+    await query(`DELETE FROM "EventParticipant" WHERE "id" = $1`, [hostEventParticipantId2]);
+  });
+
+  test("pending user cannot use /rejoin to bypass approval", async ({ request }) => {
+    // Already covered above but re-assert explicitly
+    const resp = await request.get("/rejoin", {
+      headers: { Cookie: pendingCookie },
+      maxRedirects: 0,
+    });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/pending-approval");
+  });
+
+  test("dashboard/events/sessions HTML contains no token strings", async ({ request }) => {
+    for (const path of ["/dashboard", "/events", "/sessions"]) {
+      const resp = await request.get(path, { headers: { Cookie: hostCookie } });
+      expect(resp.status()).toBe(200);
+      const html = await resp.text();
+      expect(html).not.toContain(hostToken);
+      expect(html).not.toContain(participantToken);
+      expect(html).not.toContain(joinToken);
+      expect(html).not.toContain("facilitatorJoinToken");
+      expect(html).not.toContain("hostParticipantToken");
+    }
+  });
 });

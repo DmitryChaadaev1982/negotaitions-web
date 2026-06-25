@@ -444,6 +444,55 @@ export async function saveParticipantNotes(
   return { success: true, notes };
 }
 
+/**
+ * Account-authenticated notes save for the /sessions/[id]/materials route.
+ *
+ * Uses participantId (a non-secret DB record id) instead of joinToken so that
+ * joinToken never appears in HTML props or form hidden fields for account users.
+ */
+export async function saveAccountParticipantNotes(
+  _prevState: SaveParticipantNotesState,
+  formData: FormData,
+): Promise<SaveParticipantNotesState> {
+  const user = await requireActiveUser();
+
+  const participantId = String(formData.get("participantId") ?? "").trim();
+  const notes = String(formData.get("notes") ?? "");
+
+  if (!participantId) {
+    return { errors: { form: ["invalidRequest"] } };
+  }
+
+  const isAdminUser = (await import("@/lib/auth/admin")).isAdmin(user);
+
+  const participant = await prisma.sessionParticipant.findFirst({
+    where: isAdminUser
+      ? { id: participantId }
+      : { id: participantId, userId: user.id },
+    select: {
+      id: true,
+      sessionId: true,
+      session: { select: { deletedAt: true } },
+    },
+  });
+
+  if (!participant) {
+    return { errors: { form: ["invalidRequest"] } };
+  }
+
+  if (participant.session.deletedAt) {
+    return { errors: { form: ["Session has been deleted."] } };
+  }
+
+  await prisma.sessionParticipant.update({
+    where: { id: participantId },
+    data: { notes },
+  });
+
+  revalidatePath(`/sessions/${participant.sessionId}/materials`);
+  return { success: true, notes };
+}
+
 export async function recordParticipantPresence(joinToken: string) {
   const sessionId = await updateParticipantPresence(joinToken);
 
