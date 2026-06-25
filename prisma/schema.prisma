@@ -158,6 +158,9 @@ model User {
   // Account status: "PENDING_APPROVAL" | "ACTIVE" | "REJECTED" | "BLOCKED"
   status       String   @default("PENDING_APPROVAL")
 
+  // UI language preference: "ru" | "en"
+  preferredLocale  String    @default("ru")
+
   lastLoginAt      DateTime?
   approvedAt       DateTime?
   approvedByUserId String?

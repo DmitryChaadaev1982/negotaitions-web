@@ -7,9 +7,10 @@ import { Suspense } from "react";
 
 import { registerUser } from "@/app/actions/auth";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 function RegisterForm() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const searchParams = useSearchParams();
   const returnUrl = searchParams.get("returnUrl") ?? "";
 
@@ -17,6 +18,10 @@ function RegisterForm() {
 
   return (
     <div className="w-full max-w-sm">
+      <div className="mb-6 flex justify-end">
+        <LanguageSwitcher />
+      </div>
+
       <div className="mb-8 text-center">
         <h1 className="text-2xl font-bold text-slate-50 mb-1">
           {t("auth.registerTitle")}
@@ -118,6 +123,26 @@ function RegisterForm() {
               ) ?? state.errors.confirmPassword[0]}
             </p>
           )}
+        </div>
+
+        {/* Preferred locale */}
+        <div>
+          <label
+            htmlFor="preferredLocale"
+            className="block text-sm font-medium text-slate-300 mb-1.5"
+          >
+            {t("auth.preferredLocale")}
+          </label>
+          <select
+            id="preferredLocale"
+            name="preferredLocale"
+            defaultValue={locale}
+            data-testid="preferred-locale-select"
+            className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
+          >
+            <option value="ru">{t("auth.preferredLocaleRu")}</option>
+            <option value="en">{t("auth.preferredLocaleEn")}</option>
+          </select>
         </div>
 
         {/* Legal consent checkboxes */}

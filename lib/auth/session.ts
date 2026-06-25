@@ -16,6 +16,7 @@ export type AuthUser = {
   name: string | null;
   globalRole: string;
   status: string;
+  preferredLocale: string;
 };
 
 export async function createUserSession(
@@ -80,6 +81,7 @@ export async function getOptionalCurrentUser(): Promise<AuthUser | null> {
           name: true,
           globalRole: true,
           status: true,
+          preferredLocale: true,
         },
       },
     },

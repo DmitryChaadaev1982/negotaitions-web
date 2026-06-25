@@ -127,3 +127,158 @@ test("live smoke tests are skipped by default", async () => {
   );
 });
 
+// ── Phase 6.2 i18n and language preference tests ─────────────────────────────
+
+test.describe("Phase 6.2 — Language switcher on auth pages", () => {
+  test("/register has visible language switcher", async ({ page }) => {
+    await page.goto("/register");
+    const switcher = page.locator('[data-testid="language-switch-ru"], [data-testid="language-switch-en"]').first();
+    await expect(switcher).toBeVisible();
+  });
+
+  test("/login has visible language switcher", async ({ page }) => {
+    await page.goto("/login");
+    const switcher = page.locator('[data-testid="language-switch-ru"], [data-testid="language-switch-en"]').first();
+    await expect(switcher).toBeVisible();
+  });
+
+  test("/register can switch RU/EN before login — labels change", async ({ page }) => {
+    await page.goto("/register");
+
+    await page.getByTestId("language-switch-en").click();
+    await expect(page.getByText("Create account")).toBeVisible();
+
+    await page.getByTestId("language-switch-ru").click();
+    await expect(page.getByText("Создать аккаунт")).toBeVisible();
+  });
+
+  test("/register has preferred language selector", async ({ page }) => {
+    await page.goto("/register");
+    const select = page.getByTestId("preferred-locale-select");
+    await expect(select).toBeVisible();
+    // Should have ru and en options
+    await expect(select.locator("option[value='ru']")).toHaveCount(1);
+    await expect(select.locator("option[value='en']")).toHaveCount(1);
+  });
+});
+
+test.describe("Phase 6.2 — Language switcher on legal pages", () => {
+  const legalPaths = [
+    "/privacy",
+    "/terms",
+    "/cookie-policy",
+    "/data-processing-consent",
+    "/ai-processing-notice",
+  ];
+
+  for (const path of legalPaths) {
+    test(`${path} has visible language switcher`, async ({ page }) => {
+      await page.goto(path);
+      const switcher = page.locator('[data-testid="language-switch-ru"], [data-testid="language-switch-en"]').first();
+      await expect(switcher).toBeVisible();
+    });
+  }
+
+  test("/privacy renders RU content when locale is ru", async ({ page }) => {
+    await page.evaluate(() => {
+      document.cookie = "negotaitions_locale=ru;path=/";
+    });
+    await page.goto("/privacy");
+    await expect(page.getByText("Политика конфиденциальности")).toBeVisible();
+  });
+
+  test("/privacy renders EN content when locale is en", async ({ page }) => {
+    await page.evaluate(() => {
+      document.cookie = "negotaitions_locale=en;path=/";
+    });
+    await page.goto("/privacy");
+    await expect(page.getByText("Privacy Policy")).toBeVisible();
+  });
+});
+
+test.describe("Phase 6.2 — i18n consent modals have RU/EN text (static validation)", () => {
+  test("Recording consent modal keys exist in both EN and RU dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.legal.recordingConsentTitle).toBeTruthy();
+    expect(en.legal.recordingConsentText).toBeTruthy();
+    expect(en.legal.recordingConsentConfirm).toBeTruthy();
+    expect(ru.legal.recordingConsentTitle).toBeTruthy();
+    expect(ru.legal.recordingConsentText).toBeTruthy();
+    expect(ru.legal.recordingConsentConfirm).toBeTruthy();
+  });
+
+  test("AI processing warning keys exist in both EN and RU dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.legal.aiAnalysisWarningTitle).toBeTruthy();
+    expect(en.legal.aiAnalysisWarningText).toBeTruthy();
+    expect(ru.legal.aiAnalysisWarningTitle).toBeTruthy();
+    expect(ru.legal.aiAnalysisWarningText).toBeTruthy();
+  });
+
+  test("Share debrief warning keys exist in both EN and RU dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.legal.shareDebriefWarningTitle).toBeTruthy();
+    expect(en.legal.shareDebriefWarningText).toBeTruthy();
+    expect(ru.legal.shareDebriefWarningTitle).toBeTruthy();
+    expect(ru.legal.shareDebriefWarningText).toBeTruthy();
+  });
+
+  test("Case data warning and materials retention notice keys exist in both dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.legal.caseDataWarning).toBeTruthy();
+    expect(en.legal.materialsRetentionNotice).toBeTruthy();
+    expect(en.legal.privateRoleDataWarning).toBeTruthy();
+    expect(ru.legal.caseDataWarning).toBeTruthy();
+    expect(ru.legal.materialsRetentionNotice).toBeTruthy();
+    expect(ru.legal.privateRoleDataWarning).toBeTruthy();
+  });
+
+  test("preferredLocale registration keys exist in both EN and RU dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.auth.preferredLocale).toBeTruthy();
+    expect(en.auth.preferredLocaleRu).toBeTruthy();
+    expect(en.auth.preferredLocaleEn).toBeTruthy();
+    expect(ru.auth.preferredLocale).toBeTruthy();
+    expect(ru.auth.preferredLocaleRu).toBeTruthy();
+    expect(ru.auth.preferredLocaleEn).toBeTruthy();
+  });
+
+  test("Cookie banner keys exist in both dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    expect(en.legal.cookieBannerText).toBeTruthy();
+    expect(en.legal.acceptAll).toBeTruthy();
+    expect(en.legal.rejectOptional).toBeTruthy();
+    expect(ru.legal.cookieBannerText).toBeTruthy();
+    expect(ru.legal.acceptAll).toBeTruthy();
+    expect(ru.legal.rejectOptional).toBeTruthy();
+  });
+
+  test("Auth pages (login/register/pending/rejected/blocked) keys exist in both dictionaries", async () => {
+    const { en } = await import("../../lib/i18n/dictionaries/en");
+    const { ru } = await import("../../lib/i18n/dictionaries/ru");
+
+    const authKeys = [
+      "loginTitle", "loginSubtitle", "registerTitle", "registerSubtitle",
+      "pendingTitle", "pendingMessage", "rejectedTitle", "rejectedMessage",
+      "blockedTitle", "blockedMessage",
+    ] as const;
+
+    for (const key of authKeys) {
+      expect(en.auth[key], `EN missing auth.${key}`).toBeTruthy();
+      expect(ru.auth[key], `RU missing auth.${key}`).toBeTruthy();
+    }
+  });
+});
+

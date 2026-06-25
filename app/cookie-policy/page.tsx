@@ -4,6 +4,7 @@ import Link from "next/link";
 import { getServerLocale } from "@/lib/i18n/server";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { CookieSettingsButton } from "@/components/cookie-banner";
+import { LegalPageLanguageSwitcher } from "@/components/legal-page-language-switcher";
 
 export const metadata: Metadata = {
   title: "Cookie Policy",
@@ -17,6 +18,8 @@ export default async function CookiePolicyPage() {
   return (
     <div className="min-h-screen bg-[#020617]">
       <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+        <LegalPageLanguageSwitcher />
+
         <div className="mb-8 rounded-lg border border-amber-500/40 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
           ⚠️ {d.legal.draftNotice}
         </div>

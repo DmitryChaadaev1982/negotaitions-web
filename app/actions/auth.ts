@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 import crypto from "crypto";
 
 import { prisma } from "@/lib/prisma";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import { isAdmin, parseAdminEmails } from "@/lib/auth/admin";
 import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
+import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
 
 type ActionResult = {
   errors?: Record<string, string[]>;
@@ -28,6 +29,8 @@ export async function registerUser(
   const rawEmail = String(formData.get("email") ?? "").trim();
   const rawPassword = String(formData.get("password") ?? "");
   const rawConfirm = String(formData.get("confirmPassword") ?? "");
+  const rawLocale = String(formData.get("preferredLocale") ?? "ru").trim();
+  const preferredLocale = isLocale(rawLocale) ? rawLocale : "ru";
 
   const consentTermsPrivacy = formData.get("consentTermsPrivacy") === "1";
   const consentMvpDataLimitation = formData.get("consentMvpDataLimitation") === "1";
@@ -87,6 +90,7 @@ export async function registerUser(
           passwordHash,
           globalRole,
           status,
+          preferredLocale,
           lastLoginAt: now,
           ...(isAdminEmail ? { approvedAt: now } : {}),
         },
@@ -125,6 +129,15 @@ export async function registerUser(
     });
 
     await createUserSession(user.id, { userAgent });
+
+    // Persist chosen locale in cookie so pages render in the user's language immediately.
+    const cookieStore = await cookies();
+    cookieStore.set(LOCALE_COOKIE_NAME, preferredLocale, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+      sameSite: "lax",
+      httpOnly: false,
+    });
   } catch {
     return { errors: { form: ["auth.registerFailed"] } };
   }
@@ -185,6 +198,18 @@ export async function loginUser(
     userAgent: headersList.get("user-agent") ?? undefined,
   });
 
+  // Sync locale cookie to user's saved preferredLocale so pages render immediately in their language.
+  const userLocale = (user as Record<string, unknown>).preferredLocale;
+  if (typeof userLocale === "string" && isLocale(userLocale)) {
+    const cookieStore = await cookies();
+    cookieStore.set(LOCALE_COOKIE_NAME, userLocale, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+      sameSite: "lax",
+      httpOnly: false,
+    });
+  }
+
   if (isAdmin(user)) {
     redirect(isSafeReturnUrl(returnUrl) ? returnUrl : "/dashboard");
   }
@@ -217,4 +242,29 @@ function isSafeReturnUrl(url: string): boolean {
 
 export async function getCurrentUserForHeader() {
   return getOptionalCurrentUser();
+}
+
+/**
+ * Update the logged-in user's preferredLocale.
+ * Called when the user switches language while authenticated.
+ * Also updates the locale cookie for immediate effect.
+ */
+export async function updateUserPreferredLocale(locale: string): Promise<void> {
+  if (!isLocale(locale)) return;
+
+  const user = await getOptionalCurrentUser();
+  if (!user) return;
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { preferredLocale: locale },
+  });
+
+  const cookieStore = await cookies();
+  cookieStore.set(LOCALE_COOKIE_NAME, locale, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: "lax",
+    httpOnly: false,
+  });
 }

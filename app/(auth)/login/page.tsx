@@ -7,6 +7,7 @@ import { Suspense } from "react";
 
 import { loginUser } from "@/app/actions/auth";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 function LoginForm() {
   const { t } = useI18n();
@@ -19,6 +20,10 @@ function LoginForm() {
 
   return (
     <div className="w-full max-w-sm">
+      <div className="mb-6 flex justify-end">
+        <LanguageSwitcher />
+      </div>
+
       <div className="mb-8 text-center">
         <h1 className="text-2xl font-bold text-slate-50 mb-1">
           {t("auth.loginTitle")}

@@ -145,17 +145,18 @@ type PrivacyFixture = {
 
 async function createPrivacyTestSession(): Promise<PrivacyFixture> {
   const facilitator = await ensureDemoFacilitatorForPrivacy();
+  const negotiationCaseId = await createPrivacyNegotiationCase(facilitator.id);
   const sessionId = uid("session");
 
   await query(
     `INSERT INTO "Session"
-       ("id", "facilitatorId", "title", "snapshotCaseTitle",
+       ("id", "negotiationCaseId", "facilitatorId", "title", "snapshotCaseTitle",
         "snapshotBusinessContext", "snapshotPublicInstructions", "snapshotCaseLanguage",
         "preparationDurationSeconds", "durationSeconds", "updatedAt")
-     VALUES ($1, $2, 'E2E Phase5 Privacy Session', 'E2E Privacy Case',
+     VALUES ($1, $2, $3, 'E2E Phase5 Privacy Session', 'E2E Privacy Case',
         'E2E public business context', 'E2E public instructions', 'EN',
         300, 900, NOW())`,
-    [sessionId, facilitator.id],
+    [sessionId, negotiationCaseId, facilitator.id],
   );
 
   const roleAId = uid("role");
@@ -227,9 +228,9 @@ async function createPrivacyTestSession(): Promise<PrivacyFixture> {
 
 async function ensureDemoFacilitatorForPrivacy() {
   await query(
-    `INSERT INTO "User" ("id", "email", "passwordHash", "name", "role", "updatedAt")
-     VALUES ($1, 'demo@example.com', 'hash', 'Demo Facilitator', 'FACILITATOR', NOW())
-     ON CONFLICT ("email") DO UPDATE SET "role" = 'FACILITATOR', "updatedAt" = NOW()`,
+    `INSERT INTO "User" ("id", "email", "passwordHash", "name", "role", "globalRole", "status", "updatedAt")
+     VALUES ($1, 'demo@example.com', 'hash', 'Demo Facilitator', 'FACILITATOR', 'USER', 'ACTIVE', NOW())
+     ON CONFLICT ("email") DO UPDATE SET "role" = 'FACILITATOR', "globalRole" = 'USER', "status" = 'ACTIVE', "updatedAt" = NOW()`,
     [uid("user")],
   );
   return (
@@ -237,8 +238,24 @@ async function ensureDemoFacilitatorForPrivacy() {
   )[0]!;
 }
 
+async function createPrivacyNegotiationCase(facilitatorId: string): Promise<string> {
+  const caseId = uid("case");
+  await query(
+    `INSERT INTO "NegotiationCase"
+       ("id", "facilitatorId", "title", "description", "businessContext",
+        "publicInstructions", "targetSkills", "difficulty", "caseLanguage",
+        "defaultPreparationDurationSeconds", "defaultDurationSeconds", "updatedAt")
+     VALUES ($1, $2, 'E2E Phase5 Privacy Case', 'E2E description',
+        'E2E business context', 'E2E public instructions', 'Negotiation', 'MEDIUM', 'EN',
+        300, 900, NOW())`,
+    [caseId, facilitatorId],
+  );
+  return caseId;
+}
+
 async function cleanupPrivacyTestData() {
   await query(`DELETE FROM "Session" WHERE "title" LIKE '%E2E Phase5%'`);
+  await query(`DELETE FROM "NegotiationCase" WHERE "title" LIKE '%E2E Phase5%'`);
   await query(`DELETE FROM "User" WHERE "email" LIKE '%@phase5-privacy%'`);
 }
 
@@ -1010,8 +1027,8 @@ async function createPendingUser(email: string) {
   await query(
     `INSERT INTO "User"
        ("id", "email", "passwordHash", "name", "role", "globalRole", "status", "updatedAt")
-     VALUES ($1, $2, 'hash', 'Pending User', 'PARTICIPANT', 'USER', 'PENDING', NOW())
-     ON CONFLICT ("email") DO UPDATE SET "status" = 'PENDING', "updatedAt" = NOW()`,
+     VALUES ($1, $2, 'hash', 'Pending User', 'PARTICIPANT', 'USER', 'PENDING_APPROVAL', NOW())
+     ON CONFLICT ("email") DO UPDATE SET "status" = 'PENDING_APPROVAL', "updatedAt" = NOW()`,
     [userId, email],
   );
   const rows = await query<{ id: string }>(

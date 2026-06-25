@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 
-import { logoutUser } from "@/app/actions/auth";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { StatusPageNav } from "@/components/status-page-nav";
+import { getServerLocale } from "@/lib/i18n/server";
+import { getDictionary } from "@/lib/i18n/dictionaries";
 
 export const dynamic = "force-dynamic";
 
@@ -26,22 +28,15 @@ export default async function PendingApprovalPage() {
     redirect("/account/blocked");
   }
 
+  const locale = await getServerLocale();
+  const d = getDictionary(locale);
+
   return (
     <div className="min-h-full flex flex-col">
       <header className="glass-header sticky top-0 z-50">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
           <BrandLogo size="md" href="/" />
-          <div className="flex items-center gap-4 text-sm text-slate-400">
-            <span>{user.email}</span>
-            <form action={logoutUser}>
-              <button
-                type="submit"
-                className="text-slate-400 hover:text-slate-100 transition-colors"
-              >
-                Log out
-              </button>
-            </form>
-          </div>
+          <StatusPageNav email={user.email} />
         </div>
       </header>
 
@@ -64,42 +59,31 @@ export default async function PendingApprovalPage() {
           </div>
 
           <h1 className="text-2xl font-bold text-slate-50 mb-3">
-            Account pending approval
+            {d.auth.pendingTitle}
           </h1>
           <p className="text-slate-400 mb-8">
-            Your account is waiting for administrator approval.
-            <br />
-            You will be able to use NegotAItions after approval.
+            {d.auth.pendingMessage}
           </p>
 
           <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 p-5 text-left space-y-3 mb-8">
             {user.name && (
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Name</span>
+                <span className="text-slate-400">{d.auth.pendingName}</span>
                 <span className="text-slate-200 font-medium">{user.name}</span>
               </div>
             )}
             <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Email</span>
+              <span className="text-slate-400">{d.auth.pendingEmail}</span>
               <span className="text-slate-200 font-medium">{user.email}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Status</span>
+              <span className="text-slate-400">{d.auth.pendingStatus}</span>
               <span className="inline-flex items-center gap-1.5 text-amber-400 font-medium">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                Pending approval
+                {d.auth.pendingStatusLabel}
               </span>
             </div>
           </div>
-
-          <form action={logoutUser}>
-            <button
-              type="submit"
-              className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
-            >
-              Log out
-            </button>
-          </form>
         </div>
       </main>
     </div>
