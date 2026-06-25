@@ -111,7 +111,7 @@ Tokens are generated with `nanoid(21)` via `lib/join-token.ts` → `lib/event-to
 | `POST /api/events/[id]/complete` | hostToken | hostToken | Completion result | Completes event | Medium | hostUserId or hostToken |
 | `POST /api/events/[id]/heartbeat` | Token | host/participant | ok | Presence | Low | + user |
 | `POST /api/events/[id]/livekit-token` | Token | host/participant | LiveKit JWT | — | Medium | + user |
-| `GET /api/events/overview` | **Public** | — | Event stats for all events | — | High | Auth + filter |
+| `GET /api/events/overview` | **Auth (ACTIVE user or admin)** | — | User-scoped event stats (admin sees all) | — | ~~High~~ **Fixed** | ✅ `apiRequireActiveUser` + `getEventOverviewStatsForUser(user)` |
 | `POST /api/sessions/[id]/control` | joinToken (facilitator) | joinToken | Control state | Negotiation control | Low | Keep + user |
 | `GET /api/sessions/[id]/control-state` | joinToken | joinToken | Control state | Auto-finish side effects | Medium | Keep + user |
 | `GET /api/sessions/[id]/materials/status` | joinToken | joinToken | Recording, **full transcript**, AI (filtered) | — | High | Role-based transcript/AI |
@@ -129,7 +129,7 @@ Tokens are generated with `nanoid(21)` via `lib/join-token.ts` → `lib/event-to
 | `GET .../participants/[id]/notes` | joinToken **or unprotected** | joinToken optional | Notes | — | Critical | Require token or auth |
 | `GET .../presence` | **Unprotected** | — | Presence | — | High | Auth |
 | `GET .../display-status` | **Unprotected** | — | Status | — | Medium | Auth |
-| `GET /api/sessions/overview` | **Public** | — | Session stats | — | High | Auth |
+| `GET /api/sessions/overview` | **Auth (ACTIVE user or admin)** | — | User-scoped session stats (admin sees all) | — | ~~High~~ **Fixed** | ✅ `apiRequireActiveUser` + `getSessionOverviewStatsForUser(user)` |
 | `GET /api/admin/health` | **Unprotected** | — | Config flags, **ExternalServiceEvents**, usage | — | Critical | Admin only |
 | `GET /api/admin/*` | **Unprotected** | — | Health checks | — | Critical | Admin only |
 | Server actions `cases.ts` | Implicit demo facilitator | — | — | CRUD cases | High | Auth |
@@ -513,7 +513,7 @@ Allowed if: admin OR `SessionParticipant.userId` OR valid `joinToken` OR host/fa
 ### High
 
 6. Facilitator notes API without joinToken — `GET /api/sessions/[id]/notes`
-7. Events/sessions overview APIs public
+7. ~~Events/sessions overview APIs public~~ **Fixed (Phase 1.1+)** — both APIs guarded with `apiRequireActiveUser`, user-scoped, no tokens in response
 8. Token = bearer secret for all session data
 9. All events visible on `/events`
 
