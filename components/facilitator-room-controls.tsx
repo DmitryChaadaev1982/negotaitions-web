@@ -14,6 +14,70 @@ import {
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useCallback, useState } from "react";
 
+/** Modal that gates the start-negotiation action behind recording consent. */
+function RecordingConsentModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="recording-consent-modal"
+    >
+      <div
+        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("legal.recordingConsentTitle")}
+        </h2>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+              data-testid="recording-consent-checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm text-amber-100 leading-relaxed">
+              {t("legal.recordingConsentText")}
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!checked}
+            onClick={onConfirm}
+            data-testid="recording-consent-confirm"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {t("legal.recordingConsentConfirm")}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            data-testid="recording-consent-cancel"
+            className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
+          >
+            {t("legal.recordingConsentCancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type FacilitatorRoomControlsProps = {
   sessionId: string;
   roomAuth: RoomAuthToken;
@@ -176,6 +240,8 @@ export function FacilitatorRoomControls({
   const { t } = useI18n();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
+  const [showRecordingConsent, setShowRecordingConsent] = useState(false);
+  const [pendingStartAction, setPendingStartAction] = useState<ControlAction | null>(null);
 
   const runAction = useCallback(
     async (action: ControlAction) => {
@@ -216,6 +282,32 @@ export function FacilitatorRoomControls({
     [roomAuth, onControlStateChange, onRecordingStateChange, sessionId],
   );
 
+  /** For START action, show consent modal first. All other actions run directly. */
+  const requestAction = useCallback(
+    (action: ControlAction) => {
+      if (action === "START") {
+        setPendingStartAction(action);
+        setShowRecordingConsent(true);
+        return;
+      }
+      void runAction(action);
+    },
+    [runAction],
+  );
+
+  const handleRecordingConsentConfirm = useCallback(() => {
+    setShowRecordingConsent(false);
+    if (pendingStartAction) {
+      void runAction(pendingStartAction);
+      setPendingStartAction(null);
+    }
+  }, [pendingStartAction, runAction]);
+
+  const handleRecordingConsentCancel = useCallback(() => {
+    setShowRecordingConsent(false);
+    setPendingStartAction(null);
+  }, []);
+
   const { negotiationState } = controlState;
 
   const actionButtonClass =
@@ -234,6 +326,13 @@ export function FacilitatorRoomControls({
   }[negotiationState];
 
   return (
+    <>
+    {showRecordingConsent ? (
+      <RecordingConsentModal
+        onConfirm={handleRecordingConsentConfirm}
+        onCancel={handleRecordingConsentCancel}
+      />
+    ) : null}
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -287,7 +386,7 @@ export function FacilitatorRoomControls({
               type="button"
               data-testid="start-negotiation-button"
               disabled={isSubmitting}
-              onClick={() => void runAction("START")}
+              onClick={() => requestAction("START")}
               className={`${actionButtonClass} border border-slate-600 text-slate-200 hover:bg-slate-800`}
             >
               {t("room.startNegotiation")}
@@ -347,7 +446,7 @@ export function FacilitatorRoomControls({
           type="button"
           data-testid="start-negotiation-button"
           disabled={isSubmitting}
-          onClick={() => void runAction("START")}
+          onClick={() => requestAction("START")}
           className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
         >
           {t("room.startNegotiation")}
@@ -404,5 +503,6 @@ export function FacilitatorRoomControls({
         <p className="text-sm text-slate-400">{t("room.sessionCompleteDebrief")}</p>
       ) : null}
     </div>
+    </>
   );
 }

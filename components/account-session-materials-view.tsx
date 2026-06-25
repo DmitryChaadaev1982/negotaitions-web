@@ -303,6 +303,14 @@ export function AccountSessionMaterialsView({
         </GlassCardContent>
       </GlassCard>
 
+      {/* Session materials retention notice */}
+      <div
+        data-testid="materials-retention-notice"
+        className="rounded-lg border border-slate-700/40 bg-slate-800/30 px-4 py-3"
+      >
+        <p className="text-xs text-slate-400">{t("legal.materialsRetentionNotice")}</p>
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column — recording + transcript + notes */}
         <div className="space-y-6 lg:col-span-2">

@@ -120,6 +120,69 @@ function RegisterForm() {
           )}
         </div>
 
+        {/* Legal consent checkboxes */}
+        <div className="space-y-3 pt-1">
+          {/* Checkbox 1: Terms + Privacy */}
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              name="consentTermsPrivacy"
+              value="1"
+              required
+              data-testid="consent-terms-privacy"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-xs text-slate-300 leading-relaxed">
+              {t("legal.consentTermsPrivacy").replace("Terms of Use", "").replace("Privacy Policy", "").split("and")[0]}
+              <Link href="/terms" target="_blank" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                {t("legal.termsOfUse")}
+              </Link>
+              {" "}{t("auth.alreadyHaveAccount").includes("?") ? "and" : "и"}{" "}
+              <Link href="/privacy" target="_blank" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                {t("legal.privacyPolicy")}
+              </Link>
+              .
+            </span>
+          </label>
+
+          {/* Checkbox 2: MVP data limitation */}
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              name="consentMvpDataLimitation"
+              value="1"
+              required
+              data-testid="consent-mvp-data-limitation"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-xs text-slate-300 leading-relaxed">
+              {t("legal.consentMvpDataLimitation")}
+            </span>
+          </label>
+
+          {/* Checkbox 3: External infrastructure */}
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              name="consentExternalInfrastructure"
+              value="1"
+              required
+              data-testid="consent-external-infrastructure"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-xs text-slate-300 leading-relaxed">
+              {t("legal.consentExternalInfrastructure")}
+            </span>
+          </label>
+        </div>
+
+        {state.errors?.consents && (
+          <p className="text-sm text-red-400 rounded-lg bg-red-950/40 border border-red-800/50 px-3 py-2">
+            {t(state.errors.consents[0] as Parameters<typeof t>[0]) ??
+              state.errors.consents[0]}
+          </p>
+        )}
+
         {state.errors?.form && (
           <p className="text-sm text-red-400 rounded-lg bg-red-950/40 border border-red-800/50 px-3 py-2">
             {t(state.errors.form[0] as Parameters<typeof t>[0]) ??

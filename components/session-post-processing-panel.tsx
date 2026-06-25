@@ -178,6 +178,8 @@ export function SessionPostProcessingPanel({
   const [sharingBusy, setSharingBusy] = useState(false);
   const [unsharingBusy, setUnsharingBusy] = useState(false);
   const [transcriptCollapsed, setTranscriptCollapsed] = useState(false);
+  const [aiWarningOpen, setAiWarningOpen] = useState(false);
+  const [shareWarningOpen, setShareWarningOpen] = useState(false);
 
   const mountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
@@ -299,7 +301,8 @@ export function SessionPostProcessingPanel({
     }
   }, [transcriptionDoneForCollapse, isSidebar]);
 
-  const handleRunAiAnalysis = async () => {
+  const handleRunAiAnalysisConfirmed = async () => {
+    setAiWarningOpen(false);
     setAiBusy(true);
     setAiError(null);
     setSpeakerMappingBlockingAi(false);
@@ -326,7 +329,12 @@ export function SessionPostProcessingPanel({
     }
   };
 
-  const handleShareAnalysis = async () => {
+  const handleRunAiAnalysis = () => {
+    setAiWarningOpen(true);
+  };
+
+  const handleShareAnalysisConfirmed = async () => {
+    setShareWarningOpen(false);
     setSharingBusy(true);
     try {
       await fetch(`/api/sessions/${sessionId}/ai-analysis/share`, {
@@ -338,6 +346,10 @@ export function SessionPostProcessingPanel({
     } finally {
       setSharingBusy(false);
     }
+  };
+
+  const handleShareAnalysis = () => {
+    setShareWarningOpen(true);
   };
 
   const handleUnshareAnalysis = async () => {
@@ -774,8 +786,25 @@ export function SessionPostProcessingPanel({
     </Card>
   ) : null;
 
+  const aiWarningModal = aiWarningOpen ? (
+    <AiProcessingWarningModal
+      onConfirm={() => void handleRunAiAnalysisConfirmed()}
+      onCancel={() => setAiWarningOpen(false)}
+    />
+  ) : null;
+
+  const shareWarningModal = shareWarningOpen ? (
+    <ShareDebriefWarningModal
+      onConfirm={() => void handleShareAnalysisConfirmed()}
+      onCancel={() => setShareWarningOpen(false)}
+    />
+  ) : null;
+
   if (isSidebar) {
     return (
+      <>
+        {aiWarningModal}
+        {shareWarningModal}
       <div className="space-y-4" data-testid="session-post-processing-panel">
         {sidebarStepsBar}
         {showTranscriptionSection ? (
@@ -820,10 +849,14 @@ export function SessionPostProcessingPanel({
         {aiContent}
         {navigationLinks}
       </div>
+      </>
     );
   }
 
   return (
+    <>
+      {aiWarningModal}
+      {shareWarningModal}
     <div className="space-y-6" data-testid="session-post-processing-panel">
       <Card>
         <CardHeader>
@@ -906,5 +939,131 @@ export function SessionPostProcessingPanel({
         </p>
       ) : null}
     </div>
+    </>
   );
 }
+
+// ── AI Processing Warning Modal ──────────────────────────────────────────────
+
+function AiProcessingWarningModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="ai-analysis-warning-modal"
+    >
+      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("legal.aiAnalysisWarningTitle")}
+        </h2>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+              data-testid="ai-analysis-consent-checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm text-amber-100 leading-relaxed">
+              {t("legal.aiAnalysisWarningText")}
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!checked}
+            onClick={onConfirm}
+            data-testid="ai-analysis-confirm"
+            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {t("legal.aiAnalysisConfirm")}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            data-testid="ai-analysis-cancel"
+            className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
+          >
+            {t("legal.aiAnalysisCancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Share Debrief Warning Modal ───────────────────────────────────────────────
+
+function ShareDebriefWarningModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="share-debrief-warning-modal"
+    >
+      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-700/60 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("legal.shareDebriefWarningTitle")}
+        </h2>
+        <div className="rounded-lg border border-slate-700/40 bg-slate-800/40 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+              data-testid="share-debrief-consent-checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm text-slate-200 leading-relaxed">
+              {t("legal.shareDebriefWarningText")}
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!checked}
+            onClick={onConfirm}
+            data-testid="share-debrief-confirm"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {t("legal.shareDebriefConfirm")}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            data-testid="share-debrief-cancel"
+            className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
+          >
+            {t("legal.shareDebriefCancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

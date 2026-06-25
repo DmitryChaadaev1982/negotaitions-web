@@ -88,6 +88,15 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
       {isEdit ? <input type="hidden" name="caseId" value={caseId} /> : null}
       <input type="hidden" name="roleCount" value={roles.length} />
 
+      {/* Data confidentiality warning */}
+      <div
+        data-testid="case-data-warning"
+        className="rounded-lg border border-amber-500/40 bg-amber-900/20 px-4 py-3 space-y-1"
+      >
+        <p className="text-sm font-medium text-amber-200">⚠️ {t("legal.caseDataWarning")}</p>
+        <p className="text-xs text-amber-300/80">{t("legal.caseDataWarningExamples")}</p>
+      </div>
+
       {state.errors?.form ? (
         <div className={alertErrorClassName}>
           {state.errors.form.map((message) => tv(message)).join(", ")}

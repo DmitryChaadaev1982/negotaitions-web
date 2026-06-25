@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import crypto from "crypto";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -13,6 +14,7 @@ import {
   getOptionalCurrentUser,
 } from "@/lib/auth";
 import { isAdmin, parseAdminEmails } from "@/lib/auth/admin";
+import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
 
 type ActionResult = {
   errors?: Record<string, string[]>;
@@ -27,6 +29,10 @@ export async function registerUser(
   const rawPassword = String(formData.get("password") ?? "");
   const rawConfirm = String(formData.get("confirmPassword") ?? "");
 
+  const consentTermsPrivacy = formData.get("consentTermsPrivacy") === "1";
+  const consentMvpDataLimitation = formData.get("consentMvpDataLimitation") === "1";
+  const consentExternalInfrastructure = formData.get("consentExternalInfrastructure") === "1";
+
   const errors: Record<string, string[]> = {};
 
   if (!rawName) errors.name = ["auth.nameRequired"];
@@ -38,6 +44,10 @@ export async function registerUser(
     errors.password = ["auth.passwordTooShort"];
   if (rawPassword && rawConfirm && rawPassword !== rawConfirm)
     errors.confirmPassword = ["auth.passwordMismatch"];
+
+  if (!consentTermsPrivacy || !consentMvpDataLimitation || !consentExternalInfrastructure) {
+    errors.consents = ["legal.consentRequired"];
+  }
 
   if (Object.keys(errors).length > 0) return { errors };
 
@@ -70,9 +80,46 @@ export async function registerUser(
     });
 
     const headersList = await headers();
-    await createUserSession(user.id, {
-      userAgent: headersList.get("user-agent") ?? undefined,
+    const userAgent = headersList.get("user-agent") ?? undefined;
+    const rawIp =
+      headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      headersList.get("x-real-ip") ??
+      "";
+    const ipHash = rawIp
+      ? crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 16)
+      : undefined;
+
+    // Record legal consent at registration
+    await prisma.userConsent.createMany({
+      data: [
+        {
+          userId: user.id,
+          consentType: CONSENT_TYPES.TERMS_PRIVACY_V1,
+          version: "1",
+          acceptedAt: now,
+          ipHash: ipHash ?? null,
+          userAgent: userAgent ?? null,
+        },
+        {
+          userId: user.id,
+          consentType: CONSENT_TYPES.MVP_DATA_LIMITATION_V1,
+          version: "1",
+          acceptedAt: now,
+          ipHash: ipHash ?? null,
+          userAgent: userAgent ?? null,
+        },
+        {
+          userId: user.id,
+          consentType: CONSENT_TYPES.EXTERNAL_INFRASTRUCTURE_V1,
+          version: "1",
+          acceptedAt: now,
+          ipHash: ipHash ?? null,
+          userAgent: userAgent ?? null,
+        },
+      ],
     });
+
+    await createUserSession(user.id, { userAgent });
   } catch {
     return { errors: { form: ["auth.registerFailed"] } };
   }

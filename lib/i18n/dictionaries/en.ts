@@ -1059,6 +1059,62 @@ export const en = {
       "Your account has been blocked. Please contact an administrator.",
     accessDenied: "Access denied.",
   },
+  legal: {
+    draftNotice: "Draft placeholder for legal review before production launch.",
+    privacyPolicy: "Privacy Policy",
+    termsOfUse: "Terms of Use",
+    cookiePolicy: "Cookie Policy",
+    dataProcessingConsent: "Personal Data Processing Consent",
+    aiProcessingNotice: "AI Processing & External Provider Notice",
+    cookieSettings: "Cookie settings",
+    // Cookie banner
+    cookieBannerText:
+      "We use necessary cookies and local storage to keep the site working, secure sign-in, and restore guest sessions. Optional analytics and marketing cookies are not currently used and will be enabled only with your consent. You can accept all, reject optional cookies, or customize your choice.",
+    acceptAll: "Accept all",
+    rejectOptional: "Reject optional",
+    customize: "Customize",
+    saveChoices: "Save choices",
+    cookieCategoryNecessary: "Necessary",
+    cookieCategoryNecessaryHint: "Always active — required for sign-in, session security, and guest rejoin.",
+    cookieCategoryAnalytics: "Analytics",
+    cookieCategoryAnalyticsHint: "Usage analytics to improve the platform. Not currently used.",
+    cookieCategoryMarketing: "Marketing",
+    cookieCategoryMarketingHint: "Marketing and retargeting. Not currently used.",
+    // Registration consent checkboxes
+    consentTermsPrivacy: "I accept the Terms of Use and Privacy Policy.",
+    consentMvpDataLimitation:
+      "I understand that NegotAItions is a training MVP platform and is not intended for uploading real personal data of third parties, trade secrets, confidential information, medical data, financial credentials, or other sensitive data.",
+    consentExternalInfrastructure:
+      "I understand that the service may use infrastructure and external technology providers located outside my country, including the EU and the US.",
+    consentRequired: "You must accept all required agreements to register.",
+    // Recording consent
+    recordingConsentTitle: "Recording consent required",
+    recordingConsentText:
+      "I confirm that participants have been informed about recording, transcription, and possible AI analysis, and that the session should not include real personal or confidential data.",
+    recordingConsentConfirm: "Confirm and start recording",
+    recordingConsentCancel: "Cancel",
+    // AI analysis warning
+    aiAnalysisWarningTitle: "External AI processing notice",
+    aiAnalysisWarningText:
+      "AI analysis may be performed using external AI services. Do not run analysis if the recording or transcript contains personal data, confidential information, trade secrets, or information that must not be shared with external providers.",
+    aiAnalysisConfirm: "I understand — run AI analysis",
+    aiAnalysisCancel: "Cancel",
+    // Share debrief warning
+    shareDebriefWarningTitle: "Review before sharing",
+    shareDebriefWarningText:
+      "Review the report before publishing. Participants will receive a sanitized version, but you must ensure it does not contain confidential information.",
+    shareDebriefConfirm: "I have reviewed — share with participants",
+    shareDebriefCancel: "Cancel",
+    // Case data warning
+    caseDataWarning:
+      "Use fictional names, companies, amounts, and circumstances. Do not add real personal data, trade secrets, or information about real clients, employees, projects, or deals.",
+    caseDataWarningExamples: "Examples: Company A, Company B, Participant 1, Participant 2",
+    // Session materials retention notice
+    materialsRetentionNotice:
+      "Session materials are intended for training analysis. Do not store confidential data here. Recordings, transcripts, and AI reports may be deleted by an administrator or upon user request. Retention periods will be finalized before production launch.",
+    // Admin private-data warning
+    privateRoleDataWarning: "Admin view — contains private role data.",
+  },
   validation: {
     titleRequired: "Title is required",
     nameRequired: "Name is required",

@@ -209,6 +209,15 @@ export function AdminDiagnosticsView() {
 
   return (
     <div className="space-y-8">
+      {/* Admin private-data warning label */}
+      <div
+        data-testid="admin-private-data-warning"
+        className="rounded-lg border border-amber-500/30 bg-amber-900/15 px-4 py-2.5 flex items-center gap-2"
+      >
+        <span className="text-amber-400 text-sm">⚠️</span>
+        <p className="text-xs font-medium text-amber-200">{t("legal.privateRoleDataWarning")}</p>
+      </div>
+
       <PageHeader
         title={t("admin.title")}
         description={t("admin.externalServices")}

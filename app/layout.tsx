@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { ClientI18nProvider } from "@/components/client-i18n-provider";
+import { CookieBanner } from "@/components/cookie-banner";
 import { getServerLocale } from "@/lib/i18n/server";
 
 const geistSans = Geist({
@@ -37,7 +38,10 @@ export default async function RootLayout({
       style={{ colorScheme: "dark" }}
     >
       <body className="min-h-full flex flex-col bg-[#020617] text-slate-50">
-        <ClientI18nProvider initialLocale={locale}>{children}</ClientI18nProvider>
+        <ClientI18nProvider initialLocale={locale}>
+          {children}
+          <CookieBanner />
+        </ClientI18nProvider>
       </body>
     </html>
   );

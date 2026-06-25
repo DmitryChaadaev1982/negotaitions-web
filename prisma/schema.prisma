@@ -178,6 +178,7 @@ model User {
   userSessions        UserSession[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
   targetedAdminActions AdminActionLog[]    @relation("AdminActionTarget")
+  userConsents        UserConsent[]
 }
 
 model UserSession {
@@ -598,6 +599,21 @@ model AdminActionLog {
   @@index([targetUserId])
   @@index([action])
   @@index([createdAt])
+}
+
+model UserConsent {
+  id          String   @id @default(cuid())
+  userId      String
+  consentType String
+  version     String   @default("1")
+  acceptedAt  DateTime @default(now())
+  ipHash      String?
+  userAgent   String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([consentType])
 }
 
 model SessionParticipantAudioActivity {
