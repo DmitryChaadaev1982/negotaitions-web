@@ -21,7 +21,10 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
     { href: "/events", label: t("nav.events"), testId: "nav-events" },
     { href: "/sessions", label: t("nav.sessions"), testId: "nav-sessions" },
     ...(adminFlag
-      ? [{ href: "/admin", label: t("nav.admin"), testId: "nav-admin" }]
+      ? [
+          { href: "/admin", label: t("nav.admin"), testId: "nav-admin" },
+          { href: "/admin/users", label: t("nav.adminUsers"), testId: "nav-admin-users" },
+        ]
       : []),
   ];
 

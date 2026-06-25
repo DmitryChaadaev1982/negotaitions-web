@@ -147,11 +147,11 @@ export async function requireActiveUser(returnUrl?: string): Promise<AuthUser> {
   return user;
 }
 
-export async function requireAdminUser(): Promise<AuthUser> {
+export async function requireAdminUser(returnUrl = "/admin"): Promise<AuthUser> {
   const user = await getOptionalCurrentUser();
 
   if (!user) {
-    redirect("/login?returnUrl=/admin");
+    redirect(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
   }
 
   if (!isAdmin(user)) {
