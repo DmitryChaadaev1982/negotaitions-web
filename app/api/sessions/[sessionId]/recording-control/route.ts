@@ -8,12 +8,13 @@ import {
   stopRecording,
 } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 
 export const runtime = "nodejs";
 
 const actionSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   action: z.enum(["start", "stop", "refresh"]),
 });
 
@@ -39,8 +40,8 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const participant = await getSessionParticipantByJoinToken(
-    parsed.data.joinToken,
+  const participant = await resolveRoomParticipantFromBody(
+    parsed.data as Record<string, unknown>,
     sessionId,
   );
 

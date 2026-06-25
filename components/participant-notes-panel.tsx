@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 
 import {
   saveParticipantNotes,
+  saveAccountParticipantNotes,
   type SaveParticipantNotesState,
 } from "@/app/actions/sessions";
 import { GradientButton } from "@/components/ui/buttons";
@@ -15,23 +16,31 @@ import {
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type ParticipantNotesPanelProps = {
-  joinToken: string;
   initialNotes: string;
   description: string;
   placeholder: string;
-};
+} & (
+  | { authMode?: "joinToken"; joinToken: string; participantId?: never }
+  | { authMode: "account"; participantId: string; joinToken?: never }
+);
 
 export function ParticipantNotesPanel({
-  joinToken,
   initialNotes,
   description,
   placeholder,
+  ...authProps
 }: ParticipantNotesPanelProps) {
   const { t, tv } = useI18n();
+
+  const saveAction =
+    authProps.authMode === "account"
+      ? saveAccountParticipantNotes
+      : saveParticipantNotes;
+
   const [state, formAction, isPending] = useActionState<
     SaveParticipantNotesState,
     FormData
-  >(saveParticipantNotes, { notes: initialNotes });
+  >(saveAction, { notes: initialNotes });
 
   const savedNotes = state.notes ?? initialNotes;
   const [draftNotes, setDraftNotes] = useState(initialNotes);
@@ -42,7 +51,11 @@ export function ParticipantNotesPanel({
 
   return (
     <form action={formAction} className="space-y-3">
-      <input type="hidden" name="joinToken" value={joinToken} />
+      {authProps.authMode === "account" ? (
+        <input type="hidden" name="participantId" value={authProps.participantId} />
+      ) : (
+        <input type="hidden" name="joinToken" value={authProps.joinToken ?? ""} />
+      )}
       <div>
         <p className="mb-2 text-xs text-slate-400">{description}</p>
         <textarea

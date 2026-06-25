@@ -13,6 +13,11 @@ import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import { buildSessionCloseState } from "@/lib/session-close-state";
 import { getEventLobbyUrl } from "@/lib/config";
 import { isSessionActiveForAssignment } from "@/lib/event-active-assignment";
+import {
+  scopeAssignedParticipantsForParticipant,
+  scopeAssignedParticipantsForObserver,
+  scopeAssignedParticipantsForFacilitator,
+} from "@/lib/privacy/serializers";
 
 export const dynamic = "force-dynamic";
 
@@ -139,13 +144,21 @@ export default async function JoinPage({ params }: JoinPageProps) {
     session,
     session.participants,
   );
-  const assignedParticipants = session.participants
-    .filter((sessionParticipant) => sessionParticipant.sessionRole)
-    .map((sessionParticipant) => ({
-      id: sessionParticipant.id,
-      displayName: sessionParticipant.displayName,
-      role: sessionParticipant.sessionRole!,
-    }));
+  // Phase 5: scope assigned participants by viewer type to prevent cross-role leakage.
+  // PARTICIPANT: own private briefing only; other participants get public role name only.
+  // OBSERVER: all participants get public role name only; no private fields.
+  // FACILITATOR: all participant briefings (needed to manage the session).
+  const allParticipantsWithRoles = session.participants.map((sp) => ({
+    id: sp.id,
+    displayName: sp.displayName,
+    type: sp.type as string,
+    sessionRole: sp.sessionRole ?? null,
+  }));
+  const assignedParticipants = isFacilitator
+    ? scopeAssignedParticipantsForFacilitator(allParticipantsWithRoles)
+    : isParticipant
+      ? scopeAssignedParticipantsForParticipant(allParticipantsWithRoles, participant.id)
+      : scopeAssignedParticipantsForObserver(allParticipantsWithRoles);
 
   const notesVariant = isParticipant
     ? "preparation"

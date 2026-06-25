@@ -16,7 +16,6 @@ import {
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
 import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 
 export const runtime = "nodejs";
 
@@ -26,15 +25,17 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
-  const joinToken = new URL(request.url).searchParams.get("joinToken")?.trim();
+  const url = new URL(request.url);
 
-  if (!joinToken) {
-    return NextResponse.json({ error: "Invalid join token." }, { status: 400 });
-  }
-
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const { resolveRoomParticipantFromQuery } = await import("@/lib/room-participant-resolver");
+  const participant = await resolveRoomParticipantFromQuery(url, sessionId);
 
   if (!participant) {
+    const joinToken = url.searchParams.get("joinToken");
+    const participantId = url.searchParams.get("participantId");
+    if (!joinToken && !participantId) {
+      return NextResponse.json({ error: "Invalid join token." }, { status: 400 });
+    }
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
   }
 

@@ -13,7 +13,6 @@ import {
 import {
   isSessionActiveForAssignment,
 } from "@/lib/event-active-assignment";
-import { getDemoFacilitator } from "@/lib/demo-user";
 import {
   parseAssignmentDraft,
   type EventAssignmentDraft,
@@ -123,6 +122,7 @@ export type EventStateResponse = {
 type BuildEventStateInput = {
   event: TrainingEvent;
   isHost: boolean;
+  isAdmin?: boolean;
   currentParticipant: EventParticipant | null;
   accountMode?: boolean;
 };
@@ -153,7 +153,17 @@ function getAssignmentDurationDefaults(
 export async function buildEventState(
   input: BuildEventStateInput,
 ): Promise<EventStateResponse> {
-  const facilitator = await getDemoFacilitator();
+  // Phase 5: Use the event host's cases instead of the demo facilitator.
+  // For events with a real hostUserId, show that user's case library.
+  // For legacy/guest events without a hostUserId, fall back to demo facilitator.
+  let facilitatorId: string;
+  if (input.event.hostUserId) {
+    facilitatorId = input.event.hostUserId;
+  } else {
+    const { getDemoFacilitator } = await import("@/lib/demo-user");
+    const demo = await getDemoFacilitator();
+    facilitatorId = demo.id;
+  }
 
   const [participants, cases, selectedCaseRecord, createdSession, linkedSessions, sessionParticipantAssignments] =
     await Promise.all([
@@ -163,7 +173,7 @@ export async function buildEventState(
       }),
       prisma.negotiationCase.findMany({
         where: {
-          facilitatorId: facilitator.id,
+          facilitatorId,
           ...activeCaseWhere,
         },
         include: {
@@ -178,7 +188,7 @@ export async function buildEventState(
         ? prisma.negotiationCase.findFirst({
             where: {
               id: input.event.selectedCaseId,
-              facilitatorId: facilitator.id,
+              facilitatorId,
               ...activeCaseWhere,
             },
             include: {

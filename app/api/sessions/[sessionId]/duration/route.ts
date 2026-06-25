@@ -11,11 +11,12 @@ import {
   minutesToSeconds,
 } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 
 const durationSchema = z
   .object({
-    joinToken: z.string().trim().min(1, "Join token is required"),
+    joinToken: z.string().trim().min(1).optional(),
+    participantId: z.string().trim().min(1).optional(),
     durationMinutes: z.coerce
       .number()
       .int("Duration must be a whole number of minutes")
@@ -71,8 +72,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, durationMinutes, preparationDurationMinutes } = parsed.data;
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const { durationMinutes, preparationDurationMinutes } = parsed.data;
+  const participant = await resolveRoomParticipantFromBody(
+    parsed.data as Record<string, unknown>,
+    sessionId,
+  );
 
   if (!participant) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });

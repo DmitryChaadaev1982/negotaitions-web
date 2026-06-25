@@ -23,10 +23,11 @@ import {
   closeLatestPauseInterval,
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 
 const controlActionSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   action: z.enum([
     "START_PREPARATION",
     "PAUSE_PREPARATION",
@@ -119,8 +120,11 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, action } = parsed.data;
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const { action } = parsed.data;
+  const participant = await resolveRoomParticipantFromBody(
+    parsed.data as Record<string, unknown>,
+    sessionId,
+  );
 
   if (!participant) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });

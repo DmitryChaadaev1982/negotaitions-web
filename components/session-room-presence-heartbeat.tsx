@@ -2,17 +2,19 @@
 
 import { useEffect } from "react";
 
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody } from "@/lib/room-auth";
 import { PRESENCE_HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
 
 type SessionRoomPresenceHeartbeatProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   onInvalidToken?: () => void;
 };
 
 export function SessionRoomPresenceHeartbeat({
   sessionId,
-  joinToken,
+  roomAuth,
   onInvalidToken,
 }: SessionRoomPresenceHeartbeatProps) {
   useEffect(() => {
@@ -25,7 +27,7 @@ export function SessionRoomPresenceHeartbeat({
         const response = await fetch(heartbeatUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ joinToken }),
+          body: JSON.stringify(roomAuthBody(roomAuth)),
           keepalive: true,
         });
 
@@ -58,7 +60,7 @@ export function SessionRoomPresenceHeartbeat({
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [joinToken, onInvalidToken, sessionId]);
+  }, [roomAuth, onInvalidToken, sessionId]);
 
   return null;
 }

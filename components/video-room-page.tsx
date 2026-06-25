@@ -28,6 +28,8 @@ import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionCloseState } from "@/lib/session-close-state";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
   clearRecoveryContext,
   saveRecoveryContext,
@@ -36,7 +38,7 @@ import {
 import { SpeakingActivityTracker } from "@/components/speaking-activity-tracker";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type LiveKitTokenResponse = {
   token: string;
@@ -61,16 +63,20 @@ type RoomControlPayload = ControlState &
     | null;
 };
 
-type VideoRoomPageProps = {
-  sessionId: string;
-  joinToken: string;
-};
+/**
+ * Guest mode: joinToken in URL/props (existing flow, no account login required).
+ * Account mode: participantId (non-secret DB UUID) identifies the participant;
+ *   all API calls use cookie-based auth. joinToken is never in HTML/props.
+ */
+type VideoRoomPageProps =
+  | { sessionId: string; authMode?: "guest"; joinToken: string; participantId?: never }
+  | { sessionId: string; authMode: "account"; participantId: string; joinToken?: never };
 
 function RoomSidebar({
-  joinToken,
+  roomAuth,
   sidebar,
 }: {
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   sidebar: RoomSidebarData;
 }) {
   const { t } = useI18n();
@@ -194,7 +200,9 @@ function RoomSidebar({
               {notesConfig.title}
             </h3>
             <ParticipantNotesPanel
-              joinToken={joinToken}
+              {...(roomAuth.type === "account"
+                ? { authMode: "account" as const, participantId: roomAuth.participantId }
+                : { joinToken: roomAuth.value })}
               initialNotes={sidebar.notes}
               description={notesConfig.description}
               placeholder={notesConfig.placeholder}
@@ -207,15 +215,15 @@ function RoomSidebar({
   );
 }
 
-function LeaveRoomButton({ joinToken }: { joinToken: string }) {
+function LeaveRoomButton({ materialsUrl }: { materialsUrl: string }) {
   const router = useRouter();
   const room = useRoomContext();
   const { t } = useI18n();
 
   const handleLeave = useCallback(() => {
-    router.push(buildSessionMaterialsPath(joinToken));
+    router.push(materialsUrl);
     void room.disconnect();
-  }, [joinToken, room, router]);
+  }, [materialsUrl, room, router]);
 
   return (
     <button
@@ -229,14 +237,14 @@ function LeaveRoomButton({ joinToken }: { joinToken: string }) {
 }
 
 function SessionClosedOverlay({
-  joinToken,
+  materialsUrl,
   closeMessageKey,
   recordingStatus,
   eventLobbyUrl,
   eventCompleted,
   onLeave,
 }: {
-  joinToken: string;
+  materialsUrl: string;
   closeMessageKey: NonNullable<RoomControlPayload["closeMessageKey"]>;
   recordingStatus?: string | null;
   eventLobbyUrl?: string | null;
@@ -270,7 +278,7 @@ function SessionClosedOverlay({
             </GradientButtonLink>
           ) : null}
           <GradientButtonLink
-            href={buildSessionMaterialsPath(joinToken)}
+            href={materialsUrl}
             data-testid="open-session-materials-button"
           >
             {t("room.backToSessionMaterials")}
@@ -289,7 +297,8 @@ function SessionClosedOverlay({
 }
 
 function ConnectedRoom({
-  joinToken,
+  roomAuth,
+  materialsUrl,
   sessionId,
   tokenResponse,
   sidebar,
@@ -300,7 +309,8 @@ function ConnectedRoom({
   onRecordingStateChange,
   onInvalidToken,
 }: {
-  joinToken: string;
+  roomAuth: RoomAuthToken;
+  materialsUrl: string;
   sessionId: string;
   tokenResponse: LiveKitTokenResponse;
   sidebar: RoomSidebarData;
@@ -318,12 +328,12 @@ function ConnectedRoom({
   const { t } = useI18n();
 
   const handleLeaveClosed = useCallback(() => {
-    router.push(buildSessionMaterialsPath(joinToken));
-  }, [joinToken, router]);
+    router.push(materialsUrl);
+  }, [materialsUrl, router]);
 
   const handleLeaveRoom = useCallback(() => {
-    router.push(buildSessionMaterialsPath(joinToken));
-  }, [joinToken, router]);
+    router.push(materialsUrl);
+  }, [materialsUrl, router]);
 
   const handleManualRejoin = useCallback(() => {
     router.push(`/rejoin`);
@@ -346,7 +356,7 @@ function ConnectedRoom({
     <>
       {isEventClosed && sessionCloseState.closeMessageKey ? (
         <SessionClosedOverlay
-          joinToken={joinToken}
+          materialsUrl={materialsUrl}
           closeMessageKey={sessionCloseState.closeMessageKey}
           recordingStatus={recordingState?.status}
           eventLobbyUrl={sidebar.event?.lobbyUrl}
@@ -356,7 +366,7 @@ function ConnectedRoom({
       ) : null}
       <SessionRoomPresenceHeartbeat
         sessionId={sessionId}
-        joinToken={joinToken}
+        roomAuth={roomAuth}
         onInvalidToken={onInvalidToken}
       />
       <LiveKitRoom
@@ -373,7 +383,7 @@ function ConnectedRoom({
         <MicEnforcement controlState={controlState} />
         <SpeakingActivityTracker
           sessionId={sessionId}
-          joinToken={joinToken}
+          roomAuth={roomAuth}
           negotiationStartedAt={null}
         />
         <header
@@ -407,7 +417,7 @@ function ConnectedRoom({
           <div className="flex items-center gap-3">
             {!isDebriefMode ? (
               <GradientButtonLink
-                href={buildSessionMaterialsPath(joinToken)}
+                href={materialsUrl}
                 className="hidden px-3 py-1.5 text-xs sm:inline-flex"
                 data-testid="session-materials-link"
               >
@@ -416,7 +426,7 @@ function ConnectedRoom({
             ) : null}
             <RejoinNavLink />
             <LanguageSwitcher />
-            <LeaveRoomButton joinToken={joinToken} />
+            <LeaveRoomButton materialsUrl={materialsUrl} />
           </div>
         </header>
 
@@ -436,7 +446,7 @@ function ConnectedRoom({
               <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3">
                 <FacilitatorRoomControls
                   sessionId={sessionId}
-                  joinToken={joinToken}
+                  roomAuth={roomAuth}
                   controlState={controlState}
                   onControlStateChange={(state) => {
                     onControlStateChange(state);
@@ -459,12 +469,12 @@ function ConnectedRoom({
             {isDebriefMode ? (
               <DebriefPanel
                 sessionId={sessionId}
-                joinToken={joinToken}
+                roomAuth={roomAuth}
                 participantType={tokenResponse.participantType}
                 eventLobbyUrl={sidebar.event?.lobbyUrl}
               />
             ) : (
-              <RoomSidebar joinToken={joinToken} sidebar={sidebar} />
+              <RoomSidebar roomAuth={roomAuth} sidebar={sidebar} />
             )}
           </div>
         </div>
@@ -473,10 +483,25 @@ function ConnectedRoom({
   );
 }
 
-export default function VideoRoomPage({
-  sessionId,
-  joinToken,
-}: VideoRoomPageProps) {
+export default function VideoRoomPage(props: VideoRoomPageProps) {
+  const { sessionId } = props;
+  const roomAuth: RoomAuthToken = useMemo(
+    () =>
+      props.authMode === "account"
+        ? { type: "account", participantId: props.participantId }
+        : { type: "joinToken", value: props.joinToken },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [props.authMode, props.authMode === "account" ? props.participantId : props.joinToken],
+  );
+
+  const materialsUrl = useMemo(
+    () =>
+      roomAuth.type === "joinToken"
+        ? buildSessionMaterialsPath(roomAuth.value)
+        : `/sessions/${sessionId}/materials`,
+    [roomAuth, sessionId],
+  );
+
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -507,13 +532,11 @@ export default function VideoRoomPage({
           fetch("/api/livekit/token", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ joinToken }),
+            body: JSON.stringify(roomAuthBody(roomAuth)),
           }),
+          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`),
           fetch(
-            `/api/livekit/sidebar?joinToken=${encodeURIComponent(joinToken)}`,
-          ),
-          fetch(
-            `/api/sessions/${sessionId}/control-state?joinToken=${encodeURIComponent(joinToken)}`,
+            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
           ),
         ]);
 
@@ -570,10 +593,12 @@ export default function VideoRoomPage({
             closedBeforeNegotiation: payload.closedBeforeNegotiation,
           });
 
+          // Recovery context: for account mode we use participantId instead
+          // of joinToken so that the recovery token is never stored in localStorage.
           saveRecoveryContext({
             type: "SESSION_ROOM",
             sessionId,
-            joinToken,
+            joinToken: roomAuth.type === "joinToken" ? roomAuth.value : "",
             displayName: tokenPayload.displayName,
           });
         }
@@ -606,7 +631,7 @@ export default function VideoRoomPage({
     return () => {
       cancelled = true;
     };
-  }, [joinToken, sessionId, t]);
+  }, [roomAuth, sessionId, t]);
 
   useEffect(() => {
     if (isLoading || error) {
@@ -618,7 +643,7 @@ export default function VideoRoomPage({
 
       try {
         const response = await fetch(
-          `/api/sessions/${sessionId}/control-state?joinToken=${encodeURIComponent(joinToken)}`,
+          `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
         );
 
         if (!response.ok) {
@@ -639,7 +664,7 @@ export default function VideoRoomPage({
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [error, isLoading, joinToken, sessionId]);
+  }, [error, isLoading, roomAuth, sessionId]);
 
   const handleInvalidToken = useCallback(() => {
     clearRecoveryContext();
@@ -665,7 +690,7 @@ export default function VideoRoomPage({
             {error ?? t("room.somethingWentWrongConnecting")}
           </p>
         </div>
-        <GradientButtonLink href={buildSessionMaterialsPath(joinToken)}>
+        <GradientButtonLink href={materialsUrl}>
           {t("room.backToSessionMaterials")}
         </GradientButtonLink>
         <GradientButtonLink href="/rejoin">{t("rejoin.rejoin")}</GradientButtonLink>
@@ -675,7 +700,8 @@ export default function VideoRoomPage({
 
   return (
     <ConnectedRoom
-      joinToken={joinToken}
+      roomAuth={roomAuth}
+      materialsUrl={materialsUrl}
       sessionId={sessionId}
       tokenResponse={tokenResponse}
       sidebar={sidebar}

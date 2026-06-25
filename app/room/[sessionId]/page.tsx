@@ -1,8 +1,9 @@
 import VideoRoomPage from "@/components/video-room-page";
 import { getOptionalCurrentUser, requireActiveUser } from "@/lib/auth";
-import { resolveJoinTokenForAccountSession } from "@/lib/account-session-access";
+import { canAccessSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
+import { prisma } from "@/lib/prisma";
 
 type RoomPageProps = {
   params: Promise<{ sessionId: string }>;
@@ -34,8 +35,12 @@ export default async function RoomPage({
     }
 
     const user = await requireActiveUser(`/room/${sessionId}`);
-    const accountJoinToken = await resolveJoinTokenForAccountSession(sessionId, user);
-    if (!accountJoinToken) {
+
+    // Phase 5 ROOM-1 fix: resolve participantId server-side without exposing joinToken.
+    // participantId is a non-secret DB UUID; auth comes from the httpOnly session cookie.
+    // The joinToken is never passed to the client component or serialized into __NEXT_DATA__.
+    const access = await getCurrentUserSessionAccess(sessionId, user, {});
+    if (!access || !canAccessSession(access)) {
       return (
         <div className="flex h-dvh flex-col items-center justify-center gap-3 app-gradient-bg px-4 text-center">
           <h1 className="text-lg font-bold text-slate-50">
@@ -45,16 +50,38 @@ export default async function RoomPage({
       );
     }
 
-    // KNOWN REMAINING EXPOSURE (Phase 4.1 doc): accountJoinToken is server-resolved
-    // from userId relation and never appears in the browser URL. However, VideoRoomPage
-    // is a "use client" component that receives joinToken as a prop, so it will be
-    // present in Next.js serialized page HTML (__NEXT_DATA__). A full elimination
-    // requires refactoring VideoRoomPage and all LiveKit/control/presence APIs to
-    // use account-based auth rather than joinToken. Planned for Phase 5.
-    // Improvement vs pre-Phase-4: URL is tokenless; token is one indirection from DB.
-    return <VideoRoomPage sessionId={sessionId} joinToken={accountJoinToken} />;
+    // Find the user's own participant record, or fall back to event host/admin.
+    let participantId: string | null = access.userParticipant?.id ?? null;
+    if (!participantId && (access.isAdmin || access.isEventHostOwner)) {
+      const facilitator = await prisma.sessionParticipant.findFirst({
+        where: { sessionId, type: "FACILITATOR" },
+        select: { id: true },
+        orderBy: { createdAt: "asc" },
+      });
+      participantId = facilitator?.id ?? null;
+    }
+
+    if (!participantId) {
+      return (
+        <div className="flex h-dvh flex-col items-center justify-center gap-3 app-gradient-bg px-4 text-center">
+          <h1 className="text-lg font-bold text-slate-50">
+            {translate(dictionary, "dashboard.noSessionAccess")}
+          </h1>
+        </div>
+      );
+    }
+
+    // Account mode: no joinToken in props; VideoRoomPage authenticates via cookie.
+    return (
+      <VideoRoomPage
+        authMode="account"
+        sessionId={sessionId}
+        participantId={participantId}
+      />
+    );
   }
 
+  // Guest mode: joinToken flow unchanged.
   return (
     <VideoRoomPage sessionId={sessionId} joinToken={trimmedJoinToken} />
   );

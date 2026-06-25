@@ -3,9 +3,12 @@
 import { useSpeakingParticipants } from "@livekit/components-react";
 import { useEffect, useRef } from "react";
 
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody } from "@/lib/room-auth";
+
 type SpeakingActivityTrackerProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   /** Offset in seconds from negotiation start (for mic-activity overlap mapping). */
   negotiationStartedAt: Date | null;
 };
@@ -22,7 +25,7 @@ type SpeakingActivityTrackerProps = {
  */
 export function SpeakingActivityTracker({
   sessionId,
-  joinToken,
+  roomAuth,
   negotiationStartedAt,
 }: SpeakingActivityTrackerProps) {
   const speakingParticipants = useSpeakingParticipants();
@@ -40,7 +43,7 @@ export function SpeakingActivityTracker({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          joinToken,
+          ...roomAuthBody(roomAuth),
           event,
           clientTimestamp: new Date().toISOString(),
           offsetSeconds: offset,

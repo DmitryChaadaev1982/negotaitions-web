@@ -10,6 +10,11 @@ import { buildSessionCloseState } from "@/lib/session-close-state";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
+import {
+  scopeAssignedParticipantsForParticipant,
+  scopeAssignedParticipantsForObserver,
+  scopeAssignedParticipantsForFacilitator,
+} from "@/lib/privacy/serializers";
 
 export type AccountMaterialsRole = {
   name: string;
@@ -170,15 +175,26 @@ export async function getAccountMaterialsData(
     viewerParticipant.type === ParticipantType.PARTICIPANT;
   const isObserverType = viewerParticipant.type === ParticipantType.OBSERVER;
 
-  const assignedParticipants = sessionData.participants
-    .filter((p): p is typeof p & { sessionRole: NonNullable<typeof p.sessionRole> } =>
-      p.sessionRole !== null,
-    )
-    .map((p) => ({
-      id: p.id,
-      displayName: p.displayName,
-      role: p.sessionRole,
-    }));
+  // Phase 5: scope assigned participants by viewer type.
+  // PARTICIPANT: own private briefing only; others get public role name only.
+  // OBSERVER: role names only; no private fields.
+  // FACILITATOR/ADMIN/HOST: all participant briefings.
+  const allParticipantsForScoping = sessionData.participants.map((p) => ({
+    id: p.id,
+    displayName: p.displayName,
+    type: p.type as string,
+    sessionRole: p.sessionRole ?? null,
+  }));
+  const isFacilitatorOrAdmin =
+    viewerParticipant.type === ParticipantType.FACILITATOR ||
+    access.isAdmin ||
+    access.isEventHostOwner;
+
+  const assignedParticipants = isFacilitatorOrAdmin
+    ? scopeAssignedParticipantsForFacilitator(allParticipantsForScoping)
+    : isParticipantType
+      ? scopeAssignedParticipantsForParticipant(allParticipantsForScoping, viewerParticipant.id)
+      : scopeAssignedParticipantsForObserver(allParticipantsForScoping);
 
   return {
     participantId: viewerParticipant.id,

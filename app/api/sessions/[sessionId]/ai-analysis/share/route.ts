@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import { AiAnalysisStatus, ParticipantType } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
+import { sanitizeSharedAiReport } from "@/lib/privacy/serializers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,45 +16,77 @@ type RouteContext = {
 };
 
 /**
- * Deterministic sanitizer: strips private role objectives and hidden/fallback
- * references from the full analysis JSON, producing a safe shared version.
+ * Sanitize the full analysis for sharing with session participants.
+ *
+ * Strips all fields that could reveal private role data:
+ *   - roleObjectivesAnalysis (contains private objectives/fallback analysis)
+ *   - rawPrompt (raw AI prompt including private role instructions)
+ *   - analysisContext (raw context including all role briefings)
+ *   - facilitatorNotes (facilitator-only notes)
+ *
+ * participantPersonalFeedback is retained; it is filtered per-participant
+ * at delivery time in the materials/status API.
  */
 function sanitizeAnalysisForParticipants(
   analysis: NegotiationAnalysisOutput,
 ): NegotiationAnalysisOutput {
-  return {
+  return sanitizeSharedAiReport({
     ...analysis,
-    // Remove per-role objectives analysis which contains private objective data
+    // Explicitly zero out the objectives array (most critical private data)
     roleObjectivesAnalysis: [],
-    // Keep participantPersonalFeedback — per-participant filtering (each participant
-    // sees only their own entry) is applied at delivery time in the status API.
-    // Keep everything else: summary, scores, strengths, improvement areas,
-    // tactics, questions analysis, listening, value creation, focus, debrief Qs.
-  };
+  }) as NegotiationAnalysisOutput;
 }
 
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
 
-  let body: { joinToken?: string; aiAnalysisId?: string };
+  let body: { joinToken?: string; participantId?: string; aiAnalysisId?: string };
   try {
-    body = (await request.json()) as { joinToken?: string; aiAnalysisId?: string };
+    body = (await request.json()) as { joinToken?: string; participantId?: string; aiAnalysisId?: string };
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { joinToken, aiAnalysisId } = body;
+  const { joinToken, participantId, aiAnalysisId } = body;
 
-  if (!joinToken) {
-    return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
+  if (!joinToken && !participantId) {
+    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
   }
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  let participant: Awaited<ReturnType<typeof getSessionParticipantByJoinToken>> | null = null;
+  let isEventHostOwner = false;
+  let adminUser = false;
+
+  if (joinToken) {
+    participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  } else {
+    // Account mode: verify cookie ownership
+    const user = await getOptionalCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+    adminUser = isAdmin(user);
+    const { resolveRoomParticipantFromBody } = await import("@/lib/room-participant-resolver");
+    participant = await resolveRoomParticipantFromBody(
+      body as Record<string, unknown>,
+      sessionId,
+    );
+    if (participant) {
+      // Check if user is event host (can manage even without FACILITATOR participant type)
+      const session = await prisma.session.findUnique({
+        where: { id: sessionId },
+        select: { event: { select: { hostUserId: true } } },
+      });
+      isEventHostOwner = session?.event?.hostUserId === user.id;
+    }
+  }
+
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  if (participant.type !== ParticipantType.FACILITATOR) {
+  const isFacilitatorType = participant.type === ParticipantType.FACILITATOR;
+  if (!isFacilitatorType && !isEventHostOwner && !adminUser) {
     return NextResponse.json(
       { error: "Only facilitators can share AI analysis." },
       { status: 403 },

@@ -619,3 +619,94 @@ Allowed if: admin OR `SessionParticipant.userId` OR valid `joinToken` OR host/fa
 | 8 | Route/API matrix included | Done |
 | 9 | Privacy recommendations included | Done |
 | 10 | Implementation checklist included | Done |
+
+---
+
+## Phase 5 Status — Privacy Serializers, Join SSR Leak Fix, AI Report Audit & Room Token Removal
+
+**Completed:** Phase 5 (June 2026)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| lib/privacy/serializers.ts | **NEW** — Privacy serializers and view models |
+| lib/room-auth.ts | **NEW** — RoomAuthToken discriminated union + helpers |
+| lib/room-participant-resolver.ts | **NEW** — Shared API utility to resolve participant from joinToken or participantId+cookie |
+| pp/join/[joinToken]/page.tsx | Fixed SSR role data scoping by role type |
+| lib/account-session-materials.ts | Applied role-scoped ssignedParticipants serializers |
+| lib/event-state.ts | Fixed getDemoFacilitator — now uses event.hostUserId for real users |
+| components/video-room-page.tsx | ROOM-1 fix — supports account mode with no joinToken in props |
+| pp/room/[sessionId]/page.tsx | ROOM-1 fix — resolves participantId server-side for account users |
+| components/session-room-presence-heartbeat.tsx | Uses RoomAuthToken instead of raw joinToken |
+| components/speaking-activity-tracker.tsx | Uses RoomAuthToken instead of raw joinToken |
+| components/facilitator-room-controls.tsx | Uses RoomAuthToken instead of raw joinToken |
+| components/participant-notes-panel.tsx | Supports account and guest auth modes |
+| components/debrief-panel.tsx | Uses RoomAuthToken; passes joinToken only in guest mode |
+| pp/api/livekit/token/route.ts | Supports joinToken and participantId+cookie auth |
+| pp/api/livekit/sidebar/route.ts | Supports joinToken and participantId+cookie auth |
+| pp/api/sessions/[sessionId]/control-state/route.ts | Uses esolveRoomParticipantFromQuery |
+| pp/api/sessions/[sessionId]/heartbeat/route.ts | Uses esolveRoomParticipantFromBody |
+| pp/api/sessions/[sessionId]/audio-activity/route.ts | Uses esolveRoomParticipantFromBody |
+| pp/api/sessions/[sessionId]/control/route.ts | Uses esolveRoomParticipantFromBody |
+| pp/api/sessions/[sessionId]/duration/route.ts | Uses esolveRoomParticipantFromBody |
+| pp/api/sessions/[sessionId]/recording-control/route.ts | Uses esolveRoomParticipantFromBody |
+| pp/api/sessions/[sessionId]/ai-analysis/share/route.ts | Enhanced sanitization + account auth |
+| pp/api/sessions/[sessionId]/materials/status/route.ts | Role-scoped delivery + observer transcript restriction |
+| PRIVACY_SERIALIZERS.md | **NEW** — Privacy classification and serializer documentation |
+| 	ests/e2e/phase-5-privacy.spec.ts | **NEW** — Phase 5 privacy E2E + unit tests |
+
+### Privacy Issues Fixed
+
+| ID | Issue | Resolution |
+|----|-------|-----------|
+| JOIN-SSR-1 | /join/[joinToken] SSR sends all participants' private role data | Fixed: scopeAssignedParticipantsFor*() serializers applied before sending SSR props |
+| ROOM-1 | joinToken exposed in __NEXT_DATA__ for account users | Fixed: account mode uses participantId + cookie; no joinToken in client props |
+| EVENT-STATE-1 | uildEventState uses demo facilitator for all users | Fixed: uses event.hostUserId for real events; demo facilitator only as fallback |
+| AI-SHARED-1 | sanitizeAnalysisForParticipants did not block awPrompt, nalysisContext, acilitatorNotes | Fixed: sanitizeSharedAiReport() explicitly removes all blocked fields |
+| MATERIALS-1 | Observer could access full session transcript | Fixed: observer transcript gated on published shared AI debrief |
+| MATERIALS-2 | Participant feedback filtering relied only on displayName | Improved: prefers sessionParticipantId match; falls back to displayName |
+
+### Token/Secret Search Results
+
+After Phase 5 implementation, confirmed classifications:
+
+| Location | Token/Field | Classification |
+|----------|-------------|----------------|
+| /join/[joinToken] URL | joinToken | **Allowed** — guest flow |
+| /room/[sessionId]?joinToken=... | joinToken | **Allowed** — guest room flow |
+| /events/[id]/lobby?hostToken=... | hostToken | **Allowed** — event host guest flow |
+| /events/[id]/lobby?participantToken=... | participantToken | **Allowed** — event participant guest flow |
+| Server-side DB queries | All tokens | **Allowed** — server-only validation |
+| Account /room/[sessionId] HTML | joinToken | **Fixed** — removed (ROOM-1) |
+| Shared AI report | awPrompt, nalysisContext, acilitatorNotes | **Fixed** — sanitized out |
+| Observer join page | Other participants' privateInstructions, objectives | **Fixed** — scoped out |
+| Participant join page | Other participants' privateInstructions, objectives | **Fixed** — scoped out |
+
+### Observer Transcript Decision
+
+**Decision**: Safer MVP (Option B) — observer sees transcript only if facilitator published shared AI debrief.
+
+### Remaining Known Limitations
+
+1. Legacy AI participantPersonalFeedback without sessionParticipantId uses display name matching — collision risk.
+2. Admin private view labels defined (i18n key dmin.privateRoleDataWarning) but not yet applied to admin UI pages.
+3. Account-mode debrief panel: SessionPostProcessingPanel still requires joinToken internally; hidden in account mode pending full debrief account-mode support.
+
+### Phase 5 Acceptance Criteria
+
+| # | Criterion | Status |
+|---|-----------|--------|
+| 1 | Normal participants never receive other participants' private role data in SSR/HTML/API | Done |
+| 2 | Observers never receive participant private role briefings | Done |
+| 3 | /join/[joinToken] SSR is role-scoped | Done |
+| 4 | Account /room/[sessionId] does not expose joinToken in HTML/client props | Done |
+| 5 | Guest /room joinToken flow still works | Done |
+| 6 | Event state does not use demo facilitator for account users | Done |
+| 7 | Event lobby does not expose private case data to participants/observers | Done |
+| 8 | Shared AI report is sanitized | Done |
+| 9 | Full facilitator AI analysis remains facilitator/host/admin only | Done |
+| 10 | Admin private views defined (i18n key) | Done (UI labels pending Phase 6) |
+| 11 | Dashboard/events/sessions/materials remain token-free for account users | Done |
+| 12 | Guest token flows remain intact | Done |
+| 13 | Build passes | See Phase 5 validation |

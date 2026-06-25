@@ -9,7 +9,6 @@ import {
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
 import {
   isAiAnalysisOutdated,
@@ -172,12 +171,14 @@ export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(request.url);
   const joinToken = url.searchParams.get("joinToken");
+  const participantId = url.searchParams.get("participantId");
 
-  if (!joinToken) {
+  if (!joinToken && !participantId) {
     return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
   }
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const { resolveRoomParticipantFromQuery } = await import("@/lib/room-participant-resolver");
+  const participant = await resolveRoomParticipantFromQuery(url, sessionId);
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
@@ -271,7 +272,20 @@ export async function GET(request: Request, context: RouteContext) {
     ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus);
 
   const canViewRecording = true;
-  const canViewTranscript = true;
+  // Phase 5 observer transcript decision (Part 7):
+  // Observer sees transcript only if the facilitator has published a shared AI analysis
+  // (shared debrief). This prevents silent exposure of potentially private discussion
+  // to observers before the facilitator reviews and publishes the debrief.
+  // Participants and facilitators always have access to transcripts.
+  const aiVisibilityForObserver = isObserver
+    ? (await prisma.aiAnalysis.findUnique({
+        where: { sessionId },
+        select: { visibility: true },
+      }))?.visibility ?? "FACILITATOR_ONLY"
+    : "N/A";
+  const canViewTranscript = isObserver
+    ? aiVisibilityForObserver === "SHARED_WITH_SESSION"
+    : true;
   const canRunTranscription = isFacilitator;
   const canRetryFailedProcessing = isFacilitator;
 
@@ -399,13 +413,11 @@ export async function GET(request: Request, context: RouteContext) {
   // facilitators see all sections.
   let analysisJsonForUser = rawAnalysisJsonForUser;
   if (!isFacilitator && rawAnalysisJsonForUser) {
-    const typedAnalysis = rawAnalysisJsonForUser as NegotiationAnalysisOutput;
-    analysisJsonForUser = {
-      ...typedAnalysis,
-      participantPersonalFeedback: (typedAnalysis.participantPersonalFeedback ?? []).filter(
-        (feedback) => feedback.participantName === participant.displayName,
-      ),
-    };
+    const { filterPersonalFeedbackForParticipant } = await import("@/lib/privacy/serializers");
+    analysisJsonForUser = filterPersonalFeedbackForParticipant(
+      rawAnalysisJsonForUser as NegotiationAnalysisOutput,
+      { participantId: participant.id, displayName: participant.displayName },
+    );
   }
 
   const executiveSummaryForUser = isFacilitator

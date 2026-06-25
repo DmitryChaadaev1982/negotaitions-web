@@ -1,5 +1,7 @@
 "use client";
 
+import type { RoomAuthToken } from "@/lib/room-auth";
+import { roomAuthBody } from "@/lib/room-auth";
 import type { ControlAction, ControlState } from "@/lib/negotiation-control";
 import { NegotiationState } from "@/app/generated/prisma/enums";
 import {
@@ -14,7 +16,7 @@ import { useCallback, useState } from "react";
 
 type FacilitatorRoomControlsProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
   onRecordingStateChange?: (state: {
@@ -25,7 +27,7 @@ type FacilitatorRoomControlsProps = {
 
 type DurationControlsProps = {
   sessionId: string;
-  joinToken: string;
+  roomAuth: RoomAuthToken;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
   isSubmitting: boolean;
@@ -35,7 +37,7 @@ type DurationControlsProps = {
 
 function DurationControls({
   sessionId,
-  joinToken,
+  roomAuth,
   controlState,
   onControlStateChange,
   isSubmitting,
@@ -60,7 +62,7 @@ function DurationControls({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          joinToken,
+          ...roomAuthBody(roomAuth),
           preparationDurationMinutes,
           durationMinutes: negotiationDurationMinutes,
         }),
@@ -102,7 +104,7 @@ function DurationControls({
     }
   }, [
     controlState,
-    joinToken,
+    roomAuth,
     negotiationDurationMinutes,
     onControlStateChange,
     preparationDurationMinutes,
@@ -166,7 +168,7 @@ function DurationControls({
 
 export function FacilitatorRoomControls({
   sessionId,
-  joinToken,
+  roomAuth,
   controlState,
   onControlStateChange,
   onRecordingStateChange,
@@ -184,7 +186,7 @@ export function FacilitatorRoomControls({
         const response = await fetch(`/api/sessions/${sessionId}/control`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ joinToken, action }),
+          body: JSON.stringify({ ...roomAuthBody(roomAuth), action }),
         });
 
         const payload = (await response.json()) as ControlState & {
@@ -211,7 +213,7 @@ export function FacilitatorRoomControls({
         setIsSubmitting(false);
       }
     },
-    [joinToken, onControlStateChange, onRecordingStateChange, sessionId],
+    [roomAuth, onControlStateChange, onRecordingStateChange, sessionId],
   );
 
   const { negotiationState } = controlState;
@@ -255,7 +257,7 @@ export function FacilitatorRoomControls({
           <DurationControls
             key={`${controlState.durationSeconds}-${controlState.preparationDurationSeconds}`}
             sessionId={sessionId}
-            joinToken={joinToken}
+            roomAuth={roomAuth}
             controlState={controlState}
             onControlStateChange={onControlStateChange}
             isSubmitting={isSubmitting}

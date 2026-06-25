@@ -2,17 +2,21 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
   event: z.enum(["SPEAKING_START", "SPEAKING_END"]),
   participantIdentity: z.string().trim().min(1).optional(),
   clientTimestamp: z.string().optional(),
   offsetSeconds: z.number().optional(),
-});
+}).refine(
+  (data) => Boolean(data.joinToken ?? data.participantId),
+  { message: "joinToken or participantId is required" },
+);
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -36,9 +40,12 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, event, participantIdentity, clientTimestamp, offsetSeconds } = parsed.data;
+  const { event, participantIdentity, clientTimestamp, offsetSeconds } = parsed.data;
 
-  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  const participant = await resolveRoomParticipantFromBody(
+    parsed.data as Record<string, unknown>,
+    sessionId,
+  );
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
