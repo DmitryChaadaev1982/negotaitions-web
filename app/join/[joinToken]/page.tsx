@@ -88,6 +88,11 @@ export default async function JoinPage({ params }: JoinPageProps) {
   }
 
   const currentUser = await getOptionalCurrentUser();
+  // Security hardening: logged-in but non-active users must not access
+  // session materials via token URLs. They can only proceed after activation.
+  if (currentUser && !isAdmin(currentUser) && currentUser.status !== "ACTIVE") {
+    notFound();
+  }
   const currentUserCanBind = Boolean(
     currentUser && (isAdmin(currentUser) || currentUser.status === "ACTIVE"),
   );
@@ -168,13 +173,22 @@ export default async function JoinPage({ params }: JoinPageProps) {
   const eventSessions = session.eventId
     ? await prisma.sessionParticipant.findMany({
         where: isFacilitator
-          ? {
-              session: {
-                eventId: session.eventId,
-                deletedAt: null,
-              },
-              type: ParticipantType.FACILITATOR,
-            }
+          ? participant.eventParticipantId
+            ? {
+                eventParticipantId: participant.eventParticipantId,
+                session: {
+                  eventId: session.eventId,
+                  deletedAt: null,
+                },
+                type: ParticipantType.FACILITATOR,
+              }
+            : {
+                session: {
+                  eventId: session.eventId,
+                  deletedAt: null,
+                },
+                type: ParticipantType.FACILITATOR,
+              }
           : {
               eventParticipantId: participant.eventParticipantId,
               session: {

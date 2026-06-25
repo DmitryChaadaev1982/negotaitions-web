@@ -51,6 +51,10 @@ function hashToken(raw: string) {
   return createHash("sha256").update(raw).digest("hex");
 }
 
+function authSessionCookie(rawToken: string) {
+  return `auth_session=${rawToken}`;
+}
+
 async function createActiveUser(email: string) {
   const userId = uid("user");
   await query(
@@ -501,6 +505,96 @@ test.describe("Phase 5 — ROOM-1 account mode (API)", () => {
     // Should get a valid page response (not 404/500)
     expect(response?.status()).not.toBe(404);
     expect(response?.status()).not.toBe(500);
+  });
+});
+
+test.describe("Phase 5 — room API auth hardening (API)", () => {
+  let fixture: PrivacyFixture;
+  let ownerUserId: string;
+  let ownerCookie: string;
+  let otherUserId: string;
+
+  test.beforeAll(async () => {
+    fixture = await createPrivacyTestSession();
+    ownerUserId = await createActiveUser(`room-owner@phase5-privacy.test`);
+    otherUserId = await createActiveUser(`room-other@phase5-privacy.test`);
+    ownerCookie = await createUserSession(ownerUserId);
+    await createUserSession(otherUserId);
+
+    await query(
+      `UPDATE "SessionParticipant" SET "userId" = $2, "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.roleAParticipantId, ownerUserId],
+    );
+    await query(
+      `UPDATE "SessionParticipant" SET "userId" = $2, "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.roleBParticipantId, otherUserId],
+    );
+  });
+
+  test.afterAll(async () => {
+    await cleanupPrivacyTestData();
+  });
+
+  test("participantId spoofing attempt fails for unrelated active user", async ({
+    request,
+  }) => {
+    const res = await request.post("/api/livekit/token", {
+      data: { participantId: fixture.roleBParticipantId },
+      headers: { Cookie: authSessionCookie(ownerCookie) },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("account LiveKit token response does not return joinToken", async ({
+    request,
+  }) => {
+    const res = await request.post("/api/livekit/token", {
+      data: { participantId: fixture.roleAParticipantId },
+      headers: { Cookie: authSessionCookie(ownerCookie) },
+    });
+
+    if (!res.ok()) return;
+
+    const payload = (await res.json()) as Record<string, unknown>;
+    expect(payload.joinToken).toBeUndefined();
+  });
+
+  test("participant cannot call facilitator control APIs", async ({ request }) => {
+    const controlRes = await request.post(
+      `/api/sessions/${fixture.sessionId}/control`,
+      {
+        data: { joinToken: fixture.roleAToken, action: "START" },
+      },
+    );
+    expect(controlRes.status()).toBe(403);
+
+    const recordingRes = await request.post(
+      `/api/sessions/${fixture.sessionId}/recording-control`,
+      {
+        data: { joinToken: fixture.roleAToken, action: "start" },
+      },
+    );
+    expect(recordingRes.status()).toBe(403);
+  });
+
+  test("observer cannot call facilitator control APIs", async ({ request }) => {
+    const controlRes = await request.post(
+      `/api/sessions/${fixture.sessionId}/control`,
+      {
+        data: { joinToken: fixture.observerToken, action: "START" },
+      },
+    );
+    expect(controlRes.status()).toBe(403);
+
+    const recordingRes = await request.post(
+      `/api/sessions/${fixture.sessionId}/recording-control`,
+      {
+        data: { joinToken: fixture.observerToken, action: "start" },
+      },
+    );
+    expect(recordingRes.status()).toBe(403);
   });
 });
 

@@ -495,7 +495,8 @@ export async function GET(request: Request, context: RouteContext) {
       ? {
           id: recording.id,
           status: recording.status,
-          fileKey: recording.fileKey,
+          // Do not expose raw storage object keys to participant/observer clients.
+          fileKey: isFacilitator ? recording.fileKey : null,
           fileName: recording.fileName,
           fileSizeBytes: recording.originalSizeBytes,
           startedAt: recording.startedAt?.toISOString() ?? null,
