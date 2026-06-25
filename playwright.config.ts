@@ -43,6 +43,9 @@ export default defineConfig({
       LIVEKIT_URL: "wss://mock-livekit.invalid",
       LIVEKIT_API_KEY: "mock-livekit-key",
       LIVEKIT_API_SECRET: "mock-livekit-secret",
+      // Disabled by default in tests to prevent unintended OpenAI charges
+      // and to keep tests deterministic. Enable per-test-run when needed.
+      AUTO_TRANSCRIBE_AFTER_RECORDING: "false",
     },
   },
 });

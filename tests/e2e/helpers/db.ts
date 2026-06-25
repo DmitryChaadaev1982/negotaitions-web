@@ -544,6 +544,322 @@ export async function createCompletedTranscript(sessionId: string) {
   return rows[0]!;
 }
 
+export async function createDiarizedTranscript(
+  sessionId: string,
+  segments: Array<{ speakerLabel: string; startSeconds: number; endSeconds: number; text: string }>,
+) {
+  const txId = id("transcript");
+  const rows = await query<{ id: string }>(
+    `INSERT INTO "Transcript"
+       ("id", "sessionId", "recordingId", "source", "status", "text",
+        "hasSpeakerDiarization", "speakerMappingStatus", "updatedAt", "completedAt")
+     VALUES ($1, $2, NULL, 'GENERATED', 'COMPLETED',
+             'Mock diarized transcript for speaker mapping test.',
+             TRUE, 'REQUIRED', NOW(), NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "hasSpeakerDiarization" = TRUE,
+           "speakerMappingStatus" = 'REQUIRED',
+           "completedAt" = NOW(),
+           "updatedAt" = NOW()
+     RETURNING "id"`,
+    [txId, sessionId],
+  );
+  const transcript = rows[0]!;
+
+  await query(`DELETE FROM "TranscriptSegment" WHERE "transcriptId" = $1`, [transcript.id]);
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    await query(
+      `INSERT INTO "TranscriptSegment"
+         ("id", "transcriptId", "speakerLabel", "startSeconds", "endSeconds", "text", "orderIndex", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+      [id("seg"), transcript.id, seg.speakerLabel, seg.startSeconds, seg.endSeconds, seg.text, i],
+    );
+  }
+
+  return transcript;
+}
+
+export async function createAudioActivity(
+  sessionId: string,
+  sessionParticipantId: string,
+  startedOffsetSeconds: number,
+  endedOffsetSeconds: number,
+) {
+  const now = new Date();
+  await query(
+    `INSERT INTO "SessionParticipantAudioActivity"
+       ("id", "sessionId", "sessionParticipantId", "startedAt", "endedAt",
+        "startedOffsetSeconds", "endedOffsetSeconds", "source", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'LIVEKIT_ACTIVE_SPEAKER', NOW())`,
+    [
+      id("activity"),
+      sessionId,
+      sessionParticipantId,
+      now,
+      now,
+      startedOffsetSeconds,
+      endedOffsetSeconds,
+    ],
+  );
+}
+
+export async function getSpeakerMappingStatus(sessionId: string) {
+  const rows = await query<{ speakerMappingStatus: string; speakerMappingConfirmedAt: string | null }>(
+    `SELECT "speakerMappingStatus", "speakerMappingConfirmedAt"
+     FROM "Transcript" WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export type E2eTranscriptSegment = {
+  id: string;
+  transcriptId: string;
+  speakerLabel: string | null;
+  mappedParticipantId: string | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
+  text: string;
+  orderIndex: number;
+  mappingSource: string | null;
+  mappingLocked: boolean;
+  mappingConfidence: number | null;
+};
+
+export async function getTranscriptSegments(sessionId: string) {
+  return query<E2eTranscriptSegment>(
+    `SELECT seg."id", seg."transcriptId", seg."speakerLabel", seg."mappedParticipantId",
+            seg."startSeconds", seg."endSeconds", seg."text", seg."orderIndex",
+            seg."mappingSource", seg."mappingLocked", seg."mappingConfidence"
+     FROM "TranscriptSegment" seg
+     JOIN "Transcript" t ON t."id" = seg."transcriptId"
+     WHERE t."sessionId" = $1
+     ORDER BY seg."orderIndex" ASC`,
+    [sessionId],
+  );
+}
+
+export async function lockTranscriptSegment(
+  segmentId: string,
+  overrideParticipantId: string,
+) {
+  await query(
+    `UPDATE "TranscriptSegment"
+     SET "mappedParticipantId" = $2,
+         "mappingSource" = 'MANUAL_SEGMENT_OVERRIDE',
+         "mappingLocked" = TRUE,
+         "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [segmentId, overrideParticipantId],
+  );
+}
+
+export async function getTranscriptRetranscribeInfo(sessionId: string) {
+  const rows = await query<{
+    retranscribeCount: number;
+    retranscribeHistory: unknown;
+    diarizationStatus: string | null;
+    text: string;
+    status: string;
+  }>(
+    `SELECT "retranscribeCount", "retranscribeHistory", "diarizationStatus", "text", "status"
+     FROM "Transcript" WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getAiAnalysisVersion(sessionId: string) {
+  const rows = await query<{ transcriptRetranscribeCount: number | null }>(
+    `SELECT "transcriptRetranscribeCount" FROM "AiAnalysis" WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export type E2eTwoPassTranscriptInfo = {
+  id: string;
+  status: string;
+  text: string;
+  strategy: string | null;
+  qualityModel: string | null;
+  diarizationPassStatus: string | null;
+  qualityPassStatus: string | null;
+  alignmentStatus: string | null;
+  alignmentConfidence: number | null;
+  hasSpeakerDiarization: boolean;
+  retranscribeCount: number;
+};
+
+export async function getTwoPassTranscriptInfo(sessionId: string) {
+  const rows = await query<E2eTwoPassTranscriptInfo>(
+    `SELECT "id", "status", "text", "strategy", "qualityModel",
+            "diarizationPassStatus", "qualityPassStatus", "alignmentStatus",
+            "alignmentConfidence", "hasSpeakerDiarization", "retranscribeCount"
+     FROM "Transcript" WHERE "sessionId" = $1`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+export type E2eTwoPassSegment = {
+  id: string;
+  speakerLabel: string | null;
+  text: string;
+  qualityText: string | null;
+  alignmentConfidence: number | null;
+  textSource: string | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
+  orderIndex: number;
+};
+
+export async function getTwoPassSegments(sessionId: string) {
+  return query<E2eTwoPassSegment>(
+    `SELECT seg."id", seg."speakerLabel", seg."text", seg."qualityText",
+            seg."alignmentConfidence", seg."textSource",
+            seg."startSeconds", seg."endSeconds", seg."orderIndex"
+     FROM "TranscriptSegment" seg
+     JOIN "Transcript" t ON t."id" = seg."transcriptId"
+     WHERE t."sessionId" = $1
+     ORDER BY seg."orderIndex" ASC`,
+    [sessionId],
+  );
+}
+
+export async function createTwoPassTranscript(
+  sessionId: string,
+  segments: Array<{
+    speakerLabel: string;
+    startSeconds: number;
+    endSeconds: number;
+    text: string;
+    qualityText?: string | null;
+    alignmentConfidence?: number | null;
+    textSource?: string | null;
+  }>,
+  opts?: {
+    strategy?: string;
+    qualityPassStatus?: string;
+    alignmentStatus?: string;
+    alignmentConfidence?: number;
+  },
+) {
+  const txId = id("transcript");
+  const strategy = opts?.strategy ?? "diarize_plus_quality";
+  const rows = await query<{ id: string }>(
+    `INSERT INTO "Transcript"
+       ("id", "sessionId", "recordingId", "source", "status", "text",
+        "hasSpeakerDiarization", "speakerMappingStatus", "diarizationStatus",
+        "strategy", "qualityPassStatus", "alignmentStatus", "alignmentConfidence",
+        "diarizationPassStatus", "updatedAt", "completedAt")
+     VALUES ($1, $2, NULL, 'GENERATED', 'COMPLETED',
+             'Two-pass mock transcript.',
+             TRUE, 'REQUIRED', 'COMPLETED',
+             $3, $4, $5, $6, 'COMPLETED', NOW(), NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "hasSpeakerDiarization" = TRUE,
+           "speakerMappingStatus" = 'REQUIRED',
+           "diarizationStatus" = 'COMPLETED',
+           "strategy" = $3,
+           "qualityPassStatus" = $4,
+           "alignmentStatus" = $5,
+           "alignmentConfidence" = $6,
+           "diarizationPassStatus" = 'COMPLETED',
+           "completedAt" = NOW(),
+           "updatedAt" = NOW()
+     RETURNING "id"`,
+    [
+      txId,
+      sessionId,
+      strategy,
+      opts?.qualityPassStatus ?? "OK",
+      opts?.alignmentStatus ?? "ALIGNED",
+      opts?.alignmentConfidence ?? 0.88,
+    ],
+  );
+  const transcript = rows[0]!;
+
+  await query(`DELETE FROM "TranscriptSegment" WHERE "transcriptId" = $1`, [transcript.id]);
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    await query(
+      `INSERT INTO "TranscriptSegment"
+         ("id", "transcriptId", "speakerLabel", "startSeconds", "endSeconds",
+          "text", "qualityText", "alignmentConfidence", "textSource", "orderIndex", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+      [
+        id("seg"),
+        transcript.id,
+        seg.speakerLabel,
+        seg.startSeconds,
+        seg.endSeconds,
+        seg.text,
+        seg.qualityText ?? null,
+        seg.alignmentConfidence ?? null,
+        seg.textSource ?? null,
+        i,
+      ],
+    );
+  }
+
+  return transcript;
+}
+
+export async function createDiarizedTranscriptWithStatus(
+  sessionId: string,
+  diarizationStatus: string,
+  segments: Array<{ speakerLabel: string | null; startSeconds: number; endSeconds: number; text: string }>,
+) {
+  const txId = id("transcript");
+  const hasDiarization = segments.some((s) => s.speakerLabel !== null);
+
+  const rows = await query<{ id: string }>(
+    `INSERT INTO "Transcript"
+       ("id", "sessionId", "recordingId", "source", "status", "text",
+        "hasSpeakerDiarization", "speakerMappingStatus", "diarizationStatus", "updatedAt", "completedAt")
+     VALUES ($1, $2, NULL, 'GENERATED', 'COMPLETED',
+             'Mock diarized transcript.',
+             $3, $4, $5, NOW(), NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "status" = 'COMPLETED',
+           "hasSpeakerDiarization" = $3,
+           "speakerMappingStatus" = $4,
+           "diarizationStatus" = $5,
+           "completedAt" = NOW(),
+           "updatedAt" = NOW()
+     RETURNING "id"`,
+    [
+      txId,
+      sessionId,
+      hasDiarization,
+      hasDiarization ? 'REQUIRED' : 'NOT_REQUIRED',
+      diarizationStatus,
+    ],
+  );
+  const transcript = rows[0]!;
+
+  await query(`DELETE FROM "TranscriptSegment" WHERE "transcriptId" = $1`, [transcript.id]);
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    await query(
+      `INSERT INTO "TranscriptSegment"
+         ("id", "transcriptId", "speakerLabel", "startSeconds", "endSeconds", "text", "orderIndex",
+          "mappingSource", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PROVIDER_DIARIZATION', NOW())`,
+      [id("seg"), transcript.id, seg.speakerLabel, seg.startSeconds, seg.endSeconds, seg.text, i],
+    );
+  }
+
+  return transcript;
+}
+
 export async function createSnapshotJoinFixture() {
   const facilitator = await ensureDemoFacilitator();
   const negotiationCase = await createE2eCase();

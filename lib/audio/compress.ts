@@ -8,6 +8,13 @@ import { join } from "node:path";
 import ffmpeg from "fluent-ffmpeg";
 
 import { CompressionStatus, ExternalService } from "@/app/generated/prisma/client";
+
+/**
+ * lame MP3 encoder minimum bitrate floor.
+ * Values below 32 kbps are not reliably supported by libmp3lame.
+ * This constant intentionally guards the encoder, not a configurable setting.
+ */
+export const MP3_MIN_BITRATE_KBPS = 32;
 import {
   getAudioTranscriptionChannels,
   getAudioTranscriptionSampleRate,
@@ -234,9 +241,10 @@ export async function compressAudioForTranscription(
         bitrateUsed: targetBitrateKbps,
       };
     } catch {
+      const mp3BitrateKbps = Math.max(targetBitrateKbps, MP3_MIN_BITRATE_KBPS);
       await runFfmpeg(inputPath, mp3Path, {
         codec: "libmp3lame",
-        bitrateKbps: Math.max(targetBitrateKbps, 32),
+        bitrateKbps: mp3BitrateKbps,
         sampleRate,
         channels,
         format: "mp3",
@@ -257,7 +265,7 @@ export async function compressAudioForTranscription(
         compressedMimeType: "audio/mpeg",
         compressedSizeBytes: compressedBuffer.length,
         codecUsed: "libmp3lame" as const,
-        bitrateUsed: Math.max(targetBitrateKbps, 32),
+        bitrateUsed: mp3BitrateKbps,
       };
     }
   } catch (error) {

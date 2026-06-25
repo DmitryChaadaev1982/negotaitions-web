@@ -394,24 +394,49 @@ model Recording {
 }
 
 model Transcript {
-  id                   String           @id @default(cuid())
-  sessionId            String           @unique
-  recordingId          String?          @unique
-  source               TranscriptSource
-  status               TranscriptStatus @default(COMPLETED)
-  text                 String           @default("") @db.Text
-  diarizedText         String?          @db.Text
-  language             String?
-  originalFileName     String?
-  originalMimeType     String?
-  transcriptionModel   String?
-  hasSpeakerDiarization Boolean         @default(false)
-  speakerMapping       Json?
-  errorMessage         String?
-  startedAt            DateTime?
-  completedAt          DateTime?
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
+  id                          String           @id @default(cuid())
+  sessionId                   String           @unique
+  recordingId                 String?          @unique
+  source                      TranscriptSource
+  status                      TranscriptStatus @default(COMPLETED)
+  text                        String           @default("") @db.Text
+  diarizedText                String?          @db.Text
+  language                    String?
+  originalFileName            String?
+  originalMimeType            String?
+  transcriptionModel          String?
+  hasSpeakerDiarization       Boolean          @default(false)
+  speakerMapping              Json?
+  // Speaker mapping workflow: NOT_REQUIRED | REQUIRED | AUTO_SUGGESTED | CONFIRMED | NEEDS_REVIEW | PARTIALLY_MAPPED | FAILED
+  speakerMappingStatus        String           @default("NOT_REQUIRED")
+  speakerMappingConfirmedAt   DateTime?
+  speakerMappingConfirmedBy   String?
+  // Diarization tracking: NOT_REQUESTED | REQUESTED | COMPLETED | FAILED | NO_SPEAKERS_DETECTED | SINGLE_SPEAKER_ONLY
+  diarizationStatus           String?
+  diarizationProvider         String?
+  diarizationError            String?
+  // Two-pass transcription strategy fields
+  // strategy: diarize_only | quality_only | diarize_plus_quality
+  strategy                    String?
+  // qualityModel: model used in the quality pass (diarize_plus_quality or quality_only)
+  qualityModel                String?
+  // diarizationPassStatus: COMPLETED | FAILED
+  diarizationPassStatus       String?
+  // qualityPassStatus: OK | LOW_CONFIDENCE | FAILED | SKIPPED
+  qualityPassStatus           String?
+  // alignmentStatus: ALIGNED | PARTIAL | FAILED | SKIPPED
+  alignmentStatus             String?
+  // alignmentConfidence: 0..1 average alignment confidence across segments
+  alignmentConfidence         Float?
+  // Re-transcription versioning
+  retranscribeCount           Int              @default(0)
+  retranscribeHistory         Json?
+  processingMetadata          Json?
+  errorMessage                String?
+  startedAt                   DateTime?
+  completedAt                 DateTime?
+  createdAt                   DateTime         @default(now())
+  updatedAt                   DateTime         @updatedAt
 
   session   Session             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   recording Recording?          @relation(fields: [recordingId], references: [id], onDelete: SetNull)
@@ -425,8 +450,20 @@ model TranscriptSegment {
   mappedParticipantId String?
   startSeconds        Float?
   endSeconds          Float?
+  // text is the final text shown to users and AI (= diarized text or quality-aligned text)
   text                String   @db.Text
+  // qualityText: text candidate from quality transcription pass (before confidence threshold)
+  qualityText         String?  @db.Text
+  // alignmentConfidence: per-segment confidence score from quality pass alignment (0..1)
+  alignmentConfidence Float?
+  // textSource: DIARIZED | QUALITY | MANUAL — which pass produced the final text
+  textSource          String?
   orderIndex          Int
+  // Mapping provenance: PROVIDER_DIARIZATION | CLUSTER_MAPPING | MIC_ACTIVITY | MANUAL_SEGMENT_OVERRIDE | MANUAL_CLUSTER_MAPPING | UNKNOWN
+  mappingSource       String?
+  mappingConfidence   Float?
+  // When true, cluster mapping changes must not overwrite this segment
+  mappingLocked       Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -438,10 +475,12 @@ model TranscriptSegment {
 }
 
 model AiAnalysis {
-  id                     String           @id @default(cuid())
-  sessionId              String           @unique
-  transcriptId           String?
-  status                 AiAnalysisStatus @default(QUEUED)
+  id                          String           @id @default(cuid())
+  sessionId                   String           @unique
+  transcriptId                String?
+  // Tracks which retranscribeCount version of the transcript this analysis was built on
+  transcriptRetranscribeCount Int              @default(0)
+  status                      AiAnalysisStatus @default(QUEUED)
   model                  String?
   language               String?
   executiveSummary       String?          @db.Text
@@ -497,4 +536,21 @@ model UsageCounter {
   updatedAt   DateTime        @updatedAt
 
   @@index([service, metric, periodStart])
+}
+
+model SessionParticipantAudioActivity {
+  id                      String    @id @default(cuid())
+  sessionId               String
+  sessionParticipantId    String
+  participantIdentity     String?
+  startedAt               DateTime
+  endedAt                 DateTime?
+  startedOffsetSeconds    Float?
+  endedOffsetSeconds      Float?
+  source                  String    @default("LIVEKIT_ACTIVE_SPEAKER")
+  confidence              Float?
+  createdAt               DateTime  @default(now())
+
+  @@index([sessionId])
+  @@index([sessionParticipantId])
 }

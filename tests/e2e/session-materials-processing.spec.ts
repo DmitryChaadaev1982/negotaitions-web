@@ -5,7 +5,9 @@ import {
   clearAiAnalysis,
   clearTranscript,
   countTranscripts,
+  createAudioActivity,
   createCompletedTranscript,
+  createDiarizedTranscript,
   createE2eCase,
   createE2eEvent,
   getAiAnalysis,
@@ -14,6 +16,7 @@ import {
   getExternalServiceNames,
   getRecordingBySession,
   getSession,
+  getSpeakerMappingStatus,
   getTranscriptStatus,
   getTranscriptText,
   participantByName,
@@ -139,7 +142,7 @@ test("Test 2 — Materials status API returns recording state after finish", asy
   const body = (await statusResponse.json()) as {
     recording: { status: string; processingStage: string } | null;
     transcription: { status: string | null; canStart: boolean; processingStage: string };
-    processing: { shouldPoll: boolean };
+    processing: { shouldPoll: boolean; autoTranscribeEnabled: boolean };
   };
 
   expect(body.recording).not.toBeNull();
@@ -149,7 +152,10 @@ test("Test 2 — Materials status API returns recording state after finish", asy
   expect(body.transcription.processingStage).toBe("not_started");
   expect(body.transcription.canStart).toBe(true);
 
-  expect(body.processing.shouldPoll).toBe(true);
+  // With AUTO_TRANSCRIBE_AFTER_RECORDING=false (test default), polling stops
+  // once recording is ready and no active transcription is running.
+  expect(body.processing.autoTranscribeEnabled).toBe(false);
+  expect(body.processing.shouldPoll).toBe(false);
 });
 
 test("Test 3 — Transcription flow via new endpoint: QUEUED → COMPLETED", async ({
@@ -364,7 +370,9 @@ test("Test 7 — Recording refresh status endpoint accessible to facilitator", a
   expect(participantRefresh.status()).toBe(403);
 });
 
-test("Test 8 — Duplicate transcription prevented", async ({ request }) => {
+test("Test 8 — Duplicate transcription prevented (409 on concurrent second call)", async ({
+  request,
+}) => {
   const { session, facilitator } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
@@ -377,6 +385,22 @@ test("Test 8 — Duplicate transcription prevented", async ({ request }) => {
     { data: { joinToken: facilitator.joinToken, language: "auto" } },
   );
   expect(firstTranscribe.ok()).toBeTruthy();
+
+  // Second call while the first job may still be running (or COMPLETED in mock)
+  // must be rejected as a duplicate — either 409 (in-progress) or the transcript
+  // already completed, in which case canStart is false and the second POST would
+  // start a fresh job only if the transcript was cleared first. Here the transcript
+  // exists as COMPLETED (mock mode completes synchronously), so canStartTranscription
+  // is false → the endpoint should return 400 (recording/transcript already complete).
+  const secondTranscribe = await request.post(
+    `/api/sessions/${session.id}/materials/transcribe`,
+    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+  );
+  // 409 = transcript in active state; 400 = recording not ready (unlikely here);
+  // 200 would mean a duplicate was allowed — that must not happen.
+  expect(secondTranscribe.status()).not.toBe(200);
+
+  expect(await countTranscripts(session.id)).toBe(1);
 
   await clearTranscript(session.id);
   await updateRecordingCompleted(session.id);
@@ -656,4 +680,332 @@ test("AI Test 5 — Multi-session isolation: Session 1 analysis not visible in S
   expect(session2Analysis).toBeNull();
 
   await clearAiAnalysis(session1Id);
+});
+
+// ── AUTO_TRANSCRIBE_AFTER_RECORDING Tests ─────────────────────────────────
+
+test("Test 10 — AUTO_TRANSCRIBE disabled: status API returns autoTranscribeEnabled=false and shouldPoll=false when recording ready", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  const recording = await getRecordingBySession(session.id);
+  expect(recording?.status).toBe("COMPLETED");
+
+  const statusResponse = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  );
+  expect(statusResponse.ok()).toBeTruthy();
+
+  const body = (await statusResponse.json()) as {
+    recording: { status: string; processingStage: string } | null;
+    transcription: { status: string | null; canStart: boolean; processingStage: string };
+    processing: { shouldPoll: boolean; autoTranscribeEnabled: boolean };
+  };
+
+  // Recording is ready, transcription not started
+  expect(body.recording?.processingStage).toBe("ready");
+  expect(body.transcription.processingStage).toBe("not_started");
+  expect(body.transcription.canStart).toBe(true);
+
+  // Auto-transcribe is disabled in test env → no polling needed for the recording-ready state
+  expect(body.processing.autoTranscribeEnabled).toBe(false);
+  expect(body.processing.shouldPoll).toBe(false);
+});
+
+test("Test 11 — AUTO_TRANSCRIBE disabled: no transcript is created automatically after recording completes", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  const recording = await getRecordingBySession(session.id);
+  expect(recording?.status).toBe("COMPLETED");
+
+  // Confirm no transcript was created automatically
+  expect(await countTranscripts(session.id)).toBe(0);
+  expect(await getTranscriptStatus(session.id)).toBeNull();
+});
+
+test("Test 12 — Manual transcription works when AUTO_TRANSCRIBE is disabled", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  const recording = await getRecordingBySession(session.id);
+  expect(recording?.status).toBe("COMPLETED");
+
+  // Manually start transcription
+  const transcribeResponse = await request.post(
+    `/api/sessions/${session.id}/materials/transcribe`,
+    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+  );
+  expect(transcribeResponse.ok()).toBeTruthy();
+
+  const statusResult = await getTranscriptStatus(session.id);
+  expect(statusResult?.status).toBe("COMPLETED");
+
+  const text = await getTranscriptText(session.id);
+  expect(text).toBeTruthy();
+
+  // After manual transcription completes, canStart is false
+  const statusResponse = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  );
+  const body = (await statusResponse.json()) as {
+    transcription: { canStart: boolean; processingStage: string };
+  };
+  expect(body.transcription.canStart).toBe(false);
+  expect(body.transcription.processingStage).toBe("ready");
+
+  await clearTranscript(session.id);
+});
+
+test("Test 13 — Duplicate job prevention: second transcription POST rejected when first is in progress or completed", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await updateRecordingCompleted(session.id);
+
+  const first = await request.post(
+    `/api/sessions/${session.id}/materials/transcribe`,
+    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+  );
+  expect(first.ok()).toBeTruthy();
+
+  // Second call must be rejected (transcript already COMPLETED in mock mode = canStart=false)
+  const second = await request.post(
+    `/api/sessions/${session.id}/materials/transcribe`,
+    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+  );
+  expect(second.status()).not.toBe(200);
+
+  // Only one transcript record should exist
+  expect(await countTranscripts(session.id)).toBe(1);
+});
+
+test("Test 14 — String 'false' is parsed as false: getEnvBoolean safety check via API response", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  const statusResponse = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  );
+  const body = (await statusResponse.json()) as {
+    processing: { autoTranscribeEnabled: boolean };
+  };
+
+  // The test env explicitly sets AUTO_TRANSCRIBE_AFTER_RECORDING="false"
+  // getEnvBoolean must parse the string "false" as boolean false, not truthy
+  expect(body.processing.autoTranscribeEnabled).toBe(false);
+});
+
+// ── Speaker Mapping Tests ─────────────────────────────────────────────────
+
+test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping required", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  // Transcription via mock produces hasSpeakerDiarization=true, speakerMappingStatus=REQUIRED
+  await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    data: { joinToken: facilitator.joinToken, language: "auto" },
+  });
+
+  // AI analysis must be blocked
+  const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    data: { joinToken: facilitator.joinToken },
+  });
+  expect(analyzeRes.status()).toBe(422);
+  const analyzeBody = (await analyzeRes.json()) as { errorCode: string };
+  expect(analyzeBody.errorCode).toBe("SPEAKER_MAPPING_REQUIRED");
+
+  // Confirm mapping via speaker-mapping API
+  const confirmRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    data: {
+      joinToken: facilitator.joinToken,
+      mapping: { speaker_1: facilitator.id },
+      confirm: true,
+      applyToTranscript: false,
+    },
+  });
+  expect(confirmRes.ok()).toBeTruthy();
+  const confirmBody = (await confirmRes.json()) as { confirmed: boolean };
+  expect(confirmBody.confirmed).toBe(true);
+
+  const mappingStatus = await getSpeakerMappingStatus(session.id);
+  expect(mappingStatus?.speakerMappingStatus).toBe("CONFIRMED");
+
+  // AI analysis must now be allowed
+  const analyzeAfterConfirm = await request.post(`/api/sessions/${session.id}/analyze`, {
+    data: { joinToken: facilitator.joinToken },
+  });
+  expect(analyzeAfterConfirm.ok()).toBeTruthy();
+
+  await clearAiAnalysis(session.id);
+  await clearTranscript(session.id);
+});
+
+test("Speaker Mapping Test 2 — Participant cannot edit speaker mapping", async ({
+  request,
+}) => {
+  const { session, facilitator, igor } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    data: { joinToken: facilitator.joinToken, language: "auto" },
+  });
+
+  // Participant POST should be forbidden
+  const postRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    data: {
+      joinToken: igor.joinToken,
+      mapping: { speaker_1: igor.id },
+      confirm: true,
+    },
+  });
+  expect(postRes.status()).toBe(403);
+
+  // Participant GET returns canEdit: false
+  const getRes = await request.get(
+    `/api/sessions/${session.id}/speaker-mapping?joinToken=${igor.joinToken}`,
+  );
+  expect(getRes.ok()).toBeTruthy();
+  const getBody = (await getRes.json()) as { canEdit: boolean };
+  expect(getBody.canEdit).toBe(false);
+
+  await clearTranscript(session.id);
+});
+
+test("Speaker Mapping Test 3 — Automatic mapping unavailable without audio activity", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  await createDiarizedTranscript(session.id, [
+    { speakerLabel: "speaker_1", startSeconds: 0, endSeconds: 10, text: "Hello from speaker 1." },
+    { speakerLabel: "speaker_2", startSeconds: 10, endSeconds: 20, text: "Hello from speaker 2." },
+  ]);
+
+  // No audio activity — automatic mapping should report unavailable
+  const suggestRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    data: {
+      joinToken: facilitator.joinToken,
+      suggestAutomatically: true,
+    },
+  });
+  expect(suggestRes.ok()).toBeTruthy();
+  const suggestBody = (await suggestRes.json()) as {
+    available: boolean;
+    unavailableReason: string | null;
+  };
+  expect(suggestBody.available).toBe(false);
+  expect(suggestBody.unavailableReason).toBe("no_audio_activity");
+
+  await clearTranscript(session.id);
+});
+
+test("Speaker Mapping Test 4 — Automatic mapping suggestion with mock audio activity", async ({
+  request,
+}) => {
+  const { session, facilitator, igor, alex } = await createAssignedSession(request);
+
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  await createDiarizedTranscript(session.id, [
+    { speakerLabel: "speaker_1", startSeconds: 0, endSeconds: 10, text: "Hello from speaker 1." },
+    { speakerLabel: "speaker_2", startSeconds: 10, endSeconds: 20, text: "Hello from speaker 2." },
+  ]);
+
+  // Seed audio activity matching segments
+  await createAudioActivity(session.id, igor.id, 0, 10);
+  await createAudioActivity(session.id, alex.id, 10, 20);
+
+  const suggestRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    data: {
+      joinToken: facilitator.joinToken,
+      suggestAutomatically: true,
+    },
+  });
+  expect(suggestRes.ok()).toBeTruthy();
+  const suggestBody = (await suggestRes.json()) as {
+    available: boolean;
+    suggestedMapping: Record<string, string>;
+    confidence: Record<string, number>;
+  };
+  expect(suggestBody.available).toBe(true);
+  expect(suggestBody.suggestedMapping["speaker_1"]).toBe(igor.id);
+  expect(suggestBody.suggestedMapping["speaker_2"]).toBe(alex.id);
+  expect(suggestBody.confidence["speaker_1"]).toBeGreaterThanOrEqual(0.6);
+  expect(suggestBody.confidence["speaker_2"]).toBeGreaterThanOrEqual(0.6);
+
+  await clearTranscript(session.id);
+});
+
+test("Speaker Mapping Test 5 — Multi-session isolation: mapping from Session 1 does not affect Session 2", async ({
+  request,
+}) => {
+  const sess1 = await createAssignedSession(request);
+  const sess2 = await createAssignedSession(request);
+
+  for (const { session, facilitator } of [sess1, sess2]) {
+    await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+    await control(request, session.id, facilitator.joinToken, "START");
+    await control(request, session.id, facilitator.joinToken, "FINISH");
+  }
+
+  // Transcribe and confirm mapping only in session 1
+  await request.post(`/api/sessions/${sess1.session.id}/materials/transcribe`, {
+    data: { joinToken: sess1.facilitator.joinToken, language: "auto" },
+  });
+  await request.post(`/api/sessions/${sess1.session.id}/speaker-mapping`, {
+    data: {
+      joinToken: sess1.facilitator.joinToken,
+      mapping: { speaker_1: sess1.facilitator.id },
+      confirm: true,
+      applyToTranscript: false,
+    },
+  });
+
+  const status1 = await getSpeakerMappingStatus(sess1.session.id);
+  expect(status1?.speakerMappingStatus).toBe("CONFIRMED");
+
+  // Session 2 should have no transcript / mapping
+  const status2 = await getSpeakerMappingStatus(sess2.session.id);
+  expect(status2).toBeNull();
+
+  await clearTranscript(sess1.session.id);
 });

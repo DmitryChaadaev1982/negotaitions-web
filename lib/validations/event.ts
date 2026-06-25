@@ -70,7 +70,9 @@ export const updateEventHostSchema = z.object({
       facilitatorEventParticipantId: z.string().nullable(),
       roleAssignments: z.record(z.string(), z.string()),
       observerEventParticipantIds: z.array(z.string()),
-      roomLabel: z.string().trim().max(80).optional(),
+      // Do not trim while drafting: the lobby input syncs on every keystroke, so
+      // trailing spaces would disappear before the user can type the next word.
+      roomLabel: z.string().max(80).optional(),
       preparationDurationMinutes: z.number().int().min(0).max(60),
       negotiationDurationMinutes: z.number().int().min(1).max(180),
     })

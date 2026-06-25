@@ -72,7 +72,7 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
         select: { status: true },
       },
       transcript: {
-        select: { status: true },
+        select: { status: true, hasSpeakerDiarization: true, speakerMappingStatus: true },
       },
       aiAnalysis: {
         select: { status: true, visibility: true },
@@ -111,6 +111,14 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
           : "in_progress"
       : null;
 
+    const speakerMappingStage: string | null = (() => {
+      if (!session.transcript?.hasSpeakerDiarization) return null;
+      const mappingStatus = session.transcript.speakerMappingStatus ?? "NOT_REQUIRED";
+      if (mappingStatus === "CONFIRMED") return "confirmed";
+      if (mappingStatus === "NOT_REQUIRED") return null;
+      return "required";
+    })();
+
     const aiStage = aiStatus
       ? aiStatus === "COMPLETED"
         ? "ready"
@@ -146,6 +154,7 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
       createdAt: session.createdAt.toISOString(),
       recordingStage,
       transcriptStage,
+      speakerMappingStage,
       aiStage: aiStage === "ready" && session.aiAnalysis?.visibility === "SHARED_WITH_SESSION"
         ? "shared"
         : aiStage,

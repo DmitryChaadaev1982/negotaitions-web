@@ -1,6 +1,7 @@
 "use client";
 
 import "@livekit/components-styles";
+import "@/styles/livekit-overrides.css";
 
 import {
   LiveKitRoom,
@@ -32,6 +33,7 @@ import {
   saveRecoveryContext,
   touchRecoveryContext,
 } from "@/lib/rejoin/recovery-storage";
+import { SpeakingActivityTracker } from "@/components/speaking-activity-tracker";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -369,6 +371,11 @@ function ConnectedRoom({
       >
         <RoomAudioRenderer />
         <MicEnforcement controlState={controlState} />
+        <SpeakingActivityTracker
+          sessionId={sessionId}
+          joinToken={joinToken}
+          negotiationStartedAt={null}
+        />
         <header
           className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3"
           data-testid="session-room-header"
@@ -448,7 +455,7 @@ function ConnectedRoom({
           </div>
 
           {/* Right sidebar: debrief panel when finished, regular sidebar otherwise */}
-          <div className="hidden h-full min-h-0 w-96 shrink-0 overflow-hidden border-l border-slate-800 lg:block">
+          <div className="hidden h-full min-h-0 w-[28rem] shrink-0 overflow-hidden border-l border-slate-800 xl:w-[32rem] lg:block">
             {isDebriefMode ? (
               <DebriefPanel
                 sessionId={sessionId}

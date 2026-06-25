@@ -187,6 +187,19 @@ export async function buildSessionAnalysisContext(
 export function buildAnalysisPrompt(context: SessionAnalysisContext): string {
   const lines: string[] = [];
 
+  const formatTimestamp = (value: number | null) => {
+    if (value == null) return null;
+    const safe = Math.max(0, Math.floor(value));
+    const hours = Math.floor(safe / 3600)
+      .toString()
+      .padStart(2, "0");
+    const minutes = Math.floor((safe % 3600) / 60)
+      .toString()
+      .padStart(2, "0");
+    const seconds = (safe % 60).toString().padStart(2, "0");
+    return `${hours}:${minutes}:${seconds}`;
+  };
+
   lines.push("# NegotAItions — Negotiation Session Analysis Request");
   lines.push("");
   lines.push(
@@ -209,6 +222,9 @@ export function buildAnalysisPrompt(context: SessionAnalysisContext): string {
   lines.push("- Scores must be integers 0–100.");
   lines.push(
     `- Output language: ${context.session.caseLanguage === "RU" ? "Russian" : "English"}.`,
+  );
+  lines.push(
+    "- For participantPersonalFeedback: generate one entry per NEGOTIATING participant (exclude facilitators and observers). Each entry must be specific to that individual's behaviour in the transcript. Include concrete evidence. Achievements should highlight genuine strengths. CouldHaveDoneBetter should name specific missed opportunities or mistakes with actionable tips.",
   );
   lines.push("");
 
@@ -277,6 +293,19 @@ export function buildAnalysisPrompt(context: SessionAnalysisContext): string {
     lines.push("");
     if (context.transcript.language) {
       lines.push(`Transcript language: ${context.transcript.language}`);
+    }
+
+    if (context.transcript.segments.length > 0) {
+      lines.push("");
+      lines.push("## Transcript Segments (Timeline)");
+      for (const segment of context.transcript.segments) {
+        const speaker = segment.mappedParticipantName ?? segment.speakerLabel ?? "Speaker";
+        const start = formatTimestamp(segment.startSeconds);
+        const end = formatTimestamp(segment.endSeconds);
+        const timeRange =
+          start && end ? `${start}-${end}` : (start ?? end ?? "00:00:00");
+        lines.push(`[${timeRange}] [${speaker}] ${segment.text}`);
+      }
     }
   } else {
     lines.push("## Transcript");

@@ -33,6 +33,7 @@ export type SessionListItem = {
   // AI analysis pipeline status for sessions page
   recordingStage: string | null;
   transcriptStage: string | null;
+  speakerMappingStage: string | null;
   aiStage: string | null;
   aiVisibility: string;
 };

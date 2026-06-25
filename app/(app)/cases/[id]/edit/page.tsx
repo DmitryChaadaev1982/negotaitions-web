@@ -40,6 +40,7 @@ export default async function EditCasePage({ params }: EditCasePageProps) {
         title: negotiationCase.title,
         businessContext: negotiationCase.businessContext,
         publicInstructions: negotiationCase.publicInstructions,
+        difficulty: negotiationCase.difficulty,
         caseLanguage: negotiationCase.caseLanguage,
         defaultDurationMinutes: secondsToDisplayMinutes(
           negotiationCase.defaultDurationSeconds,

@@ -4,6 +4,7 @@ import { SessionDetailView } from "@/components/session-detail-view";
 import { getJoinUrl } from "@/lib/config";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import { resolveSessionCaseSnapshot } from "@/lib/session-snapshot";
@@ -137,6 +138,7 @@ export default async function SessionDetailPage({
             }
           : null,
       }}
+      autoTranscribeEnabled={autoTranscribeAfterRecording}
     />
   );
 }

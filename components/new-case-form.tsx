@@ -34,6 +34,7 @@ export type CaseFormInitialValues = {
   title: string;
   businessContext: string;
   publicInstructions: string;
+  difficulty: "EASY" | "MEDIUM" | "HARD";
   caseLanguage: "RU" | "EN";
   defaultDurationMinutes: number;
   defaultPreparationDurationMinutes: number;
@@ -155,6 +156,23 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
             >
               <option value="EN">{t("cases.caseLanguageEn")}</option>
               <option value="RU">{t("cases.caseLanguageRu")}</option>
+            </select>
+          </Field>
+
+          <Field
+            label={t("cases.difficulty")}
+            name="difficulty"
+            error={state.errors?.difficulty?.[0]}
+          >
+            <select
+              id="difficulty"
+              name="difficulty"
+              defaultValue={initialValues?.difficulty ?? "MEDIUM"}
+              className={inputClassName(!!state.errors?.difficulty)}
+            >
+              <option value="EASY">{t("difficulty.EASY")}</option>
+              <option value="MEDIUM">{t("difficulty.MEDIUM")}</option>
+              <option value="HARD">{t("difficulty.HARD")}</option>
             </select>
           </Field>
 

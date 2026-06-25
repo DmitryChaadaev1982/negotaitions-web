@@ -50,7 +50,10 @@ type MaterialsStatusTranscription = {
   errorMessage: string | null;
   canStart: boolean;
   canRetry: boolean;
+  canRerun?: boolean;
   processingStage: string;
+  diarizationStatus?: string | null;
+  retranscribeCount?: number | null;
 };
 
 type MaterialsStatusAiAnalysis = {
@@ -59,6 +62,7 @@ type MaterialsStatusAiAnalysis = {
   model: string | null;
   executiveSummary: string | null;
   overallScore: number | null;
+  analysisFromOlderTranscript?: boolean;
   analysisJson: NegotiationAnalysisOutput | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -85,6 +89,7 @@ type MaterialsStatusResponse = {
     nextPollMs: number | null;
     currentStage: string;
     message: string | null;
+    autoTranscribeEnabled: boolean;
   };
 };
 
@@ -365,10 +370,12 @@ function SectionCard({
   );
 }
 
-function AiReportView({
+export function AiAnalysisReport({
   analysis,
+  isFacilitator = false,
 }: {
   analysis: NegotiationAnalysisOutput;
+  isFacilitator?: boolean;
 }) {
   const { t } = useI18n();
   const [reportCopied, setReportCopied] = useState(false);
@@ -778,6 +785,111 @@ function AiReportView({
           </div>
         </div>
       </SectionCard>
+
+      {/* 14. Personal feedback per participant */}
+      {analysis.participantPersonalFeedback &&
+        analysis.participantPersonalFeedback.length > 0 && (
+          <div
+            className={
+              isFacilitator
+                ? "space-y-3"
+                : "rounded-lg border border-violet-600/40 bg-violet-950/20 p-1"
+            }
+          >
+            {!isFacilitator && (
+              <div className="px-3 pt-3">
+                <p className="text-sm font-semibold text-violet-300">
+                  ★ {t("sessionMaterials.yourPersonalFeedback")}
+                </p>
+              </div>
+            )}
+            {isFacilitator && (
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                {t("sessionMaterials.participantPersonalFeedback")}
+              </p>
+            )}
+            {analysis.participantPersonalFeedback.map((pf, idx) => (
+              <div
+                key={idx}
+                className={
+                  isFacilitator
+                    ? "rounded border border-violet-700/30 bg-violet-950/20 p-3"
+                    : "p-3"
+                }
+              >
+                {isFacilitator && (
+                  <p className="mb-2 text-sm font-semibold text-violet-300">
+                    {pf.participantName}
+                  </p>
+                )}
+
+                {pf.achievements.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-xs font-medium text-emerald-400">
+                      ✓ {t("sessionMaterials.achievements")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {pf.achievements.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-slate-300">
+                          <span className="mt-0.5 shrink-0 text-emerald-500">•</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {pf.couldHaveDoneBetter.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-xs font-medium text-amber-400">
+                      ↑ {t("sessionMaterials.couldHaveDoneBetter")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {pf.couldHaveDoneBetter.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-slate-300">
+                          <span className="mt-0.5 shrink-0 text-amber-500">•</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {pf.keyMoments.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-xs font-medium text-cyan-400">
+                      ◆ {t("sessionMaterials.keyMoments")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {pf.keyMoments.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-slate-300">
+                          <span className="mt-0.5 shrink-0 text-cyan-500">•</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {pf.nextSteps.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-violet-400">
+                      → {t("sessionMaterials.personalNextSteps")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {pf.nextSteps.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-slate-300">
+                          <span className="mt-0.5 shrink-0 text-violet-500">•</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
     </div>
   );
 }
@@ -798,6 +910,9 @@ export function SessionMaterialsDashboard({
   const [liveData, setLiveData] = useState<MaterialsStatusResponse | null>(null);
   const [transcriptionBusy, setTranscriptionBusy] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
+  const [rerunBusy, setRerunBusy] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [aiAnalysisBusy, setAiAnalysisBusy] = useState(false);
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
@@ -835,8 +950,12 @@ export function SessionMaterialsDashboard({
 
   const isPolling = canPoll && shouldCurrentlyPoll;
 
+  const autoTranscribeEnabled = liveData?.processing?.autoTranscribeEnabled ?? false;
   const canStartTranscription = liveData?.transcription?.canStart ?? false;
   const canRetryTranscription = liveData?.transcription?.canRetry ?? false;
+  const canRerunTranscription = liveData?.transcription?.canRerun ?? false;
+  const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
+  const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 
   const canStartAiAnalysis = liveData?.aiAnalysis?.canStart ?? false;
   const canRetryAiAnalysis = liveData?.aiAnalysis?.canRetry ?? false;
@@ -957,7 +1076,38 @@ export function SessionMaterialsDashboard({
     }
   }, [sessionId, joinToken, fetchStatus]);
 
+  const handleRerunTranscription = useCallback(async () => {
+    if (!sessionId || !joinToken) return;
+    setRerunConfirmOpen(false);
+    setRerunBusy(true);
+    setRerunError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/materials/retranscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ joinToken, reason: "manual_rerun" }),
+      });
+      if (!isMountedRef.current) return;
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Re-transcription failed.");
+      }
+      await fetchStatus();
+    } catch (err) {
+      if (isMountedRef.current) {
+        setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setRerunBusy(false);
+      }
+    }
+  }, [sessionId, joinToken, fetchStatus]);
+
   useEffect(() => {
+    if (!autoTranscribeEnabled) {
+      return;
+    }
     if (!canStartTranscription || transcriptionBusy) {
       return;
     }
@@ -968,7 +1118,7 @@ export function SessionMaterialsDashboard({
 
     autoTranscribeStartedRef.current = true;
     void handleStartTranscription();
-  }, [canStartTranscription, handleStartTranscription, transcriptionBusy]);
+  }, [autoTranscribeEnabled, canStartTranscription, handleStartTranscription, transcriptionBusy]);
 
   const handleRefreshRecording = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1226,6 +1376,53 @@ export function SessionMaterialsDashboard({
                     : t("sessionMaterials.retryTranscription")}
                 </SecondaryButton>
               ) : null}
+              {canRerunTranscription ? (
+                <SecondaryButton
+                  disabled={rerunBusy || transcriptionBusy}
+                  onClick={() => setRerunConfirmOpen(true)}
+                  data-testid="rerun-transcription-button"
+                >
+                  {rerunBusy
+                    ? t("common.loading")
+                    : t("sessionMaterials.rerunTranscription")}
+                </SecondaryButton>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* Re-run confirmation dialog */}
+          {rerunConfirmOpen ? (
+            <div className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-4">
+              <p className="text-sm text-amber-100">
+                {t("sessionMaterials.rerunTranscriptionConfirmBody")}
+              </p>
+              <div className="flex gap-2">
+                <SecondaryButton
+                  disabled={rerunBusy}
+                  onClick={() => void handleRerunTranscription()}
+                  data-testid="confirm-rerun-transcription-button"
+                >
+                  {t("recording.rerunTranscriptionConfirm")}
+                </SecondaryButton>
+                <SecondaryButton
+                  onClick={() => setRerunConfirmOpen(false)}
+                >
+                  {t("recording.rerunTranscriptionCancel")}
+                </SecondaryButton>
+              </div>
+            </div>
+          ) : null}
+
+          {rerunError ? (
+            <p className="text-sm text-amber-400">{rerunError}</p>
+          ) : null}
+
+          {/* Diarization failure warning with re-run hint */}
+          {(diarizationStatus === "FAILED" || diarizationStatus === "SINGLE_SPEAKER_ONLY" || diarizationStatus === "NO_SPEAKERS_DETECTED") && isFacilitatorView ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              {diarizationStatus === "SINGLE_SPEAKER_ONLY"
+                ? t("recording.singleSpeakerOnlyWarning")
+                : t("recording.diarizationDidNotSeparate")}
             </div>
           ) : null}
 
@@ -1267,6 +1464,16 @@ export function SessionMaterialsDashboard({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Analysis version warning */}
+          {analysisFromOlderTranscript && isFacilitatorView ? (
+            <div
+              className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+              data-testid="analysis-from-older-transcript-warning"
+            >
+              {t("sessionMaterials.analysisFromOlderTranscript")}
+            </div>
+          ) : null}
+
           {/* Participant placeholder: analysis not shared yet */}
           {participantPlaceholder && aiNotSharedMessage ? (
             <p
@@ -1385,7 +1592,7 @@ export function SessionMaterialsDashboard({
 
           {/* Report */}
           {canViewAiAnalysis && analysisJson ? (
-            <AiReportView analysis={analysisJson} />
+            <AiAnalysisReport analysis={analysisJson} isFacilitator={isFacilitatorView} />
           ) : null}
         </CardContent>
       </Card>

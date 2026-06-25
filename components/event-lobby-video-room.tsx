@@ -11,9 +11,10 @@ import {
 } from "@livekit/components-react";
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-core";
 import { isTrackReference } from "@livekit/components-core";
-import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
+import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ensureLiveKitClientSetup } from "@/lib/livekit-client-setup";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 
 const PARTICIPANT_TILE_CLASS =
   "h-full w-full [&_.lk-participant-media-video]:h-full [&_.lk-participant-media-video]:w-full [&_.lk-participant-media-video]:object-cover [&_.lk-participant-metadata]:hidden [&_.lk-participant-placeholder]:h-full [&_.lk-participant-placeholder]:w-full [&_video]:h-full [&_video]:w-full [&_video]:object-cover";
@@ -164,12 +165,16 @@ export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
   serverUrl,
   onDeviceWarning,
 }: EventLobbyVideoRoomProps) {
-  const [room] = useState(
-    () =>
-      new Room({
-        adaptiveStream: true,
-        dynacast: true,
-      }),
+  useEffect(() => {
+    ensureLiveKitClientSetup();
+  }, []);
+
+  const roomOptions = useMemo(
+    () => ({
+      adaptiveStream: true,
+      dynacast: true,
+    }),
+    [],
   );
 
   const connectOptions = useMemo(
@@ -190,6 +195,15 @@ export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
         return;
       }
 
+      const message = error.message.toLowerCase();
+      if (
+        message.includes("failed to fetch") ||
+        message.includes("could not establish pc connection")
+      ) {
+        // Transient WebRTC/network errors are surfaced by LiveKitReconnectBanner.
+        return;
+      }
+
       console.warn("[EventLobby] LiveKit error:", error.message);
     },
     [onDeviceWarning],
@@ -201,9 +215,9 @@ export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
 
   return (
     <LiveKitRoom
-      room={room}
       token={token}
       serverUrl={serverUrl}
+      options={roomOptions}
       connect
       video={false}
       audio={false}

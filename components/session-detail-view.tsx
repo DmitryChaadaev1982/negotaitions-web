@@ -17,7 +17,7 @@ import {
   ParticipantNotesModal,
   type ParticipantNotesModalParticipant,
 } from "@/components/participant-notes-modal";
-import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
+import { SessionPostProcessingPanel } from "@/components/session-post-processing-panel";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionDisplayStatusBadge } from "@/components/session-display-status-badge";
 import { SessionDurationEditor } from "@/components/session-duration-editor";
@@ -89,9 +89,10 @@ type SessionDetailViewProps = {
       lobbyUrl: string;
     } | null;
   };
+  autoTranscribeEnabled?: boolean;
 };
 
-export function SessionDetailView({ session }: SessionDetailViewProps) {
+export function SessionDetailView({ session, autoTranscribeEnabled = false }: SessionDetailViewProps) {
   const { t, locale } = useI18n();
   const [notesModalParticipant, setNotesModalParticipant] =
     useState<ParticipantNotesModalParticipant | null>(null);
@@ -321,10 +322,13 @@ export function SessionDetailView({ session }: SessionDetailViewProps) {
       </Card>
 
       {session.facilitatorParticipant ? (
-        <RecordingTranscriptionSection
+        <SessionPostProcessingPanel
           sessionId={session.id}
           joinToken={session.facilitatorParticipant.joinToken}
           readOnly={isReadOnly}
+          autoTranscribeEnabled={autoTranscribeEnabled}
+          variant="page"
+          participantType="FACILITATOR"
         />
       ) : null}
 

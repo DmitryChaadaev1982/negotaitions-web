@@ -33,6 +33,8 @@ export const caseRoleSchema = z.object({
     .min(1, "privateInstructionsRequired"),
 });
 
+export const caseDifficultySchema = z.enum(["EASY", "MEDIUM", "HARD"]);
+
 export const createCaseSchema = z.object({
   title: z.string().trim().min(1, "titleRequired"),
   businessContext: z.string().trim().min(1, "businessContextRequired"),
@@ -40,6 +42,7 @@ export const createCaseSchema = z.object({
     .string()
     .trim()
     .min(1, "publicInstructionsRequired"),
+  difficulty: caseDifficultySchema.default("MEDIUM"),
   caseLanguage: z.enum(["RU", "EN"]).default("EN"),
   preparationDurationMinutes: defaultPreparationDurationMinutesSchema,
   negotiationDurationMinutes: defaultNegotiationDurationMinutesSchema,

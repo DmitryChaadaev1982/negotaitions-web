@@ -18,6 +18,31 @@ export type ParticipantDisplayInfo = {
   roleName: string | null;
 };
 
+function formatSecondsAsTimestamp(totalSeconds: number): string {
+  const safe = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatSegmentTimeRange(
+  startSeconds: number | null,
+  endSeconds: number | null,
+): string {
+  if (startSeconds == null && endSeconds == null) {
+    return "00:00:00";
+  }
+
+  if (startSeconds != null && endSeconds != null) {
+    return `${formatSecondsAsTimestamp(startSeconds)}-${formatSecondsAsTimestamp(endSeconds)}`;
+  }
+
+  return formatSecondsAsTimestamp(startSeconds ?? endSeconds ?? 0);
+}
+
 function speakerLabelToDisplayIndex(rawLabel: string, labelOrder: string[]) {
   const index = labelOrder.indexOf(rawLabel);
   return index >= 0 ? index + 1 : labelOrder.length + 1;
@@ -126,7 +151,11 @@ export function buildDiarizedText(
         participantsById,
         labelOrder,
       );
-      return `[${speakerName}] ${segment.text}`;
+      const timeRange = formatSegmentTimeRange(
+        segment.startSeconds,
+        segment.endSeconds,
+      );
+      return `[${timeRange}] [${speakerName}] ${segment.text}`;
     })
     .join("\n\n");
 }

@@ -99,6 +99,18 @@ const OneMinuteFeedbackSchema = z.object({
   nextStep: z.string(),
 });
 
+const ParticipantPersonalFeedbackSchema = z.object({
+  participantName: z.string(),
+  achievements: z.array(z.string()),
+  couldHaveDoneBetter: z.array(z.string()),
+  keyMoments: z.array(z.string()),
+  nextSteps: z.array(z.string()),
+});
+
+export type ParticipantPersonalFeedback = z.infer<
+  typeof ParticipantPersonalFeedbackSchema
+>;
+
 export const NegotiationAnalysisOutputSchema = z.object({
   executiveSummary: z.string(),
   overallScore: z.number().int().min(0).max(100),
@@ -120,6 +132,7 @@ export const NegotiationAnalysisOutputSchema = z.object({
   nextTrainingFocus: z.array(NextTrainingFocusSchema),
   facilitatorDebriefQuestions: z.array(z.string()),
   oneMinuteFeedback: OneMinuteFeedbackSchema,
+  participantPersonalFeedback: z.array(ParticipantPersonalFeedbackSchema),
 });
 
 export type NegotiationAnalysisOutput = z.infer<
@@ -315,6 +328,86 @@ export function createMockAnalysisOutput(language: string): NegotiationAnalysisO
         ? "Попрактикуйтесь в обмене ценностями на следующей сессии."
         : "Practice value trading in the next session.",
     },
+    participantPersonalFeedback: [
+      {
+        participantName: "Participant A",
+        achievements: isRu
+          ? [
+              "Уверенно использовал технику якорения с первого хода.",
+              "Сохранял спокойствие под давлением и не шёл на уступки без взаимного обмена.",
+            ]
+          : [
+              "Confidently used anchoring technique from the first move.",
+              "Remained calm under pressure and did not concede without reciprocal exchange.",
+            ],
+        couldHaveDoneBetter: isRu
+          ? [
+              "Мало задавал открытых вопросов для выяснения интересов партнёра.",
+              "Не исследовал возможности расширения пирога переговоров.",
+            ]
+          : [
+              "Asked too few open questions to explore the counterpart's interests.",
+              "Did not explore options for expanding the negotiation pie.",
+            ],
+        keyMoments: isRu
+          ? [
+              "Первое предложение создало сильный ценовой якорь и задало тон переговорам.",
+              "Момент, когда партнёр поднял возражение по срокам — была возможность раскрыть скрытые интересы.",
+            ]
+          : [
+              "The opening offer created a strong price anchor and set the tone for the negotiation.",
+              "When the counterpart raised an objection about timing — there was an opportunity to uncover hidden interests.",
+            ],
+        nextSteps: isRu
+          ? [
+              "Потренируйтесь задавать 3–5 диагностических вопросов до выдвижения своего предложения.",
+              "На следующей сессии попробуйте предложить пакетный вариант с несколькими переменными.",
+            ]
+          : [
+              "Practice asking 3–5 diagnostic questions before making your offer.",
+              "In the next session, try proposing a package deal with multiple variables.",
+            ],
+      },
+      {
+        participantName: "Participant B",
+        achievements: isRu
+          ? [
+              "Активно слушал и перефразировал позиции партнёра, что снижало напряжение.",
+              "Эффективно использовал паузы для обдумывания ответов.",
+            ]
+          : [
+              "Actively listened and paraphrased the counterpart's positions, reducing tension.",
+              "Effectively used pauses to think through responses.",
+            ],
+        couldHaveDoneBetter: isRu
+          ? [
+              "Слишком быстро шёл на уступки без достаточных условий.",
+              "Не использовал собственную НАОС как рычаг давления.",
+            ]
+          : [
+              "Conceded too quickly without sufficient conditions.",
+              "Did not use their own BATNA as a source of leverage.",
+            ],
+        keyMoments: isRu
+          ? [
+              "Момент встречного предложения — можно было добавить условия, а не просто снизить цену.",
+              "Когда партнёр молчал — это была возможность задать уточняющий вопрос, а не заполнять паузу уступкой.",
+            ]
+          : [
+              "The counter-offer moment — conditions could have been added rather than simply lowering the price.",
+              "When the counterpart went silent — it was an opportunity to ask a clarifying question rather than fill the pause with a concession.",
+            ],
+        nextSteps: isRu
+          ? [
+              "Перед следующей сессией пропишите свою НАОС и определите линию ухода.",
+              "Попрактикуйтесь делать условные уступки: «Я готов на X, если вы согласитесь на Y».",
+            ]
+          : [
+              "Before the next session, write down your BATNA and define your walk-away point.",
+              "Practice conditional concessions: 'I'm willing to do X if you agree to Y'.",
+            ],
+      },
+    ],
   };
 }
 
@@ -353,6 +446,13 @@ export async function runNegotiationAnalysis(
   nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>;
   facilitatorDebriefQuestions: string[];
   oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; };
+  participantPersonalFeedback: Array<{
+    participantName: string; // exact name of the negotiating participant (not facilitator/observer)
+    achievements: string[]; // 2-4 specific things this participant did well, with evidence
+    couldHaveDoneBetter: string[]; // 2-4 specific areas where this participant underperformed, with evidence and concrete improvement tips
+    keyMoments: string[]; // 2-3 key moments that were decisive for this participant (good or missed)
+    nextSteps: string[]; // 2-3 personalized, actionable next steps for this participant's development
+  }>; // one entry per negotiating participant (exclude facilitators and observers)
 }`;
 
   const completion = await client.chat.completions.create({

@@ -11,7 +11,16 @@ import {
   TranscriptSource,
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
-import { getAudioTranscriptionMaxFileBytes } from "@/lib/audio/config";
+import {
+  getAudioRecordingTargetBitrateKbps,
+  getAudioTranscriptionChannels,
+  getAudioTranscriptionMaxFileBytes,
+  getAudioTranscriptionSampleRate,
+  getAudioTranscriptionTargetBitrateKbps,
+} from "@/lib/audio/config";
+import { getOpenAiTranscriptionConfig } from "@/lib/audio/openai-transcription-config";
+import { AudioFileTooLargeError } from "@/lib/audio/validate";
+import { buildTranscriptionPrompt } from "@/lib/ai/transcription-prompt";
 import { prisma } from "@/lib/prisma";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 import {
@@ -225,6 +234,7 @@ export async function POST(request: Request, context: RouteContext) {
           transcriptionModel: "mock-transcription",
           hasSpeakerDiarization: true,
           speakerMapping: Prisma.JsonNull,
+          speakerMappingStatus: "REQUIRED",
         },
         update: {
           recordingId: recording.id,
@@ -237,6 +247,7 @@ export async function POST(request: Request, context: RouteContext) {
           transcriptionModel: "mock-transcription",
           hasSpeakerDiarization: true,
           speakerMapping: Prisma.JsonNull,
+          speakerMappingStatus: "REQUIRED",
         },
       });
 
@@ -321,7 +332,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (compression.compressedSizeBytes > maxBytes) {
       const classified = classifyExternalServiceError(
         ExternalService.OPENAI,
-        new Error("File too large"),
+        new AudioFileTooLargeError(compression.compressedSizeBytes, maxBytes),
         "file_too_large",
       );
 
@@ -339,15 +350,39 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: classified.message }, { status: 413 });
     }
 
+    const txConfig = getOpenAiTranscriptionConfig();
+    const transcriptionPrompt = txConfig.promptEnabled
+      ? (await buildTranscriptionPrompt(sessionId)) ?? undefined
+      : undefined;
+
     const transcription = await transcribeAudioBuffer(
       compression.compressedBuffer,
       compression.compressedFileName,
       compression.compressedMimeType,
       languageHint as TranscriptionLanguageHint,
-      { sessionId, recordingId: recording.id },
+      { sessionId, recordingId: recording.id, prompt: transcriptionPrompt },
     );
 
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
+
+    const processingMetadata = {
+      recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
+      transcriptionBitrateKbps: getAudioTranscriptionTargetBitrateKbps(),
+      sampleRate: getAudioTranscriptionSampleRate(),
+      channels: getAudioTranscriptionChannels(),
+      maxFileMb: getAudioTranscriptionMaxFileBytes() / (1024 * 1024),
+      openaiModel: txConfig.model,
+      responseFormat: txConfig.responseFormat,
+      timestampsEnabled: txConfig.useTimestamps,
+      promptEnabled: txConfig.promptEnabled,
+      promptLength: transcriptionPrompt?.length ?? 0,
+      codecUsed: compression.codecUsed,
+      compressedSizeBytes: compression.compressedSizeBytes,
+    };
+
+    const speakerMappingStatus = transcription.hasSpeakerDiarization
+      ? "REQUIRED"
+      : "NOT_REQUIRED";
 
     const transcript = await prisma.$transaction(async (tx) => {
       const saved = await tx.transcript.upsert({
@@ -364,6 +399,8 @@ export async function POST(request: Request, context: RouteContext) {
           transcriptionModel: transcription.model,
           hasSpeakerDiarization: transcription.hasSpeakerDiarization,
           speakerMapping: Prisma.JsonNull,
+          speakerMappingStatus,
+          processingMetadata,
         },
         update: {
           recordingId: recording.id,
@@ -376,6 +413,8 @@ export async function POST(request: Request, context: RouteContext) {
           transcriptionModel: transcription.model,
           hasSpeakerDiarization: transcription.hasSpeakerDiarization,
           speakerMapping: Prisma.JsonNull,
+          speakerMappingStatus,
+          processingMetadata,
         },
       });
 

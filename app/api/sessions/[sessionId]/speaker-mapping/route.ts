@@ -11,18 +11,108 @@ import {
   getDisplaySpeakerLabel,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
 
 export const runtime = "nodejs";
-
-const speakerMappingSchema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
-  mapping: z.record(z.string(), z.string().nullable()),
-  applyOnly: z.boolean().optional(),
-});
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
+
+// ── GET ──────────────────────────────────────────────────────────────────────
+
+export async function GET(request: Request, context: RouteContext) {
+  const { sessionId } = await context.params;
+  const url = new URL(request.url);
+  const joinToken = url.searchParams.get("joinToken");
+
+  if (!joinToken) {
+    return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
+  }
+
+  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  if (!participant) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  const isFacilitator = participant.type === ParticipantType.FACILITATOR;
+
+  const transcript = await prisma.transcript.findUnique({
+    where: { sessionId },
+    include: {
+      segments: { orderBy: { orderIndex: "asc" } },
+    },
+  });
+
+  if (!transcript) {
+    return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
+  }
+
+  const sessionParticipants = await prisma.sessionParticipant.findMany({
+    where: { sessionId },
+    include: {
+      sessionRole: { select: { name: true } },
+    },
+  });
+
+  const existingMapping = (transcript.speakerMapping as SpeakerMapping | null) ?? {};
+  const labelOrder = getUniqueSpeakerLabels(
+    transcript.segments.map((s) => ({
+      speakerLabel: s.speakerLabel,
+      displaySpeakerLabel: s.speakerLabel
+        ? getDisplaySpeakerLabel(
+            s.speakerLabel,
+            transcript.segments
+              .map((seg) => seg.speakerLabel)
+              .filter((l): l is string => Boolean(l)),
+          )
+        : null,
+    })),
+  );
+
+  const detectedSpeakers = labelOrder.map((label) => ({
+    speakerLabel: label.speakerLabel,
+    displaySpeakerLabel: label.displaySpeakerLabel,
+    suggestedParticipantId: existingMapping[label.speakerLabel] ?? null,
+    mappedParticipantId: existingMapping[label.speakerLabel] ?? null,
+    confidence: null as number | null,
+    evidence: null as string | null,
+  }));
+
+  const participants = sessionParticipants.map((p) => ({
+    sessionParticipantId: p.id,
+    displayName: p.displayName,
+    participantType: p.type,
+    roleName: p.sessionRole?.name ?? null,
+  }));
+
+  return NextResponse.json({
+    transcriptId: transcript.id,
+    speakerMappingStatus: transcript.speakerMappingStatus,
+    speakerMappingConfirmedAt: transcript.speakerMappingConfirmedAt?.toISOString() ?? null,
+    speakerMappingConfirmedBy: transcript.speakerMappingConfirmedBy ?? null,
+    hasSpeakerDiarization: transcript.hasSpeakerDiarization,
+    diarizationStatus: transcript.diarizationStatus ?? null,
+    detectedSpeakers,
+    participants,
+    canEdit: isFacilitator,
+  });
+}
+
+// ── POST ─────────────────────────────────────────────────────────────────────
+
+const speakerMappingSchema = z.object({
+  joinToken: z.string().trim().min(1, "Join token is required"),
+  transcriptId: z.string().optional(),
+  mapping: z.record(z.string(), z.string().nullable()).optional().default({}),
+  confirm: z.boolean().optional().default(false),
+  applyToTranscript: z.boolean().optional().default(true),
+  suggestAutomatically: z.boolean().optional().default(false),
+  /** When true, overwrite locked manual overrides with new cluster mapping */
+  forceOverrideLocked: z.boolean().optional().default(false),
+  /** Legacy: applyOnly means re-apply existing saved mapping, not save new one */
+  applyOnly: z.boolean().optional(),
+});
 
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
@@ -42,7 +132,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { joinToken, mapping, applyOnly } = parsed.data;
+  const { joinToken, mapping, confirm, applyToTranscript, applyOnly, suggestAutomatically, forceOverrideLocked } = parsed.data;
 
   const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
@@ -61,9 +151,7 @@ export async function POST(request: Request, context: RouteContext) {
   const transcript = await prisma.transcript.findUnique({
     where: { sessionId },
     include: {
-      segments: {
-        orderBy: { orderIndex: "asc" },
-      },
+      segments: { orderBy: { orderIndex: "asc" } },
     },
   });
 
@@ -74,12 +162,23 @@ export async function POST(request: Request, context: RouteContext) {
   const sessionParticipants = await prisma.sessionParticipant.findMany({
     where: { sessionId },
     include: {
-      sessionRole: {
-        select: { name: true },
-      },
+      sessionRole: { select: { name: true } },
     },
   });
 
+  // ── Suggest automatically ────────────────────────────────────────────────
+  if (suggestAutomatically) {
+    const suggestion = await suggestSpeakerMapping(sessionId, transcript);
+
+    return NextResponse.json({
+      suggestedMapping: suggestion.mapping,
+      confidence: suggestion.confidence,
+      available: suggestion.available,
+      unavailableReason: suggestion.unavailableReason,
+    });
+  }
+
+  // ── Build sanitized mapping ───────────────────────────────────────────────
   const participantIds = new Set(sessionParticipants.map((p) => p.id));
   const sanitizedMapping: SpeakerMapping = {};
 
@@ -140,13 +239,32 @@ export async function POST(request: Request, context: RouteContext) {
     participantDisplayInfo,
   );
 
+  // Determine new mapping status
+  let newMappingStatus: string = transcript.speakerMappingStatus;
+  let confirmedAt: Date | null = transcript.speakerMappingConfirmedAt;
+  let confirmedBy: string | null = transcript.speakerMappingConfirmedBy;
+
+  if (!applyOnly) {
+    if (confirm) {
+      newMappingStatus = "CONFIRMED";
+      confirmedAt = new Date();
+      confirmedBy = participant.id;
+    } else if (newMappingStatus !== "CONFIRMED") {
+      // Saved but not yet confirmed
+      newMappingStatus = "AUTO_SUGGESTED";
+    }
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     if (!applyOnly) {
       await tx.transcript.update({
         where: { id: transcript.id },
         data: {
           speakerMapping: sanitizedMapping,
-          diarizedText,
+          diarizedText: applyToTranscript ? diarizedText : undefined,
+          speakerMappingStatus: newMappingStatus,
+          speakerMappingConfirmedAt: confirmedAt,
+          speakerMappingConfirmedBy: confirmedBy,
         },
       });
 
@@ -156,10 +274,15 @@ export async function POST(request: Request, context: RouteContext) {
         );
         if (!dbSegment) continue;
 
+        // Skip locked segments unless facilitator explicitly requests override
+        if (dbSegment.mappingLocked && !forceOverrideLocked) continue;
+
         await tx.transcriptSegment.update({
           where: { id: dbSegment.id },
           data: {
             mappedParticipantId: segment.mappedParticipantId,
+            mappingSource: "CLUSTER_MAPPING",
+            mappingLocked: false,
           },
         });
       }
@@ -173,9 +296,7 @@ export async function POST(request: Request, context: RouteContext) {
     return tx.transcript.findUniqueOrThrow({
       where: { id: transcript.id },
       include: {
-        segments: {
-          orderBy: { orderIndex: "asc" },
-        },
+        segments: { orderBy: { orderIndex: "asc" } },
       },
     });
   });
@@ -190,6 +311,8 @@ export async function POST(request: Request, context: RouteContext) {
       transcriptionModel: updated.transcriptionModel,
       hasSpeakerDiarization: updated.hasSpeakerDiarization,
       speakerMapping: (updated.speakerMapping as SpeakerMapping | null) ?? null,
+      speakerMappingStatus: updated.speakerMappingStatus,
+      speakerMappingConfirmedAt: updated.speakerMappingConfirmedAt?.toISOString() ?? null,
       updatedAt: updated.updatedAt.toISOString(),
       segments: updated.segments.map((segment) => ({
         id: segment.id,
@@ -199,7 +322,11 @@ export async function POST(request: Request, context: RouteContext) {
         endSeconds: segment.endSeconds,
         text: segment.text,
         orderIndex: segment.orderIndex,
+        mappingSource: segment.mappingSource ?? null,
+        mappingLocked: segment.mappingLocked,
+        mappingConfidence: segment.mappingConfidence ?? null,
       })),
     },
+    confirmed: confirm,
   });
 }

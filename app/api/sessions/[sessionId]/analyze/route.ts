@@ -26,6 +26,7 @@ import {
   getMockExternalServiceError,
   isAiAnalysisMockMode,
 } from "@/lib/test-mode";
+import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 
 export const runtime = "nodejs";
 
@@ -86,13 +87,39 @@ export async function POST(request: Request, context: RouteContext) {
 
   const transcript = await prisma.transcript.findUnique({
     where: { sessionId },
-    select: { id: true, status: true, language: true },
+    select: {
+      id: true,
+      status: true,
+      language: true,
+      hasSpeakerDiarization: true,
+      speakerMappingStatus: true,
+      speakerMapping: true,
+      retranscribeCount: true,
+      segments: {
+        select: {
+          speakerLabel: true,
+          mappedParticipantId: true,
+          text: true,
+        },
+      },
+    },
   });
 
   if (!transcript || transcript.status !== TranscriptStatus.COMPLETED) {
     return NextResponse.json(
       { error: "Transcript must be completed before running AI analysis." },
       { status: 400 },
+    );
+  }
+
+  if (transcript.hasSpeakerDiarization && !isSpeakerMappingReadyForAnalysis(transcript)) {
+    return NextResponse.json(
+      {
+        error: "Confirm speaker mapping before AI analysis.",
+        errorCode: "SPEAKER_MAPPING_REQUIRED",
+        speakerMappingStatus: transcript.speakerMappingStatus,
+      },
+      { status: 422 },
     );
   }
 
@@ -122,6 +149,7 @@ export async function POST(request: Request, context: RouteContext) {
     create: {
       sessionId,
       transcriptId: transcript.id,
+      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
       status: AiAnalysisStatus.QUEUED,
       language: analysisLanguage,
       startedAt: now,
@@ -129,6 +157,7 @@ export async function POST(request: Request, context: RouteContext) {
     },
     update: {
       transcriptId: transcript.id,
+      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
       status: AiAnalysisStatus.QUEUED,
       language: analysisLanguage,
       startedAt: now,

@@ -46,6 +46,7 @@ type SessionRow = {
   createdAt: string;
   recordingStage: string | null;
   transcriptStage: string | null;
+  speakerMappingStage: string | null;
   aiStage: string | null;
   aiVisibility: string;
 };
@@ -86,9 +87,14 @@ function AiStatusCell({
     session.transcriptStage === null || session.transcriptStage === "failed";
   const noAi = session.aiStage === null || session.aiStage === "failed";
 
+  const speakerMappingRequired = session.speakerMappingStage === "required";
+  const speakerMappingConfirmed = session.speakerMappingStage === "confirmed";
+
   const canStartTranscription = isFinished && recordingReady && noTranscript;
-  const canRunAi = isFinished && transcriptReady && noAi;
-  const canRetryAi = isFinished && transcriptReady && session.aiStage === "failed";
+  const canRunAi =
+    isFinished && transcriptReady && noAi && !speakerMappingRequired;
+  const canRetryAi =
+    isFinished && transcriptReady && session.aiStage === "failed" && !speakerMappingRequired;
   const canShare = (aiReady || aiShared) && token;
 
   const runAction = useCallback(
@@ -134,8 +140,21 @@ function AiStatusCell({
           ? t("sessions.aiStatusFailed")
           : null;
 
+  const materialsPath = token ? buildSessionMaterialsPath(token) : null;
+
   return (
     <div className="flex flex-col gap-1 min-w-[10rem]">
+      {/* Speaker mapping status */}
+      {speakerMappingRequired ? (
+        <span className="text-xs font-medium text-amber-400" data-testid="sessions-speaker-mapping-required-badge">
+          {t("room.speakerMappingRequired")}
+        </span>
+      ) : speakerMappingConfirmed ? (
+        <span className="text-xs font-medium text-emerald-400" data-testid="sessions-speaker-mapping-confirmed-badge">
+          {t("room.speakerMappingConfirmed")}
+        </span>
+      ) : null}
+
       {/* AI status */}
       {stageLabel ? (
         <span className={`text-xs font-medium ${aiStageTone(session.aiStage)}`}>
@@ -154,6 +173,17 @@ function AiStatusCell({
           >
             {t("sessions.startTranscription")}
           </button>
+        ) : null}
+
+        {/* Link to materials for speaker mapping confirmation */}
+        {speakerMappingRequired && transcriptReady && materialsPath ? (
+          <Link
+            href={materialsPath}
+            className="text-xs font-medium text-amber-400 hover:text-amber-300"
+            data-testid="sessions-confirm-speakers-button"
+          >
+            {t("room.confirmMappingButton")}
+          </Link>
         ) : null}
 
         {(canRunAi || canRetryAi) ? (

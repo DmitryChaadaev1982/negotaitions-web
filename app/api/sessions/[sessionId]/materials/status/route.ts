@@ -6,9 +6,15 @@ import {
   RecordingStatus,
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
+import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
+import {
+  isAiAnalysisOutdated,
+  isSpeakerMappingReadyForAnalysis,
+} from "@/lib/transcription/speaker-mapping-readiness";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -125,6 +131,9 @@ function computeShouldPoll(
   isParticipantOrObserver = false,
   transcriptHasText = false,
   hasRunningTranscription = false,
+  autoTranscribeEnabled = false,
+  sessionIsFinished = false,
+  isSharedWithSession = false,
 ): boolean {
   if (
     recordingStatus &&
@@ -133,7 +142,10 @@ function computeShouldPoll(
   ) {
     return true;
   }
+  // Only poll waiting-for-auto-transcription when auto-transcription is enabled.
+  // When disabled, the recording-ready state is stable and no auto-job will start.
   if (
+    autoTranscribeEnabled &&
     recordingStatus === RecordingStatus.COMPLETED &&
     !transcriptHasText &&
     !hasRunningTranscription
@@ -146,8 +158,11 @@ function computeShouldPoll(
   if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
     return true;
   }
-  // Participants/observers need to poll to detect when analysis gets shared
-  if (isParticipantOrObserver && aiStatus === AiAnalysisStatus.COMPLETED) {
+  // Participants/observers on a finished session need to poll to detect:
+  // - when facilitator starts and completes analysis (aiStatus null → QUEUED → COMPLETED)
+  // - when facilitator shares/unshares the completed analysis
+  // Stop polling only once analysis is confirmed shared (stable state).
+  if (isParticipantOrObserver && sessionIsFinished && !isSharedWithSession) {
     return true;
   }
   return false;
@@ -198,6 +213,19 @@ export async function GET(request: Request, context: RouteContext) {
           completedAt: true,
           source: true,
           recordingId: true,
+          hasSpeakerDiarization: true,
+          diarizationStatus: true,
+          retranscribeCount: true,
+          speakerMappingStatus: true,
+          speakerMappingConfirmedAt: true,
+          speakerMapping: true,
+          segments: {
+            select: {
+              speakerLabel: true,
+              mappedParticipantId: true,
+              text: true,
+            },
+          },
         },
       },
       aiAnalysis: {
@@ -216,6 +244,7 @@ export async function GET(request: Request, context: RouteContext) {
           sharedExecutiveSummary: true,
           sharedAt: true,
           sharedBy: true,
+          transcriptRetranscribeCount: true,
         },
       },
       event: {
@@ -250,13 +279,38 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptStatus === TranscriptStatus.COMPLETED && transcriptHasText;
   const hasRunningAiAnalysis = aiStatus !== null && ACTIVE_AI_STATUSES.has(aiStatus);
 
+  const speakerMappingReady = transcript
+    ? isSpeakerMappingReadyForAnalysis(transcript)
+    : true;
+
+  const speakerMappingRequired =
+    Boolean(transcript?.hasSpeakerDiarization) && !speakerMappingReady;
+
+  const analysisOutdated = isAiAnalysisOutdated(
+    transcript?.retranscribeCount,
+    aiAnalysis?.transcriptRetranscribeCount,
+  );
+
   const canRunAiAnalysis =
-    isFacilitator && transcriptCompleted && !hasRunningAiAnalysis;
+    isFacilitator &&
+    transcriptCompleted &&
+    !hasRunningAiAnalysis &&
+    speakerMappingReady &&
+    (aiStatus === null ||
+      aiStatus === AiAnalysisStatus.FAILED ||
+      analysisOutdated);
   const canRetryAiAnalysis =
     isFacilitator &&
     transcriptCompleted &&
     aiStatus === AiAnalysisStatus.FAILED &&
-    !hasRunningAiAnalysis;
+    !hasRunningAiAnalysis &&
+    speakerMappingReady;
+  const canRerunAiAnalysis =
+    isFacilitator &&
+    transcriptCompleted &&
+    !hasRunningAiAnalysis &&
+    speakerMappingReady &&
+    aiStatus === AiAnalysisStatus.COMPLETED;
   const canShareAiAnalysis =
     isFacilitator && aiStatus === AiAnalysisStatus.COMPLETED;
 
@@ -292,6 +346,7 @@ export async function GET(request: Request, context: RouteContext) {
   );
 
   const isParticipantOrObserver = !isFacilitator;
+  const sessionIsFinished = session.negotiationState === "FINISHED";
   const shouldPoll = computeShouldPoll(
     recordingStatus,
     transcriptStatus,
@@ -299,11 +354,15 @@ export async function GET(request: Request, context: RouteContext) {
     isParticipantOrObserver,
     transcriptHasText,
     hasRunningTranscription,
+    autoTranscribeAfterRecording,
+    sessionIsFinished,
+    isSharedWithSession,
   );
 
   const canStartTranscription =
     canRunTranscription &&
     !hasRunningTranscription &&
+    !transcriptCompleted &&
     recording?.status === RecordingStatus.COMPLETED &&
     Boolean(recording.fileKey) &&
     !transcriptHasText;
@@ -315,6 +374,14 @@ export async function GET(request: Request, context: RouteContext) {
     recording?.status === RecordingStatus.COMPLETED &&
     Boolean(recording?.fileKey);
 
+  // Re-run is allowed when a completed transcript exists and recording is available
+  const canRerunTranscription =
+    canRunTranscription &&
+    !hasRunningTranscription &&
+    transcriptCompleted &&
+    recording?.status === RecordingStatus.COMPLETED &&
+    Boolean(recording?.fileKey);
+
   const sessionRoleRecord = await prisma.sessionRole.findUnique({
     where: { id: participant.sessionRoleId ?? "" },
     select: { name: true },
@@ -322,11 +389,25 @@ export async function GET(request: Request, context: RouteContext) {
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
   // For facilitators: full analysis. For participants/observers: shared sanitized version only.
-  const analysisJsonForUser = isFacilitator
+  const rawAnalysisJsonForUser = isFacilitator
     ? (aiAnalysis?.analysisJson ?? null)
     : isSharedWithSession
       ? (aiAnalysis?.sharedAnalysisJson ?? null)
       : null;
+
+  // Filter participantPersonalFeedback: each participant sees only their own section;
+  // facilitators see all sections.
+  let analysisJsonForUser = rawAnalysisJsonForUser;
+  if (!isFacilitator && rawAnalysisJsonForUser) {
+    const typedAnalysis = rawAnalysisJsonForUser as NegotiationAnalysisOutput;
+    analysisJsonForUser = {
+      ...typedAnalysis,
+      participantPersonalFeedback: (typedAnalysis.participantPersonalFeedback ?? []).filter(
+        (feedback) => feedback.participantName === participant.displayName,
+      ),
+    };
+  }
+
   const executiveSummaryForUser = isFacilitator
     ? (aiAnalysis?.executiveSummary ?? null)
     : isSharedWithSession
@@ -347,9 +428,13 @@ export async function GET(request: Request, context: RouteContext) {
     processingStage: aiAnalysisStage,
     canStart: canRunAiAnalysis,
     canRetry: canRetryAiAnalysis,
+    canRerun: canRerunAiAnalysis,
     canView: canViewAiAnalysis,
     canShare: canShareAiAnalysis,
+    speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
     participantPlaceholder: !isFacilitator && !isSharedWithSession,
+    // Analysis version tracking
+    analysisFromOlderTranscript: isFacilitator && analysisOutdated,
     // Sharing metadata
     visibility: isFacilitator ? aiVisibility : null,
     isSharedWithSession,
@@ -422,7 +507,16 @@ export async function GET(request: Request, context: RouteContext) {
           errorMessage: isFacilitator ? transcript.errorMessage : null,
           canStart: canStartTranscription,
           canRetry: canRetryTranscription,
+          canRerun: isFacilitator ? canRerunTranscription : false,
           processingStage: transcriptStage,
+          hasSpeakerDiarization: transcript.hasSpeakerDiarization ?? false,
+          diarizationStatus: isFacilitator ? (transcript.diarizationStatus ?? null) : null,
+          retranscribeCount: isFacilitator ? (transcript.retranscribeCount ?? 0) : null,
+          speakerMappingStatus: isFacilitator
+            ? (transcript.speakerMappingStatus ?? "NOT_REQUIRED")
+            : null,
+          speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
+          speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,
         }
       : {
           id: null,
@@ -436,6 +530,10 @@ export async function GET(request: Request, context: RouteContext) {
           canStart: canStartTranscription,
           canRetry: false,
           processingStage: transcriptStage,
+          hasSpeakerDiarization: false,
+          speakerMappingStatus: null,
+          speakerMappingRequired: false,
+          speakerMappingConfirmed: null,
         },
     aiAnalysis: aiAnalysisResponse,
     processing: {
@@ -443,6 +541,7 @@ export async function GET(request: Request, context: RouteContext) {
       nextPollMs: shouldPoll ? 3500 : null,
       currentStage,
       message: shouldPoll ? "updating" : null,
+      autoTranscribeEnabled: autoTranscribeAfterRecording,
     },
   });
 }

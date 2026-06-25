@@ -1,0 +1,8 @@
+/*
+ * LiveKit mirrors the local participant camera by default (selfie view).
+ * Show frontal orientation for all participants so local and remote tiles match.
+ */
+[data-lk-facing-mode="user"]
+  .lk-participant-media-video[data-lk-local-participant="true"][data-lk-source="camera"] {
+  transform: none;
+}

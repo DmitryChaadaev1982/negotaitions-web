@@ -23,8 +23,10 @@ function sanitizeAnalysisForParticipants(
     ...analysis,
     // Remove per-role objectives analysis which contains private objective data
     roleObjectivesAnalysis: [],
+    // Keep participantPersonalFeedback — per-participant filtering (each participant
+    // sees only their own entry) is applied at delivery time in the status API.
     // Keep everything else: summary, scores, strengths, improvement areas,
-    // tactics, questions analysis, listening, value creation, focus, debrief Qs
+    // tactics, questions analysis, listening, value creation, focus, debrief Qs.
   };
 }
 

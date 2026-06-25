@@ -1,6 +1,7 @@
 "use client";
 
 import "@livekit/components-styles";
+import "@/styles/livekit-overrides.css";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 

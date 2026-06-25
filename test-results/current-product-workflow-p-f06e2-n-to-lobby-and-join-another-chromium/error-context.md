@@ -56,9 +56,9 @@ Call log:
 - text: "Recording: Recording is not available for this session. Transcription: Waiting for recording to become available. AI analysis: Waiting for transcript."
 - paragraph: Actions
 - link "Open Session materials":
-  - /url: /join/KCRn6nhZ_GgMiwHb7Ta8D
+  - /url: /join/hYzmfFR5-vkgF2l6pMvoH
 - link "Return to Event lobby":
-  - /url: /events/event_1782314504291_8ybce2ix/lobby?participantToken=igor-1782314504291-4fwvy
+  - /url: /events/event_1782325529423_o6x7xsi3/lobby?participantToken=igor-1782325529423-5st1d
 - paragraph: AI analysis has not been shared yet.
 - alert
 ```
