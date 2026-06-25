@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import { PageHeader } from "@/components/page-header";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { GradientButtonLink } from "@/components/ui/buttons";
-import { buildSessionMaterialsPath, buildSessionRoomPath } from "@/lib/config";
 import {
   DataTable,
   DataTableBody,
@@ -22,7 +21,6 @@ import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import {
   applySessionOverviewStats,
   isSessionActiveForPresence,
-  isSessionActiveForRoom,
   type SessionOverviewStats,
 } from "@/lib/session-overview-shared";
 import { PRESENCE_OVERVIEW_POLL_INTERVAL_MS } from "@/lib/presence";
@@ -39,7 +37,8 @@ type SessionRow = {
   status: SessionDisplayStatus;
   negotiationState: "PREPARATION" | "PREPARATION_RUNNING" | "PREPARATION_PAUSED" | "READY_TO_START" | "RUNNING" | "PAUSED" | "FINISHED";
   closedByEventAt: string | null;
-  facilitatorJoinToken: string | null;
+  // facilitatorJoinToken is intentionally absent — tokens must not be embedded
+  // in list HTML. Session detail and materials are accessible via /sessions/[id].
   participantCount: number;
   onlineParticipantCount: number;
   durationMinutes: number;
@@ -65,71 +64,20 @@ function aiStageTone(stage: string | null): string {
   return "text-slate-500";
 }
 
-function AiStatusCell({
-  session,
-  onAction,
-}: {
-  session: SessionRow;
-  onAction: () => void;
-}) {
+// Shows AI pipeline status only. Token-based actions (transcribe, analyze,
+// share) have been removed from the list view — facilitatorJoinToken must not
+// be embedded in list HTML. Use the session detail page (/sessions/[id]) for
+// those operations (Phase 4 will add account-authorized server routes).
+function AiStatusCell({ session }: { session: SessionRow }) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState<null | "transcribe" | "analyze" | "share">(null);
 
-  const isFinished = session.negotiationState === "FINISHED";
-  const token = session.facilitatorJoinToken;
-
-  const recordingReady = session.recordingStage === "ready";
-  const transcriptReady = session.transcriptStage === "ready";
-  const aiReady = session.aiStage === "ready";
   const aiShared = session.aiStage === "shared";
+  const aiReady = session.aiStage === "ready";
   const aiInProgress = session.aiStage === "in_progress";
-  const noTranscript =
-    session.transcriptStage === null || session.transcriptStage === "failed";
-  const noAi = session.aiStage === null || session.aiStage === "failed";
 
   const speakerMappingRequired = session.speakerMappingStage === "required";
   const speakerMappingConfirmed = session.speakerMappingStage === "confirmed";
 
-  const canStartTranscription = isFinished && recordingReady && noTranscript;
-  const canRunAi =
-    isFinished && transcriptReady && noAi && !speakerMappingRequired;
-  const canRetryAi =
-    isFinished && transcriptReady && session.aiStage === "failed" && !speakerMappingRequired;
-  const canShare = (aiReady || aiShared) && token;
-
-  const runAction = useCallback(
-    async (type: "transcribe" | "analyze" | "share") => {
-      if (!token) return;
-      setBusy(type);
-      try {
-        if (type === "transcribe") {
-          await fetch(`/api/sessions/${session.id}/materials/transcribe`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ joinToken: token }),
-          });
-        } else if (type === "analyze") {
-          await fetch(`/api/sessions/${session.id}/analyze`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ joinToken: token }),
-          });
-        } else if (type === "share") {
-          await fetch(`/api/sessions/${session.id}/ai-analysis/share`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ joinToken: token }),
-          });
-        }
-        onAction();
-      } finally {
-        setBusy(null);
-      }
-    },
-    [session.id, token, onAction],
-  );
-
-  // Status pills
   const stageLabel = aiShared
     ? t("sessions.aiStatusShared")
     : aiReady
@@ -140,11 +88,8 @@ function AiStatusCell({
           ? t("sessions.aiStatusFailed")
           : null;
 
-  const materialsPath = token ? buildSessionMaterialsPath(token) : null;
-
   return (
     <div className="flex flex-col gap-1 min-w-[10rem]">
-      {/* Speaker mapping status */}
       {speakerMappingRequired ? (
         <span className="text-xs font-medium text-amber-400" data-testid="sessions-speaker-mapping-required-badge">
           {t("room.speakerMappingRequired")}
@@ -155,88 +100,26 @@ function AiStatusCell({
         </span>
       ) : null}
 
-      {/* AI status */}
       {stageLabel ? (
         <span className={`text-xs font-medium ${aiStageTone(session.aiStage)}`}>
           {stageLabel}
         </span>
       ) : null}
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-1.5">
-        {canStartTranscription && !busy ? (
-          <button
-            type="button"
-            className="text-xs font-medium text-amber-400 hover:text-amber-300"
-            onClick={() => void runAction("transcribe")}
-            data-testid="sessions-start-transcription-button"
-          >
-            {t("sessions.startTranscription")}
-          </button>
-        ) : null}
+      {aiInProgress ? (
+        <span className="text-xs text-cyan-400 animate-pulse">
+          {t("sessions.aiStatusInProgress")}...
+        </span>
+      ) : null}
 
-        {/* Link to materials for speaker mapping confirmation */}
-        {speakerMappingRequired && transcriptReady && materialsPath ? (
-          <Link
-            href={materialsPath}
-            className="text-xs font-medium text-amber-400 hover:text-amber-300"
-            data-testid="sessions-confirm-speakers-button"
-          >
-            {t("room.confirmMappingButton")}
-          </Link>
-        ) : null}
-
-        {(canRunAi || canRetryAi) ? (
-          <button
-            type="button"
-            className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
-            onClick={() => void runAction("analyze")}
-            disabled={!!busy}
-            data-testid="sessions-run-ai-analysis-button"
-          >
-            {busy === "analyze"
-              ? t("common.loading")
-              : t("sessions.runAiAnalysis")}
-          </button>
-        ) : null}
-
-        {aiInProgress ? (
-          <span className="text-xs text-cyan-400 animate-pulse">
-            {t("sessions.aiStatusInProgress")}...
-          </span>
-        ) : null}
-
-        {(aiReady || aiShared) && token ? (
-          <Link
-            href={buildSessionMaterialsPath(token)}
-            className="text-xs font-medium text-emerald-400 hover:text-emerald-300"
-            data-testid="sessions-open-ai-report-button"
-          >
-            {t("sessions.openAiReport")}
-          </Link>
-        ) : null}
-
-        {aiReady && canShare && !aiShared ? (
-          <button
-            type="button"
-            className="text-xs font-medium text-emerald-400 hover:text-emerald-300"
-            onClick={() => void runAction("share")}
-            disabled={!!busy}
-            data-testid="sessions-share-analysis-button"
-          >
-            {busy === "share" ? t("common.loading") : t("sessions.shareAnalysis")}
-          </button>
-        ) : null}
-
-        {aiShared ? (
-          <span
-            className="text-xs font-medium text-cyan-400"
-            data-testid="sessions-analysis-shared-badge"
-          >
-            {t("sessions.analysisSharedBadge")}
-          </span>
-        ) : null}
-      </div>
+      {aiShared ? (
+        <span
+          className="text-xs font-medium text-cyan-400"
+          data-testid="sessions-analysis-shared-badge"
+        >
+          {t("sessions.analysisSharedBadge")}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -245,11 +128,6 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
   const { t, locale } = useI18n();
   const [sessionStats, setSessionStats] = useState<SessionOverviewStats[]>([]);
   const sessions = applySessionOverviewStats(initialSessions, sessionStats);
-
-  // After an AI action (start transcription/analysis/share), reload page data
-  const handleAiAction = useCallback(() => {
-    window.location.reload();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,10 +241,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                     <SessionStatusBadge status={session.status} />
                   </DataTableCell>
                   <DataTableCell>
-                    <AiStatusCell
-                      session={session}
-                      onAction={handleAiAction}
-                    />
+                    <AiStatusCell session={session} />
                   </DataTableCell>
                   <DataTableCell>{session.participantCount}</DataTableCell>
                   <DataTableCell>
@@ -382,41 +257,6 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                   <DataTableCell>{formatDate(session.createdAt)}</DataTableCell>
                   <DataTableCell align="right">
                     <div className="flex flex-wrap items-center justify-end gap-3">
-                      {session.facilitatorJoinToken ? (
-                        <Link
-                          href={buildSessionMaterialsPath(session.facilitatorJoinToken)}
-                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
-                          data-testid="open-session-materials-button"
-                        >
-                          {t("sessions.openMaterials")}
-                        </Link>
-                      ) : null}
-                      {session.facilitatorJoinToken &&
-                      isSessionActiveForRoom(session) ? (
-                        <Link
-                          href={buildSessionRoomPath(
-                            session.id,
-                            session.facilitatorJoinToken,
-                          )}
-                          className="text-sm font-medium text-emerald-400 hover:text-emerald-300"
-                          data-testid="open-session-room-button"
-                        >
-                          {t("sessions.openRoom")}
-                        </Link>
-                      ) : session.facilitatorJoinToken &&
-                        session.negotiationState === "FINISHED" &&
-                        !session.closedByEventAt ? (
-                        <Link
-                          href={buildSessionRoomPath(
-                            session.id,
-                            session.facilitatorJoinToken,
-                          )}
-                          className="text-sm font-medium text-amber-400 hover:text-amber-300"
-                          data-testid="open-session-debrief-button"
-                        >
-                          {t("sessions.openDebrief")}
-                        </Link>
-                      ) : null}
                       {session.eventLobbyUrl && session.eventStatus !== "COMPLETED" ? (
                         <Link
                           href={session.eventLobbyUrl}

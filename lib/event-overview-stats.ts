@@ -116,13 +116,12 @@ export async function getTrainingEventsForList(
       title: true,
       status: true,
       scheduledAt: true,
-      hostToken: true,
       publicJoinCode: true,
       createdAt: true,
       participants: {
         select: {
           id: true,
-          participantToken: true,
+          // participantToken intentionally omitted — do not expose in list data.
           isHost: true,
           lastSeenAt: true,
         },
@@ -157,7 +156,6 @@ export async function getTrainingEventsForList(
   });
 
   return events.map((event) => {
-    const hostParticipant = event.participants.find((participant) => participant.isHost);
     const presenceActive = isEventActiveForPresence(event.status);
     const activeSessions = event.sessions.filter(isActiveSession).length;
     const finishedSessions = event.sessions.filter(isFinishedSession).length;
@@ -186,8 +184,6 @@ export async function getTrainingEventsForList(
       title: event.title,
       status: event.status,
       scheduledAt: event.scheduledAt?.toISOString() ?? null,
-      hostToken: event.hostToken,
-      hostParticipantToken: hostParticipant?.participantToken ?? null,
       publicJoinCode: event.publicJoinCode,
       primarySessionId: event.sessions[0]?.id ?? null,
       createdAt: event.createdAt.toISOString(),

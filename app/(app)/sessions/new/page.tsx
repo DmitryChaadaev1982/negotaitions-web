@@ -2,6 +2,7 @@ import { NewSessionPageClient } from "@/components/new-session-page-client";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
+import { requireActiveUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,7 @@ type NewSessionPageProps = {
 export default async function NewSessionPage({
   searchParams,
 }: NewSessionPageProps) {
+  await requireActiveUser("/sessions/new");
   const { caseId } = await searchParams;
   const facilitator = await getDemoFacilitator();
 

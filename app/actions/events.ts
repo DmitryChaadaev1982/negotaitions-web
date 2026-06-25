@@ -22,6 +22,8 @@ import {
   generatePublicJoinCode,
   joinEventSchema,
 } from "@/lib/validations/event";
+import { requireActiveUser, getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 
 type ActionErrors = {
   [key: string]: string[] | undefined;
@@ -45,6 +47,10 @@ export async function createTrainingEvent(
   _prevState: CreateEventState,
   formData: FormData,
 ): Promise<CreateEventState> {
+  // Require active account to create events from the app.
+  // TODO: Set event.hostUserId = user.id once TrainingEvent.hostUserId field is added (Phase C).
+  await requireActiveUser("/events/new");
+
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
     hostDisplayName: formData.get("hostDisplayName"),
@@ -240,13 +246,28 @@ export async function joinTrainingEvent(
 
 export async function completeTrainingEventFromList(formData: FormData) {
   const eventId = String(formData.get("eventId") ?? "");
-  const hostToken = String(formData.get("hostToken") ?? "");
 
-  if (!eventId || !hostToken) {
+  if (!eventId) {
     return;
   }
 
-  await completeTrainingEvent(eventId, hostToken);
+  // Only admin may complete events from the list view until TrainingEvent.hostUserId
+  // is implemented (Phase C). Generic active users must not complete arbitrary events.
+  const user = await getOptionalCurrentUser();
+  if (!user || !isAdmin(user)) {
+    return;
+  }
+
+  const event = await prisma.trainingEvent.findUnique({
+    where: { id: eventId },
+    select: { hostToken: true, deletedAt: true },
+  });
+
+  if (!event || event.deletedAt) {
+    return;
+  }
+
+  await completeTrainingEvent(eventId, event.hostToken);
 
   revalidatePath("/events");
   revalidatePath("/dashboard");
@@ -254,16 +275,38 @@ export async function completeTrainingEventFromList(formData: FormData) {
 
 export async function cancelTrainingEvent(formData: FormData) {
   const eventId = String(formData.get("eventId") ?? "");
+  const hostToken = String(formData.get("hostToken") ?? "");
 
   if (!eventId) {
     return;
   }
 
-  await prisma.trainingEvent.updateMany({
-    where: {
-      id: eventId,
-      deletedAt: null,
-    },
+  // Accept either: valid hostToken (lobby/guest host flow) OR admin user.
+  // Generic ACTIVE users must not cancel arbitrary events they do not own.
+  // TODO: When TrainingEvent.hostUserId is added (Phase C), also allow the
+  //       owning user (event.hostUserId === currentUser.id).
+  const user = await getOptionalCurrentUser();
+  const userIsAdmin = user !== null && isAdmin(user);
+
+  if (!hostToken && !userIsAdmin) {
+    throw new Error("cancelTrainingEvent: hostToken or admin access required.");
+  }
+
+  const event = await prisma.trainingEvent.findUnique({
+    where: { id: eventId },
+    select: { hostToken: true, deletedAt: true },
+  });
+
+  if (!event || event.deletedAt) {
+    return;
+  }
+
+  if (hostToken && event.hostToken !== hostToken) {
+    throw new Error("cancelTrainingEvent: invalid hostToken.");
+  }
+
+  await prisma.trainingEvent.update({
+    where: { id: eventId },
     data: {
       status: TrainingEventStatus.CANCELLED,
       deletedAt: new Date(),

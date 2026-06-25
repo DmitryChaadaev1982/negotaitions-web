@@ -4,10 +4,30 @@ import { getTrainingEventsForList } from "@/lib/event-overview-stats";
 import { prisma } from "@/lib/prisma";
 import { getSessionsForList } from "@/lib/session-overview-stats";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
+import { requireActiveUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  const user = await requireActiveUser("/dashboard");
+
+  // Non-admin users see zero counts and empty lists until user binding is
+  // implemented (Phase C). The demo facilitator data must not leak to every
+  // approved account — it belongs to the seed identity, not the viewer.
+  if (!isAdmin(user)) {
+    return (
+      <DashboardView
+        caseCount={0}
+        sessionCount={0}
+        eventCount={0}
+        recentCases={[]}
+        recentSessions={[]}
+        recentEvents={[]}
+      />
+    );
+  }
+
   const facilitator = await getDemoFacilitator();
 
   const [caseCount, sessionCount, eventCount, recentCases, allSessions, recentEvents] =
@@ -71,8 +91,6 @@ export default async function DashboardPage() {
         activeSessionParticipantCount: event.activeSessionParticipantCount,
         totalSessionParticipantCount: event.totalSessionParticipantCount,
         createdAt: event.createdAt ?? new Date().toISOString(),
-        hostToken: event.hostToken,
-        hostParticipantToken: event.hostParticipantToken,
       }))}
     />
   );

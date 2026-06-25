@@ -25,7 +25,6 @@ import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { MetricCard } from "@/components/ui/metric-card";
 import { ContinueLastActivityCard } from "@/components/rejoin-page-view";
 import { ServiceWarningBanner } from "@/components/service-warning-banner";
-import { getEventLobbyUrl } from "@/lib/config";
 import {
   applyEventOverviewStats,
   isEventActiveForPresence,
@@ -70,8 +69,7 @@ type DashboardViewProps = {
     activeSessionParticipantCount: number;
     totalSessionParticipantCount: number;
     createdAt: string;
-    hostToken: string;
-    hostParticipantToken: string | null;
+    // hostToken and hostParticipantToken intentionally omitted from list data.
   }>;
 };
 
@@ -284,10 +282,7 @@ export function DashboardView({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <Link
-                          href={getEventLobbyUrl(event.id, {
-                            hostToken: event.hostToken,
-                            participantToken: event.hostParticipantToken ?? undefined,
-                          })}
+                          href={`/events/${event.id}/join`}
                           className="font-medium text-slate-100 hover:text-cyan-300"
                           data-testid="event-title"
                         >
@@ -323,10 +318,7 @@ export function DashboardView({
                     <div className="flex flex-wrap gap-2">
                       {eventActive ? (
                         <SecondaryButtonLink
-                          href={getEventLobbyUrl(event.id, {
-                            hostToken: event.hostToken,
-                            participantToken: event.hostParticipantToken ?? undefined,
-                          })}
+                          href={`/events/${event.id}/join`}
                           data-testid="open-event-lobby-button"
                         >
                           {t("events.openLobby")}

@@ -3,10 +3,12 @@ import { getDemoFacilitator } from "@/lib/demo-user";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
+import { requireActiveUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function CasesPage() {
+  await requireActiveUser("/cases");
   const facilitator = await getDemoFacilitator();
 
   const cases = await prisma.negotiationCase.findMany({

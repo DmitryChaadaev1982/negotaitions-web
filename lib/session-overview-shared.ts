@@ -25,7 +25,8 @@ export type SessionListItem = {
   status: SessionDisplayStatus;
   negotiationState: SessionNegotiationState;
   closedByEventAt: string | null;
-  facilitatorJoinToken: string | null;
+  // facilitatorJoinToken intentionally omitted — must not appear in list HTML.
+  // Deep-link access is available via the session detail page (/sessions/[id]).
   participantCount: number;
   onlineParticipantCount: number;
   durationMinutes: number;

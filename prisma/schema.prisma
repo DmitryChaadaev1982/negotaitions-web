@@ -150,13 +150,45 @@ model User {
   email        String   @unique
   passwordHash String
   name         String?
+  // Legacy session-scoped role — kept for existing seed/facilitator checks.
+  // Do not use for access control; use globalRole + status instead.
   role         UserRole @default(PARTICIPANT)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  // Account-level role: "USER" | "ADMIN"
+  globalRole   String   @default("USER")
+  // Account status: "PENDING_APPROVAL" | "ACTIVE" | "REJECTED" | "BLOCKED"
+  status       String   @default("PENDING_APPROVAL")
+
+  lastLoginAt      DateTime?
+  approvedAt       DateTime?
+  approvedByUserId String?
+  rejectedAt       DateTime?
+  rejectedByUserId String?
+  blockedAt        DateTime?
+  blockedByUserId  String?
+  approvalComment  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   negotiationCases    NegotiationCase[]    @relation("CaseFacilitator")
   facilitatedSessions Session[]            @relation("SessionFacilitator")
   sessionParticipants SessionParticipant[]
+  userSessions        UserSession[]
+}
+
+model UserSession {
+  id               String    @id @default(cuid())
+  userId           String
+  sessionTokenHash String    @unique
+  expiresAt        DateTime
+  createdAt        DateTime  @default(now())
+  lastSeenAt       DateTime?
+  userAgent        String?
+  ipHash           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model NegotiationCase {

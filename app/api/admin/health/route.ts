@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { getDemoFacilitator } from "@/lib/demo-user";
 import {
   getEnvironmentConfigStatus,
 } from "@/lib/services/admin-health";
 import { hasRecentCriticalServiceErrors } from "@/lib/services/external-service-events";
 import { getMonthlyUsageSummary } from "@/lib/services/usage-counters";
 import { prisma } from "@/lib/prisma";
+import { apiRequireAdminUser } from "@/lib/auth/api-guards";
 
 export const runtime = "nodejs";
 
@@ -20,8 +20,10 @@ const emptyUsage = {
 };
 
 export async function GET() {
+  const { response: authError } = await apiRequireAdminUser();
+  if (authError) return authError;
+
   try {
-    await getDemoFacilitator();
 
     const [hasRecentErrors, recentEvents, usage] = await Promise.all([
       hasRecentCriticalServiceErrors(24).catch(() => false),

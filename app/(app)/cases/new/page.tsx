@@ -1,19 +1,9 @@
-"use client";
+import { requireActiveUser } from "@/lib/auth";
+import { NewCasePage as NewCasePageClient } from "./new-case-page-client";
 
-import { PageHeader } from "@/components/page-header";
-import { NewCaseForm } from "@/components/new-case-form";
-import { useI18n } from "@/lib/i18n/useI18n";
+export const dynamic = "force-dynamic";
 
-export default function NewCasePage() {
-  const { t } = useI18n();
-
-  return (
-    <div className="space-y-8">
-      <PageHeader
-        title={t("cases.newCase")}
-        description={t("cases.newCasePageDescription")}
-      />
-      <NewCaseForm />
-    </div>
-  );
+export default async function NewCasePage() {
+  await requireActiveUser("/cases/new");
+  return <NewCasePageClient />;
 }

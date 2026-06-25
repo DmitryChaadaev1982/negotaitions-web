@@ -71,6 +71,33 @@ function toPayload(
   };
 }
 
+/**
+ * Phase 1 auth-gated version for individual participant notes.
+ * Caller must have already verified active user auth.
+ * TODO: Add ownership check once Session.facilitatorId is user-bound (Phase C).
+ */
+export async function getParticipantNotesForActiveUser(
+  sessionId: string,
+  participantId: string,
+): Promise<ParticipantNotesAccessResult> {
+  const session = await prisma.session.findFirst({
+    where: { id: sessionId },
+    select: { id: true },
+  });
+
+  if (!session) {
+    return { ok: false, status: 404 };
+  }
+
+  const participant = await loadTargetParticipant(sessionId, participantId);
+
+  if (!participant) {
+    return { ok: false, status: 404 };
+  }
+
+  return { ok: true, data: toPayload(participant) };
+}
+
 export async function getParticipantNotesForFacilitator(
   sessionId: string,
   participantId: string,
@@ -96,6 +123,51 @@ export async function getParticipantNotesForFacilitator(
   }
 
   return { ok: true, data: toPayload(participant) };
+}
+
+/**
+ * Phase 1 auth-gated version: caller must have already verified active user
+ * auth. Does not filter by facilitatorId until user binding is implemented (Phase C).
+ * TODO: Add user binding once Session.facilitatorId is linked to real User.id.
+ */
+export async function getSessionParticipantsNotesForFacilitatorByUserId(
+  sessionId: string,
+): Promise<
+  | { ok: true; data: SessionParticipantNotesSnapshot[] }
+  | { ok: false; status: 404 }
+> {
+  const session = await prisma.session.findFirst({
+    where: { id: sessionId },
+    select: { id: true },
+  });
+
+  if (!session) {
+    return { ok: false, status: 404 };
+  }
+
+  const participants = await prisma.sessionParticipant.findMany({
+    where: { sessionId },
+    select: {
+      id: true,
+      notes: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return {
+    ok: true,
+    data: participants.map((participant) => {
+      const notes = toParticipantNoteEntries(participant);
+
+      return {
+        id: participant.id,
+        notesCount: notes.length,
+        notes,
+      };
+    }),
+  };
 }
 
 export async function getSessionParticipantsNotesForFacilitator(

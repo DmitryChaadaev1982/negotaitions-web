@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { CaseLanguage, Difficulty } from "@/app/generated/prisma/client";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import { requireActiveUser } from "@/lib/auth";
 import {
   DEFAULT_NEGOTIATION_DURATION_SECONDS,
   minutesToSeconds,
@@ -88,6 +89,8 @@ export async function createCase(
   _prevState: CreateCaseState,
   formData: FormData,
 ): Promise<CreateCaseState> {
+  await requireActiveUser("/cases/new");
+
   const roles = parseCaseRolesFromFormData(formData);
 
   const parsed = createCaseSchema.safeParse({
@@ -178,6 +181,8 @@ export async function updateCase(
   _prevState: CreateCaseState,
   formData: FormData,
 ): Promise<CreateCaseState> {
+  await requireActiveUser();
+
   const roles = parseCaseRolesFromFormData(formData);
 
   const parsed = updateCaseSchema.safeParse({
@@ -292,6 +297,7 @@ export async function updateCase(
 }
 
 export async function deleteCase(caseId: string) {
+  await requireActiveUser();
   const facilitator = await getDemoFacilitator();
 
   const existingCase = await prisma.negotiationCase.findFirst({

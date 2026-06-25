@@ -1,5 +1,4 @@
 import { getDemoFacilitator } from "@/lib/demo-user";
-import { getEventLobbyUrl } from "@/lib/config";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
@@ -49,12 +48,7 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
           id: true,
           title: true,
           status: true,
-          hostToken: true,
-          participants: {
-            where: { isHost: true },
-            select: { participantToken: true },
-            take: 1,
-          },
+          // hostToken and participantToken intentionally omitted — do not expose in list data.
         },
       },
       participants: {
@@ -62,7 +56,7 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
           type: true,
           joinedAt: true,
           lastSeenAt: true,
-          joinToken: true,
+          // joinToken intentionally omitted — must not appear in list data.
         },
       },
       _count: {
@@ -82,9 +76,6 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
 
   return sessions.map((session) => {
     const presenceActive = isSessionActiveForPresence(session);
-    const facilitatorJoinToken =
-      session.participants.find((participant) => participant.type === "FACILITATOR")
-        ?.joinToken ?? null;
 
     // Derive pipeline stages for sessions-page display
     const recStatus = session.recording?.status ?? null;
@@ -134,16 +125,13 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
       eventId: session.event?.id ?? null,
       eventTitle: session.event?.title ?? null,
       eventStatus: session.event?.status ?? null,
+      // eventLobbyUrl: tokens omitted from list data. Use /events/[id]/join for lobby access.
       eventLobbyUrl: session.event
-        ? getEventLobbyUrl(session.event.id, {
-            hostToken: session.event.hostToken,
-            participantToken: session.event.participants[0]?.participantToken,
-          })
+        ? `/events/${session.event.id}/join`
         : null,
       status: resolveSessionDisplayStatus(session, session.participants),
       negotiationState: session.negotiationState,
       closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
-      facilitatorJoinToken,
       participantCount: session._count.participants,
       onlineParticipantCount: presenceActive
         ? session.participants.filter((participant) =>

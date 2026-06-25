@@ -12,6 +12,7 @@ import {
   getParticipantNotesCount,
   toParticipantNoteEntries,
 } from "@/lib/participant-notes-access";
+import { requireActiveUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ export default async function SessionDetailPage({
   params,
 }: SessionDetailPageProps) {
   const { id } = await params;
+  await requireActiveUser(`/sessions/${id}`);
   const facilitator = await getDemoFacilitator();
 
   const session = await prisma.session.findFirst({

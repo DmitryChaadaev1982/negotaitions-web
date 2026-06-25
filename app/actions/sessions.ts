@@ -9,6 +9,7 @@ import {
 } from "@/app/generated/prisma/client";
 import { canEditSessionDurations } from "@/lib/negotiation-control";
 import { getDemoFacilitator } from "@/lib/demo-user";
+import { requireActiveUser } from "@/lib/auth";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
@@ -84,6 +85,8 @@ export async function createSession(
   _prevState: CreateSessionState,
   formData: FormData,
 ): Promise<CreateSessionState> {
+  await requireActiveUser("/sessions/new");
+
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
     caseId: formData.get("caseId"),
@@ -185,6 +188,8 @@ export async function addParticipant(
   _prevState: AddParticipantState,
   formData: FormData,
 ): Promise<AddParticipantState> {
+  await requireActiveUser();
+
   const parsed = addParticipantSchema.safeParse({
     sessionId: formData.get("sessionId"),
     displayName: formData.get("displayName"),
@@ -293,6 +298,7 @@ export async function addParticipant(
 }
 
 export async function removeParticipant(formData: FormData) {
+  await requireActiveUser();
   const participantId = String(formData.get("participantId") ?? "");
   const sessionId = String(formData.get("sessionId") ?? "");
 
@@ -319,6 +325,8 @@ export async function removeParticipant(formData: FormData) {
 }
 
 export async function updateSessionDuration(formData: FormData) {
+  await requireActiveUser();
+
   const parsed = updateSessionDurationSchema.safeParse({
     sessionId: formData.get("sessionId"),
     durationMinutes: formData.get("durationMinutes") || undefined,
@@ -439,6 +447,7 @@ export async function markParticipantJoined(joinToken: string) {
 }
 
 export async function deleteSession(sessionId: string) {
+  await requireActiveUser();
   const facilitator = await getDemoFacilitator();
 
   const session = await prisma.session.findFirst({

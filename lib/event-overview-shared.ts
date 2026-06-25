@@ -27,8 +27,6 @@ export type TrainingEventListItem = {
   title: string;
   status: TrainingEventStatus;
   scheduledAt: string | null;
-  hostToken: string;
-  hostParticipantToken: string | null;
   publicJoinCode: string;
   primarySessionId: string | null;
   lobbyParticipantCount: number;

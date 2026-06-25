@@ -9,7 +9,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/badge";
 import { cn } from "@/lib/cn";
-import { getEventLobbyUrl, getEventPublicJoinUrl } from "@/lib/config";
+import { getEventPublicJoinUrl } from "@/lib/config";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
   cancelTrainingEvent,
@@ -41,8 +41,8 @@ type EventRow = {
   latestActivityAt: string | null;
   activeSessionParticipantCount: number;
   totalSessionParticipantCount: number;
-  hostToken: string;
-  hostParticipantToken: string | null;
+  // hostToken and hostParticipantToken are intentionally omitted from list data.
+  // Use the event lobby URL via /events/[id]/join or direct host navigation.
   publicJoinCode: string;
   primarySessionId: string | null;
 };
@@ -157,10 +157,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
     <div className="flex flex-wrap items-center justify-end gap-1">
       {canEnterEventLobby(event.status) ? (
         <Link
-          href={getEventLobbyUrl(event.id, {
-            hostToken: event.hostToken,
-            participantToken: event.hostParticipantToken ?? undefined,
-          })}
+          href={`/events/${event.id}/join`}
           className={cn(
             compactButtonClass,
             "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-500/25 hover:bg-cyan-500/25 hover:text-cyan-200",
@@ -228,7 +225,6 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           }}
         >
           <input type="hidden" name="eventId" value={event.id} />
-          <input type="hidden" name="hostToken" value={event.hostToken} />
           <button
             type="submit"
             className={cn(

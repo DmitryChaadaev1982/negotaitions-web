@@ -5,6 +5,7 @@ import { getDemoFacilitator } from "@/lib/demo-user";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
+import { requireActiveUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ type EditCasePageProps = {
 
 export default async function EditCasePage({ params }: EditCasePageProps) {
   const { id } = await params;
+  await requireActiveUser(`/cases/${id}/edit`);
   const facilitator = await getDemoFacilitator();
 
   const negotiationCase = await prisma.negotiationCase.findFirst({
