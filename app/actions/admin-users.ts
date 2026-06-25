@@ -117,6 +117,11 @@ function revalidateAdminPages() {
 export async function approveUser(userId: string, comment?: string): Promise<void> {
   const adminUser = await requireAdminUser("/admin/users");
   const target = await getTargetUserOrThrow(userId);
+
+  if (target.id === adminUser.id) {
+    throw new Error("Self-action is not allowed.");
+  }
+
   const normalizedComment = normalizeComment(comment);
   const now = new Date();
 
@@ -161,6 +166,8 @@ export async function rejectUser(userId: string, comment?: string): Promise<void
         status: USER_STATUS.REJECTED,
         rejectedAt: new Date(),
         rejectedByUserId: adminUser.id,
+        blockedAt: null,
+        blockedByUserId: null,
         ...(normalizedComment ? { approvalComment: normalizedComment } : {}),
       },
     }),
@@ -222,6 +229,8 @@ export async function unblockUser(userId: string, comment?: string): Promise<voi
         approvedByUserId: target.approvedByUserId ?? adminUser.id,
         blockedAt: null,
         blockedByUserId: null,
+        rejectedAt: null,
+        rejectedByUserId: null,
       },
     }),
     prisma.adminActionLog.create({

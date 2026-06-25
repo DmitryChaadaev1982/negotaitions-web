@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 
-import { isAdmin } from "./admin";
+import { isAdmin, parseAdminEmails } from "./admin";
 import { generateSessionToken, hashSessionToken } from "./crypto";
 
 const COOKIE_NAME = "auth_session";
@@ -156,6 +156,19 @@ export async function requireAdminUser(returnUrl = "/admin"): Promise<AuthUser> 
 
   if (!isAdmin(user)) {
     redirect("/dashboard?error=access_denied");
+  }
+
+  // Bootstrap admins (ADMIN_EMAILS) always get through — required for system recovery.
+  // Role-only admins (globalRole=ADMIN) must not be BLOCKED or REJECTED; they lose admin
+  // access when blocked, preventing a blocked admin from self-approving via the panel.
+  const isBootstrap = parseAdminEmails().includes(user.email.toLowerCase());
+  if (!isBootstrap) {
+    if (user.status === "BLOCKED") {
+      redirect("/account/blocked");
+    }
+    if (user.status === "REJECTED") {
+      redirect("/account/rejected");
+    }
   }
 
   return user;
