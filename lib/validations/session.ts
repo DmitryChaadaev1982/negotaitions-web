@@ -9,6 +9,7 @@ export const createSessionSchema = z.object({
   negotiationDurationMinutes: negotiationDurationMinutesSchema,
   visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PRIVATE"),
   invitedUserIds: z.array(z.string().min(1)).default([]),
+  invitedEmails: z.array(z.string().trim().email("invalidEmailAddress")).default([]),
 });
 
 export const updateSessionDurationSchema = z.object({

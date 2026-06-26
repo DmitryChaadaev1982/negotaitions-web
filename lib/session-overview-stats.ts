@@ -1,5 +1,6 @@
 import type { AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { normalizeUserEmail } from "@/lib/invite-email";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
@@ -35,7 +36,10 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
 
 export async function getSessionsForUser(user: AuthUser | null): Promise<SessionListItem[]> {
   const onlineThreshold = new Date(Date.now() - PRESENCE_ONLINE_THRESHOLD_MS);
-  const visibilityFilter = user && !isAdmin(user) ? sessionVisibilityWhere(user.id) : {};
+  const visibilityFilter =
+    user && !isAdmin(user)
+      ? sessionVisibilityWhere(user.id, normalizeUserEmail(user.email))
+      : {};
   const where =
     user && !isAdmin(user)
       ? {

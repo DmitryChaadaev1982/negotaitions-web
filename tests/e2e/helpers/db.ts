@@ -89,13 +89,46 @@ export type E2eRecording = {
   mimeType: string | null;
 };
 
+/**
+ * SQL predicate (on the "User" table) that matches every email pattern used by
+ * the e2e suite to create throwaway accounts. Keep this in sync with the email
+ * domains used across the spec files. The demo facilitator is always preserved
+ * so seeded cases and demo flows keep working.
+ */
+export const TEST_USER_EMAIL_PREDICATE = `(
+  "email" LIKE '%.negotaitions'
+  OR "email" LIKE '%.negotaitions.local'
+  OR "email" LIKE '%@test.invalid'
+  OR "email" LIKE '%@phase5-privacy.test'
+  OR "email" LIKE 'e2e-%@example.com'
+  OR "email" LIKE 'test-%@example.com'
+) AND "email" <> 'demo@example.com'`;
+
 export async function cleanupE2eData() {
+  // 1. Title-based artifacts (sessions before cases: Session.negotiationCaseId is Restrict).
   await query(`DELETE FROM "Session" WHERE "title" LIKE '%E2E%' OR "snapshotCaseTitle" LIKE '%E2E%'`);
   await query(`DELETE FROM "TrainingEvent" WHERE "title" LIKE '%E2E%'`);
   await query(`DELETE FROM "NegotiationCase" WHERE "title" LIKE '%E2E%'`);
   await query(
     `DELETE FROM "ExternalServiceEvent" WHERE "title" LIKE '%Mock%' OR "message" LIKE '%Mock%' OR "message" LIKE '%quota%' OR "message" LIKE '%billing%'`,
   );
+
+  // 2. Test users plus everything they own. Sessions/cases/events reference the
+  //    user via Restrict (facilitator) or SetNull, so delete owned rows first,
+  //    then the users themselves.
+  const testUsers = await query<{ id: string }>(
+    `SELECT "id" FROM "User" WHERE ${TEST_USER_EMAIL_PREDICATE}`,
+  );
+  const ids = testUsers.map((u) => u.id);
+  if (ids.length > 0) {
+    await query(`DELETE FROM "Session" WHERE "facilitatorId" = ANY($1)`, [ids]);
+    await query(
+      `DELETE FROM "TrainingEvent" WHERE "hostUserId" = ANY($1) OR "facilitatorUserId" = ANY($1)`,
+      [ids],
+    );
+    await query(`DELETE FROM "NegotiationCase" WHERE "facilitatorId" = ANY($1)`, [ids]);
+    await query(`DELETE FROM "User" WHERE "id" = ANY($1)`, [ids]);
+  }
 }
 
 /**

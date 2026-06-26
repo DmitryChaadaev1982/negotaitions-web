@@ -11,6 +11,7 @@ import { getDictionary } from "@/lib/i18n/dictionaries";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { eventVisibilityWhere } from "@/lib/visibility";
+import { normalizeUserEmail } from "@/lib/invite-email";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -95,7 +96,7 @@ export default async function JoinEventPage({ params }: JoinEventPageProps) {
     const visibleEvent = await prisma.trainingEvent.findFirst({
       where: {
         id: event.id,
-        ...eventVisibilityWhere(currentUser.id),
+        ...eventVisibilityWhere(currentUser.id, normalizeUserEmail(currentUser.email)),
       },
       select: { id: true },
     });

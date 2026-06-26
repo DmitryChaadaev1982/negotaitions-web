@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import {
   createTrainingEvent,
   type CreateEventState,
 } from "@/app/actions/events";
+import { PeoplePicker } from "@/components/people-picker";
 import { PageHeader } from "@/components/page-header";
 import {
   GradientButton,
@@ -32,30 +33,38 @@ type UserOption = {
 
 type NewEventFormProps = {
   currentUserId: string;
+  currentUserEmail: string;
   activeUsers: UserOption[];
+  canAssignFacilitator: boolean;
 };
 
 function userLabel(user: UserOption): string {
   return user.name ? `${user.name} (${user.email})` : user.email;
 }
 
-export function NewEventForm({ currentUserId, activeUsers }: NewEventFormProps) {
+export function NewEventForm({
+  currentUserId,
+  currentUserEmail,
+  activeUsers,
+  canAssignFacilitator,
+}: NewEventFormProps) {
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     createTrainingEvent,
     initialState,
   );
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PRIVATE");
-  const [selectedInvites, setSelectedInvites] = useState<string[]>([]);
-
-  const toggleInvite = (userId: string) => {
-    setSelectedInvites((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
-    );
-  };
-
-  // Users available for invitation (exclude self)
-  const invitableUsers = activeUsers.filter((u) => u.id !== currentUserId);
+  const [facilitatorUserId, setFacilitatorUserId] = useState(currentUserId);
+  const selfOption = useMemo(
+    () =>
+      activeUsers.find((user) => user.id === currentUserId) ?? {
+        id: currentUserId,
+        name: null,
+        email: currentUserEmail,
+      },
+    [activeUsers, currentUserEmail, currentUserId],
+  );
+  const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
 
   return (
     <div className="space-y-8">
@@ -73,9 +82,42 @@ export function NewEventForm({ currentUserId, activeUsers }: NewEventFormProps) 
 
         {/* Hidden fields for controlled state */}
         <input type="hidden" name="visibility" value={visibility} />
-        {selectedInvites.map((userId) => (
-          <input key={userId} type="hidden" name="invitedUserId" value={userId} />
-        ))}
+        <input type="hidden" name="facilitatorUserId" value={facilitatorUserId} />
+
+        {/* Facilitator selection */}
+        <GlassCard>
+          <GlassCardHeader>
+            <h2 className="text-base font-semibold text-slate-50">
+              {t("visibility.facilitatorOrganizer")}
+            </h2>
+          </GlassCardHeader>
+          <GlassCardContent className="space-y-4">
+            <div>
+              <label className={labelClassName} htmlFor="facilitatorUserIdSelector">
+                {t("visibility.facilitatorOrganizer")}
+              </label>
+              <select
+                id="facilitatorUserIdSelector"
+                value={facilitatorUserId}
+                onChange={(event) => setFacilitatorUserId(event.target.value)}
+                className={inputClassName(false)}
+                disabled={!canAssignFacilitator}
+              >
+                {facilitatorOptions.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {userLabel(user)}
+                    {user.id === currentUserId ? " (you)" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className={hintClassName}>
+                {canAssignFacilitator
+                  ? t("visibility.selectFacilitatorHint")
+                  : t("visibility.facilitatorSelfOnlyHint")}
+              </p>
+            </div>
+          </GlassCardContent>
+        </GlassCard>
 
         <GlassCard>
           <GlassCardHeader>
@@ -84,24 +126,6 @@ export function NewEventForm({ currentUserId, activeUsers }: NewEventFormProps) 
             </h2>
           </GlassCardHeader>
           <GlassCardContent className="space-y-4">
-            <div>
-              <label className={labelClassName} htmlFor="hostDisplayName">
-                {t("events.hostDisplayName")}
-              </label>
-              <input
-                id="hostDisplayName"
-                name="hostDisplayName"
-                required
-                autoComplete="name"
-                className={inputClassName(Boolean(state.errors?.hostDisplayName))}
-              />
-              {state.errors?.hostDisplayName ? (
-                <p className={errorClassName}>
-                  {state.errors.hostDisplayName.map((key) => tv(key)).join(", ")}
-                </p>
-              ) : null}
-            </div>
-
             <div>
               <label className={labelClassName} htmlFor="title">
                 {t("common.title")}
@@ -172,37 +196,7 @@ export function NewEventForm({ currentUserId, activeUsers }: NewEventFormProps) 
           </GlassCardContent>
         </GlassCard>
 
-        {/* Facilitator selection */}
-        <GlassCard>
-          <GlassCardHeader>
-            <h2 className="text-base font-semibold text-slate-50">
-              {t("visibility.selectFacilitator")}
-            </h2>
-          </GlassCardHeader>
-          <GlassCardContent className="space-y-4">
-            <div>
-              <label className={labelClassName} htmlFor="facilitatorUserId">
-                {t("visibility.facilitatorLabel")}
-              </label>
-              <select
-                id="facilitatorUserId"
-                name="facilitatorUserId"
-                defaultValue={currentUserId}
-                className={inputClassName(false)}
-              >
-                {activeUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {userLabel(user)}
-                    {user.id === currentUserId ? " (you)" : ""}
-                  </option>
-                ))}
-              </select>
-              <p className={hintClassName}>{t("visibility.selectFacilitatorHint")}</p>
-            </div>
-          </GlassCardContent>
-        </GlassCard>
-
-        {/* Visibility + Invited users */}
+        {/* Visibility + Invitees */}
         <GlassCard>
           <GlassCardHeader>
             <h2 className="text-base font-semibold text-slate-50">
@@ -242,34 +236,14 @@ export function NewEventForm({ currentUserId, activeUsers }: NewEventFormProps) 
               ))}
             </div>
 
-            {invitableUsers.length > 0 ? (
-              <div>
-                <p className={labelClassName}>{t("visibility.invitedUsers")}</p>
-                <p className="mb-2 text-xs text-amber-400/80">
-                  {t("visibility.invitedUsersHint")}
-                </p>
-                <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-600/40 bg-slate-900/50 p-2">
-                  {invitableUsers.map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800/60"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedInvites.includes(user.id)}
-                        onChange={() => toggleInvite(user.id)}
-                      />
-                      {userLabel(user)}
-                    </label>
-                  ))}
-                </div>
-                {selectedInvites.length > 0 ? (
-                  <p className="mt-1 text-xs text-cyan-400">
-                    {selectedInvites.length} invited
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            <div>
+              <p className={labelClassName}>{t("visibility.inviteesLabel")}</p>
+              <PeoplePicker
+                excludeUserIds={[currentUserId]}
+                userFieldName="invitedUserId"
+                emailFieldName="invitedEmail"
+              />
+            </div>
           </GlassCardContent>
         </GlassCard>
 

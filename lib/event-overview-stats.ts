@@ -6,6 +6,7 @@ import {
   isEventActiveForPresence,
   type TrainingEventListItem,
 } from "@/lib/event-overview-shared";
+import { normalizeUserEmail } from "@/lib/invite-email";
 import { prisma } from "@/lib/prisma";
 import { eventVisibilityWhere } from "@/lib/visibility";
 
@@ -119,7 +120,7 @@ export async function getEventsForUser(
 ): Promise<TrainingEventListItem[]> {
   const where =
     user && !isAdmin(user)
-      ? eventVisibilityWhere(user.id)
+      ? eventVisibilityWhere(user.id, normalizeUserEmail(user.email))
       : { deletedAt: null };
 
   const events = await prisma.trainingEvent.findMany({

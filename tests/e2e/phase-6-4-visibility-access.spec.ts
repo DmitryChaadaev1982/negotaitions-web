@@ -31,7 +31,11 @@ import { createHash, randomBytes } from "crypto";
 
 import { test, expect } from "@playwright/test";
 
-import { query } from "./helpers/db";
+import { cleanupE2eData, query } from "./helpers/db";
+
+// Remove any leftover test users/events/sessions before and after this file runs.
+test.beforeAll(cleanupE2eData);
+test.afterAll(cleanupE2eData);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,15 +132,24 @@ async function createEventParticipant(opts: {
 
 async function createEventInvite(opts: {
   eventId: string;
-  userId: string;
+  userId?: string;
+  invitedEmail?: string;
   invitedByUserId: string;
 }): Promise<void> {
+  const invitedEmailNormalized = opts.invitedEmail?.trim().toLowerCase() ?? null;
   await query(
     `INSERT INTO "EventInvite"
-       ("id","eventId","userId","invitedByUserId","createdAt")
-     VALUES (gen_random_uuid(),$1,$2,$3,NOW())
-     ON CONFLICT ("eventId","userId") DO NOTHING`,
-    [opts.eventId, opts.userId, opts.invitedByUserId],
+       ("id","eventId","userId","invitedEmail","invitedEmailNormalized","displayLabel","invitedByUserId","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,NOW())
+     ON CONFLICT DO NOTHING`,
+    [
+      opts.eventId,
+      opts.userId ?? null,
+      opts.invitedEmail ?? null,
+      invitedEmailNormalized,
+      opts.invitedEmail ?? null,
+      opts.invitedByUserId,
+    ],
   );
 }
 
@@ -164,15 +177,24 @@ async function createStandaloneSession(opts: {
 
 async function createSessionInvite(opts: {
   sessionId: string;
-  userId: string;
+  userId?: string;
+  invitedEmail?: string;
   invitedByUserId: string;
 }): Promise<void> {
+  const invitedEmailNormalized = opts.invitedEmail?.trim().toLowerCase() ?? null;
   await query(
     `INSERT INTO "SessionInvite"
-       ("id","sessionId","userId","invitedByUserId","createdAt")
-     VALUES (gen_random_uuid(),$1,$2,$3,NOW())
-     ON CONFLICT ("sessionId","userId") DO NOTHING`,
-    [opts.sessionId, opts.userId, opts.invitedByUserId],
+       ("id","sessionId","userId","invitedEmail","invitedEmailNormalized","displayLabel","invitedByUserId","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,NOW())
+     ON CONFLICT DO NOTHING`,
+    [
+      opts.sessionId,
+      opts.userId ?? null,
+      opts.invitedEmail ?? null,
+      invitedEmailNormalized,
+      opts.invitedEmail ?? null,
+      opts.invitedByUserId,
+    ],
   );
 }
 
@@ -210,7 +232,8 @@ async function ensureDemoCase(facilitatorId: string): Promise<string> {
 }
 
 /** Query helper to run getEventsForUser WHERE filter (tests filter logic directly) */
-async function queryVisibleEventIds(userId: string): Promise<string[]> {
+async function queryVisibleEventIds(userId: string, userEmail?: string): Promise<string[]> {
+  const normalizedEmail = userEmail?.trim().toLowerCase() ?? null;
   const rows = await query<{ id: string }>(
     `SELECT DISTINCT e."id"
      FROM "TrainingEvent" e
@@ -224,15 +247,23 @@ async function queryVisibleEventIds(userId: string): Promise<string[]> {
            JOIN "SessionParticipant" sp ON sp."sessionId"=s."id"
            WHERE s."eventId"=e."id" AND sp."userId"=$1
          )
-         OR EXISTS (SELECT 1 FROM "EventInvite" ei WHERE ei."eventId"=e."id" AND ei."userId"=$1)
+        OR EXISTS (
+          SELECT 1 FROM "EventInvite" ei
+          WHERE ei."eventId"=e."id"
+            AND (
+              ei."userId"=$1
+              OR ($2::text IS NOT NULL AND ei."invitedEmailNormalized"=$2::text)
+            )
+        )
          OR (e."visibility"='PUBLIC' AND e."status" IN ('LOBBY_OPEN','SESSION_CREATED'))
-       )`,
-    [userId],
+      )`,
+    [userId, normalizedEmail],
   );
   return rows.map((r) => r.id);
 }
 
-async function queryVisibleSessionIds(userId: string): Promise<string[]> {
+async function queryVisibleSessionIds(userId: string, userEmail?: string): Promise<string[]> {
+  const normalizedEmail = userEmail?.trim().toLowerCase() ?? null;
   const rows = await query<{ id: string }>(
     `SELECT DISTINCT s."id"
      FROM "Session" s
@@ -253,9 +284,16 @@ async function queryVisibleSessionIds(userId: string): Promise<string[]> {
            AND s."negotiationState" != 'FINISHED'
            AND s."closedByEventAt" IS NULL
          )
-         OR EXISTS (SELECT 1 FROM "SessionInvite" si WHERE si."sessionId"=s."id" AND si."userId"=$1)
+        OR EXISTS (
+          SELECT 1 FROM "SessionInvite" si
+          WHERE si."sessionId"=s."id"
+            AND (
+              si."userId"=$1
+              OR ($2::text IS NOT NULL AND si."invitedEmailNormalized"=$2::text)
+            )
+        )
        )`,
-    [userId],
+    [userId, normalizedEmail],
   );
   return rows.map((r) => r.id);
 }
@@ -348,6 +386,24 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     expect(visible).toContain(eventId);
   });
 
+  test("6b. Private event visible to user invited by email after registration", async () => {
+    const host = await createActiveUser("host_priv_email_inv");
+    const invited = await createActiveUser("invited_email_event");
+    const eventId = await createTrainingEvent({
+      title: "Private Event Email Invite",
+      hostUserId: host.id,
+      visibility: "PRIVATE",
+    });
+    await createEventInvite({
+      eventId,
+      invitedEmail: invited.email.toUpperCase(),
+      invitedByUserId: host.id,
+    });
+
+    const visible = await queryVisibleEventIds(invited.id, invited.email);
+    expect(visible).toContain(eventId);
+  });
+
   test("11. Standalone PUBLIC session visible while open", async () => {
     const facilitator = await createActiveUser("fac_pub_sess");
     const unrelated = await createActiveUser("unrelated_pub_sess");
@@ -391,6 +447,24 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     });
 
     const visible = await queryVisibleSessionIds(invited.id);
+    expect(visible).toContain(sessionId);
+  });
+
+  test("13b. Standalone PRIVATE session visible to invited email after registration", async () => {
+    const facilitator = await createActiveUser("fac_priv_sess_email");
+    const invited = await createActiveUser("invited_priv_sess_email");
+    const sessionId = await createStandaloneSession({
+      title: "Private Invited Session Email",
+      facilitatorId: facilitator.id,
+      visibility: "PRIVATE",
+    });
+    await createSessionInvite({
+      sessionId,
+      invitedEmail: invited.email.toUpperCase(),
+      invitedByUserId: facilitator.id,
+    });
+
+    const visible = await queryVisibleSessionIds(invited.id, invited.email);
     expect(visible).toContain(sessionId);
   });
 

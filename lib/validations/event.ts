@@ -17,7 +17,6 @@ export function generatePublicJoinCode() {
 
 export const createEventSchema = z.object({
   title: z.string().trim().min(1, "titleRequired"),
-  hostDisplayName: z.string().trim().min(1, "displayNameRequired"),
   description: z.string().trim().optional(),
   scheduledAt: z.string().trim().optional(),
   estimatedEventDurationMinutes: z.coerce
@@ -29,6 +28,7 @@ export const createEventSchema = z.object({
   visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PRIVATE"),
   facilitatorUserId: z.string().trim().optional(),
   invitedUserIds: z.array(z.string().min(1)).default([]),
+  invitedEmails: z.array(z.string().trim().email("invalidEmailAddress")).default([]),
 });
 
 export const joinEventSchema = z.object({

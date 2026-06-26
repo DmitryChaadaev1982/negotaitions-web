@@ -25,6 +25,7 @@ import {
 import { requireActiveUser, getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { eventVisibilityWhere } from "@/lib/visibility";
+import { normalizeInviteEmail, normalizeUserEmail } from "@/lib/invite-email";
 
 type ActionErrors = {
   [key: string]: string[] | undefined;
@@ -56,18 +57,28 @@ export async function createTrainingEvent(
   formData: FormData,
 ): Promise<CreateEventState> {
   const user = await requireActiveUser("/events/new");
+  const userIsAdmin = isAdmin(user);
+
+  if (formData.has("hostDisplayName")) {
+    return {
+      errors: {
+        form: ["obsoleteFacilitatorNameField"],
+      },
+    };
+  }
 
   const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+  const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
 
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
-    hostDisplayName: formData.get("hostDisplayName"),
     description: formData.get("description") || undefined,
     scheduledAt: formData.get("scheduledAt") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
     facilitatorUserId: formData.get("facilitatorUserId") || undefined,
     invitedUserIds: rawInvitedUserIds,
+    invitedEmails: rawInvitedEmails,
   });
 
   if (!parsed.success) {
@@ -75,33 +86,36 @@ export async function createTrainingEvent(
     return {
       errors: {
         title: fieldErrors.title,
-        hostDisplayName: fieldErrors.hostDisplayName,
         estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
+        invitedEmail: fieldErrors.invitedEmails,
       },
     };
   }
 
   try {
-    const { title, hostDisplayName, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds } =
+    const { title, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
 
-    const hostDisplayNameResolved =
-      hostDisplayName?.trim() ||
-      user.name?.trim() ||
-      user.email.split("@")[0] ||
-      "Host";
-
-    // Resolve facilitatorUserId: if provided and valid ACTIVE user, use it; else default to creator
-    let resolvedFacilitatorUserId: string | null = null;
-    if (facilitatorUserId && facilitatorUserId !== user.id) {
-      const facilitatorUser = await prisma.user.findFirst({
-        where: { id: facilitatorUserId, status: "ACTIVE" },
-        select: { id: true },
-      });
-      resolvedFacilitatorUserId = facilitatorUser?.id ?? null;
-    } else if (facilitatorUserId === user.id) {
-      resolvedFacilitatorUserId = user.id;
+    // Enforce facilitator assignment rules server-side.
+    if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
+      return {
+        errors: {
+          form: ["facilitatorSelectionNotAllowed"],
+        },
+      };
     }
+
+    const requestedFacilitatorUserId = facilitatorUserId ?? user.id;
+    const facilitatorUser = await prisma.user.findFirst({
+      where: { id: requestedFacilitatorUserId, status: "ACTIVE" },
+      select: { id: true },
+    });
+
+    if (!facilitatorUser) {
+      return { errors: { form: ["facilitatorMustBeActive"] } };
+    }
+
+    const resolvedFacilitatorUserId = facilitatorUser.id;
 
     const hostToken = generateHostToken();
     const hostParticipantToken = generateParticipantToken();
@@ -124,7 +138,7 @@ export async function createTrainingEvent(
         ),
         participants: {
           create: {
-            displayName: hostDisplayNameResolved,
+            displayName: user.name?.trim() || user.email.split("@")[0] || "Host",
             participantToken: hostParticipantToken,
             isHost: true,
             userId: user.id,
@@ -133,26 +147,73 @@ export async function createTrainingEvent(
       },
     });
 
-    // Create EventInvites for invited users (deduped, skip self)
-    if (invitedUserIds.length > 0) {
-      const uniqueInvited = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
-      if (uniqueInvited.length > 0) {
-        const validUsers = await prisma.user.findMany({
-          where: { id: { in: uniqueInvited }, status: "ACTIVE" },
-          select: { id: true },
-        });
-        for (const invitedUser of validUsers) {
-          await prisma.eventInvite.upsert({
-            where: { eventId_userId: { eventId: event.id, userId: invitedUser.id } },
-            update: {},
-            create: {
-              eventId: event.id,
-              userId: invitedUser.id,
-              invitedByUserId: user.id,
-            },
-          });
-        }
+    // Create EventInvites for invited users and external emails.
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
+    const currentUserEmailNormalized = normalizeUserEmail(user.email);
+
+    const activeUsersById = requestedUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: requestedUserIds }, status: "ACTIVE" },
+          select: { id: true, email: true },
+        })
+      : [];
+    const activeUsersByEmail = normalizedInputEmails.length
+      ? await prisma.user.findMany({
+          where: {
+            status: "ACTIVE",
+            OR: normalizedInputEmails.map((email) => ({
+              email: { equals: email, mode: "insensitive" as const },
+            })),
+          },
+          select: { id: true, email: true },
+        })
+      : [];
+
+    const invitedRegisteredIds = new Set(activeUsersById.map((invitedUser) => invitedUser.id));
+    const activeEmailToUser = new Map(
+      activeUsersByEmail.map((invitedUser) => [invitedUser.email.toLowerCase(), invitedUser.id]),
+    );
+    const invitedExternalEmails = new Set<string>();
+
+    for (const email of normalizedInputEmails) {
+      const matchedUserId = activeEmailToUser.get(email);
+      if (matchedUserId) {
+        invitedRegisteredIds.add(matchedUserId);
+      } else if (email !== currentUserEmailNormalized) {
+        invitedExternalEmails.add(email);
       }
+    }
+
+    for (const invitedUserId of invitedRegisteredIds) {
+      await prisma.eventInvite.upsert({
+        where: { eventId_userId: { eventId: event.id, userId: invitedUserId } },
+        update: {},
+        create: {
+          eventId: event.id,
+          userId: invitedUserId,
+          invitedByUserId: user.id,
+        },
+      });
+    }
+
+    for (const invitedEmail of invitedExternalEmails) {
+      await prisma.eventInvite.upsert({
+        where: {
+          eventId_invitedEmailNormalized: {
+            eventId: event.id,
+            invitedEmailNormalized: invitedEmail,
+          },
+        },
+        update: {},
+        create: {
+          eventId: event.id,
+          invitedEmail: invitedEmail,
+          invitedEmailNormalized: invitedEmail,
+          displayLabel: invitedEmail,
+          invitedByUserId: user.id,
+        },
+      });
     }
 
     const lobbyRoomName = buildEventLobbyRoomName(event.id);
@@ -241,7 +302,7 @@ export async function joinTrainingEvent(
     const canJoinEvent = await prisma.trainingEvent.findFirst({
       where: {
         id: event.id,
-        ...eventVisibilityWhere(currentUser.id),
+        ...eventVisibilityWhere(currentUser.id, normalizeUserEmail(currentUser.email)),
       },
       select: { id: true },
     });

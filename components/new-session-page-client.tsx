@@ -9,12 +9,6 @@ import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { alertErrorClassName } from "@/components/ui/form-styles";
 import { useI18n } from "@/lib/i18n/useI18n";
 
-type UserOption = {
-  id: string;
-  name: string | null;
-  email: string;
-};
-
 type NewSessionPageClientProps = {
   cases: Array<{
     id: string;
@@ -26,7 +20,6 @@ type NewSessionPageClientProps = {
   defaultCaseId?: string;
   deletedCaseError?: boolean;
   currentUserId?: string;
-  activeUsers?: UserOption[];
 };
 
 export function NewSessionPageClient({
@@ -34,7 +27,6 @@ export function NewSessionPageClient({
   defaultCaseId,
   deletedCaseError = false,
   currentUserId,
-  activeUsers = [],
 }: NewSessionPageClientProps) {
   const { t } = useI18n();
 
@@ -69,7 +61,6 @@ export function NewSessionPageClient({
           cases={cases}
           defaultCaseId={defaultCaseId}
           currentUserId={currentUserId}
-          activeUsers={activeUsers}
         />
       )}
     </div>

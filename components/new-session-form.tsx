@@ -11,6 +11,7 @@ import {
   GradientButton,
   SecondaryButtonLink,
 } from "@/components/ui/buttons";
+import { PeoplePicker } from "@/components/people-picker";
 import {
   alertErrorClassName,
   errorClassName,
@@ -35,24 +36,13 @@ type CaseOption = {
   defaultDurationSeconds: number;
 };
 
-type UserOption = {
-  id: string;
-  name: string | null;
-  email: string;
-};
-
 type NewSessionFormProps = {
   cases: CaseOption[];
   defaultCaseId?: string;
   currentUserId?: string;
-  activeUsers?: UserOption[];
 };
 
-function userLabel(user: UserOption): string {
-  return user.name ? `${user.name} (${user.email})` : user.email;
-}
-
-export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUsers = [] }: NewSessionFormProps) {
+export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessionFormProps) {
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     createSession,
@@ -61,15 +51,6 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUser
   const initialCaseId = defaultCaseId ?? cases[0]?.id ?? "";
   const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId);
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PRIVATE");
-  const [selectedInvites, setSelectedInvites] = useState<string[]>([]);
-
-  const toggleInvite = (userId: string) => {
-    setSelectedInvites((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
-    );
-  };
-
-  const invitableUsers = activeUsers.filter((u) => u.id !== currentUserId);
 
   const selectedCase = useMemo(
     () => cases.find((negotiationCase) => negotiationCase.id === selectedCaseId),
@@ -97,9 +78,6 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUser
 
       {/* Hidden fields for controlled state */}
       <input type="hidden" name="visibility" value={visibility} />
-      {selectedInvites.map((userId) => (
-        <input key={userId} type="hidden" name="invitedUserId" value={userId} />
-      ))}
 
       <GlassCard>
         <GlassCardHeader>
@@ -239,7 +217,7 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUser
         </GlassCardContent>
       </GlassCard>
 
-      {/* Visibility + Invited users */}
+      {/* Visibility + Invitees */}
       <GlassCard>
         <GlassCardHeader>
           <h2 className="text-base font-semibold text-slate-50">
@@ -279,34 +257,14 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUser
             ))}
           </div>
 
-          {invitableUsers.length > 0 ? (
-            <div>
-              <p className={labelClassName}>{t("visibility.invitedUsers")}</p>
-              <p className="mb-2 text-xs text-amber-400/80">
-                {t("visibility.invitedUsersHint")}
-              </p>
-              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-600/40 bg-slate-900/50 p-2">
-                {invitableUsers.map((user) => (
-                  <label
-                    key={user.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800/60"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedInvites.includes(user.id)}
-                      onChange={() => toggleInvite(user.id)}
-                    />
-                    {userLabel(user)}
-                  </label>
-                ))}
-              </div>
-              {selectedInvites.length > 0 ? (
-                <p className="mt-1 text-xs text-cyan-400">
-                  {selectedInvites.length} invited
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+          <div>
+            <p className={labelClassName}>{t("visibility.inviteesLabel")}</p>
+            <PeoplePicker
+              excludeUserIds={currentUserId ? [currentUserId] : []}
+              userFieldName="invitedUserId"
+              emailFieldName="invitedEmail"
+            />
+          </div>
         </GlassCardContent>
       </GlassCard>
 

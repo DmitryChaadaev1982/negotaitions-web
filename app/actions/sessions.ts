@@ -18,6 +18,7 @@ import { prisma } from "@/lib/prisma";
 import { resolvePrepStatus } from "@/lib/session-display-status";
 import { mapCaseRolesToSessionRoleCreate } from "@/lib/session-role";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
+import { normalizeInviteEmail, normalizeUserEmail } from "@/lib/invite-email";
 import {
   addParticipantSchema,
   createSessionSchema,
@@ -92,6 +93,7 @@ export async function createSession(
   const user = await requireActiveUser("/sessions/new");
 
   const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+  const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
 
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
@@ -100,6 +102,7 @@ export async function createSession(
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
     invitedUserIds: rawInvitedUserIds,
+    invitedEmails: rawInvitedEmails,
   });
 
   if (!parsed.success) {
@@ -110,12 +113,13 @@ export async function createSession(
         caseId: fieldErrors.caseId,
         negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
         preparationDurationMinutes: fieldErrors.preparationDurationMinutes,
+        invitedEmail: fieldErrors.invitedEmails,
       },
     };
   }
 
   try {
-    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes, visibility, invitedUserIds } =
+    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes, visibility, invitedUserIds, invitedEmails } =
       parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.findFirst({
@@ -175,26 +179,73 @@ export async function createSession(
       },
     });
 
-    // Create SessionInvites for invited users (deduped, skip self).
-    if (invitedUserIds.length > 0) {
-      const uniqueInvited = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
-      if (uniqueInvited.length > 0) {
-        const validUsers = await prisma.user.findMany({
-          where: { id: { in: uniqueInvited }, status: "ACTIVE" },
-          select: { id: true },
-        });
-        for (const invitedUser of validUsers) {
-          await prisma.sessionInvite.upsert({
-            where: { sessionId_userId: { sessionId: session.id, userId: invitedUser.id } },
-            update: {},
-            create: {
-              sessionId: session.id,
-              userId: invitedUser.id,
-              invitedByUserId: user.id,
-            },
-          });
-        }
+    // Create SessionInvites for invited users and external emails.
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
+    const currentUserEmailNormalized = normalizeUserEmail(user.email);
+
+    const activeUsersById = requestedUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: requestedUserIds }, status: "ACTIVE" },
+          select: { id: true, email: true },
+        })
+      : [];
+    const activeUsersByEmail = normalizedInputEmails.length
+      ? await prisma.user.findMany({
+          where: {
+            status: "ACTIVE",
+            OR: normalizedInputEmails.map((email) => ({
+              email: { equals: email, mode: "insensitive" as const },
+            })),
+          },
+          select: { id: true, email: true },
+        })
+      : [];
+
+    const invitedRegisteredIds = new Set(activeUsersById.map((invitedUser) => invitedUser.id));
+    const activeEmailToUser = new Map(
+      activeUsersByEmail.map((invitedUser) => [invitedUser.email.toLowerCase(), invitedUser.id]),
+    );
+    const invitedExternalEmails = new Set<string>();
+
+    for (const email of normalizedInputEmails) {
+      const matchedUserId = activeEmailToUser.get(email);
+      if (matchedUserId) {
+        invitedRegisteredIds.add(matchedUserId);
+      } else if (email !== currentUserEmailNormalized) {
+        invitedExternalEmails.add(email);
       }
+    }
+
+    for (const invitedUserId of invitedRegisteredIds) {
+      await prisma.sessionInvite.upsert({
+        where: { sessionId_userId: { sessionId: session.id, userId: invitedUserId } },
+        update: {},
+        create: {
+          sessionId: session.id,
+          userId: invitedUserId,
+          invitedByUserId: user.id,
+        },
+      });
+    }
+
+    for (const invitedEmail of invitedExternalEmails) {
+      await prisma.sessionInvite.upsert({
+        where: {
+          sessionId_invitedEmailNormalized: {
+            sessionId: session.id,
+            invitedEmailNormalized: invitedEmail,
+          },
+        },
+        update: {},
+        create: {
+          sessionId: session.id,
+          invitedEmail: invitedEmail,
+          invitedEmailNormalized: invitedEmail,
+          displayLabel: invitedEmail,
+          invitedByUserId: user.id,
+        },
+      });
     }
 
     revalidatePath("/sessions");

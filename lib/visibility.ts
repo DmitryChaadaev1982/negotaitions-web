@@ -25,6 +25,7 @@
  */
 
 import { TrainingEventStatus } from "@/app/generated/prisma/client";
+import { normalizeUserEmail } from "@/lib/invite-email";
 
 /** Event statuses that are considered "open / joinable" */
 const OPEN_EVENT_STATUSES: TrainingEventStatus[] = [
@@ -40,11 +41,16 @@ export function isEventOpenAndJoinable(status: TrainingEventStatus): boolean {
  * Prisma WHERE clause fragment for events visible to a given authenticated user.
  * Pass `null` for admin / unscoped queries.
  */
-export function eventVisibilityWhere(userId: string | null) {
+export function eventVisibilityWhere(userId: string | null, userEmail?: string | null) {
   if (userId === null) {
     // Admin / no filter — return only deleted filter
     return { deletedAt: null };
   }
+
+  const normalizedUserEmail = normalizeUserEmail(userEmail);
+  const eventInviteOr = normalizedUserEmail
+    ? [{ userId }, { invitedEmailNormalized: normalizedUserEmail }]
+    : [{ userId }];
 
   return {
     deletedAt: null,
@@ -58,7 +64,7 @@ export function eventVisibilityWhere(userId: string | null) {
       // session participant in any event session
       { sessions: { some: { participants: { some: { userId } } } } },
       // invited user
-      { invites: { some: { userId } } },
+      { invites: { some: { OR: eventInviteOr } } },
       // PUBLIC event that is still open/joinable
       {
         visibility: "PUBLIC" as const,
@@ -73,10 +79,15 @@ export function eventVisibilityWhere(userId: string | null) {
  * Pass `null` for admin / unscoped queries.
  * Combine with your existing `activeSessionWhere` (deletedAt: null).
  */
-export function sessionVisibilityWhere(userId: string | null) {
+export function sessionVisibilityWhere(userId: string | null, userEmail?: string | null) {
   if (userId === null) {
     return {};
   }
+
+  const normalizedUserEmail = normalizeUserEmail(userEmail);
+  const sessionInviteOr = normalizedUserEmail
+    ? [{ userId }, { invitedEmailNormalized: normalizedUserEmail }]
+    : [{ userId }];
 
   return {
     OR: [
@@ -112,7 +123,7 @@ export function sessionVisibilityWhere(userId: string | null) {
         },
       },
       // session invite
-      { sessionInvites: { some: { userId } } },
+      { sessionInvites: { some: { OR: sessionInviteOr } } },
     ],
   };
 }

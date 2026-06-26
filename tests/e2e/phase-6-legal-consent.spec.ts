@@ -11,6 +11,13 @@
 
 import { expect, test } from "@playwright/test";
 
+import { cleanupE2eData } from "./helpers/db";
+
+// The registration consent test creates a `test-*@example.com` account via the
+// signup form; clean it (and any other leftovers) up around this file.
+test.beforeAll(cleanupE2eData);
+test.afterAll(cleanupE2eData);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
