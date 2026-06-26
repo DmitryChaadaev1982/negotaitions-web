@@ -25,6 +25,7 @@ import { StructuredVideoLayout } from "@/components/structured-video-layout";
 import { GradientButtonLink } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionCloseState } from "@/lib/session-close-state";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -391,9 +392,12 @@ function ConnectedRoom({
           data-testid="session-room-header"
         >
           <div className="min-w-0 space-y-2">
-            <p className="truncate text-sm font-semibold text-slate-50">
-              {sidebar.sessionTitle}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-slate-50">
+                {sidebar.sessionTitle}
+              </p>
+              <VisibilityBadge visibility={sidebar.visibility} showLabel={false} />
+            </div>
             <p className="truncate text-xs text-slate-400">
               {tokenResponse.displayName} · {participantTypeLabel}
             </p>

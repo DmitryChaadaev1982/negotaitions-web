@@ -24,6 +24,7 @@ export async function getRoomSidebarData(
       session: {
         select: {
           title: true,
+          visibility: true,
           durationSeconds: true,
           snapshotBusinessContext: true,
           snapshotPublicInstructions: true,
@@ -76,6 +77,7 @@ export async function getRoomSidebarData(
 
   return {
     sessionTitle: participant.session.title,
+    visibility: participant.session.visibility,
     event: participant.session.event
       ? {
           id: participant.session.event.id,

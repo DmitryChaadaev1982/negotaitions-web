@@ -36,6 +36,7 @@ export type AccountMaterialsData = {
   session: {
     id: string;
     title: string;
+    visibility: "PUBLIC" | "PRIVATE";
     caseTitle: string;
     roomLabel: string | null;
     preparationDurationMinutes: number;
@@ -78,7 +79,8 @@ export type AccountMaterialsData = {
  * Access is checked by userId relation only — no joinToken is read, stored,
  * or returned. This keeps joinToken out of browser URL, HTML, and logs.
  *
- * Guest access continues to use /join/[joinToken] unchanged.
+ * Legacy /join/[joinToken] links now require login and redirect to this
+ * account-authorized route after server-side binding.
  */
 export async function getAccountMaterialsData(
   sessionId: string,
@@ -96,6 +98,7 @@ export async function getAccountMaterialsData(
     select: {
       id: true,
       title: true,
+      visibility: true,
       status: true,
       snapshotCaseTitle: true,
       roomLabel: true,
@@ -205,6 +208,7 @@ export async function getAccountMaterialsData(
     session: {
       id: sessionData.id,
       title: sessionData.title,
+      visibility: sessionData.visibility,
       caseTitle: sessionData.snapshotCaseTitle,
       roomLabel: sessionData.roomLabel,
       preparationDurationMinutes: secondsToDisplayMinutes(

@@ -10,6 +10,7 @@ import { getServerLocale } from "@/lib/i18n/server";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { eventVisibilityWhere } from "@/lib/visibility";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +89,20 @@ export default async function JoinEventPage({ params }: JoinEventPageProps) {
         </Link>
       </div>
     );
+  }
+
+  if (!isAdmin(currentUser)) {
+    const visibleEvent = await prisma.trainingEvent.findFirst({
+      where: {
+        id: event.id,
+        ...eventVisibilityWhere(currentUser.id),
+      },
+      select: { id: true },
+    });
+
+    if (!visibleEvent) {
+      notFound();
+    }
   }
 
   // Authenticated ACTIVE user — show preference selection join view.

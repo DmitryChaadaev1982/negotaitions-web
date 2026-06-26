@@ -6,6 +6,7 @@ import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type DashboardAction = {
@@ -20,6 +21,7 @@ type DashboardAction = {
 type DashboardEventItem = {
   id: string;
   title: string;
+  visibility: "PUBLIC" | "PRIVATE";
   status: string;
   scheduledAt: string | null;
   roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
@@ -32,6 +34,7 @@ type DashboardEventItem = {
 type DashboardSessionItem = {
   id: string;
   title: string;
+  visibility: "PUBLIC" | "PRIVATE";
   eventTitle: string | null;
   status: string;
   roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
@@ -102,7 +105,10 @@ export function AccountDashboardView({
             {activeEvents.map((event) => (
               <GlassCard key={event.id}>
                 <GlassCardHeader>
-                  <p className="font-semibold text-slate-100">{event.title}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-slate-100">{event.title}</p>
+                    <VisibilityBadge visibility={event.visibility} showLabel={false} />
+                  </div>
                 </GlassCardHeader>
                 <GlassCardContent className="space-y-2 text-sm text-slate-300">
                   <Badge variant="info">{t(event.roleKey)}</Badge>
@@ -148,7 +154,10 @@ export function AccountDashboardView({
             {hostedEvents.map((event) => (
               <GlassCard key={event.id}>
                 <GlassCardContent className="space-y-2 py-4">
-                  <p className="font-semibold text-slate-100">{event.title}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-slate-100">{event.title}</p>
+                    <VisibilityBadge visibility={event.visibility} showLabel={false} />
+                  </div>
                   {event.primaryAction ? (
                     <Link href={event.primaryAction.href} className="font-semibold text-cyan-400 hover:text-cyan-300">
                       {t(event.primaryAction.labelKey)}
@@ -171,7 +180,10 @@ function SessionCards({ sessions }: { sessions: DashboardSessionItem[] }) {
       {sessions.map((session) => (
         <GlassCard key={session.id}>
           <GlassCardContent className="space-y-2 py-4">
-            <p className="font-semibold text-slate-100">{session.title}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-slate-100">{session.title}</p>
+              <VisibilityBadge visibility={session.visibility} showLabel={false} />
+            </div>
             <p className="text-sm text-slate-400">{session.eventTitle ?? "—"}</p>
             <Badge variant="default">{t(session.roleKey)}</Badge>
             <p className="text-xs text-slate-500">{session.status}</p>

@@ -85,6 +85,7 @@ export type EventStateResponse = {
     description: string | null;
     scheduledAt: string | null;
     status: string;
+    visibility: "PUBLIC" | "PRIVATE";
     completedAt: string | null;
     completionReason: string | null;
     estimatedEventDurationSeconds: number | null;
@@ -315,6 +316,7 @@ export async function buildEventState(
       description: input.event.description,
       scheduledAt: input.event.scheduledAt?.toISOString() ?? null,
       status: input.event.status,
+      visibility: input.event.visibility,
       completedAt: input.event.completedAt?.toISOString() ?? null,
       completionReason: input.event.completionReason,
       estimatedEventDurationSeconds: input.event.estimatedEventDurationSeconds,

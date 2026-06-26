@@ -204,16 +204,18 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           {t("events.materials")}
         </Link>
       ) : null}
-      <button
-        type="button"
-        className="inline-flex h-8 shrink-0 items-center justify-center px-2 text-xs font-medium text-blue-400 underline decoration-blue-400/60 underline-offset-2 transition-colors hover:text-blue-300 hover:decoration-blue-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617]"
-        title={t("events.copyEventJoinLink")}
-        aria-label={t("events.copyEventJoinLink")}
-        data-testid="copy-event-link-button"
-        onClick={() => onCopyLink(event)}
-      >
-        {copyId === event.id ? t("events.linkCopied") : t("events.actionLink")}
-      </button>
+      {event.visibility === "PUBLIC" ? (
+        <button
+          type="button"
+          className="inline-flex h-8 shrink-0 items-center justify-center px-2 text-xs font-medium text-blue-400 underline decoration-blue-400/60 underline-offset-2 transition-colors hover:text-blue-300 hover:decoration-blue-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617]"
+          title={t("events.copyEventJoinLink")}
+          aria-label={t("events.copyEventJoinLink")}
+          data-testid="copy-event-link-button"
+          onClick={() => onCopyLink(event)}
+        >
+          {copyId === event.id ? t("events.linkCopied") : t("events.actionLink")}
+        </button>
+      ) : null}
       {canCompleteEvent(event) ? (
         <form
           action={completeTrainingEventFromList}

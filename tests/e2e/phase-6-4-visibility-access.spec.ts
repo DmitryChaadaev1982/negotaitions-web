@@ -43,10 +43,6 @@ function hashToken(raw: string) {
   return createHash("sha256").update(raw).digest("hex");
 }
 
-function authSessionCookie(rawToken: string) {
-  return `auth_session=${rawToken}`;
-}
-
 async function createActiveUser(namePfx: string): Promise<{ id: string; email: string }> {
   const id = uid(namePfx);
   const email = `${id}@test.negotaitions.local`;
@@ -183,7 +179,7 @@ async function createSessionInvite(opts: {
 async function createSessionParticipant(opts: {
   sessionId: string;
   userId: string;
-}): Promise<void> {
+}): Promise<string> {
   const token = randomBytes(16).toString("hex");
   await query(
     `INSERT INTO "SessionParticipant"
@@ -192,6 +188,7 @@ async function createSessionParticipant(opts: {
      ON CONFLICT DO NOTHING`,
     [opts.sessionId, opts.userId, token],
   );
+  return token;
 }
 
 /** Ensure a demo negotiation case exists for the given facilitator */
@@ -511,28 +508,23 @@ test.describe("Phase 6.4 — Join flow (requires dev server)", () => {
     page,
   }) => {
     const facilitator = await createActiveUser("fac_sess_redir");
+    const participant = await createActiveUser("part_sess_redir");
     const sessionId = await createStandaloneSession({
       title: "Auth Redirect Session",
       facilitatorId: facilitator.id,
       visibility: "PUBLIC",
     });
-    const tokenRows = await query<{ joinToken: string }>(
-      `SELECT "joinToken" FROM "SessionParticipant" WHERE "sessionId"=$1 LIMIT 1`,
-      [sessionId],
-    );
-    const joinToken = tokenRows[0]?.joinToken;
-    if (!joinToken) {
-      test.skip(true, "No session participant token — skipping");
-      return;
-    }
+    const joinToken = await createSessionParticipant({
+      sessionId,
+      userId: participant.id,
+    });
 
     await page.context().clearCookies();
     await page.goto(`${BROWSER_BASE_URL}/join/${joinToken}`, { waitUntil: "networkidle" });
 
     const nameInput = page.locator("input[name='displayName']");
-    const loginLink = page.locator("a[href*='/login']");
-    const isOnLogin = page.url().includes("/login");
-    expect(isOnLogin || (await loginLink.count()) > 0).toBe(true);
+    expect(page.url()).toContain("/login");
+    expect(page.url()).toContain("returnUrl=");
     await expect(nameInput).not.toBeVisible();
   });
 

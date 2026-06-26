@@ -1,5 +1,4 @@
 import { NewSessionPageClient } from "@/components/new-session-page-client";
-import { getDemoFacilitator } from "@/lib/demo-user";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { requireActiveUser } from "@/lib/auth";
@@ -15,10 +14,9 @@ export default async function NewSessionPage({
 }: NewSessionPageProps) {
   const user = await requireActiveUser("/sessions/new");
   const { caseId } = await searchParams;
-  const facilitator = await getDemoFacilitator();
 
   const cases = await prisma.negotiationCase.findMany({
-    where: { facilitatorId: facilitator.id, ...activeCaseWhere },
+    where: { facilitatorId: user.id, ...activeCaseWhere },
     orderBy: { title: "asc" },
     select: {
       id: true,
@@ -34,7 +32,7 @@ export default async function NewSessionPage({
       ? await prisma.negotiationCase.findFirst({
           where: {
             id: caseId,
-            facilitatorId: facilitator.id,
+            facilitatorId: user.id,
             deletedAt: { not: null },
           },
           select: { id: true },

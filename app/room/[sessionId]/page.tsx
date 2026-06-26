@@ -1,6 +1,9 @@
+import { notFound, redirect } from "next/navigation";
+
 import VideoRoomPage from "@/components/video-room-page";
 import { getOptionalCurrentUser, requireActiveUser } from "@/lib/auth";
 import { canAccessSession, getCurrentUserSessionAccess } from "@/lib/access-control";
+import { isAdmin } from "@/lib/auth/admin";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { prisma } from "@/lib/prisma";
@@ -81,8 +84,69 @@ export default async function RoomPage({
     );
   }
 
-  // Guest mode: joinToken flow unchanged.
-  return (
-    <VideoRoomPage sessionId={sessionId} joinToken={trimmedJoinToken} />
-  );
+  const participant = await prisma.sessionParticipant.findUnique({
+    where: { joinToken: trimmedJoinToken },
+    select: {
+      id: true,
+      sessionId: true,
+      userId: true,
+      eventParticipant: {
+        select: {
+          id: true,
+          userId: true,
+        },
+      },
+      session: {
+        select: { deletedAt: true },
+      },
+    },
+  });
+
+  if (!participant || participant.sessionId !== sessionId || participant.session.deletedAt) {
+    notFound();
+  }
+
+  const optionalUser = await getOptionalCurrentUser();
+  if (!optionalUser) {
+    const returnUrl = encodeURIComponent(
+      `/room/${sessionId}?joinToken=${trimmedJoinToken}`,
+    );
+    redirect(`/login?returnUrl=${returnUrl}`);
+  }
+
+  if (!isAdmin(optionalUser) && optionalUser.status !== "ACTIVE") {
+    notFound();
+  }
+
+  const sessionOwnedByAnotherUser =
+    participant.userId && participant.userId !== optionalUser.id;
+  const eventOwnedByAnotherUser =
+    participant.eventParticipant?.userId &&
+    participant.eventParticipant.userId !== optionalUser.id;
+  if (sessionOwnedByAnotherUser || eventOwnedByAnotherUser) {
+    notFound();
+  }
+
+  const existingUserParticipant = await prisma.sessionParticipant.findFirst({
+    where: { sessionId, userId: optionalUser.id },
+    select: { id: true },
+  });
+
+  if (!existingUserParticipant) {
+    await prisma.$transaction(async (tx) => {
+      await tx.sessionParticipant.updateMany({
+        where: { id: participant.id, userId: null },
+        data: { userId: optionalUser.id },
+      });
+
+      if (participant.eventParticipant?.id) {
+        await tx.eventParticipant.updateMany({
+          where: { id: participant.eventParticipant.id, userId: null },
+          data: { userId: optionalUser.id },
+        });
+      }
+    });
+  }
+
+  redirect(`/room/${sessionId}`);
 }

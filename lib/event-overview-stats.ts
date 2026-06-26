@@ -202,7 +202,12 @@ export async function getEventsForUser(
       title: event.title,
       status: event.status,
       visibility: event.visibility as "PUBLIC" | "PRIVATE",
-      canManage: Boolean(user && (isAdmin(user) || event.hostUserId === user.id)),
+      canManage: Boolean(
+        user &&
+          (isAdmin(user) ||
+            event.hostUserId === user.id ||
+            event.facilitatorUserId === user.id),
+      ),
       scheduledAt: event.scheduledAt?.toISOString() ?? null,
       publicJoinCode: event.publicJoinCode,
       primarySessionId: event.sessions[0]?.id ?? null,

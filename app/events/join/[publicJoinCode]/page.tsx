@@ -17,5 +17,9 @@ export default async function PublicEventJoinPage({ params }: PublicJoinPageProp
     notFound();
   }
 
+  if (event.visibility !== "PUBLIC") {
+    notFound();
+  }
+
   redirect(`/events/${event.id}/join`);
 }

@@ -19,7 +19,8 @@ export const dynamic = "force-dynamic";
  *   - HTTP Location / Redirect header
  *   - HTML response body / client props
  *
- * Guest access continues through /join/[joinToken] unchanged.
+ * Legacy /join/[joinToken] links now require login, bind once server-side, and
+ * redirect here so session materials stay account-authorized.
  */
 export default async function SessionMaterialsAccountPage({
   params,

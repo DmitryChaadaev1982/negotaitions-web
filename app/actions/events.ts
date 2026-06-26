@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { TrainingEventStatus } from "@/app/generated/prisma/client";
+import { Prisma, TrainingEventStatus } from "@/app/generated/prisma/client";
 import { completeTrainingEvent } from "@/lib/complete-event";
 import { getEventLobbyUrl } from "@/lib/config";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@/lib/validations/event";
 import { requireActiveUser, getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { eventVisibilityWhere } from "@/lib/visibility";
 
 type ActionErrors = {
   [key: string]: string[] | undefined;
@@ -36,6 +37,13 @@ function isRedirectError(error: unknown) {
     typeof error === "object" &&
     "digest" in error &&
     String((error as { digest?: string }).digest).startsWith("NEXT_REDIRECT")
+  );
+}
+
+function isSerializableConflict(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
   );
 }
 
@@ -229,6 +237,20 @@ export async function joinTrainingEvent(
     return { errors: { form: ["eventUnavailable"] } };
   }
 
+  if (!isAdmin(currentUser)) {
+    const canJoinEvent = await prisma.trainingEvent.findFirst({
+      where: {
+        id: event.id,
+        ...eventVisibilityWhere(currentUser.id),
+      },
+      select: { id: true },
+    });
+
+    if (!canJoinEvent) {
+      return { errors: { form: ["eventUnavailable"] } };
+    }
+  }
+
   // If a participantToken is provided (URL invite), validate and bind to account.
   if (participantToken) {
     const existing = await prisma.eventParticipant.findFirst({
@@ -238,6 +260,22 @@ export async function joinTrainingEvent(
     if (existing) {
       if (existing.userId && existing.userId !== currentUser.id) {
         return { errors: { form: ["participantTokenAlreadyLinked"] } };
+      }
+
+      const existingByUser = await prisma.eventParticipant.findFirst({
+        where: { eventId, userId: currentUser.id },
+      });
+
+      if (existingByUser && existingByUser.id !== existing.id) {
+        await prisma.eventParticipant.update({
+          where: { id: existingByUser.id },
+          data: {
+            ...(preference ? { preference, ...flagsFromPreference(preference) } : {}),
+            lastSeenAt: new Date(),
+          },
+        });
+
+        redirect(getEventLobbyUrl(eventId, { participantToken: existingByUser.participantToken }));
       }
 
       await prisma.eventParticipant.update({
@@ -277,20 +315,54 @@ export async function joinTrainingEvent(
   const resolvedDisplayName =
     currentUser.name?.trim() || currentUser.email.split("@")[0] || "User";
 
-  await prisma.eventParticipant.create({
-    data: {
-      eventId,
-      displayName: resolvedDisplayName,
-      participantToken: newParticipantToken,
-      preference: resolvedPreference,
-      ...preferenceFlags,
-      userId: currentUser.id,
-      joinedAt: new Date(),
-      lastSeenAt: new Date(),
-    },
-  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const participant = await prisma.$transaction(
+        async (tx) => {
+          const existingInTransaction = await tx.eventParticipant.findFirst({
+            where: { eventId, userId: currentUser.id },
+          });
 
-  redirect(getEventLobbyUrl(eventId, { participantToken: newParticipantToken }));
+          if (existingInTransaction) {
+            await tx.eventParticipant.update({
+              where: { id: existingInTransaction.id },
+              data: {
+                preference: resolvedPreference,
+                ...preferenceFlags,
+                lastSeenAt: new Date(),
+              },
+            });
+
+            return existingInTransaction;
+          }
+
+          return tx.eventParticipant.create({
+            data: {
+              eventId,
+              displayName: resolvedDisplayName,
+              participantToken: newParticipantToken,
+              preference: resolvedPreference,
+              ...preferenceFlags,
+              userId: currentUser.id,
+              joinedAt: new Date(),
+              lastSeenAt: new Date(),
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      redirect(getEventLobbyUrl(eventId, { participantToken: participant.participantToken }));
+    } catch (error) {
+      if (isSerializableConflict(error) && attempt === 0) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return { errors: { form: ["createEventFailed"] } };
 }
 
 export async function completeTrainingEventFromList(formData: FormData) {
@@ -307,14 +379,20 @@ export async function completeTrainingEventFromList(formData: FormData) {
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
-    select: { hostToken: true, deletedAt: true, hostUserId: true },
+    select: {
+      hostToken: true,
+      deletedAt: true,
+      hostUserId: true,
+      facilitatorUserId: true,
+    },
   });
 
   if (!event || event.deletedAt) {
     return;
   }
 
-  const ownerAccess = event.hostUserId === user.id;
+  const ownerAccess =
+    event.hostUserId === user.id || event.facilitatorUserId === user.id;
   if (!isAdmin(user) && !ownerAccess) {
     return;
   }
@@ -342,7 +420,12 @@ export async function cancelTrainingEvent(formData: FormData) {
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
-    select: { hostToken: true, deletedAt: true, hostUserId: true },
+    select: {
+      hostToken: true,
+      deletedAt: true,
+      hostUserId: true,
+      facilitatorUserId: true,
+    },
   });
 
   if (!event || event.deletedAt) {
@@ -354,7 +437,10 @@ export async function cancelTrainingEvent(formData: FormData) {
   }
 
   if (!hostToken) {
-    const ownerAccess = Boolean(user && event.hostUserId === user.id);
+    const ownerAccess = Boolean(
+      user &&
+        (event.hostUserId === user.id || event.facilitatorUserId === user.id),
+    );
     if (!userIsAdmin && !ownerAccess) {
       return;
     }

@@ -70,6 +70,7 @@ export default async function DashboardPage() {
       activeEvents={activeEvents.map((event) => ({
         id: event.id,
         title: event.title,
+        visibility: event.visibility,
         status: event.status,
         roleKey: event.canManage ? "dashboard.roleHost" : "dashboard.roleParticipant",
         scheduledAt: event.scheduledAt,
@@ -90,6 +91,7 @@ export default async function DashboardPage() {
       activeSessions={activeSessions.map((session) => ({
         id: session.id,
         title: session.title,
+        visibility: session.visibility,
         eventTitle: session.eventTitle,
         status: session.status,
         roleKey: toRoleKey(session.userRole),
@@ -104,6 +106,7 @@ export default async function DashboardPage() {
       completedSessions={completedSessions.map((session) => ({
         id: session.id,
         title: session.title,
+        visibility: session.visibility,
         eventTitle: session.eventTitle,
         status: session.status,
         roleKey: toRoleKey(session.userRole),
@@ -118,6 +121,7 @@ export default async function DashboardPage() {
       hostedEvents={hostedEvents.map((event) => ({
         id: event.id,
         title: event.title,
+        visibility: event.visibility,
         status: event.status,
         roleKey: "dashboard.roleHost",
         scheduledAt: event.scheduledAt,

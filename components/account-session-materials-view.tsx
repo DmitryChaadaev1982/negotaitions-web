@@ -7,6 +7,7 @@ import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { GradientButtonLink, SecondaryButtonLink } from "@/components/ui/buttons";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import {
   saveAccountParticipantNotes,
   type SaveParticipantNotesState,
@@ -252,6 +253,7 @@ export function AccountSessionMaterialsView({
       <PageHeader
         title={session.title}
         description={session.caseTitle}
+        badge={<VisibilityBadge visibility={session.visibility} />}
         action={
           <div className="flex flex-wrap gap-2">
             {isActive ? (

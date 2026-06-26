@@ -101,6 +101,10 @@ export function sessionVisibilityWhere(userId: string | null) {
       {
         eventId: { not: null },
         visibility: "PUBLIC" as const,
+        deletedAt: null,
+        status: { not: "COMPLETED" },
+        negotiationState: { notIn: ["FINISHED"] },
+        closedByEventAt: null,
         event: {
           visibility: "PUBLIC" as const,
           status: { in: OPEN_EVENT_STATUSES },

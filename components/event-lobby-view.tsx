@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import {
   alertErrorClassName,
 } from "@/components/ui/form-styles";
@@ -467,7 +468,10 @@ export function EventLobbyView({
               <p className="text-xs font-medium uppercase tracking-wide text-cyan-400/80">
                 {t("events.eventLobby")}
               </p>
-              <h1 className="text-lg font-bold text-slate-50">{state.event.title}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-slate-50">{state.event.title}</h1>
+                <VisibilityBadge visibility={state.event.visibility} />
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-3">

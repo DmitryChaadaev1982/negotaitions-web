@@ -1,23 +1,8 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import { JoinPageView } from "@/components/join-page-view";
-import { JoinRecoverySync } from "@/components/join-recovery-sync";
-import { ParticipantPresenceHeartbeat } from "@/components/participant-presence-heartbeat";
-import { ParticipantType } from "@/app/generated/prisma/client";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
-import { sessionRoleBriefingSelect } from "@/lib/session-role";
-import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
-import { buildSessionCloseState } from "@/lib/session-close-state";
-import { getEventLobbyUrl } from "@/lib/config";
-import { isSessionActiveForAssignment } from "@/lib/event-active-assignment";
-import {
-  scopeAssignedParticipantsForParticipant,
-  scopeAssignedParticipantsForObserver,
-  scopeAssignedParticipantsForFacilitator,
-} from "@/lib/privacy/serializers";
 
 export const dynamic = "force-dynamic";
 
@@ -30,287 +15,66 @@ export default async function JoinPage({ params }: JoinPageProps) {
 
   const participant = await prisma.sessionParticipant.findUnique({
     where: { joinToken },
-    include: {
-      sessionRole: {
-        select: sessionRoleBriefingSelect,
-      },
+    select: {
+      id: true,
+      sessionId: true,
+      userId: true,
       eventParticipant: {
         select: {
           id: true,
           userId: true,
-          participantToken: true,
         },
       },
       session: {
-        include: {
-          recording: {
-            select: {
-              status: true,
-              fileUrl: true,
-              updatedAt: true,
-              errorMessage: true,
-            },
-          },
-          transcript: {
-            select: {
-              text: true,
-              diarizedText: true,
-              updatedAt: true,
-            },
-          },
-          event: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              hostToken: true,
-            },
-          },
-          participants: {
-            select: {
-              id: true,
-              displayName: true,
-              type: true,
-              joinedAt: true,
-              sessionRole: {
-                select: sessionRoleBriefingSelect,
-              },
-            },
-            orderBy: { createdAt: "asc" },
-          },
-        },
+        select: { deletedAt: true },
       },
     },
   });
 
-  if (!participant) {
+  if (!participant || participant.session.deletedAt) {
     notFound();
   }
 
   const currentUser = await getOptionalCurrentUser();
-  // Security hardening: logged-in but non-active users must not access
-  // session materials via token URLs. They can only proceed after activation.
-  if (currentUser && !isAdmin(currentUser) && currentUser.status !== "ACTIVE") {
+
+  if (!currentUser) {
+    const returnUrl = encodeURIComponent(`/join/${joinToken}`);
+    redirect(`/login?returnUrl=${returnUrl}`);
+  }
+
+  if (!isAdmin(currentUser) && currentUser.status !== "ACTIVE") {
     notFound();
   }
-  const currentUserCanBind = Boolean(
-    currentUser && (isAdmin(currentUser) || currentUser.status === "ACTIVE"),
-  );
-  if (currentUserCanBind) {
-    const sessionOwnedByAnotherUser =
-      participant.userId &&
-      participant.userId !== currentUser!.id;
-    const eventOwnedByAnotherUser =
-      participant.eventParticipant?.userId &&
-      participant.eventParticipant.userId !== currentUser!.id;
-    if (sessionOwnedByAnotherUser || eventOwnedByAnotherUser) {
-      notFound();
-    }
 
-    if (!participant.userId || !participant.eventParticipant?.userId) {
-      await prisma.$transaction(async (tx) => {
-        if (!participant.userId) {
-          // Conditional WHERE prevents a concurrent request from overwriting
-          // a userId that was just bound by a racing request (TOCTOU guard).
-          await tx.sessionParticipant.updateMany({
-            where: { id: participant.id, userId: null },
-            data: { userId: currentUser!.id },
-          });
-        }
-        if (participant.eventParticipant?.id && !participant.eventParticipant.userId) {
-          await tx.eventParticipant.updateMany({
-            where: { id: participant.eventParticipant.id, userId: null },
-            data: { userId: currentUser!.id },
-          });
-        }
-      });
-    }
+  const sessionOwnedByAnotherUser =
+    participant.userId && participant.userId !== currentUser.id;
+  const eventOwnedByAnotherUser =
+    participant.eventParticipant?.userId &&
+    participant.eventParticipant.userId !== currentUser.id;
+  if (sessionOwnedByAnotherUser || eventOwnedByAnotherUser) {
+    notFound();
   }
 
-  const isParticipant = participant.type === ParticipantType.PARTICIPANT;
-  const isObserver = participant.type === ParticipantType.OBSERVER;
-  const isFacilitator = participant.type === ParticipantType.FACILITATOR;
-  const showNotes = isParticipant || isObserver || isFacilitator;
-
-  const { session } = participant;
-  const sessionCloseState = buildSessionCloseState({
-    negotiationState: session.negotiationState,
-    negotiationStartedAt: session.negotiationStartedAt,
-    closedByEventAt: session.closedByEventAt,
-    closeReason: session.closeReason,
-    event: session.eventId
-      ? await prisma.trainingEvent.findUnique({
-          where: { id: session.eventId },
-          select: { status: true },
-        })
-      : null,
+  const existingUserParticipant = await prisma.sessionParticipant.findFirst({
+    where: { sessionId: participant.sessionId, userId: currentUser.id },
+    select: { id: true },
   });
-  const displayStatus = resolveSessionDisplayStatus(
-    session,
-    session.participants,
-  );
-  // Phase 5: scope assigned participants by viewer type to prevent cross-role leakage.
-  // PARTICIPANT: own private briefing only; other participants get public role name only.
-  // OBSERVER: all participants get public role name only; no private fields.
-  // FACILITATOR: all participant briefings (needed to manage the session).
-  const allParticipantsWithRoles = session.participants.map((sp) => ({
-    id: sp.id,
-    displayName: sp.displayName,
-    type: sp.type as string,
-    sessionRole: sp.sessionRole ?? null,
-  }));
-  const assignedParticipants = isFacilitator
-    ? scopeAssignedParticipantsForFacilitator(allParticipantsWithRoles)
-    : isParticipant
-      ? scopeAssignedParticipantsForParticipant(allParticipantsWithRoles, participant.id)
-      : scopeAssignedParticipantsForObserver(allParticipantsWithRoles);
 
-  const notesVariant = isParticipant
-    ? "preparation"
-    : isObserver
-      ? "observer"
-      : "facilitator";
-  const eventSessions = session.eventId
-    ? await prisma.sessionParticipant.findMany({
-        where: isFacilitator
-          ? participant.eventParticipantId
-            ? {
-                eventParticipantId: participant.eventParticipantId,
-                session: {
-                  eventId: session.eventId,
-                  deletedAt: null,
-                },
-                type: ParticipantType.FACILITATOR,
-              }
-            : {
-                session: {
-                  eventId: session.eventId,
-                  deletedAt: null,
-                },
-                type: ParticipantType.FACILITATOR,
-              }
-          : {
-              eventParticipantId: participant.eventParticipantId,
-              session: {
-                eventId: session.eventId,
-                deletedAt: null,
-              },
-            },
-        include: {
-          sessionRole: {
-            select: {
-              name: true,
-            },
-          },
-          session: {
-            select: {
-              id: true,
-              title: true,
-              roomLabel: true,
-              snapshotCaseTitle: true,
-              negotiationState: true,
-              status: true,
-              deletedAt: true,
-              closedByEventAt: true,
-              createdAt: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      })
-    : [];
-  const eventLobbyUrl =
-    session.event && session.eventId
-      ? participant.userId || participant.eventParticipant?.userId
-        ? `/events/${session.eventId}/lobby`
-        : getEventLobbyUrl(session.eventId, {
-            hostToken: isFacilitator ? session.event.hostToken : undefined,
-            participantToken: participant.eventParticipant?.participantToken,
-          })
-      : null;
+  if (!existingUserParticipant) {
+    await prisma.$transaction(async (tx) => {
+      await tx.sessionParticipant.updateMany({
+        where: { id: participant.id, userId: null },
+        data: { userId: currentUser.id },
+      });
 
-  return (
-    <>
-      <JoinRecoverySync
-        joinToken={joinToken}
-        sessionId={session.id}
-        displayName={participant.displayName}
-        eventId={session.eventId}
-      />
-      <ParticipantPresenceHeartbeat joinToken={joinToken} />
-      <JoinPageView
-        joinToken={joinToken}
-        session={{
-          id: session.id,
-          title: session.title,
-          caseTitle: session.snapshotCaseTitle,
-          roomLabel: session.roomLabel,
-          preparationDurationMinutes: secondsToDisplayMinutes(
-            session.preparationDurationSeconds,
-          ),
-          negotiationDurationMinutes: secondsToDisplayMinutes(
-            session.durationSeconds,
-          ),
-          displayStatus,
-          negotiationState: session.negotiationState,
-          isDeleted: session.deletedAt != null,
-          closedByEvent: sessionCloseState.isClosed,
-          closedBeforeNegotiation: sessionCloseState.closedBeforeNegotiation,
-          closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
-        }}
-        event={
-          session.event && eventLobbyUrl
-            ? {
-                title: session.event.title,
-                lobbyUrl: eventLobbyUrl,
-              }
-            : null
-        }
-        eventSessions={eventSessions.map((item) => ({
-          id: item.session.id,
-          roomLabel: item.session.roomLabel,
-          title: item.session.title,
-          caseTitle: item.session.snapshotCaseTitle,
-          roleName: item.sessionRole?.name ?? null,
-          status: item.session.status,
-          createdAt: item.session.createdAt.toISOString(),
-          joinToken: item.joinToken,
-          isActive: isSessionActiveForAssignment(item.session),
-        }))}
-        participant={{
-          displayName: participant.displayName,
-          type: participant.type,
-          notes: participant.notes,
-        }}
-        negotiationCase={{
-          description: session.snapshotBusinessContext,
-          publicInstructions: session.snapshotPublicInstructions,
-          caseLanguage: session.snapshotCaseLanguage,
-        }}
-        caseRole={isParticipant ? participant.sessionRole : null}
-        assignedParticipants={assignedParticipants}
-        showNotes={showNotes}
-        notesVariant={notesVariant}
-        recording={
-          session.recording
-            ? {
-                status: session.recording.status,
-                fileUrl: session.recording.fileUrl,
-                updatedAt: session.recording.updatedAt.toISOString(),
-                errorMessage: session.recording.errorMessage,
-              }
-            : null
-        }
-        transcript={
-          session.transcript
-            ? {
-                text: session.transcript.text,
-                diarizedText: session.transcript.diarizedText,
-                updatedAt: session.transcript.updatedAt.toISOString(),
-              }
-            : null
-        }
-      />
-    </>
-  );
+      if (participant.eventParticipant?.id) {
+        await tx.eventParticipant.updateMany({
+          where: { id: participant.eventParticipant.id, userId: null },
+          data: { userId: currentUser.id },
+        });
+      }
+    });
+  }
+
+  redirect(`/sessions/${participant.sessionId}/materials`);
 }

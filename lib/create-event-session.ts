@@ -286,6 +286,7 @@ export async function createSessionFromEvent(
         facilitatorId: facilitator.id,
         eventId: event.id,
         status: SessionStatus.DRAFT,
+        visibility: event.visibility,
         preparationDurationSeconds:
           input.preparationDurationSeconds ??
           negotiationCase.defaultPreparationDurationSeconds,
