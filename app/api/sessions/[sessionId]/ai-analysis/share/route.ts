@@ -129,7 +129,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const fullAnalysis = aiAnalysis.analysisJson as NegotiationAnalysisOutput | null;
-  const sanitized = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
+  // sanitizeAnalysisForParticipants strips private fields but also removes roleObjectivesAnalysis
+  // entirely — re-add it as an empty array so the stored JSON remains schema-valid.
+  const sanitizedBase = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
+  const sanitized = sanitizedBase
+    ? { ...sanitizedBase, roleObjectivesAnalysis: [] as NegotiationAnalysisOutput["roleObjectivesAnalysis"] }
+    : null;
 
   const updated = await prisma.aiAnalysis.update({
     where: { id: aiAnalysis.id },

@@ -148,7 +148,9 @@ export async function createTrainingEvent(
     });
 
     // Create EventInvites for invited users and external emails.
-    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    // Exclude the resolved facilitator (not the current user) so that when admin
+    // assigns a different facilitator, admin can be explicitly invited as a player.
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== resolvedFacilitatorUserId);
     const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
     const currentUserEmailNormalized = normalizeUserEmail(user.email);
 
@@ -351,7 +353,9 @@ export async function updateTrainingEvent(
     });
 
     // Sync EventInvites: add new ones (do not delete existing to preserve history).
-    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    // Exclude the resolved facilitator so admin can be explicitly invited as a player
+    // when they assign someone else as the facilitator.
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== facilitatorUser.id);
     const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
     const currentUserEmailNormalized = normalizeUserEmail(user.email);
 

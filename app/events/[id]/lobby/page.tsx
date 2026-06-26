@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { EventLobbyView } from "@/components/event-lobby-view";
 import { getOptionalCurrentUser } from "@/lib/auth";
 
@@ -20,11 +22,8 @@ export default async function EventLobbyPage({
   const user = await getOptionalCurrentUser();
 
   if (!hostToken && !participantToken && !user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#020617] px-4 text-slate-400">
-        Invalid access link.
-      </div>
-    );
+    // Redirect unauthenticated users to login so they can return here after signing in.
+    redirect(`/login?returnUrl=${encodeURIComponent(`/events/${id}/lobby`)}`);
   }
 
   return (

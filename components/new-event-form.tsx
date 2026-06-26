@@ -239,7 +239,7 @@ export function NewEventForm({
             <div>
               <p className={labelClassName}>{t("visibility.inviteesLabel")}</p>
               <PeoplePicker
-                excludeUserIds={[currentUserId]}
+                excludeUserIds={[facilitatorUserId]}
                 userFieldName="invitedUserId"
                 emailFieldName="invitedEmail"
               />

@@ -4,6 +4,15 @@ export const PRESENCE_ONLINE_THRESHOLD_MS = 30_000;
 export const PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS = 120_000;
 export const PRESENCE_STREAM_INTERVAL_MS = 3_000;
 
+/**
+ * Lobby-specific presence constants — more aggressive than session-room constants
+ * so that disconnect detection in the lobby roster is visible within ~10-15 seconds
+ * rather than the 30+ seconds of the global thresholds.
+ */
+export const LOBBY_HEARTBEAT_INTERVAL_MS = 5_000;
+export const LOBBY_ONLINE_THRESHOLD_MS = 12_000;
+export const LOBBY_RECENTLY_DISCONNECTED_THRESHOLD_MS = 60_000;
+
 export type ParticipantConnectionStatus =
   | "ONLINE"
   | "RECENTLY_DISCONNECTED"
@@ -12,6 +21,8 @@ export type ParticipantConnectionStatus =
 export function resolveConnectionStatus(
   lastSeenAt: Date | null | undefined,
   now = Date.now(),
+  onlineThresholdMs = PRESENCE_ONLINE_THRESHOLD_MS,
+  recentlyDisconnectedThresholdMs = PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS,
 ): ParticipantConnectionStatus {
   if (!lastSeenAt) {
     return "OFFLINE";
@@ -19,15 +30,27 @@ export function resolveConnectionStatus(
 
   const elapsed = now - lastSeenAt.getTime();
 
-  if (elapsed <= PRESENCE_ONLINE_THRESHOLD_MS) {
+  if (elapsed <= onlineThresholdMs) {
     return "ONLINE";
   }
 
-  if (elapsed <= PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS) {
+  if (elapsed <= recentlyDisconnectedThresholdMs) {
     return "RECENTLY_DISCONNECTED";
   }
 
   return "OFFLINE";
+}
+
+/** Lobby-aware variant with shorter online/disconnect thresholds. */
+export function resolveConnectionStatusForLobby(
+  lastSeenAt: Date | null | undefined,
+): ParticipantConnectionStatus {
+  return resolveConnectionStatus(
+    lastSeenAt,
+    Date.now(),
+    LOBBY_ONLINE_THRESHOLD_MS,
+    LOBBY_RECENTLY_DISCONNECTED_THRESHOLD_MS,
+  );
 }
 
 export function isParticipantOnline(lastSeenAt: Date | null | undefined) {

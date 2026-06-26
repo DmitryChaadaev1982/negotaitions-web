@@ -20,7 +20,7 @@ import {
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { toPublicCaseSummary, type PublicCaseSummary } from "@/lib/event-case-public";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
-import { resolveConnectionStatus } from "@/lib/presence";
+import { resolveConnectionStatusForLobby } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 
@@ -398,7 +398,7 @@ function mapEventParticipant({
     wantsToFacilitate: participant.wantsToFacilitate,
     joinedAt: participant.joinedAt?.toISOString() ?? null,
     lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
-    connectionStatus: resolveConnectionStatus(participant.lastSeenAt),
+    connectionStatus: resolveConnectionStatusForLobby(participant.lastSeenAt),
     assignedSessionId: activeAssignment?.sessionId ?? null,
     assignedSessionParticipantId: activeAssignment?.id ?? null,
     assignedType: activeAssignment?.type ?? null,

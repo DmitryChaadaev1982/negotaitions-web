@@ -14,6 +14,12 @@ import {
   NegotiationAnalysisOutputSchema,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
+
+// sharedAnalysisJson stored for participants has roleObjectivesAnalysis stripped.
+// Allow that field to be absent so the parse succeeds for participant view.
+const ParticipantAnalysisSchema = NegotiationAnalysisOutputSchema.partial({
+  roleObjectivesAnalysis: true,
+});
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { TranslationKey } from "@/lib/i18n/translate";
 
@@ -242,11 +248,16 @@ export function SessionPostProcessingPanel({
   const aiShared = ai?.isSharedWithSession ?? false;
   const isFacilitatorView = ai?.visibility != null;
 
+  // Facilitators get the full analysisJson (validated strictly).
+  // Participants get sharedAnalysisJson which lacks roleObjectivesAnalysis — use
+  // the partial schema so the parse succeeds even without that blocked field.
   const parsedAnalysis = canViewAi
-    ? NegotiationAnalysisOutputSchema.safeParse(ai?.analysisJson)
+    ? (isFacilitatorView
+        ? NegotiationAnalysisOutputSchema.safeParse(ai?.analysisJson)
+        : ParticipantAnalysisSchema.safeParse(ai?.analysisJson))
     : null;
   const analysisJson: NegotiationAnalysisOutput | null = parsedAnalysis?.success
-    ? parsedAnalysis.data
+    ? (parsedAnalysis.data as NegotiationAnalysisOutput)
     : null;
 
   const handleStartTranscription = useCallback(async () => {

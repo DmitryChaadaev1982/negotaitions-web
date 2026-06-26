@@ -268,7 +268,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                   <DataTableCell>{formatDate(session.createdAt)}</DataTableCell>
                   <DataTableCell align="right">
                     <div className="flex flex-wrap items-center justify-end gap-3">
-                      {session.eventLobbyUrl && session.eventStatus !== "COMPLETED" ? (
+                      {session.eventLobbyUrl ? (
                         <Link
                           href={session.eventLobbyUrl}
                           className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
@@ -277,12 +277,14 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           {t("events.openLobby")}
                         </Link>
                       ) : null}
-                      <Link
-                        href={session.roomUrl}
-                        className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
-                      >
-                        {t("dashboard.openRoom")}
-                      </Link>
+                      {session.status !== "FINISHED" ? (
+                        <Link
+                          href={session.roomUrl}
+                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                        >
+                          {t("dashboard.openRoom")}
+                        </Link>
+                      ) : null}
                       <Link
                         href={session.materialsUrl}
                         className="text-sm font-medium text-cyan-400 hover:text-cyan-300"

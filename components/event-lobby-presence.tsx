@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { PRESENCE_HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
+import { LOBBY_HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
 import { touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 
 type EventLobbyPresenceProps = {
@@ -47,7 +47,7 @@ export function EventLobbyPresence({
       if (!cancelled) {
         void sendHeartbeat();
       }
-    }, PRESENCE_HEARTBEAT_INTERVAL_MS);
+    }, LOBBY_HEARTBEAT_INTERVAL_MS);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible" && !cancelled) {

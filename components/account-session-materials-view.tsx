@@ -7,6 +7,7 @@ import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { GradientButtonLink, SecondaryButtonLink } from "@/components/ui/buttons";
+import { SessionPostProcessingPanel } from "@/components/session-post-processing-panel";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import {
   saveAccountParticipantNotes,
@@ -224,6 +225,7 @@ function NotesForm({
  */
 export function AccountSessionMaterialsView({
   participantId,
+  sessionId,
   participantType,
   displayName,
   notes,
@@ -349,6 +351,16 @@ export function AccountSessionMaterialsView({
               />
             </GlassCardContent>
           </GlassCard>
+
+          {/* AI analysis / debrief — visible once facilitator shares the report */}
+          <SessionPostProcessingPanel
+            sessionId={sessionId}
+            roomAuth={{ type: "account", participantId }}
+            variant="page"
+            participantType={participantType}
+            showNavigation={false}
+            eventLobbyUrl={event?.lobbyUrl}
+          />
         </div>
 
         {/* Right column — role briefing + roster + event */}
@@ -382,25 +394,43 @@ export function AccountSessionMaterialsView({
             </GlassCard>
           ) : null}
 
-          {/* Roster */}
+          {/* Roster — for facilitators/admins show full role briefings per participant */}
           {assignedParticipants.length > 0 ? (
-            <GlassCard>
-              <GlassCardHeader>
-                <p className="font-semibold text-slate-100">{t("sessions.participants")}</p>
-              </GlassCardHeader>
-              <GlassCardContent className="py-4">
-                <ul className="space-y-2">
-                  {assignedParticipants.map((ap) => (
-                    <li key={ap.id} className="flex items-center gap-2 text-sm">
-                      <span className="font-medium text-slate-200">
-                        {ap.displayName}
-                      </span>
-                      <span className="text-xs text-slate-500">{ap.role.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              </GlassCardContent>
-            </GlassCard>
+            participantType === "FACILITATOR" ? (
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  {t("sessions.participants")}
+                </p>
+                {assignedParticipants.map((ap) => (
+                  <GlassCard key={ap.id}>
+                    <GlassCardHeader>
+                      <p className="text-sm font-semibold text-slate-200">{ap.displayName}</p>
+                    </GlassCardHeader>
+                    <GlassCardContent className="py-3">
+                      <RoleBriefingSection role={ap.role} />
+                    </GlassCardContent>
+                  </GlassCard>
+                ))}
+              </div>
+            ) : (
+              <GlassCard>
+                <GlassCardHeader>
+                  <p className="font-semibold text-slate-100">{t("sessions.participants")}</p>
+                </GlassCardHeader>
+                <GlassCardContent className="py-4">
+                  <ul className="space-y-2">
+                    {assignedParticipants.map((ap) => (
+                      <li key={ap.id} className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-slate-200">
+                          {ap.displayName}
+                        </span>
+                        <span className="text-xs text-slate-500">{ap.role.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </GlassCardContent>
+              </GlassCard>
+            )
           ) : null}
 
           {/* Event navigation */}

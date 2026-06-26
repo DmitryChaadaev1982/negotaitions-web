@@ -28,6 +28,7 @@ export type AccountMaterialsRole = {
 export type AccountMaterialsData = {
   /** Public DB id — not a secret token. Safe to embed in client HTML. */
   participantId: string;
+  sessionId: string;
   participantType: "FACILITATOR" | "PARTICIPANT" | "OBSERVER";
   displayName: string;
   notes: string;
@@ -201,6 +202,7 @@ export async function getAccountMaterialsData(
 
   return {
     participantId: viewerParticipant.id,
+    sessionId: sessionData.id,
     participantType: viewerParticipant.type as "FACILITATOR" | "PARTICIPANT" | "OBSERVER",
     displayName: viewerParticipant.displayName,
     notes: viewerParticipant.notes,

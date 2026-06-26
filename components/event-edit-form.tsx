@@ -277,7 +277,7 @@ export function EventEditForm({
             <div>
               <p className={labelClassName}>{t("visibility.inviteesLabel")}</p>
               <PeoplePicker
-                excludeUserIds={[currentUserId]}
+                excludeUserIds={[facilitatorUserId]}
                 userFieldName="invitedUserId"
                 emailFieldName="invitedEmail"
                 initialUsers={initialInvitedUsers}
