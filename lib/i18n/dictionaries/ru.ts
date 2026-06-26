@@ -147,6 +147,21 @@ export const ru: Dictionary = {
     deletedBadge: "Удалённый кейс",
     deletedCaseReadOnly:
       "Этот шаблон кейса удалён. Детали доступны только для просмотра, новые сессии создать нельзя.",
+    caseVisibilityLabel: "Видимость кейса",
+    publicCase: "Публичный кейс",
+    privateCase: "Приватный кейс",
+    publicCaseHint: "Публичные кейсы доступны всем фасилитаторам.",
+    privateCaseHint: "Приватные кейсы доступны только создателю.",
+    safePreview: "Безопасный просмотр",
+    fullCaseView: "Полный просмотр кейса",
+    adminEditDeleteOnly:
+      "Редактировать или удалять кейсы могут только администраторы.",
+    createdBy: "Создал",
+    myCase: "Мой кейс",
+    legacyCase: "Устаревший кейс",
+    publicPreviewNoRoleInstructions:
+      "Публичный просмотр не включает инструкции ролей.",
+    noPrivateCaseAccess: "У вас нет доступа к этому приватному кейсу.",
   },
   sessions: {
     title: "Сессии",

@@ -17,6 +17,7 @@ import {
   parseAssignmentDraft,
   type EventAssignmentDraft,
 } from "@/lib/event-assignment";
+import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { toPublicCaseSummary, type PublicCaseSummary } from "@/lib/event-case-public";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { resolveConnectionStatus } from "@/lib/presence";
@@ -156,23 +157,13 @@ function getAssignmentDurationDefaults(
 export async function buildEventState(
   input: BuildEventStateInput,
 ): Promise<EventStateResponse> {
-  // Phase 5+: Resolve facilitatorId for the case library:
-  //   1. Prefer event.hostUserId when set (the event creator's cases).
-  //   2. If event has no hostUserId and a real authenticated user is accessing as host/admin,
-  //      use that user's own cases — do NOT fall back to the demo facilitator for real users.
-  //   3. Only fall back to demo facilitator when there is genuinely no real user context.
-  let facilitatorId: string;
-  if (input.event.hostUserId) {
-    facilitatorId = input.event.hostUserId;
-  } else if (input.userId) {
-    // Real authenticated user (admin or host token owner) on a legacy event without a hostUserId:
-    // use their own case library instead of the demo facilitator.
-    facilitatorId = input.userId;
-  } else {
-    const { getDemoFacilitator } = await import("@/lib/demo-user");
-    const demo = await getDemoFacilitator();
-    facilitatorId = demo.id;
-  }
+  const ownerUserId =
+    input.event.hostUserId ?? input.event.facilitatorUserId ?? input.userId ?? null;
+  const caseScopeWhere = input.isAdmin
+    ? {}
+    : ownerUserId
+      ? caseVisibilityWhereForUser(ownerUserId)
+      : { visibility: "PUBLIC" as const };
 
   const [participants, cases, selectedCaseRecord, createdSession, linkedSessions, sessionParticipantAssignments] =
     await Promise.all([
@@ -182,8 +173,8 @@ export async function buildEventState(
       }),
       prisma.negotiationCase.findMany({
         where: {
-          facilitatorId,
           ...activeCaseWhere,
+          ...caseScopeWhere,
         },
         include: {
           roles: {
@@ -197,8 +188,8 @@ export async function buildEventState(
         ? prisma.negotiationCase.findFirst({
             where: {
               id: input.event.selectedCaseId,
-              facilitatorId,
               ...activeCaseWhere,
+              ...caseScopeWhere,
             },
             include: {
               roles: {

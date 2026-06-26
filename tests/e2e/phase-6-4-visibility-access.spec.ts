@@ -224,8 +224,8 @@ async function ensureDemoCase(facilitatorId: string): Promise<string> {
   await query(
     `INSERT INTO "NegotiationCase"
        ("id","title","description","businessContext","publicInstructions","targetSkills",
-        "facilitatorId","createdAt","updatedAt")
-     VALUES ($1,'Test Case','Desc','Ctx','Instrs','Skills',$2,NOW(),NOW())`,
+        "facilitatorId","createdByUserId","visibility","createdAt","updatedAt")
+     VALUES ($1,'Test Case','Desc','Ctx','Instrs','Skills',$2,$2,'PUBLIC',NOW(),NOW())`,
     [id, facilitatorId],
   );
   return id;

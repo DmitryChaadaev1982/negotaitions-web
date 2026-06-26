@@ -179,6 +179,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   negotiationCases    NegotiationCase[]    @relation("CaseFacilitator")
+  createdNegotiationCases NegotiationCase[] @relation("CaseCreator")
   facilitatedSessions Session[]            @relation("SessionFacilitator")
   hostedTrainingEvents TrainingEvent[]     @relation("TrainingEventHost")
   facilitatedTrainingEvents TrainingEvent[] @relation("TrainingEventFacilitator")
@@ -221,14 +222,20 @@ model NegotiationCase {
   defaultPreparationDurationSeconds Int @default(300)
   defaultDurationSeconds            Int @default(900)
   facilitatorId                     String
+  createdByUserId                   String?
+  visibility                        VisibilityLevel @default(PRIVATE)
   deletedAt                DateTime?
   createdAt                DateTime     @default(now())
   updatedAt                DateTime     @updatedAt
 
   facilitator    User            @relation("CaseFacilitator", fields: [facilitatorId], references: [id], onDelete: Restrict)
+  createdByUser  User?           @relation("CaseCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   roles          CaseRole[]
   sessions       Session[]
   trainingEvents TrainingEvent[]
+
+  @@index([createdByUserId])
+  @@index([visibility])
 }
 
 model CaseRole {

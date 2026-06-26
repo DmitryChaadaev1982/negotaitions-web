@@ -145,6 +145,20 @@ export const en = {
     deletedBadge: "Deleted case",
     deletedCaseReadOnly:
       "This case template has been deleted. Details are read-only and new sessions cannot be created.",
+    caseVisibilityLabel: "Case visibility",
+    publicCase: "Public case",
+    privateCase: "Private case",
+    publicCaseHint: "Public cases are available to all facilitators.",
+    privateCaseHint: "Private cases are available only to the creator.",
+    safePreview: "Safe preview",
+    fullCaseView: "Full case view",
+    adminEditDeleteOnly: "Only administrators can edit or delete cases.",
+    createdBy: "Created by",
+    myCase: "My case",
+    legacyCase: "Legacy case",
+    publicPreviewNoRoleInstructions:
+      "Public preview does not include role instructions.",
+    noPrivateCaseAccess: "You do not have access to this private case.",
   },
   sessions: {
     title: "Sessions",

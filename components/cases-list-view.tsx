@@ -6,6 +6,7 @@ import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { DeleteCaseButton } from "@/components/delete-case-button";
 import { DifficultyBadge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import { GradientButtonLink } from "@/components/ui/buttons";
 import {
   DataTable,
@@ -25,6 +26,10 @@ type CaseRow = {
   businessContext: string;
   difficulty: "EASY" | "MEDIUM" | "HARD";
   caseLanguage: "RU" | "EN";
+  visibility: "PUBLIC" | "PRIVATE";
+  createdByUserId: string | null;
+  createdByLabel: string | null;
+  isMyCase: boolean;
   roleCount: number;
   defaultDurationMinutes: number;
   defaultPreparationDurationMinutes: number;
@@ -33,9 +38,10 @@ type CaseRow = {
 
 type CasesListViewProps = {
   cases: CaseRow[];
+  isAdminViewer: boolean;
 };
 
-export function CasesListView({ cases }: CasesListViewProps) {
+export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
   const { t, locale } = useI18n();
 
   const formatDate = (iso: string) =>
@@ -73,6 +79,7 @@ export function CasesListView({ cases }: CasesListViewProps) {
               <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("cases.difficulty")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("cases.caseLanguage")}</DataTableHeaderCell>
+              <DataTableHeaderCell>{t("visibility.visibilityLabel")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("cases.roles")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.negotiationDuration")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
@@ -88,12 +95,23 @@ export function CasesListView({ cases }: CasesListViewProps) {
                     <p className="mt-1 line-clamp-1 max-w-md text-sm text-slate-400">
                       {negotiationCase.businessContext}
                     </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {negotiationCase.isMyCase
+                        ? t("cases.myCase")
+                        : `${t("cases.createdBy")}: ${
+                            negotiationCase.createdByLabel ??
+                            t("cases.legacyCase")
+                          }`}
+                    </p>
                   </DataTableCell>
                   <DataTableCell>
                     <DifficultyBadge difficulty={negotiationCase.difficulty} />
                   </DataTableCell>
                   <DataTableCell>
                     <CaseLanguageBadge caseLanguage={negotiationCase.caseLanguage} />
+                  </DataTableCell>
+                  <DataTableCell>
+                    <VisibilityBadge visibility={negotiationCase.visibility} />
                   </DataTableCell>
                   <DataTableCell>{negotiationCase.roleCount}</DataTableCell>
                   <DataTableCell>
@@ -110,13 +128,17 @@ export function CasesListView({ cases }: CasesListViewProps) {
                       >
                         {t("common.view")}
                       </Link>
-                      <Link
-                        href={`/cases/${negotiationCase.id}/edit`}
-                        className="text-sm font-medium text-slate-400 hover:text-slate-300"
-                      >
-                        {t("common.edit")}
-                      </Link>
-                      <DeleteCaseButton caseId={negotiationCase.id} />
+                      {isAdminViewer ? (
+                        <>
+                          <Link
+                            href={`/cases/${negotiationCase.id}/edit`}
+                            className="text-sm font-medium text-slate-400 hover:text-slate-300"
+                          >
+                            {t("common.edit")}
+                          </Link>
+                          <DeleteCaseButton caseId={negotiationCase.id} />
+                        </>
+                      ) : null}
                     </div>
                   </DataTableCell>
                 </DataTableRow>

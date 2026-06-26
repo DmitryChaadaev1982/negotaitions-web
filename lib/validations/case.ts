@@ -44,6 +44,7 @@ export const createCaseSchema = z.object({
     .min(1, "publicInstructionsRequired"),
   difficulty: caseDifficultySchema.default("MEDIUM"),
   caseLanguage: z.enum(["RU", "EN"]).default("EN"),
+  visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PRIVATE"),
   preparationDurationMinutes: defaultPreparationDurationMinutesSchema,
   negotiationDurationMinutes: defaultNegotiationDurationMinutesSchema,
   roles: z

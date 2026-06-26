@@ -82,8 +82,8 @@ async function createMinimalSession(hostUserId: string): Promise<{ sessionId: st
   await query(
     `INSERT INTO "NegotiationCase"
        ("id","title","description","businessContext","publicInstructions","targetSkills",
-        "facilitatorId","createdAt","updatedAt")
-     VALUES ($1,'Test Case 6.4.1','Desc','Ctx','Instructions','Skills',$2,NOW(),NOW())`,
+        "facilitatorId","createdByUserId","visibility","createdAt","updatedAt")
+     VALUES ($1,'Test Case 6.4.1','Desc','Ctx','Instructions','Skills',$2,$2,'PUBLIC',NOW(),NOW())`,
     [caseId, hostUserId],
   );
   const sessionId = uid("sess");

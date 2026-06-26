@@ -192,10 +192,10 @@ export async function createE2eCase() {
        ("id", "title", "description", "businessContext", "publicInstructions",
         "targetSkills", "difficulty", "caseLanguage",
         "defaultPreparationDurationSeconds", "defaultDurationSeconds",
-        "facilitatorId", "updatedAt")
+        "facilitatorId", "createdByUserId", "visibility", "updatedAt")
      VALUES ($1, $2, 'E2E case description', 'E2E public business context',
         'E2E public instructions', 'E2E target skills', 'MEDIUM', 'EN',
-        300, 900, $3, NOW())`,
+        300, 900, $3, $3, 'PUBLIC', NOW())`,
     [caseId, title, facilitator.id],
   );
 
@@ -237,10 +237,10 @@ export async function createTestCase(input?: {
        ("id", "title", "description", "businessContext", "publicInstructions",
         "targetSkills", "difficulty", "caseLanguage",
         "defaultPreparationDurationSeconds", "defaultDurationSeconds",
-        "facilitatorId", "updatedAt")
+        "facilitatorId", "createdByUserId", "visibility", "updatedAt")
      VALUES ($1, $2, 'E2E case description', $3,
         'E2E public instructions', 'E2E target skills', $4, 'EN',
-        $5, $6, $7, NOW())`,
+        $5, $6, $7, $7, 'PUBLIC', NOW())`,
     [
       caseId,
       title,

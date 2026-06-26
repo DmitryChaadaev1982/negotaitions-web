@@ -8,6 +8,7 @@ import {
   SessionStatus,
 } from "@/app/generated/prisma/client";
 import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
+import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { canEditSessionDurations } from "@/lib/negotiation-control";
 import { requireActiveUser } from "@/lib/auth";
 import { isAssignableCaseRole } from "@/lib/case-roles";
@@ -125,8 +126,8 @@ export async function createSession(
     const negotiationCase = await prisma.negotiationCase.findFirst({
       where: {
         id: caseId,
-        facilitatorId: user.id,
         ...activeCaseWhere,
+        ...caseVisibilityWhereForUser(user.id),
       },
       include: {
         roles: {
@@ -139,8 +140,8 @@ export async function createSession(
       const deletedCase = await prisma.negotiationCase.findFirst({
         where: {
           id: caseId,
-          facilitatorId: user.id,
           deletedAt: { not: null },
+          ...caseVisibilityWhereForUser(user.id),
         },
         select: { id: true },
       });

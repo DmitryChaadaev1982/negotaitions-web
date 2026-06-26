@@ -1,8 +1,13 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { CaseDetailView } from "@/components/case-detail-view";
-import { getDemoFacilitator } from "@/lib/demo-user";
+import {
+  canViewCaseSafePreview,
+  canViewFullCase,
+  isCaseOwner,
+} from "@/lib/case-access";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
+import { toAdminCaseView, toPublicCaseView } from "@/lib/privacy/serializers";
 import { prisma } from "@/lib/prisma";
 import { requireActiveUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
@@ -16,25 +21,18 @@ type CaseDetailPageProps = {
 export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const { id } = await params;
   const user = await requireActiveUser(`/cases/${id}`);
-
-  // /cases/[id] is an authoring page that exposes private role instructions.
-  // Until a real case ownership relation exists (Phase C / Phase E), only
-  // admins may view the full case detail. Non-admin users are redirected to
-  // the cases list which shows public summaries only.
-  if (!isAdmin(user)) {
-    redirect("/cases");
-  }
-
-  const facilitator = await getDemoFacilitator();
+  const adminViewer = isAdmin(user);
 
   const negotiationCase = await prisma.negotiationCase.findFirst({
     where: {
       id,
-      facilitatorId: facilitator.id,
     },
     include: {
       roles: {
         orderBy: { sortOrder: "asc" },
+      },
+      createdByUser: {
+        select: { id: true, name: true, email: true },
       },
     },
   });
@@ -43,25 +41,85 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
     notFound();
   }
 
+  const owner = isCaseOwner(user, negotiationCase);
+  const fullAccess = canViewFullCase(user, negotiationCase, adminViewer);
+  const safePreviewAccess = canViewCaseSafePreview(
+    user,
+    negotiationCase,
+    adminViewer,
+  );
+
+  if (!safePreviewAccess) {
+    notFound();
+  }
+
+  if (!fullAccess) {
+    const publicCase = toPublicCaseView(negotiationCase);
+    return (
+      <CaseDetailView
+        negotiationCase={{
+          id: publicCase.id,
+          title: publicCase.title,
+          businessContext: publicCase.businessContext,
+          publicInstructions: publicCase.publicInstructions,
+          targetSkills: publicCase.targetSkills || null,
+          difficulty: publicCase.difficulty as "EASY" | "MEDIUM" | "HARD",
+          caseLanguage: publicCase.caseLanguage as "RU" | "EN",
+          visibility: negotiationCase.visibility,
+          createdByLabel:
+            negotiationCase.createdByUser?.name ??
+            negotiationCase.createdByUser?.email ??
+            null,
+          createdAt: negotiationCase.createdAt.toISOString(),
+          isDeleted: negotiationCase.deletedAt != null,
+          defaultDurationMinutes: secondsToDisplayMinutes(
+            negotiationCase.defaultDurationSeconds,
+          ),
+          defaultPreparationDurationMinutes: secondsToDisplayMinutes(
+            negotiationCase.defaultPreparationDurationSeconds,
+          ),
+          mode: "safe-preview",
+          isOwner: owner,
+          isAdminViewer: false,
+          showAdminWarning: false,
+          roles: publicCase.roles.map((role) => ({
+            id: role.id,
+            name: role.name,
+            privateInstructions: null,
+          })),
+        }}
+      />
+    );
+  }
+
+  const fullCase = adminViewer ? toAdminCaseView(negotiationCase) : negotiationCase;
+
   return (
     <CaseDetailView
       negotiationCase={{
-        id: negotiationCase.id,
-        title: negotiationCase.title,
-        businessContext: negotiationCase.businessContext,
-        publicInstructions: negotiationCase.publicInstructions,
-        targetSkills: negotiationCase.targetSkills || null,
-        difficulty: negotiationCase.difficulty,
-        caseLanguage: negotiationCase.caseLanguage,
+        id: fullCase.id,
+        title: fullCase.title,
+        businessContext: fullCase.businessContext,
+        publicInstructions: fullCase.publicInstructions,
+        targetSkills: fullCase.targetSkills || null,
+        difficulty: fullCase.difficulty,
+        caseLanguage: fullCase.caseLanguage,
+        visibility: fullCase.visibility,
+        createdByLabel:
+          fullCase.createdByUser?.name ?? fullCase.createdByUser?.email ?? null,
         defaultDurationMinutes: secondsToDisplayMinutes(
-          negotiationCase.defaultDurationSeconds,
+          fullCase.defaultDurationSeconds,
         ),
         defaultPreparationDurationMinutes: secondsToDisplayMinutes(
-          negotiationCase.defaultPreparationDurationSeconds,
+          fullCase.defaultPreparationDurationSeconds,
         ),
-        createdAt: negotiationCase.createdAt.toISOString(),
-        isDeleted: negotiationCase.deletedAt != null,
-        roles: negotiationCase.roles.map((role) => ({
+        createdAt: fullCase.createdAt.toISOString(),
+        isDeleted: fullCase.deletedAt != null,
+        mode: "full",
+        isOwner: owner,
+        isAdminViewer: adminViewer,
+        showAdminWarning: adminViewer,
+        roles: fullCase.roles.map((role) => ({
           id: role.id,
           name: role.name,
           privateInstructions: role.privateInstructions,

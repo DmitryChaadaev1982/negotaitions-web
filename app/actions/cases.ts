@@ -3,9 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { CaseLanguage, Difficulty } from "@/app/generated/prisma/client";
-import { getDemoFacilitator } from "@/lib/demo-user";
-import { requireActiveUser } from "@/lib/auth";
+import {
+  CaseLanguage,
+  Difficulty,
+  VisibilityLevel,
+} from "@/app/generated/prisma/client";
+import { requireActiveUser, requireAdminUser } from "@/lib/auth";
 import {
   DEFAULT_NEGOTIATION_DURATION_SECONDS,
   minutesToSeconds,
@@ -61,6 +64,7 @@ function mapCaseValidationErrors(
     defaultDurationMinutes: fieldErrors.negotiationDurationMinutes,
     preparationDurationMinutes: fieldErrors.preparationDurationMinutes,
     negotiationDurationMinutes: fieldErrors.negotiationDurationMinutes,
+    visibility: fieldErrors.visibility,
   };
 
   if (roleErrors.length > 0) {
@@ -89,7 +93,7 @@ export async function createCase(
   _prevState: CreateCaseState,
   formData: FormData,
 ): Promise<CreateCaseState> {
-  await requireActiveUser("/cases/new");
+  const user = await requireActiveUser("/cases/new");
 
   const roles = parseCaseRolesFromFormData(formData);
 
@@ -99,6 +103,7 @@ export async function createCase(
     publicInstructions: formData.get("publicInstructions"),
     difficulty: formData.get("difficulty") ?? "MEDIUM",
     caseLanguage: formData.get("caseLanguage") ?? "EN",
+    visibility: formData.get("visibility") ?? "PRIVATE",
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
     preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     roles,
@@ -109,13 +114,13 @@ export async function createCase(
   }
 
   try {
-    const facilitator = await getDemoFacilitator();
     const {
       title,
       businessContext,
       publicInstructions,
       difficulty,
       caseLanguage,
+      visibility,
       negotiationDurationMinutes,
       preparationDurationMinutes,
       roles: caseRoles,
@@ -137,7 +142,9 @@ export async function createCase(
           negotiationDurationMinutes ??
             DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
         ),
-        facilitatorId: facilitator.id,
+        facilitatorId: user.id,
+        createdByUserId: user.id,
+        visibility: visibility as VisibilityLevel,
         roles: {
           create: caseRoles.map((role, index) => ({
             name: role.name,
@@ -181,7 +188,7 @@ export async function updateCase(
   _prevState: CreateCaseState,
   formData: FormData,
 ): Promise<CreateCaseState> {
-  await requireActiveUser();
+  await requireAdminUser();
 
   const roles = parseCaseRolesFromFormData(formData);
 
@@ -192,6 +199,7 @@ export async function updateCase(
     publicInstructions: formData.get("publicInstructions"),
     difficulty: formData.get("difficulty") ?? "MEDIUM",
     caseLanguage: formData.get("caseLanguage") ?? "EN",
+    visibility: formData.get("visibility") ?? "PRIVATE",
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
     preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     roles,
@@ -202,7 +210,6 @@ export async function updateCase(
   }
 
   try {
-    const facilitator = await getDemoFacilitator();
     const {
       caseId,
       title,
@@ -210,6 +217,7 @@ export async function updateCase(
       publicInstructions,
       difficulty,
       caseLanguage,
+      visibility,
       negotiationDurationMinutes,
       preparationDurationMinutes,
       roles: caseRoles,
@@ -218,7 +226,6 @@ export async function updateCase(
     const existingCase = await prisma.negotiationCase.findFirst({
       where: {
         id: caseId,
-        facilitatorId: facilitator.id,
         ...activeCaseWhere,
       },
     });
@@ -248,6 +255,7 @@ export async function updateCase(
             negotiationDurationMinutes ??
               DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
           ),
+          visibility: visibility as VisibilityLevel,
         },
       });
 
@@ -297,13 +305,11 @@ export async function updateCase(
 }
 
 export async function deleteCase(caseId: string) {
-  await requireActiveUser();
-  const facilitator = await getDemoFacilitator();
+  await requireAdminUser();
 
   const existingCase = await prisma.negotiationCase.findFirst({
     where: {
       id: caseId,
-      facilitatorId: facilitator.id,
       ...activeCaseWhere,
     },
   });
@@ -321,5 +327,6 @@ export async function deleteCase(caseId: string) {
   revalidatePath(`/cases/${caseId}`);
   revalidatePath("/dashboard");
   revalidatePath("/sessions/new");
+  revalidatePath("/events");
   redirect("/cases");
 }

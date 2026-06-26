@@ -204,6 +204,8 @@ async function main() {
         defaultPreparationDurationSeconds: caseSeed.defaultPreparationDurationSeconds,
         defaultDurationSeconds: caseSeed.defaultDurationSeconds,
         facilitatorId: facilitator.id,
+        createdByUserId: facilitator.id,
+        visibility: "PUBLIC",
         roles: {
           create: caseSeed.roles.map((role, index) => ({
             name: role.name,

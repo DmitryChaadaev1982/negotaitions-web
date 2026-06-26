@@ -5,6 +5,7 @@ import { DifficultyBadge, Badge, StatusBadge } from "@/components/badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { DeleteCaseButton } from "@/components/delete-case-button";
 import { PageHeader } from "@/components/page-header";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import {
   GradientButtonLink,
   SecondaryButtonLink,
@@ -15,7 +16,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type CaseRole = {
   id: string;
   name: string;
-  privateInstructions: string;
+  privateInstructions: string | null;
 };
 
 type CaseDetailViewProps = {
@@ -27,10 +28,16 @@ type CaseDetailViewProps = {
     targetSkills: string | null;
     difficulty: "EASY" | "MEDIUM" | "HARD";
     caseLanguage: "RU" | "EN";
+    visibility: "PUBLIC" | "PRIVATE";
+    createdByLabel: string | null;
     defaultDurationMinutes: number;
     defaultPreparationDurationMinutes: number;
     createdAt: string;
     isDeleted: boolean;
+    mode: "full" | "safe-preview";
+    isOwner: boolean;
+    isAdminViewer: boolean;
+    showAdminWarning: boolean;
     roles: CaseRole[];
   };
 };
@@ -51,7 +58,11 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
     <div className="space-y-8">
       <PageHeader
         title={negotiationCase.title}
-        description={t("cases.caseDetailsDescription")}
+        description={
+          negotiationCase.mode === "safe-preview"
+            ? t("cases.safePreview")
+            : t("cases.fullCaseView")
+        }
         action={
           <div className="flex flex-wrap items-center gap-2">
             {!negotiationCase.isDeleted ? (
@@ -61,10 +72,14 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
                 >
                   {t("cases.createSession")}
                 </GradientButtonLink>
-                <SecondaryButtonLink href={`/cases/${negotiationCase.id}/edit`}>
-                  {t("common.edit")}
-                </SecondaryButtonLink>
-                <DeleteCaseButton caseId={negotiationCase.id} variant="button" />
+                {negotiationCase.isAdminViewer ? (
+                  <>
+                    <SecondaryButtonLink href={`/cases/${negotiationCase.id}/edit`}>
+                      {t("common.edit")}
+                    </SecondaryButtonLink>
+                    <DeleteCaseButton caseId={negotiationCase.id} variant="button" />
+                  </>
+                ) : null}
               </>
             ) : null}
             <SecondaryButtonLink href="/cases">
@@ -81,9 +96,33 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
         </div>
       ) : null}
 
+      {negotiationCase.showAdminWarning ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          {t("legal.privateRoleDataWarning")}
+        </div>
+      ) : null}
+
+      {negotiationCase.mode === "safe-preview" ? (
+        <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
+          {t("cases.publicPreviewNoRoleInstructions")}
+        </div>
+      ) : null}
+
+      {!negotiationCase.isAdminViewer ? (
+        <p className="text-xs text-slate-400">
+          {t("cases.adminEditDeleteOnly")}
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <DifficultyBadge difficulty={negotiationCase.difficulty} />
         <CaseLanguageBadge caseLanguage={negotiationCase.caseLanguage} />
+        <VisibilityBadge visibility={negotiationCase.visibility} />
+        <Badge>
+          {negotiationCase.mode === "safe-preview"
+            ? t("cases.safePreview")
+            : t("cases.fullCaseView")}
+        </Badge>
         <Badge>
           {t("common.rolesCount", { count: negotiationCase.roles.length })}
         </Badge>
@@ -99,6 +138,12 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
         </Badge>
         <span className="text-sm text-slate-400">
           {t("common.created")} {formatDate(negotiationCase.createdAt)}
+        </span>
+        <span className="text-sm text-slate-400">
+          {t("cases.createdBy")}:{" "}
+          {negotiationCase.isOwner
+            ? t("cases.myCase")
+            : negotiationCase.createdByLabel ?? t("cases.legacyCase")}
         </span>
       </div>
 
@@ -159,12 +204,20 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
                 </div>
               </GlassCardHeader>
               <GlassCardContent>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-                  {t("cases.privateInstructions")}
-                </p>
-                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                  {role.privateInstructions}
-                </p>
+                {negotiationCase.mode === "full" ? (
+                  <>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                      {t("cases.privateInstructions")}
+                    </p>
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                      {role.privateInstructions}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-400">
+                    {t("cases.safePreview")}
+                  </p>
+                )}
               </GlassCardContent>
             </GlassCard>
           ))}

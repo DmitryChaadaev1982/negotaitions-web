@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
+import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { createSessionFromEvent } from "@/lib/create-event-session";
 import { parseAssignmentDraft } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventDeletedOrCancelled } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
 import { prisma } from "@/lib/prisma";
+import { activeCaseWhere } from "@/lib/soft-delete";
 import {
   createEventSessionSchema,
   updateEventHostSchema,
@@ -55,6 +57,29 @@ export async function PATCH(request: Request, context: RouteContext) {
   } = {};
 
   if (parsed.data.selectedCaseId !== undefined) {
+    if (parsed.data.selectedCaseId) {
+      const ownerUserId =
+        user?.id ?? access.event.hostUserId ?? access.event.facilitatorUserId ?? null;
+      const caseScopeWhere = access.isAdmin
+        ? {}
+        : ownerUserId
+          ? caseVisibilityWhereForUser(ownerUserId)
+          : { visibility: "PUBLIC" as const };
+
+      const selectedCase = await prisma.negotiationCase.findFirst({
+        where: {
+          id: parsed.data.selectedCaseId,
+          ...activeCaseWhere,
+          ...caseScopeWhere,
+        },
+        select: { id: true },
+      });
+
+      if (!selectedCase) {
+        return NextResponse.json({ error: "caseNotFound" }, { status: 403 });
+      }
+    }
+
     updateData.selectedCaseId = parsed.data.selectedCaseId;
   }
 
@@ -152,6 +177,10 @@ export async function POST(request: Request, context: RouteContext) {
   const result = await createSessionFromEvent(
     eventId,
     explicitSessionInput ?? assignmentDraft,
+    {
+      requesterUserId: user?.id ?? access.event.hostUserId ?? null,
+      isAdmin: access.isAdmin,
+    },
   );
 
   if (!result.ok) {

@@ -36,6 +36,7 @@ export type CaseFormInitialValues = {
   publicInstructions: string;
   difficulty: "EASY" | "MEDIUM" | "HARD";
   caseLanguage: "RU" | "EN";
+  visibility: "PUBLIC" | "PRIVATE";
   defaultDurationMinutes: number;
   defaultPreparationDurationMinutes: number;
   roles: RoleField[];
@@ -57,6 +58,9 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
   );
   const [roles, setRoles] = useState<RoleField[]>(
     initialValues?.roles ?? [emptyRole(), emptyRole()],
+  );
+  const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">(
+    initialValues?.visibility ?? "PRIVATE",
   );
 
   const addRole = () => {
@@ -166,6 +170,46 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
               <option value="EN">{t("cases.caseLanguageEn")}</option>
               <option value="RU">{t("cases.caseLanguageRu")}</option>
             </select>
+          </Field>
+
+          <Field
+            label={t("cases.caseVisibilityLabel")}
+            name="visibility"
+            error={state.errors?.visibility?.[0]}
+          >
+            <div className="space-y-2">
+              {(["PRIVATE", "PUBLIC"] as const).map((visibilityOption) => (
+                <label
+                  key={visibilityOption}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                    visibility === visibilityOption
+                      ? "border-cyan-500/40 bg-cyan-500/5"
+                      : "border-slate-600/40 bg-slate-900/50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value={visibilityOption}
+                    checked={visibility === visibilityOption}
+                    onChange={() => setVisibility(visibilityOption)}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-slate-100">
+                      {visibilityOption === "PUBLIC"
+                        ? t("cases.publicCase")
+                        : t("cases.privateCase")}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {visibilityOption === "PUBLIC"
+                        ? t("cases.publicCaseHint")
+                        : t("cases.privateCaseHint")}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
           </Field>
 
           <Field

@@ -32,6 +32,7 @@ type CaseOption = {
   id: string;
   title: string;
   caseLanguage: "RU" | "EN";
+  visibility: "PUBLIC" | "PRIVATE";
   defaultPreparationDurationSeconds: number;
   defaultDurationSeconds: number;
 };

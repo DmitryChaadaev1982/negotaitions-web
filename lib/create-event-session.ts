@@ -7,6 +7,7 @@ import { isAssignableCaseRole } from "@/lib/case-roles";
 import {
   ACTIVE_SESSION_ASSIGNMENT_SESSION_WHERE,
 } from "@/lib/event-active-assignment";
+import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { getDemoFacilitator } from "@/lib/demo-user";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 import { generateJoinToken } from "@/lib/join-token";
@@ -82,9 +83,11 @@ function isCreateEventSessionInput(
 export async function createSessionFromEvent(
   eventId: string,
   inputOrDraft: CreateEventSessionInput | EventAssignmentDraft,
+  options?: {
+    requesterUserId?: string | null;
+    isAdmin?: boolean;
+  },
 ): Promise<CreateEventSessionResult> {
-  const facilitator = await getDemoFacilitator();
-
   const event = await prisma.trainingEvent.findFirst({
     where: {
       id: eventId,
@@ -110,11 +113,22 @@ export async function createSessionFromEvent(
     return { ok: false, error: "caseNotSelected" };
   }
 
+  const caseOwnerUserId =
+    options?.requesterUserId ??
+    event.hostUserId ??
+    event.facilitatorUserId ??
+    null;
+  const caseScopeWhere = options?.isAdmin
+    ? {}
+    : caseOwnerUserId
+      ? caseVisibilityWhereForUser(caseOwnerUserId)
+      : { visibility: "PUBLIC" as const };
+
   const negotiationCase = await prisma.negotiationCase.findFirst({
     where: {
       id: caseId,
-      facilitatorId: facilitator.id,
       ...activeCaseWhere,
+      ...caseScopeWhere,
     },
     include: {
       roles: {
@@ -259,6 +273,12 @@ export async function createSessionFromEvent(
   }
 
   const sessionTitle = `${event.title} — ${negotiationCase.title}`;
+  const fallbackFacilitator = await getDemoFacilitator();
+  const sessionFacilitatorId =
+    event.facilitatorUserId ??
+    event.hostUserId ??
+    options?.requesterUserId ??
+    fallbackFacilitator.id;
 
   const session = await prisma.$transaction(async (tx) => {
     const sequence = await tx.session.aggregate({
@@ -283,7 +303,7 @@ export async function createSessionFromEvent(
         sequenceNumber,
         createdFromEventAt,
         negotiationCaseId: negotiationCase.id,
-        facilitatorId: facilitator.id,
+        facilitatorId: sessionFacilitatorId,
         eventId: event.id,
         status: SessionStatus.DRAFT,
         visibility: event.visibility,

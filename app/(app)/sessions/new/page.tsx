@@ -1,4 +1,5 @@
 import { NewSessionPageClient } from "@/components/new-session-page-client";
+import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { requireActiveUser } from "@/lib/auth";
@@ -16,12 +17,16 @@ export default async function NewSessionPage({
   const { caseId } = await searchParams;
 
   const cases = await prisma.negotiationCase.findMany({
-    where: { facilitatorId: user.id, ...activeCaseWhere },
+    where: {
+      ...activeCaseWhere,
+      ...caseVisibilityWhereForUser(user.id),
+    },
     orderBy: { title: "asc" },
     select: {
       id: true,
       title: true,
       caseLanguage: true,
+      visibility: true,
       defaultDurationSeconds: true,
       defaultPreparationDurationSeconds: true,
     },
@@ -32,7 +37,7 @@ export default async function NewSessionPage({
       ? await prisma.negotiationCase.findFirst({
           where: {
             id: caseId,
-            facilitatorId: user.id,
+            ...caseVisibilityWhereForUser(user.id),
             deletedAt: { not: null },
           },
           select: { id: true },
