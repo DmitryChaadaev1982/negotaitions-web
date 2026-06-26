@@ -702,6 +702,10 @@ export const ru: Dictionary = {
     invalidJoinLink: "Недействительная ссылка для входа",
     invalidJoinLinkDescription:
       "Эта ссылка недействительна или истекла. Попросите фасилитатора прислать новую ссылку.",
+    inviteLoginRequired:
+      "Чтобы присоединиться к сессии, войдите или зарегистрируйтесь. Доступ будет сохранён за вашим аккаунтом.",
+    guestAccessDisabled:
+      "Гостевой вход отключён. Используйте аккаунт, чтобы не потерять доступ к сессиям и материалам.",
     participantRoleBriefings: "Брифинги ролей участников",
     participantRoleBriefingsDescription:
       "Полные приватные брифинги для каждой назначенной роли участника.",
@@ -1002,6 +1006,7 @@ export const ru: Dictionary = {
     rejoinLastActivity: "Вернуться к последней активности",
     continueLastActivity: "Продолжить последнюю активность",
     noRecentSession: "Нет недавней сессии для возврата.",
+    signInToRejoinTitle: "Войдите, чтобы вернуться",
     alreadyJoinedEvent: "Вы уже присоединились к этой встрече как {name}.",
     rejoinLobby: "Вернуться в лобби",
     rejoinRoom: "Вернуться в комнату",

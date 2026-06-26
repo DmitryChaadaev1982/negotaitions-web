@@ -20,25 +20,13 @@ export async function POST(request: Request) {
   }
 
   const currentUser = await getOptionalCurrentUser();
-  if (
-    !currentUser &&
-    (parsed.data.type === "SESSION_JOIN" || parsed.data.type === "SESSION_ROOM")
-  ) {
-    const joinToken = parsed.data.joinToken?.trim();
-    if (!joinToken) {
-      return NextResponse.json({ valid: false, reason: "missingJoinToken" });
-    }
 
-    const returnUrl =
-      parsed.data.type === "SESSION_ROOM" && parsed.data.sessionId
-        ? `/room/${parsed.data.sessionId}?joinToken=${joinToken}`
-        : `/join/${joinToken}`;
-
-    return NextResponse.json({
-      valid: true,
-      primaryAction: parsed.data.type === "SESSION_ROOM" ? "room" : "materials",
-      targetUrl: `/login?returnUrl=${encodeURIComponent(returnUrl)}`,
-    });
+  // Phase 6.4.2: guest runtime access is closed. Any token supplied by an
+  // unauthenticated client (e.g. a stale localStorage recovery entry) must NOT
+  // be accepted as runtime auth and must NOT be echoed back. Unauthenticated
+  // callers always get a safe login-required fallback.
+  if (!currentUser) {
+    return NextResponse.json({ valid: false, reason: "loginRequired" });
   }
 
   const result = await validateRejoinContext(parsed.data);

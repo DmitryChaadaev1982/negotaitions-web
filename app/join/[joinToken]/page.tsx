@@ -43,6 +43,9 @@ export default async function JoinPage({ params }: JoinPageProps) {
   }
 
   if (!isAdmin(currentUser) && currentUser.status !== "ACTIVE") {
+    if (currentUser.status === "PENDING_APPROVAL") redirect("/pending-approval");
+    if (currentUser.status === "REJECTED") redirect("/account/rejected");
+    if (currentUser.status === "BLOCKED") redirect("/account/blocked");
     notFound();
   }
 

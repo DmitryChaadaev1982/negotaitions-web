@@ -700,6 +700,10 @@ export const en = {
     invalidJoinLink: "Invalid join link",
     invalidJoinLinkDescription:
       "This join link is invalid or has expired. Ask your facilitator for a new link.",
+    inviteLoginRequired:
+      "To join this session, sign in or register. Access will be saved to your account.",
+    guestAccessDisabled:
+      "Guest access is disabled. Use an account to keep access to sessions and materials.",
     participantRoleBriefings: "Participant role briefings",
     participantRoleBriefingsDescription:
       "Full private briefings for each assigned participant role.",
@@ -1000,6 +1004,7 @@ export const en = {
     rejoinLastActivity: "Rejoin last activity",
     continueLastActivity: "Continue last activity",
     noRecentSession: "No recent session to rejoin.",
+    signInToRejoinTitle: "Sign in to rejoin",
     alreadyJoinedEvent: "You already joined this event as {name}.",
     rejoinLobby: "Rejoin lobby",
     rejoinRoom: "Rejoin room",

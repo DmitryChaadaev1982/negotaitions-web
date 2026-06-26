@@ -115,6 +115,9 @@ export default async function RoomPage({
   }
 
   if (!isAdmin(optionalUser) && optionalUser.status !== "ACTIVE") {
+    if (optionalUser.status === "PENDING_APPROVAL") redirect("/pending-approval");
+    if (optionalUser.status === "REJECTED") redirect("/account/rejected");
+    if (optionalUser.status === "BLOCKED") redirect("/account/blocked");
     notFound();
   }
 

@@ -190,33 +190,25 @@ export function EventLobbyView({
       return;
     }
 
-    const displayName =
-      state.currentParticipant?.displayName ?? liveKit?.displayName;
-
+    // Store only the non-secret event/session hints. No hostToken,
+    // participantToken, or joinToken is ever persisted in localStorage.
     saveRecoveryContext({
       type: "EVENT_LOBBY",
       eventId,
-      hostToken,
-      participantToken,
-      displayName,
     });
 
     const assignment = state.currentParticipant
       ? state.participants.find((participant) => participant.id === state.currentParticipant?.id)
       : null;
 
-    if (assignment?.joinToken) {
+    if (assignment?.assignedSessionId) {
       saveRecoveryContext({
         type: "SESSION_JOIN",
         eventId,
-        sessionId: assignment.assignedSessionId ?? undefined,
-        hostToken,
-        participantToken,
-        joinToken: assignment.joinToken,
-        displayName,
+        sessionId: assignment.assignedSessionId,
       });
     }
-  }, [eventId, hostToken, liveKit?.displayName, participantToken, state]);
+  }, [eventId, state]);
 
   const updateHost = useCallback(
     async (payload: Record<string, unknown>) => {

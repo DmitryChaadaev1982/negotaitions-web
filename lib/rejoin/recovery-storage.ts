@@ -7,14 +7,26 @@ export type RecoveryContextType =
   | "SESSION_ROOM"
   | "SESSION_JOIN";
 
+/**
+ * Phase 6.4.2: localStorage recovery stores ONLY non-secret UI hints.
+ *
+ * Guest runtime access is fully closed (Phase 6.4.1). Logged-in rejoin is
+ * resolved server-side from the user/session relation (see lib/rejoin/account.ts
+ * and app/rejoin/page.tsx), so no secret token ever needs to live in the browser.
+ *
+ * The following secrets MUST NEVER be persisted here:
+ *   - joinToken
+ *   - hostToken
+ *   - participantToken
+ *   - facilitatorJoinToken
+ *
+ * Legacy entries that still contain any of those fields are treated as invalid,
+ * ignored, and cleared on read.
+ */
 export type RecoveryContext = {
   type: RecoveryContextType;
   eventId?: string;
   sessionId?: string;
-  hostToken?: string;
-  participantToken?: string;
-  joinToken?: string;
-  displayName?: string;
   updatedAt: string;
 };
 
@@ -22,8 +34,69 @@ export type SaveRecoveryContextInput = Omit<RecoveryContext, "updatedAt"> & {
   updatedAt?: string;
 };
 
+/**
+ * Secret fields that must never be stored in browser recovery storage. Used to
+ * detect and purge legacy entries written before Phase 6.4.2.
+ */
+export const RECOVERY_SECRET_FIELDS = [
+  "joinToken",
+  "hostToken",
+  "participantToken",
+  "facilitatorJoinToken",
+] as const;
+
+const RECOVERY_CONTEXT_TYPES: RecoveryContextType[] = [
+  "EVENT_LOBBY",
+  "SESSION_ROOM",
+  "SESSION_JOIN",
+];
+
 function isBrowser() {
   return typeof window !== "undefined";
+}
+
+/**
+ * Returns true if a parsed recovery value contains any legacy secret token.
+ * Pure (no browser APIs) so it is unit-testable.
+ */
+export function recoveryValueHasLegacyToken(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return RECOVERY_SECRET_FIELDS.some(
+    (field) => typeof record[field] === "string" && record[field] !== "",
+  );
+}
+
+/**
+ * Strip any unknown/secret fields and return only the safe, non-secret hint
+ * shape. Returns null for structurally invalid values. Pure (no browser APIs).
+ */
+export function sanitizeRecoveryContext(value: unknown): RecoveryContext | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    typeof record.type !== "string" ||
+    !RECOVERY_CONTEXT_TYPES.includes(record.type as RecoveryContextType) ||
+    typeof record.updatedAt !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    type: record.type as RecoveryContextType,
+    eventId: typeof record.eventId === "string" ? record.eventId : undefined,
+    sessionId:
+      typeof record.sessionId === "string" ? record.sessionId : undefined,
+    updatedAt: record.updatedAt,
+  };
 }
 
 export function getRecoveryTtlMs() {
@@ -62,13 +135,16 @@ export function readRecoveryContext(): RecoveryContext | null {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as RecoveryContext;
+    const parsed = JSON.parse(raw) as unknown;
 
-    if (!parsed?.type || !parsed.updatedAt) {
+    // Legacy entry containing a secret token: ignore it and clear it so no
+    // guest secret can ever be reused for runtime auth.
+    if (recoveryValueHasLegacyToken(parsed)) {
+      window.localStorage.removeItem(RECOVERY_STORAGE_KEY);
       return null;
     }
 
-    return parsed;
+    return sanitizeRecoveryContext(parsed);
   } catch {
     return null;
   }
@@ -103,11 +179,19 @@ export function saveRecoveryContext(input: SaveRecoveryContextInput) {
   }
 
   const current = readRecoveryContext();
-  const next: RecoveryContext = {
+  const merged = {
     ...current,
     ...input,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
   };
+
+  // sanitize guarantees only the non-secret hint shape is ever written, even if
+  // a caller accidentally passes extra/secret fields.
+  const next = sanitizeRecoveryContext(merged);
+
+  if (!next) {
+    return;
+  }
 
   window.localStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(next));
   notifyRecoveryStorageChanged();
@@ -130,14 +214,4 @@ export function clearRecoveryContext() {
 
   window.localStorage.removeItem(RECOVERY_STORAGE_KEY);
   notifyRecoveryStorageChanged();
-}
-
-export function getEventParticipantTokenForEvent(eventId: string) {
-  const context = getValidRecoveryContext();
-
-  if (!context || context.eventId !== eventId) {
-    return null;
-  }
-
-  return context.participantToken ?? null;
 }

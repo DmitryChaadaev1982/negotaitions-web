@@ -597,13 +597,12 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
             closedBeforeNegotiation: payload.closedBeforeNegotiation,
           });
 
-          // Recovery context: for account mode we use participantId instead
-          // of joinToken so that the recovery token is never stored in localStorage.
+          // Recovery context: store only the non-secret sessionId hint. No
+          // joinToken (or any secret) is ever persisted in localStorage; rejoin
+          // is resolved server-side from the authenticated user/session relation.
           saveRecoveryContext({
             type: "SESSION_ROOM",
             sessionId,
-            joinToken: roomAuth.type === "joinToken" ? roomAuth.value : "",
-            displayName: tokenPayload.displayName,
           });
         }
       } catch (loadError) {

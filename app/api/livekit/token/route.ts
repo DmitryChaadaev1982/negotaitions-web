@@ -51,12 +51,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid join token or participant." }, { status: 404 });
   }
 
-  // Account-mode ownership check: cookie user must own this participant.
-  if (!joinToken) {
-    const user = await getOptionalCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  // Phase 6.4.1: authentication is required regardless of joinToken or participantId.
+  // joinToken is no longer a guest identity; it is an invite-claim secret only.
+  const user = await getOptionalCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: "Authentication required.", code: "LOGIN_REQUIRED" },
+      { status: 401 },
+    );
+  }
+
+  if (joinToken) {
+    // joinToken path: user must own the participant or participant must be unclaimed.
+    if (participant.userId && participant.userId !== user.id) {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
+  } else {
+    // participantId path: user must own the participant, be admin, or be the event host.
     const adminUser = isAdmin(user);
     const isOwner = participant.userId === user.id;
     const isEventHost = participant.session.event?.hostUserId === user.id;

@@ -14,20 +14,39 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
   }
 
+  // Phase 6.4.1: authentication is required for all paths — joinToken is no longer
+  // a guest identity; it is an invite-claim secret that requires a valid session cookie.
+  const user = await getOptionalCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: "Authentication required.", code: "LOGIN_REQUIRED" },
+      { status: 401 },
+    );
+  }
+
   if (joinToken) {
-    const sidebar = await getRoomSidebarData(joinToken);
-    if (!sidebar) {
+    // Verify the user owns or may use this participant before returning sidebar data.
+    const participantForToken = await prisma.sessionParticipant.findUnique({
+      where: { joinToken },
+      select: { id: true, joinToken: true, userId: true },
+    });
+
+    if (!participantForToken) {
       return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+    }
+
+    if (participantForToken.userId && participantForToken.userId !== user.id) {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+
+    const sidebar = await getRoomSidebarData(participantForToken.joinToken);
+    if (!sidebar) {
+      return NextResponse.json({ error: "Sidebar data not found." }, { status: 404 });
     }
     return NextResponse.json(sidebar);
   }
 
   // Account mode: verify cookie ownership then get sidebar by participantId.
-  const user = await getOptionalCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const participant = await prisma.sessionParticipant.findUnique({
     where: { id: participantId! },
     select: {

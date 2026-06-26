@@ -1,14 +1,18 @@
 /**
  * Shared server-side helper for resolving the SessionParticipant from a room API request.
  *
+ * Phase 6.4.1: guest access is fully closed. joinToken is now an invite-claim secret
+ * only; it cannot be used as a runtime guest identity.
+ *
  * Supports two authentication modes:
  *
- *   1. joinToken (guest flow): finds participant by joinToken unique index.
+ *   1. joinToken (invite-claim, authenticated): finds participant by joinToken, then
+ *      verifies the caller is authenticated and owns (or may claim) the participant.
  *   2. participantId + cookie (account flow): verifies that the authenticated user
  *      owns the SessionParticipant with the given id in the given session.
  *
- * Call this from any room API route that previously called
- * getSessionParticipantByJoinToken(joinToken, sessionId).
+ * In both cases a valid httpOnly session cookie is required. Unauthenticated callers
+ * receive null, which causes API routes to return 401/403.
  */
 
 import { getOptionalCurrentUser } from "@/lib/auth";
@@ -39,7 +43,7 @@ export async function resolveRoomParticipantFromBody(
     typeof body.participantId === "string" ? body.participantId.trim() : null;
 
   if (joinToken) {
-    return getSessionParticipantByJoinToken(joinToken, sessionId);
+    return resolveByJoinToken(joinToken, sessionId);
   }
 
   if (participantId) {
@@ -66,7 +70,7 @@ export async function resolveRoomParticipantFromQuery(
   const participantId = url.searchParams.get("participantId")?.trim() ?? null;
 
   if (joinToken) {
-    return getSessionParticipantByJoinToken(joinToken, sessionId);
+    return resolveByJoinToken(joinToken, sessionId);
   }
 
   if (participantId) {
@@ -74,6 +78,40 @@ export async function resolveRoomParticipantFromQuery(
   }
 
   return null;
+}
+
+/**
+ * Phase 6.4.1 — joinToken invite-claim lookup (authentication required).
+ *
+ * joinToken is no longer a guest identity; it is an invite secret that binds to
+ * an authenticated account. Requirements:
+ *   - Caller must be authenticated (valid httpOnly session cookie).
+ *   - If participant.userId is already set, it must match the current user's id.
+ *   - If participant.userId is null (unclaimed), any authenticated ACTIVE user may use
+ *     the token (the actual claim/bind happens in /join/[joinToken] or /room/[sessionId]).
+ *
+ * Returns null for unauthenticated callers; API routes then return 401/403.
+ */
+async function resolveByJoinToken(
+  joinToken: string,
+  sessionId: string,
+): Promise<RoomParticipantResult | null> {
+  const user = await getOptionalCurrentUser();
+  if (!user) {
+    return null;
+  }
+
+  const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
+  if (!participant) {
+    return null;
+  }
+
+  // If already claimed by another user, deny access.
+  if (participant.userId && participant.userId !== user.id) {
+    return null;
+  }
+
+  return participant;
 }
 
 /**
@@ -153,7 +191,7 @@ export async function resolveRoomParticipantFromParsedBody(
   sessionId: string,
 ): Promise<RoomParticipantResult | null> {
   if (parsed.joinToken) {
-    return getSessionParticipantByJoinToken(parsed.joinToken, sessionId);
+    return resolveByJoinToken(parsed.joinToken, sessionId);
   }
   if (parsed.participantId) {
     return resolveByParticipantId(parsed.participantId, sessionId);
