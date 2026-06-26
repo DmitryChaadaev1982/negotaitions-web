@@ -4,6 +4,7 @@ type PageHeaderProps = {
   title: string;
   description?: string;
   action?: React.ReactNode;
+  badge?: React.ReactNode;
   className?: string;
 };
 
@@ -11,6 +12,7 @@ export function PageHeader({
   title,
   description,
   action,
+  badge,
   className,
 }: PageHeaderProps) {
   return (
@@ -21,9 +23,12 @@ export function PageHeader({
       )}
     >
       <div className="space-y-1.5">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-50 sm:text-3xl">
-          {title}
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-50 sm:text-3xl">
+            {title}
+          </h1>
+          {badge ? badge : null}
+        </div>
         {description ? (
           <p className="max-w-2xl text-sm leading-6 text-slate-400">
             {description}

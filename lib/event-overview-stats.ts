@@ -7,6 +7,7 @@ import {
   type TrainingEventListItem,
 } from "@/lib/event-overview-shared";
 import { prisma } from "@/lib/prisma";
+import { eventVisibilityWhere } from "@/lib/visibility";
 
 export type { EventOverviewStats, TrainingEventListItem } from "@/lib/event-overview-shared";
 export {
@@ -118,14 +119,7 @@ export async function getEventsForUser(
 ): Promise<TrainingEventListItem[]> {
   const where =
     user && !isAdmin(user)
-      ? {
-          deletedAt: null,
-          OR: [
-            { hostUserId: user.id },
-            { participants: { some: { userId: user.id } } },
-            { sessions: { some: { participants: { some: { userId: user.id } } } } },
-          ],
-        }
+      ? eventVisibilityWhere(user.id)
       : { deletedAt: null };
 
   const events = await prisma.trainingEvent.findMany({
@@ -136,6 +130,8 @@ export async function getEventsForUser(
       id: true,
       title: true,
       hostUserId: true,
+      facilitatorUserId: true,
+      visibility: true,
       status: true,
       scheduledAt: true,
       publicJoinCode: true,
@@ -205,6 +201,7 @@ export async function getEventsForUser(
       id: event.id,
       title: event.title,
       status: event.status,
+      visibility: event.visibility as "PUBLIC" | "PRIVATE",
       canManage: Boolean(user && (isAdmin(user) || event.hostUserId === user.id)),
       scheduledAt: event.scheduledAt?.toISOString() ?? null,
       publicJoinCode: event.publicJoinCode,

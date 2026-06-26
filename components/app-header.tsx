@@ -2,7 +2,6 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { AppHeaderNav } from "@/components/app-header-nav";
 import { AuthNav } from "@/components/auth-nav";
-import { CookieSettingsButton } from "@/components/cookie-banner";
 
 type AppHeaderProps = {
   isAdmin?: boolean;
@@ -15,8 +14,7 @@ export function AppHeader({ isAdmin: adminFlag = false }: AppHeaderProps) {
         <AppHeaderNav isAdmin={adminFlag} />
         <div className="flex flex-wrap items-center gap-3">
           <RejoinNavLink />
-          <LanguageSwitcher />
-          <CookieSettingsButton />
+          <LanguageSwitcher persistToServer />
           <AuthNav />
         </div>
       </div>

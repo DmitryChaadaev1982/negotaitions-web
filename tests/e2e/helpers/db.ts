@@ -98,6 +98,42 @@ export async function cleanupE2eData() {
   );
 }
 
+/**
+ * Create an ACTIVE, non-admin user with the current auth schema
+ * (globalRole/status/preferredLocale) so e2e tests can log in via the form.
+ */
+export async function createActiveUser(input?: {
+  email?: string;
+  password?: string;
+  preferredLocale?: "ru" | "en";
+}) {
+  const email = input?.email ?? `e2e-locale-${id("u")}@example.com`;
+  const password = input?.password ?? "e2e-pass-1234";
+  const passwordHash = await hash(password, 12);
+  const userId = id("user");
+
+  await query(
+    `INSERT INTO "User"
+       ("id", "email", "passwordHash", "name", "globalRole", "status", "preferredLocale", "updatedAt")
+     VALUES ($1, $2, $3, 'E2E Locale User', 'USER', 'ACTIVE', $4, NOW())`,
+    [userId, email, passwordHash, input?.preferredLocale ?? "ru"],
+  );
+
+  return { id: userId, email, password };
+}
+
+export async function getUserPreferredLocale(email: string) {
+  const rows = await query<{ preferredLocale: string }>(
+    `SELECT "preferredLocale" FROM "User" WHERE "email" = $1`,
+    [email],
+  );
+  return rows[0]?.preferredLocale ?? null;
+}
+
+export async function deleteUserByEmail(email: string) {
+  await query(`DELETE FROM "User" WHERE "email" = $1`, [email]);
+}
+
 export async function ensureDemoFacilitator() {
   const passwordHash = await hash("demo1234", 10);
   const rows = await query<{ id: string; email: string }>(

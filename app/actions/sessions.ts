@@ -91,11 +91,15 @@ export async function createSession(
 ): Promise<CreateSessionState> {
   const user = await requireActiveUser("/sessions/new");
 
+  const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+
   const parsed = createSessionSchema.safeParse({
     title: formData.get("title"),
     caseId: formData.get("caseId"),
     preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
+    visibility: formData.get("visibility") || "PRIVATE",
+    invitedUserIds: rawInvitedUserIds,
   });
 
   if (!parsed.success) {
@@ -111,7 +115,7 @@ export async function createSession(
   }
 
   try {
-    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes } =
+    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes, visibility, invitedUserIds } =
       parsed.data;
 
     const negotiationCase = await prisma.negotiationCase.findFirst({
@@ -150,6 +154,7 @@ export async function createSession(
         negotiationCaseId: caseId,
         facilitatorId: user.id,
         status: SessionStatus.DRAFT,
+        visibility,
         preparationDurationSeconds: minutesToSeconds(preparationDurationMinutes),
         durationSeconds: minutesToSeconds(negotiationDurationMinutes),
         snapshotCaseTitle: negotiationCase.title,
@@ -169,6 +174,28 @@ export async function createSession(
         },
       },
     });
+
+    // Create SessionInvites for invited users (deduped, skip self).
+    if (invitedUserIds.length > 0) {
+      const uniqueInvited = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+      if (uniqueInvited.length > 0) {
+        const validUsers = await prisma.user.findMany({
+          where: { id: { in: uniqueInvited }, status: "ACTIVE" },
+          select: { id: true },
+        });
+        for (const invitedUser of validUsers) {
+          await prisma.sessionInvite.upsert({
+            where: { sessionId_userId: { sessionId: session.id, userId: invitedUser.id } },
+            update: {},
+            create: {
+              sessionId: session.id,
+              userId: invitedUser.id,
+              invitedByUserId: user.id,
+            },
+          });
+        }
+      }
+    }
 
     revalidatePath("/sessions");
     revalidatePath("/dashboard");

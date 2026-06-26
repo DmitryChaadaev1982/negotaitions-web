@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import { PageHeader } from "@/components/page-header";
 import { SessionStatusBadge } from "@/components/session-status-badge";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import { GradientButtonLink } from "@/components/ui/buttons";
 import {
   DataTable,
@@ -29,6 +30,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type SessionRow = {
   id: string;
   title: string;
+  visibility?: "PUBLIC" | "PRIVATE";
   userRole: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | "HOST" | null;
   canManage: boolean;
   caseTitle: string;
@@ -217,12 +219,17 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
               {sessions.map((session) => (
                 <DataTableRow key={session.id}>
                   <DataTableCell>
-                    <Link
-                      href={`/sessions/${session.id}`}
-                      className="font-medium text-slate-50 hover:text-blue-300"
-                    >
-                      {session.title}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/sessions/${session.id}`}
+                        className="font-medium text-slate-50 hover:text-blue-300"
+                      >
+                        {session.title}
+                      </Link>
+                      {session.visibility ? (
+                        <VisibilityBadge visibility={session.visibility} showLabel={false} />
+                      ) : null}
+                    </div>
                   </DataTableCell>
                   <DataTableCell>{session.caseTitle}</DataTableCell>
                   <DataTableCell>

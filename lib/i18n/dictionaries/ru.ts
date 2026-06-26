@@ -983,6 +983,12 @@ export const ru: Dictionary = {
     sessions: "Сессии",
     participantsInSessions: "Участники в сессиях",
     totalSessionParticipants: "Всего в сессиях",
+    loginToJoin: "Войдите для участия",
+    loginToJoinDescription: "Для участия в этой встрече необходимо войти в аккаунт или зарегистрироваться.",
+    loginButton: "Войти",
+    registerButton: "Создать аккаунт",
+    accountNotActive: "Ваш аккаунт неактивен",
+    accountNotActiveDescription: "Ваш аккаунт ожидает одобрения или ограничен. Обратитесь к администратору.",
     status: {
       DRAFT: "Черновик",
       LOBBY_OPEN: "Лобби открыто",
@@ -1063,6 +1069,19 @@ export const ru: Dictionary = {
     blockedMessage:
       "Ваш аккаунт заблокирован. Обратитесь к администратору.",
     accessDenied: "Доступ запрещён.",
+    // Account menu
+    profile: "Профиль",
+    accountSettings: "Настройки аккаунта",
+    language: "Язык",
+    // Account settings page
+    changePassword: "Изменить пароль",
+    currentPassword: "Текущий пароль",
+    newPassword: "Новый пароль",
+    confirmNewPassword: "Подтвердите новый пароль",
+    passwordUpdated: "Пароль успешно изменён.",
+    displayNameUpdated: "Имя обновлено.",
+    languageUpdated: "Язык обновлён.",
+    invalidCurrentPassword: "Неверный текущий пароль.",
   },
   legal: {
     draftNotice: "Черновик для юридической проверки перед production-запуском.",
@@ -1120,6 +1139,12 @@ export const ru: Dictionary = {
     // Admin private-data warning
     privateRoleDataWarning: "Административный режим — содержит скрытые данные ролей.",
   },
+  browser: {
+    localStorageUnavailable:
+      "Локальное хранилище недоступно. Некоторые настройки могут не сохраняться в этом браузере.",
+    cookiesUnavailable:
+      "Для входа и восстановления доступа к сессиям нужны cookie. Разрешите cookie для этого сайта.",
+  },
   validation: {
     titleRequired: "Название обязательно",
     nameRequired: "Имя обязательно",
@@ -1146,5 +1171,25 @@ export const ru: Dictionary = {
     eventUnavailable: "Эта встреча больше недоступна.",
     caseDeleted:
       "Этот кейс удалён и не может использоваться для новой сессии.",
+    accountStatusRestricted: "Ваш аккаунт неактивен. Обратитесь к администратору.",
+    participantTokenAlreadyLinked: "Эта ссылка-приглашение уже привязана к другому аккаунту.",
+    loginRequired: "Для участия в этой встрече необходимо войти в систему.",
+  },
+  visibility: {
+    public: "Публичная",
+    private: "Приватная",
+    publicTitle: "Публичная — видна всем активным пользователям, пока открыта",
+    privateTitle: "Приватная — видна только приглашённым пользователям и участникам",
+    visibilityLabel: "Видимость",
+    selectVisibility: "Выберите видимость",
+    publicOption: "Публичная — все активные пользователи видят встречу, пока она открыта",
+    privateOption: "Приватная — только приглашённые пользователи и участники",
+    invitedUsers: "Приглашённые пользователи",
+    invitedUsersHint: "Приглашения по email пока не отправляются. Добавленные пользователи увидят встречу в своём списке.",
+    noInvitesYet: "Приглашённых пользователей пока нет.",
+    selectFacilitator: "Фасилитатор / организатор",
+    selectFacilitatorHint: "Выберите фасилитатора для этой встречи. По умолчанию — вы.",
+    facilitatorLabel: "Фасилитатор",
+    inheritedFromEvent: "Наследуется от встречи",
   },
 };

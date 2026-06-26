@@ -10,6 +10,7 @@ import {
   type SessionOverviewStats,
 } from "@/lib/session-overview-shared";
 import { activeSessionWhere } from "@/lib/soft-delete";
+import { sessionVisibilityWhere } from "@/lib/visibility";
 
 export type SessionAiStatus = {
   recordingStage: string | null;
@@ -34,14 +35,12 @@ export async function getSessionsForList(): Promise<SessionListItem[]> {
 
 export async function getSessionsForUser(user: AuthUser | null): Promise<SessionListItem[]> {
   const onlineThreshold = new Date(Date.now() - PRESENCE_ONLINE_THRESHOLD_MS);
+  const visibilityFilter = user && !isAdmin(user) ? sessionVisibilityWhere(user.id) : {};
   const where =
     user && !isAdmin(user)
       ? {
           ...activeSessionWhere,
-          OR: [
-            { event: { hostUserId: user.id } },
-            { participants: { some: { userId: user.id } } },
-          ],
+          ...visibilityFilter,
         }
       : activeSessionWhere;
 
@@ -56,13 +55,16 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       negotiationState: true,
       closedByEventAt: true,
       durationSeconds: true,
+      visibility: true,
       createdAt: true,
       event: {
         select: {
           id: true,
           title: true,
           hostUserId: true,
+          facilitatorUserId: true,
           status: true,
+          visibility: true,
           // hostToken and participantToken intentionally omitted — do not expose in list data.
         },
       },
@@ -137,6 +139,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
     return {
       id: session.id,
       title: session.title,
+      visibility: (session.visibility ?? "PRIVATE") as "PUBLIC" | "PRIVATE",
       userRole: (() => {
         const current = user
           ? session.participants.find((participant) => participant.userId === user.id)
@@ -144,7 +147,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         if (current?.type) {
           return current.type;
         }
-        if (user && session.event?.hostUserId === user.id) {
+        if (user && (session.event?.hostUserId === user.id || session.event?.facilitatorUserId === user.id)) {
           return "HOST";
         }
         return null;
@@ -153,6 +156,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         user &&
           (isAdmin(user) ||
             session.event?.hostUserId === user.id ||
+            session.event?.facilitatorUserId === user.id ||
             session.participants.some(
               (participant) =>
                 participant.userId === user.id &&
@@ -163,6 +167,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       eventId: session.event?.id ?? null,
       eventTitle: session.event?.title ?? null,
       eventStatus: session.event?.status ?? null,
+      eventVisibility: (session.event?.visibility ?? null) as "PUBLIC" | "PRIVATE" | null,
       // eventLobbyUrl: tokens omitted from list data. Use account-authorized /events/[id]/lobby.
       eventLobbyUrl: session.event
         ? `/events/${session.event.id}/lobby`

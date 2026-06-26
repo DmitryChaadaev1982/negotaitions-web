@@ -35,12 +35,24 @@ type CaseOption = {
   defaultDurationSeconds: number;
 };
 
+type UserOption = {
+  id: string;
+  name: string | null;
+  email: string;
+};
+
 type NewSessionFormProps = {
   cases: CaseOption[];
   defaultCaseId?: string;
+  currentUserId?: string;
+  activeUsers?: UserOption[];
 };
 
-export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
+function userLabel(user: UserOption): string {
+  return user.name ? `${user.name} (${user.email})` : user.email;
+}
+
+export function NewSessionForm({ cases, defaultCaseId, currentUserId, activeUsers = [] }: NewSessionFormProps) {
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     createSession,
@@ -48,6 +60,16 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
   );
   const initialCaseId = defaultCaseId ?? cases[0]?.id ?? "";
   const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId);
+  const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PRIVATE");
+  const [selectedInvites, setSelectedInvites] = useState<string[]>([]);
+
+  const toggleInvite = (userId: string) => {
+    setSelectedInvites((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
+    );
+  };
+
+  const invitableUsers = activeUsers.filter((u) => u.id !== currentUserId);
 
   const selectedCase = useMemo(
     () => cases.find((negotiationCase) => negotiationCase.id === selectedCaseId),
@@ -72,6 +94,12 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
           {state.errors.form.map((message) => tv(message)).join(", ")}
         </div>
       ) : null}
+
+      {/* Hidden fields for controlled state */}
+      <input type="hidden" name="visibility" value={visibility} />
+      {selectedInvites.map((userId) => (
+        <input key={userId} type="hidden" name="invitedUserId" value={userId} />
+      ))}
 
       <GlassCard>
         <GlassCardHeader>
@@ -208,6 +236,77 @@ export function NewSessionForm({ cases, defaultCaseId }: NewSessionFormProps) {
               })}
             </p>
           </Field>
+        </GlassCardContent>
+      </GlassCard>
+
+      {/* Visibility + Invited users */}
+      <GlassCard>
+        <GlassCardHeader>
+          <h2 className="text-base font-semibold text-slate-50">
+            {t("visibility.visibilityLabel")}
+          </h2>
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-4">
+          <div className="space-y-2">
+            {(["PRIVATE", "PUBLIC"] as const).map((v) => (
+              <label
+                key={v}
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                  visibility === v
+                    ? "border-cyan-500/40 bg-cyan-500/5"
+                    : "border-slate-600/40 bg-slate-900/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="_visibilityRadio"
+                  value={v}
+                  checked={visibility === v}
+                  onChange={() => setVisibility(v)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <p className="text-sm font-medium text-slate-100">
+                    {v === "PUBLIC" ? t("visibility.public") : t("visibility.private")}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {v === "PUBLIC"
+                      ? t("visibility.publicOption")
+                      : t("visibility.privateOption")}
+                  </p>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {invitableUsers.length > 0 ? (
+            <div>
+              <p className={labelClassName}>{t("visibility.invitedUsers")}</p>
+              <p className="mb-2 text-xs text-amber-400/80">
+                {t("visibility.invitedUsersHint")}
+              </p>
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-600/40 bg-slate-900/50 p-2">
+                {invitableUsers.map((user) => (
+                  <label
+                    key={user.id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800/60"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedInvites.includes(user.id)}
+                      onChange={() => toggleInvite(user.id)}
+                    />
+                    {userLabel(user)}
+                  </label>
+                ))}
+              </div>
+              {selectedInvites.length > 0 ? (
+                <p className="mt-1 text-xs text-cyan-400">
+                  {selectedInvites.length} invited
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </GlassCardContent>
       </GlassCard>
 

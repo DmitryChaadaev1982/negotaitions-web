@@ -8,6 +8,7 @@ import { GradientButtonLink } from "@/components/ui/buttons";
 import { GlassCard } from "@/components/ui/glass-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/badge";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import { cn } from "@/lib/cn";
 import { getEventPublicJoinUrl } from "@/lib/config";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -26,6 +27,7 @@ import { PRESENCE_OVERVIEW_POLL_INTERVAL_MS } from "@/lib/presence";
 type EventRow = {
   id: string;
   title: string;
+  visibility?: "PUBLIC" | "PRIVATE";
   status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
   canManage: boolean;
   scheduledAt: string | null;
@@ -374,12 +376,17 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                   >
                     <td className="px-4 py-3 align-top">
                       <div className="min-w-0 space-y-0.5">
-                        <p
-                          className="truncate font-medium text-slate-50"
-                          data-testid="event-title"
-                        >
-                          {event.title}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p
+                            className="truncate font-medium text-slate-50"
+                            data-testid="event-title"
+                          >
+                            {event.title}
+                          </p>
+                          {event.visibility ? (
+                            <VisibilityBadge visibility={event.visibility} showLabel={false} />
+                          ) : null}
+                        </div>
                         <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                           {formatDate(event.scheduledAt)}
                         </p>
@@ -415,12 +422,17 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
-                      <p
-                        className="font-medium text-slate-50"
-                        data-testid="event-title"
-                      >
-                        {event.title}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p
+                          className="font-medium text-slate-50"
+                          data-testid="event-title"
+                        >
+                          {event.title}
+                        </p>
+                        {event.visibility ? (
+                          <VisibilityBadge visibility={event.visibility} showLabel={false} />
+                        ) : null}
+                      </div>
                       <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                         {formatDate(event.scheduledAt)}
                       </p>

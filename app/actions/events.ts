@@ -49,12 +49,17 @@ export async function createTrainingEvent(
 ): Promise<CreateEventState> {
   const user = await requireActiveUser("/events/new");
 
+  const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
     hostDisplayName: formData.get("hostDisplayName"),
     description: formData.get("description") || undefined,
     scheduledAt: formData.get("scheduledAt") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
+    visibility: formData.get("visibility") || "PRIVATE",
+    facilitatorUserId: formData.get("facilitatorUserId") || undefined,
+    invitedUserIds: rawInvitedUserIds,
   });
 
   if (!parsed.success) {
@@ -69,7 +74,7 @@ export async function createTrainingEvent(
   }
 
   try {
-    const { title, hostDisplayName, description, scheduledAt, estimatedEventDurationMinutes } =
+    const { title, hostDisplayName, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds } =
       parsed.data;
 
     const hostDisplayNameResolved =
@@ -77,6 +82,19 @@ export async function createTrainingEvent(
       user.name?.trim() ||
       user.email.split("@")[0] ||
       "Host";
+
+    // Resolve facilitatorUserId: if provided and valid ACTIVE user, use it; else default to creator
+    let resolvedFacilitatorUserId: string | null = null;
+    if (facilitatorUserId && facilitatorUserId !== user.id) {
+      const facilitatorUser = await prisma.user.findFirst({
+        where: { id: facilitatorUserId, status: "ACTIVE" },
+        select: { id: true },
+      });
+      resolvedFacilitatorUserId = facilitatorUser?.id ?? null;
+    } else if (facilitatorUserId === user.id) {
+      resolvedFacilitatorUserId = user.id;
+    }
+
     const hostToken = generateHostToken();
     const hostParticipantToken = generateParticipantToken();
     const publicJoinCode = generatePublicJoinCode();
@@ -87,6 +105,8 @@ export async function createTrainingEvent(
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: TrainingEventStatus.LOBBY_OPEN,
         hostUserId: user.id,
+        facilitatorUserId: resolvedFacilitatorUserId,
+        visibility,
         publicJoinCode,
         hostToken,
         lobbyRoomName: null,
@@ -104,6 +124,28 @@ export async function createTrainingEvent(
         },
       },
     });
+
+    // Create EventInvites for invited users (deduped, skip self)
+    if (invitedUserIds.length > 0) {
+      const uniqueInvited = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+      if (uniqueInvited.length > 0) {
+        const validUsers = await prisma.user.findMany({
+          where: { id: { in: uniqueInvited }, status: "ACTIVE" },
+          select: { id: true },
+        });
+        for (const invitedUser of validUsers) {
+          await prisma.eventInvite.upsert({
+            where: { eventId_userId: { eventId: event.id, userId: invitedUser.id } },
+            update: {},
+            create: {
+              eventId: event.id,
+              userId: invitedUser.id,
+              invitedByUserId: user.id,
+            },
+          });
+        }
+      }
+    }
 
     const lobbyRoomName = buildEventLobbyRoomName(event.id);
     await prisma.trainingEvent.update({
@@ -153,34 +195,25 @@ export async function joinTrainingEvent(
 ): Promise<JoinEventState> {
   const parsed = joinEventSchema.safeParse({
     eventId: formData.get("eventId"),
-    displayName: formData.get("displayName") || undefined,
-    email: formData.get("email") || undefined,
     preference: formData.get("preference") || undefined,
     participantToken: formData.get("participantToken") || undefined,
   });
 
   if (!parsed.success) {
-    const fieldErrors = parsed.error.flatten().fieldErrors;
-    return {
-      errors: {
-        displayName: fieldErrors.displayName,
-        preference: fieldErrors.preference,
-      },
-    };
+    return { errors: { form: ["loginRequired"] } };
   }
 
-  const { eventId, displayName, email, preference, participantToken } = parsed.data;
+  const { eventId, preference, participantToken } = parsed.data;
 
+  // Guest join is closed — require authenticated ACTIVE user.
   const currentUser = await getOptionalCurrentUser();
-  const accountJoinAllowed = Boolean(
-    currentUser && (isAdmin(currentUser) || currentUser.status === "ACTIVE"),
-  );
-  if (currentUser && !accountJoinAllowed) {
-    return {
-      errors: {
-        form: ["accountStatusRestricted"],
-      },
-    };
+  if (!currentUser) {
+    return { errors: { form: ["loginRequired"] } };
+  }
+
+  const accountJoinAllowed = isAdmin(currentUser) || currentUser.status === "ACTIVE";
+  if (!accountJoinAllowed) {
+    return { errors: { form: ["accountStatusRestricted"] } };
   }
 
   const event = await prisma.trainingEvent.findUnique({
@@ -193,48 +226,26 @@ export async function joinTrainingEvent(
     event.status === TrainingEventStatus.CANCELLED ||
     event.status === TrainingEventStatus.COMPLETED
   ) {
-    return {
-      errors: {
-        form: ["eventUnavailable"],
-      },
-    };
+    return { errors: { form: ["eventUnavailable"] } };
   }
 
+  // If a participantToken is provided (URL invite), validate and bind to account.
   if (participantToken) {
     const existing = await prisma.eventParticipant.findFirst({
-      where: {
-        eventId,
-        participantToken,
-      },
+      where: { eventId, participantToken },
     });
 
     if (existing) {
-      if (
-        accountJoinAllowed &&
-        existing.userId &&
-        existing.userId !== currentUser!.id
-      ) {
-        return {
-          errors: {
-            form: ["participantTokenAlreadyLinked"],
-          },
-        };
+      if (existing.userId && existing.userId !== currentUser.id) {
+        return { errors: { form: ["participantTokenAlreadyLinked"] } };
       }
 
       await prisma.eventParticipant.update({
         where: { id: existing.id },
         data: {
-          ...(accountJoinAllowed && !existing.userId
-            ? { userId: currentUser!.id }
-            : {}),
+          ...(!existing.userId ? { userId: currentUser.id } : {}),
           lastSeenAt: new Date(),
-          ...(preference
-            ? {
-                preference,
-                ...flagsFromPreference(preference),
-              }
-            : {}),
-          ...(email ? { email } : {}),
+          ...(preference ? { preference, ...flagsFromPreference(preference) } : {}),
         },
       });
 
@@ -242,62 +253,38 @@ export async function joinTrainingEvent(
     }
   }
 
-  if (accountJoinAllowed) {
-    const existingByUser = await prisma.eventParticipant.findFirst({
-      where: {
-        eventId,
-        userId: currentUser!.id,
+  // Check if user is already a participant (duplicate prevention).
+  const existingByUser = await prisma.eventParticipant.findFirst({
+    where: { eventId, userId: currentUser.id },
+  });
+
+  if (existingByUser) {
+    await prisma.eventParticipant.update({
+      where: { id: existingByUser.id },
+      data: {
+        ...(preference ? { preference, ...flagsFromPreference(preference) } : {}),
+        lastSeenAt: new Date(),
       },
     });
 
-    if (existingByUser) {
-      await prisma.eventParticipant.update({
-        where: { id: existingByUser.id },
-        data: {
-          ...(email ? { email } : {}),
-          ...(preference
-            ? {
-                preference,
-                ...flagsFromPreference(preference),
-              }
-            : {}),
-          lastSeenAt: new Date(),
-        },
-      });
-
-      redirect(
-        getEventLobbyUrl(eventId, { participantToken: existingByUser.participantToken }),
-      );
-    }
+    redirect(getEventLobbyUrl(eventId, { participantToken: existingByUser.participantToken }));
   }
 
-  if (!accountJoinAllowed && (!displayName || !preference)) {
-    return {
-      errors: {
-        displayName: displayName ? undefined : ["displayNameRequired"],
-        preference: preference ? undefined : ["preferenceRequired"],
-      },
-    };
-  }
-
+  // Create new EventParticipant bound to authenticated user.
   const newParticipantToken = generateParticipantToken();
   const resolvedPreference = preference ?? "UNDECIDED";
   const preferenceFlags = flagsFromPreference(resolvedPreference);
   const resolvedDisplayName =
-    displayName?.trim() ||
-    currentUser?.name?.trim() ||
-    currentUser?.email.split("@")[0] ||
-    "Guest";
+    currentUser.name?.trim() || currentUser.email.split("@")[0] || "User";
 
   await prisma.eventParticipant.create({
     data: {
       eventId,
       displayName: resolvedDisplayName,
-      email: email || null,
       participantToken: newParticipantToken,
       preference: resolvedPreference,
       ...preferenceFlags,
-      userId: accountJoinAllowed ? currentUser!.id : null,
+      userId: currentUser.id,
       joinedAt: new Date(),
       lastSeenAt: new Date(),
     },

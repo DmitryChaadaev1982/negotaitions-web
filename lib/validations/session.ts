@@ -7,6 +7,8 @@ export const createSessionSchema = z.object({
   caseId: z.string().trim().min(1, "caseIdRequired"),
   preparationDurationMinutes: preparationDurationMinutesSchema,
   negotiationDurationMinutes: negotiationDurationMinutesSchema,
+  visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PRIVATE"),
+  invitedUserIds: z.array(z.string().min(1)).default([]),
 });
 
 export const updateSessionDurationSchema = z.object({

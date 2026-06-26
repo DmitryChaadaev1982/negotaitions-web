@@ -13,7 +13,7 @@ export function StatusPageNav({ email }: { email: string }) {
 
   return (
     <div className="flex items-center gap-4 text-sm text-slate-400">
-      <LanguageSwitcher />
+      <LanguageSwitcher persistToServer />
       <span>{email}</span>
       <form action={logoutUser}>
         <button

@@ -981,6 +981,12 @@ export const en = {
     sessions: "Sessions",
     participantsInSessions: "Participants in sessions",
     totalSessionParticipants: "Total in sessions",
+    loginToJoin: "Sign in to join",
+    loginToJoinDescription: "You must be logged in to join this event. Sign in or create an account to continue.",
+    loginButton: "Sign in",
+    registerButton: "Create account",
+    accountNotActive: "Your account is not active",
+    accountNotActiveDescription: "Your account is pending approval or has been restricted. Contact an administrator.",
     status: {
       DRAFT: "Draft",
       LOBBY_OPEN: "Lobby open",
@@ -1061,6 +1067,19 @@ export const en = {
     blockedMessage:
       "Your account has been blocked. Please contact an administrator.",
     accessDenied: "Access denied.",
+    // Account menu
+    profile: "Profile",
+    accountSettings: "Account settings",
+    language: "Language",
+    // Account settings page
+    changePassword: "Change password",
+    currentPassword: "Current password",
+    newPassword: "New password",
+    confirmNewPassword: "Confirm new password",
+    passwordUpdated: "Password updated successfully.",
+    displayNameUpdated: "Display name updated.",
+    languageUpdated: "Language updated.",
+    invalidCurrentPassword: "Invalid current password.",
   },
   legal: {
     draftNotice: "Draft placeholder for legal review before production launch.",
@@ -1118,6 +1137,12 @@ export const en = {
     // Admin private-data warning
     privateRoleDataWarning: "Admin view — contains private role data.",
   },
+  browser: {
+    localStorageUnavailable:
+      "Local storage is unavailable. Some settings may not be saved in this browser.",
+    cookiesUnavailable:
+      "Cookies are required for sign-in and session recovery. Please allow cookies for this site.",
+  },
   validation: {
     titleRequired: "Title is required",
     nameRequired: "Name is required",
@@ -1144,5 +1169,25 @@ export const en = {
     eventUnavailable: "This event is no longer available.",
     caseDeleted:
       "This case has been deleted and cannot be used for a new session.",
+    accountStatusRestricted: "Your account is not active. Contact an administrator.",
+    participantTokenAlreadyLinked: "This invite link is already linked to another account.",
+    loginRequired: "You must be logged in to join this event.",
+  },
+  visibility: {
+    public: "Public",
+    private: "Private",
+    publicTitle: "Public — visible to all active users while open",
+    privateTitle: "Private — visible only to invited users and participants",
+    visibilityLabel: "Visibility",
+    selectVisibility: "Select visibility",
+    publicOption: "Public — all active users can see this while it is open",
+    privateOption: "Private — only invited users and participants can see this",
+    invitedUsers: "Invited users",
+    invitedUsersHint: "Email invitations are not sent yet. Added users will see this meeting in their list.",
+    noInvitesYet: "No invited users yet.",
+    selectFacilitator: "Facilitator / host",
+    selectFacilitatorHint: "Select the facilitator for this event. Defaults to you.",
+    facilitatorLabel: "Facilitator",
+    inheritedFromEvent: "Inherited from event",
   },
 } as const;

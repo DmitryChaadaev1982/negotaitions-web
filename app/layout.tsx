@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { ClientI18nProvider } from "@/components/client-i18n-provider";
 import { CookieBanner } from "@/components/cookie-banner";
+import { BrowserCapabilityWarning } from "@/components/browser-capability-warning";
 import { getServerLocale } from "@/lib/i18n/server";
 
 const geistSans = Geist({
@@ -41,6 +42,7 @@ export default async function RootLayout({
         <ClientI18nProvider initialLocale={locale}>
           {children}
           <CookieBanner />
+          <BrowserCapabilityWarning />
         </ClientI18nProvider>
       </body>
     </html>

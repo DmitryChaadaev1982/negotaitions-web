@@ -2,9 +2,41 @@
 
 import { useI18n, type Locale } from "@/lib/i18n/useI18n";
 import { cn } from "@/lib/cn";
+import { updateUserPreferredLocale } from "@/app/actions/auth";
 
-export function LanguageSwitcher({ className }: { className?: string }) {
+type LanguageSwitcherProps = {
+  className?: string;
+  /**
+   * When true (logged-in contexts), the switch also persists the locale to
+   * User.preferredLocale via the server action. Defaults to false so public,
+   * auth, and legal pages perform no server call for unauthenticated visitors.
+   */
+  persistToServer?: boolean;
+};
+
+export function LanguageSwitcher({
+  className,
+  persistToServer = false,
+}: LanguageSwitcherProps) {
   const { locale, setLocale } = useI18n();
+
+  const handleSelect = (option: Locale) => {
+    // Client-side change is always immediate and authoritative for the UI.
+    setLocale(option);
+
+    if (!persistToServer) {
+      return;
+    }
+
+    // Fire-and-forget: server persistence must never block or break the
+    // client-side switch. A no-op for unauthenticated users; harmless for
+    // non-active users. Surface failures only in development.
+    void updateUserPreferredLocale(option).catch((error) => {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Failed to persist preferred locale", error);
+      }
+    });
+  };
 
   return (
     <div
@@ -20,7 +52,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           key={option}
           type="button"
           data-testid={`language-switch-${option}`}
-          onClick={() => setLocale(option)}
+          onClick={() => handleSelect(option)}
           className={cn(
             "rounded-md px-3 py-1 uppercase transition-all duration-200",
             locale === option

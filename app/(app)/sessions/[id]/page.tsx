@@ -78,6 +78,7 @@ export default async function SessionDetailPage({
       session={{
         id: session.id,
         title: session.title,
+        visibility: (session.visibility ?? "PRIVATE") as "PUBLIC" | "PRIVATE",
         durationSeconds: session.durationSeconds,
         preparationDurationSeconds: session.preparationDurationSeconds,
         negotiationState: session.negotiationState,

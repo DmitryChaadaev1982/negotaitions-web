@@ -125,6 +125,8 @@ type BuildEventStateInput = {
   isAdmin?: boolean;
   currentParticipant: EventParticipant | null;
   accountMode?: boolean;
+  /** ID of the authenticated user making this request. Used to resolve case library when event has no hostUserId. */
+  userId?: string | null;
 };
 
 function getAssignmentDurationDefaults(
@@ -153,12 +155,18 @@ function getAssignmentDurationDefaults(
 export async function buildEventState(
   input: BuildEventStateInput,
 ): Promise<EventStateResponse> {
-  // Phase 5: Use the event host's cases instead of the demo facilitator.
-  // For events with a real hostUserId, show that user's case library.
-  // For legacy/guest events without a hostUserId, fall back to demo facilitator.
+  // Phase 5+: Resolve facilitatorId for the case library:
+  //   1. Prefer event.hostUserId when set (the event creator's cases).
+  //   2. If event has no hostUserId and a real authenticated user is accessing as host/admin,
+  //      use that user's own cases — do NOT fall back to the demo facilitator for real users.
+  //   3. Only fall back to demo facilitator when there is genuinely no real user context.
   let facilitatorId: string;
   if (input.event.hostUserId) {
     facilitatorId = input.event.hostUserId;
+  } else if (input.userId) {
+    // Real authenticated user (admin or host token owner) on a legacy event without a hostUserId:
+    // use their own case library instead of the demo facilitator.
+    facilitatorId = input.userId;
   } else {
     const { getDemoFacilitator } = await import("@/lib/demo-user");
     const demo = await getDemoFacilitator();

@@ -9,6 +9,7 @@ import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { AddParticipantForm } from "@/components/add-participant-form";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { StatusBadge } from "@/components/badge";
+import { VisibilityBadge } from "@/components/visibility-badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import { PageHeader } from "@/components/page-header";
@@ -35,6 +36,7 @@ type SessionDetailViewProps = {
   session: {
     id: string;
     title: string;
+    visibility?: "PUBLIC" | "PRIVATE";
     durationSeconds: number;
     negotiationState:
       | "PREPARATION"
@@ -190,6 +192,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       <PageHeader
         title={session.title}
         description={t("sessions.sessionDetailsDescription")}
+        badge={session.visibility ? <VisibilityBadge visibility={session.visibility} /> : undefined}
         action={
           <div className="flex flex-wrap items-center gap-2">
             {!isReadOnly ? (

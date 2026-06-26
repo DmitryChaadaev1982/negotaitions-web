@@ -41,8 +41,44 @@ const defaultPreferences = (): CookieConsentPreferences => ({
 });
 
 /**
+ * Safely test whether localStorage is writable in this browser context.
+ * Returns false in incognito when storage quota is 0, or when blocked by policy.
+ */
+export function isLocalStorageAvailable(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const testKey = "__ls_test__";
+    localStorage.setItem(testKey, "1");
+    localStorage.removeItem(testKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Safely test whether cookies appear to be enabled.
+ * Uses document.cookie write/read; does not persist.
+ */
+export function areCookiesAvailable(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (!navigator.cookieEnabled) return false;
+    const testKey = "__cookie_test__";
+    document.cookie = `${testKey}=1; path=/; SameSite=Lax`;
+    const available = document.cookie.includes(`${testKey}=`);
+    // Clean up test cookie
+    document.cookie = `${testKey}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+    return available;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read stored cookie consent preferences from localStorage.
- * Returns null if not yet set (i.e. banner should be shown).
+ * Returns null if not yet set (i.e. banner should be shown)
+ * or if localStorage is unavailable.
  */
 export function getStoredCookieConsent(): CookieConsentPreferences | null {
   if (typeof window === "undefined") return null;
@@ -66,6 +102,7 @@ export function getStoredCookieConsent(): CookieConsentPreferences | null {
 /**
  * Persist cookie consent preferences to localStorage.
  * Always sets necessary=true regardless of input.
+ * Silently skips write if localStorage is unavailable.
  */
 export function storeCookieConsent(
   prefs: Omit<CookieConsentPreferences, "version" | "necessary" | "updatedAt">,
@@ -78,7 +115,11 @@ export function storeCookieConsent(
     updatedAt: new Date().toISOString(),
   };
   if (typeof window !== "undefined") {
-    localStorage.setItem(COOKIE_CONSENT_STORAGE_KEY, JSON.stringify(stored));
+    try {
+      localStorage.setItem(COOKIE_CONSENT_STORAGE_KEY, JSON.stringify(stored));
+    } catch {
+      // localStorage unavailable (quota exceeded, private browsing policy, etc.) — ignore
+    }
   }
   return stored;
 }

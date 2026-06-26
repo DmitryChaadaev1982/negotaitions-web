@@ -26,6 +26,7 @@ export type TrainingEventListItem = {
   id: string;
   title: string;
   status: TrainingEventStatus;
+  visibility: "PUBLIC" | "PRIVATE";
   canManage: boolean;
   scheduledAt: string | null;
   publicJoinCode: string;

@@ -36,6 +36,7 @@ export async function GET(request: Request, context: RouteContext) {
   const state = await buildEventState({
     ...access,
     accountMode: Boolean(user),
+    userId: user?.id ?? null,
   });
 
   return NextResponse.json(state);

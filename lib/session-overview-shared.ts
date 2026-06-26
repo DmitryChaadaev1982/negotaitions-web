@@ -17,12 +17,14 @@ export type SessionNegotiationState =
 export type SessionListItem = {
   id: string;
   title: string;
+  visibility: "PUBLIC" | "PRIVATE";
   userRole: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | "HOST" | null;
   canManage: boolean;
   caseTitle: string;
   eventId: string | null;
   eventTitle: string | null;
   eventStatus: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED" | null;
+  eventVisibility: "PUBLIC" | "PRIVATE" | null;
   eventLobbyUrl: string | null;
   status: SessionDisplayStatus;
   negotiationState: SessionNegotiationState;

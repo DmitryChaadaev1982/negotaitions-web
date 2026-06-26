@@ -13,7 +13,7 @@ type NewSessionPageProps = {
 export default async function NewSessionPage({
   searchParams,
 }: NewSessionPageProps) {
-  await requireActiveUser("/sessions/new");
+  const user = await requireActiveUser("/sessions/new");
   const { caseId } = await searchParams;
   const facilitator = await getDemoFacilitator();
 
@@ -46,11 +46,19 @@ export default async function NewSessionPage({
       ? caseId
       : cases[0]?.id;
 
+  const activeUsers = await prisma.user.findMany({
+    where: { status: "ACTIVE" },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true, email: true },
+  });
+
   return (
     <NewSessionPageClient
       cases={cases}
       defaultCaseId={defaultCaseId}
       deletedCaseError={requestedDeletedCase != null}
+      currentUserId={user.id}
+      activeUsers={activeUsers}
     />
   );
 }

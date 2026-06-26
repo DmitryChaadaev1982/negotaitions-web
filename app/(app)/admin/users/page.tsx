@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { AdminUserRowActions } from "@/components/admin-user-row-actions";
+import { CompactAdminUserRowActions } from "@/components/admin-user-row-actions";
 import { StatusBadge } from "@/components/badge";
 import { DataTable, DataTableBody, DataTableCell, DataTableElement, DataTableHead, DataTableHeaderCell, DataTableRow } from "@/components/ui/data-table";
 import { getServerDictionary, getServerLocale } from "@/lib/i18n/server";
@@ -20,14 +20,12 @@ type AdminUsersPageProps = {
   }>;
 };
 
-function formatDate(locale: string, value: Date | null): string {
+function formatDateCompact(locale: string, value: Date | null): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
+    year: "2-digit",
     month: "short",
     day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
   }).format(value);
 }
 
@@ -93,21 +91,12 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
       createdAt: true,
       lastLoginAt: true,
       approvedAt: true,
-      _count: {
-        select: {
-          sessionParticipants: true,
-        },
-      },
     },
   });
 
   const effectiveAdminCount = (
     await prisma.user.findMany({
-      select: {
-        email: true,
-        globalRole: true,
-        status: true,
-      },
+      select: { email: true, globalRole: true, status: true },
     })
   ).filter((user) => {
     const isBootstrap = adminEmails.includes(user.email.toLowerCase());
@@ -164,7 +153,7 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
             name="q"
             defaultValue={query}
             placeholder={t("admin.searchUsers")}
-            className="min-w-[260px] flex-1 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+            className="min-w-[200px] flex-1 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
           />
           <button
             type="submit"
@@ -173,7 +162,6 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
             {t("common.view")}
           </button>
         </div>
-
         <div className="mt-3 flex flex-wrap gap-2">
           {baseFilters.map((item) => {
             const active = filter === item.key;
@@ -195,24 +183,20 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
         </div>
       </form>
 
+      {/* Compact table: name+email | status | role | created | actions */}
       <DataTable>
         <DataTableElement>
           <DataTableHead>
-            <DataTableHeaderCell>{t("common.name")}</DataTableHeaderCell>
-            <DataTableHeaderCell>{t("auth.email")}</DataTableHeaderCell>
+            <DataTableHeaderCell>{t("common.name")} / {t("auth.email")}</DataTableHeaderCell>
             <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
             <DataTableHeaderCell>{t("admin.systemRole")}</DataTableHeaderCell>
             <DataTableHeaderCell>{t("admin.created")}</DataTableHeaderCell>
-            <DataTableHeaderCell>{t("admin.lastLogin")}</DataTableHeaderCell>
-            <DataTableHeaderCell>{t("admin.approvedAt")}</DataTableHeaderCell>
-            <DataTableHeaderCell>{t("admin.linkedEvents")}</DataTableHeaderCell>
-            <DataTableHeaderCell>{t("admin.linkedSessions")}</DataTableHeaderCell>
             <DataTableHeaderCell>{t("common.actions")}</DataTableHeaderCell>
           </DataTableHead>
           <DataTableBody>
             {users.length === 0 ? (
               <DataTableRow>
-                <td colSpan={10} className="px-6 py-8 text-center text-sm text-slate-400">
+                <td colSpan={5} className="px-6 py-8 text-center text-sm text-slate-400">
                   {t("admin.noUsersFound")}
                 </td>
               </DataTableRow>
@@ -225,47 +209,63 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
                   user.status !== "BLOCKED" &&
                   user.status !== "REJECTED";
                 const wouldLeaveNoAdmin = isEffectiveAdmin && effectiveAdminCount <= 1;
+                const isCurrentAdmin = user.globalRole === "ADMIN" || isBootstrapAdmin;
 
                 const canReject = !isSelf && !wouldLeaveNoAdmin;
                 const canBlock = !isSelf && !wouldLeaveNoAdmin;
-                const canRemoveAdmin = !isSelf && !isBootstrapAdmin && !wouldLeaveNoAdmin;
 
                 return (
                   <DataTableRow key={user.id}>
+                    {/* Compact name + email cell */}
                     <DataTableCell>
-                      <div className="font-medium text-slate-100">{user.name?.trim() || "—"}</div>
+                      <div className="font-medium text-slate-100 truncate max-w-[180px]">
+                        {user.name?.trim() || <span className="text-slate-500 italic">—</span>}
+                      </div>
+                      <div className="text-xs text-slate-400 truncate max-w-[180px]">{user.email}</div>
+                      {isBootstrapAdmin && (
+                        <div className="mt-0.5 text-xs text-cyan-300">{t("admin.bootstrapAdmin")}</div>
+                      )}
                     </DataTableCell>
-                    <DataTableCell>
-                      <div className="text-slate-300">{user.email}</div>
-                      {isBootstrapAdmin ? (
-                        <div className="mt-1 text-xs text-cyan-300">{t("admin.bootstrapAdmin")}</div>
-                      ) : null}
-                    </DataTableCell>
+
                     <DataTableCell>
                       <StatusBadge variant={getStatusBadgeVariant(user.status)}>
                         {getStatusLabel(t, user.status)}
                       </StatusBadge>
+                      {/* Secondary date info on hover / as subtext */}
+                      {user.approvedAt && (
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          ✓ {formatDateCompact(localeCode, user.approvedAt)}
+                        </div>
+                      )}
+                      {user.lastLoginAt && (
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          ↩ {formatDateCompact(localeCode, user.lastLoginAt)}
+                        </div>
+                      )}
                     </DataTableCell>
+
                     <DataTableCell>
-                      <StatusBadge variant={user.globalRole === "ADMIN" ? "info" : "default"}>
-                        {user.globalRole === "ADMIN" ? t("admin.administrator") : t("admin.user")}
+                      <StatusBadge variant={isCurrentAdmin ? "info" : "default"}>
+                        {isCurrentAdmin ? t("admin.administrator") : t("admin.user")}
                       </StatusBadge>
                     </DataTableCell>
-                    <DataTableCell>{formatDate(localeCode, user.createdAt)}</DataTableCell>
-                    <DataTableCell>{formatDate(localeCode, user.lastLoginAt)}</DataTableCell>
-                    <DataTableCell>{formatDate(localeCode, user.approvedAt)}</DataTableCell>
-                    {/* TODO(phase-3-user-binding): replace placeholder with safe account-linked event counts. */}
-                    <DataTableCell>—</DataTableCell>
-                    <DataTableCell>{user._count.sessionParticipants}</DataTableCell>
+
                     <DataTableCell>
-                      <AdminUserRowActions
+                      <span className="text-xs text-slate-400">
+                        {formatDateCompact(localeCode, user.createdAt)}
+                      </span>
+                    </DataTableCell>
+
+                    <DataTableCell>
+                      <CompactAdminUserRowActions
                         userId={user.id}
-                        canApprove={user.status !== "ACTIVE"}
+                        userStatus={user.status}
+                        isCurrentAdmin={isCurrentAdmin}
+                        isBootstrapAdmin={isBootstrapAdmin}
+                        isSelf={isSelf}
                         canReject={canReject}
                         canBlock={canBlock}
-                        canUnblock={user.status === "BLOCKED"}
-                        canMakeAdmin={user.globalRole !== "ADMIN"}
-                        canRemoveAdmin={canRemoveAdmin}
+                        wouldLeaveNoAdmin={wouldLeaveNoAdmin}
                         labels={{
                           approve: t("admin.approve"),
                           reject: t("admin.reject"),
@@ -276,6 +276,7 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
                           approvalComment: t("admin.approvalComment"),
                           confirmAction: t("admin.confirmAction"),
                           confirmUndoWarning: t("admin.actionCannotBeUndone"),
+                          administrator: t("admin.administrator"),
                         }}
                       />
                     </DataTableCell>
