@@ -11,7 +11,6 @@ import { ConnectionStatusBadge } from "@/components/connection-status-badge";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
 import {
   GradientButtonLink,
@@ -228,20 +227,40 @@ export function EventLobbyView({
 
   const updatePreference = useCallback(
     async (preference: string) => {
-      if (!participantToken) return;
+      setState((current) =>
+        current?.currentParticipant
+          ? {
+              ...current,
+              currentParticipant: {
+                ...current.currentParticipant,
+                preference,
+              },
+              participants: current.participants.map((participant) =>
+                participant.id === current.currentParticipant?.id
+                  ? { ...participant, preference }
+                  : participant,
+              ),
+            }
+          : current,
+      );
 
       const response = await fetch(`/api/events/${eventId}/participant`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantToken, preference }),
+        body: JSON.stringify({
+          participantToken: participantToken || undefined,
+          preference,
+        }),
       });
 
       if (response.ok) {
         const data = (await response.json()) as EventStateResponse;
         setState(data);
+      } else {
+        await fetchState();
       }
     },
-    [eventId, participantToken],
+    [eventId, fetchState, participantToken],
   );
 
   const createSession = useCallback(async () => {
@@ -289,7 +308,9 @@ export function EventLobbyView({
             ? t("events.participantAlreadyAssignedName", {
                 name: data.participantName,
               })
-            : t("validation.createSessionFailed"),
+            : data.error === "facilitatorPlayerConflict" && data.participantName
+              ? t("validation.facilitatorPlayerConflict")
+              : t("validation.createSessionFailed"),
         );
       }
     } finally {
@@ -299,11 +320,14 @@ export function EventLobbyView({
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
-    const url = `${window.location.origin}/events/join/${state.event.publicJoinCode}`;
+    const url =
+      state.event.visibility === "PUBLIC"
+        ? `${window.location.origin}/events/join/${state.event.publicJoinCode}`
+        : `${window.location.origin}/events/${eventId}/join`;
     await navigator.clipboard.writeText(url);
     setCopyMessage(t("events.linkCopied"));
     window.setTimeout(() => setCopyMessage(null), 2000);
-  }, [state, t]);
+  }, [eventId, state, t]);
 
   const completeEvent = useCallback(async () => {
     setIsCompletingEvent(true);
@@ -349,7 +373,7 @@ export function EventLobbyView({
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#020617] px-4">
         <p className="text-sm text-slate-400">{t("common.loading")}…</p>
-        {state?.isHost ? (
+        {state?.isEventOwner ? (
           <button
             type="button"
             data-testid="complete-event-button"
@@ -406,7 +430,12 @@ export function EventLobbyView({
   }
 
   const draft = state.assignmentDraft;
+  // isHost: system-level host capabilities (used for API calls, read-only display decisions)
   const isHost = state.isHost || Boolean(hostToken);
+  // isEventOwner: this user is the designated host/facilitator of THIS event.
+  // Only isEventOwner sees the host-controls panel and the "copy join link" button.
+  // A system admin opening another user's event gets participant view.
+  const isEventOwner = state.isEventOwner || Boolean(hostToken);
   const currentAssignment = state.currentParticipant
     ? state.participants.find((p) => p.id === state.currentParticipant?.id)
     : null;
@@ -445,16 +474,25 @@ export function EventLobbyView({
 
   return (
     <div className="flex min-h-screen flex-col bg-[#020617]" data-testid="event-lobby-page">
-      {participantToken || hostToken ? (
-        <EventLobbyPresence
-          eventId={eventId}
-          participantToken={participantToken}
-          hostToken={hostToken}
-        />
-      ) : null}
+      {/* Render in all lobby modes. In account mode (no token), the heartbeat
+          endpoint resolves presence via the authenticated user session. */}
+      <EventLobbyPresence
+        eventId={eventId}
+        participantToken={participantToken}
+        hostToken={hostToken}
+      />
       <header className="glass-header border-b border-slate-700/40 px-4 py-3 sm:px-6">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4">
+            <SecondaryButtonLink
+              href="/events"
+              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+              aria-label={t("events.backToEventsCompact")}
+              title={t("events.backToEventsCompact")}
+              data-testid="back-to-events-button"
+            >
+              {t("events.backToEventsCompact")}
+            </SecondaryButtonLink>
             <BrandLogo size="sm" href={isHost ? "/events" : undefined} />
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-cyan-400/80">
@@ -467,13 +505,12 @@ export function EventLobbyView({
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {isHost ? (
+            {isEventOwner ? (
               <SecondaryButton type="button" onClick={() => void copyJoinLink()}>
                 {t("events.copyEventJoinLink")}
               </SecondaryButton>
             ) : null}
             <LanguageSwitcher />
-            <RejoinNavLink />
           </div>
         </div>
         {copyMessage ? (
@@ -489,7 +526,7 @@ export function EventLobbyView({
           <div className="shrink-0 border-b border-slate-600/25 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-50">{t("events.commonLobby")}</h2>
             <p className="text-xs text-slate-400">
-              {liveKit?.displayName ?? state.currentParticipant?.displayName ?? "Host"}
+              {liveKit?.displayName ?? state.currentParticipant?.displayName ?? ""}
             </p>
             <p className="mt-1 text-[11px] text-slate-500">{t("events.singleDeviceHint")}</p>
           </div>
@@ -519,7 +556,11 @@ export function EventLobbyView({
               <GlassCardHeader>
                 <h3 className="text-sm font-semibold text-slate-50">
                   {state.currentParticipant.displayName}
-                  {isHost ? (
+                  {/* Show "Ведущий" only when this participant IS the actual event
+                      host (isHost on EventParticipant row). System-level admin
+                      access gives host controls but must not label the admin as
+                      the event host if they didn't create the event. */}
+                  {currentAssignment?.isHost ? (
                     <span className="ml-2 text-xs font-normal text-cyan-400">
                       ({t("events.hostLabel")})
                     </span>
@@ -605,7 +646,7 @@ export function EventLobbyView({
             </GlassCardContent>
           </GlassCard>
 
-          {state.selectedCase && !isHost ? (
+          {state.selectedCase && !isEventOwner ? (
             <GlassCard elevated>
               <GlassCardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -641,7 +682,7 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          {isHost ? (
+          {isEventOwner ? (
             <EventHostControlsPanel
               state={state}
               draft={draft}
@@ -705,7 +746,7 @@ export function EventLobbyView({
             <GlassCard data-testid="my-sessions-in-event-section">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm font-semibold text-slate-100">
-                  {isHost ? t("events.sessionsInThisEvent") : t("events.mySessionsInThisEvent")}
+                  {isEventOwner ? t("events.sessionsInThisEvent") : t("events.mySessionsInThisEvent")}
                 </p>
                 <div className="space-y-2">
                   {participantHistoricalSessions.map((session) => {
@@ -823,7 +864,7 @@ function EventCompletedOverlay({
         ) : null}
       </div>
       <div className="flex flex-wrap justify-center gap-3">
-        {hostToken || state.isHost ? (
+        {hostToken || state.isEventOwner ? (
           <GradientButtonLink href="/events">{t("events.backToEvents")}</GradientButtonLink>
         ) : null}
         {currentAssignment?.assignedSessionId ? (
@@ -837,7 +878,7 @@ function EventCompletedOverlay({
             {t("events.openSessionMaterials")}
           </GradientButtonLink>
         ) : null}
-        {(hostToken || state.isHost) && latestParticipantSession ? (
+        {(hostToken || state.isEventOwner) && latestParticipantSession ? (
           <SecondaryButtonLink href={`/sessions/${latestParticipantSession.id}`}>
             {t("events.materials")}
           </SecondaryButtonLink>

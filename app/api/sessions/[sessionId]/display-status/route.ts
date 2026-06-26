@@ -16,8 +16,10 @@ export async function GET(request: Request, context: RouteContext) {
   // Require joinToken belonging to this session OR admin.
   // Generic active users must not read arbitrary session status —
   // no user↔session ownership relation exists yet (Phase C).
-  const joinToken = new URL(request.url).searchParams.get("joinToken");
-  const access = await apiRequireSessionJoinTokenOrAdmin(sessionId, joinToken);
+  const searchParams = new URL(request.url).searchParams;
+  const joinToken = searchParams.get("joinToken");
+  const participantId = searchParams.get("participantId");
+  const access = await apiRequireSessionJoinTokenOrAdmin(sessionId, joinToken, participantId);
   if (!access.ok) return access.response;
 
   const session = await prisma.session.findFirst({

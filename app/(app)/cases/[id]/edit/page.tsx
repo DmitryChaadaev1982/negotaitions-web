@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 
 import { EditCasePageView } from "@/components/edit-case-page-view";
+import { canManageCase } from "@/lib/case-access";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
-import { requireAdminUser } from "@/lib/auth";
+import { requireActiveUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +16,8 @@ type EditCasePageProps = {
 
 export default async function EditCasePage({ params }: EditCasePageProps) {
   const { id } = await params;
-  await requireAdminUser(`/cases/${id}/edit`);
+  const user = await requireActiveUser(`/cases/${id}/edit`);
+  const adminViewer = isAdmin(user);
 
   const negotiationCase = await prisma.negotiationCase.findFirst({
     where: {
@@ -29,6 +32,10 @@ export default async function EditCasePage({ params }: EditCasePageProps) {
   });
 
   if (!negotiationCase) {
+    notFound();
+  }
+
+  if (!canManageCase(user, negotiationCase, adminViewer)) {
     notFound();
   }
 

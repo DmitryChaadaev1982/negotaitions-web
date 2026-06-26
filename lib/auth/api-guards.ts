@@ -46,6 +46,7 @@ export async function apiRequireActiveUser() {
 export async function apiRequireSessionJoinTokenOrAdmin(
   sessionId: string,
   joinToken: string | null,
+  participantId: string | null = null,
 ): Promise<
   | {
       ok: true;
@@ -61,7 +62,13 @@ export async function apiRequireSessionJoinTokenOrAdmin(
   const access = await getCurrentUserSessionAccess(sessionId, user, {
     joinToken,
   });
-  if (!access || !canAccessSession(access)) {
+  const accountParticipant =
+    participantId && user
+      ? await import("@/lib/room-participant-resolver").then(({ resolveRoomParticipantFromParsedBody }) =>
+          resolveRoomParticipantFromParsedBody({ participantId }, sessionId),
+        )
+      : null;
+  if (!accountParticipant && (!access || !canAccessSession(access))) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -71,13 +78,13 @@ export async function apiRequireSessionJoinTokenOrAdmin(
     };
   }
 
-  const participant = access.tokenParticipant ?? access.userParticipant;
+  const participant = accountParticipant ?? access?.tokenParticipant ?? access?.userParticipant;
 
   return {
     ok: true,
-    isAdminAccess: access.isAdmin,
-    isEventHostOwner: access.isEventHostOwner,
-    canManageSession: canManageSession(access),
+    isAdminAccess: access?.isAdmin ?? false,
+    isEventHostOwner: access?.isEventHostOwner ?? false,
+    canManageSession: access ? canManageSession(access) : participant?.type === "FACILITATOR",
     participantId: participant?.id ?? null,
     participantType: participant?.type ?? null,
   };

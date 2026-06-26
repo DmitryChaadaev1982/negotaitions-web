@@ -100,6 +100,12 @@ export type EventStateResponse = {
     preference: string;
   } | null;
   isHost: boolean;
+  /**
+   * true only when the authenticated user is the designated host/facilitator
+   * of this event, or has a valid hostToken. false for system admins who are
+   * not the event owner. Use this to gate host-controls UI in the lobby.
+   */
+  isEventOwner: boolean;
   participants: EventStateParticipant[];
   sessions: EventStateSession[];
   availableParticipants: EventStateParticipant[];
@@ -124,6 +130,8 @@ export type EventStateResponse = {
 type BuildEventStateInput = {
   event: TrainingEvent;
   isHost: boolean;
+  /** true only for designated host/facilitator/hostToken — not plain admins. Gates host-controls UI. */
+  isEventOwner?: boolean;
   isAdmin?: boolean;
   currentParticipant: EventParticipant | null;
   accountMode?: boolean;
@@ -325,6 +333,7 @@ export async function buildEventState(
         }
       : null,
     isHost: input.isHost,
+    isEventOwner: input.isEventOwner ?? input.isHost,
     participants: mappedParticipants,
     sessions,
     availableParticipants: mappedParticipants.filter(

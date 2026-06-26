@@ -61,17 +61,19 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!isAdmin(user) && user.status !== "ACTIVE") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
   if (joinToken) {
     // joinToken path: user must own the participant or participant must be unclaimed.
     if (participant.userId && participant.userId !== user.id) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
   } else {
-    // participantId path: user must own the participant, be admin, or be the event host.
-    const adminUser = isAdmin(user);
+    // participantId path: account room APIs must target the caller's own row.
     const isOwner = participant.userId === user.id;
-    const isEventHost = participant.session.event?.hostUserId === user.id;
-    if (!isOwner && !adminUser && !isEventHost) {
+    if (!isOwner) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
   }

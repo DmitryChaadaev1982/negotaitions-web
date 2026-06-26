@@ -88,6 +88,11 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
             <DataTableBody>
               {cases.map((negotiationCase) => (
                 <DataTableRow key={negotiationCase.id}>
+                  {(() => {
+                    const canManageCase = isAdminViewer || negotiationCase.isMyCase;
+
+                    return (
+                      <>
                   <DataTableCell>
                     <div className="font-medium text-slate-50">
                       {negotiationCase.title}
@@ -128,7 +133,7 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
                       >
                         {t("common.view")}
                       </Link>
-                      {isAdminViewer ? (
+                      {canManageCase ? (
                         <>
                           <Link
                             href={`/cases/${negotiationCase.id}/edit`}
@@ -141,6 +146,9 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
                       ) : null}
                     </div>
                   </DataTableCell>
+                      </>
+                    );
+                  })()}
                 </DataTableRow>
               ))}
             </DataTableBody>

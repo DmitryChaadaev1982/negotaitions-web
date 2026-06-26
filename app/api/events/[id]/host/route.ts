@@ -95,6 +95,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const state = await buildEventState({
     event: updated,
     isHost: true,
+    isEventOwner: access.isEventOwner,
     currentParticipant: access.currentParticipant,
   });
 
@@ -195,6 +196,7 @@ export async function POST(request: Request, context: RouteContext) {
       where: { id: eventId },
     }),
     isHost: true,
+    isEventOwner: access.isEventOwner,
     currentParticipant: access.currentParticipant,
   });
 

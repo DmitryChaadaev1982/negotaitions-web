@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
+import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { buildEventState } from "@/lib/event-state";
 import { eventAccessQuerySchema } from "@/lib/validations/event";
 
@@ -33,8 +35,21 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
   }
 
+  // Authenticated lobby identity must be resolved by eventId + currentUser.id.
+  // If an authenticated user (admin, hostOwner, facilitatorOwner) has event access
+  // but no EventParticipant row yet, auto-create one so their identity is correct.
+  // Never represent them as host/first participant.
+  let { currentParticipant } = access;
+  if (!currentParticipant && user && (isAdmin(user) || user.status === "ACTIVE")) {
+    currentParticipant = await ensureUserEventParticipant(eventId, user);
+  }
+
   const state = await buildEventState({
-    ...access,
+    event: access.event,
+    isHost: access.isHost,
+    isEventOwner: access.isEventOwner,
+    isAdmin: access.isAdmin,
+    currentParticipant,
     accountMode: Boolean(user),
     userId: user?.id ?? null,
   });

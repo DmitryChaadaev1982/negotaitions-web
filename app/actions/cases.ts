@@ -8,7 +8,9 @@ import {
   Difficulty,
   VisibilityLevel,
 } from "@/app/generated/prisma/client";
-import { requireActiveUser, requireAdminUser } from "@/lib/auth";
+import { requireActiveUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
+import { canManageCase } from "@/lib/case-access";
 import {
   DEFAULT_NEGOTIATION_DURATION_SECONDS,
   minutesToSeconds,
@@ -188,7 +190,8 @@ export async function updateCase(
   _prevState: CreateCaseState,
   formData: FormData,
 ): Promise<CreateCaseState> {
-  await requireAdminUser();
+  const user = await requireActiveUser("/cases");
+  const adminViewer = isAdmin(user);
 
   const roles = parseCaseRolesFromFormData(formData);
 
@@ -234,6 +237,14 @@ export async function updateCase(
       return {
         errors: {
           form: ["caseNotFound"],
+        },
+      };
+    }
+
+    if (!canManageCase(user, existingCase, adminViewer)) {
+      return {
+        errors: {
+          form: ["caseForbidden"],
         },
       };
     }
@@ -305,7 +316,8 @@ export async function updateCase(
 }
 
 export async function deleteCase(caseId: string) {
-  await requireAdminUser();
+  const user = await requireActiveUser("/cases");
+  const adminViewer = isAdmin(user);
 
   const existingCase = await prisma.negotiationCase.findFirst({
     where: {
@@ -315,6 +327,10 @@ export async function deleteCase(caseId: string) {
   });
 
   if (!existingCase) {
+    return;
+  }
+
+  if (!canManageCase(user, existingCase, adminViewer)) {
     return;
   }
 

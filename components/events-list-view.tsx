@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/badge";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import { cn } from "@/lib/cn";
-import { getEventPublicJoinUrl } from "@/lib/config";
+import { getEventJoinUrl, getEventPublicJoinUrl } from "@/lib/config";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
   cancelTrainingEvent,
@@ -172,6 +172,20 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           {t("events.actionOpen")}
         </Link>
       ) : null}
+      {event.canManage && canEnterEventLobby(event.status) ? (
+        <Link
+          href={`/events/${event.id}/edit`}
+          className={cn(
+            compactButtonClass,
+            "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
+          )}
+          title={t("events.editEvent")}
+          aria-label={t("events.editEvent")}
+          data-testid="edit-event-button"
+        >
+          {t("events.actionEdit")}
+        </Link>
+      ) : null}
       {event.sessionCount > 0 && event.primarySessionId ? (
         <Link
           href={`/sessions?eventId=${event.id}`}
@@ -204,12 +218,20 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           {t("events.materials")}
         </Link>
       ) : null}
-      {event.visibility === "PUBLIC" ? (
+      {event.canManage ? (
         <button
           type="button"
           className="inline-flex h-8 shrink-0 items-center justify-center px-2 text-xs font-medium text-blue-400 underline decoration-blue-400/60 underline-offset-2 transition-colors hover:text-blue-300 hover:decoration-blue-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617]"
-          title={t("events.copyEventJoinLink")}
-          aria-label={t("events.copyEventJoinLink")}
+          title={
+            event.visibility === "PUBLIC"
+              ? t("events.copyEventJoinLink")
+              : t("events.copyPrivateInviteLink")
+          }
+          aria-label={
+            event.visibility === "PUBLIC"
+              ? t("events.copyEventJoinLink")
+              : t("events.copyPrivateInviteLink")
+          }
           data-testid="copy-event-link-button"
           onClick={() => onCopyLink(event)}
         >
@@ -323,7 +345,11 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
   };
 
   const copyLink = async (event: EventRow) => {
-    await navigator.clipboard.writeText(getEventPublicJoinUrl(event.publicJoinCode));
+    const url =
+      event.visibility === "PUBLIC"
+        ? getEventPublicJoinUrl(event.publicJoinCode)
+        : getEventJoinUrl(event.id);
+    await navigator.clipboard.writeText(url);
     setCopyId(event.id);
     window.setTimeout(() => setCopyId(null), 2000);
   };

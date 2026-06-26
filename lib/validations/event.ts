@@ -65,7 +65,7 @@ export const updateEventHostSchema = z.object({
 });
 
 export const updateEventParticipantSchema = z.object({
-  participantToken: z.string().min(1),
+  participantToken: z.string().min(1).optional(),
   preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]),
 });
 

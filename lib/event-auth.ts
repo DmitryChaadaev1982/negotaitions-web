@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 export type EventAccessContext = {
   event: TrainingEvent;
   isHost: boolean;
+  isEventOwner: boolean;
   isAdmin: boolean;
   currentParticipant: EventParticipant | null;
 };
@@ -54,6 +55,7 @@ export async function resolveEventAccess(
   return {
     event: access.event,
     isHost: access.isHost,
+    isEventOwner: access.isEventOwner,
     isAdmin: access.isAdmin,
     currentParticipant: access.currentParticipant,
   };

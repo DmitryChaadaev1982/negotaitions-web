@@ -15,14 +15,162 @@
  * receive null, which causes API routes to return 401/403.
  */
 
-import { getOptionalCurrentUser } from "@/lib/auth";
+import { Prisma } from "@/app/generated/prisma/client";
+import { getOptionalCurrentUser, type AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { generateJoinToken } from "@/lib/join-token";
 import { prisma } from "@/lib/prisma";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import { sessionVisibilityWhere } from "@/lib/visibility";
 
 export type RoomParticipantResult = Awaited<
   ReturnType<typeof getSessionParticipantByJoinToken>
 >;
+
+const roomParticipantInclude = {
+  session: {
+    select: {
+      id: true,
+      eventId: true,
+      negotiationState: true,
+      negotiationStartedAt: true,
+      preparationDurationSeconds: true,
+      durationSeconds: true,
+      status: true,
+      closedByEventAt: true,
+      closeReason: true,
+      event: {
+        select: {
+          id: true,
+          status: true,
+          hostUserId: true,
+          facilitatorUserId: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SessionParticipantInclude;
+
+function isActiveAccountUser(user: AuthUser) {
+  return isAdmin(user) || user.status === "ACTIVE";
+}
+
+function displayNameForUser(user: AuthUser) {
+  return user.name?.trim() || user.email.split("@")[0] || "User";
+}
+
+function isSerializableConflict(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
+  );
+}
+
+async function findParticipantForAccount(sessionId: string, userId: string) {
+  return prisma.sessionParticipant.findFirst({
+    where: { sessionId, userId },
+    include: roomParticipantInclude,
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/**
+ * Account room entry point: resolve the current user's own SessionParticipant.
+ *
+ * This must never fall back to the first/facilitator participant row. If the
+ * account is authorized for the room but has no row yet, create a user-bound
+ * participant so LiveKit, presence, and roster state all target the caller.
+ */
+export async function ensureAccountRoomParticipant(
+  sessionId: string,
+  user: AuthUser,
+): Promise<RoomParticipantResult | null> {
+  if (!isActiveAccountUser(user)) {
+    return null;
+  }
+
+  const existing = await findParticipantForAccount(sessionId, user.id);
+  if (existing) {
+    return existing as unknown as RoomParticipantResult;
+  }
+
+  const adminUser = isAdmin(user);
+  const session = await prisma.session.findFirst({
+    where: {
+      id: sessionId,
+      deletedAt: null,
+      ...(adminUser
+        ? {}
+        : (sessionVisibilityWhere(user.id, user.email) as Prisma.SessionWhereInput)),
+    },
+    select: {
+      id: true,
+      facilitatorId: true,
+      event: {
+        select: {
+          hostUserId: true,
+          facilitatorUserId: true,
+        },
+      },
+    },
+  });
+
+  if (!session) {
+    return null;
+  }
+
+  const shouldEnterAsFacilitator =
+    adminUser ||
+    session.facilitatorId === user.id ||
+    session.event?.hostUserId === user.id ||
+    session.event?.facilitatorUserId === user.id;
+  const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "PARTICIPANT";
+  const displayName = displayNameForUser(user);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const participant = await prisma.$transaction(
+        async (tx) => {
+          const existingInTransaction = await tx.sessionParticipant.findFirst({
+            where: { sessionId, userId: user.id },
+            include: roomParticipantInclude,
+            orderBy: { createdAt: "asc" },
+          });
+
+          if (existingInTransaction) {
+            return existingInTransaction;
+          }
+
+          return tx.sessionParticipant.create({
+            data: {
+              sessionId,
+              userId: user.id,
+              displayName,
+              type: participantType,
+              joinToken: generateJoinToken(),
+              joinedAt: new Date(),
+              lastSeenAt: new Date(),
+            },
+            include: roomParticipantInclude,
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      return participant as unknown as RoomParticipantResult;
+    } catch (error) {
+      if (isSerializableConflict(error) && attempt === 0) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return findParticipantForAccount(
+    sessionId,
+    user.id,
+  ) as Promise<RoomParticipantResult | null>;
+}
 
 /**
  * Resolve a room participant from a JSON request body.
@@ -101,6 +249,10 @@ async function resolveByJoinToken(
     return null;
   }
 
+  if (!isActiveAccountUser(user)) {
+    return null;
+  }
+
   const participant = await getSessionParticipantByJoinToken(joinToken, sessionId);
   if (!participant) {
     return null;
@@ -131,33 +283,14 @@ async function resolveByParticipantId(
     return null;
   }
 
-  const adminUser = isAdmin(user);
+  if (!isActiveAccountUser(user)) {
+    return null;
+  }
 
   // Look up the participant + associated session (same shape as getSessionParticipantByJoinToken)
   const participant = await prisma.sessionParticipant.findUnique({
     where: { id: participantId },
-    include: {
-      session: {
-        select: {
-          id: true,
-          eventId: true,
-          negotiationState: true,
-          negotiationStartedAt: true,
-          preparationDurationSeconds: true,
-          durationSeconds: true,
-          status: true,
-          closedByEventAt: true,
-          closeReason: true,
-          event: {
-            select: {
-              id: true,
-              status: true,
-              hostUserId: true,
-            },
-          },
-        },
-      },
-    },
+    include: roomParticipantInclude,
   });
 
   if (!participant) {
@@ -169,12 +302,9 @@ async function resolveByParticipantId(
     return null;
   }
 
-  // Check ownership: userId match, admin bypass, or event host bypass
+  // Check ownership: account APIs must target the caller's own participant row.
   const isOwner = participant.userId === user.id;
-  const isEventHost =
-    participant.session.event?.hostUserId === user.id;
-
-  if (!isOwner && !adminUser && !isEventHost) {
+  if (!isOwner) {
     return null;
   }
 

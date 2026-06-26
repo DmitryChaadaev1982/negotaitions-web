@@ -1,4 +1,5 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
+import type { Prisma } from "@/app/generated/prisma/client";
 import { getEventLobbyUrl } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
@@ -6,50 +7,73 @@ import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
 export type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
+const roomSidebarParticipantInclude = {
+  sessionRole: {
+    select: sessionRoleBriefingSelect,
+  },
+  eventParticipant: {
+    select: {
+      participantToken: true,
+      userId: true,
+    },
+  },
+  session: {
+    select: {
+      title: true,
+      visibility: true,
+      durationSeconds: true,
+      snapshotBusinessContext: true,
+      snapshotPublicInstructions: true,
+      snapshotCaseLanguage: true,
+      event: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          hostToken: true,
+        },
+      },
+      participants: {
+        include: {
+          sessionRole: {
+            select: sessionRoleBriefingSelect,
+          },
+        },
+        orderBy: { createdAt: "asc" as const },
+      },
+    },
+  },
+} satisfies Prisma.SessionParticipantInclude;
+
+type RoomSidebarParticipant = Prisma.SessionParticipantGetPayload<{
+  include: typeof roomSidebarParticipantInclude;
+}>;
+
 export async function getRoomSidebarData(
   joinToken: string,
 ): Promise<RoomSidebarData | null> {
   const participant = await prisma.sessionParticipant.findUnique({
     where: { joinToken },
-    include: {
-      sessionRole: {
-        select: sessionRoleBriefingSelect,
-      },
-      eventParticipant: {
-        select: {
-          participantToken: true,
-          userId: true,
-        },
-      },
-      session: {
-        select: {
-          title: true,
-          visibility: true,
-          durationSeconds: true,
-          snapshotBusinessContext: true,
-          snapshotPublicInstructions: true,
-          snapshotCaseLanguage: true,
-          event: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              hostToken: true,
-            },
-          },
-          participants: {
-            include: {
-              sessionRole: {
-                select: sessionRoleBriefingSelect,
-              },
-            },
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      },
-    },
+    include: roomSidebarParticipantInclude,
   });
 
+  return buildRoomSidebarData(participant);
+}
+
+export async function getRoomSidebarDataByParticipantId(
+  participantId: string,
+): Promise<RoomSidebarData | null> {
+  const participant = await prisma.sessionParticipant.findUnique({
+    where: { id: participantId },
+    include: roomSidebarParticipantInclude,
+  });
+
+  return buildRoomSidebarData(participant);
+}
+
+function buildRoomSidebarData(
+  participant: RoomSidebarParticipant | null,
+): RoomSidebarData | null {
   if (!participant) {
     return null;
   }

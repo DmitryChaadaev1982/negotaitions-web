@@ -6,6 +6,7 @@ import type {
 } from "@/app/generated/prisma/client";
 import type { AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { normalizeUserEmail } from "@/lib/invite-email";
 import { prisma } from "@/lib/prisma";
 
 export type EventTokenContext = {
@@ -24,10 +25,21 @@ export type CurrentUserEventAccess = {
   isHostOwner: boolean;
   isFacilitatorOwner: boolean;
   isHostToken: boolean;
+  /** true for any user with host-level API capabilities (admin, hostOwner, facilitatorOwner, hostToken) */
   isHost: boolean;
+  /**
+   * true only when this user is the *designated* host/facilitator of this
+   * specific event (isHostOwner || isFacilitatorOwner || isHostToken).
+   * Unlike isHost, this is false for system admins who are not the event owner.
+   * Use this to gate host-controls UI — so a system admin joining another
+   * user's event lobby sees participant controls, not the host panel.
+   */
+  isEventOwner: boolean;
   currentParticipant: EventParticipant | null;
   hasUserParticipant: boolean;
   hasTokenParticipant: boolean;
+  /** true when the user has an EventInvite by userId or by normalized email */
+  hasEmailInvite: boolean;
 };
 
 export type CurrentUserSessionAccess = {
@@ -49,6 +61,8 @@ export type CurrentUserSessionAccess = {
   isSessionFacilitatorOwner: boolean;
   tokenParticipant: SessionParticipant | null;
   userParticipant: SessionParticipant | null;
+  /** true when the user has a SessionInvite by userId or by normalized email */
+  hasEmailInvite: boolean;
 };
 
 export function canAccessEvent(access: CurrentUserEventAccess) {
@@ -58,8 +72,13 @@ export function canAccessEvent(access: CurrentUserEventAccess) {
     access.isFacilitatorOwner ||
     access.hasUserParticipant ||
     access.hasTokenParticipant ||
-    access.isHostToken
+    access.isHostToken ||
+    access.hasEmailInvite
   );
+}
+
+export function canEditEvent(access: CurrentUserEventAccess) {
+  return access.isAdmin || access.isHostOwner || access.isFacilitatorOwner;
 }
 
 export function canManageEvent(access: CurrentUserEventAccess) {
@@ -78,7 +97,17 @@ export function canAccessSession(access: CurrentUserSessionAccess) {
     access.isEventFacilitatorOwner ||
     access.isSessionFacilitatorOwner ||
     access.userParticipant !== null ||
-    access.tokenParticipant !== null
+    access.tokenParticipant !== null ||
+    access.hasEmailInvite
+  );
+}
+
+export function canEditSession(access: CurrentUserSessionAccess) {
+  return (
+    access.isAdmin ||
+    access.isSessionFacilitatorOwner ||
+    access.isEventHostOwner ||
+    access.isEventFacilitatorOwner
   );
 }
 
@@ -134,7 +163,9 @@ export async function getCurrentUserEventAccess(
   const isFacilitatorOwner = Boolean(user && event.facilitatorUserId === user.id);
   const isHostToken = Boolean(hostToken && hostToken === event.hostToken);
 
-  const [tokenParticipant, userParticipant] = await Promise.all([
+  const normalizedEmail = user?.email ? normalizeUserEmail(user.email) : null;
+
+  const [tokenParticipant, userParticipant, emailInvite] = await Promise.all([
     participantToken
       ? prisma.eventParticipant.findFirst({
           where: {
@@ -151,6 +182,18 @@ export async function getCurrentUserEventAccess(
           },
         })
       : Promise.resolve(null),
+    user
+      ? prisma.eventInvite.findFirst({
+          where: {
+            eventId,
+            OR: [
+              { userId: user.id },
+              ...(normalizedEmail ? [{ invitedEmailNormalized: normalizedEmail }] : []),
+            ],
+          },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   if (
@@ -164,7 +207,10 @@ export async function getCurrentUserEventAccess(
   }
 
   let currentParticipant = tokenParticipant ?? userParticipant ?? null;
-  if (!currentParticipant && (isHostToken || isHostOwner || isFacilitatorOwner || admin)) {
+  // Authenticated lobby identity must be resolved by eventId + currentUser.id.
+  // Never fall back to host/first participant for authenticated users.
+  // Token-only (non-user) host access may still fall back to the isHost participant.
+  if (!currentParticipant && !user && isHostToken) {
     currentParticipant = await prisma.eventParticipant.findFirst({
       where: {
         eventId,
@@ -181,9 +227,11 @@ export async function getCurrentUserEventAccess(
     isFacilitatorOwner,
     isHostToken,
     isHost: admin || isHostOwner || isFacilitatorOwner || isHostToken,
+    isEventOwner: isHostOwner || isFacilitatorOwner || isHostToken,
     currentParticipant,
     hasUserParticipant: userParticipant !== null,
     hasTokenParticipant: tokenParticipant !== null,
+    hasEmailInvite: emailInvite !== null,
   };
 }
 
@@ -219,7 +267,9 @@ export async function getCurrentUserSessionAccess(
     return null;
   }
 
-  const [tokenParticipant, userParticipant] = await Promise.all([
+  const normalizedEmail = user?.email ? normalizeUserEmail(user.email) : null;
+
+  const [tokenParticipant, userParticipant, emailInvite] = await Promise.all([
     joinToken
       ? prisma.sessionParticipant.findUnique({
           where: { joinToken },
@@ -231,6 +281,18 @@ export async function getCurrentUserSessionAccess(
             sessionId,
             userId: user.id,
           },
+        })
+      : Promise.resolve(null),
+    user
+      ? prisma.sessionInvite.findFirst({
+          where: {
+            sessionId,
+            OR: [
+              { userId: user.id },
+              ...(normalizedEmail ? [{ invitedEmailNormalized: normalizedEmail }] : []),
+            ],
+          },
+          select: { id: true },
         })
       : Promise.resolve(null),
   ]);
@@ -257,6 +319,7 @@ export async function getCurrentUserSessionAccess(
     isSessionFacilitatorOwner,
     tokenParticipant,
     userParticipant,
+    hasEmailInvite: emailInvite !== null,
   };
 }
 

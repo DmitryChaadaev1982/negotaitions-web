@@ -44,6 +44,7 @@ type CaseDetailViewProps = {
 
 export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
   const { t, locale } = useI18n();
+  const canManageCase = negotiationCase.isAdminViewer || negotiationCase.isOwner;
 
   const formatDate = (iso: string) =>
     new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
@@ -72,7 +73,7 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
                 >
                   {t("cases.createSession")}
                 </GradientButtonLink>
-                {negotiationCase.isAdminViewer ? (
+                {canManageCase ? (
                   <>
                     <SecondaryButtonLink href={`/cases/${negotiationCase.id}/edit`}>
                       {t("common.edit")}
@@ -108,9 +109,9 @@ export function CaseDetailView({ negotiationCase }: CaseDetailViewProps) {
         </div>
       ) : null}
 
-      {!negotiationCase.isAdminViewer ? (
+      {!canManageCase ? (
         <p className="text-xs text-slate-400">
-          {t("cases.adminEditDeleteOnly")}
+          {t("cases.ownerOrAdminEditDeleteOnly")}
         </p>
       ) : null}
 

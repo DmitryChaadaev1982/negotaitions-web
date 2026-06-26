@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import {
   createEventLobbyLiveKitAccessToken,
   getLiveKitConfig,
 } from "@/lib/livekit";
 import { isEventUnavailable, resolveEventAccess } from "@/lib/event-auth";
+import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { prisma } from "@/lib/prisma";
 import { handleExternalServiceFailure } from "@/lib/services/external-service-events";
 import { ExternalService } from "@/app/generated/prisma/client";
@@ -51,12 +53,19 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
   }
 
-  if (!access.currentParticipant) {
+  // Authenticated lobby identity must be resolved by eventId + currentUser.id.
+  // Ensure participant exists before issuing a LiveKit token.
+  let currentParticipant = access.currentParticipant;
+  if (!currentParticipant && user && (isAdmin(user) || user.status === "ACTIVE")) {
+    currentParticipant = await ensureUserEventParticipant(eventId, user);
+  }
+
+  if (!currentParticipant) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });
   }
 
-  const identity = access.currentParticipant.id;
-  const displayName = access.currentParticipant.displayName;
+  const identity = currentParticipant.id;
+  const displayName = currentParticipant.displayName;
 
   try {
     const { token, roomName } = await createEventLobbyLiveKitAccessToken(
@@ -69,11 +78,11 @@ export async function POST(request: Request, context: RouteContext) {
       config,
     );
 
-    if (access.currentParticipant) {
+    if (currentParticipant) {
       await prisma.eventParticipant.update({
-        where: { id: access.currentParticipant.id },
+        where: { id: currentParticipant.id },
         data: {
-          joinedAt: access.currentParticipant.joinedAt ?? new Date(),
+          joinedAt: currentParticipant.joinedAt ?? new Date(),
           lastSeenAt: new Date(),
         },
       });

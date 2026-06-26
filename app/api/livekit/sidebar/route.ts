@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { getRoomSidebarData } from "@/lib/room-sidebar";
+import { getRoomSidebarData, getRoomSidebarDataByParticipantId } from "@/lib/room-sidebar";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
@@ -22,6 +22,10 @@ export async function GET(request: Request) {
       { error: "Authentication required.", code: "LOGIN_REQUIRED" },
       { status: 401 },
     );
+  }
+
+  if (!isAdmin(user) && user.status !== "ACTIVE") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   if (joinToken) {
@@ -51,9 +55,7 @@ export async function GET(request: Request) {
     where: { id: participantId! },
     select: {
       id: true,
-      joinToken: true,
       userId: true,
-      session: { select: { event: { select: { hostUserId: true } } } },
     },
   });
 
@@ -61,14 +63,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Participant not found." }, { status: 404 });
   }
 
-  const adminUser = isAdmin(user);
   const isOwner = participant.userId === user.id;
-  const isEventHost = participant.session.event?.hostUserId === user.id;
-  if (!isOwner && !adminUser && !isEventHost) {
+  if (!isOwner) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const sidebar = await getRoomSidebarData(participant.joinToken);
+  const sidebar = await getRoomSidebarDataByParticipantId(participant.id);
   if (!sidebar) {
     return NextResponse.json({ error: "Sidebar data not found." }, { status: 404 });
   }

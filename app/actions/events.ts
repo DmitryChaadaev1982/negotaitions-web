@@ -254,6 +254,186 @@ export async function createTrainingEvent(
   }
 }
 
+export type UpdateEventState = {
+  errors?: ActionErrors;
+  success?: boolean;
+};
+
+export async function updateTrainingEvent(
+  _prevState: UpdateEventState,
+  formData: FormData,
+): Promise<UpdateEventState> {
+  const user = await requireActiveUser("/events");
+
+  const eventId = String(formData.get("eventId") ?? "").trim();
+  if (!eventId) {
+    return { errors: { form: ["updateEventFailed"] } };
+  }
+
+  const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+  const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
+
+  const parsed = createEventSchema.safeParse({
+    title: formData.get("title"),
+    description: formData.get("description") || undefined,
+    scheduledAt: formData.get("scheduledAt") || undefined,
+    estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
+    visibility: formData.get("visibility") || "PRIVATE",
+    facilitatorUserId: formData.get("facilitatorUserId") || undefined,
+    invitedUserIds: rawInvitedUserIds,
+    invitedEmails: rawInvitedEmails,
+  });
+
+  if (!parsed.success) {
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    return {
+      errors: {
+        title: fieldErrors.title,
+        estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
+        invitedEmail: fieldErrors.invitedEmails,
+      },
+    };
+  }
+
+  try {
+    const event = await prisma.trainingEvent.findUnique({
+      where: { id: eventId },
+      select: {
+        id: true,
+        hostUserId: true,
+        facilitatorUserId: true,
+        deletedAt: true,
+        status: true,
+      },
+    });
+
+    if (!event || event.deletedAt) {
+      return { errors: { form: ["updateEventFailed"] } };
+    }
+
+    const userIsAdmin = isAdmin(user);
+    const isOwner = event.hostUserId === user.id || event.facilitatorUserId === user.id;
+
+    if (!userIsAdmin && !isOwner) {
+      return { errors: { form: ["updateEventFailed"] } };
+    }
+
+    const { title, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
+      parsed.data;
+
+    if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
+      return { errors: { form: ["facilitatorSelectionNotAllowed"] } };
+    }
+
+    const resolvedFacilitatorUserId = facilitatorUserId ?? event.facilitatorUserId ?? user.id;
+    const facilitatorUser = await prisma.user.findFirst({
+      where: { id: resolvedFacilitatorUserId, status: "ACTIVE" },
+      select: { id: true },
+    });
+
+    if (!facilitatorUser) {
+      return { errors: { form: ["facilitatorMustBeActive"] } };
+    }
+
+    await prisma.trainingEvent.update({
+      where: { id: eventId },
+      data: {
+        title,
+        description: description || null,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        facilitatorUserId: facilitatorUser.id,
+        visibility,
+        estimatedEventDurationSeconds: minutesToSeconds(
+          estimatedEventDurationMinutes ??
+            DEFAULT_EVENT_DURATION_SECONDS / 60,
+        ),
+      },
+    });
+
+    // Sync EventInvites: add new ones (do not delete existing to preserve history).
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
+    const currentUserEmailNormalized = normalizeUserEmail(user.email);
+
+    const activeUsersById = requestedUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: requestedUserIds }, status: "ACTIVE" },
+          select: { id: true, email: true },
+        })
+      : [];
+    const activeUsersByEmail = normalizedInputEmails.length
+      ? await prisma.user.findMany({
+          where: {
+            status: "ACTIVE",
+            OR: normalizedInputEmails.map((email) => ({
+              email: { equals: email, mode: "insensitive" as const },
+            })),
+          },
+          select: { id: true, email: true },
+        })
+      : [];
+
+    const invitedRegisteredIds = new Set(activeUsersById.map((u) => u.id));
+    const activeEmailToUser = new Map(
+      activeUsersByEmail.map((u) => [u.email.toLowerCase(), u.id]),
+    );
+    const invitedExternalEmails = new Set<string>();
+
+    for (const email of normalizedInputEmails) {
+      const matchedUserId = activeEmailToUser.get(email);
+      if (matchedUserId) {
+        invitedRegisteredIds.add(matchedUserId);
+      } else if (email !== currentUserEmailNormalized) {
+        invitedExternalEmails.add(email);
+      }
+    }
+
+    for (const invitedUserId of invitedRegisteredIds) {
+      await prisma.eventInvite.upsert({
+        where: { eventId_userId: { eventId, userId: invitedUserId } },
+        update: {},
+        create: {
+          eventId,
+          userId: invitedUserId,
+          invitedByUserId: user.id,
+        },
+      });
+    }
+
+    for (const invitedEmail of invitedExternalEmails) {
+      await prisma.eventInvite.upsert({
+        where: {
+          eventId_invitedEmailNormalized: {
+            eventId,
+            invitedEmailNormalized: invitedEmail,
+          },
+        },
+        update: {},
+        create: {
+          eventId,
+          invitedEmail: invitedEmail,
+          invitedEmailNormalized: invitedEmail,
+          displayLabel: invitedEmail,
+          invitedByUserId: user.id,
+        },
+      });
+    }
+
+    revalidatePath("/events");
+    revalidatePath(`/events/${eventId}/edit`);
+    revalidatePath("/dashboard");
+
+    return { success: true };
+  } catch (error) {
+    if (isRedirectError(error)) throw error;
+    return {
+      errors: {
+        form: [error instanceof Error ? error.message : "updateEventFailed"],
+      },
+    };
+  }
+}
+
 export type JoinEventState = {
   errors?: ActionErrors;
 };

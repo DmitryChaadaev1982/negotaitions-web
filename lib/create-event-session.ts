@@ -182,6 +182,15 @@ export async function createSessionFromEvent(
       return { ok: false, error: "duplicateRoleAssignment" };
     }
 
+    // Prevent assigning the same participant as both facilitator and player.
+    if (eventParticipantId === input.facilitatorEventParticipantId) {
+      return {
+        ok: false,
+        error: "facilitatorPlayerConflict",
+        participantName: facilitatorParticipant.displayName,
+      };
+    }
+
     const eventParticipant = event.participants.find(
       (participant) => participant.id === eventParticipantId,
     );

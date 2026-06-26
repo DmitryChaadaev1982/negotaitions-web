@@ -20,6 +20,10 @@ type PeoplePickerProps = {
   excludeUserIds?: string[];
   userFieldName: string;
   emailFieldName: string;
+  /** Pre-populate with existing invited users (for edit forms). */
+  initialUsers?: UserSuggestion[];
+  /** Pre-populate with existing invited external emails (for edit forms). */
+  initialEmails?: string[];
 };
 
 function userLabel(user: UserSuggestion): string {
@@ -30,10 +34,21 @@ export function PeoplePicker({
   excludeUserIds = [],
   userFieldName,
   emailFieldName,
+  initialUsers = [],
+  initialEmails = [],
 }: PeoplePickerProps) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
-  const [chips, setChips] = useState<InviteChip[]>([]);
+  const [chips, setChips] = useState<InviteChip[]>(() => {
+    const initial: InviteChip[] = [];
+    for (const user of initialUsers) {
+      initial.push({ kind: "user", user });
+    }
+    for (const email of initialEmails) {
+      if (email) initial.push({ kind: "email", email });
+    }
+    return initial;
+  });
   const [suggestions, setSuggestions] = useState<UserSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);

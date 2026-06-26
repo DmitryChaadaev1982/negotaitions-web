@@ -22,7 +22,7 @@ import { RecordingIndicator } from "@/components/recording-indicator";
 import { RestrictedControlBar } from "@/components/restricted-control-bar";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { StructuredVideoLayout } from "@/components/structured-video-layout";
-import { GradientButtonLink } from "@/components/ui/buttons";
+import { GradientButtonLink, SecondaryButtonLink } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { VisibilityBadge } from "@/components/visibility-badge";
@@ -419,6 +419,26 @@ function ConnectedRoom({
             )}
           </div>
           <div className="flex items-center gap-3">
+            <SecondaryButtonLink
+              href="/sessions"
+              className="px-3 py-1.5 text-xs"
+              aria-label={t("events.backToSessionsCompact")}
+              title={t("events.backToSessionsCompact")}
+              data-testid="back-to-sessions-button"
+            >
+              {t("events.backToSessionsCompact")}
+            </SecondaryButtonLink>
+            {sidebar.event?.lobbyUrl ? (
+              <SecondaryButtonLink
+                href={sidebar.event.lobbyUrl}
+                className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+                aria-label={t("events.backToLobbyCompact")}
+                title={t("events.backToLobbyCompact")}
+                data-testid="back-to-event-lobby-button"
+              >
+                {t("events.backToLobbyCompact")}
+              </SecondaryButtonLink>
+            ) : null}
             {!isDebriefMode ? (
               <GradientButtonLink
                 href={materialsUrl}

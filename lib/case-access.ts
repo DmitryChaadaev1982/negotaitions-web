@@ -33,6 +33,14 @@ export function canViewFullCase(
   return isAdminViewer || isCaseOwner(viewer, negotiationCase);
 }
 
+export function canManageCase(
+  viewer: CaseViewerShape,
+  negotiationCase: CaseOwnerShape,
+  isAdminViewer: boolean,
+): boolean {
+  return isAdminViewer || isCaseOwner(viewer, negotiationCase);
+}
+
 export function canViewCaseSafePreview(
   viewer: CaseViewerShape,
   negotiationCase: CaseVisibilityShape,
