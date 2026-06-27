@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { removeParticipant } from "@/app/actions/sessions";
-import { CopyJoinLinkButton } from "@/components/copy-join-link-button";
 import { formatDateFromIso } from "@/lib/format-date";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ParticipantNoteEntry } from "@/lib/participant-notes-types";
@@ -19,7 +18,6 @@ type ParticipantRow = {
   displayName: string;
   type: string;
   caseRoleName: string | null;
-  joinUrl: string;
   joinedAt: string | null;
   lastSeenAt: string | null;
   notesCount: number;
@@ -148,9 +146,6 @@ function ParticipantsPresenceTable({
                 {t("common.assignedRole")}
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
-                {t("common.joinLink")}
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
                 {t("common.firstJoined")}
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -184,19 +179,6 @@ function ParticipantsPresenceTable({
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-300">
                   {participant.caseRoleName ?? "—"}
-                </td>
-                <td className="px-6 py-4">
-                  <div className="flex flex-col gap-1">
-                    <a
-                      href={participant.joinUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="max-w-xs truncate text-sm text-cyan-400 hover:text-cyan-300"
-                    >
-                      {participant.joinUrl}
-                    </a>
-                    <CopyJoinLinkButton joinUrl={participant.joinUrl} />
-                  </div>
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-300">
                   {formatDateFromIso(

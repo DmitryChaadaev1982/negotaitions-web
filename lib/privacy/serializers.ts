@@ -242,7 +242,44 @@ export const BLOCKED_AI_SHARED_FIELDS = [
   "rawPrompt",
   "analysisContext",
   "facilitatorNotes",
+  "privateInstructions",
+  "hiddenObjectives",
+  "privateRoleAnalysis",
+  "rolePrivateAnalysis",
+  "internalPrompt",
+  "internalContext",
+  "debugPrompt",
+  "debugContext",
+  "otherParticipantFeedback",
+  "otherParticipantsFeedback",
+  "batna",
 ] as const;
+
+const BLOCKED_AI_SHARED_FIELD_SET = new Set(
+  BLOCKED_AI_SHARED_FIELDS.map((field) => field.toLowerCase()),
+);
+
+/**
+ * Recursively removes forbidden keys from participant-facing AI payloads.
+ *
+ * Privacy note: key presence itself is a policy failure, even when value is
+ * null/undefined. We must strip forbidden keys entirely at every depth.
+ */
+export function stripForbiddenAiKeysDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripForbiddenAiKeysDeep(entry)) as T;
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const sanitizedEntries = Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !BLOCKED_AI_SHARED_FIELD_SET.has(key.toLowerCase()))
+    .map(([key, entryValue]) => [key, stripForbiddenAiKeysDeep(entryValue)]);
+
+  return Object.fromEntries(sanitizedEntries) as T;
+}
 
 /**
  * Sanitize a full AI analysis for sharing with session participants.
@@ -266,12 +303,18 @@ export function sanitizeSharedAiReport<
     facilitatorNotes?: unknown;
   },
 >(fullAnalysis: T): Omit<T, "roleObjectivesAnalysis" | "rawPrompt" | "analysisContext" | "facilitatorNotes"> {
-  const sanitized = { ...fullAnalysis };
-  delete (sanitized as Record<string, unknown>).roleObjectivesAnalysis;
-  delete (sanitized as Record<string, unknown>).rawPrompt;
-  delete (sanitized as Record<string, unknown>).analysisContext;
-  delete (sanitized as Record<string, unknown>).facilitatorNotes;
-  return sanitized;
+  return stripForbiddenAiKeysDeep(fullAnalysis) as Omit<
+    T,
+    "roleObjectivesAnalysis" | "rawPrompt" | "analysisContext" | "facilitatorNotes"
+  >;
+}
+
+/**
+ * Central sanitizer for participant/observer shared AI output.
+ * Keeps only safe shared/general analysis fields.
+ */
+export function sanitizeSharedAiAnalysisForParticipant<T>(analysis: T): T {
+  return stripForbiddenAiKeysDeep(analysis);
 }
 
 /**

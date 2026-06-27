@@ -26,11 +26,12 @@ export default async function EventLobbyPage({
     redirect(`/login?returnUrl=${encodeURIComponent(`/events/${id}/lobby`)}`);
   }
 
-  return (
-    <EventLobbyView
-      eventId={id}
-      hostToken={hostToken}
-      participantToken={participantToken}
-    />
-  );
+  // Privacy hardening: account-mode lobby must never serialize token field names
+  // into HTML/Flight payloads. Keep token access server-side and pass it only for
+  // legacy token-based flows under neutral key names.
+  if (user) {
+    return <EventLobbyView eventId={id} />;
+  }
+
+  return <EventLobbyView eventId={id} tokenAccess={{ h: hostToken, p: participantToken }} />;
 }

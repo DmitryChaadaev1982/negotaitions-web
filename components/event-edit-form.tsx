@@ -80,6 +80,9 @@ export function EventEditForm({
   const [facilitatorUserId, setFacilitatorUserId] = useState(
     event.facilitatorUserId ?? currentUserId,
   );
+  const [ownerUserId, setOwnerUserId] = useState(
+    event.hostUserId ?? currentUserId,
+  );
 
   const selfOption = useMemo(
     () =>
@@ -91,6 +94,7 @@ export function EventEditForm({
     [activeUsers, currentUserId, currentUserEmail],
   );
   const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
+  const ownerOptions = canAssignFacilitator ? activeUsers : [selfOption];
 
   const defaultDurationMinutes = event.estimatedEventDurationSeconds
     ? secondsToDisplayMinutes(event.estimatedEventDurationSeconds)
@@ -116,6 +120,7 @@ export function EventEditForm({
         <input type="hidden" name="eventId" value={event.id} />
         <input type="hidden" name="visibility" value={visibility} />
         <input type="hidden" name="facilitatorUserId" value={facilitatorUserId} />
+        <input type="hidden" name="ownerUserId" value={ownerUserId} />
 
         {state.errors?.form ? (
           <div className={alertErrorClassName}>
@@ -234,7 +239,7 @@ export function EventEditForm({
           </GlassCardContent>
         </GlassCard>
 
-        {/* Visibility + Invitees */}
+        {/* Visibility + Owner + Invitees */}
         <GlassCard>
           <GlassCardHeader>
             <h2 className="text-base font-semibold text-slate-50">
@@ -272,6 +277,43 @@ export function EventEditForm({
                   </div>
                 </label>
               ))}
+            </div>
+
+            {/* Owner field — placed near visibility per Phase 6.11A */}
+            <div>
+              <label className={labelClassName} htmlFor="ownerUserIdDisplay">
+                {t("visibility.ownerLabel")}
+              </label>
+              {canAssignFacilitator ? (
+                <>
+                  <select
+                    id="ownerUserIdDisplay"
+                    value={ownerUserId}
+                    onChange={(e) => setOwnerUserId(e.target.value)}
+                    className={inputClassName(false)}
+                  >
+                    {ownerOptions.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {userLabel(u)}
+                        {u.id === currentUserId ? " (you)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className={hintClassName}>{t("visibility.ownerSelectHint")}</p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {selfOption.name
+                      ? `${selfOption.name} (${selfOption.email})`
+                      : selfOption.email}
+                  </p>
+                  <p className={hintClassName}>{t("visibility.ownerSelfOnlyHint")}</p>
+                </>
+              )}
+              {state.errors?.form?.includes("ownerRequired") ? (
+                <p className={errorClassName}>{t("visibility.ownerRequired")}</p>
+              ) : null}
             </div>
 
             <div>

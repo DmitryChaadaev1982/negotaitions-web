@@ -40,7 +40,7 @@ export type EventStateParticipant = {
   assignedSessionParticipantId: string | null;
   assignedType: string | null;
   assignedRoleName: string | null;
-  joinToken: string | null;
+  joinToken?: string | null;
   roomUrl: string | null;
   materialsUrl: string | null;
   activeAssignmentLabel: string | null;
@@ -403,7 +403,9 @@ function mapEventParticipant({
     assignedSessionParticipantId: activeAssignment?.id ?? null,
     assignedType: activeAssignment?.type ?? null,
     assignedRoleName: activeAssignment?.sessionRole?.name ?? null,
-    joinToken: canSeeJoinToken ? (activeAssignment?.joinToken ?? null) : null,
+    ...(canSeeJoinToken
+      ? { joinToken: activeAssignment?.joinToken ?? null }
+      : {}),
     roomUrl: activeAssignment
       ? accountMode
         ? buildAccountSessionRoomPath(activeAssignment.sessionId)

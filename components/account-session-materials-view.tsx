@@ -243,12 +243,17 @@ export function AccountSessionMaterialsView({
   const isActive =
     session.negotiationState !== "FINISHED" && !session.closedByEvent;
 
+  // Phase 6.11B: PARTICIPANT without role sees waiting message instead of notes/briefing.
+  const isRoleLocked = notesVariant === "locked";
+
   const notesSectionTitle =
     notesVariant === "facilitator"
       ? t("join.facilitatorNotes")
       : notesVariant === "observer"
         ? t("join.observerNotes")
-        : t("join.preparation");
+        : isRoleLocked
+          ? t("join.preparation")
+          : t("join.preparation");
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-8" data-testid="account-materials-page">
@@ -338,17 +343,26 @@ export function AccountSessionMaterialsView({
             </GlassCardContent>
           </GlassCard>
 
-          {/* Notes */}
+          {/* Notes — Phase 6.11B: locked for unassigned PARTICIPANT */}
           <GlassCard>
             <GlassCardHeader>
               <p className="font-semibold text-slate-100">{notesSectionTitle}</p>
             </GlassCardHeader>
             <GlassCardContent className="py-4">
-              <NotesForm
-                participantId={participantId}
-                initialNotes={notes}
-                variant={notesVariant}
-              />
+              {isRoleLocked ? (
+                <p
+                  className="text-sm text-amber-400"
+                  data-testid="materials-notes-locked-message"
+                >
+                  {t("sessions.preparationLockedNoRole")}
+                </p>
+              ) : (
+                <NotesForm
+                  participantId={participantId}
+                  initialNotes={notes}
+                  variant={notesVariant as "preparation" | "observer" | "facilitator"}
+                />
+              )}
             </GlassCardContent>
           </GlassCard>
 
@@ -365,16 +379,32 @@ export function AccountSessionMaterialsView({
 
         {/* Right column — role briefing + roster + event */}
         <div className="space-y-6">
-          {/* Role briefing for participants */}
-          {caseRole ? (
-            <GlassCard>
-              <GlassCardHeader>
-                <p className="font-semibold text-slate-100">{t("join.yourRole")}</p>
-              </GlassCardHeader>
-              <GlassCardContent className="py-4">
-                <RoleBriefingSection role={caseRole} />
-              </GlassCardContent>
-            </GlassCard>
+          {/* Role briefing for participants — Phase 6.11B: locked if no role assigned */}
+          {participantType === "PARTICIPANT" ? (
+            isRoleLocked ? (
+              <GlassCard>
+                <GlassCardHeader>
+                  <p className="font-semibold text-slate-100">{t("join.yourRole")}</p>
+                </GlassCardHeader>
+                <GlassCardContent className="py-4">
+                  <p
+                    className="text-sm text-amber-400"
+                    data-testid="materials-role-locked-message"
+                  >
+                    {t("sessions.waitingForRoleAssignment")}
+                  </p>
+                </GlassCardContent>
+              </GlassCard>
+            ) : caseRole ? (
+              <GlassCard>
+                <GlassCardHeader>
+                  <p className="font-semibold text-slate-100">{t("join.yourRole")}</p>
+                </GlassCardHeader>
+                <GlassCardContent className="py-4">
+                  <RoleBriefingSection role={caseRole} />
+                </GlassCardContent>
+              </GlassCard>
+            ) : null
           ) : null}
 
           {/* Public case context */}

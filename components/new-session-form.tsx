@@ -35,15 +35,36 @@ type CaseOption = {
   visibility: "PUBLIC" | "PRIVATE";
   defaultPreparationDurationSeconds: number;
   defaultDurationSeconds: number;
+  ownerLabel?: string | null;
+};
+
+type UserOption = {
+  id: string;
+  name: string | null;
+  email: string;
 };
 
 type NewSessionFormProps = {
   cases: CaseOption[];
   defaultCaseId?: string;
   currentUserId?: string;
+  currentUserEmail?: string;
+  activeUsers?: UserOption[];
+  canAssignFacilitator?: boolean;
 };
 
-export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessionFormProps) {
+function userLabel(user: UserOption): string {
+  return user.name ? `${user.name} (${user.email})` : user.email;
+}
+
+export function NewSessionForm({
+  cases,
+  defaultCaseId,
+  currentUserId,
+  currentUserEmail,
+  activeUsers = [],
+  canAssignFacilitator = false,
+}: NewSessionFormProps) {
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
     createSession,
@@ -52,6 +73,18 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessi
   const initialCaseId = defaultCaseId ?? cases[0]?.id ?? "";
   const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId);
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PRIVATE");
+  const [facilitatorUserId, setFacilitatorUserId] = useState(currentUserId ?? "");
+
+  const selfOption = useMemo(
+    () =>
+      activeUsers.find((u) => u.id === currentUserId) ?? {
+        id: currentUserId ?? "",
+        name: null,
+        email: currentUserEmail ?? "",
+      },
+    [activeUsers, currentUserId, currentUserEmail],
+  );
+  const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
 
   const selectedCase = useMemo(
     () => cases.find((negotiationCase) => negotiationCase.id === selectedCaseId),
@@ -79,6 +112,45 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessi
 
       {/* Hidden fields for controlled state */}
       <input type="hidden" name="visibility" value={visibility} />
+      <input type="hidden" name="facilitatorUserId" value={facilitatorUserId} />
+
+      {/* Facilitator / owner selection — Phase 6.11B: facilitatorId = session owner */}
+      <GlassCard>
+        <GlassCardHeader>
+          <h2 className="text-base font-semibold text-slate-50">
+            {t("sessions.facilitatorOwnerLabel")}
+          </h2>
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-4">
+          <p className="text-xs text-slate-400">
+            {t("sessions.facilitatorOwnerHint")}
+          </p>
+          <div>
+            <label className={labelClassName} htmlFor="facilitatorUserIdSelector">
+              {t("sessions.facilitatorOwnerLabel")}
+            </label>
+            <select
+              id="facilitatorUserIdSelector"
+              value={facilitatorUserId}
+              onChange={(event) => setFacilitatorUserId(event.target.value)}
+              className={inputClassName(false)}
+              disabled={!canAssignFacilitator}
+            >
+              {facilitatorOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {userLabel(u)}
+                  {u.id === currentUserId ? ` (${t("sessions.facilitatorYou")})` : ""}
+                </option>
+              ))}
+            </select>
+            <p className={hintClassName}>
+              {canAssignFacilitator
+                ? t("visibility.selectFacilitatorHint")
+                : t("visibility.facilitatorSelfOnlyHint")}
+            </p>
+          </div>
+        </GlassCardContent>
+      </GlassCard>
 
       <GlassCard>
         <GlassCardHeader>
@@ -143,7 +215,11 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessi
               </option>
               {cases.map((negotiationCase) => (
                 <option key={negotiationCase.id} value={negotiationCase.id}>
-                  {negotiationCase.title}
+                  {negotiationCase.visibility === "PRIVATE" && negotiationCase.ownerLabel
+                    ? `[${t("visibility.private")}] ${negotiationCase.title} — ${negotiationCase.ownerLabel}`
+                    : negotiationCase.visibility === "PRIVATE"
+                      ? `[${t("visibility.private")}] ${negotiationCase.title}`
+                      : negotiationCase.title}
                 </option>
               ))}
             </select>
@@ -218,7 +294,7 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessi
         </GlassCardContent>
       </GlassCard>
 
-      {/* Visibility + Invitees */}
+      {/* Visibility + Owner reference + Invitees */}
       <GlassCard>
         <GlassCardHeader>
           <h2 className="text-base font-semibold text-slate-50">
@@ -258,10 +334,18 @@ export function NewSessionForm({ cases, defaultCaseId, currentUserId }: NewSessi
             ))}
           </div>
 
+          {/* Phase 6.11B: owner = facilitator reference note */}
+          <div>
+            <p className={labelClassName}>{t("sessions.facilitatorOwnerLabel")}</p>
+            <p className="mt-1 text-sm text-slate-400">
+              {t("sessions.facilitatorOwnerHint")}
+            </p>
+          </div>
+
           <div>
             <p className={labelClassName}>{t("visibility.inviteesLabel")}</p>
             <PeoplePicker
-              excludeUserIds={currentUserId ? [currentUserId] : []}
+              excludeUserIds={facilitatorUserId ? [facilitatorUserId] : (currentUserId ? [currentUserId] : [])}
               userFieldName="invitedUserId"
               emailFieldName="invitedEmail"
             />

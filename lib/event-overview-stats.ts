@@ -137,6 +137,9 @@ export async function getEventsForUser(
       scheduledAt: true,
       publicJoinCode: true,
       createdAt: true,
+      hostUser: {
+        select: { id: true, name: true, email: true },
+      },
       participants: {
         select: {
           id: true,
@@ -213,6 +216,7 @@ export async function getEventsForUser(
       publicJoinCode: event.publicJoinCode,
       primarySessionId: event.sessions[0]?.id ?? null,
       createdAt: event.createdAt.toISOString(),
+      ownerLabel: event.hostUser?.name ?? event.hostUser?.email ?? null,
       lobbyParticipantCount: presenceActive
         ? participantsInLobby
         : 0,

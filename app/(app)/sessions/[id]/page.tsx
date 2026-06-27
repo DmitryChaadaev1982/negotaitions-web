@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { SessionDetailView } from "@/components/session-detail-view";
-import { getJoinUrl } from "@/lib/config";
+import { buildAccountSessionRoomPath, getAppUrl } from "@/lib/config";
 import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { autoTranscribeAfterRecording } from "@/lib/env";
@@ -60,6 +60,10 @@ export default async function SessionDetailPage({
           sessionRole: true,
         },
       },
+      // Phase 6.11B: load facilitator user for owner display.
+      facilitator: {
+        select: { id: true, name: true, email: true },
+      },
     },
   });
 
@@ -73,18 +77,26 @@ export default async function SessionDetailPage({
   const displayStatus = resolveSessionDisplayStatus(session, session.participants);
   const caseSnapshot = resolveSessionCaseSnapshot(session);
 
+  const sessionUrl = `${getAppUrl()}${buildAccountSessionRoomPath(id)}`;
+  const existingParticipantUserIds = session.participants
+    .filter((p) => p.userId != null)
+    .map((p) => p.userId!);
+
   return (
     <SessionDetailView
       session={{
         id: session.id,
         title: session.title,
         visibility: (session.visibility ?? "PRIVATE") as "PUBLIC" | "PRIVATE",
+        // Phase 6.11B: facilitatorId = owner. Show for facilitator/owner display on detail page.
+        facilitatorLabel: session.facilitator?.name ?? session.facilitator?.email ?? null,
         durationSeconds: session.durationSeconds,
         preparationDurationSeconds: session.preparationDurationSeconds,
         negotiationState: session.negotiationState,
         createdAt: session.createdAt.toISOString(),
         displayStatus,
         isDeleted: session.deletedAt != null,
+        sessionUrl,
         caseSnapshot: {
           sourceCaseId: caseSnapshot.sourceCaseId,
           title: caseSnapshot.title,
@@ -107,7 +119,8 @@ export default async function SessionDetailPage({
           displayName: participant.displayName,
           type: participant.type,
           caseRoleName: participant.sessionRole?.name ?? null,
-          joinUrl: getJoinUrl(participant.joinToken),
+          // Phase 6.11B: expose sessionRoleId for role management panel.
+          sessionRoleId: participant.sessionRoleId,
           joinedAt: participant.joinedAt?.toISOString() ?? null,
           lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
           notesCount: getParticipantNotesCount(participant.notes),
@@ -115,7 +128,7 @@ export default async function SessionDetailPage({
         })),
         facilitatorParticipant: facilitatorParticipant
           ? {
-              joinToken: facilitatorParticipant.joinToken,
+              id: facilitatorParticipant.id,
             }
           : null,
         assignableRoles: session.sessionRoles
@@ -133,6 +146,7 @@ export default async function SessionDetailPage({
         hasFacilitator: session.participants.some(
           (participant) => participant.type === "FACILITATOR",
         ),
+        existingParticipantUserIds,
         linkedEvent: session.event
           ? {
               id: session.event.id,

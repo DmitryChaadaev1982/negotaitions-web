@@ -61,6 +61,9 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       durationSeconds: true,
       visibility: true,
       createdAt: true,
+      facilitator: {
+        select: { id: true, name: true, email: true },
+      },
       event: {
         select: {
           id: true,
@@ -196,6 +199,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       aiVisibility: session.aiAnalysis?.visibility ?? "FACILITATOR_ONLY",
       roomUrl: `/room/${session.id}`,
       materialsUrl: `/sessions/${session.id}/materials`,
+      ownerLabel: session.facilitator?.name ?? session.facilitator?.email ?? null,
     };
   });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import { createCase, updateCase, type CreateCaseState } from "@/app/actions/cases";
 import { useCaseLanguageDefault } from "@/components/language-switcher";
@@ -42,12 +42,35 @@ export type CaseFormInitialValues = {
   roles: RoleField[];
 };
 
+type UserOption = {
+  id: string;
+  name: string | null;
+  email: string;
+};
+
 type NewCaseFormProps = {
   caseId?: string;
   initialValues?: CaseFormInitialValues;
+  currentUserId?: string;
+  currentUserEmail?: string;
+  activeUsers?: UserOption[];
+  canAssignOwner?: boolean;
+  currentOwnerUserId?: string;
 };
 
-export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
+function userLabel(user: UserOption): string {
+  return user.name ? `${user.name} (${user.email})` : user.email;
+}
+
+export function NewCaseForm({
+  caseId,
+  initialValues,
+  currentUserId,
+  currentUserEmail,
+  activeUsers = [],
+  canAssignOwner = false,
+  currentOwnerUserId,
+}: NewCaseFormProps = {}) {
   const { t, tv } = useI18n();
   const isEdit = Boolean(caseId);
   const languageDefault = useCaseLanguageDefault();
@@ -62,6 +85,20 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">(
     initialValues?.visibility ?? "PRIVATE",
   );
+
+  const defaultOwnerUserId = currentOwnerUserId ?? currentUserId ?? "";
+  const [ownerUserId, setOwnerUserId] = useState(defaultOwnerUserId);
+
+  const selfOption = useMemo(
+    () =>
+      activeUsers.find((u) => u.id === currentUserId) ?? {
+        id: currentUserId ?? "",
+        name: null,
+        email: currentUserEmail ?? "",
+      },
+    [activeUsers, currentUserId, currentUserEmail],
+  );
+  const ownerOptions = canAssignOwner ? activeUsers : [selfOption];
 
   const addRole = () => {
     if (roles.length < 4) {
@@ -91,6 +128,7 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
     <form action={formAction} className="space-y-8">
       {isEdit ? <input type="hidden" name="caseId" value={caseId} /> : null}
       <input type="hidden" name="roleCount" value={roles.length} />
+      <input type="hidden" name="ownerUserId" value={ownerUserId} />
 
       {/* Data confidentiality warning */}
       <div
@@ -210,6 +248,46 @@ export function NewCaseForm({ caseId, initialValues }: NewCaseFormProps = {}) {
                 </label>
               ))}
             </div>
+          </Field>
+
+          {/* Owner field — placed near visibility per Phase 6.11A requirement */}
+          <Field
+            label={t("visibility.ownerLabel")}
+            name="ownerUserIdDisplay"
+          >
+            {canAssignOwner ? (
+              <>
+                <select
+                  id="ownerUserIdDisplay"
+                  value={ownerUserId}
+                  onChange={(e) => setOwnerUserId(e.target.value)}
+                  className={inputClassName(false)}
+                >
+                  {ownerOptions.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {userLabel(u)}
+                      {u.id === currentUserId ? " (you)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className={hintClassName}>{t("visibility.ownerSelectHint")}</p>
+              </>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-slate-300">
+                  {selfOption.name
+                    ? `${selfOption.name} (${selfOption.email})`
+                    : selfOption.email}
+                </p>
+                <p className={hintClassName}>{t("visibility.ownerSelfOnlyHint")}</p>
+              </>
+            )}
+            {state.errors?.form?.includes("ownerRequired") ? (
+              <p className={errorClassName}>{t("visibility.ownerRequired")}</p>
+            ) : null}
+            {state.errors?.form?.includes("ownerMustBeActive") ? (
+              <p className={errorClassName}>{t("visibility.ownerMustBeActive")}</p>
+            ) : null}
           </Field>
 
           <Field

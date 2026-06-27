@@ -117,6 +117,27 @@ export async function createTrainingEvent(
 
     const resolvedFacilitatorUserId = facilitatorUser.id;
 
+    // Resolve owner (hostUserId): admin can assign any ACTIVE user; non-admin always owns themselves.
+    const requestedOwnerUserId = userIsAdmin
+      ? (String(formData.get("ownerUserId") ?? "").trim() || user.id)
+      : user.id;
+
+    const ownerUser = await prisma.user.findFirst({
+      where: { id: requestedOwnerUserId, status: "ACTIVE" },
+      select: { id: true },
+    });
+
+    if (!ownerUser) {
+      return { errors: { form: ["ownerMustBeActive"] } };
+    }
+
+    // Private events require an owner.
+    if (visibility === "PRIVATE" && !ownerUser.id) {
+      return { errors: { form: ["ownerRequired"] } };
+    }
+
+    const resolvedHostUserId = ownerUser.id;
+
     const hostToken = generateHostToken();
     const hostParticipantToken = generateParticipantToken();
     const publicJoinCode = generatePublicJoinCode();
@@ -126,7 +147,7 @@ export async function createTrainingEvent(
         description: description || null,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: TrainingEventStatus.LOBBY_OPEN,
-        hostUserId: user.id,
+        hostUserId: resolvedHostUserId,
         facilitatorUserId: resolvedFacilitatorUserId,
         visibility,
         publicJoinCode,
@@ -337,6 +358,27 @@ export async function updateTrainingEvent(
       return { errors: { form: ["facilitatorMustBeActive"] } };
     }
 
+    // Resolve owner (hostUserId) for update: admin can transfer; non-admin keeps existing owner.
+    let resolvedHostUserId = event.hostUserId;
+    if (userIsAdmin) {
+      const requestedOwnerUserId = String(formData.get("ownerUserId") ?? "").trim();
+      if (requestedOwnerUserId && requestedOwnerUserId !== resolvedHostUserId) {
+        const ownerUser = await prisma.user.findFirst({
+          where: { id: requestedOwnerUserId, status: "ACTIVE" },
+          select: { id: true },
+        });
+        if (!ownerUser) {
+          return { errors: { form: ["ownerMustBeActive"] } };
+        }
+        resolvedHostUserId = ownerUser.id;
+      }
+    }
+
+    // Private events require an owner.
+    if (visibility === "PRIVATE" && !resolvedHostUserId) {
+      return { errors: { form: ["ownerRequired"] } };
+    }
+
     await prisma.trainingEvent.update({
       where: { id: eventId },
       data: {
@@ -344,6 +386,7 @@ export async function updateTrainingEvent(
         description: description || null,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         facilitatorUserId: facilitatorUser.id,
+        ...(userIsAdmin ? { hostUserId: resolvedHostUserId } : {}),
         visibility,
         estimatedEventDurationSeconds: minutesToSeconds(
           estimatedEventDurationMinutes ??

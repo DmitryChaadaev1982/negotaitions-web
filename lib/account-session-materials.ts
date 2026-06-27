@@ -32,7 +32,13 @@ export type AccountMaterialsData = {
   participantType: "FACILITATOR" | "PARTICIPANT" | "OBSERVER";
   displayName: string;
   notes: string;
-  /** Only set for PARTICIPANT type; null for facilitator/observer. */
+  /**
+   * Phase 6.11B: Whether this PARTICIPANT has an assigned role.
+   * False when participant joined without a role (waiting for facilitator assignment).
+   * Always true for FACILITATOR and OBSERVER types.
+   */
+  hasAssignedRole: boolean;
+  /** Only set for PARTICIPANT type with an assigned role; null otherwise. */
   caseRole: AccountMaterialsRole | null;
   session: {
     id: string;
@@ -71,7 +77,8 @@ export type AccountMaterialsData = {
   } | null;
   /** Tokenless room URL — /room/[sessionId] without query params. */
   roomUrl: string;
-  notesVariant: "preparation" | "observer" | "facilitator";
+  /** "locked" means participant has no assigned role yet — notes input is hidden. */
+  notesVariant: "preparation" | "observer" | "facilitator" | "locked";
 };
 
 /**
@@ -128,6 +135,7 @@ export async function getAccountMaterialsData(
           notes: true,
           joinedAt: true,
           lastSeenAt: true,
+          sessionRoleId: true,
           sessionRole: {
             select: sessionRoleBriefingSelect,
           },
@@ -178,6 +186,8 @@ export async function getAccountMaterialsData(
   const isParticipantType =
     viewerParticipant.type === ParticipantType.PARTICIPANT;
   const isObserverType = viewerParticipant.type === ParticipantType.OBSERVER;
+  // Phase 6.11B: unassigned PARTICIPANT must not see private role materials or write notes.
+  const hasAssignedRole = !isParticipantType || viewerParticipant.sessionRole !== null;
 
   // Phase 5: scope assigned participants by viewer type.
   // PARTICIPANT: own private briefing only; others get public role name only.
@@ -206,7 +216,9 @@ export async function getAccountMaterialsData(
     participantType: viewerParticipant.type as "FACILITATOR" | "PARTICIPANT" | "OBSERVER",
     displayName: viewerParticipant.displayName,
     notes: viewerParticipant.notes,
-    caseRole: isParticipantType ? (viewerParticipant.sessionRole ?? null) : null,
+    hasAssignedRole,
+    // Phase 6.11B: only expose private role materials if role is assigned.
+    caseRole: isParticipantType && hasAssignedRole ? (viewerParticipant.sessionRole ?? null) : null,
     session: {
       id: sessionData.id,
       title: sessionData.title,
@@ -253,8 +265,11 @@ export async function getAccountMaterialsData(
         }
       : null,
     roomUrl: `/room/${sessionData.id}`,
+    // Phase 6.11B: unassigned PARTICIPANT sees "locked" variant (no notes input).
     notesVariant: isParticipantType
-      ? "preparation"
+      ? hasAssignedRole
+        ? "preparation"
+        : "locked"
       : isObserverType
         ? "observer"
         : "facilitator",

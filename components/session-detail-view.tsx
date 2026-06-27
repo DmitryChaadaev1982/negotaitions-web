@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { buildSessionRoomPath } from "@/lib/config";
+import { buildAccountSessionRoomPath } from "@/lib/config";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 import { AddParticipantForm } from "@/components/add-participant-form";
@@ -22,6 +22,7 @@ import { SessionPostProcessingPanel } from "@/components/session-post-processing
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionDisplayStatusBadge } from "@/components/session-display-status-badge";
 import { SessionDurationEditor } from "@/components/session-duration-editor";
+import { SessionRoleManagementPanel } from "@/components/session-role-management-panel";
 import {
   GradientButtonLink,
   SecondaryButtonLink,
@@ -37,6 +38,8 @@ type SessionDetailViewProps = {
     id: string;
     title: string;
     visibility?: "PUBLIC" | "PRIVATE";
+    /** Phase 6.11B: display label for facilitator/owner (name or email). */
+    facilitatorLabel?: string | null;
     durationSeconds: number;
     negotiationState:
       | "PREPARATION"
@@ -50,6 +53,7 @@ type SessionDetailViewProps = {
     createdAt: string;
     displayStatus: SessionDisplayStatus;
     isDeleted: boolean;
+    sessionUrl: string;
     caseSnapshot: {
       sourceCaseId: string;
       title: string;
@@ -72,18 +76,20 @@ type SessionDetailViewProps = {
       displayName: string;
       type: string;
       caseRoleName: string | null;
-      joinUrl: string;
+      /** Phase 6.11B: DB role id; null = unassigned. */
+      sessionRoleId?: string | null;
       joinedAt: string | null;
       lastSeenAt: string | null;
       notesCount: number;
       notes: ParticipantNoteEntry[];
     }>;
     facilitatorParticipant: {
-      joinToken: string;
+      id: string;
     } | null;
     assignableRoles: Array<{ id: string; name: string }>;
     assignedRoleIds: string[];
     hasFacilitator: boolean;
+    existingParticipantUserIds: string[];
     linkedEvent: {
       id: string;
       title: string;
@@ -98,6 +104,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
   const { t, locale } = useI18n();
   const [notesModalParticipant, setNotesModalParticipant] =
     useState<ParticipantNotesModalParticipant | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const initialNotesSnapshots = useMemo(
     () =>
@@ -166,6 +173,16 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
     );
   }, [notesModalParticipant, notesByParticipantId, participantsWithLiveNotes]);
 
+  const handleCopySessionLink = async () => {
+    try {
+      await navigator.clipboard.writeText(session.sessionUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      window.prompt(t("sessions.copySessionLinkPrompt"), session.sessionUrl);
+    }
+  };
+
   const formatDate = (iso: string) =>
     new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
       month: "short",
@@ -187,6 +204,18 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
     deletedAt: session.isDeleted ? new Date().toISOString() : null,
   });
 
+  // Phase 6.11B: participants eligible for role assignment (joined, PARTICIPANT type).
+  const roleManagementParticipants = session.participants
+    .filter((p) => p.type === "PARTICIPANT" || p.type === "FACILITATOR" || p.type === "OBSERVER")
+    .map((p) => ({
+      id: p.id,
+      displayName: p.displayName,
+      type: p.type,
+      currentRoleId: p.sessionRoleId ?? null,
+      currentRoleName: p.caseRoleName,
+      joinedAt: p.joinedAt,
+    }));
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -204,6 +233,13 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
           </div>
         }
       />
+      {/* Phase 6.11B: Facilitator/owner display — always visible on detail page */}
+      {session.facilitatorLabel ? (
+        <p className="text-sm text-slate-400" data-testid="session-facilitator-owner-label">
+          <span className="font-medium text-slate-300">{t("sessions.facilitatorOwnerLabel")}:</span>{" "}
+          {session.facilitatorLabel}
+        </p>
+      ) : null}
 
       {session.linkedEvent ? (
         <GlassCard elevated>
@@ -308,10 +344,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
           />
           {!isReadOnly && roomActive && session.facilitatorParticipant ? (
             <GradientButtonLink
-              href={buildSessionRoomPath(
-                session.id,
-                session.facilitatorParticipant.joinToken,
-              )}
+              href={buildAccountSessionRoomPath(session.id)}
               data-testid="open-session-room-button"
             >
               {t("sessions.joinVideoRoom")}
@@ -327,12 +360,44 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       {session.facilitatorParticipant ? (
         <SessionPostProcessingPanel
           sessionId={session.id}
-          roomAuth={{ type: "joinToken", value: session.facilitatorParticipant.joinToken }}
+          roomAuth={{ type: "account", participantId: session.facilitatorParticipant.id }}
           readOnly={isReadOnly}
           autoTranscribeEnabled={autoTranscribeEnabled}
           variant="page"
           participantType="FACILITATOR"
         />
+      ) : null}
+
+      {/* Session link sharing (standalone sessions — no linkedEvent) */}
+      {!session.linkedEvent ? (
+        <Card>
+          <CardHeader>
+            <h2 className="text-base font-semibold text-slate-50">
+              {t("sessions.sessionLink")}
+            </h2>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-slate-400">
+              {t("sessions.participantsUseSharedLink")}
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="truncate text-sm font-mono text-slate-300">
+                {session.sessionUrl}
+              </span>
+              <button
+                type="button"
+                onClick={handleCopySessionLink}
+                className="shrink-0 text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                data-testid="copy-session-link-button"
+              >
+                {linkCopied ? t("events.linkCopied") : t("sessions.copySessionLink")}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              {t("sessions.individualLinksRemoved")}
+            </p>
+          </CardContent>
+        </Card>
       ) : null}
 
       {!isReadOnly ? (
@@ -348,6 +413,25 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
               sessionRoles={session.assignableRoles}
               assignedRoleIds={session.assignedRoleIds}
               hasFacilitator={session.hasFacilitator}
+              existingParticipantUserIds={session.existingParticipantUserIds}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Phase 6.11B: Role management panel — shown when session has participants with assignable roles */}
+      {!isReadOnly && session.assignableRoles.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <h2 className="text-base font-semibold text-slate-50">
+              {t("sessions.roleManagementTitle")}
+            </h2>
+          </CardHeader>
+          <CardContent>
+            <SessionRoleManagementPanel
+              sessionId={session.id}
+              participants={roleManagementParticipants}
+              availableRoles={session.assignableRoles}
             />
           </CardContent>
         </Card>

@@ -31,8 +31,10 @@ import { useI18n } from "@/lib/i18n/useI18n";
 
 type EventLobbyViewProps = {
   eventId: string;
-  hostToken?: string;
-  participantToken?: string;
+  tokenAccess?: {
+    h?: string;
+    p?: string;
+  };
 };
 
 type LiveKitTokenResponse = {
@@ -58,9 +60,10 @@ function deviceWarningLabel(
 
 export function EventLobbyView({
   eventId,
-  hostToken,
-  participantToken,
+  tokenAccess,
 }: EventLobbyViewProps) {
+  const hostAccessToken = tokenAccess?.h;
+  const participantAccessToken = tokenAccess?.p;
   const { t } = useI18n();
   const [state, setState] = useState<EventStateResponse | null>(null);
   const [liveKit, setLiveKit] = useState<LiveKitTokenResponse | null>(null);
@@ -77,10 +80,10 @@ export function EventLobbyView({
 
   const accessQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (hostToken) params.set("hostToken", hostToken);
-    if (participantToken) params.set("participantToken", participantToken);
+    if (hostAccessToken) params.set("hostToken", hostAccessToken);
+    if (participantAccessToken) params.set("participantToken", participantAccessToken);
     return params.toString();
-  }, [hostToken, participantToken]);
+  }, [hostAccessToken, participantAccessToken]);
 
   const fetchState = useCallback(async () => {
     const response = await fetch(
@@ -142,8 +145,10 @@ export function EventLobbyView({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              hostToken: hostToken || undefined,
-              participantToken: participantToken || undefined,
+              ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+              ...(participantAccessToken
+                ? { participantToken: participantAccessToken }
+                : {}),
             }),
           });
 
@@ -173,7 +178,7 @@ export function EventLobbyView({
     return () => {
       active = false;
     };
-  }, [accessQuery, eventId, hostToken, participantToken]);
+  }, [accessQuery, eventId, hostAccessToken, participantAccessToken]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -214,7 +219,10 @@ export function EventLobbyView({
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostToken: hostToken || undefined, ...payload }),
+        body: JSON.stringify({
+          ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+          ...payload,
+        }),
       });
 
       if (response.ok) {
@@ -222,7 +230,7 @@ export function EventLobbyView({
         setState(data);
       }
     },
-    [eventId, hostToken],
+    [eventId, hostAccessToken],
   );
 
   const updatePreference = useCallback(
@@ -248,7 +256,9 @@ export function EventLobbyView({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          participantToken: participantToken || undefined,
+          ...(participantAccessToken
+            ? { participantToken: participantAccessToken }
+            : {}),
           preference,
         }),
       });
@@ -260,7 +270,7 @@ export function EventLobbyView({
         await fetchState();
       }
     },
-    [eventId, fetchState, participantToken],
+    [eventId, fetchState, participantAccessToken],
   );
 
   const createSession = useCallback(async () => {
@@ -275,7 +285,7 @@ export function EventLobbyView({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          hostToken: hostToken || undefined,
+          ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
           caseId: selectedCase?.id,
           roomLabel: state.assignmentDraft.roomLabel || undefined,
           preparationDurationSeconds:
@@ -316,7 +326,7 @@ export function EventLobbyView({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [eventId, hostToken, state, t]);
+  }, [eventId, hostAccessToken, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
@@ -338,7 +348,9 @@ export function EventLobbyView({
       const response = await fetch(`/api/events/${eventId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostToken: hostToken || undefined }),
+        body: JSON.stringify(
+          hostAccessToken ? { hostToken: hostAccessToken } : {},
+        ),
       });
 
       if (response.ok) {
@@ -354,7 +366,7 @@ export function EventLobbyView({
     } finally {
       setIsCompletingEvent(false);
     }
-  }, [eventId, fetchState, hostToken, t]);
+  }, [eventId, fetchState, hostAccessToken, t]);
 
   const isEventCompleted = state?.event.status === "COMPLETED";
 
@@ -431,11 +443,11 @@ export function EventLobbyView({
 
   const draft = state.assignmentDraft;
   // isHost: system-level host capabilities (used for API calls, read-only display decisions)
-  const isHost = state.isHost || Boolean(hostToken);
+  const isHost = state.isHost || Boolean(hostAccessToken);
   // isEventOwner: this user is the designated host/facilitator of THIS event.
   // Only isEventOwner sees the host-controls panel and the "copy join link" button.
   // A system admin opening another user's event gets participant view.
-  const isEventOwner = state.isEventOwner || Boolean(hostToken);
+  const isEventOwner = state.isEventOwner || Boolean(hostAccessToken);
   const currentAssignment = state.currentParticipant
     ? state.participants.find((p) => p.id === state.currentParticipant?.id)
     : null;
@@ -465,7 +477,7 @@ export function EventLobbyView({
     return (
       <EventCompletedOverlay
         state={state}
-        hostToken={hostToken}
+        hostToken={hostAccessToken}
         completeMessage={completeMessage}
         completeWarnings={completeWarnings}
       />
@@ -478,8 +490,8 @@ export function EventLobbyView({
           endpoint resolves presence via the authenticated user session. */}
       <EventLobbyPresence
         eventId={eventId}
-        participantToken={participantToken}
-        hostToken={hostToken}
+        participantToken={participantAccessToken}
+        hostToken={hostAccessToken}
       />
       <header className="glass-header border-b border-slate-700/40 px-4 py-3 sm:px-6">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">

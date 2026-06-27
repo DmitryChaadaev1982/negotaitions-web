@@ -11,6 +11,7 @@ import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-cont
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { canEditSessionDurations } from "@/lib/negotiation-control";
 import { requireActiveUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth/admin";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
@@ -21,7 +22,9 @@ import { mapCaseRolesToSessionRoleCreate } from "@/lib/session-role";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
 import { normalizeInviteEmail, normalizeUserEmail } from "@/lib/invite-email";
 import {
+  addAccountParticipantSchema,
   addParticipantSchema,
+  assignParticipantRoleSchema,
   createSessionSchema,
   saveParticipantNotesSchema,
   updateSessionDurationSchema,
@@ -92,6 +95,7 @@ export async function createSession(
   formData: FormData,
 ): Promise<CreateSessionState> {
   const user = await requireActiveUser("/sessions/new");
+  const userIsAdmin = isAdmin(user);
 
   const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
   const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
@@ -102,6 +106,7 @@ export async function createSession(
     preparationDurationMinutes: formData.get("preparationDurationMinutes"),
     negotiationDurationMinutes: formData.get("negotiationDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
+    facilitatorUserId: formData.get("facilitatorUserId") || undefined,
     invitedUserIds: rawInvitedUserIds,
     invitedEmails: rawInvitedEmails,
   });
@@ -120,15 +125,42 @@ export async function createSession(
   }
 
   try {
-    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes, visibility, invitedUserIds, invitedEmails } =
+    const { title, caseId, negotiationDurationMinutes, preparationDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
 
+    // Enforce facilitator assignment rules server-side.
+    if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
+      return {
+        errors: {
+          form: ["facilitatorSelectionNotAllowed"],
+        },
+      };
+    }
+
+    const requestedFacilitatorUserId = facilitatorUserId ?? user.id;
+    const facilitatorUser = await prisma.user.findFirst({
+      where: { id: requestedFacilitatorUserId, status: "ACTIVE" },
+      select: { id: true, name: true, email: true },
+    });
+
+    if (!facilitatorUser) {
+      return { errors: { form: ["facilitatorMustBeActive"] } };
+    }
+
+    const resolvedFacilitatorUserId = facilitatorUser.id;
+
+    // Private sessions require an owner (facilitator).
+    if (visibility === "PRIVATE" && !resolvedFacilitatorUserId) {
+      return { errors: { form: ["ownerRequired"] } };
+    }
+
+    // Admin can see all cases; non-admin is restricted to own/public cases.
+    const caseAccessWhere = userIsAdmin
+      ? { id: caseId, ...activeCaseWhere }
+      : { id: caseId, ...activeCaseWhere, ...caseVisibilityWhereForUser(user.id) };
+
     const negotiationCase = await prisma.negotiationCase.findFirst({
-      where: {
-        id: caseId,
-        ...activeCaseWhere,
-        ...caseVisibilityWhereForUser(user.id),
-      },
+      where: caseAccessWhere,
       include: {
         roles: {
           orderBy: { sortOrder: "asc" },
@@ -138,11 +170,9 @@ export async function createSession(
 
     if (!negotiationCase) {
       const deletedCase = await prisma.negotiationCase.findFirst({
-        where: {
-          id: caseId,
-          deletedAt: { not: null },
-          ...caseVisibilityWhereForUser(user.id),
-        },
+        where: userIsAdmin
+          ? { id: caseId, deletedAt: { not: null } }
+          : { id: caseId, deletedAt: { not: null }, ...caseVisibilityWhereForUser(user.id) },
         select: { id: true },
       });
 
@@ -157,7 +187,7 @@ export async function createSession(
       data: {
         title,
         negotiationCaseId: caseId,
-        facilitatorId: user.id,
+        facilitatorId: resolvedFacilitatorUserId,
         status: SessionStatus.DRAFT,
         visibility,
         preparationDurationSeconds: minutesToSeconds(preparationDurationMinutes),
@@ -171,8 +201,8 @@ export async function createSession(
         },
         participants: {
           create: {
-            userId: user.id,
-            displayName: user.name?.trim() || user.email.split("@")[0] || "Facilitator",
+            userId: resolvedFacilitatorUserId,
+            displayName: facilitatorUser.name?.trim() || facilitatorUser.email.split("@")[0] || "Facilitator",
             type: ParticipantType.FACILITATOR,
             joinToken: generateJoinToken(),
           },
@@ -181,7 +211,9 @@ export async function createSession(
     });
 
     // Create SessionInvites for invited users and external emails.
-    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== user.id);
+    // Exclude the resolved facilitator so that when admin assigns a different
+    // facilitator, admin can be explicitly invited as a player.
+    const requestedUserIds = [...new Set(invitedUserIds)].filter((id) => id !== resolvedFacilitatorUserId);
     const normalizedInputEmails = [...new Set(invitedEmails.map((email) => normalizeInviteEmail(email)).filter((email): email is string => Boolean(email)))];
     const currentUserEmailNormalized = normalizeUserEmail(user.email);
 
@@ -387,6 +419,161 @@ export async function addParticipant(
   }
 }
 
+export type AddAccountParticipantState = {
+  errors?: ActionErrors;
+  success?: boolean;
+};
+
+/**
+ * Account-based participant add for standalone Sessions.
+ * Accepts a registered userId or an external email.
+ * Registered users get a SessionParticipant row with userId.
+ * External emails get a SessionInvite row (no role assignment until entry).
+ */
+export async function addAccountParticipant(
+  _prevState: AddAccountParticipantState,
+  formData: FormData,
+): Promise<AddAccountParticipantState> {
+  const user = await requireActiveUser();
+
+  const parsed = addAccountParticipantSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    type: formData.get("type"),
+    sessionRoleId: formData.get("sessionRoleId") || undefined,
+  });
+
+  if (!parsed.success) {
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    return {
+      errors: {
+        sessionRoleId: fieldErrors.sessionRoleId,
+        form: fieldErrors.type ?? fieldErrors.sessionId,
+      },
+    };
+  }
+
+  const { sessionId, type, sessionRoleId } = parsed.data;
+  const selectedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
+  const selectedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
+
+  if (selectedUserIds.length === 0 && selectedEmails.length === 0) {
+    return { errors: { form: ["selectUserOrEmail"] } };
+  }
+
+  try {
+    const session = await getFacilitatorSession(sessionId, user);
+
+    if (type === ParticipantType.PARTICIPANT && sessionRoleId) {
+      const assignedRole = session.sessionRoles.find((role) => role.id === sessionRoleId);
+      if (!assignedRole) {
+        return { errors: { sessionRoleId: ["Selected role does not belong to this session."] } };
+      }
+      if (!isAssignableCaseRole(assignedRole.name)) {
+        return { errors: { sessionRoleId: ["This role cannot be assigned to a participant."] } };
+      }
+      const existingAssignment = await prisma.sessionParticipant.findFirst({
+        where: { sessionId, type: ParticipantType.PARTICIPANT, sessionRoleId },
+      });
+      if (existingAssignment) {
+        return { errors: { sessionRoleId: ["This role is already assigned to another participant."] } };
+      }
+    }
+
+    let addedCount = 0;
+
+    for (const selectedUserId of selectedUserIds) {
+      const selectedUser = await prisma.user.findFirst({
+        where: { id: selectedUserId, status: "ACTIVE" },
+        select: { id: true, name: true, email: true },
+      });
+      if (!selectedUser) continue;
+
+      const existingParticipant = await prisma.sessionParticipant.findFirst({
+        where: { sessionId, userId: selectedUserId },
+      });
+      if (existingParticipant) continue;
+
+      await prisma.sessionParticipant.create({
+        data: {
+          sessionId,
+          userId: selectedUserId,
+          displayName: selectedUser.name?.trim() || selectedUser.email.split("@")[0] || selectedUser.email,
+          type: type as ParticipantType,
+          sessionRoleId: type === ParticipantType.PARTICIPANT ? (sessionRoleId ?? null) : null,
+          joinToken: generateJoinToken(),
+        },
+      });
+      addedCount++;
+    }
+
+    for (const rawEmail of selectedEmails) {
+      const normalizedEmail = normalizeInviteEmail(rawEmail);
+      if (!normalizedEmail) continue;
+
+      const existingUser = await prisma.user.findFirst({
+        where: { email: { equals: normalizedEmail, mode: "insensitive" }, status: "ACTIVE" },
+        select: { id: true, name: true, email: true },
+      });
+
+      if (existingUser) {
+        const existingParticipant = await prisma.sessionParticipant.findFirst({
+          where: { sessionId, userId: existingUser.id },
+        });
+        if (!existingParticipant) {
+          await prisma.sessionParticipant.create({
+            data: {
+              sessionId,
+              userId: existingUser.id,
+              displayName: existingUser.name?.trim() || existingUser.email.split("@")[0] || existingUser.email,
+              type: type as ParticipantType,
+              sessionRoleId: type === ParticipantType.PARTICIPANT ? (sessionRoleId ?? null) : null,
+              joinToken: generateJoinToken(),
+            },
+          });
+          addedCount++;
+        }
+      } else {
+        const existingInvite = await prisma.sessionInvite.findFirst({
+          where: {
+            sessionId,
+            invitedEmailNormalized: normalizedEmail,
+          },
+        });
+        if (!existingInvite) {
+          await prisma.sessionInvite.create({
+            data: {
+              sessionId,
+              invitedEmail: normalizedEmail,
+              invitedEmailNormalized: normalizedEmail,
+              displayLabel: normalizedEmail,
+              invitedByUserId: user.id,
+            },
+          });
+          addedCount++;
+        }
+      }
+    }
+
+    if (addedCount === 0) {
+      return { errors: { form: ["noNewParticipantsAdded"] } };
+    }
+
+    await syncSessionPrepStatus(sessionId);
+    revalidatePath(`/sessions/${sessionId}`);
+    return { success: true };
+  } catch (error) {
+    return {
+      errors: {
+        form: [
+          error instanceof Error
+            ? error.message
+            : "Unable to add participant. Please try again.",
+        ],
+      },
+    };
+  }
+}
+
 export async function removeParticipant(formData: FormData) {
   const user = await requireActiveUser();
   const participantId = String(formData.get("participantId") ?? "");
@@ -551,6 +738,8 @@ export async function saveAccountParticipantNotes(
     select: {
       id: true,
       sessionId: true,
+      type: true,
+      sessionRoleId: true,
       session: { select: { deletedAt: true } },
     },
   });
@@ -561,6 +750,11 @@ export async function saveAccountParticipantNotes(
 
   if (participant.session.deletedAt) {
     return { errors: { form: ["Session has been deleted."] } };
+  }
+
+  // Phase 6.11B: PARTICIPANT must have an assigned role before writing notes.
+  if (participant.type === ParticipantType.PARTICIPANT && !participant.sessionRoleId) {
+    return { errors: { form: ["preparationLockedNoRole"] } };
   }
 
   await prisma.sessionParticipant.update({
@@ -583,6 +777,139 @@ export async function recordParticipantPresence(joinToken: string) {
 /** @deprecated Use recordParticipantPresence */
 export async function markParticipantJoined(joinToken: string) {
   await recordParticipantPresence(joinToken);
+}
+
+export type AssignParticipantRoleState = {
+  errors?: ActionErrors;
+  success?: boolean;
+};
+
+/**
+ * Phase 6.11B: Assigns or reassigns roles to already-joined participants.
+ * Only the session facilitator/owner or admin can call this action.
+ * Participants cannot assign roles. No joinToken required.
+ *
+ * Input: sessionId + array of { sessionParticipantId, sessionRoleId | null }
+ * - sessionRoleId null = unassign role
+ * - Validates: session exists, caller has manage rights, all participant IDs
+ *   belong to this session, roles belong to this session, no duplicate unique
+ *   role assignments, no facilitator/player conflict.
+ */
+export async function assignParticipantRole(
+  _prevState: AssignParticipantRoleState,
+  formData: FormData,
+): Promise<AssignParticipantRoleState> {
+  const user = await requireActiveUser();
+
+  const rawAssignments: Array<{ sessionParticipantId: string; sessionRoleId: string | null }> = [];
+  const participantIds = formData.getAll("sessionParticipantId").map(String).filter(Boolean);
+  const roleIds = formData.getAll("sessionRoleId").map(String);
+
+  for (let i = 0; i < participantIds.length; i++) {
+    rawAssignments.push({
+      sessionParticipantId: participantIds[i],
+      sessionRoleId: roleIds[i]?.trim() || null,
+    });
+  }
+
+  const sessionId = String(formData.get("sessionId") ?? "").trim();
+
+  const parsed = assignParticipantRoleSchema.safeParse({
+    sessionId,
+    assignments: rawAssignments,
+  });
+
+  if (!parsed.success) {
+    return { errors: { form: ["roleAssignmentInvalidParticipant"] } };
+  }
+
+  try {
+    const session = await getFacilitatorSession(parsed.data.sessionId, user);
+
+    // Validate that all participant IDs belong to this session.
+    const sessionParticipantIds = parsed.data.assignments.map((a) => a.sessionParticipantId);
+    const dbParticipants = await prisma.sessionParticipant.findMany({
+      where: { sessionId: session.id, id: { in: sessionParticipantIds } },
+      select: { id: true, type: true, sessionRoleId: true },
+    });
+
+    if (dbParticipants.length !== sessionParticipantIds.length) {
+      return { errors: { form: ["roleAssignmentInvalidParticipant"] } };
+    }
+
+    // Build role → name map for validation.
+    const sessionRoleMap = new Map(session.sessionRoles.map((r) => [r.id, r]));
+
+    // Validate all requested role IDs belong to this session and are assignable.
+    for (const assignment of parsed.data.assignments) {
+      if (assignment.sessionRoleId === null) continue;
+      const role = sessionRoleMap.get(assignment.sessionRoleId);
+      if (!role) {
+        return { errors: { sessionRoleId: ["Selected role does not belong to this session."] } };
+      }
+      if (!isAssignableCaseRole(role.name)) {
+        return { errors: { sessionRoleId: ["This role cannot be assigned to a participant."] } };
+      }
+    }
+
+    // Check for facilitator/player conflicts (facilitator cannot be a player).
+    const facilitatorParticipant = dbParticipants.find((p) => p.type === ParticipantType.FACILITATOR);
+    if (facilitatorParticipant) {
+      const facilitatorAssignment = parsed.data.assignments.find(
+        (a) => a.sessionParticipantId === facilitatorParticipant.id && a.sessionRoleId !== null,
+      );
+      if (facilitatorAssignment) {
+        return { errors: { form: ["roleAssignmentFacilitatorConflict"] } };
+      }
+    }
+
+    // Check for duplicate unique role assignments among the new assignments.
+    const newRoleAssignmentIds = parsed.data.assignments
+      .filter((a) => a.sessionRoleId !== null)
+      .map((a) => a.sessionRoleId!);
+    const uniqueRoleIds = new Set(newRoleAssignmentIds);
+    if (uniqueRoleIds.size < newRoleAssignmentIds.length) {
+      return { errors: { form: ["roleAssignmentConflict"] } };
+    }
+
+    // Also check against EXISTING participants not in this batch.
+    const existingOtherParticipants = await prisma.sessionParticipant.findMany({
+      where: {
+        sessionId: session.id,
+        id: { notIn: sessionParticipantIds },
+        type: ParticipantType.PARTICIPANT,
+        sessionRoleId: { not: null },
+      },
+      select: { sessionRoleId: true },
+    });
+    for (const existing of existingOtherParticipants) {
+      if (existing.sessionRoleId && uniqueRoleIds.has(existing.sessionRoleId)) {
+        return { errors: { form: ["roleAssignmentConflict"] } };
+      }
+    }
+
+    await prisma.$transaction(
+      parsed.data.assignments.map((assignment) =>
+        prisma.sessionParticipant.update({
+          where: { id: assignment.sessionParticipantId },
+          data: { sessionRoleId: assignment.sessionRoleId },
+        }),
+      ),
+    );
+
+    await syncSessionPrepStatus(session.id);
+    revalidatePath(`/sessions/${session.id}`);
+    revalidatePath(`/sessions/${session.id}/materials`);
+    return { success: true };
+  } catch (error) {
+    return {
+      errors: {
+        form: [
+          error instanceof Error ? error.message : "roleAssignmentFailed",
+        ],
+      },
+    };
+  }
 }
 
 export async function deleteSession(sessionId: string) {

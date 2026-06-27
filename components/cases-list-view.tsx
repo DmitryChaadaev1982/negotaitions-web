@@ -117,6 +117,11 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
                   </DataTableCell>
                   <DataTableCell>
                     <VisibilityBadge visibility={negotiationCase.visibility} />
+                    {negotiationCase.visibility === "PRIVATE" && negotiationCase.createdByLabel ? (
+                      <p className="mt-0.5 text-xs text-slate-500" data-testid="case-owner-label">
+                        Owner: {negotiationCase.createdByLabel}
+                      </p>
+                    ) : null}
                   </DataTableCell>
                   <DataTableCell>{negotiationCase.roleCount}</DataTableCell>
                   <DataTableCell>

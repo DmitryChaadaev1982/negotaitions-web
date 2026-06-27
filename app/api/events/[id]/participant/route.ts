@@ -74,11 +74,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     event: access.event,
     isHost: access.isHost,
     isEventOwner: access.isEventOwner,
+    isAdmin: access.isAdmin,
     currentParticipant: {
       ...currentParticipant,
       preference: parsed.data.preference,
       ...preferenceFlags,
     },
+    accountMode: true,
+    userId: user.id,
   });
 
   return NextResponse.json(state);

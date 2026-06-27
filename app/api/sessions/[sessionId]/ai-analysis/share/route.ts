@@ -6,7 +6,7 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
-import { sanitizeSharedAiReport } from "@/lib/privacy/serializers";
+import { sanitizeSharedAiAnalysisForParticipant } from "@/lib/privacy/serializers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,11 +30,9 @@ type RouteContext = {
 function sanitizeAnalysisForParticipants(
   analysis: NegotiationAnalysisOutput,
 ): NegotiationAnalysisOutput {
-  return sanitizeSharedAiReport({
-    ...analysis,
-    // Explicitly zero out the objectives array (most critical private data)
-    roleObjectivesAnalysis: [],
-  }) as NegotiationAnalysisOutput;
+  return sanitizeSharedAiAnalysisForParticipant(
+    analysis,
+  ) as NegotiationAnalysisOutput;
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -129,12 +127,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const fullAnalysis = aiAnalysis.analysisJson as NegotiationAnalysisOutput | null;
-  // sanitizeAnalysisForParticipants strips private fields but also removes roleObjectivesAnalysis
-  // entirely — re-add it as an empty array so the stored JSON remains schema-valid.
-  const sanitizedBase = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
-  const sanitized = sanitizedBase
-    ? { ...sanitizedBase, roleObjectivesAnalysis: [] as NegotiationAnalysisOutput["roleObjectivesAnalysis"] }
-    : null;
+  // Key presence itself is a privacy failure; forbidden keys must be removed,
+  // never re-added as null/empty placeholders.
+  const sanitized = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
 
   const updated = await prisma.aiAnalysis.update({
     where: { id: aiAnalysis.id },

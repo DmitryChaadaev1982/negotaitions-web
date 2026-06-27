@@ -4,7 +4,25 @@ import { PageHeader } from "@/components/page-header";
 import { NewCaseForm } from "@/components/new-case-form";
 import { useI18n } from "@/lib/i18n/useI18n";
 
-export function NewCasePage() {
+type UserOption = {
+  id: string;
+  name: string | null;
+  email: string;
+};
+
+type NewCasePageProps = {
+  currentUserId: string;
+  currentUserEmail: string;
+  activeUsers: UserOption[];
+  canAssignOwner: boolean;
+};
+
+export function NewCasePage({
+  currentUserId,
+  currentUserEmail,
+  activeUsers,
+  canAssignOwner,
+}: NewCasePageProps) {
   const { t } = useI18n();
 
   return (
@@ -13,7 +31,12 @@ export function NewCasePage() {
         title={t("cases.newCase")}
         description={t("cases.newCasePageDescription")}
       />
-      <NewCaseForm />
+      <NewCaseForm
+        currentUserId={currentUserId}
+        currentUserEmail={currentUserEmail}
+        activeUsers={activeUsers}
+        canAssignOwner={canAssignOwner}
+      />
     </div>
   );
 }

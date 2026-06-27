@@ -39,9 +39,25 @@ export default async function EditCasePage({ params }: EditCasePageProps) {
     notFound();
   }
 
+  const activeUsers = adminViewer
+    ? await prisma.user.findMany({
+        where: { status: "ACTIVE" },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, email: true },
+      })
+    : [];
+
+  const currentOwnerUserId =
+    negotiationCase.createdByUserId ?? negotiationCase.facilitatorId;
+
   return (
     <EditCasePageView
       caseId={negotiationCase.id}
+      currentUserId={user.id}
+      currentUserEmail={user.email}
+      activeUsers={activeUsers}
+      canAssignOwner={adminViewer}
+      currentOwnerUserId={currentOwnerUserId}
       initialValues={{
         title: negotiationCase.title,
         businessContext: negotiationCase.businessContext,

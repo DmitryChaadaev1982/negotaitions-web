@@ -1,6 +1,7 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getEventLobbyUrl } from "@/lib/config";
+import { isAssignableCaseRole } from "@/lib/case-roles";
 import { prisma } from "@/lib/prisma";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -40,6 +41,11 @@ const roomSidebarParticipantInclude = {
           },
         },
         orderBy: { createdAt: "asc" as const },
+      },
+      // Phase 6.11B: session roles for facilitator role management panel.
+      sessionRoles: {
+        select: { id: true, name: true },
+        orderBy: { sortOrder: "asc" as const },
       },
     },
   },
@@ -97,9 +103,26 @@ function buildRoomSidebarData(
     displayName: sessionParticipant.displayName,
     participantType: sessionParticipant.type,
     caseRoleName: sessionParticipant.sessionRole?.name ?? null,
+    // Phase 6.11B: expose sessionRoleId only; no private briefing data.
+    sessionRoleId: sessionParticipant.type === ParticipantType.PARTICIPANT
+      ? (sessionParticipant.sessionRoleId ?? null)
+      : undefined,
   }));
 
+  // Phase 6.11B: for facilitators, include assignable session roles for role management panel.
+  const sessionRolesForFacilitator =
+    participant.type === ParticipantType.FACILITATOR
+      ? participant.session.sessionRoles
+          .filter((r) => isAssignableCaseRole(r.name))
+          .map((r) => ({ id: r.id, name: r.name }))
+      : [];
+
+  const isParticipantType = participant.type === ParticipantType.PARTICIPANT;
+  // Phase 6.11B: unassigned PARTICIPANT has no sessionRole.
+  const hasAssignedRole = !isParticipantType || participant.sessionRole !== null;
+
   return {
+    sessionId: participant.sessionId,
     sessionTitle: participant.session.title,
     visibility: participant.session.visibility,
     event: participant.session.event
@@ -128,8 +151,10 @@ function buildRoomSidebarData(
       publicInstructions: participant.session.snapshotPublicInstructions,
       caseLanguage: participant.session.snapshotCaseLanguage,
     },
-    caseRole: participant.sessionRole,
+    caseRole: hasAssignedRole ? participant.sessionRole : null,
+    hasAssignedRole,
     facilitatorBriefings,
     roster,
+    sessionRolesForFacilitator,
   };
 }

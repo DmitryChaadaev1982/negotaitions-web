@@ -54,6 +54,7 @@ type SessionRow = {
   aiVisibility: string;
   roomUrl: string;
   materialsUrl: string;
+  ownerLabel?: string | null;
 };
 
 type SessionsListViewProps = {
@@ -230,6 +231,11 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                         <VisibilityBadge visibility={session.visibility} showLabel={false} />
                       ) : null}
                     </div>
+                    {session.visibility === "PRIVATE" && session.ownerLabel ? (
+                      <p className="mt-0.5 text-xs text-slate-500" data-testid="session-owner-label">
+                        {t("sessions.facilitatorOwnerLabel")}: {session.ownerLabel}
+                      </p>
+                    ) : null}
                   </DataTableCell>
                   <DataTableCell>{session.caseTitle}</DataTableCell>
                   <DataTableCell>

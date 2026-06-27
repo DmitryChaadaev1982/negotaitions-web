@@ -43,6 +43,7 @@ export type SessionListItem = {
   aiVisibility: string;
   roomUrl: string;
   materialsUrl: string;
+  ownerLabel?: string | null;
 };
 
 export function isSessionActiveForPresence(session: {

@@ -111,6 +111,16 @@ export function canEditSession(access: CurrentUserSessionAccess) {
   );
 }
 
+/**
+ * For Sessions, facilitatorId is the owner by product decision.
+ * Changing facilitatorId changes the Session owner.
+ * Private Sessions require facilitatorId (enforced in createSession/updateSession).
+ *
+ * Canonical ownership model:
+ *   NegotiationCase owner = createdByUserId
+ *   TrainingEvent/Event owner = hostUserId
+ *   Session owner = facilitatorId  ← this file
+ */
 export function canManageSession(access: CurrentUserSessionAccess) {
   return (
     access.isAdmin ||

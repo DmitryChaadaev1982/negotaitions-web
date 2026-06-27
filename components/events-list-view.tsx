@@ -48,6 +48,7 @@ type EventRow = {
   // Use the event lobby URL via /events/[id]/join or direct host navigation.
   publicJoinCode: string;
   primarySessionId: string | null;
+  ownerLabel?: string | null;
 };
 
 const compactButtonClass =
@@ -415,6 +416,11 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                             <VisibilityBadge visibility={event.visibility} showLabel={false} />
                           ) : null}
                         </div>
+                        {event.visibility === "PRIVATE" && event.ownerLabel ? (
+                          <p className="text-xs text-slate-500" data-testid="event-owner-label">
+                            {t("visibility.ownerLabel")}: {event.ownerLabel}
+                          </p>
+                        ) : null}
                         <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                           {formatDate(event.scheduledAt)}
                         </p>
@@ -461,6 +467,11 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                           <VisibilityBadge visibility={event.visibility} showLabel={false} />
                         ) : null}
                       </div>
+                      {event.visibility === "PRIVATE" && event.ownerLabel ? (
+                        <p className="text-xs text-slate-500" data-testid="event-owner-label">
+                          {t("visibility.ownerLabel")}: {event.ownerLabel}
+                        </p>
+                      ) : null}
                       <p className="text-xs text-slate-500" data-testid="event-scheduled-at">
                         {formatDate(event.scheduledAt)}
                       </p>

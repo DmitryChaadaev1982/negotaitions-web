@@ -757,14 +757,30 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
     expect(dataStr).not.toContain(BATNA_SECRET_DO_NOT_LEAK);
     expect(dataStr).not.toContain(FACILITATOR_SECRET_DO_NOT_LEAK);
     expect(dataStr).not.toContain(ROLE_A_PRIVATE_SECRET_DO_NOT_LEAK);
+    expect(dataStr).not.toContain("roleObjectivesAnalysis");
+    expect(dataStr).not.toContain("rawPrompt");
+    expect(dataStr).not.toContain("analysisContext");
+    expect(dataStr).not.toContain("facilitatorNotes");
 
     // Other participant's feedback must not appear
     expect(dataStr).not.toContain(OTHER_PARTICIPANT_FEEDBACK_SECRET);
+    // Participant should still see their own published feedback.
+    expect(dataStr).toContain("Alice feedback");
   });
 
   test("Full facilitator AI analysis is NOT returned to participant", async ({
     request,
   }) => {
+    // Ensure unpublished state for this assertion, regardless of previous tests.
+    await query(
+      `UPDATE "AiAnalysis"
+       SET "visibility" = 'FACILITATOR_ONLY', "sharedAnalysisJson" = NULL,
+           "sharedExecutiveSummary" = NULL, "sharedAt" = NULL, "sharedBy" = NULL,
+           "updatedAt" = NOW()
+       WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    );
+
     const statusRes = await request.get(
       `/api/sessions/${fixture.sessionId}/materials/status?joinToken=${fixture.roleAToken}`,
     );
@@ -785,6 +801,9 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
     expect(data.aiAnalysis?.sharedBy).toBeNull();
     expect(data.aiAnalysis?.overallScore).toBeNull();
     expect(data.aiAnalysis?.errorMessage).toBeNull();
+    // Unpublished analysis remains hidden from participant-facing shared output.
+    expect((data.aiAnalysis as { canView?: boolean } | undefined)?.canView ?? false).toBe(false);
+    expect((data.aiAnalysis as { analysisJson?: unknown } | undefined)?.analysisJson ?? null).toBeNull();
   });
 
   test("Facilitator can access full AI analysis", async ({ request }) => {

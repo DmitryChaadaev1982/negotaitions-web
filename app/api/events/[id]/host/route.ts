@@ -96,7 +96,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     event: updated,
     isHost: true,
     isEventOwner: access.isEventOwner,
+    isAdmin: access.isAdmin,
     currentParticipant: access.currentParticipant,
+    accountMode: Boolean(user),
+    userId: user?.id ?? null,
   });
 
   return NextResponse.json(state);
@@ -197,7 +200,10 @@ export async function POST(request: Request, context: RouteContext) {
     }),
     isHost: true,
     isEventOwner: access.isEventOwner,
+    isAdmin: access.isAdmin,
     currentParticipant: access.currentParticipant,
+    accountMode: Boolean(user),
+    userId: user?.id ?? null,
   });
 
   return NextResponse.json({

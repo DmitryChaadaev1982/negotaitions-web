@@ -96,6 +96,7 @@ export async function createCase(
   formData: FormData,
 ): Promise<CreateCaseState> {
   const user = await requireActiveUser("/cases/new");
+  const adminViewer = isAdmin(user);
 
   const roles = parseCaseRolesFromFormData(formData);
 
@@ -128,6 +129,27 @@ export async function createCase(
       roles: caseRoles,
     } = parsed.data;
 
+    // Resolve owner: admin can assign any ACTIVE user; non-admin always owns themselves.
+    const requestedOwnerUserId = adminViewer
+      ? (String(formData.get("ownerUserId") ?? "").trim() || user.id)
+      : user.id;
+
+    const ownerUser = await prisma.user.findFirst({
+      where: { id: requestedOwnerUserId, status: "ACTIVE" },
+      select: { id: true },
+    });
+
+    if (!ownerUser) {
+      return { errors: { form: ["ownerMustBeActive"] } };
+    }
+
+    // Private objects require an owner (enforced server-side for consistency).
+    if (visibility === "PRIVATE" && !ownerUser.id) {
+      return { errors: { form: ["ownerRequired"] } };
+    }
+
+    const resolvedOwnerUserId = ownerUser.id;
+
     const negotiationCase = await prisma.negotiationCase.create({
       data: {
         title,
@@ -144,8 +166,8 @@ export async function createCase(
           negotiationDurationMinutes ??
             DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
         ),
-        facilitatorId: user.id,
-        createdByUserId: user.id,
+        facilitatorId: resolvedOwnerUserId,
+        createdByUserId: resolvedOwnerUserId,
         visibility: visibility as VisibilityLevel,
         roles: {
           create: caseRoles.map((role, index) => ({
@@ -249,6 +271,27 @@ export async function updateCase(
       };
     }
 
+    // Resolve owner for update: admin can transfer ownership; non-admin keeps existing owner.
+    let resolvedOwnerUserId = existingCase.createdByUserId ?? existingCase.facilitatorId;
+    if (adminViewer) {
+      const requestedOwnerUserId = String(formData.get("ownerUserId") ?? "").trim();
+      if (requestedOwnerUserId && requestedOwnerUserId !== resolvedOwnerUserId) {
+        const ownerUser = await prisma.user.findFirst({
+          where: { id: requestedOwnerUserId, status: "ACTIVE" },
+          select: { id: true },
+        });
+        if (!ownerUser) {
+          return { errors: { form: ["ownerMustBeActive"] } };
+        }
+        resolvedOwnerUserId = ownerUser.id;
+      }
+    }
+
+    // Private objects must have an owner.
+    if (visibility === "PRIVATE" && !resolvedOwnerUserId) {
+      return { errors: { form: ["ownerRequired"] } };
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.negotiationCase.update({
         where: { id: caseId },
@@ -267,6 +310,7 @@ export async function updateCase(
               DEFAULT_NEGOTIATION_DURATION_SECONDS / 60,
           ),
           visibility: visibility as VisibilityLevel,
+          ...(adminViewer ? { createdByUserId: resolvedOwnerUserId, facilitatorId: resolvedOwnerUserId } : {}),
         },
       });
 

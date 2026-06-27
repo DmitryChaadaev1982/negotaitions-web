@@ -17,6 +17,7 @@ import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
 import { MicEnforcement } from "@/components/mic-enforcement";
 import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { SessionRoomPresenceHeartbeat } from "@/components/session-room-presence-heartbeat";
+import { SessionRoleManagementPanel } from "@/components/session-role-management-panel";
 import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RecordingIndicator } from "@/components/recording-indicator";
 import { RestrictedControlBar } from "@/components/restricted-control-bar";
@@ -82,6 +83,10 @@ function RoomSidebar({
 }) {
   const { t } = useI18n();
 
+  // Phase 6.11B: unassigned PARTICIPANT sees waiting message instead of prep notes.
+  const isUnassignedParticipant =
+    sidebar.participantType === ParticipantType.PARTICIPANT && !sidebar.hasAssignedRole;
+
   const notesConfig =
     sidebar.participantType === ParticipantType.PARTICIPANT
       ? {
@@ -105,6 +110,18 @@ function RoomSidebar({
     `participantType.${sidebar.participantType}` as `participantType.${typeof sidebar.participantType}`,
   );
 
+  // Phase 6.11B: build role management participants from roster for facilitator view.
+  const roleManagementParticipants = sidebar.sessionRolesForFacilitator.length > 0
+    ? sidebar.roster.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName,
+        type: entry.participantType as string,
+        currentRoleId: entry.sessionRoleId ?? null,
+        currentRoleName: entry.caseRoleName,
+        joinedAt: null,
+      }))
+    : [];
+
   return (
     <aside className="glass-panel flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-600/25 bg-[#020617]/90">
       <div className="shrink-0 border-b border-slate-600/25 px-4 py-3.5">
@@ -113,6 +130,11 @@ function RoomSidebar({
         </h2>
         <p className="mt-0.5 text-xs text-slate-400">
           {sidebar.displayName} · {participantTypeLabel}
+          {isUnassignedParticipant ? (
+            <span className="ml-2 text-amber-400" data-testid="room-unassigned-badge">
+              · {t("sessions.noRoleAssignedBadge")}
+            </span>
+          ) : null}
         </p>
       </div>
 
@@ -145,13 +167,29 @@ function RoomSidebar({
             </GlassCardContent>
           </GlassCard>
 
-        {sidebar.participantType === ParticipantType.PARTICIPANT &&
-        sidebar.caseRole ? (
-          <RoleBriefingCard
-            title={t("join.yourRoleTitle", { name: sidebar.caseRole.name })}
-            subtitle={t("join.privateBriefingVisible")}
-            role={sidebar.caseRole}
-          />
+        {/* Phase 6.11B: unassigned PARTICIPANT sees waiting message instead of role briefing */}
+        {sidebar.participantType === ParticipantType.PARTICIPANT ? (
+          isUnassignedParticipant ? (
+            <GlassCard elevated>
+              <GlassCardContent>
+                <h3 className="mb-2 text-sm font-semibold text-slate-50">
+                  {t("join.yourRole")}
+                </h3>
+                <p
+                  className="text-sm text-amber-400"
+                  data-testid="room-waiting-role-message"
+                >
+                  {t("sessions.waitingForRoleAssignment")}
+                </p>
+              </GlassCardContent>
+            </GlassCard>
+          ) : sidebar.caseRole ? (
+            <RoleBriefingCard
+              title={t("join.yourRoleTitle", { name: sidebar.caseRole.name })}
+              subtitle={t("join.privateBriefingVisible")}
+              role={sidebar.caseRole}
+            />
+          ) : null
         ) : null}
 
         {sidebar.participantType === ParticipantType.FACILITATOR ? (
@@ -184,6 +222,24 @@ function RoomSidebar({
           </div>
         ) : null}
 
+        {/* Phase 6.11B: Role management panel — facilitator only in room */}
+        {sidebar.participantType === ParticipantType.FACILITATOR &&
+        sidebar.sessionRolesForFacilitator.length > 0 ? (
+          <GlassCard elevated>
+            <GlassCardContent>
+              <h3 className="mb-3 text-sm font-semibold text-slate-50">
+                {t("sessions.roleManagementTitle")}
+              </h3>
+              <SessionRoleManagementPanel
+                sessionId={sidebar.sessionId}
+                participants={roleManagementParticipants}
+                availableRoles={sidebar.sessionRolesForFacilitator}
+                compact
+              />
+            </GlassCardContent>
+          </GlassCard>
+        ) : null}
+
         {sidebar.participantType === ParticipantType.OBSERVER ? (
           <div>
             <h3 className="text-sm font-semibold text-slate-50">
@@ -195,19 +251,29 @@ function RoomSidebar({
           </div>
         ) : null}
 
+        {/* Phase 6.11B: hide preparation notes for unassigned PARTICIPANT */}
         <GlassCard elevated>
           <GlassCardContent>
             <h3 className="mb-3 text-sm font-semibold text-slate-50">
               {notesConfig.title}
             </h3>
-            <ParticipantNotesPanel
-              {...(roomAuth.type === "account"
-                ? { authMode: "account" as const, participantId: roomAuth.participantId }
-                : { joinToken: roomAuth.value })}
-              initialNotes={sidebar.notes}
-              description={notesConfig.description}
-              placeholder={notesConfig.placeholder}
-            />
+            {isUnassignedParticipant ? (
+              <p
+                className="text-sm text-amber-400"
+                data-testid="room-notes-locked-message"
+              >
+                {t("sessions.preparationLockedNoRole")}
+              </p>
+            ) : (
+              <ParticipantNotesPanel
+                {...(roomAuth.type === "account"
+                  ? { authMode: "account" as const, participantId: roomAuth.participantId }
+                  : { joinToken: roomAuth.value })}
+                initialNotes={sidebar.notes}
+                description={notesConfig.description}
+                placeholder={notesConfig.placeholder}
+              />
+            )}
           </GlassCardContent>
         </GlassCard>
         </div>

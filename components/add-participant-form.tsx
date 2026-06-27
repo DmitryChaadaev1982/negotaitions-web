@@ -3,9 +3,10 @@
 import { useActionState, useState } from "react";
 
 import {
-  addParticipant,
-  type AddParticipantState,
+  addAccountParticipant,
+  type AddAccountParticipantState,
 } from "@/app/actions/sessions";
+import { PeoplePicker } from "@/components/people-picker";
 import { GradientButton } from "@/components/ui/buttons";
 import {
   alertErrorClassName,
@@ -17,9 +18,9 @@ import {
 } from "@/components/ui/form-styles";
 import { useI18n } from "@/lib/i18n/useI18n";
 
-const initialState: AddParticipantState = {};
+const initialState: AddAccountParticipantState = {};
 
-type ParticipantTypeOption = "PARTICIPANT" | "OBSERVER" | "FACILITATOR";
+type ParticipantTypeOption = "PARTICIPANT" | "OBSERVER";
 
 type SessionRoleOption = {
   id: string;
@@ -31,27 +32,24 @@ type AddParticipantFormProps = {
   sessionRoles: SessionRoleOption[];
   assignedRoleIds: string[];
   hasFacilitator: boolean;
+  existingParticipantUserIds?: string[];
 };
 
 export function AddParticipantForm({
   sessionId,
   sessionRoles,
   assignedRoleIds,
-  hasFacilitator,
+  existingParticipantUserIds = [],
 }: AddParticipantFormProps) {
   const { t, tv } = useI18n();
   const [state, formAction, isPending] = useActionState(
-    addParticipant,
+    addAccountParticipant,
     initialState,
   );
   const [participantType, setParticipantType] =
     useState<ParticipantTypeOption>("PARTICIPANT");
 
-  const effectiveType =
-    hasFacilitator && participantType === "FACILITATOR"
-      ? "PARTICIPANT"
-      : participantType;
-  const isParticipant = effectiveType === "PARTICIPANT";
+  const isParticipant = participantType === "PARTICIPANT";
   const availableRoles = sessionRoles.filter(
     (role) => !assignedRoleIds.includes(role.id),
   );
@@ -59,6 +57,7 @@ export function AddParticipantForm({
   return (
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="sessionId" value={sessionId} />
+      <input type="hidden" name="type" value={participantType} />
 
       {state.errors?.form ? (
         <div className={alertErrorClassName}>
@@ -72,108 +71,85 @@ export function AddParticipantForm({
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Field
-          label={t("common.displayName")}
-          name="displayName"
-          error={state.errors?.displayName?.[0]}
-          required
-        >
-          <input
-            id="displayName"
-            name="displayName"
-            type="text"
-            required
-            className={inputClassName(!!state.errors?.displayName)}
-            placeholder="e.g. Alex Chen"
+      <p className="text-sm text-slate-400">
+        {t("sessions.addParticipantAccountHint")}
+      </p>
+
+      <div className="space-y-4">
+        <div>
+          <p className={labelClassName}>{t("sessions.selectParticipant")}</p>
+          <PeoplePicker
+            excludeUserIds={existingParticipantUserIds}
+            userFieldName="invitedUserId"
+            emailFieldName="invitedEmail"
           />
-        </Field>
+        </div>
 
-        <Field
-          label={t("common.type")}
-          name="type"
-          error={state.errors?.type?.[0]}
-          required
-        >
-          <select
-            id="type"
-            name="type"
-            required
-            value={effectiveType}
-            onChange={(event) => {
-              const nextType = event.target.value as ParticipantTypeOption;
-              if (nextType === "FACILITATOR" && hasFacilitator) {
-                return;
-              }
-              setParticipantType(nextType);
-            }}
-            className={inputClassName(!!state.errors?.type)}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field
+            label={t("common.type")}
+            name="participantType"
+            error={state.errors?.form?.[0]}
           >
-            <option value="PARTICIPANT">{t("common.participant")}</option>
-            <option value="OBSERVER">{t("common.observer")}</option>
-            <option value="FACILITATOR" disabled={hasFacilitator}>
-              {t("common.facilitator")}
-              {hasFacilitator ? t("common.facilitatorAlreadyAdded") : ""}
-            </option>
-          </select>
-        </Field>
-
-        <Field
-          label={t("common.assignedRole")}
-          name="sessionRoleId"
-          error={state.errors?.sessionRoleId?.[0]}
-          required={isParticipant}
-          description={
-            isParticipant
-              ? t("sessions.assignedRoleRequired")
-              : t("sessions.assignedRoleNotApplicable")
-          }
-        >
-          {isParticipant ? (
             <select
-              id="sessionRoleId"
-              name="sessionRoleId"
-              required
-              defaultValue=""
-              className={inputClassName(!!state.errors?.sessionRoleId)}
+              id="participantType"
+              value={participantType}
+              onChange={(event) =>
+                setParticipantType(event.target.value as ParticipantTypeOption)
+              }
+              className={inputClassName(false)}
             >
-              <option value="" disabled>
-                {t("common.selectRole")}
-              </option>
-              {availableRoles.length === 0 ? (
-                <option value="" disabled>
-                  {t("common.allRolesAssigned")}
-                </option>
-              ) : (
-                availableRoles.map((role) => (
+              <option value="PARTICIPANT">{t("common.participant")}</option>
+              <option value="OBSERVER">{t("common.observer")}</option>
+            </select>
+          </Field>
+
+          <Field
+            label={t("common.assignedRole")}
+            name="sessionRoleId"
+            error={state.errors?.sessionRoleId?.[0]}
+            description={
+              isParticipant
+                ? t("sessions.assignedRoleRequired")
+                : t("sessions.assignedRoleNotApplicable")
+            }
+          >
+            {isParticipant ? (
+              <select
+                id="sessionRoleId"
+                name="sessionRoleId"
+                defaultValue=""
+                className={inputClassName(!!state.errors?.sessionRoleId)}
+              >
+                {/* Phase 6.11B: allow adding participant without role — role assigned later via management panel */}
+                <option value="">{t("sessions.assignRoleLater")}</option>
+                {availableRoles.map((role) => (
                   <option key={role.id} value={role.id}>
                     {role.name}
                   </option>
-                ))
-              )}
-            </select>
-          ) : (
-            <select
-              id="sessionRoleId"
-              disabled
-              value=""
-              className={`${inputClassName(false)} cursor-not-allowed opacity-60`}
-            >
-              <option value="">{t("common.notApplicable")}</option>
-            </select>
-          )}
-        </Field>
+                ))}
+              </select>
+            ) : (
+              <select
+                id="sessionRoleId"
+                disabled
+                value=""
+                className={`${inputClassName(false)} cursor-not-allowed opacity-60`}
+              >
+                <option value="">{t("common.notApplicable")}</option>
+              </select>
+            )}
+          </Field>
 
-        <div className="flex items-end">
-          <GradientButton
-            type="submit"
-            disabled={
-              isPending || (isParticipant && availableRoles.length === 0)
-            }
-            className="w-full"
-          >
-            {isPending ? t("common.adding") : t("common.addParticipant")}
-          </GradientButton>
+          <div className="flex items-end">
+            <GradientButton
+              type="submit"
+              disabled={isPending}
+              className="w-full"
+            >
+              {isPending ? t("common.adding") : t("common.addParticipant")}
+            </GradientButton>
+          </div>
         </div>
       </div>
     </form>

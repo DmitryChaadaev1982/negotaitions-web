@@ -413,11 +413,27 @@ export async function GET(request: Request, context: RouteContext) {
   // facilitators see all sections.
   let analysisJsonForUser = rawAnalysisJsonForUser;
   if (!isFacilitator && rawAnalysisJsonForUser) {
-    const { filterPersonalFeedbackForParticipant } = await import("@/lib/privacy/serializers");
-    analysisJsonForUser = filterPersonalFeedbackForParticipant(
+    const {
+      filterPersonalFeedbackForParticipant,
+      sanitizeSharedAiAnalysisForParticipant,
+    } = await import("@/lib/privacy/serializers");
+    const sanitizedShared = sanitizeSharedAiAnalysisForParticipant(
       rawAnalysisJsonForUser as NegotiationAnalysisOutput,
-      { participantId: participant.id, displayName: participant.displayName },
     );
+
+    if (isObserver) {
+      const observerSafe = {
+        ...(sanitizedShared as NegotiationAnalysisOutput),
+      };
+      delete (observerSafe as { participantPersonalFeedback?: unknown })
+        .participantPersonalFeedback;
+      analysisJsonForUser = observerSafe as NegotiationAnalysisOutput;
+    } else {
+      analysisJsonForUser = filterPersonalFeedbackForParticipant(
+        sanitizedShared,
+        { participantId: participant.id, displayName: participant.displayName },
+      );
+    }
   }
 
   const executiveSummaryForUser = isFacilitator
