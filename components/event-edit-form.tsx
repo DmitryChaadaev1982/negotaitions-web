@@ -22,6 +22,7 @@ import {
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { getSupportedTimeZones } from "@/lib/timezones";
 
 const initialState: UpdateEventState = {};
 
@@ -38,6 +39,7 @@ type EventEditFormProps = {
     title: string;
     description: string | null;
     scheduledAt: Date | null;
+    timeZone: string;
     estimatedEventDurationSeconds: number | null;
     visibility: string;
     facilitatorUserId: string | null;
@@ -56,11 +58,22 @@ function userLabel(user: UserOption): string {
   return user.name ? `${user.name} (${user.email})` : user.email;
 }
 
-function toDatetimeLocalValue(date: Date | null): string {
+function toDatetimeLocalValue(date: Date | null, timeZone: string): string {
   if (!date) return "";
-  const d = new Date(date);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(new Date(date));
+  const lookup = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+
+  return `${lookup("year")}-${lookup("month")}-${lookup("day")}T${lookup("hour")}:${lookup("minute")}`;
 }
 
 export function EventEditForm({
@@ -83,6 +96,7 @@ export function EventEditForm({
   const [ownerUserId, setOwnerUserId] = useState(
     event.hostUserId ?? currentUserId,
   );
+  const [timeZone, setTimeZone] = useState(event.timeZone);
 
   const selfOption = useMemo(
     () =>
@@ -95,12 +109,13 @@ export function EventEditForm({
   );
   const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
   const ownerOptions = canAssignFacilitator ? activeUsers : [selfOption];
+  const timeZoneOptions = useMemo(() => getSupportedTimeZones(), []);
 
   const defaultDurationMinutes = event.estimatedEventDurationSeconds
     ? secondsToDisplayMinutes(event.estimatedEventDurationSeconds)
     : 120;
 
-  const defaultScheduledAt = toDatetimeLocalValue(event.scheduledAt);
+  const defaultScheduledAt = toDatetimeLocalValue(event.scheduledAt, timeZone);
 
 
   return (
@@ -121,6 +136,7 @@ export function EventEditForm({
         <input type="hidden" name="visibility" value={visibility} />
         <input type="hidden" name="facilitatorUserId" value={facilitatorUserId} />
         <input type="hidden" name="ownerUserId" value={ownerUserId} />
+        <input type="hidden" name="timeZone" value={timeZone} />
 
         {state.errors?.form ? (
           <div className={alertErrorClassName}>
@@ -214,6 +230,30 @@ export function EventEditForm({
                 className={inputClassName(false)}
               />
               <p className={hintClassName}>{t("events.scheduledAtHint")}</p>
+            </div>
+
+            <div>
+              <label className={labelClassName} htmlFor="timeZone">
+                {t("events.timeZone")}
+              </label>
+              <select
+                id="timeZone"
+                value={timeZone}
+                onChange={(event) => setTimeZone(event.target.value)}
+                className={inputClassName(Boolean(state.errors?.timeZone))}
+              >
+                {timeZoneOptions.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zone}
+                  </option>
+                ))}
+              </select>
+              <p className={hintClassName}>{t("events.timeZoneHint")}</p>
+              {state.errors?.timeZone ? (
+                <p className={errorClassName}>
+                  {state.errors.timeZone.map((key) => tv(key)).join(", ")}
+                </p>
+              ) : null}
             </div>
 
             <div>

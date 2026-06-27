@@ -13,11 +13,14 @@ import {
 } from "@/components/ui/form-styles";
 import { GradientButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { resolveConnectionStatus } from "@/lib/presence";
 
 type SessionRoleOption = {
   id: string;
   name: string;
 };
+const OBSERVER_DRAFT_VALUE = "__observer__";
+type DraftAssignmentValue = string | typeof OBSERVER_DRAFT_VALUE | null;
 
 type ParticipantRoleEntry = {
   id: string;
@@ -26,6 +29,7 @@ type ParticipantRoleEntry = {
   currentRoleId: string | null;
   currentRoleName: string | null;
   joinedAt: string | null;
+  lastSeenAt: string | null;
 };
 
 type SessionRoleManagementPanelProps = {
@@ -40,6 +44,8 @@ type SessionRoleManagementPanelProps = {
 };
 
 const initialState: AssignParticipantRoleState = {};
+
+type JoinStatus = "NOT_JOINED" | "JOINED" | "INACTIVE" | "DISCONNECTED";
 
 /**
  * Phase 6.11B: Facilitator/admin panel for assigning and reassigning roles
@@ -65,33 +71,57 @@ export function SessionRoleManagementPanel({
   );
 
   // Local draft — each participant's selected role before Apply.
-  const [draft, setDraft] = useState<Record<string, string | null>>(() => {
-    const initial: Record<string, string | null> = {};
+  const [draft, setDraft] = useState<Record<string, DraftAssignmentValue>>(() => {
+    const initial: Record<string, DraftAssignmentValue> = {};
     for (const p of participants) {
-      initial[p.id] = p.currentRoleId;
+      initial[p.id] =
+        p.type === "OBSERVER" ? OBSERVER_DRAFT_VALUE : p.currentRoleId;
     }
     return initial;
   });
 
-  // Only PARTICIPANT-type entries can have roles assigned.
-  const assignableParticipants = participants.filter(
-    (p) => p.type === "PARTICIPANT",
+  // Facilitator is excluded from reassignment in this panel.
+  const manageableParticipants = participants.filter(
+    (p) => p.type !== "FACILITATOR",
   );
-  const otherParticipants = participants.filter(
-    (p) => p.type !== "PARTICIPANT",
+  const staticParticipants = participants.filter(
+    (p) => p.type === "FACILITATOR",
   );
 
   // Build hidden form fields for all assignments in the draft.
   const formFields = useMemo(() => {
-    return assignableParticipants.map((p) => ({
+    return manageableParticipants.map((p) => ({
       participantId: p.id,
-      roleId: draft[p.id] ?? null,
+      roleId:
+        draft[p.id] === OBSERVER_DRAFT_VALUE ? null : (draft[p.id] ?? null),
+      participantType:
+        draft[p.id] === OBSERVER_DRAFT_VALUE ? "OBSERVER" : "PARTICIPANT",
     }));
-  }, [assignableParticipants, draft]);
+  }, [manageableParticipants, draft]);
 
   if (participants.length === 0) {
     return null;
   }
+
+  const resolveJoinStatus = (participant: ParticipantRoleEntry): JoinStatus => {
+    if (!participant.joinedAt && !participant.lastSeenAt) {
+      return "NOT_JOINED";
+    }
+
+    const status = resolveConnectionStatus(
+      participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
+    );
+
+    if (status === "ONLINE") {
+      return "JOINED";
+    }
+
+    if (status === "RECENTLY_DISCONNECTED") {
+      return "INACTIVE";
+    }
+
+    return "DISCONNECTED";
+  };
 
   return (
     <div
@@ -121,7 +151,7 @@ export function SessionRoleManagementPanel({
         <input type="hidden" name="sessionId" value={sessionId} />
 
         {/* Hidden fields for all assignments */}
-        {formFields.map(({ participantId, roleId }) => (
+        {formFields.map(({ participantId, roleId, participantType }) => (
           <span key={participantId}>
             <input
               type="hidden"
@@ -133,60 +163,86 @@ export function SessionRoleManagementPanel({
               name="sessionRoleId"
               value={roleId ?? ""}
             />
+            <input
+              type="hidden"
+              name="sessionParticipantType"
+              value={participantType}
+            />
           </span>
         ))}
 
-        {/* PARTICIPANT rows */}
-        {assignableParticipants.map((p) => (
-          <div
-            key={p.id}
-            className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3"
-            data-testid={`role-row-${p.id}`}
-          >
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-slate-100">
-                {p.displayName}
-              </p>
-              <p className="text-xs text-slate-500">
-                {p.joinedAt ? t("common.joined") : t("common.notYet")}
-                {draft[p.id]
-                  ? null
-                  : (
-                    <span
-                      className="ml-2 text-xs text-amber-400"
-                      data-testid="unassigned-badge"
-                    >
-                      {t("sessions.roleUnassigned")}
-                    </span>
-                  )}
-              </p>
-            </div>
-            <select
-              value={draft[p.id] ?? ""}
-              onChange={(e) =>
-                setDraft((prev) => ({
-                  ...prev,
-                  [p.id]: e.target.value || null,
-                }))
-              }
-              className={`w-40 shrink-0 ${inputClassName(false)} text-sm`}
-              aria-label={`${t("common.assignedRole")}: ${p.displayName}`}
-              data-testid={`role-select-${p.id}`}
+        {/* Participant and observer rows */}
+        {manageableParticipants.map((p) => {
+          const joinStatus = resolveJoinStatus(p);
+          const joinStatusClass =
+            joinStatus === "JOINED"
+              ? "text-emerald-400"
+              : joinStatus === "INACTIVE"
+                ? "text-amber-400"
+                : joinStatus === "DISCONNECTED"
+                ? "text-rose-400"
+                : "text-slate-500";
+          const joinStatusLabel =
+            joinStatus === "JOINED"
+              ? t("common.joined")
+              : joinStatus === "INACTIVE"
+                ? t("sessions.inactive")
+                : joinStatus === "DISCONNECTED"
+                ? t("sessions.disconnected")
+                : t("sessions.notJoinedYet");
+
+          return (
+            <div
+              key={p.id}
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3"
+              data-testid={`role-row-${p.id}`}
             >
-              <option value="">{t("sessions.roleUnassigned")}</option>
-              {availableRoles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-slate-100">
+                  {p.displayName}
+                </p>
+                <p className={`text-xs ${joinStatusClass}`}>
+                  {joinStatusLabel}
+                  {draft[p.id] === null ? (
+                      <span
+                        className="ml-2 text-xs text-amber-400"
+                        data-testid="unassigned-badge"
+                      >
+                        {t("sessions.roleUnassigned")}
+                      </span>
+                    ) : null}
+                </p>
+              </div>
+              <select
+                value={draft[p.id] ?? ""}
+                onChange={(e) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    [p.id]: e.target.value || null,
+                  }))
+                }
+                className={`w-40 shrink-0 ${inputClassName(false)} text-sm`}
+                aria-label={`${t("common.assignedRole")}: ${p.displayName}`}
+                data-testid={`role-select-${p.id}`}
+              >
+                <option value="">{t("sessions.roleUnassigned")}</option>
+                {availableRoles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+                <option value={OBSERVER_DRAFT_VALUE}>
+                  {t("participantType.OBSERVER")}
                 </option>
-              ))}
-            </select>
-          </div>
-        ))}
+              </select>
+            </div>
+          );
+        })}
 
         {/* Non-participant rows (facilitator, observer) — show status only */}
-        {!compact && otherParticipants.length > 0 ? (
+        {!compact && staticParticipants.length > 0 ? (
           <div className="space-y-2">
-            {otherParticipants.map((p) => (
+            {staticParticipants.map((p) => (
               <div
                 key={p.id}
                 className="flex items-center gap-3 rounded-lg border border-slate-700/20 bg-slate-900/20 px-4 py-2.5"
@@ -202,7 +258,7 @@ export function SessionRoleManagementPanel({
           </div>
         ) : null}
 
-        {assignableParticipants.length > 0 ? (
+        {manageableParticipants.length > 0 ? (
           <GradientButton
             type="submit"
             disabled={isPending}

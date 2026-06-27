@@ -29,6 +29,8 @@ import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 
+const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
+
 type EventLobbyViewProps = {
   eventId: string;
   tokenAccess?: {
@@ -85,6 +87,32 @@ export function EventLobbyView({
     return params.toString();
   }, [hostAccessToken, participantAccessToken]);
 
+  const fetchLiveKitToken = useCallback(async () => {
+    const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+        ...(participantAccessToken
+          ? { participantToken: participantAccessToken }
+          : {}),
+      }),
+    });
+
+    if (tokenResponse.ok) {
+      setLiveKit((await tokenResponse.json()) as LiveKitTokenResponse);
+      return "ok" as const;
+    }
+
+    if (tokenResponse.status === 410) {
+      setError("eventUnavailable");
+      return "eventUnavailable" as const;
+    }
+
+    setLiveKit(null);
+    return "retryableError" as const;
+  }, [eventId, hostAccessToken, participantAccessToken]);
+
   const fetchState = useCallback(async () => {
     const response = await fetch(
       `/api/events/${eventId}/state?${accessQuery}`,
@@ -112,23 +140,32 @@ export function EventLobbyView({
 
     async function bootstrap() {
       try {
-        const stateResponse = await fetch(`/api/events/${eventId}/state?${accessQuery}`, {
-          cache: "no-store",
-        });
+        let stateData: EventStateResponse | null = null;
+        for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
+          const stateResponse = await fetch(`/api/events/${eventId}/state?${accessQuery}`, {
+            cache: "no-store",
+          });
 
-        if (!active) return;
+          if (!active) return;
 
-        if (stateResponse.status === 410) {
-          setError("eventUnavailable");
-          return;
+          if (stateResponse.status === 410) {
+            setError("eventUnavailable");
+            return;
+          }
+
+          if (stateResponse.ok) {
+            stateData = (await stateResponse.json()) as EventStateResponse;
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
         }
 
-        if (!stateResponse.ok) {
+        if (!stateData) {
           setError("invalidAccess");
           return;
         }
 
-        const stateData = (await stateResponse.json()) as EventStateResponse;
         setState(stateData);
         setError(null);
 
@@ -140,28 +177,16 @@ export function EventLobbyView({
           return;
         }
 
-        void (async () => {
-          const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
-              ...(participantAccessToken
-                ? { participantToken: participantAccessToken }
-                : {}),
-            }),
-          });
-
-          if (!active) return;
-
-          if (tokenResponse.ok) {
-            setLiveKit((await tokenResponse.json()) as LiveKitTokenResponse);
-          } else if (tokenResponse.status === 410) {
-            setError("eventUnavailable");
-          } else {
-            setLiveKit(null);
+        for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
+          const tokenFetchResult = await fetchLiveKitToken();
+          if (!active) {
+            return;
           }
-        })();
+          if (tokenFetchResult === "ok" || tokenFetchResult === "eventUnavailable") {
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+        }
       } catch {
         if (active) {
           setError("invalidAccess");
@@ -178,16 +203,25 @@ export function EventLobbyView({
     return () => {
       active = false;
     };
-  }, [accessQuery, eventId, hostAccessToken, participantAccessToken]);
+  }, [accessQuery, eventId, fetchLiveKitToken]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      void fetchState();
-      touchRecoveryContext();
+      void (async () => {
+        const latestState = await fetchState();
+        if (
+          latestState &&
+          latestState.event.status !== "COMPLETED" &&
+          !liveKit
+        ) {
+          await fetchLiveKitToken();
+        }
+        touchRecoveryContext();
+      })();
     }, 2500);
 
     return () => window.clearInterval(interval);
-  }, [fetchState]);
+  }, [fetchLiveKitToken, fetchState, liveKit]);
 
   useEffect(() => {
     if (!state) {

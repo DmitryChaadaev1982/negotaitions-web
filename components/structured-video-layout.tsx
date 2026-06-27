@@ -456,6 +456,8 @@ function useLayoutParticipants(roster: SessionRosterEntry[]): LayoutParticipant[
         participantType:
           metadata?.participantType ?? ParticipantType.PARTICIPANT,
         caseRoleName: metadata?.caseRoleName ?? null,
+        joinedAt: null,
+        lastSeenAt: null,
         livekitParticipant: participant,
       });
     }

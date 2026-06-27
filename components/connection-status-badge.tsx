@@ -18,7 +18,7 @@ function statusColor(status: ParticipantConnectionStatus) {
     case "RECENTLY_DISCONNECTED":
       return "bg-amber-500";
     default:
-      return "bg-slate-600";
+      return "bg-rose-500";
   }
 }
 
@@ -64,7 +64,7 @@ export function ConnectionStatusBadge({
               ? "text-emerald-300"
               : status === "RECENTLY_DISCONNECTED"
                 ? "text-amber-300"
-                : "text-slate-400"
+                : "text-rose-300"
           }
         >
           {t(statusLabelKey(status))}

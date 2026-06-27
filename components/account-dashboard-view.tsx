@@ -24,6 +24,8 @@ type DashboardEventItem = {
   visibility: "PUBLIC" | "PRIVATE";
   status: string;
   scheduledAt: string | null;
+  timeZone: string;
+  estimatedDurationSeconds: number | null;
   roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
   totalSessions: number;
   activeSessions: number;
@@ -70,7 +72,53 @@ export function AccountDashboardView({
   hostedEvents,
   isAdmin,
 }: AccountDashboardViewProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const dateTimeLocale = locale === "ru" ? "ru-RU" : "en-US";
+
+  const formatDate = (iso: string | null, timeZone: string) => {
+    if (!iso) return "—";
+    return new Intl.DateTimeFormat(dateTimeLocale, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone,
+    }).format(new Date(iso));
+  };
+
+  const formatTime = (iso: string | null, timeZone: string) => {
+    if (!iso) return "—";
+    return new Intl.DateTimeFormat(dateTimeLocale, {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+      timeZoneName: "short",
+    }).format(new Date(iso));
+  };
+
+  const formatDuration = (seconds: number | null) => {
+    if (!seconds || seconds <= 0) return "—";
+    const totalMinutes = Math.round(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (locale === "ru") {
+      if (hours > 0 && minutes > 0) {
+        return `${hours} ч ${minutes} мин`;
+      }
+      if (hours > 0) {
+        return `${hours} ч`;
+      }
+      return `${minutes} мин`;
+    }
+
+    if (hours > 0 && minutes > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+    if (hours > 0) {
+      return `${hours}h`;
+    }
+    return `${minutes}m`;
+  };
 
   return (
     <div className="space-y-8">
@@ -113,8 +161,13 @@ export function AccountDashboardView({
                 <GlassCardContent className="space-y-2 text-sm text-slate-300">
                   <Badge variant="info">{t(event.roleKey)}</Badge>
                   <p>{t(`events.status.${event.status}` as never)}</p>
-                  <p>{event.scheduledAt ?? "—"}</p>
-                  <p>{`${event.totalSessions}/${event.activeSessions}/${event.finishedSessions}`}</p>
+                  <p>{formatDate(event.scheduledAt, event.timeZone)}</p>
+                  <p>
+                    {t("dashboard.eventTimeDuration", {
+                      time: formatTime(event.scheduledAt, event.timeZone),
+                      duration: formatDuration(event.estimatedDurationSeconds),
+                    })}
+                  </p>
                   {event.primaryAction ? (
                     <Link href={event.primaryAction.href} className="font-semibold text-cyan-400 hover:text-cyan-300">
                       {t(event.primaryAction.labelKey)}

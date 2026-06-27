@@ -221,8 +221,12 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                 <DataTableRow key={session.id}>
                   <DataTableCell>
                     <div className="flex items-center gap-2">
+                      {/**
+                       * Non-managers can access PUBLIC/open sessions via the room entrypoint.
+                       * The detail page is manager-only, so route title clicks accordingly.
+                       */}
                       <Link
-                        href={`/sessions/${session.id}`}
+                        href={session.canManage ? `/sessions/${session.id}` : session.roomUrl}
                         className="font-medium text-slate-50 hover:text-blue-300"
                       >
                         {session.title}

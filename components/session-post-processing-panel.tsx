@@ -31,6 +31,7 @@ type MaterialsStatusResponse = {
     processingStage: string;
     canStart: boolean;
     canRetry: boolean;
+    canStop?: boolean;
     canRerun?: boolean;
     speakerMappingRequired?: boolean;
     diarizationStatus?: string | null;
@@ -181,6 +182,7 @@ export function SessionPostProcessingPanel({
 
   const [statusData, setStatusData] = useState<MaterialsStatusResponse | null>(null);
   const [transcriptionBusy, setTranscriptionBusy] = useState(false);
+  const [stopTranscriptionBusy, setStopTranscriptionBusy] = useState(false);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [rerunBusy, setRerunBusy] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
@@ -214,7 +216,10 @@ export function SessionPostProcessingPanel({
   useEffect(() => {
     mountedRef.current = true;
     autoTranscribeStartedRef.current = false;
-    queueMicrotask(() => void fetchStatus());
+    queueMicrotask(() => {
+      if (mountedRef.current) setStopTranscriptionBusy(false);
+      void fetchStatus();
+    });
     return () => {
       mountedRef.current = false;
     };
@@ -238,6 +243,8 @@ export function SessionPostProcessingPanel({
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStart;
   const canRetryTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canRetry;
+  const canStopTranscription =
+    isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStop;
   const canRerunTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canRerun;
   const canStartAi = isFacilitator && !readOnly && ai?.canStart;
@@ -299,6 +306,32 @@ export function SessionPostProcessingPanel({
       setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
     } finally {
       setRerunBusy(false);
+    }
+  }, [fetchStatus, roomAuth, sessionId]);
+
+  const handleStopTranscription = useCallback(async () => {
+    setStopTranscriptionBusy(true);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/materials/transcribe/stop`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(roomAuthBody(roomAuth)),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Unable to stop transcription.");
+      }
+      autoTranscribeStartedRef.current = true;
+      void fetchStatus();
+    } catch (err) {
+      setRerunError(
+        err instanceof Error ? err.message : "Unable to stop transcription.",
+      );
+    } finally {
+      setStopTranscriptionBusy(false);
     }
   }, [fetchStatus, roomAuth, sessionId]);
 
@@ -436,6 +469,17 @@ export function SessionPostProcessingPanel({
                 data-testid="post-processing-rerun-transcription-button"
               >
                 {rerunBusy ? t("common.loading") : t("sessionMaterials.rerunTranscription")}
+              </SecondaryButton>
+            ) : null}
+            {canStopTranscription ? (
+              <SecondaryButton
+                disabled={stopTranscriptionBusy}
+                onClick={() => void handleStopTranscription()}
+                data-testid="post-processing-stop-transcription-button"
+              >
+                {stopTranscriptionBusy
+                  ? t("common.loading")
+                  : t("sessionMaterials.stopTranscription")}
               </SecondaryButton>
             ) : null}
             {transcriptionDone && !canRerunTranscription ? (
@@ -587,7 +631,7 @@ export function SessionPostProcessingPanel({
           </div>
           {(canStartTranscription || canRetryTranscription || (canRerunTranscription && !rerunConfirmOpen)) ? (
             <SecondaryButton
-              disabled={transcriptionBusy || rerunBusy}
+              disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
               onClick={() =>
                 canRerunTranscription ? setRerunConfirmOpen(true) : void handleStartTranscription()
               }
@@ -601,6 +645,18 @@ export function SessionPostProcessingPanel({
                   : canRetryTranscription
                     ? t("sessionMaterials.retryTranscription")
                     : t("room.startTranscription")}
+            </SecondaryButton>
+          ) : null}
+          {canStopTranscription ? (
+            <SecondaryButton
+              disabled={stopTranscriptionBusy}
+              onClick={() => void handleStopTranscription()}
+              data-testid="post-processing-stop-transcription-button"
+              className="shrink-0 text-xs"
+            >
+              {stopTranscriptionBusy
+                ? t("common.loading")
+                : t("sessionMaterials.stopTranscription")}
             </SecondaryButton>
           ) : null}
         </div>
@@ -827,9 +883,23 @@ export function SessionPostProcessingPanel({
         {showTranscriptionSection ? (
           transcriptionActive ? (
             <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4 text-center">
-              <p className="text-xs text-cyan-300 animate-pulse">
+              <p className="text-xs text-cyan-300">
                 {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.transcriptionInProgress")}
               </p>
+              {canStopTranscription ? (
+                <div className="mt-3 flex justify-center">
+                  <SecondaryButton
+                    disabled={stopTranscriptionBusy}
+                    onClick={() => void handleStopTranscription()}
+                    data-testid="post-processing-stop-transcription-button"
+                    className="text-xs"
+                  >
+                    {stopTranscriptionBusy
+                      ? t("common.loading")
+                      : t("sessionMaterials.stopTranscription")}
+                  </SecondaryButton>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="rounded-xl border border-slate-700/40 bg-slate-900/30">
@@ -848,7 +918,6 @@ export function SessionPostProcessingPanel({
               {!transcriptCollapsed ? (
                 <div className="px-3 pb-3">
                   <RecordingTranscriptionSection
-                    key={transcriptionStage}
                     sessionId={sessionId}
                     roomAuth={roomAuth}
                     autoTranscribeEnabled={autoTranscribeEnabled}
@@ -909,6 +978,17 @@ export function SessionPostProcessingPanel({
                 <p className="text-xs text-slate-500">
                   {t("sessionMaterials.transcriptionInProgressDescription")}
                 </p>
+                {canStopTranscription ? (
+                  <SecondaryButton
+                    disabled={stopTranscriptionBusy}
+                    onClick={() => void handleStopTranscription()}
+                    data-testid="post-processing-stop-transcription-button"
+                  >
+                    {stopTranscriptionBusy
+                      ? t("common.loading")
+                      : t("sessionMaterials.stopTranscription")}
+                  </SecondaryButton>
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -931,7 +1011,6 @@ export function SessionPostProcessingPanel({
             {!transcriptCollapsed ? (
               <CardContent>
                 <RecordingTranscriptionSection
-                  key={transcriptionStage === "ready" ? "ready" : "idle"}
                   sessionId={sessionId}
                   roomAuth={roomAuth}
                   autoTranscribeEnabled={autoTranscribeEnabled}

@@ -18,6 +18,7 @@ import {
 import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -89,14 +90,23 @@ export async function GET(request: Request, context: RouteContext) {
   const isFacilitator = participant.type === ParticipantType.FACILITATOR;
   const sessionCloseState = buildSessionCloseState(session);
 
-  return NextResponse.json({
-    ...buildControlState(session, participant.type, now),
-    ...sessionCloseState,
-    recording: recording
-      ? {
-          status: recording.status,
-          errorMessage: isFacilitator ? recording.errorMessage : null,
-        }
-      : null,
-  });
+  return NextResponse.json(
+    {
+      ...buildControlState(session, participant.type, now),
+      ...sessionCloseState,
+      recording: recording
+        ? {
+            status: recording.status,
+            errorMessage: isFacilitator ? recording.errorMessage : null,
+          }
+        : null,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    },
+  );
 }

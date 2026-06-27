@@ -16,6 +16,10 @@ import {
   DEFAULT_EVENT_DURATION_SECONDS,
   minutesToSeconds,
 } from "@/lib/negotiation-duration";
+import {
+  normalizeTimeZone,
+  zonedDateTimeInputToUtcDate,
+} from "@/lib/timezones";
 import { prisma } from "@/lib/prisma";
 import {
   createEventSchema,
@@ -74,6 +78,7 @@ export async function createTrainingEvent(
     title: formData.get("title"),
     description: formData.get("description") || undefined,
     scheduledAt: formData.get("scheduledAt") || undefined,
+    timeZone: formData.get("timeZone") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
     facilitatorUserId: formData.get("facilitatorUserId") || undefined,
@@ -86,6 +91,7 @@ export async function createTrainingEvent(
     return {
       errors: {
         title: fieldErrors.title,
+        timeZone: fieldErrors.timeZone,
         estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
         invitedEmail: fieldErrors.invitedEmails,
       },
@@ -93,8 +99,12 @@ export async function createTrainingEvent(
   }
 
   try {
-    const { title, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
+    const { title, description, scheduledAt, timeZone, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
+    const normalizedTimeZone = normalizeTimeZone(timeZone);
+    const scheduledAtUtc = scheduledAt
+      ? zonedDateTimeInputToUtcDate(scheduledAt, normalizedTimeZone)
+      : null;
 
     // Enforce facilitator assignment rules server-side.
     if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
@@ -145,7 +155,8 @@ export async function createTrainingEvent(
       data: {
         title,
         description: description || null,
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        scheduledAt: scheduledAtUtc,
+        timeZone: normalizedTimeZone,
         status: TrainingEventStatus.LOBBY_OPEN,
         hostUserId: resolvedHostUserId,
         facilitatorUserId: resolvedFacilitatorUserId,
@@ -300,6 +311,7 @@ export async function updateTrainingEvent(
     title: formData.get("title"),
     description: formData.get("description") || undefined,
     scheduledAt: formData.get("scheduledAt") || undefined,
+    timeZone: formData.get("timeZone") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
     facilitatorUserId: formData.get("facilitatorUserId") || undefined,
@@ -312,6 +324,7 @@ export async function updateTrainingEvent(
     return {
       errors: {
         title: fieldErrors.title,
+        timeZone: fieldErrors.timeZone,
         estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
         invitedEmail: fieldErrors.invitedEmails,
       },
@@ -341,8 +354,12 @@ export async function updateTrainingEvent(
       return { errors: { form: ["updateEventFailed"] } };
     }
 
-    const { title, description, scheduledAt, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
+    const { title, description, scheduledAt, timeZone, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
+    const normalizedTimeZone = normalizeTimeZone(timeZone);
+    const scheduledAtUtc = scheduledAt
+      ? zonedDateTimeInputToUtcDate(scheduledAt, normalizedTimeZone)
+      : null;
 
     if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
       return { errors: { form: ["facilitatorSelectionNotAllowed"] } };
@@ -384,7 +401,8 @@ export async function updateTrainingEvent(
       data: {
         title,
         description: description || null,
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        scheduledAt: scheduledAtUtc,
+        timeZone: normalizedTimeZone,
         facilitatorUserId: facilitatorUser.id,
         ...(userIsAdmin ? { hostUserId: resolvedHostUserId } : {}),
         visibility,

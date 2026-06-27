@@ -242,6 +242,9 @@ function buildReportMarkdown(
   analysis: NegotiationAnalysisOutput,
   t: (key: TranslationKey) => string,
 ): string {
+  const strengths = analysis.strengths ?? [];
+  const improvementAreas = analysis.improvementAreas ?? [];
+  const facilitatorDebriefQuestions = analysis.facilitatorDebriefQuestions ?? [];
   const lines: string[] = [];
   lines.push(`# ${t("sessionMaterials.aiReport")}\n`);
   lines.push(`## ${t("sessionMaterials.executiveSummary")}\n`);
@@ -255,18 +258,18 @@ function buildReportMarkdown(
   }
   lines.push("");
 
-  if (analysis.strengths.length > 0) {
+  if (strengths.length > 0) {
     lines.push(`## ${t("sessionMaterials.strengths")}\n`);
-    for (const s of analysis.strengths) {
+    for (const s of strengths) {
       lines.push(`### ${s.title}`);
       lines.push(`${s.evidence}`);
       lines.push(`*${s.recommendation}*\n`);
     }
   }
 
-  if (analysis.improvementAreas.length > 0) {
+  if (improvementAreas.length > 0) {
     lines.push(`## ${t("sessionMaterials.improvementAreas")}\n`);
-    for (const a of analysis.improvementAreas) {
+    for (const a of improvementAreas) {
       lines.push(`### ${a.title}`);
       lines.push(`${a.evidence}`);
       lines.push(`*${a.recommendation}*\n`);
@@ -278,9 +281,9 @@ function buildReportMarkdown(
   lines.push(`**${t("sessionMaterials.whatToImprove")}**: ${analysis.oneMinuteFeedback.whatToImprove}`);
   lines.push(`**${t("sessionMaterials.nextStep")}**: ${analysis.oneMinuteFeedback.nextStep}\n`);
 
-  if (analysis.facilitatorDebriefQuestions.length > 0) {
+  if (facilitatorDebriefQuestions.length > 0) {
     lines.push(`## ${t("sessionMaterials.facilitatorDebriefQuestions")}\n`);
-    for (const q of analysis.facilitatorDebriefQuestions) {
+    for (const q of facilitatorDebriefQuestions) {
       lines.push(`- ${q}`);
     }
     lines.push("");
@@ -380,6 +383,29 @@ export function AiAnalysisReport({
   const { t } = useI18n();
   const [reportCopied, setReportCopied] = useState(false);
   const [debriefCopied, setDebriefCopied] = useState(false);
+  const roleObjectivesAnalysis = analysis.roleObjectivesAnalysis ?? [];
+  const strengths = analysis.strengths ?? [];
+  const improvementAreas = analysis.improvementAreas ?? [];
+  const detectedTactics = analysis.detectedTactics ?? [];
+  const questionsAnalysis = analysis.questionsAnalysis ?? {
+    goodQuestions: [],
+    missedQuestions: [],
+    diagnosticQualityComment: "",
+  };
+  const listeningAndReframing = analysis.listeningAndReframing ?? {
+    goodExamples: [],
+    missedOpportunities: [],
+    comment: "",
+  };
+  const valueCreationAnalysis = analysis.valueCreationAnalysis ?? {
+    createdOptions: [],
+    missedOptions: [],
+    tradeOffsDiscussed: [],
+    comment: "",
+  };
+  const nextTrainingFocus = analysis.nextTrainingFocus ?? [];
+  const facilitatorDebriefQuestions = analysis.facilitatorDebriefQuestions ?? [];
+  const participantPersonalFeedback = analysis.participantPersonalFeedback ?? [];
 
   const handleCopyReport = useCallback(async () => {
     const md = buildReportMarkdown(analysis, t);
@@ -393,7 +419,7 @@ export function AiAnalysisReport({
   }, [analysis, t]);
 
   const handleCopyDebrief = useCallback(async () => {
-    const text = analysis.facilitatorDebriefQuestions.join("\n");
+    const text = (analysis.facilitatorDebriefQuestions ?? []).join("\n");
     try {
       await navigator.clipboard.writeText(text);
       setDebriefCopied(true);
@@ -493,10 +519,10 @@ export function AiAnalysisReport({
       </SectionCard>
 
       {/* 4. Role objectives analysis */}
-      {analysis.roleObjectivesAnalysis.length > 0 && (
+      {roleObjectivesAnalysis.length > 0 && (
         <SectionCard title={t("sessionMaterials.roleObjectivesAnalysis")}>
           <div className="space-y-3">
-            {analysis.roleObjectivesAnalysis.map((roa, i) => (
+            {roleObjectivesAnalysis.map((roa, i) => (
               <div key={i} className="rounded border border-slate-700/40 bg-slate-900/30 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -522,10 +548,10 @@ export function AiAnalysisReport({
       )}
 
       {/* 5. Strengths */}
-      {analysis.strengths.length > 0 && (
+      {strengths.length > 0 && (
         <SectionCard title={t("sessionMaterials.strengths")}>
           <div className="space-y-3">
-            {analysis.strengths.map((s, i) => (
+            {strengths.map((s, i) => (
               <div key={i} className="rounded border border-emerald-700/30 bg-emerald-950/20 p-3">
                 <p className="text-sm font-medium text-emerald-300">{s.title}</p>
                 <p className="mt-1 text-xs text-slate-400">
@@ -544,10 +570,10 @@ export function AiAnalysisReport({
       )}
 
       {/* 6. Improvement areas */}
-      {analysis.improvementAreas.length > 0 && (
+      {improvementAreas.length > 0 && (
         <SectionCard title={t("sessionMaterials.improvementAreas")}>
           <div className="space-y-3">
-            {analysis.improvementAreas.map((a, i) => (
+            {improvementAreas.map((a, i) => (
               <div key={i} className="rounded border border-amber-700/30 bg-amber-950/20 p-3">
                 <p className="text-sm font-medium text-amber-300">{a.title}</p>
                 <p className="mt-1 text-xs text-slate-400">
@@ -569,10 +595,10 @@ export function AiAnalysisReport({
       )}
 
       {/* 7. Detected tactics */}
-      {analysis.detectedTactics.length > 0 && (
+      {detectedTactics.length > 0 && (
         <SectionCard title={t("sessionMaterials.detectedTactics")}>
           <div className="space-y-3">
-            {analysis.detectedTactics.map((tactic, i) => (
+            {detectedTactics.map((tactic, i) => (
               <div key={i} className="rounded border border-violet-700/30 bg-violet-950/20 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium text-violet-300">{tactic.name}</p>
@@ -596,13 +622,13 @@ export function AiAnalysisReport({
       {/* 8. Questions analysis */}
       <SectionCard title={t("sessionMaterials.questionsAnalysis")}>
         <div className="space-y-3">
-          {analysis.questionsAnalysis.goodQuestions.length > 0 && (
+          {questionsAnalysis.goodQuestions.length > 0 && (
             <div>
               <p className="mb-2 text-xs font-medium text-emerald-400">
                 {t("sessionMaterials.goodQuestions")}
               </p>
               <div className="space-y-2">
-                {analysis.questionsAnalysis.goodQuestions.map((q, i) => (
+                {questionsAnalysis.goodQuestions.map((q, i) => (
                   <div key={i} className="rounded bg-slate-900/50 px-3 py-2">
                     <p className="text-xs text-slate-200">&ldquo;{q.question}&rdquo;</p>
                     <p className="mt-0.5 text-xs text-slate-500">
@@ -613,13 +639,13 @@ export function AiAnalysisReport({
               </div>
             </div>
           )}
-          {analysis.questionsAnalysis.missedQuestions.length > 0 && (
+          {questionsAnalysis.missedQuestions.length > 0 && (
             <div>
               <p className="mb-2 text-xs font-medium text-amber-400">
                 {t("sessionMaterials.missedQuestions")}
               </p>
               <div className="space-y-2">
-                {analysis.questionsAnalysis.missedQuestions.map((q, i) => (
+                {questionsAnalysis.missedQuestions.map((q, i) => (
                   <div key={i} className="rounded bg-slate-900/50 px-3 py-2">
                     <p className="text-xs text-slate-200">&ldquo;{q.suggestedQuestion}&rdquo;</p>
                     <p className="mt-0.5 text-xs text-slate-500">{q.whyItMattered}</p>
@@ -628,9 +654,9 @@ export function AiAnalysisReport({
               </div>
             </div>
           )}
-          {analysis.questionsAnalysis.diagnosticQualityComment && (
+          {questionsAnalysis.diagnosticQualityComment && (
             <p className="text-xs text-slate-400">
-              {analysis.questionsAnalysis.diagnosticQualityComment}
+              {questionsAnalysis.diagnosticQualityComment}
             </p>
           )}
         </div>
@@ -639,13 +665,13 @@ export function AiAnalysisReport({
       {/* 9. Listening and reframing */}
       <SectionCard title={t("sessionMaterials.listeningAndReframing")}>
         <div className="space-y-2">
-          {analysis.listeningAndReframing.goodExamples.length > 0 && (
+          {listeningAndReframing.goodExamples.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-emerald-400">
                 {t("sessionMaterials.goodExamples")}
               </p>
               <ul className="space-y-1">
-                {analysis.listeningAndReframing.goodExamples.map((ex, i) => (
+                {listeningAndReframing.goodExamples.map((ex, i) => (
                   <li key={i} className="text-xs text-slate-300">
                     • {ex}
                   </li>
@@ -653,13 +679,13 @@ export function AiAnalysisReport({
               </ul>
             </div>
           )}
-          {analysis.listeningAndReframing.missedOpportunities.length > 0 && (
+          {listeningAndReframing.missedOpportunities.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-amber-400">
                 {t("sessionMaterials.missedOpportunities")}
               </p>
               <ul className="space-y-1">
-                {analysis.listeningAndReframing.missedOpportunities.map(
+                {listeningAndReframing.missedOpportunities.map(
                   (op, i) => (
                     <li key={i} className="text-xs text-slate-300">
                       • {op}
@@ -669,9 +695,9 @@ export function AiAnalysisReport({
               </ul>
             </div>
           )}
-          {analysis.listeningAndReframing.comment && (
+          {listeningAndReframing.comment && (
             <p className="text-xs text-slate-400">
-              {analysis.listeningAndReframing.comment}
+              {listeningAndReframing.comment}
             </p>
           )}
         </div>
@@ -680,13 +706,13 @@ export function AiAnalysisReport({
       {/* 10. Value creation analysis */}
       <SectionCard title={t("sessionMaterials.valueCreationAnalysis")}>
         <div className="space-y-2">
-          {analysis.valueCreationAnalysis.createdOptions.length > 0 && (
+          {valueCreationAnalysis.createdOptions.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-emerald-400">
                 {t("sessionMaterials.createdOptions")}
               </p>
               <ul className="space-y-1">
-                {analysis.valueCreationAnalysis.createdOptions.map((o, i) => (
+                {valueCreationAnalysis.createdOptions.map((o, i) => (
                   <li key={i} className="text-xs text-slate-300">
                     • {o}
                   </li>
@@ -694,13 +720,13 @@ export function AiAnalysisReport({
               </ul>
             </div>
           )}
-          {analysis.valueCreationAnalysis.missedOptions.length > 0 && (
+          {valueCreationAnalysis.missedOptions.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-amber-400">
                 {t("sessionMaterials.missedOptions")}
               </p>
               <ul className="space-y-1">
-                {analysis.valueCreationAnalysis.missedOptions.map((o, i) => (
+                {valueCreationAnalysis.missedOptions.map((o, i) => (
                   <li key={i} className="text-xs text-slate-300">
                     • {o}
                   </li>
@@ -708,19 +734,19 @@ export function AiAnalysisReport({
               </ul>
             </div>
           )}
-          {analysis.valueCreationAnalysis.comment && (
+          {valueCreationAnalysis.comment && (
             <p className="text-xs text-slate-400">
-              {analysis.valueCreationAnalysis.comment}
+              {valueCreationAnalysis.comment}
             </p>
           )}
         </div>
       </SectionCard>
 
       {/* 11. Next training focus */}
-      {analysis.nextTrainingFocus.length > 0 && (
+      {nextTrainingFocus.length > 0 && (
         <SectionCard title={t("sessionMaterials.nextTrainingFocus")}>
           <div className="space-y-3">
-            {analysis.nextTrainingFocus.map((f, i) => (
+            {nextTrainingFocus.map((f, i) => (
               <div key={i} className="rounded border border-cyan-700/30 bg-cyan-950/20 p-3">
                 <p className="text-sm font-medium text-cyan-300">{f.focusArea}</p>
                 <p className="mt-1 text-xs text-slate-400">
@@ -736,10 +762,10 @@ export function AiAnalysisReport({
       )}
 
       {/* 12. Facilitator debrief questions */}
-      {analysis.facilitatorDebriefQuestions.length > 0 && (
+      {facilitatorDebriefQuestions.length > 0 && (
         <SectionCard title={t("sessionMaterials.facilitatorDebriefQuestions")}>
           <ol className="space-y-2">
-            {analysis.facilitatorDebriefQuestions.map((q, i) => (
+            {facilitatorDebriefQuestions.map((q, i) => (
               <li key={i} className="text-sm text-slate-300">
                 <span className="mr-2 font-mono text-xs text-slate-500">
                   {i + 1}.
@@ -787,8 +813,7 @@ export function AiAnalysisReport({
       </SectionCard>
 
       {/* 14. Personal feedback per participant */}
-      {analysis.participantPersonalFeedback &&
-        analysis.participantPersonalFeedback.length > 0 && (
+      {participantPersonalFeedback.length > 0 && (
           <div
             className={
               isFacilitator
@@ -808,7 +833,7 @@ export function AiAnalysisReport({
                 {t("sessionMaterials.participantPersonalFeedback")}
               </p>
             )}
-            {analysis.participantPersonalFeedback.map((pf, idx) => (
+            {participantPersonalFeedback.map((pf, idx) => (
               <div
                 key={idx}
                 className={

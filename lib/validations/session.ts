@@ -71,6 +71,7 @@ export const assignParticipantRoleSchema = z.object({
   assignments: z.array(
     z.object({
       sessionParticipantId: z.string().trim().min(1),
+      sessionParticipantType: z.enum(["PARTICIPANT", "OBSERVER"]),
       sessionRoleId: z.string().trim().min(1).nullable(),
     }),
   ).min(1),

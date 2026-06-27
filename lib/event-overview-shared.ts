@@ -29,6 +29,8 @@ export type TrainingEventListItem = {
   visibility: "PUBLIC" | "PRIVATE";
   canManage: boolean;
   scheduledAt: string | null;
+  timeZone: string;
+  estimatedDurationSeconds: number | null;
   publicJoinCode: string;
   primarySessionId: string | null;
   lobbyParticipantCount: number;

@@ -581,8 +581,9 @@ test.describe("Guest flow remains closed", () => {
     const res = await request.get(`/events/${event.id}/lobby`, {
       maxRedirects: 0,
     });
-    // 200 with "Invalid access link." message, 302/303 redirect to login
-    expect([200, 302, 303]).toContain(res.status());
+    // 200 with "Invalid access link." message, or redirect to login
+    // (Next.js redirect() returns 307; 302/303/308 also accepted as login redirects)
+    expect([200, 302, 303, 307, 308]).toContain(res.status());
     if (res.status() === 200) {
       const body = await res.text();
       expect(body).toContain("Invalid access link.");

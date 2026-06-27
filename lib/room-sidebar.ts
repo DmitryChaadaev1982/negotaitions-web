@@ -103,6 +103,8 @@ function buildRoomSidebarData(
     displayName: sessionParticipant.displayName,
     participantType: sessionParticipant.type,
     caseRoleName: sessionParticipant.sessionRole?.name ?? null,
+    joinedAt: sessionParticipant.joinedAt?.toISOString() ?? null,
+    lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
     // Phase 6.11B: expose sessionRoleId only; no private briefing data.
     sessionRoleId: sessionParticipant.type === ParticipantType.PARTICIPANT
       ? (sessionParticipant.sessionRoleId ?? null)

@@ -28,6 +28,7 @@ export default async function EventEditPage({ params }: EventEditPageProps) {
       title: true,
       description: true,
       scheduledAt: true,
+      timeZone: true,
       estimatedEventDurationSeconds: true,
       visibility: true,
       facilitatorUserId: true,

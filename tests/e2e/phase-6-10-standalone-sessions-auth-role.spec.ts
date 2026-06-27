@@ -417,6 +417,39 @@ test.describe("Part 4+6 - Standalone session access semantics", () => {
     const finalUrl = response.url();
     expect(finalUrl).not.toContain("joinToken");
   });
+
+  test("account room entry auto-creates OBSERVER participant by default", async ({ request }) => {
+    const owner = await createActiveUser("p610_room_observer_owner", "Room Observer Owner");
+    const invited = await createActiveUser("p610_room_observer_inv", "Room Observer Invited");
+    const invitedToken = await createUserSession(invited.id);
+    const { sessionId } = await createStandaloneSession(owner.id, "PRIVATE");
+
+    await createSessionInviteForUser(sessionId, invited.id, owner.id);
+
+    const beforeRows = await query<{ id: string }>(
+      `SELECT "id"
+       FROM "SessionParticipant"
+       WHERE "sessionId" = $1 AND "userId" = $2`,
+      [sessionId, invited.id],
+    );
+    expect(beforeRows).toHaveLength(0);
+
+    const roomResponse = await request.get(`/room/${sessionId}`, {
+      headers: { Cookie: `auth_session=${invitedToken}` },
+      maxRedirects: 5,
+    });
+    expect([200, 302, 303]).toContain(roomResponse.status());
+
+    const afterRows = await query<{ type: "OBSERVER" | "PARTICIPANT" | "FACILITATOR"; sessionRoleId: string | null }>(
+      `SELECT "type", "sessionRoleId"
+       FROM "SessionParticipant"
+       WHERE "sessionId" = $1 AND "userId" = $2`,
+      [sessionId, invited.id],
+    );
+    expect(afterRows).toHaveLength(1);
+    expect(afterRows[0]?.type).toBe("OBSERVER");
+    expect(afterRows[0]?.sessionRoleId).toBeNull();
+  });
 });
 
 // ─── Part 5: No individual join links in session detail response ───────────────

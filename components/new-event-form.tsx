@@ -22,6 +22,10 @@ import {
 } from "@/components/ui/form-styles";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  getClientTimeZone,
+  getSupportedTimeZones,
+} from "@/lib/timezones";
 
 const initialState: CreateEventState = {};
 
@@ -56,6 +60,7 @@ export function NewEventForm({
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PRIVATE");
   const [facilitatorUserId, setFacilitatorUserId] = useState(currentUserId);
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
+  const [timeZone, setTimeZone] = useState(() => getClientTimeZone());
   const selfOption = useMemo(
     () =>
       activeUsers.find((user) => user.id === currentUserId) ?? {
@@ -67,6 +72,7 @@ export function NewEventForm({
   );
   const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
   const ownerOptions = canAssignFacilitator ? activeUsers : [selfOption];
+  const timeZoneOptions = useMemo(() => getSupportedTimeZones(), []);
 
   return (
     <div className="space-y-8">
@@ -86,6 +92,7 @@ export function NewEventForm({
         <input type="hidden" name="visibility" value={visibility} />
         <input type="hidden" name="facilitatorUserId" value={facilitatorUserId} />
         <input type="hidden" name="ownerUserId" value={ownerUserId} />
+        <input type="hidden" name="timeZone" value={timeZone} />
 
         {/* Facilitator selection */}
         <GlassCard>
@@ -170,6 +177,30 @@ export function NewEventForm({
                 className={inputClassName(false)}
               />
               <p className={hintClassName}>{t("events.scheduledAtHint")}</p>
+            </div>
+
+            <div>
+              <label className={labelClassName} htmlFor="timeZone">
+                {t("events.timeZone")}
+              </label>
+              <select
+                id="timeZone"
+                value={timeZone}
+                onChange={(event) => setTimeZone(event.target.value)}
+                className={inputClassName(Boolean(state.errors?.timeZone))}
+              >
+                {timeZoneOptions.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zone}
+                  </option>
+                ))}
+              </select>
+              <p className={hintClassName}>{t("events.timeZoneHint")}</p>
+              {state.errors?.timeZone ? (
+                <p className={errorClassName}>
+                  {state.errors.timeZone.map((key) => tv(key)).join(", ")}
+                </p>
+              ) : null}
             </div>
 
             <div>

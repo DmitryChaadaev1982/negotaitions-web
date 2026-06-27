@@ -34,8 +34,17 @@ const roomParticipantInclude = {
       eventId: true,
       negotiationState: true,
       negotiationStartedAt: true,
+      negotiationEndedAt: true,
       preparationDurationSeconds: true,
       durationSeconds: true,
+      timerStartedAt: true,
+      pausedAt: true,
+      totalPausedSeconds: true,
+      preparationStartedAt: true,
+      preparationEndedAt: true,
+      preparationTimerStartedAt: true,
+      preparationPausedAt: true,
+      preparationTotalPausedSeconds: true,
       status: true,
       closedByEventAt: true,
       closeReason: true,
@@ -124,7 +133,9 @@ export async function ensureAccountRoomParticipant(
     session.facilitatorId === user.id ||
     session.event?.hostUserId === user.id ||
     session.event?.facilitatorUserId === user.id;
-  const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "PARTICIPANT";
+  // Non-facilitators join as observers by default; facilitator can later promote
+  // them to participant roles from the role management panel.
+  const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "OBSERVER";
   const displayName = displayNameForUser(user);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {

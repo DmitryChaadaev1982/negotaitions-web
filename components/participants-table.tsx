@@ -43,14 +43,14 @@ function ConnectionStatus({
       ? "bg-emerald-500"
       : connectionStatus === "RECENTLY_DISCONNECTED"
         ? "bg-amber-500"
-        : "bg-slate-600";
+        : "bg-rose-500";
 
   const textClass =
     connectionStatus === "ONLINE"
       ? "text-emerald-300"
       : connectionStatus === "RECENTLY_DISCONNECTED"
         ? "text-amber-300"
-        : "text-slate-400";
+        : "text-rose-300";
 
   const labelKey =
     connectionStatus === "ONLINE"

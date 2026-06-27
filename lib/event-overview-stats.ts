@@ -135,6 +135,8 @@ export async function getEventsForUser(
       visibility: true,
       status: true,
       scheduledAt: true,
+      timeZone: true,
+      estimatedEventDurationSeconds: true,
       publicJoinCode: true,
       createdAt: true,
       hostUser: {
@@ -213,6 +215,8 @@ export async function getEventsForUser(
             event.facilitatorUserId === user.id),
       ),
       scheduledAt: event.scheduledAt?.toISOString() ?? null,
+      timeZone: event.timeZone,
+      estimatedDurationSeconds: event.estimatedEventDurationSeconds ?? null,
       publicJoinCode: event.publicJoinCode,
       primarySessionId: event.sessions[0]?.id ?? null,
       createdAt: event.createdAt.toISOString(),

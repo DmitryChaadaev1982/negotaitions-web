@@ -203,6 +203,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       session.linkedEvent?.status === "COMPLETED" ? new Date().toISOString() : null,
     deletedAt: session.isDeleted ? new Date().toISOString() : null,
   });
+  const canManageRolesBeforePreparation = session.negotiationState === "PREPARATION";
 
   // Phase 6.11B: participants eligible for role assignment (joined, PARTICIPANT type).
   const roleManagementParticipants = session.participants
@@ -214,6 +215,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       currentRoleId: p.sessionRoleId ?? null,
       currentRoleName: p.caseRoleName,
       joinedAt: p.joinedAt,
+      lastSeenAt: p.lastSeenAt,
     }));
 
   return (
@@ -420,7 +422,9 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       ) : null}
 
       {/* Phase 6.11B: Role management panel — shown when session has participants with assignable roles */}
-      {!isReadOnly && session.assignableRoles.length > 0 ? (
+      {!isReadOnly &&
+      session.assignableRoles.length > 0 &&
+      canManageRolesBeforePreparation ? (
         <Card>
           <CardHeader>
             <h2 className="text-base font-semibold text-slate-50">

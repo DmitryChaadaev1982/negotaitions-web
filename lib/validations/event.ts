@@ -5,6 +5,7 @@ import {
   MAX_EVENT_DURATION_MINUTES,
   MIN_EVENT_DURATION_MINUTES,
 } from "@/lib/negotiation-duration";
+import { DEFAULT_EVENT_TIME_ZONE, isValidTimeZone } from "@/lib/timezones";
 
 const publicCodeAlphabet = customAlphabet(
   "23456789ABCDEFGHJKLMNPQRSTUVWXYZ",
@@ -19,6 +20,12 @@ export const createEventSchema = z.object({
   title: z.string().trim().min(1, "titleRequired"),
   description: z.string().trim().optional(),
   scheduledAt: z.string().trim().optional(),
+  timeZone: z
+    .string()
+    .trim()
+    .min(1, "invalidTimeZone")
+    .refine((value) => isValidTimeZone(value), "invalidTimeZone")
+    .default(DEFAULT_EVENT_TIME_ZONE),
   estimatedEventDurationMinutes: z.coerce
     .number()
     .int("durationWholeMinutes")

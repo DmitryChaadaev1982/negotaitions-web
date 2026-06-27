@@ -376,6 +376,7 @@ model TrainingEvent {
   title                  String
   description            String?              @db.Text
   scheduledAt            DateTime?
+  timeZone               String               @default("UTC")
   hostUserId             String?
   facilitatorUserId      String?
   visibility             VisibilityLevel      @default(PRIVATE)

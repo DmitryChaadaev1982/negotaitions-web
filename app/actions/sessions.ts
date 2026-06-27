@@ -789,7 +789,8 @@ export type AssignParticipantRoleState = {
  * Only the session facilitator/owner or admin can call this action.
  * Participants cannot assign roles. No joinToken required.
  *
- * Input: sessionId + array of { sessionParticipantId, sessionRoleId | null }
+ * Input: sessionId + array of
+ * { sessionParticipantId, sessionParticipantType, sessionRoleId | null }
  * - sessionRoleId null = unassign role
  * - Validates: session exists, caller has manage rights, all participant IDs
  *   belong to this session, roles belong to this session, no duplicate unique
@@ -801,14 +802,23 @@ export async function assignParticipantRole(
 ): Promise<AssignParticipantRoleState> {
   const user = await requireActiveUser();
 
-  const rawAssignments: Array<{ sessionParticipantId: string; sessionRoleId: string | null }> = [];
+  const rawAssignments: Array<{
+    sessionParticipantId: string;
+    sessionRoleId: string | null;
+    sessionParticipantType: "PARTICIPANT" | "OBSERVER";
+  }> = [];
   const participantIds = formData.getAll("sessionParticipantId").map(String).filter(Boolean);
   const roleIds = formData.getAll("sessionRoleId").map(String);
+  const participantTypes = formData
+    .getAll("sessionParticipantType")
+    .map((value) => String(value).trim().toUpperCase());
 
   for (let i = 0; i < participantIds.length; i++) {
     rawAssignments.push({
       sessionParticipantId: participantIds[i],
       sessionRoleId: roleIds[i]?.trim() || null,
+      sessionParticipantType:
+        participantTypes[i] === "OBSERVER" ? "OBSERVER" : "PARTICIPANT",
     });
   }
 
@@ -842,6 +852,12 @@ export async function assignParticipantRole(
 
     // Validate all requested role IDs belong to this session and are assignable.
     for (const assignment of parsed.data.assignments) {
+      if (
+        assignment.sessionParticipantType === ParticipantType.OBSERVER &&
+        assignment.sessionRoleId !== null
+      ) {
+        return { errors: { form: ["roleAssignmentConflict"] } };
+      }
       if (assignment.sessionRoleId === null) continue;
       const role = sessionRoleMap.get(assignment.sessionRoleId);
       if (!role) {
@@ -856,7 +872,7 @@ export async function assignParticipantRole(
     const facilitatorParticipant = dbParticipants.find((p) => p.type === ParticipantType.FACILITATOR);
     if (facilitatorParticipant) {
       const facilitatorAssignment = parsed.data.assignments.find(
-        (a) => a.sessionParticipantId === facilitatorParticipant.id && a.sessionRoleId !== null,
+        (a) => a.sessionParticipantId === facilitatorParticipant.id,
       );
       if (facilitatorAssignment) {
         return { errors: { form: ["roleAssignmentFacilitatorConflict"] } };
@@ -865,7 +881,11 @@ export async function assignParticipantRole(
 
     // Check for duplicate unique role assignments among the new assignments.
     const newRoleAssignmentIds = parsed.data.assignments
-      .filter((a) => a.sessionRoleId !== null)
+      .filter(
+        (a) =>
+          a.sessionParticipantType === ParticipantType.PARTICIPANT &&
+          a.sessionRoleId !== null,
+      )
       .map((a) => a.sessionRoleId!);
     const uniqueRoleIds = new Set(newRoleAssignmentIds);
     if (uniqueRoleIds.size < newRoleAssignmentIds.length) {
@@ -892,7 +912,13 @@ export async function assignParticipantRole(
       parsed.data.assignments.map((assignment) =>
         prisma.sessionParticipant.update({
           where: { id: assignment.sessionParticipantId },
-          data: { sessionRoleId: assignment.sessionRoleId },
+          data: {
+            type: assignment.sessionParticipantType,
+            sessionRoleId:
+              assignment.sessionParticipantType === ParticipantType.PARTICIPANT
+                ? assignment.sessionRoleId
+                : null,
+          },
         }),
       ),
     );

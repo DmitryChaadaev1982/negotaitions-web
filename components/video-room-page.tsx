@@ -77,9 +77,11 @@ type VideoRoomPageProps =
 function RoomSidebar({
   roomAuth,
   sidebar,
+  negotiationState,
 }: {
   roomAuth: RoomAuthToken;
   sidebar: RoomSidebarData;
+  negotiationState: ControlState["negotiationState"];
 }) {
   const { t } = useI18n();
 
@@ -118,9 +120,11 @@ function RoomSidebar({
         type: entry.participantType as string,
         currentRoleId: entry.sessionRoleId ?? null,
         currentRoleName: entry.caseRoleName,
-        joinedAt: null,
+        joinedAt: entry.joinedAt,
+        lastSeenAt: entry.lastSeenAt,
       }))
     : [];
+  const canManageRolesBeforePreparation = negotiationState === "PREPARATION";
 
   return (
     <aside className="glass-panel flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-600/25 bg-[#020617]/90">
@@ -224,7 +228,8 @@ function RoomSidebar({
 
         {/* Phase 6.11B: Role management panel — facilitator only in room */}
         {sidebar.participantType === ParticipantType.FACILITATOR &&
-        sidebar.sessionRolesForFacilitator.length > 0 ? (
+        sidebar.sessionRolesForFacilitator.length > 0 &&
+        canManageRolesBeforePreparation ? (
           <GlassCard elevated>
             <GlassCardContent>
               <h3 className="mb-3 text-sm font-semibold text-slate-50">
@@ -564,7 +569,11 @@ function ConnectedRoom({
                 eventLobbyUrl={sidebar.event?.lobbyUrl}
               />
             ) : (
-              <RoomSidebar roomAuth={roomAuth} sidebar={sidebar} />
+              <RoomSidebar
+                roomAuth={roomAuth}
+                sidebar={sidebar}
+                negotiationState={controlState.negotiationState}
+              />
             )}
           </div>
         </div>
@@ -627,6 +636,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`),
           fetch(
             `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            { cache: "no-store" },
           ),
         ]);
 
@@ -731,22 +741,31 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       touchRecoveryContext();
 
       try {
-        const response = await fetch(
-          `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
-        );
+        const [controlResponse, sidebarResponse] = await Promise.all([
+          fetch(
+            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            { cache: "no-store" },
+          ),
+          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`, {
+            cache: "no-store",
+          }),
+        ]);
 
-        if (!response.ok) {
-          return;
+        if (controlResponse.ok) {
+          const nextState = (await controlResponse.json()) as RoomControlPayload;
+          setControlState(nextState);
+          setRecordingState(nextState.recording ?? null);
+          setSessionCloseState({
+            isClosed: nextState.isClosed,
+            closeMessageKey: nextState.closeMessageKey,
+            closedBeforeNegotiation: nextState.closedBeforeNegotiation,
+          });
         }
 
-        const nextState = (await response.json()) as RoomControlPayload;
-        setControlState(nextState);
-        setRecordingState(nextState.recording ?? null);
-        setSessionCloseState({
-          isClosed: nextState.isClosed,
-          closeMessageKey: nextState.closeMessageKey,
-          closedBeforeNegotiation: nextState.closedBeforeNegotiation,
-        });
+        if (sidebarResponse.ok) {
+          const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
+          setSidebar(nextSidebar);
+        }
       } catch {
         // Ignore transient polling errors.
       }

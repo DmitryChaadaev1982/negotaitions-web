@@ -12,6 +12,8 @@ export type SessionRosterEntry = {
   displayName: string;
   participantType: ParticipantType;
   caseRoleName: string | null;
+  joinedAt: string | null;
+  lastSeenAt: string | null;
   /** Phase 6.11B: DB sessionRoleId — null = unassigned. Only set for PARTICIPANT type. */
   sessionRoleId?: string | null;
 };

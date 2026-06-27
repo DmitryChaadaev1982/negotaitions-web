@@ -14,6 +14,7 @@ import {
   isAiAnalysisOutdated,
   isSpeakerMappingReadyForAnalysis,
 } from "@/lib/transcription/speaker-mapping-readiness";
+import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -121,6 +122,14 @@ function resolveAiAnalysisProcessingStage(
     default:
       return "not_started";
   }
+}
+
+function sanitizeTranscriptErrorMessage(message: string | null): string | null {
+  if (!message) {
+    return null;
+  }
+
+  return message.replace(MANUAL_TRANSCRIPTION_STOP_SENTINEL, "").trim();
 }
 
 function computeShouldPoll(
@@ -388,6 +397,8 @@ export async function GET(request: Request, context: RouteContext) {
     recording?.status === RecordingStatus.COMPLETED &&
     Boolean(recording?.fileKey);
 
+  const canStopTranscription = canRunTranscription && hasRunningTranscription;
+
   // Re-run is allowed when a completed transcript exists and recording is available
   const canRerunTranscription =
     canRunTranscription &&
@@ -533,9 +544,12 @@ export async function GET(request: Request, context: RouteContext) {
           model: transcript.transcriptionModel,
           startedAt: transcript.startedAt?.toISOString() ?? null,
           completedAt: transcript.completedAt?.toISOString() ?? null,
-          errorMessage: isFacilitator ? transcript.errorMessage : null,
+          errorMessage: isFacilitator
+            ? sanitizeTranscriptErrorMessage(transcript.errorMessage)
+            : null,
           canStart: canStartTranscription,
           canRetry: canRetryTranscription,
+          canStop: isFacilitator ? canStopTranscription : false,
           canRerun: isFacilitator ? canRerunTranscription : false,
           processingStage: transcriptStage,
           hasSpeakerDiarization: transcript.hasSpeakerDiarization ?? false,
@@ -558,6 +572,7 @@ export async function GET(request: Request, context: RouteContext) {
           errorMessage: null,
           canStart: canStartTranscription,
           canRetry: false,
+          canStop: false,
           processingStage: transcriptStage,
           hasSpeakerDiarization: false,
           speakerMappingStatus: null,

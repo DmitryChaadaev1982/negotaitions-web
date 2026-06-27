@@ -38,10 +38,39 @@ import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { getMockExternalServiceError } from "@/lib/test-mode";
 
+export const MANUAL_TRANSCRIPTION_STOP_SENTINEL = "__MANUAL_TRANSCRIPTION_STOP__";
+
+class TranscriptionCancelledError extends Error {
+  constructor() {
+    super("Transcription was stopped manually.");
+    this.name = "TranscriptionCancelledError";
+  }
+}
+
+async function throwIfTranscriptionStoppedManually(
+  transcriptId: string,
+): Promise<void> {
+  const transcript = await prisma.transcript.findUnique({
+    where: { id: transcriptId },
+    select: { status: true, errorMessage: true },
+  });
+
+  const manuallyStopped =
+    transcript?.status === TranscriptStatus.FAILED &&
+    Boolean(
+      transcript.errorMessage?.includes(MANUAL_TRANSCRIPTION_STOP_SENTINEL),
+    );
+
+  if (manuallyStopped) {
+    throw new TranscriptionCancelledError();
+  }
+}
+
 export async function setTranscriptStatus(
   transcriptId: string,
   status: TranscriptStatus,
 ): Promise<void> {
+  await throwIfTranscriptionStoppedManually(transcriptId);
   await prisma.transcript.update({
     where: { id: transcriptId },
     data: { status },
@@ -221,11 +250,13 @@ export async function runRealTranscription(
   language: string,
 ): Promise<NextResponse> {
   try {
+    await throwIfTranscriptionStoppedManually(transcriptId);
     await setTranscriptStatus(transcriptId, TranscriptStatus.DOWNLOADING_RECORDING);
     const originalBuffer = await downloadObjectToBuffer(recording.fileKey, {
       sessionId,
       recordingId: recording.id,
     });
+    await throwIfTranscriptionStoppedManually(transcriptId);
 
     await prisma.recording.update({
       where: { id: recording.id },
@@ -238,6 +269,7 @@ export async function runRealTranscription(
       recording.fileName ?? "recording.mp4",
       { recordingId: recording.id, sessionId },
     );
+    await throwIfTranscriptionStoppedManually(transcriptId);
 
     const timestamp = Date.now();
     const extension = compression.compressedFileName.endsWith(".mp3") ? "mp3" : "webm";
@@ -300,6 +332,7 @@ export async function runRealTranscription(
       language as TranscriptionLanguageHint,
       { sessionId, recordingId: recording.id, prompt: transcriptionPrompt },
     );
+    await throwIfTranscriptionStoppedManually(transcriptId);
 
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
 
@@ -421,6 +454,13 @@ export async function runRealTranscription(
       completedAt: saved.completedAt?.toISOString() ?? null,
     });
   } catch (error) {
+    if (error instanceof TranscriptionCancelledError) {
+      return NextResponse.json(
+        { cancelled: true, message: error.message },
+        { status: 409 },
+      );
+    }
+
     const classified = classifyExternalServiceError(
       ExternalService.APP,
       error,
