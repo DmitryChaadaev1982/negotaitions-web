@@ -21,14 +21,22 @@ import {
 import { getOpenAiTranscriptionConfig } from "@/lib/audio/openai-transcription-config";
 import { AudioFileTooLargeError } from "@/lib/audio/validate";
 import { buildTranscriptionPrompt } from "@/lib/ai/transcription-prompt";
+import {
+  getYandexSpeechKitModel,
+  isYandexSpeechKitLiteratureTextEnabled,
+  isYandexSpeechKitSpeakerLabelingEnabled,
+  isYandexSpeechKitTextNormalizationEnabled,
+  isYandexTranscriptEnhancementEnabled,
+} from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 import {
-  isOpenAiConfigured,
+  getSelectedTranscriptionProvider,
+  isTranscriptionConfiguredForSelectedProvider,
   transcribeAudioBuffer,
   type TranscriptionLanguageHint,
   type TranscriptionWarningCode,
-} from "@/lib/services/openai-transcription";
+} from "@/lib/services/transcription-provider";
 import {
   trackOpenAiTranscriptionBytes,
   trackOpenAiTranscriptionMinutes,
@@ -143,9 +151,18 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session is read-only." }, { status: 403 });
   }
 
-  if (!isTranscriptionMockMode() && !isOpenAiConfigured()) {
+  if (
+    !isTranscriptionMockMode() &&
+    !isTranscriptionConfiguredForSelectedProvider()
+  ) {
+    const provider = getSelectedTranscriptionProvider();
     return NextResponse.json(
-      { error: "OpenAI API key is missing." },
+      {
+        error:
+          provider === "yandex_speechkit"
+            ? "Yandex SpeechKit configuration is missing."
+            : "OpenAI API key is missing.",
+      },
       { status: 503 },
     );
   }
@@ -290,6 +307,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
+    const transcriptionProvider = getSelectedTranscriptionProvider();
     const originalBuffer = await downloadObjectToBuffer(recording.fileKey, {
       sessionId,
       recordingId: recording.id,
@@ -369,18 +387,40 @@ export async function POST(request: Request, context: RouteContext) {
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
 
     const processingMetadata = {
+      transcriptionProvider,
       recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
       transcriptionBitrateKbps: getAudioTranscriptionTargetBitrateKbps(),
       sampleRate: getAudioTranscriptionSampleRate(),
       channels: getAudioTranscriptionChannels(),
       maxFileMb: getAudioTranscriptionMaxFileBytes() / (1024 * 1024),
-      openaiModel: txConfig.model,
-      responseFormat: txConfig.responseFormat,
-      timestampsEnabled: txConfig.useTimestamps,
-      promptEnabled: txConfig.promptEnabled,
+      openaiModel: transcriptionProvider === "openai" ? txConfig.model : null,
+      responseFormat: transcriptionProvider === "openai" ? txConfig.responseFormat : null,
+      timestampsEnabled: transcriptionProvider === "openai" ? txConfig.useTimestamps : null,
+      promptEnabled: transcriptionProvider === "openai" ? txConfig.promptEnabled : false,
       promptLength: transcriptionPrompt?.length ?? 0,
       codecUsed: compression.codecUsed,
       compressedSizeBytes: compression.compressedSizeBytes,
+      yandexSpeechKitModel:
+        transcriptionProvider === "yandex_speechkit" ? getYandexSpeechKitModel() : null,
+      yandexTextNormalizationEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitTextNormalizationEnabled()
+          : null,
+      yandexLiteratureTextEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitLiteratureTextEnabled()
+          : null,
+      yandexSpeakerLabelingEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitSpeakerLabelingEnabled()
+          : null,
+      yandexTranscriptEnhancementEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexTranscriptEnhancementEnabled()
+          : null,
+      transcriptionProcessingTimings: transcription.processingTimings ?? null,
+      transcriptEnhancementRecommendation:
+        transcription.enhancementRecommendation ?? null,
     };
 
     const speakerMappingStatus = transcription.hasSpeakerDiarization
@@ -449,13 +489,19 @@ export async function POST(request: Request, context: RouteContext) {
       });
     });
 
-    if (recording.startedAt && recording.endedAt) {
+    if (
+      transcriptionProvider === "openai" &&
+      recording.startedAt &&
+      recording.endedAt
+    ) {
       const minutes =
         (recording.endedAt.getTime() - recording.startedAt.getTime()) / 60000;
       await trackOpenAiTranscriptionMinutes(minutes, sessionId);
     }
 
-    await trackOpenAiTranscriptionBytes(compression.compressedSizeBytes, sessionId);
+    if (transcriptionProvider === "openai") {
+      await trackOpenAiTranscriptionBytes(compression.compressedSizeBytes, sessionId);
+    }
 
     return NextResponse.json({
       transcript: serializeTranscript(transcript),

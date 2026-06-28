@@ -104,6 +104,20 @@ export type TranscriptionResult = {
   qualityPassStatus?: QualityPassStatus;
   alignmentResult?: AlignmentResult;
   qualityPromptMetadata?: QualityPromptMetadata;
+  processingTimings?: {
+    provider: string;
+    totalMs: number;
+    stages: Record<string, number>;
+    counters?: Record<string, number>;
+    flags?: Record<string, boolean | string | number | null>;
+  };
+  enhancementRecommendation?: {
+    available: boolean;
+    suggested: boolean;
+    reasons: string[];
+    asrArtifactsDetected: boolean;
+    normalizationEnabled: boolean;
+  };
 };
 
 export type QualityPromptMetadata = {

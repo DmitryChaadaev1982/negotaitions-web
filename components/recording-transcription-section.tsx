@@ -39,6 +39,7 @@ type TranscriptSegmentData = {
 
 type TranscriptData = {
   id: string;
+  status?: string;
   source: "MANUAL" | "GENERATED";
   text: string;
   diarizedText: string | null;
@@ -46,6 +47,13 @@ type TranscriptData = {
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
   speakerMapping: Record<string, string | null> | null;
+  processingMetadata?: Record<string, unknown> | null;
+  enhancement?: {
+    status: string;
+    suggested: boolean;
+    reasons: string[];
+    error: string | null;
+  } | null;
   updatedAt: string;
   segments?: TranscriptSegmentData[];
 };
@@ -279,6 +287,7 @@ function formatTurnTime(startSeconds: number | null, endSeconds: number | null):
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
 const RECORDING_STATUS_STALL_MS = 45_000;
+const ENHANCEMENT_STATUS_POLL_INTERVAL_MS = 3_500;
 
 export function RecordingTranscriptionSection({
   sessionId,
@@ -537,6 +546,17 @@ export function RecordingTranscriptionSection({
     sessionStatus,
   ]);
 
+  useEffect(() => {
+    if (readOnly) return;
+    if (transcript?.enhancement?.status !== "IN_PROGRESS") return;
+
+    const intervalId = window.setInterval(() => {
+      void loadData();
+    }, ENHANCEMENT_STATUS_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadData, readOnly, transcript?.enhancement?.status]);
+
   const applyTranscriptPayload = useCallback((payload: TranscriptData) => {
     setTranscript(payload);
     setTranscriptText(payload.text);
@@ -660,6 +680,39 @@ export function RecordingTranscriptionSection({
       setBusyAction((current) => (current === "rerun" ? null : current));
     }
   }, [roomAuth, languageHint, loadData, notifyProcessingChange, sessionId, t]);
+
+  const runTranscriptEnhancement = useCallback(async () => {
+    setBusyAction("enhance");
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${sessionId}/materials/enhance-transcript`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(roomAuthBody(roomAuth)),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Transcript enhancement failed.");
+      }
+
+      await loadData();
+      setMessage(t("recording.transcriptEnhancementInProgress"));
+      notifyProcessingChange();
+    } catch (enhanceError) {
+      setError(
+        enhanceError instanceof Error
+          ? enhanceError.message
+          : "Transcript enhancement failed.",
+      );
+    } finally {
+      setBusyAction((current) => (current === "enhance" ? null : current));
+    }
+  }, [loadData, notifyProcessingChange, roomAuth, sessionId, t]);
 
   const isWaitingForRecordingReady =
     sessionStatus === "FINISHED" &&
@@ -900,7 +953,11 @@ export function RecordingTranscriptionSection({
       }
     }
 
-    if (transcript?.source === "GENERATED" && transcriptionWarnings.length === 0) {
+    if (
+      transcript?.source === "GENERATED" &&
+      transcript.status === "COMPLETED" &&
+      transcriptionWarnings.length === 0
+    ) {
       if (
         transcript.transcriptionModel === "gpt-4o-transcribe-diarize" &&
         !transcript.hasSpeakerDiarization
@@ -950,6 +1007,27 @@ export function RecordingTranscriptionSection({
     transcript?.source === "GENERATED" &&
     !transcript.hasSpeakerDiarization &&
     hasUsableTranscript(transcript);
+  const transcriptEnhancement = transcript?.enhancement ?? null;
+  const enhancementAvailable =
+    Boolean(
+      transcript?.processingMetadata &&
+        typeof transcript.processingMetadata === "object" &&
+        (transcript.processingMetadata as Record<string, unknown>).transcriptionProvider ===
+          "yandex_speechkit",
+    ) &&
+    hasUsableTranscript(transcript);
+  const enhancementSuggested =
+    !readOnly &&
+    !isLocked &&
+    Boolean(transcriptEnhancement?.suggested) &&
+    enhancementAvailable;
+  const enhancementInProgress = transcriptEnhancement?.status === "IN_PROGRESS";
+  const showEnhancementAction =
+    !readOnly &&
+    !isLocked &&
+    enhancementAvailable &&
+    !enhancementInProgress;
+  const showEnhancementStatus = enhancementInProgress || busyAction === "enhance";
 
   const speakersForMapping =
     detectedSpeakers.length > 0
@@ -969,6 +1047,23 @@ export function RecordingTranscriptionSection({
           });
           return labels;
         }, []);
+
+  const hasFullyMappedSegments = useMemo(() => {
+    const segments = transcript?.segments ?? [];
+    const spokenSegments = segments.filter((segment) => segment.text.trim().length > 0);
+    if (spokenSegments.length === 0) {
+      return false;
+    }
+    return spokenSegments.every((segment) => Boolean(segment.mappedParticipantId));
+  }, [transcript?.segments]);
+
+  const shouldShowSpeakerMappingPanel =
+    speakersForMapping.length > 0 &&
+    !readOnly &&
+    !isLocked &&
+    !manualSpeakerModeEnabled &&
+    transcript?.source !== "MANUAL" &&
+    !hasFullyMappedSegments;
 
   const allSpeakersMappedInDraft = useMemo(() => {
     if (speakersForMapping.length === 0) {
@@ -1387,7 +1482,50 @@ export function RecordingTranscriptionSection({
               </div>
             ) : null}
 
-            {speakersForMapping.length > 0 && !readOnly && !isLocked ? (
+            {showEnhancementAction || showEnhancementStatus ? (
+              <div className="space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
+                {enhancementSuggested ? (
+                  <p className="text-sm font-medium text-violet-100">
+                    {t("recording.transcriptEnhancementSuggested")}
+                  </p>
+                ) : (
+                  <p className="text-sm font-medium text-violet-100">
+                    {t("recording.runTranscriptEnhancement")}
+                  </p>
+                )}
+                <p className="text-xs text-violet-200/90">
+                  {t("recording.transcriptEnhancementMayTakeTime")}
+                </p>
+                {transcriptEnhancement?.reasons?.length ? (
+                  <p className="text-xs text-violet-200/80">
+                    {t("recording.transcriptEnhancementReasons")}:{" "}
+                    {transcriptEnhancement.reasons.join(", ")}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {enhancementInProgress ? (
+                    <span className="text-xs text-violet-200">
+                      {t("recording.transcriptEnhancementInProgress")}
+                    </span>
+                  ) : (
+                    <SecondaryButton
+                      disabled={busyAction != null}
+                      onClick={() => void runTranscriptEnhancement()}
+                      data-testid="run-transcript-enhancement-button"
+                    >
+                      {busyAction === "enhance"
+                        ? t("recording.transcriptEnhancementInProgress")
+                        : t("recording.runTranscriptEnhancement")}
+                    </SecondaryButton>
+                  )}
+                </div>
+                {transcriptEnhancement?.error ? (
+                  <p className="text-xs text-amber-300">{transcriptEnhancement.error}</p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {shouldShowSpeakerMappingPanel ? (
               <div className="space-y-4 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">
@@ -1440,27 +1578,13 @@ export function RecordingTranscriptionSection({
                         confirm: allSpeakersMappedInDraft,
                       })
                     }
-                  >
-                    {busyAction === "save-mapping"
-                      ? t("common.saving")
-                      : t("recording.saveSpeakerMapping")}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    disabled={busyAction != null || !allSpeakersMappedInDraft}
-                    onClick={() => void saveSpeakerMapping({ confirm: true })}
                     data-testid="confirm-speaker-mapping-button"
                   >
-                    {busyAction === "confirm-mapping"
+                    {busyAction === "save-mapping" || busyAction === "confirm-mapping"
                       ? t("common.saving")
-                      : t("recording.confirmSpeakerMapping")}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    disabled={busyAction != null}
-                    onClick={() => void saveSpeakerMapping({ applyOnly: true })}
-                  >
-                    {busyAction === "apply-mapping"
-                      ? t("common.saving")
-                      : t("recording.applyMappingToTranscript")}
+                      : allSpeakersMappedInDraft
+                        ? t("recording.confirmSpeakerMapping")
+                        : t("recording.saveSpeakerMapping")}
                   </SecondaryButton>
                 </div>
               </div>

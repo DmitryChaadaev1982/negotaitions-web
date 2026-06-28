@@ -54,6 +54,13 @@ type MaterialsStatusTranscription = {
   processingStage: string;
   diarizationStatus?: string | null;
   retranscribeCount?: number | null;
+  enhancement?: {
+    status: string;
+    available: boolean;
+    suggested: boolean;
+    reasons: string[];
+    error: string | null;
+  } | null;
 };
 
 type MaterialsStatusAiAnalysis = {
@@ -124,6 +131,7 @@ const transcriptionStatusKeys: Record<
   downloading: "sessionMaterials.transcriptionDownloading",
   compressing: "sessionMaterials.transcriptionCompressing",
   transcribing: "sessionMaterials.transcriptionInProgress",
+  enhancing: "sessionMaterials.transcriptEnhancementInProgress",
   ready: "sessionMaterials.transcriptReady",
   failed: "sessionMaterials.transcriptionFailed",
 };
@@ -153,6 +161,7 @@ const transcriptionStatusTone: Record<ProcessingTranscriptionStatus, string> = {
   downloading: "border-cyan-500/30 bg-cyan-950/20 text-cyan-200",
   compressing: "border-cyan-500/30 bg-cyan-950/20 text-cyan-200",
   transcribing: "border-cyan-500/30 bg-cyan-950/20 text-cyan-200",
+  enhancing: "border-violet-500/30 bg-violet-950/20 text-violet-200",
   ready: "border-emerald-500/30 bg-emerald-950/20 text-emerald-200",
   failed: "border-rose-500/30 bg-rose-950/20 text-rose-200",
 };
@@ -184,6 +193,7 @@ function mapApiTranscriptionStage(stage: string): ProcessingTranscriptionStatus 
     downloading: "downloading",
     compressing: "compressing",
     transcribing: "transcribing",
+    enhancing: "enhancing",
     ready: "ready",
     failed: "failed",
   };
@@ -939,6 +949,7 @@ export function SessionMaterialsDashboard({
   const [rerunBusy, setRerunBusy] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [aiAnalysisBusy, setAiAnalysisBusy] = useState(false);
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
   const [sharingBusy, setSharingBusy] = useState(false);
@@ -979,6 +990,11 @@ export function SessionMaterialsDashboard({
   const canStartTranscription = liveData?.transcription?.canStart ?? false;
   const canRetryTranscription = liveData?.transcription?.canRetry ?? false;
   const canRerunTranscription = liveData?.transcription?.canRerun ?? false;
+  const canRunTranscriptEnhancement =
+    (liveData?.transcription?.enhancement?.available ?? false) &&
+    liveTranscriptionStage === "ready" &&
+    liveTranscriptionStage !== "transcribing" &&
+    liveTranscriptionStage !== "enhancing";
   const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
   const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 
@@ -1136,6 +1152,9 @@ export function SessionMaterialsDashboard({
     if (!canStartTranscription || transcriptionBusy) {
       return;
     }
+    if (canRetryTranscription) {
+      return;
+    }
 
     if (autoTranscribeStartedRef.current) {
       return;
@@ -1143,7 +1162,13 @@ export function SessionMaterialsDashboard({
 
     autoTranscribeStartedRef.current = true;
     void handleStartTranscription();
-  }, [autoTranscribeEnabled, canStartTranscription, handleStartTranscription, transcriptionBusy]);
+  }, [
+    autoTranscribeEnabled,
+    canRetryTranscription,
+    canStartTranscription,
+    handleStartTranscription,
+    transcriptionBusy,
+  ]);
 
   const handleRefreshRecording = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1196,6 +1221,36 @@ export function SessionMaterialsDashboard({
       if (isMountedRef.current) {
         setAiAnalysisBusy(false);
       }
+    }
+  }, [sessionId, joinToken, fetchStatus]);
+
+  const handleRunTranscriptEnhancement = useCallback(async () => {
+    if (!sessionId || !joinToken) return;
+    setEnhancementBusy(true);
+    setTranscriptionError(null);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/materials/enhance-transcript`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ joinToken }),
+        },
+      );
+      if (!isMountedRef.current) return;
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Transcript enhancement failed.");
+      }
+      await fetchStatus();
+    } catch (err) {
+      if (isMountedRef.current) {
+        setTranscriptionError(
+          err instanceof Error ? err.message : "Transcript enhancement failed.",
+        );
+      }
+    } finally {
+      if (isMountedRef.current) setEnhancementBusy(false);
     }
   }, [sessionId, joinToken, fetchStatus]);
 
@@ -1412,6 +1467,27 @@ export function SessionMaterialsDashboard({
                     : t("sessionMaterials.rerunTranscription")}
                 </SecondaryButton>
               ) : null}
+            </div>
+          ) : null}
+          {canRunTranscriptEnhancement ? (
+            <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
+              <p className="text-xs text-violet-200">
+                {t("sessionMaterials.transcriptEnhancementRecommended")}
+              </p>
+              <p className="mt-1 text-xs text-violet-200/80">
+                {t("sessionMaterials.transcriptEnhancementMayTakeTime")}
+              </p>
+              <div className="mt-2">
+                <SecondaryButton
+                  disabled={enhancementBusy}
+                  onClick={() => void handleRunTranscriptEnhancement()}
+                  data-testid="run-transcript-enhancement-button"
+                >
+                  {enhancementBusy
+                    ? t("sessionMaterials.transcriptEnhancementInProgress")
+                    : t("sessionMaterials.runTranscriptEnhancement")}
+                </SecondaryButton>
+              </div>
             </div>
           ) : null}
 

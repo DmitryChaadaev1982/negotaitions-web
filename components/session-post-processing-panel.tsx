@@ -35,6 +35,13 @@ type MaterialsStatusResponse = {
     canRerun?: boolean;
     speakerMappingRequired?: boolean;
     diarizationStatus?: string | null;
+    enhancement?: {
+      status: string;
+      available: boolean;
+      suggested: boolean;
+      reasons: string[];
+      error: string | null;
+    } | null;
   };
   aiAnalysis: {
     processingStage: string;
@@ -93,6 +100,7 @@ const transcriptionStageKeys: Record<string, TranslationKey> = {
   downloading: "sessionMaterials.transcriptionDownloading",
   compressing: "sessionMaterials.transcriptionCompressing",
   transcribing: "sessionMaterials.transcriptionInProgress",
+  enhancing: "sessionMaterials.transcriptEnhancementInProgress",
   ready: "sessionMaterials.transcriptReady",
   failed: "sessionMaterials.transcriptionFailed",
 };
@@ -185,6 +193,7 @@ export function SessionPostProcessingPanel({
   const [stopTranscriptionBusy, setStopTranscriptionBusy] = useState(false);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [rerunBusy, setRerunBusy] = useState(false);
+  const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -247,6 +256,16 @@ export function SessionPostProcessingPanel({
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStop;
   const canRerunTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canRerun;
+  const canRunTranscriptEnhancement =
+    isFacilitator &&
+    !readOnly &&
+    transcript?.enhancement?.available &&
+    transcript?.processingStage === "ready" &&
+    transcript?.processingStage !== "queued" &&
+    transcript?.processingStage !== "downloading" &&
+    transcript?.processingStage !== "compressing" &&
+    transcript?.processingStage !== "transcribing" &&
+    transcript?.processingStage !== "enhancing";
   const canStartAi = isFacilitator && !readOnly && ai?.canStart;
   const canRetryAi = isFacilitator && !readOnly && ai?.canRetry;
   const canRerunAi = isFacilitator && !readOnly && ai?.canRerun;
@@ -335,12 +354,45 @@ export function SessionPostProcessingPanel({
     }
   }, [fetchStatus, roomAuth, sessionId]);
 
+  const handleRunTranscriptEnhancement = useCallback(async () => {
+    setEnhancementBusy(true);
+    setRerunError(null);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/materials/enhance-transcript`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(roomAuthBody(roomAuth)),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Transcript enhancement failed.");
+      }
+      void fetchStatus();
+    } catch (err) {
+      setRerunError(
+        err instanceof Error ? err.message : "Transcript enhancement failed.",
+      );
+    } finally {
+      setEnhancementBusy(false);
+    }
+  }, [fetchStatus, roomAuth, sessionId]);
+
   useEffect(() => {
     if (!autoTranscribeEnabled || !canStartTranscription || transcriptionBusy) return;
+    if (canRetryTranscription) return;
     if (autoTranscribeStartedRef.current) return;
     autoTranscribeStartedRef.current = true;
     void handleStartTranscription();
-  }, [autoTranscribeEnabled, canStartTranscription, handleStartTranscription, transcriptionBusy]);
+  }, [
+    autoTranscribeEnabled,
+    canRetryTranscription,
+    canStartTranscription,
+    handleStartTranscription,
+    transcriptionBusy,
+  ]);
 
   // Auto-collapse transcript once AI analysis is done (only once per session load).
   const transcriptionDoneForCollapse = statusData?.transcription?.processingStage === "ready";
@@ -421,7 +473,7 @@ export function SessionPostProcessingPanel({
 
   const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
   const aiStage = ai?.processingStage ?? "waiting_for_transcript";
-  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing"].includes(transcriptionStage);
+  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
   const aiActive = ["queued", "analyzing"].includes(aiStage);
   const transcriptionDone = transcriptionStage === "ready";
   const aiDone = aiStage === "ready";
@@ -445,23 +497,6 @@ export function SessionPostProcessingPanel({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canStartTranscription ? (
-              <SecondaryButton
-                disabled={transcriptionBusy}
-                onClick={() => void handleStartTranscription()}
-                data-testid="post-processing-start-transcription-button"
-              >
-                {transcriptionBusy ? t("common.loading") : t("room.startTranscription")}
-              </SecondaryButton>
-            ) : null}
-            {canRetryTranscription ? (
-              <SecondaryButton
-                disabled={transcriptionBusy}
-                onClick={() => void handleStartTranscription()}
-              >
-                {transcriptionBusy ? t("common.loading") : t("sessionMaterials.retryTranscription")}
-              </SecondaryButton>
-            ) : null}
             {canRerunTranscription && !rerunConfirmOpen ? (
               <SecondaryButton
                 disabled={rerunBusy || transcriptionBusy}
@@ -469,6 +504,17 @@ export function SessionPostProcessingPanel({
                 data-testid="post-processing-rerun-transcription-button"
               >
                 {rerunBusy ? t("common.loading") : t("sessionMaterials.rerunTranscription")}
+              </SecondaryButton>
+            ) : null}
+            {canRunTranscriptEnhancement ? (
+              <SecondaryButton
+                disabled={enhancementBusy || transcriptionBusy || rerunBusy}
+                onClick={() => void handleRunTranscriptEnhancement()}
+                data-testid="post-processing-run-transcript-enhancement-button"
+              >
+                {enhancementBusy
+                  ? t("sessionMaterials.transcriptEnhancementInProgress")
+                  : t("sessionMaterials.runTranscriptEnhancement")}
               </SecondaryButton>
             ) : null}
             {canStopTranscription ? (
@@ -482,7 +528,7 @@ export function SessionPostProcessingPanel({
                   : t("sessionMaterials.stopTranscription")}
               </SecondaryButton>
             ) : null}
-            {transcriptionDone && !canRerunTranscription ? (
+            {transcriptionDone || canStartTranscription || canRetryTranscription || canRerunTranscription ? (
               <a
                 href="#transcription-section"
                 className="text-xs text-slate-500 hover:text-slate-300"
@@ -514,6 +560,11 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-2 text-xs text-rose-400">{rerunError}</p> : null}
+        {transcript?.enhancement?.suggested ? (
+          <p className="mt-2 text-xs text-violet-300">
+            {t("sessionMaterials.transcriptEnhancementRecommended")}
+          </p>
+        ) : null}
       </div>
 
       {/* ── Step 2: AI Analysis ── */}
@@ -629,22 +680,28 @@ export function SessionPostProcessingPanel({
               {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
             </p>
           </div>
-          {(canStartTranscription || canRetryTranscription || (canRerunTranscription && !rerunConfirmOpen)) ? (
+          {canRerunTranscription && !rerunConfirmOpen ? (
             <SecondaryButton
               disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
-              onClick={() =>
-                canRerunTranscription ? setRerunConfirmOpen(true) : void handleStartTranscription()
-              }
-              data-testid="post-processing-start-transcription-button"
+              onClick={() => setRerunConfirmOpen(true)}
+              data-testid="post-processing-rerun-transcription-button"
               className="shrink-0 text-xs"
             >
-              {transcriptionBusy || rerunBusy
+              {rerunBusy
                 ? t("common.loading")
-                : canRerunTranscription
-                  ? t("sessionMaterials.rerunTranscription")
-                  : canRetryTranscription
-                    ? t("sessionMaterials.retryTranscription")
-                    : t("room.startTranscription")}
+                : t("sessionMaterials.rerunTranscription")}
+            </SecondaryButton>
+          ) : null}
+          {canRunTranscriptEnhancement ? (
+            <SecondaryButton
+              disabled={enhancementBusy || transcriptionBusy || rerunBusy}
+              onClick={() => void handleRunTranscriptEnhancement()}
+              data-testid="post-processing-run-transcript-enhancement-button"
+              className="shrink-0 text-xs"
+            >
+              {enhancementBusy
+                ? t("sessionMaterials.transcriptEnhancementInProgress")
+                : t("sessionMaterials.runTranscriptEnhancement")}
             </SecondaryButton>
           ) : null}
           {canStopTranscription ? (
@@ -678,6 +735,11 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-1 text-xs text-rose-400">{rerunError}</p> : null}
+        {transcript?.enhancement?.suggested ? (
+          <p className="mt-1 text-xs text-violet-300">
+            {t("sessionMaterials.transcriptEnhancementRecommended")}
+          </p>
+        ) : null}
       </div>
 
       {/* Step 2: AI Analysis */}
@@ -920,7 +982,9 @@ export function SessionPostProcessingPanel({
                   <RecordingTranscriptionSection
                     sessionId={sessionId}
                     roomAuth={roomAuth}
-                    autoTranscribeEnabled={autoTranscribeEnabled}
+                    // Auto-start is orchestrated by this panel via /materials/transcribe.
+                    // Keep child section auto-start disabled to prevent duplicate starts.
+                    autoTranscribeEnabled={false}
                     embedded
                     compact
                     hideRerunControls
@@ -1013,7 +1077,9 @@ export function SessionPostProcessingPanel({
                 <RecordingTranscriptionSection
                   sessionId={sessionId}
                   roomAuth={roomAuth}
-                  autoTranscribeEnabled={autoTranscribeEnabled}
+                  // Auto-start is orchestrated by this panel via /materials/transcribe.
+                  // Keep child section auto-start disabled to prevent duplicate starts.
+                  autoTranscribeEnabled={false}
                   embedded
                   hideRerunControls
                   isLocked={rerunBusy}

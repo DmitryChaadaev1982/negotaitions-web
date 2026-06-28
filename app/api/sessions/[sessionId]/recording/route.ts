@@ -15,6 +15,10 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
+function asMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(_request.url);
@@ -101,6 +105,7 @@ export async function GET(_request: Request, context: RouteContext) {
       transcript: session.transcript
         ? {
             id: session.transcript.id,
+            status: session.transcript.status,
             source: session.transcript.source,
             text: session.transcript.text,
             diarizedText: session.transcript.diarizedText,
@@ -109,6 +114,25 @@ export async function GET(_request: Request, context: RouteContext) {
             hasSpeakerDiarization: session.transcript.hasSpeakerDiarization,
             speakerMapping:
               (session.transcript.speakerMapping as SpeakerMapping | null) ?? null,
+            processingMetadata: session.transcript.processingMetadata ?? null,
+            enhancement: {
+              status:
+                (asMetadata(asMetadata(session.transcript.processingMetadata).transcriptEnhancement)
+                  .status as string | undefined) ?? "NOT_AVAILABLE",
+              suggested:
+                asMetadata(
+                  asMetadata(session.transcript.processingMetadata)
+                    .transcriptEnhancementRecommendation,
+                ).suggested === true,
+              reasons:
+                (asMetadata(
+                  asMetadata(session.transcript.processingMetadata)
+                    .transcriptEnhancementRecommendation,
+                ).reasons as string[] | undefined) ?? [],
+              error:
+                (asMetadata(asMetadata(session.transcript.processingMetadata).transcriptEnhancement)
+                  .error as string | undefined) ?? null,
+            },
             updatedAt: session.transcript.updatedAt.toISOString(),
             segments: session.transcript.segments.map((segment) => ({
               id: segment.id,

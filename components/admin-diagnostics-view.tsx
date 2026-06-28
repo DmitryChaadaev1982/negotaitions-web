@@ -9,7 +9,31 @@ import { SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type HealthData = {
-  config: Record<string, boolean> & {
+  config: {
+    aiAnalysisProvider?: "openai" | "yandex";
+    transcriptionProvider?: "openai" | "yandex_speechkit";
+    aiAnalysisProviderEnvValid?: boolean;
+    transcriptionProviderEnvValid?: boolean;
+    livekitUrl: boolean;
+    livekitApiKey: boolean;
+    livekitApiSecret: boolean;
+    s3Bucket: boolean;
+    s3Region: boolean;
+    s3Endpoint: boolean;
+    s3AccessKeyId: boolean;
+    s3SecretAccessKey: boolean;
+    openAiApiKey: boolean;
+    yandexFolderId?: boolean;
+    yandexApiKey?: boolean;
+    yandexAiModel?: boolean;
+    yandexSpeechKitModel?: boolean;
+    yandexSpeechKitModelValue?: string;
+    yandexSpeechKitLanguageValue?: string;
+    yandexSpeechKitNormalizationEnabled?: boolean;
+    yandexSpeechKitLiteratureTextEnabled?: boolean;
+    yandexSpeechKitSpeakerLabelingEnabled?: boolean;
+    yandexTranscriptEnhancementEnabled?: boolean;
+    yandexSpeechKitRequiredKeysPresent?: boolean;
     ffmpeg?: {
       available: boolean;
       path: string | null;
@@ -262,6 +286,14 @@ export function AdminDiagnosticsView() {
             <p className="text-sm text-slate-400">{t("common.loading")}...</p>
           ) : (
             <>
+              <ConfigRow
+                label={`AI_ANALYSIS_PROVIDER (${data.config.aiAnalysisProvider ?? "openai"})`}
+                configured={data.config.aiAnalysisProviderEnvValid ?? true}
+              />
+              <ConfigRow
+                label={`TRANSCRIPTION_PROVIDER (${data.config.transcriptionProvider ?? "openai"})`}
+                configured={data.config.transcriptionProviderEnvValid ?? true}
+              />
               <ConfigRow label="LIVEKIT_URL" configured={data.config.livekitUrl} />
               <ConfigRow label="LIVEKIT_API_KEY" configured={data.config.livekitApiKey} />
               <ConfigRow label="LIVEKIT_API_SECRET" configured={data.config.livekitApiSecret} />
@@ -271,6 +303,37 @@ export function AdminDiagnosticsView() {
               <ConfigRow label="S3_ACCESS_KEY_ID" configured={data.config.s3AccessKeyId} />
               <ConfigRow label="S3_SECRET_ACCESS_KEY" configured={data.config.s3SecretAccessKey} />
               <ConfigRow label="OPENAI_API_KEY" configured={data.config.openAiApiKey} />
+              <ConfigRow label="YANDEX_FOLDER_ID" configured={data.config.yandexFolderId ?? false} />
+              <ConfigRow label="YANDEX_API_KEY" configured={data.config.yandexApiKey ?? false} />
+              <ConfigRow label="YANDEX_AI_MODEL" configured={data.config.yandexAiModel ?? false} />
+              <ConfigRow
+                label={`YANDEX_SPEECHKIT_MODEL (${data.config.yandexSpeechKitModelValue ?? "general:rc"})`}
+                configured={data.config.yandexSpeechKitModel ?? false}
+              />
+              <ConfigRow
+                label={`YANDEX_SPEECHKIT_LANGUAGE (${data.config.yandexSpeechKitLanguageValue ?? "ru-RU"})`}
+                configured={Boolean(data.config.yandexSpeechKitLanguageValue)}
+              />
+              <ConfigRow
+                label="YANDEX_SPEECHKIT_TEXT_NORMALIZATION_ENABLED"
+                configured={data.config.yandexSpeechKitNormalizationEnabled ?? false}
+              />
+              <ConfigRow
+                label="YANDEX_SPEECHKIT_LITERATURE_TEXT"
+                configured={data.config.yandexSpeechKitLiteratureTextEnabled ?? false}
+              />
+              <ConfigRow
+                label="YANDEX_SPEECHKIT_ENABLE_SPEAKER_LABELING"
+                configured={data.config.yandexSpeechKitSpeakerLabelingEnabled ?? false}
+              />
+              <ConfigRow
+                label="YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED"
+                configured={data.config.yandexTranscriptEnhancementEnabled ?? false}
+              />
+              <ConfigRow
+                label="YANDEX_SPEECHKIT_REQUIRED_KEYS_PRESENT"
+                configured={data.config.yandexSpeechKitRequiredKeysPresent ?? false}
+              />
               <FfmpegConfigRow
                 available={data.config.ffmpeg?.available ?? false}
                 path={data.config.ffmpeg?.path ?? null}

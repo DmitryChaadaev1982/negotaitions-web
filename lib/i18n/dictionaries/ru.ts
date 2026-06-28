@@ -461,6 +461,14 @@ export const ru: Dictionary = {
     saveManualSpeakerAttribution: "Сохранить ручное присвоение",
     manualSpeakerTurnPlaceholder: "Текст реплики",
     selectParticipant: "Выберите участника",
+    transcriptEnhancementSuggested:
+      "Рекомендуется дополнительное улучшение качества транскрипта.",
+    transcriptEnhancementReasons: "Причины",
+    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта...",
+    transcriptEnhancementCompleted: "Улучшение качества транскрипта завершено.",
+    transcriptEnhancementMayTakeTime:
+      "Улучшение выполняется отдельным AI-шагом и может занять заметное время.",
     speakerSlotLabel: "Говорящий",
     speakerSlotHint: "Пометьте реплику номером говорящего. Все реплики с одинаковой меткой будут одновременно привязаны к одному участнику.",
     diarizedTranscriptCopied: "Транскрипт с говорящими скопирован",
@@ -626,6 +634,12 @@ export const ru: Dictionary = {
     transcriptionDownloading: "Загружаем запись для транскрибации.",
     transcriptionCompressing: "Подготавливаем аудио для транскрибации.",
     transcriptionInProgress: "Идёт транскрибация.",
+    transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта.",
+    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    transcriptEnhancementRecommended:
+      "Система рекомендует выполнить дополнительное улучшение качества транскрипта.",
+    transcriptEnhancementMayTakeTime:
+      "Это отдельный AI-шаг и он может занять заметное время.",
     transcriptionInProgressDescription: "Пожалуйста, подождите. Транскрипт обновится автоматически.",
     transcriptReady: "Транскрипт готов.",
     transcriptionFailed: "Ошибка транскрибации.",

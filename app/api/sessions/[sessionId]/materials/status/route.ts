@@ -41,6 +41,25 @@ const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
   AiAnalysisStatus.ANALYZING,
 ]);
 
+function asMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function resolveTranscriptEnhancementStatus(
+  processingMetadata: unknown,
+): "NOT_AVAILABLE" | "IDLE" | "SUGGESTED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" {
+  const metadata = asMetadata(processingMetadata);
+  const enhancement = asMetadata(metadata.transcriptEnhancement);
+  const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
+  const status = enhancement.status;
+  if (status === "IN_PROGRESS") return "IN_PROGRESS";
+  if (status === "FAILED") return "FAILED";
+  if (status === "COMPLETED") return "COMPLETED";
+  if (recommendation.suggested === true) return "SUGGESTED";
+  if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
+  return "NOT_AVAILABLE";
+}
+
 function resolveRecordingProcessingStage(status: RecordingStatus): string {
   switch (status) {
     case RecordingStatus.NOT_STARTED:
@@ -66,7 +85,11 @@ function resolveTranscriptProcessingStage(
   transcriptStatus: TranscriptStatus | null,
   recordingStatus: RecordingStatus | null,
   transcriptHasText: boolean,
+  enhancementStatus: ReturnType<typeof resolveTranscriptEnhancementStatus>,
 ): string {
+  if (enhancementStatus === "IN_PROGRESS") {
+    return "enhancing";
+  }
   if (transcriptStatus === TranscriptStatus.COMPLETED) {
     return transcriptHasText ? "ready" : "not_started";
   }
@@ -156,7 +179,8 @@ function computeShouldPoll(
     autoTranscribeEnabled &&
     recordingStatus === RecordingStatus.COMPLETED &&
     !transcriptHasText &&
-    !hasRunningTranscription
+    !hasRunningTranscription &&
+    transcriptStatus !== TranscriptStatus.FAILED
   ) {
     return true;
   }
@@ -216,6 +240,7 @@ export async function GET(request: Request, context: RouteContext) {
           id: true,
           status: true,
           text: true,
+          diarizedText: true,
           language: true,
           transcriptionModel: true,
           errorMessage: true,
@@ -226,6 +251,7 @@ export async function GET(request: Request, context: RouteContext) {
           hasSpeakerDiarization: true,
           diarizationStatus: true,
           retranscribeCount: true,
+          processingMetadata: true,
           speakerMappingStatus: true,
           speakerMappingConfirmedAt: true,
           speakerMapping: true,
@@ -274,11 +300,16 @@ export async function GET(request: Request, context: RouteContext) {
   const recordingStatus = recording?.status ?? null;
   const transcriptStatus = transcript?.status ?? null;
   const aiStatus = aiAnalysis?.status ?? null;
+  const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
+    transcript?.processingMetadata,
+  );
 
-  const transcriptHasText = Boolean(transcript?.text?.trim());
+  const transcriptHasText = Boolean(
+    transcript?.text?.trim() || transcript?.diarizedText?.trim(),
+  );
   const hasRunningTranscription =
-    transcriptStatus !== null &&
-    ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus);
+    transcriptEnhancementStatus === "IN_PROGRESS" ||
+    (transcriptStatus !== null && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus));
 
   const canViewRecording = true;
   // Phase 5 observer transcript decision (Part 7):
@@ -360,6 +391,7 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptStatus,
     recordingStatus,
     transcriptHasText,
+    transcriptEnhancementStatus,
   );
 
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
@@ -386,6 +418,7 @@ export async function GET(request: Request, context: RouteContext) {
     canRunTranscription &&
     !hasRunningTranscription &&
     !transcriptCompleted &&
+    transcript?.status !== TranscriptStatus.FAILED &&
     recording?.status === RecordingStatus.COMPLETED &&
     Boolean(recording.fileKey) &&
     !transcriptHasText;
@@ -560,6 +593,28 @@ export async function GET(request: Request, context: RouteContext) {
             : null,
           speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
           speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,
+          processingMetadata: isFacilitator ? (transcript.processingMetadata ?? null) : null,
+          enhancement: isFacilitator
+            ? {
+                status: transcriptEnhancementStatus,
+                available:
+                  asMetadata(transcript.processingMetadata).transcriptionProvider ===
+                  "yandex_speechkit",
+                suggested:
+                  asMetadata(
+                    asMetadata(transcript.processingMetadata)
+                      .transcriptEnhancementRecommendation,
+                  ).suggested === true,
+                reasons:
+                  (asMetadata(
+                    asMetadata(transcript.processingMetadata)
+                      .transcriptEnhancementRecommendation,
+                  ).reasons as string[] | undefined) ?? [],
+                error:
+                  (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
+                    .error as string | undefined) ?? null,
+              }
+            : null,
         }
       : {
           id: null,
@@ -578,6 +633,7 @@ export async function GET(request: Request, context: RouteContext) {
           speakerMappingStatus: null,
           speakerMappingRequired: false,
           speakerMappingConfirmed: null,
+          enhancement: null,
         },
     aiAnalysis: aiAnalysisResponse,
     processing: {

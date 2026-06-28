@@ -9,8 +9,9 @@ import {
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
-  isOpenAiConfigured,
-} from "@/lib/services/openai-transcription";
+  getSelectedTranscriptionProvider,
+  isTranscriptionConfiguredForSelectedProvider,
+} from "@/lib/services/transcription-provider";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import {
   isTranscriptionActive,
@@ -70,8 +71,20 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found or deleted." }, { status: 404 });
   }
 
-  if (!isTranscriptionMockMode() && !isOpenAiConfigured()) {
-    return NextResponse.json({ error: "OpenAI API key is missing." }, { status: 503 });
+  if (
+    !isTranscriptionMockMode() &&
+    !isTranscriptionConfiguredForSelectedProvider()
+  ) {
+    const provider = getSelectedTranscriptionProvider();
+    return NextResponse.json(
+      {
+        error:
+          provider === "yandex_speechkit"
+            ? "Yandex SpeechKit configuration is missing."
+            : "OpenAI API key is missing.",
+      },
+      { status: 503 },
+    );
   }
 
   const recording = await prisma.recording.findUnique({ where: { sessionId } });

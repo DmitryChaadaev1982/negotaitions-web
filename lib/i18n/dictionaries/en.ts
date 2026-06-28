@@ -478,6 +478,14 @@ export const en = {
     saveManualSpeakerAttribution: "Save manual attribution",
     manualSpeakerTurnPlaceholder: "Turn text",
     selectParticipant: "Select participant",
+    transcriptEnhancementSuggested:
+      "Additional transcript quality enhancement is recommended.",
+    transcriptEnhancementReasons: "Reasons",
+    runTranscriptEnhancement: "Enhance transcript quality",
+    transcriptEnhancementInProgress: "Transcript quality enhancement in progress...",
+    transcriptEnhancementCompleted: "Transcript quality enhancement completed.",
+    transcriptEnhancementMayTakeTime:
+      "This is a separate AI step and may take noticeable time.",
     speakerSlotLabel: "Speaker",
     speakerSlotHint: "Tag this turn with a speaker number. All turns with the same tag will be assigned to the same participant at once.",
     diarizedTranscriptCopied: "Diarized transcript copied",
@@ -622,6 +630,12 @@ export const en = {
     transcriptionDownloading: "Downloading recording for transcription.",
     transcriptionCompressing: "Preparing audio for transcription.",
     transcriptionInProgress: "Transcription is in progress.",
+    transcriptEnhancementInProgress: "Transcript quality enhancement is in progress.",
+    runTranscriptEnhancement: "Enhance transcript quality",
+    transcriptEnhancementRecommended:
+      "System recommends running additional transcript quality enhancement.",
+    transcriptEnhancementMayTakeTime:
+      "This is a separate AI step and may take noticeable time.",
     transcriptionInProgressDescription: "Please wait. The transcript will update automatically.",
     transcriptReady: "Transcript is ready.",
     transcriptionFailed: "Transcription failed.",

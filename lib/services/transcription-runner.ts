@@ -19,12 +19,20 @@ import { getOpenAiTranscriptionConfig } from "@/lib/audio/openai-transcription-c
 import { getTranscriptionStrategy } from "@/lib/audio/two-pass-transcription-config";
 import { AudioFileTooLargeError } from "@/lib/audio/validate";
 import { buildTranscriptionPrompt } from "@/lib/ai/transcription-prompt";
+import {
+  getYandexSpeechKitModel,
+  isYandexSpeechKitLiteratureTextEnabled,
+  isYandexSpeechKitSpeakerLabelingEnabled,
+  isYandexSpeechKitTextNormalizationEnabled,
+  isYandexTranscriptEnhancementEnabled,
+} from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 import {
+  getSelectedTranscriptionProvider,
   transcribeAudioBuffer,
   type TranscriptionLanguageHint,
-} from "@/lib/services/openai-transcription";
+} from "@/lib/services/transcription-provider";
 import {
   trackOpenAiTranscriptionBytes,
   trackOpenAiTranscriptionMinutes,
@@ -249,6 +257,7 @@ export async function runRealTranscription(
   transcriptId: string,
   language: string,
 ): Promise<NextResponse> {
+  const transcriptionProvider = getSelectedTranscriptionProvider();
   try {
     await throwIfTranscriptionStoppedManually(transcriptId);
     await setTranscriptStatus(transcriptId, TranscriptStatus.DOWNLOADING_RECORDING);
@@ -335,6 +344,23 @@ export async function runRealTranscription(
     await throwIfTranscriptionStoppedManually(transcriptId);
 
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
+    const normalizedTranscriptionText =
+      transcription.text.trim().length > 0
+        ? transcription.text
+        : mappedSegments.map((segment) => segment.text.trim()).filter(Boolean).join(" ");
+    const normalizedDiarizedText =
+      transcription.diarizedText?.trim().length
+        ? transcription.diarizedText
+        : mappedSegments.length > 0
+          ? mappedSegments.map((segment) => segment.text.trim()).filter(Boolean).join("\n\n")
+          : null;
+
+    if (
+      normalizedTranscriptionText.trim().length === 0 &&
+      (normalizedDiarizedText?.trim().length ?? 0) === 0
+    ) {
+      throw new Error("Transcription returned empty content.");
+    }
 
     // Two-pass alignment data (present when strategy=diarize_plus_quality)
     const alignmentResult = transcription.alignmentResult;
@@ -343,18 +369,40 @@ export async function runRealTranscription(
     );
 
     const processingMetadata = {
+      transcriptionProvider,
       recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
       transcriptionBitrateKbps: getAudioTranscriptionTargetBitrateKbps(),
       sampleRate: getAudioTranscriptionSampleRate(),
       channels: getAudioTranscriptionChannels(),
       maxFileMb: getAudioTranscriptionMaxFileBytes() / (1024 * 1024),
-      openaiModel: txConfig.model,
-      responseFormat: txConfig.responseFormat,
-      timestampsEnabled: txConfig.useTimestamps,
-      promptEnabled: txConfig.promptEnabled,
+      openaiModel: transcriptionProvider === "openai" ? txConfig.model : null,
+      responseFormat: transcriptionProvider === "openai" ? txConfig.responseFormat : null,
+      timestampsEnabled: transcriptionProvider === "openai" ? txConfig.useTimestamps : null,
+      promptEnabled: transcriptionProvider === "openai" ? txConfig.promptEnabled : false,
       promptLength: transcriptionPrompt?.length ?? 0,
       codecUsed: compression.codecUsed,
       compressedSizeBytes: compression.compressedSizeBytes,
+      yandexSpeechKitModel:
+        transcriptionProvider === "yandex_speechkit" ? getYandexSpeechKitModel() : null,
+      yandexTextNormalizationEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitTextNormalizationEnabled()
+          : null,
+      yandexLiteratureTextEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitLiteratureTextEnabled()
+          : null,
+      yandexSpeakerLabelingEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexSpeechKitSpeakerLabelingEnabled()
+          : null,
+      yandexTranscriptEnhancementEnabled:
+        transcriptionProvider === "yandex_speechkit"
+          ? isYandexTranscriptEnhancementEnabled()
+          : null,
+      transcriptionProcessingTimings: transcription.processingTimings ?? null,
+      transcriptEnhancementRecommendation:
+        transcription.enhancementRecommendation ?? null,
       // Two-pass metadata
       strategy: transcription.strategy ?? "diarize_only",
       qualityModel: transcription.qualityModel ?? null,
@@ -385,8 +433,8 @@ export async function runRealTranscription(
         where: { id: transcriptId },
         data: {
           status: TranscriptStatus.COMPLETED,
-          text: transcription.text,
-          diarizedText: transcription.diarizedText,
+          text: normalizedTranscriptionText,
+          diarizedText: normalizedDiarizedText,
           language: transcription.language,
           originalFileName: compression.compressedFileName,
           originalMimeType: compression.compressedMimeType,
@@ -437,13 +485,19 @@ export async function runRealTranscription(
       return updated;
     });
 
-    if (recording.startedAt && recording.endedAt) {
+    if (
+      transcriptionProvider === "openai" &&
+      recording.startedAt &&
+      recording.endedAt
+    ) {
       const minutes =
         (recording.endedAt.getTime() - recording.startedAt.getTime()) / 60000;
       await trackOpenAiTranscriptionMinutes(minutes, sessionId);
     }
 
-    await trackOpenAiTranscriptionBytes(compression.compressedSizeBytes, sessionId);
+    if (transcriptionProvider === "openai") {
+      await trackOpenAiTranscriptionBytes(compression.compressedSizeBytes, sessionId);
+    }
 
     return NextResponse.json({
       transcriptId: saved.id,

@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
+import { getAiAnalysisProvider, isYandexAiConfigured } from "@/lib/env";
+import type { AnalysisProvider } from "@/lib/services/provider-interfaces";
 
 export function getAiAnalysisModel(): string {
   return process.env.AI_ANALYSIS_MODEL?.trim() || "gpt-4o-mini";
@@ -7,6 +9,29 @@ export function getAiAnalysisModel(): string {
 
 export function isOpenAiConfiguredForAnalysis(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
+}
+
+export function getYandexAiModel(): string {
+  return process.env.YANDEX_AI_MODEL?.trim() || "deepseek-v4-flash";
+}
+
+export function getYandexAiMaxOutputTokens(): number {
+  const raw = Number.parseInt(
+    process.env.YANDEX_AI_MAX_OUTPUT_TOKENS?.trim() || "6000",
+    10,
+  );
+  if (!Number.isFinite(raw)) {
+    return 6000;
+  }
+  return Math.max(4000, raw);
+}
+
+export function isAiAnalysisConfiguredForSelectedProvider(): boolean {
+  const provider = getAiAnalysisProvider();
+  if (provider === "yandex") {
+    return isYandexAiConfigured();
+  }
+  return isOpenAiConfiguredForAnalysis();
 }
 
 // ── Output schema ──────────────────────────────────────────────────────────
@@ -150,6 +175,32 @@ CRITICAL RULES:
 4. Never hallucinate timestamps, quotes, or events.
 5. Scores MUST be integers 0-100. An average negotiator scores 40-60.
 6. You MUST respond with valid JSON only, matching the exact schema provided. No explanation text outside JSON.`;
+
+const YANDEX_COACHING_REQUIREMENTS = `
+Depth and coaching quality requirements:
+- Do not retell transcript. Evaluate negotiation quality and learning value.
+- Separate deal outcome from process quality.
+- Assess each participant relative to their role goals, constraints, and leverage.
+- Explicitly indicate who captured better position and why.
+- Use evidence: quote/paraphrase/missing behavior signals.
+- Keep advice behaviorally concrete ("say/do X next time"), not generic.
+- If transcript is short, mark confidence limits precisely but still provide complete structured analysis.
+
+Section quality targets:
+- executiveSummary: Russian 4-7 sentences, evaluative verdict, not a recap.
+- strengths: 2-4 items with evidence + why it mattered + how to scale.
+- improvementAreas: 3-5 items, each with evidence + risk + recommendation + micro-exercise.
+- detectedTactics: 2-5 items; include effectiveness and counter-tactic; if weak evidence, mark as partial.
+- questionsAnalysis.missedQuestions: include why it mattered, which role should ask, and what answer would change.
+- listeningAndReframing.missedOpportunities: provide improved phrase and why it works.
+- valueCreationAnalysis: distinguish value claimed vs created vs left on table via arrays/comment.
+- nextTrainingFocus: 2-4 prioritized focuses; each exercise must include measurable success criterion and next negotiation application in text.
+- facilitatorDebriefQuestions: 4-6 sharp, facilitator-grade questions.
+- participantPersonalFeedback: role-specific, actionable; include one phrase to try next time and one risk to avoid in nextSteps/couldHaveDoneBetter text.
+
+JSON constraints:
+- strict JSON only, no markdown fences, no comments, no trailing commas.
+- include all required fields; when uncertain use cautious wording or empty arrays.`;
 
 // ── Mock response ──────────────────────────────────────────────────────────
 
@@ -411,9 +462,9 @@ export function createMockAnalysisOutput(language: string): NegotiationAnalysisO
   };
 }
 
-// ── OpenAI call ────────────────────────────────────────────────────────────
+// ── Analysis providers ─────────────────────────────────────────────────────
 
-export async function runNegotiationAnalysis(
+async function runOpenAiNegotiationAnalysis(
   prompt: string,
   language: string,
 ): Promise<{ output: NegotiationAnalysisOutput; rawOutput: unknown; model: string }> {
@@ -494,4 +545,350 @@ export async function runNegotiationAnalysis(
     rawOutput: parsed,
     model: completion.model ?? model,
   };
+}
+
+function stripMarkdownJsonFences(input: string): {
+  cleaned: string;
+  fencesRemoved: boolean;
+} {
+  const trimmed = input.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  if (!fenced) {
+    return { cleaned: trimmed, fencesRemoved: false };
+  }
+  return { cleaned: fenced[1].trim(), fencesRemoved: true };
+}
+
+function stripTrailingCommas(input: string): string {
+  return input.replace(/,\s*([}\]])/g, "$1");
+}
+
+function extractFirstBalancedJsonObject(input: string): string | null {
+  const source = input.trim();
+  const startIndex = source.indexOf("{");
+  if (startIndex < 0) {
+    return null;
+  }
+
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+
+  for (let i = startIndex; i < source.length; i += 1) {
+    const ch = source[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function looksPossiblyTruncatedJson(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return (
+    trimmed.endsWith(":") ||
+    trimmed.endsWith(",") ||
+    !trimmed.endsWith("}") ||
+    trimmed.split("{").length > trimmed.split("}").length
+  );
+}
+
+function tryParseJsonWithRecovery(input: string): unknown | null {
+  const attempts = [input, stripTrailingCommas(input)];
+  const firstBalanced = extractFirstBalancedJsonObject(input);
+  if (firstBalanced) {
+    attempts.push(firstBalanced, stripTrailingCommas(firstBalanced));
+  }
+
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+function countSentences(input: string): number {
+  return input
+    .split(/[.!?]+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean).length;
+}
+
+function assessAnalysisDepth(output: NegotiationAnalysisOutput): string[] {
+  const issues: string[] = [];
+
+  const summarySentences = countSentences(output.executiveSummary);
+  if (summarySentences < 4) {
+    issues.push("executiveSummary should contain at least 4 evaluative sentences.");
+  }
+  if (summarySentences > 7) {
+    issues.push("executiveSummary should be concise: no more than 7 sentences.");
+  }
+  if (output.strengths.length < 2) {
+    issues.push("strengths should include at least 2 evidence-based items.");
+  }
+  if (output.improvementAreas.length < 3) {
+    issues.push("improvementAreas should include at least 3 actionable items.");
+  }
+  if (output.detectedTactics.length < 2) {
+    issues.push("detectedTactics should include at least 2 tactics with counter-moves.");
+  }
+  if (output.nextTrainingFocus.length < 2 || output.nextTrainingFocus.length > 4) {
+    issues.push("nextTrainingFocus should contain 2-4 prioritized focuses.");
+  }
+  if (
+    output.facilitatorDebriefQuestions.length < 4 ||
+    output.facilitatorDebriefQuestions.length > 6
+  ) {
+    issues.push("facilitatorDebriefQuestions should contain 4-6 sharp questions.");
+  }
+  if (output.participantPersonalFeedback.length === 0) {
+    issues.push("participantPersonalFeedback should include role-specific feedback entries.");
+  }
+
+  return issues;
+}
+
+function extractYandexOutputText(payload: Record<string, unknown>): string {
+  const outputText = payload.output_text;
+  if (typeof outputText === "string" && outputText.trim().length > 0) {
+    return outputText;
+  }
+
+  const output = payload.output;
+  if (!Array.isArray(output)) {
+    return "";
+  }
+
+  const chunks: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as Record<string, unknown>).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const text = (part as Record<string, unknown>).text;
+      if (typeof text === "string" && text.trim().length > 0) {
+        chunks.push(text);
+      }
+    }
+  }
+  return chunks.join("\n").trim();
+}
+
+async function runYandexNegotiationAnalysis(
+  prompt: string,
+  language: string,
+): Promise<{ output: NegotiationAnalysisOutput; rawOutput: unknown; model: string }> {
+  const folderId = process.env.YANDEX_FOLDER_ID?.trim();
+  const apiKey = process.env.YANDEX_API_KEY?.trim();
+  if (!folderId || !apiKey) {
+    throw new Error("Yandex AI configuration is missing.");
+  }
+  const safeFolderId = folderId;
+  const safeApiKey = apiKey;
+
+  const modelName = getYandexAiModel();
+  const modelUri = `gpt://${safeFolderId}/${modelName}`;
+  const maxOutputTokens = getYandexAiMaxOutputTokens();
+  const baseUrl = (
+    process.env.YANDEX_AI_BASE_URL?.trim() || "https://ai.api.cloud.yandex.net/v1"
+  ).replace(/\/$/, "");
+  const langInstruction =
+    language === "ru" || language === "RU"
+      ? "Respond in Russian language."
+      : "Respond in English language.";
+
+  const schemaDescription = `Respond with a JSON object matching this TypeScript type exactly:
+{
+  executiveSummary: string;
+  overallScore: number; // integer 0-100 for negotiation skill quality, not just deal reached
+  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
+  evidenceQuality: { transcriptQuality: "LOW"|"MEDIUM"|"HIGH"; speakerAttributionQuality: "LOW"|"MEDIUM"|"HIGH"; notesQuality: "LOW"|"MEDIUM"|"HIGH"; comment: string; }; // explain reliability and limits specifically
+  scores: { preparation: number; structure: number; questionQuality: number; activeListening: number; argumentation: number; objectionHandling: number; emotionalControl: number; valueCreation: number; closing: number; };
+  roleObjectivesAnalysis: Array<{ participantName: string; roleName: string; objectiveProgress: string; evidence: string; score: number; }>; // include leverage used/missed and concession quality in objectiveProgress/evidence text
+  strengths: Array<{ title: string; evidence: string; whyItMatters: string; recommendation: string; }>;
+  improvementAreas: Array<{ title: string; evidence: string; risk: string; recommendation: string; practiceExercise: string; }>;
+  detectedTactics: Array<{ name: string; usedBy: string; evidence: string; effectiveness: string; counterMove: string; }>; // include tactic risk in effectiveness/counterMove text
+  questionsAnalysis: { goodQuestions: Array<{ question: string; usedBy: string; whyGood: string; }>; missedQuestions: Array<{ suggestedQuestion: string; whyItMattered: string; }>; diagnosticQualityComment: string; }; // missed question text must specify role + what answer would change
+  listeningAndReframing: { goodExamples: string[]; missedOpportunities: string[]; comment: string; }; // missed opportunities should include improved phrase + why it works
+  valueCreationAnalysis: { createdOptions: string[]; missedOptions: string[]; tradeOffsDiscussed: string[]; comment: string; }; // separate created value vs left on table in arrays/comment
+  nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>; // exercise text must include success criterion and next negotiation application
+  facilitatorDebriefQuestions: string[]; // 4-6 facilitator-grade questions
+  oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; }; // concise coach-style
+  participantPersonalFeedback: Array<{ participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // role-specific, actionable
+}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+
+  try {
+    async function requestModelOutput(
+      tokenLimit: number,
+      compactJsonMode = false,
+      depthRetryReason = "",
+    ): Promise<{ envelope: Record<string, unknown>; cleaned: string }> {
+      const compactInstruction = compactJsonMode
+        ? "\n\nOutput constraints: return strict minified JSON only, no markdown, no comments, no trailing commas, concise strings."
+        : "";
+      const depthInstruction = depthRetryReason
+        ? `\n\nYour previous output was too shallow. Fix these quality gaps while keeping strict JSON schema:\n- ${depthRetryReason}`
+        : "";
+
+      const response = await fetch(`${baseUrl}/responses`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Api-Key ${safeApiKey}`,
+          "Content-Type": "application/json",
+          "x-folder-id": safeFolderId,
+          "x-data-logging-enabled": "false",
+        },
+        body: JSON.stringify({
+          model: modelUri,
+          temperature: 0.2,
+          max_output_tokens: tokenLimit,
+          instructions: `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${YANDEX_COACHING_REQUIREMENTS}\n\n${schemaDescription}${compactInstruction}${depthInstruction}`,
+          input: prompt,
+        }),
+      });
+
+      const rawResponseText = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          `Yandex AI request failed with HTTP ${response.status}: ${rawResponseText.slice(0, 300)}`,
+        );
+      }
+
+      let envelope: Record<string, unknown>;
+      try {
+        envelope = JSON.parse(rawResponseText) as Record<string, unknown>;
+      } catch {
+        throw new Error(
+          `Yandex AI analysis failed: non-JSON envelope (model=${modelName}, responseLength=${rawResponseText.length}).`,
+        );
+      }
+
+      const modelText = extractYandexOutputText(envelope);
+      if (!modelText) {
+        throw new Error(
+          `Yandex AI analysis failed: empty model output (model=${modelName}, responseLength=0).`,
+        );
+      }
+
+      const { cleaned, fencesRemoved } = stripMarkdownJsonFences(modelText);
+      if (fencesRemoved) {
+        console.warn("[AI analysis] Yandex response required markdown fence cleanup.");
+      }
+
+      return { envelope, cleaned };
+    }
+
+    let requestResult = await requestModelOutput(maxOutputTokens, false);
+    let parsed = tryParseJsonWithRecovery(requestResult.cleaned);
+
+    if (!parsed && looksPossiblyTruncatedJson(requestResult.cleaned)) {
+      const retryTokens = Math.max(maxOutputTokens, 6500);
+      console.warn(
+        `[AI analysis] Retrying Yandex analysis with compact JSON mode (model=${modelName}, max_output_tokens=${retryTokens}).`,
+      );
+      requestResult = await requestModelOutput(retryTokens, true);
+      parsed = tryParseJsonWithRecovery(requestResult.cleaned);
+    }
+
+    if (!parsed) {
+      const responseLength = requestResult.cleaned.length;
+      const kind = looksPossiblyTruncatedJson(requestResult.cleaned)
+        ? "truncated/invalid JSON"
+        : "invalid JSON";
+      const message = `Yandex AI analysis failed: ${kind} (model=${modelName}, responseLength=${responseLength}).`;
+      console.error(`[AI analysis] ${message}`);
+      throw new Error(message);
+    }
+
+    const validated = NegotiationAnalysisOutputSchema.safeParse(parsed);
+    if (!validated.success) {
+      const issues = validated.error.issues
+        .slice(0, 3)
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ");
+      throw new Error(`AI response failed schema validation: ${issues}`);
+    }
+
+    let selectedOutput = validated.data;
+    const depthIssues = assessAnalysisDepth(selectedOutput);
+    if (depthIssues.length > 0) {
+      const retryTokens = Math.max(maxOutputTokens, 7000);
+      console.warn(
+        `[AI analysis] Retrying Yandex analysis for deeper coaching output (model=${modelName}, issues=${depthIssues.length}).`,
+      );
+      const depthRetry = await requestModelOutput(
+        retryTokens,
+        false,
+        depthIssues.slice(0, 6).join("\n- "),
+      );
+      const reparsed = tryParseJsonWithRecovery(depthRetry.cleaned);
+      if (reparsed) {
+        const revalidated = NegotiationAnalysisOutputSchema.safeParse(reparsed);
+        if (revalidated.success) {
+          selectedOutput = revalidated.data;
+          requestResult = depthRetry;
+        }
+      }
+    }
+
+    return {
+      output: selectedOutput,
+      rawOutput: requestResult.envelope,
+      model: modelName,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Yandex API network timeout. Check VPN split tunneling.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function runNegotiationAnalysis(
+  prompt: string,
+  language: string,
+): Promise<{ output: NegotiationAnalysisOutput; rawOutput: unknown; model: string }> {
+  const provider = getAiAnalysisProvider();
+  const providers: Record<"openai" | "yandex", AnalysisProvider> = {
+    openai: { run: runOpenAiNegotiationAnalysis },
+    yandex: { run: runYandexNegotiationAnalysis },
+  };
+  return providers[provider].run(prompt, language);
 }
