@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type RoleOption = {
   id: "participant_a" | "participant_b" | "facilitator";
@@ -12,12 +12,14 @@ type AccessPayload = {
   roleLabel: string;
   username: string;
   password: string;
+  /** Empty string = auto node selection. Do NOT default to NODE_1. */
   connectionNode: string;
   conferenceName: string;
   applicationName: string;
   accountName: string;
   scenarioName: string;
   ruleName: string;
+  minimalJoinMode: boolean;
   isProductionSafe: boolean;
   loginMode: string;
 };
@@ -131,6 +133,7 @@ type VoxConferenceManager = {
     conferenceName: string;
     muteAudio: boolean;
     reportStats: boolean;
+    statsReportInterval?: number;
   }) => VoxConference;
 };
 
@@ -138,7 +141,8 @@ type VoxCore = {
   registerModules: (modules: unknown[]) => void;
   getModule: (token: unknown) => unknown;
   client: {
-    connect: (options: { node: string }) => Promise<unknown>;
+    /** Pass an empty object (no node property) for Voximplant SDK auto node selection. */
+    connect: (options?: { node?: string }) => Promise<unknown>;
     login: (options: { username: string; password: string }) => Promise<unknown>;
     disconnect: () => Promise<unknown>;
     state: VoxWatchable<string>;
@@ -170,6 +174,19 @@ type SdkState = {
     onEndpointRemoved: (event: VoxConferenceEvent) => void;
   } | null;
   unwatchers: Array<() => void>;
+};
+
+type RecordingStatusPayload = {
+  mode: string;
+  status: string;
+  implemented: boolean;
+  recordingStorage: string;
+  requestedAction: string;
+  recordingUrl: string | null;
+  recordingPath: string | null;
+  lastActionAt: string;
+  message: string;
+  diagnostics: string[];
 };
 
 const ROLE_OPTIONS: RoleOption[] = [
@@ -204,26 +221,46 @@ function getVideoTrack(stream: VoxStream | null): MediaStreamTrack | null {
   return stream.sourceStream?.getVideoTracks()[0] ?? null;
 }
 
-export default function VoximplantTestClient() {
+export default function VoximplantTestClient({
+  recordingPanelEnabled = false,
+}: {
+  recordingPanelEnabled?: boolean;
+}) {
   const [selectedRole, setSelectedRole] = useState<RoleOption["id"]>("participant_a");
   const [roleLabel, setRoleLabel] = useState<string>("Participant A");
   const [status, setStatus] = useState<string>("Idle");
   const [error, setError] = useState<string | null>(null);
   const [conferenceName, setConferenceName] = useState<string>("");
   const [joined, setJoined] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraSending, setIsCameraSending] = useState(false);
   const [isLocalSpeaking, setIsLocalSpeaking] = useState(false);
+
+  // Diagnostics state — safe values only, never shows password or tokens
+  const [safeUsername, setSafeUsername] = useState<string>("");
+  const [userDomain, setUserDomain] = useState<string>("");
+  const [applicationName, setApplicationName] = useState<string>("");
+  const [configuredNode, setConfiguredNode] = useState<string>("");
+  const [connectedNode, setConnectedNode] = useState<string>("");
+  const [lastSdkEvent, setLastSdkEvent] = useState<string>("—");
+  const [lastErrorCode, setLastErrorCode] = useState<string>("");
+  const [lastErrorPhase, setLastErrorPhase] = useState<string>("");
+
+  // Recording panel state — only used when recordingPanelEnabled=true and role=facilitator
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatusPayload | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [recordingIsLoading, setRecordingIsLoading] = useState(false);
 
   const localVideoHostRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoHostRef = useRef<HTMLDivElement | null>(null);
   const hiddenAudioHostRef = useRef<HTMLDivElement | null>(null);
   const sdkRef = useRef<SdkState | null>(null);
+  // Ref-based joining guard prevents double-join race during async handshake
+  const isJoiningRef = useRef(false);
 
-  const selectedRoleLabel = useMemo(
-    () => ROLE_OPTIONS.find((item) => item.id === selectedRole)?.label ?? selectedRole,
-    [selectedRole],
-  );
+  const selectedRoleLabel =
+    ROLE_OPTIONS.find((item) => item.id === selectedRole)?.label ?? selectedRole;
 
   const mountRenderer = useCallback((stream: VoxStream, kind: "local" | "remote") => {
     const sdk = sdkRef.current;
@@ -443,6 +480,8 @@ export default function VoximplantTestClient() {
     setIsCameraSending(false);
     setIsLocalSpeaking(false);
     setStatus("Disconnected");
+    setLastSdkEvent("—");
+    setLastErrorCode("");
   }, [unsubscribeEndpoint]);
 
   const join = useCallback(async () => {
@@ -463,6 +502,13 @@ export default function VoximplantTestClient() {
     const access = (await response.json()) as AccessPayload;
     setRoleLabel(access.roleLabel);
     setConferenceName(access.conferenceName);
+    // Set safe diagnostics — access.username is shortUser@userDomain, no password exposed
+    setSafeUsername(access.username);
+    setUserDomain(access.username.split("@")[1] ?? "");
+    setApplicationName(access.applicationName);
+    // Empty connectionNode = auto; never show "NODE_1 (default)"
+    setConfiguredNode(access.connectionNode || "auto");
+    setConnectedNode("");
     setStatus("Initializing Voximplant SDK...");
 
     const [{ Core, ConnectionNode }, conferenceModule, streamModulePackage] =
@@ -471,6 +517,11 @@ export default function VoximplantTestClient() {
         import("@voximplant/websdk/modules/conference-manager"),
         import("@voximplant/websdk/modules/stream"),
       ]);
+
+    // Guard against double-initialization on hot reload or repeated join attempts
+    if (sdkRef.current) {
+      await cleanup();
+    }
 
     const core = Core.init({}) as unknown as VoxCore;
     try {
@@ -508,19 +559,40 @@ export default function VoximplantTestClient() {
     };
     sdkRef.current = sdkState;
 
-    const connectionNode =
-      (ConnectionNode as Record<string, string>)[access.connectionNode] ||
-      ConnectionNode.NODE_1;
+    // ── Connect ──────────────────────────────────────────────────────────────
+    // If VOXIMPLANT_CONNECTION_NODE is not set (connectionNode is empty), let
+    // the SDK auto-select the node. Do NOT fall back to NODE_1 or any fixed
+    // node — wrong node is the leading cause of 502 Bad Gateway.
+    if (access.connectionNode) {
+      const nodeLabel = access.connectionNode.trim().toUpperCase();
+      const nodeValue = (ConnectionNode as Record<string, string>)[nodeLabel];
+      if (!nodeValue) {
+        throw new Error(
+          `Unknown VOXIMPLANT_CONNECTION_NODE value: "${nodeLabel}". ` +
+          `Remove VOXIMPLANT_CONNECTION_NODE from .env.local to use auto node selection.`,
+        );
+      }
+      setStatus(`Connecting to Voximplant Cloud (node: ${nodeLabel})...`);
+      await core.client.connect({ node: nodeValue });
+      setConnectedNode(nodeLabel);
+      setLastSdkEvent(`Client connected to node ${nodeLabel}`);
+    } else {
+      // Auto node selection — preferred when node is unknown
+      setStatus("Connecting to Voximplant Cloud (auto node)...");
+      await core.client.connect({});
+      setConnectedNode("auto");
+      setLastSdkEvent("Client connected (auto node)");
+    }
 
-    setStatus(`Connecting to Voximplant Cloud (${connectionNode})...`);
-    await core.client.connect({ node: connectionNode });
-
+    // ── Login ────────────────────────────────────────────────────────────────
     setStatus(`Logging in as ${access.roleLabel}...`);
     await core.client.login({
       username: access.username,
       password: access.password,
     });
+    setLastSdkEvent(`Logged in as ${access.roleLabel}`);
 
+    // ── Media ────────────────────────────────────────────────────────────────
     setStatus("Acquiring media devices...");
     const localAudioStream = await streamModule.streamManager.createAudioStream({
       audioProcessing: true,
@@ -533,35 +605,68 @@ export default function VoximplantTestClient() {
     sdkState.localVideoStream = localVideoStream;
     mountRenderer(localVideoStream, "local");
 
+    // ── Conference join ──────────────────────────────────────────────────────
+    // In minimal mode: use exactly one deterministic conference name, no retry.
+    // This ensures all participants always join the same VoxEngine session.
+    const resolvedConferenceName = access.conferenceName;
+    setConferenceName(resolvedConferenceName);
+
     const conference = conferenceManager.createConference({
-      conferenceName: access.conferenceName,
+      conferenceName: resolvedConferenceName,
       muteAudio: access.role === "facilitator",
-      reportStats: true,
+      reportStats: !access.minimalJoinMode,
+      statsReportInterval: access.minimalJoinMode ? undefined : 1000,
     });
-    sdkState.conference = conference;
+
+    let handshakeResolve: (() => void) | null = null;
+    let handshakeReject: ((reason: Error) => void) | null = null;
+    let settled = false;
+    const handshake = new Promise<void>((resolve, reject) => {
+      handshakeResolve = resolve;
+      handshakeReject = reject;
+    });
+    const settleOk = () => {
+      if (settled) return;
+      settled = true;
+      handshakeResolve?.();
+    };
+    const settleFail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      handshakeReject?.(new Error(message));
+    };
 
     const onConnected = () => {
       setStatus("Connected to conference.");
+      setLastSdkEvent("Conference Connected");
       setJoined(true);
       setIsMicMuted(conference.isMicrophoneMuted.value);
       const localVideoTrack = getVideoTrack(localVideoStream);
       setIsCameraSending(localVideoTrack ? localVideoTrack.enabled : true);
+      settleOk();
     };
     const onFailed = (event: VoxConferenceEvent) => {
-      setStatus("Conference failed.");
-      setError(
-        `Conference error ${event.payload?.code ?? "unknown"}: ${
-          event.payload?.reason ?? "No reason provided."
-        }`,
-      );
+      const code = event.payload?.code ?? "unknown";
+      const reason = event.payload?.reason ?? "No reason provided.";
+      const codeStr = String(code);
+      setLastSdkEvent(`Conference Failed (${codeStr})`);
+      setLastErrorCode(`${codeStr}: ${reason}`);
+      setLastErrorPhase("after-conference-join");
+      setStatus(`Conference failed (${codeStr}): ${reason}`);
+      settleFail(`Conference error ${codeStr}: ${reason}`);
     };
     const onDisconnected = (event: VoxConferenceEvent) => {
-      setStatus(`Conference disconnected: ${event.payload?.reason ?? "unknown"}`);
+      const reason = event.payload?.reason ?? "unknown";
+      setStatus(`Conference disconnected: ${reason}`);
+      setLastSdkEvent(`Conference Disconnected: ${reason}`);
+      setLastErrorPhase("after-conference-join");
       setJoined(false);
+      settleFail(`Conference disconnected: ${reason}`);
     };
     const onEndpointAdded = (event: VoxConferenceEvent) => {
       const endpointId = event.payload?.newEndpointId;
       if (!endpointId) return;
+      setLastSdkEvent(`Endpoint Added: ${endpointId.slice(0, 8)}`);
       const endpoint = conference.endpoints.value.get(endpointId);
       if (endpoint) {
         subscribeEndpoint(endpoint);
@@ -570,15 +675,8 @@ export default function VoximplantTestClient() {
     const onEndpointRemoved = (event: VoxConferenceEvent) => {
       const endpointId = event.payload?.removedEndpointId;
       if (!endpointId) return;
+      setLastSdkEvent(`Endpoint Removed: ${endpointId.slice(0, 8)}`);
       unsubscribeEndpoint(endpointId);
-    };
-
-    sdkState.conferenceListeners = {
-      onConnected,
-      onFailed,
-      onDisconnected,
-      onEndpointAdded,
-      onEndpointRemoved,
     };
 
     conference.addEventListener("Connected", onConnected);
@@ -587,39 +685,81 @@ export default function VoximplantTestClient() {
     conference.addEventListener("EndpointAdded", onEndpointAdded);
     conference.addEventListener("EndpointRemoved", onEndpointRemoved);
 
-    sdkState.unwatchers.push(
-      conference.isMicrophoneMuted.watch((next) => setIsMicMuted(next)),
-    );
-    sdkState.unwatchers.push(
-      conference.voiceActivityDetected.watch((next) => setIsLocalSpeaking(next)),
-    );
-    sdkState.unwatchers.push(
-      core.client.state.watch((next) => setStatus(`Client state: ${next}`)),
-    );
+    try {
+      await conference.addStream(localAudioStream);
+      await conference.addStream(localVideoStream);
+      setStatus(`Joining conference "${resolvedConferenceName}"...`);
+      await conference.join();
+      await handshake;
 
-    await conference.addStream(localAudioStream);
-    await conference.addStream(localVideoStream);
-    setStatus("Joining conference...");
-    await conference.join();
+      sdkState.conference = conference;
+      sdkState.conferenceListeners = {
+        onConnected,
+        onFailed,
+        onDisconnected,
+        onEndpointAdded,
+        onEndpointRemoved,
+      };
 
-    // Attach already-connected endpoints after join completes.
-    for (const endpoint of conference.endpoints.value.values()) {
-      subscribeEndpoint(endpoint);
+      sdkState.unwatchers.push(
+        conference.isMicrophoneMuted.watch((next) => setIsMicMuted(next)),
+      );
+      sdkState.unwatchers.push(
+        conference.voiceActivityDetected.watch((next) => setIsLocalSpeaking(next)),
+      );
+      sdkState.unwatchers.push(
+        core.client.state.watch((next) => setStatus(`Client state: ${next}`)),
+      );
+
+      for (const endpoint of conference.endpoints.value.values()) {
+        subscribeEndpoint(endpoint);
+      }
+    } catch (conferenceError) {
+      conference.removeEventListener("Connected", onConnected);
+      conference.removeEventListener("Failed", onFailed);
+      conference.removeEventListener("Disconnected", onDisconnected);
+      conference.removeEventListener("EndpointAdded", onEndpointAdded);
+      conference.removeEventListener("EndpointRemoved", onEndpointRemoved);
+      throw conferenceError;
     }
-  }, [mountRenderer, selectedRole, subscribeEndpoint, unsubscribeEndpoint]);
+  }, [cleanup, mountRenderer, selectedRole, subscribeEndpoint, unsubscribeEndpoint]);
 
   const handleJoin = useCallback(async () => {
-    if (sdkRef.current) {
-      await cleanup();
-    }
+    if (isJoiningRef.current || joined) return;
+    isJoiningRef.current = true;
+    setIsJoining(true);
+    setError(null);
+    setLastErrorCode("");
+    setLastErrorPhase("");
     try {
       await join();
     } catch (joinError) {
-      setError(toErrorMessage(joinError));
-      setStatus("Join failed");
+      const msg = toErrorMessage(joinError);
+      if (msg.includes("502") || msg.toLowerCase().includes("bad gateway")) {
+        setError(
+          "502 Bad Gateway — Conference connection refused. " +
+          "Check: (1) VoxEngine scenario in Console matches " +
+          (recordingPanelEnabled
+            ? "docs/voximplant/neg-conf.recording.scenario.js"
+            : "docs/voximplant/neg-conf.video-only.baseline.js") +
+          ", (2) routing rule negotaitions-conference-rule points to neg-conf, " +
+          "(3) VOXIMPLANT_CONNECTION_NODE is unset (auto) in .env.local, " +
+          "(4) all users belong to application negotaitions-video-poc. " +
+          "See Diagnostics below for details.",
+        );
+      } else {
+        setError(msg);
+      }
+      if (!lastErrorPhase) {
+        setLastErrorPhase("before-conference-join");
+      }
+      setStatus("Join failed — see error above");
       await cleanup();
+    } finally {
+      isJoiningRef.current = false;
+      setIsJoining(false);
     }
-  }, [cleanup, join]);
+  }, [cleanup, join, joined, lastErrorPhase, recordingPanelEnabled]);
 
   const toggleMute = useCallback(() => {
     const sdk = sdkRef.current;
@@ -659,6 +799,41 @@ export default function VoximplantTestClient() {
     setError(null);
   }, [isCameraSending]);
 
+  const handleRecordingAction = useCallback(
+    async (action: "start" | "stop" | "status") => {
+      setRecordingError(null);
+      setRecordingIsLoading(true);
+      try {
+        const url =
+          action === "status"
+            ? `/api/voximplant-test/recording/status?conferenceName=${encodeURIComponent(conferenceName || "")}`
+            : `/api/voximplant-test/recording/${action}`;
+        const response =
+          action === "status"
+            ? await fetch(url)
+            : await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conferenceName: conferenceName || undefined }),
+              });
+        const payload = (await response.json().catch(() => ({}))) as
+          | RecordingStatusPayload
+          | { error?: string };
+        if (!response.ok) {
+          const errPayload = payload as { error?: string };
+          setRecordingError(errPayload.error ?? `Request failed (${response.status})`);
+        } else {
+          setRecordingStatus(payload as RecordingStatusPayload);
+        }
+      } catch (err) {
+        setRecordingError(toErrorMessage(err));
+      } finally {
+        setRecordingIsLoading(false);
+      }
+    },
+    [conferenceName],
+  );
+
   useEffect(() => {
     return () => {
       void cleanup();
@@ -681,7 +856,7 @@ export default function VoximplantTestClient() {
             onChange={(event) =>
               setSelectedRole(event.target.value as RoleOption["id"])
             }
-            disabled={joined}
+            disabled={isJoining || joined}
           >
             {ROLE_OPTIONS.map((role) => (
               <option key={role.id} value={role.id}>
@@ -710,14 +885,15 @@ export default function VoximplantTestClient() {
             type="button"
             className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             onClick={() => void handleJoin()}
+            disabled={isJoining || joined}
           >
-            Join conference
+            {isJoining ? "Connecting…" : "Join conference"}
           </button>
           <button
             type="button"
             className="rounded bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             onClick={() => void cleanup()}
-            disabled={!joined}
+            disabled={isJoining || !joined}
           >
             Leave
           </button>
@@ -732,7 +908,7 @@ export default function VoximplantTestClient() {
           <button
             type="button"
             className="rounded bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            onClick={() => void toggleCamera()}
+            onClick={toggleCamera}
             disabled={!joined}
           >
             {isCameraSending ? "Camera off" : "Camera on"}
@@ -747,6 +923,137 @@ export default function VoximplantTestClient() {
         <div className="rounded border border-rose-500 bg-rose-950/40 p-3 text-sm text-rose-200">
           {error}
         </div>
+      ) : null}
+
+      <details className="rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm">
+        <summary className="cursor-pointer select-none font-semibold text-slate-300">
+          Diagnostics
+        </summary>
+        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+          <dt className="text-slate-400">Role</dt>
+          <dd className="text-slate-200">{joined ? roleLabel : selectedRoleLabel}</dd>
+          <dt className="text-slate-400">Username</dt>
+          <dd className="break-all font-mono text-slate-200">{safeUsername || "—"}</dd>
+          <dt className="text-slate-400">Domain</dt>
+          <dd className="font-mono text-slate-200">{userDomain || "—"}</dd>
+          <dt className="text-slate-400">Application</dt>
+          <dd className="font-mono text-slate-200">{applicationName || "—"}</dd>
+          <dt className="text-slate-400">Conference</dt>
+          <dd className="font-mono text-slate-200">{conferenceName || "—"}</dd>
+          <dt className="text-slate-400">Configured node</dt>
+          <dd className="font-mono text-slate-200">{configuredNode || "auto (unset)"}</dd>
+          <dt className="text-slate-400">Connected node</dt>
+          <dd className="font-mono text-slate-200">{connectedNode || "—"}</dd>
+          <dt className="text-slate-400">Scenario in use</dt>
+          <dd className="font-mono text-slate-200">
+            {recordingPanelEnabled
+              ? "neg-conf.recording.scenario.js (recording enabled)"
+              : "neg-conf.video-only.baseline.js (video-only baseline)"}
+          </dd>
+          <dt className="text-slate-400">Recording panel</dt>
+          <dd className="font-mono text-slate-200">
+            {recordingPanelEnabled ? "enabled (VOXIMPLANT_RECORDING_PANEL_ENABLED=true)" : "disabled (default)"}
+          </dd>
+          <dt className="text-slate-400">Connection state</dt>
+          <dd className="text-slate-200">{status}</dd>
+          <dt className="text-slate-400">Last SDK event</dt>
+          <dd className="text-slate-200">{lastSdkEvent}</dd>
+          {lastErrorCode ? (
+            <>
+              <dt className="text-rose-400">Last error</dt>
+              <dd className="text-rose-300">{lastErrorCode}</dd>
+              {lastErrorPhase ? (
+                <>
+                  <dt className="text-rose-400">Error phase</dt>
+                  <dd className="text-rose-300">{lastErrorPhase}</dd>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </dl>
+        <p className="mt-3 text-xs text-slate-500">
+          No passwords or tokens are shown here.
+          Configured node shows &quot;auto (unset)&quot; when VOXIMPLANT_CONNECTION_NODE is not set (recommended).
+          Error phase indicates whether the error occurred before or after conference join.
+        </p>
+      </details>
+
+      {recordingPanelEnabled && selectedRole === "facilitator" ? (
+        <section className="rounded-lg border border-violet-700 bg-violet-950/30 p-4 text-sm">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">
+            Recording panel
+          </h2>
+          <p className="mb-3 text-xs text-violet-400">
+            Facilitator only · Experimental · Requires{" "}
+            <code>neg-conf.recording.scenario.js</code> in Voximplant Console
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              onClick={() => void handleRecordingAction("start")}
+              disabled={recordingIsLoading}
+            >
+              Start recording
+            </button>
+            <button
+              type="button"
+              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              onClick={() => void handleRecordingAction("stop")}
+              disabled={recordingIsLoading}
+            >
+              Stop recording
+            </button>
+            <button
+              type="button"
+              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              onClick={() => void handleRecordingAction("status")}
+              disabled={recordingIsLoading}
+            >
+              {recordingIsLoading ? "Loading…" : "Check status"}
+            </button>
+          </div>
+          {recordingError ? (
+            <p className="mt-3 rounded border border-rose-500 bg-rose-950/40 p-2 text-xs text-rose-300">
+              Error: {recordingError}
+            </p>
+          ) : null}
+          {recordingStatus ? (
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+              <dt className="text-slate-400">Mode</dt>
+              <dd className="font-mono text-slate-200">{recordingStatus.mode}</dd>
+              <dt className="text-slate-400">Status</dt>
+              <dd className="font-mono text-slate-200">{recordingStatus.status}</dd>
+              <dt className="text-slate-400">Last action</dt>
+              <dd className="font-mono text-slate-200">{recordingStatus.requestedAction}</dd>
+              <dt className="text-slate-400">Storage</dt>
+              <dd className="font-mono text-slate-200">{recordingStatus.recordingStorage}</dd>
+              {recordingStatus.recordingUrl ? (
+                <>
+                  <dt className="text-slate-400">Recording URL</dt>
+                  <dd className="break-all font-mono text-emerald-300">{recordingStatus.recordingUrl}</dd>
+                </>
+              ) : null}
+              {recordingStatus.recordingPath ? (
+                <>
+                  <dt className="text-slate-400">Recording path</dt>
+                  <dd className="break-all font-mono text-emerald-300">{recordingStatus.recordingPath}</dd>
+                </>
+              ) : null}
+              <dt className="text-slate-400">Last action at</dt>
+              <dd className="font-mono text-slate-200">{recordingStatus.lastActionAt}</dd>
+              <dt className="text-slate-400">Message</dt>
+              <dd className="text-slate-200">{recordingStatus.message}</dd>
+            </dl>
+          ) : null}
+          {recordingStatus?.diagnostics?.length ? (
+            <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-slate-400">
+              {recordingStatus.diagnostics.map((d, i) => (
+                <li key={i}>{d}</li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2">

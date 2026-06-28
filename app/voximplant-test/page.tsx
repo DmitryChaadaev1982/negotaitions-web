@@ -1,6 +1,6 @@
 import VoximplantTestClient from "@/components/voximplant-test-client";
 
-import { getVoximplantTestConfig } from "@/lib/voximplant-test/config";
+import { getVoximplantTestConfig, isVoximplantRecordingPanelEnabled } from "@/lib/voximplant-test/config";
 
 export default function VoximplantTestPage() {
   let config: ReturnType<typeof getVoximplantTestConfig>;
@@ -45,5 +45,5 @@ export default function VoximplantTestPage() {
     );
   }
 
-  return <VoximplantTestClient />;
+  return <VoximplantTestClient recordingPanelEnabled={isVoximplantRecordingPanelEnabled()} />;
 }

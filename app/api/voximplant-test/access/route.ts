@@ -66,12 +66,14 @@ export async function POST(request: Request) {
     roleLabel: roleConfig.label,
     username: buildUsername(roleConfig.usernameShort, config.userDomain),
     password: roleConfig.password,
+    // Empty string = auto node selection. Client must NOT default to NODE_1.
     connectionNode: config.connectionNode,
     conferenceName: config.conferenceName,
     applicationName: config.applicationName,
     accountName: config.accountName,
     scenarioName: config.scenarioName,
     ruleName: config.ruleName,
+    minimalJoinMode: config.minimalJoinMode,
     isProductionSafe: false,
     loginMode: "password",
   });

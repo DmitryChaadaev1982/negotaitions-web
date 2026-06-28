@@ -1,18 +1,34 @@
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unused-vars */
 
-// VoxEngine scenario for:
-// Applications -> negotaitions-video-poc -> Scenarios -> neg-conf
+// ============================================================
+// STABLE VIDEO-ONLY BASELINE — DO NOT MODIFY THIS FILE
+// ============================================================
+//
+// This is the exact scenario that produces a working 3-user video conference.
+// It was tagged as:   checkpoint/voximplant-video-only-stable
+//
+// To restore the baseline after a recording regression:
+//   1. Open Voximplant Console → Applications → negotaitions-video-poc → Scenarios → neg-conf
+//   2. Replace the ENTIRE content with this file.
+//   3. Save.
+//   4. Confirm routing rule negotaitions-conference-rule still points to neg-conf.
+//
+// To restore via git:
+//   git show checkpoint/voximplant-video-only-stable:docs/voximplant/neg-conf.scenario.js
 //
 // Goal: minimal multi-party VIDEO-ONLY conference for Web SDK clients.
 //
-// Recording is intentionally disabled in this baseline scenario.
-// Do not add recording until the video-only smoke test passes again.
-// Recording must be implemented in a separate branch and commit.
+// Recording is intentionally absent from this file.
+// Do not add recording, CallEvents.MessageReceived, or any experimental
+// event listeners here.
 //
-// This scenario is the source of truth for the restored baseline.
-// Paste this exact content into Voximplant Console -> Applications ->
-// negotaitions-video-poc -> Scenarios -> neg-conf -> Save -> then verify
-// the routing rule negotaitions-conference-rule points to neg-conf.
+// Safe ConferenceEvents for VoxEngine 7.50.0:
+//   ConferenceEvents.Started  ✓
+//   ConferenceEvents.Stopped  ✓
+//
+// DO NOT add:
+//   ConferenceEvents.Failed  — undefined in 7.50.0, crashes scenario, causes 502
+//   Any other ConferenceEvents.* not listed above
 
 require(Modules.Conference);
 
