@@ -84,6 +84,7 @@ type VoxConferenceEvent = {
     reason?: string;
     newEndpointId?: string;
     removedEndpointId?: string;
+    text?: string;
   };
 };
 
@@ -94,7 +95,8 @@ type VoxConference = {
       | "Failed"
       | "Disconnected"
       | "EndpointAdded"
-      | "EndpointRemoved",
+      | "EndpointRemoved"
+      | "MessageReceived",
     listener: (event: VoxConferenceEvent) => void,
   ) => void;
   removeEventListener: (
@@ -103,7 +105,8 @@ type VoxConference = {
       | "Failed"
       | "Disconnected"
       | "EndpointAdded"
-      | "EndpointRemoved",
+      | "EndpointRemoved"
+      | "MessageReceived",
     listener: (event: VoxConferenceEvent) => void,
   ) => void;
   join: () => Promise<void>;
@@ -115,6 +118,7 @@ type VoxConference = {
   voiceActivityDetected: VoxWatchable<boolean>;
   isMicrophoneMuted: VoxWatchable<boolean>;
   endpoints: VoxWatchable<Map<string, VoxEndpoint>>;
+  sendMessage?: (text: string) => void;
 };
 
 type VoxStreamModule = {
@@ -174,20 +178,47 @@ type SdkState = {
     onEndpointRemoved: (event: VoxConferenceEvent) => void;
   } | null;
   unwatchers: Array<() => void>;
+  sendMessageSupported: boolean;
+  removeMessageListener: (() => void) | null;
 };
 
-type RecordingStatusPayload = {
-  mode: string;
-  status: string;
-  implemented: boolean;
-  recordingStorage: string;
-  requestedAction: string;
+type RecordingPanelState = {
+  mode: "scenario_message_control";
+  status:
+    | "idle"
+    | "starting"
+    | "recording"
+    | "stopping"
+    | "stopped"
+    | "not_recording"
+    | "error"
+    | "api_not_confirmed";
+  sendMessageAvailable: boolean;
+  lastAction: "start" | "stop" | "status" | null;
+  lastRequestId: string | null;
+  lastResponseTime: string | null;
+  lastScenarioMessage: string | null;
   recordingUrl: string | null;
-  recordingPath: string | null;
-  lastActionAt: string;
-  message: string;
-  diagnostics: string[];
+  recordingId: string | null;
+  error: string | null;
 };
+
+const INITIAL_RECORDING_PANEL: RecordingPanelState = {
+  mode: "scenario_message_control",
+  status: "idle",
+  sendMessageAvailable: false,
+  lastAction: null,
+  lastRequestId: null,
+  lastResponseTime: null,
+  lastScenarioMessage: null,
+  recordingUrl: null,
+  recordingId: null,
+  error: null,
+};
+
+function genRequestId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
 
 const ROLE_OPTIONS: RoleOption[] = [
   { id: "participant_a", label: "Participant A" },
@@ -248,9 +279,7 @@ export default function VoximplantTestClient({
   const [lastErrorPhase, setLastErrorPhase] = useState<string>("");
 
   // Recording panel state — only used when recordingPanelEnabled=true and role=facilitator
-  const [recordingStatus, setRecordingStatus] = useState<RecordingStatusPayload | null>(null);
-  const [recordingError, setRecordingError] = useState<string | null>(null);
-  const [recordingIsLoading, setRecordingIsLoading] = useState(false);
+  const [recordingPanel, setRecordingPanel] = useState<RecordingPanelState>(INITIAL_RECORDING_PANEL);
 
   const localVideoHostRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoHostRef = useRef<HTMLDivElement | null>(null);
@@ -258,6 +287,8 @@ export default function VoximplantTestClient({
   const sdkRef = useRef<SdkState | null>(null);
   // Ref-based joining guard prevents double-join race during async handshake
   const isJoiningRef = useRef(false);
+  // Timeout for recording command replies — cleared when scenario responds
+  const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedRoleLabel =
     ROLE_OPTIONS.find((item) => item.id === selectedRole)?.label ?? selectedRole;
@@ -409,6 +440,148 @@ export default function VoximplantTestClient({
     sdk.endpointSubscriptions.delete(endpointId);
   }, [unmountRenderer]);
 
+  const handleScenarioMessage = useCallback((event: VoxConferenceEvent) => {
+    try {
+      const text =
+        event.payload?.text ??
+        (event as unknown as { text?: string }).text ??
+        "";
+      if (!text) return;
+      const parsed = JSON.parse(text) as unknown;
+      if (!parsed || typeof parsed !== "object") return;
+      const msg = parsed as Record<string, unknown>;
+      if (msg.type !== "recording_status") return;
+
+      const rawStatus = String(msg.status ?? "");
+      const message = String(msg.message ?? "");
+      const requestId = msg.requestId ? String(msg.requestId) : null;
+      const recUrl = msg.recordingUrl ? String(msg.recordingUrl) : null;
+      const recId = msg.recordingId ? String(msg.recordingId) : null;
+
+      const panelStatus: RecordingPanelState["status"] =
+        rawStatus === "recording" ? "recording" :
+        rawStatus === "stopped" ? "stopped" :
+        rawStatus === "starting" ? "starting" :
+        rawStatus === "stopping" ? "stopping" :
+        rawStatus === "not_recording" ? "not_recording" :
+        rawStatus === "error" || rawStatus === "failed" ? "error" :
+        "idle";
+
+      // Clear the command timeout whenever any matching reply arrives
+      const isTerminal = panelStatus === "recording" || panelStatus === "stopped";
+      setRecordingPanel((prev) => {
+        // Stale requestId guard: ignore intermediate statuses from old requests,
+        // but always accept terminal states (recording, stopped) and errors.
+        if (
+          requestId &&
+          prev.lastRequestId &&
+          requestId !== prev.lastRequestId &&
+          !isTerminal &&
+          panelStatus !== "error"
+        ) {
+          return prev;
+        }
+
+        // A real response arrived — clear the client-side timeout
+        if (recordingTimeoutRef.current !== null) {
+          clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
+
+        return {
+          ...prev,
+          status: panelStatus,
+          lastRequestId: requestId ?? prev.lastRequestId,
+          lastResponseTime: new Date().toISOString(),
+          lastScenarioMessage: message || rawStatus,
+          recordingUrl: recUrl ?? prev.recordingUrl,
+          recordingId: recId ?? prev.recordingId,
+          error: panelStatus === "error" ? (message || "Recording error from scenario") : null,
+        };
+      });
+      setLastSdkEvent(`Scenario: ${rawStatus}`);
+    } catch {
+      // Ignore non-JSON or unexpected messages silently
+    }
+  }, []);
+
+  const handleSendRecordingCommand = useCallback(
+    (action: "start" | "stop" | "status") => {
+      const sdk = sdkRef.current;
+      if (!sdk?.conference) {
+        setRecordingPanel((prev) => ({
+          ...prev,
+          error: "Not connected to conference. Join first.",
+        }));
+        return;
+      }
+
+      const conf = sdk.conference;
+      if (typeof conf.sendMessage !== "function") {
+        setRecordingPanel((prev) => ({
+          ...prev,
+          sendMessageAvailable: false,
+          status: "api_not_confirmed",
+          error:
+            "conference.sendMessage() is not available on this SDK object. " +
+            "Scenario message-based recording control is unavailable. " +
+            "Check @voximplant/websdk version or enable RECORDING_AUTOSTART in the scenario.",
+        }));
+        return;
+      }
+
+      const requestId = genRequestId();
+      const msg = JSON.stringify({ type: "recording_control", action, requestId });
+      try {
+        conf.sendMessage(msg);
+        setRecordingPanel((prev) => ({
+          ...prev,
+          lastAction: action,
+          lastRequestId: requestId,
+          lastScenarioMessage: null,
+          lastResponseTime: null,
+          error: null,
+          status:
+            action === "start" ? "starting" :
+            action === "stop" ? "stopping" :
+            prev.status,
+        }));
+        setLastSdkEvent(`Sent: recording_control/${action}`);
+
+        // Start a 15s timeout — if no scenario reply arrives, show a clear error.
+        if (action === "start" || action === "stop") {
+          if (recordingTimeoutRef.current !== null) {
+            clearTimeout(recordingTimeoutRef.current);
+          }
+          recordingTimeoutRef.current = setTimeout(() => {
+            recordingTimeoutRef.current = null;
+            setRecordingPanel((prev) => {
+              // Only fire if still waiting (starting/stopping with this requestId)
+              if (
+                prev.lastRequestId !== requestId ||
+                (prev.status !== "starting" && prev.status !== "stopping")
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                status: "error",
+                error:
+                  "No scenario reply received within 15s. " +
+                  "Check VoxEngine logs for [neg-conf-rec] recording_control received. " +
+                  "If absent, conference.sendMessage() may not be reaching the scenario.",
+              };
+            });
+          }, 15000);
+        }
+      } catch (sendErr) {
+        const errMsg = `sendMessage failed: ${toErrorMessage(sendErr)}`;
+        setRecordingPanel((prev) => ({ ...prev, error: errMsg }));
+      }
+    },
+    [],
+  );
+
   const cleanup = useCallback(async () => {
     const sdk = sdkRef.current;
     if (!sdk) return;
@@ -468,6 +641,14 @@ export default function VoximplantTestClient({
       sdk.localVideoStream.close?.();
     }
 
+    sdk.removeMessageListener?.();
+    sdk.removeMessageListener = null;
+
+    if (recordingTimeoutRef.current !== null) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+
     try {
       await sdk.core.client.disconnect();
     } catch {
@@ -482,6 +663,7 @@ export default function VoximplantTestClient({
     setStatus("Disconnected");
     setLastSdkEvent("—");
     setLastErrorCode("");
+    setRecordingPanel(INITIAL_RECORDING_PANEL);
   }, [unsubscribeEndpoint]);
 
   const join = useCallback(async () => {
@@ -556,6 +738,8 @@ export default function VoximplantTestClient({
       endpointSubscriptions: new Map(),
       conferenceListeners: null,
       unwatchers: [],
+      sendMessageSupported: false,
+      removeMessageListener: null,
     };
     sdkRef.current = sdkState;
 
@@ -594,6 +778,13 @@ export default function VoximplantTestClient({
 
     // ── Media ────────────────────────────────────────────────────────────────
     setStatus("Acquiring media devices...");
+    // audioProcessing:true activates the browser's full WebRTC audio processing
+    // pipeline (echo cancellation, noise suppression, auto gain control).
+    // The Voximplant WebSDK streamManager.createAudioStream() only exposes this
+    // single flag — individual constraints (echoCancellation, noiseSuppression,
+    // autoGainControl) are not accessible through this API.
+    // Do NOT bypass via getUserMedia() directly — it would create a second,
+    // unmanaged audio track that bypasses SDK lifecycle and could break the join flow.
     const localAudioStream = await streamModule.streamManager.createAudioStream({
       audioProcessing: true,
     });
@@ -701,6 +892,47 @@ export default function VoximplantTestClient({
         onEndpointRemoved,
       };
 
+      // ── Recording message wiring ─────────────────────────────────────────
+      // Only wire when recording panel is enabled AND role is facilitator.
+      // This block must not affect the video-only join flow.
+      if (recordingPanelEnabled && access.role === "facilitator") {
+        const canSend = typeof conference.sendMessage === "function";
+        sdkState.sendMessageSupported = canSend;
+
+        if (canSend) {
+          // Try to listen for recording_status replies from VoxEngine
+          try {
+            const onMsg = (event: VoxConferenceEvent) => handleScenarioMessage(event);
+            conference.addEventListener("MessageReceived", onMsg);
+            sdkState.removeMessageListener = () => {
+              try {
+                conference.removeEventListener("MessageReceived", onMsg);
+              } catch {
+                // ignore cleanup errors
+              }
+            };
+            setLastSdkEvent("Recording: sendMessage available, MessageReceived registered");
+          } catch (msgRegErr) {
+            // MessageReceived registration failed — we can still send but won't auto-receive replies
+            setLastSdkEvent(
+              "Recording: sendMessage available, MessageReceived unavailable (" +
+              toErrorMessage(msgRegErr) + ")",
+            );
+          }
+        }
+
+        setRecordingPanel((prev) => ({
+          ...prev,
+          sendMessageAvailable: canSend,
+          status: canSend ? "idle" : "api_not_confirmed",
+          error: canSend
+            ? null
+            : "conference.sendMessage() not found on SDK object. " +
+              "Scenario message control is unavailable. " +
+              "Check @voximplant/websdk version or enable RECORDING_AUTOSTART in the scenario.",
+        }));
+      }
+
       sdkState.unwatchers.push(
         conference.isMicrophoneMuted.watch((next) => setIsMicMuted(next)),
       );
@@ -722,7 +954,7 @@ export default function VoximplantTestClient({
       conference.removeEventListener("EndpointRemoved", onEndpointRemoved);
       throw conferenceError;
     }
-  }, [cleanup, mountRenderer, selectedRole, subscribeEndpoint, unsubscribeEndpoint]);
+  }, [cleanup, handleScenarioMessage, mountRenderer, recordingPanelEnabled, selectedRole, subscribeEndpoint, unsubscribeEndpoint]);
 
   const handleJoin = useCallback(async () => {
     if (isJoiningRef.current || joined) return;
@@ -750,16 +982,14 @@ export default function VoximplantTestClient({
       } else {
         setError(msg);
       }
-      if (!lastErrorPhase) {
-        setLastErrorPhase("before-conference-join");
-      }
+      setLastErrorPhase((prev) => prev || "before-conference-join");
       setStatus("Join failed — see error above");
       await cleanup();
     } finally {
       isJoiningRef.current = false;
       setIsJoining(false);
     }
-  }, [cleanup, join, joined, lastErrorPhase, recordingPanelEnabled]);
+  }, [cleanup, join, joined, recordingPanelEnabled]);
 
   const toggleMute = useCallback(() => {
     const sdk = sdkRef.current;
@@ -798,41 +1028,6 @@ export default function VoximplantTestClient({
     setStatus(nextCameraEnabled ? "Camera enabled." : "Camera disabled.");
     setError(null);
   }, [isCameraSending]);
-
-  const handleRecordingAction = useCallback(
-    async (action: "start" | "stop" | "status") => {
-      setRecordingError(null);
-      setRecordingIsLoading(true);
-      try {
-        const url =
-          action === "status"
-            ? `/api/voximplant-test/recording/status?conferenceName=${encodeURIComponent(conferenceName || "")}`
-            : `/api/voximplant-test/recording/${action}`;
-        const response =
-          action === "status"
-            ? await fetch(url)
-            : await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ conferenceName: conferenceName || undefined }),
-              });
-        const payload = (await response.json().catch(() => ({}))) as
-          | RecordingStatusPayload
-          | { error?: string };
-        if (!response.ok) {
-          const errPayload = payload as { error?: string };
-          setRecordingError(errPayload.error ?? `Request failed (${response.status})`);
-        } else {
-          setRecordingStatus(payload as RecordingStatusPayload);
-        }
-      } catch (err) {
-        setRecordingError(toErrorMessage(err));
-      } finally {
-        setRecordingIsLoading(false);
-      }
-    },
-    [conferenceName],
-  );
 
   useEffect(() => {
     return () => {
@@ -983,76 +1178,127 @@ export default function VoximplantTestClient({
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-violet-300">
             Recording panel
           </h2>
-          <p className="mb-3 text-xs text-violet-400">
+          <p className="mb-1 text-xs text-violet-400">
             Facilitator only · Experimental · Requires{" "}
             <code>neg-conf.recording.scenario.js</code> in Voximplant Console
           </p>
-          <div className="flex flex-wrap gap-2">
+          {!joined ? (
+            <p className="mb-3 text-xs text-slate-500">
+              Join the conference first to enable recording controls.
+            </p>
+          ) : !recordingPanel.sendMessageAvailable ? (
+            <p className="mb-3 rounded border border-amber-500/60 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+              <strong>SDK message sending unavailable.</strong>{" "}
+              {recordingPanel.error ||
+                "conference.sendMessage() not found. Check @voximplant/websdk version."}
+            </p>
+          ) : null}
+          <div className="mb-3 flex flex-wrap gap-2">
             <button
               type="button"
-              className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              onClick={() => void handleRecordingAction("start")}
-              disabled={recordingIsLoading}
+              className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              onClick={() => handleSendRecordingCommand("start")}
+              disabled={
+                !joined ||
+                !recordingPanel.sendMessageAvailable ||
+                recordingPanel.status === "recording" ||
+                recordingPanel.status === "starting"
+              }
             >
               Start recording
             </button>
             <button
               type="button"
-              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              onClick={() => void handleRecordingAction("stop")}
-              disabled={recordingIsLoading}
+              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              onClick={() => handleSendRecordingCommand("stop")}
+              disabled={
+                !joined ||
+                !recordingPanel.sendMessageAvailable ||
+                recordingPanel.status === "idle" ||
+                recordingPanel.status === "stopped" ||
+                recordingPanel.status === "api_not_confirmed"
+              }
             >
               Stop recording
             </button>
             <button
               type="button"
-              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              onClick={() => void handleRecordingAction("status")}
-              disabled={recordingIsLoading}
+              className="rounded bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              onClick={() => handleSendRecordingCommand("status")}
+              disabled={!joined || !recordingPanel.sendMessageAvailable}
             >
-              {recordingIsLoading ? "Loading…" : "Check status"}
+              Check status
             </button>
           </div>
-          {recordingError ? (
-            <p className="mt-3 rounded border border-rose-500 bg-rose-950/40 p-2 text-xs text-rose-300">
-              Error: {recordingError}
-            </p>
-          ) : null}
-          {recordingStatus ? (
-            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-              <dt className="text-slate-400">Mode</dt>
-              <dd className="font-mono text-slate-200">{recordingStatus.mode}</dd>
-              <dt className="text-slate-400">Status</dt>
-              <dd className="font-mono text-slate-200">{recordingStatus.status}</dd>
-              <dt className="text-slate-400">Last action</dt>
-              <dd className="font-mono text-slate-200">{recordingStatus.requestedAction}</dd>
-              <dt className="text-slate-400">Storage</dt>
-              <dd className="font-mono text-slate-200">{recordingStatus.recordingStorage}</dd>
-              {recordingStatus.recordingUrl ? (
-                <>
-                  <dt className="text-slate-400">Recording URL</dt>
-                  <dd className="break-all font-mono text-emerald-300">{recordingStatus.recordingUrl}</dd>
-                </>
-              ) : null}
-              {recordingStatus.recordingPath ? (
-                <>
-                  <dt className="text-slate-400">Recording path</dt>
-                  <dd className="break-all font-mono text-emerald-300">{recordingStatus.recordingPath}</dd>
-                </>
-              ) : null}
-              <dt className="text-slate-400">Last action at</dt>
-              <dd className="font-mono text-slate-200">{recordingStatus.lastActionAt}</dd>
-              <dt className="text-slate-400">Message</dt>
-              <dd className="text-slate-200">{recordingStatus.message}</dd>
-            </dl>
-          ) : null}
-          {recordingStatus?.diagnostics?.length ? (
-            <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-slate-400">
-              {recordingStatus.diagnostics.map((d, i) => (
-                <li key={i}>{d}</li>
-              ))}
-            </ul>
-          ) : null}
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+            <dt className="text-slate-400">Mode</dt>
+            <dd className="font-mono text-slate-200">scenario_message_control</dd>
+            <dt className="text-slate-400">Status</dt>
+            <dd className={`font-mono ${
+              recordingPanel.status === "recording"
+                ? "text-emerald-400"
+                : recordingPanel.status === "error" || recordingPanel.status === "api_not_confirmed"
+                  ? "text-rose-400"
+                  : recordingPanel.status === "starting" || recordingPanel.status === "stopping"
+                    ? "text-amber-300"
+                    : "text-slate-200"
+            }`}>
+              {recordingPanel.status}
+            </dd>
+            <dt className="text-slate-400">Send message</dt>
+            <dd className="font-mono text-slate-200">
+              {recordingPanel.sendMessageAvailable ? "available" : "unavailable"}
+            </dd>
+            {recordingPanel.lastAction ? (
+              <>
+                <dt className="text-slate-400">Last action</dt>
+                <dd className="font-mono text-slate-200">{recordingPanel.lastAction}</dd>
+              </>
+            ) : null}
+            {recordingPanel.lastRequestId ? (
+              <>
+                <dt className="text-slate-400">Last request ID</dt>
+                <dd className="font-mono text-slate-200">{recordingPanel.lastRequestId}</dd>
+              </>
+            ) : null}
+            {recordingPanel.lastScenarioMessage ? (
+              <>
+                <dt className="text-slate-400">Last scenario reply</dt>
+                <dd className="text-slate-200">{recordingPanel.lastScenarioMessage}</dd>
+              </>
+            ) : null}
+            {recordingPanel.lastResponseTime ? (
+              <>
+                <dt className="text-slate-400">Last reply at</dt>
+                <dd className="font-mono text-slate-200">{recordingPanel.lastResponseTime}</dd>
+              </>
+            ) : null}
+            {recordingPanel.recordingUrl ? (
+              <>
+                <dt className="text-slate-400">Recording URL</dt>
+                <dd className="break-all font-mono text-emerald-300">{recordingPanel.recordingUrl}</dd>
+              </>
+            ) : null}
+            {recordingPanel.recordingId ? (
+              <>
+                <dt className="text-slate-400">Recording ID</dt>
+                <dd className="font-mono text-slate-200">{recordingPanel.recordingId}</dd>
+              </>
+            ) : null}
+            {recordingPanel.error ? (
+              <>
+                <dt className="text-rose-400">Error</dt>
+                <dd className="text-rose-300">{recordingPanel.error}</dd>
+              </>
+            ) : null}
+          </dl>
+          <p className="mt-3 text-xs text-slate-500">
+            Paste <code>docs/voximplant/neg-conf.recording.scenario.js</code> into
+            Voximplant Console before testing. If status does not update after sending
+            a command, check VoxEngine logs for{" "}
+            <code>[neg-conf-rec] recording_control received</code> and{" "}
+            <code>recording_started</code>.
+          </p>
         </section>
       ) : null}
 
