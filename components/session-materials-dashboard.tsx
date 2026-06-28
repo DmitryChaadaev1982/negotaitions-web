@@ -992,9 +992,7 @@ export function SessionMaterialsDashboard({
   const canRerunTranscription = liveData?.transcription?.canRerun ?? false;
   const canRunTranscriptEnhancement =
     (liveData?.transcription?.enhancement?.available ?? false) &&
-    liveTranscriptionStage === "ready" &&
-    liveTranscriptionStage !== "transcribing" &&
-    liveTranscriptionStage !== "enhancing";
+    liveTranscriptionStage === "ready";
   const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
   const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 

@@ -346,11 +346,13 @@ export async function enhanceTranscriptWithYandexAi(
     return { segments: [], globalWarnings: [] };
   }
 
-  const apiKey = process.env.YANDEX_API_KEY?.trim();
-  const folderId = process.env.YANDEX_FOLDER_ID?.trim();
-  if (!apiKey || !folderId) {
+  const apiKeyFromEnv = process.env.YANDEX_API_KEY?.trim();
+  const folderIdFromEnv = process.env.YANDEX_FOLDER_ID?.trim();
+  if (!apiKeyFromEnv || !folderIdFromEnv) {
     throw new Error("Yandex transcript enhancement configuration is missing.");
   }
+  const apiKey = apiKeyFromEnv;
+  const folderId = folderIdFromEnv;
 
   const modelName = getYandexTranscriptEnhancementModel();
   const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();

@@ -260,12 +260,7 @@ export function SessionPostProcessingPanel({
     isFacilitator &&
     !readOnly &&
     transcript?.enhancement?.available &&
-    transcript?.processingStage === "ready" &&
-    transcript?.processingStage !== "queued" &&
-    transcript?.processingStage !== "downloading" &&
-    transcript?.processingStage !== "compressing" &&
-    transcript?.processingStage !== "transcribing" &&
-    transcript?.processingStage !== "enhancing";
+    transcript?.processingStage === "ready";
   const canStartAi = isFacilitator && !readOnly && ai?.canStart;
   const canRetryAi = isFacilitator && !readOnly && ai?.canRetry;
   const canRerunAi = isFacilitator && !readOnly && ai?.canRerun;
