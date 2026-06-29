@@ -1,4 +1,4 @@
-# Voximplant integration: negotiation room (Stages 1-2)
+# Voximplant integration: negotiation room (Stages 1-3)
 
 ## Scope of Stage 1
 
@@ -20,6 +20,14 @@ Stage 2 adds a shared typed browser <-> VoxEngine scenario message contract:
 
 Stage 2 is additive only and intentionally does **not** change runtime behavior.
 There is no routing switch for the negotiation room yet.
+
+## Scope of Stage 3
+
+Stage 3 adds a production-oriented VoxEngine scenario artifact for later manual deployment:
+
+- `docs/voximplant/neg-conf.main-room.scenario.js`
+
+This is a source/documentation artifact only. It is not wired into app runtime in this stage.
 
 ## Provider switch behavior
 
@@ -101,6 +109,47 @@ Compatibility requirements:
 - current PoC control payload (`start|stop|status`) remains valid;
 - current PoC status payload remains valid.
 
+## Stage 3 scenario artifact
+
+Created file:
+
+- `docs/voximplant/neg-conf.main-room.scenario.js`
+
+How it differs from the PoC scenario:
+
+- keeps the same browser/scenario message compatibility but includes full `start|pause|resume|stop|status`;
+- uses an explicit recording state machine with `idle`, `starting`, `recording`, `paused`, `resuming`, `stopping`, `stopped`, `error`;
+- includes defensive watchdogs for starting/stopping/resuming;
+- isolates recording failures so conference calls continue;
+- uses safe event registration helpers to avoid crashes on missing event namespaces/constants;
+- adds authorization placeholder flow for recording control with strict mode and development fallback.
+
+Recording behavior in Stage 3 artifact:
+
+- audio-only recording default (`video: false`);
+- recording mode supports `lossless` default with `hd_mp3`-style fallback pattern;
+- pause/resume implemented via `recorder.mute(true/false)`;
+- if `recorder.mute` is unavailable, scenario returns `recording_status` with `status=error` and error code (conference remains active).
+
+Recording URL/object key notes:
+
+- scenario captures `recordingUrl` / `recordingId` when available from recorder events;
+- object key extraction in scenario is best effort only;
+- reliable `Recording.fileKey` handoff may require later webhook/status integration step.
+
+Facilitator authorization status:
+
+- Stage 3 includes `isAuthorizedRecordingController(...)` placeholder;
+- it does **not** claim final production authorization completeness yet;
+- payload `role` is treated as untrusted;
+- strict auth mode can deny by default without trusted identity evidence.
+
+Production blockers (as of Stage 3):
+
+- finalize trusted facilitator authorization based on Stage 4 identity model (`VideoProviderIdentity` + on-demand provisioning);
+- remove or disable development-only fallback before production rollout;
+- finalize reliable object-key handoff flow for `Recording.fileKey` persistence.
+
 ## Yandex pipeline compatibility expectation
 
 Future Voximplant recording integration must keep this provider-agnostic chain intact:
@@ -130,7 +179,7 @@ Operational rollback is provider-level:
 
 - set `VIDEO_PROVIDER=livekit`.
 
-## Explicit non-goals for Stages 1-2
+## Explicit non-goals for Stages 1-3
 
 - no runtime switch in negotiation room (`/room/[sessionId]`);
 - no changes to event lobby / lobby behavior;
