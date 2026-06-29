@@ -1,4 +1,4 @@
-# Voximplant integration: negotiation room (Stage 1)
+# Voximplant integration: negotiation room (Stages 1-2)
 
 ## Scope of Stage 1
 
@@ -9,6 +9,17 @@ Stage 1 adds only additive infrastructure:
 - documentation of the chosen Stage 4 identity model.
 
 Stage 1 intentionally does **not** change runtime behavior in the negotiation room (`/room/[sessionId]`), does not touch event lobby behavior, and does not modify existing LiveKit flows.
+
+## Scope of Stage 2
+
+Stage 2 adds a shared typed browser <-> VoxEngine scenario message contract:
+
+- `lib/voximplant/scenario-messages.ts`;
+- typed `recording_control` and `recording_status` messages;
+- small parse/validation/helper functions.
+
+Stage 2 is additive only and intentionally does **not** change runtime behavior.
+There is no routing switch for the negotiation room yet.
 
 ## Provider switch behavior
 
@@ -57,6 +68,39 @@ Security requirements:
 - Default recording mode is `lossless`.
 - Planned pause/resume behavior: `ConferenceRecorder.mute(true/false)` unless Voximplant later provides a true pause/resume API.
 
+Stage 2 protocol semantics:
+
+- `pause` maps to `ConferenceRecorder.mute(true)`;
+- `resume` maps to `ConferenceRecorder.mute(false)`.
+
+Expected future status state machine:
+
+- `idle` -> `starting` -> `recording` -> `paused` -> `resuming` -> `recording` -> `stopping` -> `stopped`
+- failures are represented as `recording_status` with `status=error`.
+- message parsing errors must not break the conference session.
+- recording failures must not disconnect participants.
+
+## Stage 2 scenario message protocol
+
+Browser -> scenario control messages:
+
+- `type: "recording_control"`
+- `action: "start" | "pause" | "resume" | "stop" | "status"`
+- `requestId: string`
+- optional: `sessionId`, `participantId`, `role`
+
+Scenario -> browser status messages:
+
+- `type: "recording_status"`
+- `status: "idle" | "starting" | "recording" | "paused" | "resuming" | "stopping" | "stopped" | "error" | "not_recording"`
+- optional: `requestId`, `message`, `recordingUrl`, `recordingId`, `objectKey`, `pausedAt`, `resumedAt`, `errorCode`
+
+Compatibility requirements:
+
+- fully compatible with current PoC shape used by `/voximplant-test`;
+- current PoC control payload (`start|stop|status`) remains valid;
+- current PoC status payload remains valid.
+
 ## Yandex pipeline compatibility expectation
 
 Future Voximplant recording integration must keep this provider-agnostic chain intact:
@@ -78,11 +122,22 @@ Examples that must remain supported:
 - `speaker_3`
 - `speaker_4`
 
+Speaker mapping to Participant A / Participant B / Facilitator / Observer / Unknown / Exclude is handled in a later stage and is intentionally unchanged in Stage 2.
+
 ## Rollback / fallback
 
 Operational rollback is provider-level:
 
 - set `VIDEO_PROVIDER=livekit`.
+
+## Explicit non-goals for Stages 1-2
+
+- no runtime switch in negotiation room (`/room/[sessionId]`);
+- no changes to event lobby / lobby behavior;
+- no changes to existing LiveKit behavior;
+- no changes to Yandex SpeechKit / DeepSeek transcript cleanup / DeepSeek negotiation analysis pipelines;
+- no Prisma schema or migration changes;
+- no Voximplant user provisioning or `VideoProviderIdentity` implementation in these stages.
 
 ## Stage 4 identity provisioning decision (documented, not implemented in Stage 1)
 
