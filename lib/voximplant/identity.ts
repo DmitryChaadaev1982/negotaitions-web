@@ -6,6 +6,7 @@ import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
 import {
+  createVoximplantOneTimeLoginHash,
   ensureRemoteVoximplantUser,
   VoximplantManagementApiNotImplementedError,
 } from "@/lib/voximplant/management-api";
@@ -78,18 +79,24 @@ function asIdentityResult(row: {
   };
 }
 
-function sanitizeUserIdFragment(userId: string): string {
-  return userId.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 export function buildVoximplantUsernameForUser(userId: string): string {
-  const safe = sanitizeUserIdFragment(userId);
-  if (safe.length >= 6) {
-    return `ng_u_${safe.slice(0, 24)}`;
-  }
-  const digest = createHash("sha256").update(userId).digest("hex").slice(0, 8);
+  const digest = createHash("sha256").update(userId).digest("hex").slice(0, 16);
   return `ng_u_${digest}`;
 }
+
+export function buildVoximplantSdkUsername(
+  providerUsername: string,
+  userDomain: string,
+): string {
+  return `${providerUsername}@${userDomain}`;
+}
+
+export type VoximplantBrowserCredentials = {
+  status: "ready";
+  method: "one_time_key";
+  oneTimeKeyHash: string;
+  expiresAt: string;
+};
 
 export async function markVoximplantIdentityUsed(
   identityId: string,
@@ -221,4 +228,47 @@ export async function getOrCreateVoximplantIdentityForUser(
 
     throw error;
   }
+}
+
+export async function issueVoximplantBrowserCredentialsForUser(params: {
+  userId: string;
+  displayName: string | null;
+  sessionId: string;
+  role: VoximplantRoomRole;
+  userDomain: string;
+  oneTimeKey: string;
+}): Promise<{
+  identity: VoximplantIdentityResult;
+  sdkUsername: string;
+  credentials: VoximplantBrowserCredentials;
+}> {
+  const identity = await getOrCreateVoximplantIdentityForUser({
+    userId: params.userId,
+    displayName: params.displayName,
+    sessionId: params.sessionId,
+    role: params.role,
+  });
+
+  const sdkUsername = buildVoximplantSdkUsername(
+    identity.providerUsername,
+    params.userDomain,
+  );
+  const oneTime = await createVoximplantOneTimeLoginHash({
+    sdkUsername,
+    providerUsername: identity.providerUsername,
+    displayName: params.displayName,
+    oneTimeKey: params.oneTimeKey,
+  });
+
+  const usedIdentity = await markVoximplantIdentityUsed(identity.id);
+  return {
+    identity: usedIdentity,
+    sdkUsername,
+    credentials: {
+      status: "ready",
+      method: "one_time_key",
+      oneTimeKeyHash: oneTime.hash,
+      expiresAt: oneTime.expiresAt,
+    },
+  };
 }

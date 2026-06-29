@@ -1,4 +1,4 @@
-# Voximplant integration: negotiation room (Stages 1-4)
+# Voximplant integration: negotiation room (Stages 1-4.1)
 
 ## Scope of Stage 1
 
@@ -39,6 +39,16 @@ Stage 4 adds backend foundation for durable provider identity and session-scoped
 - session-scoped endpoint: `POST /api/sessions/[sessionId]/voximplant/access`.
 
 Stage 4 still does not switch the negotiation room UI runtime from LiveKit to Voximplant.
+
+## Scope of Stage 4.1
+
+Stage 4.1 hardens provider identity and adds secure browser auth handoff primitives:
+
+- hash-based provider usernames (`ng_u_<sha256(userId).slice(0, 16)>`);
+- server-side one-time key token exchange flow for browser login;
+- Management API-backed remote user provisioning and password rotation boundary.
+
+This stage still does not change negotiation room UI runtime and does not modify LiveKit behavior.
 
 ## Provider switch behavior
 
@@ -196,11 +206,12 @@ No bulk user sync is performed.
 
 Technical username format:
 
-- `ng_u_<safeUserIdOrHash>`
+- `ng_u_<sha256(userId).slice(0, 16)>`
 
 Rules:
 
 - no email in username;
+- no raw local userId in username;
 - only safe technical characters;
 - deterministic per local user.
 
@@ -224,20 +235,47 @@ Browser-safe payload includes:
 - public connection identifiers (`accountName`, `applicationName`, `userDomain`);
 - recording feature flags (`enabled`, `audioOnly`, `audioMode`, `pauseEnabled`).
 
+Stage 4.1 credential handoff format:
+
+- first call returns browser-safe identity/config plus `credentials.status = "one_time_key_required"`;
+- browser requests one-time key using Voximplant WebSDK (`client.requestOneTimeKey({ username })`);
+- browser calls the same endpoint with `{ oneTimeKey }`;
+- backend returns `credentials.status = "ready"` and `credentials.oneTimeKeyHash` for `client.loginOneTimeKey(...)`.
+
+Exact SDK username format:
+
+- `sdkUsername = <providerUsername>@<userDomain>`;
+- this exact `sdkUsername` is used for both browser `requestOneTimeKey` and browser `loginOneTimeKey`;
+- endpoint returns `user.sdkUsername` and `credentials.sdkUsername` to avoid ambiguity.
+
+One-time hash input note:
+
+- WebSDK login hash formula uses the local user part (`providerUsername`) with `:voximplant.com:` salt;
+- backend validates that incoming `sdkUsername` starts with `<providerUsername>@` before hash calculation.
+
+Selected browser auth method:
+
+- one-time key login (`requestOneTimeKey` + backend hash calculation + `loginOneTimeKey`).
+- this avoids returning permanent password to browser.
+
 Never returned to browser:
 
 - Management API credentials;
 - service account JSON;
 - API secrets;
 - private role instructions of other users.
+- Management API key;
+- account/service credentials.
 
 ### Remaining Stage 4 blocker
 
-Browser credential/token handoff for Voximplant access is intentionally unresolved in this stage.
+In Stage 4, browser credential/token handoff was intentionally unresolved.
 
-- endpoint returns controlled `501 implementation_pending` for credential delivery;
-- auth/access/identity checks still execute before that response;
-- this avoids fake or insecure credential distribution.
+Stage 4.1 update:
+
+- backend one-time key token exchange is implemented;
+- remote user provisioning path is implemented via Management API methods (`GetUsers`, `AddUser`, `SetUserInfo`) when management env configuration is present;
+- if management API setup is missing, endpoint returns controlled `501` with explicit setup-required code.
 
 ### Scenario authorization preparation
 
@@ -280,6 +318,7 @@ Operational rollback is provider-level:
 - no changes to existing LiveKit behavior;
 - no changes to Yandex SpeechKit / DeepSeek transcript cleanup / DeepSeek negotiation analysis pipelines;
 - no exposure of provider management secrets to browser code.
+- no negotiation room UI switch away from LiveKit in this stage.
 
 ## Stage 4 identity provisioning decision (documented, not implemented in Stage 1)
 
@@ -301,7 +340,7 @@ Rules:
 
 - no bulk sync;
 - no email as Voximplant username;
-- deterministic technical username format: `ng_u_<safeUserIdOrHash>`;
+- deterministic technical username format: `ng_u_<sha256(userId).slice(0, 16)>`;
 - no static PoC credentials;
 - no permanent provider secrets in browser responses.
 

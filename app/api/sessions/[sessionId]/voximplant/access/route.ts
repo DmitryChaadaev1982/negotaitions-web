@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { canAccessSession, getCurrentUserSessionAccess } from "@/lib/access-control";
@@ -6,10 +7,16 @@ import { apiRequireActiveUser } from "@/lib/auth/api-guards";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import { prisma } from "@/lib/prisma";
 import {
+  buildVoximplantSdkUsername,
   getOrCreateVoximplantIdentityForUser,
+  issueVoximplantBrowserCredentialsForUser,
   VoximplantIdentityDisabledError,
   VoximplantIdentityProvisioningPendingError,
 } from "@/lib/voximplant/identity";
+import {
+  VoximplantManagementApiError,
+  VoximplantManagementApiNotImplementedError,
+} from "@/lib/voximplant/management-api";
 import type { VoximplantRoomRole } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
 
@@ -18,6 +25,10 @@ export const runtime = "nodejs";
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
+
+const requestSchema = z.object({
+  oneTimeKey: z.string().trim().min(1).max(512).optional(),
+});
 
 function resolveParticipantRole(
   participantType: ParticipantType,
@@ -57,6 +68,7 @@ function resolveParticipantRole(
 function buildBrowserSafePayload(params: {
   sessionId: string;
   providerUsername: string;
+  sdkUsername: string;
   displayName: string;
   role: VoximplantRoomRole;
   accountName: string;
@@ -75,6 +87,7 @@ function buildBrowserSafePayload(params: {
     roomNameOrConferenceName: `negotiation-${params.sessionId}`,
     user: {
       providerUsername: params.providerUsername,
+      sdkUsername: params.sdkUsername,
       displayName: params.displayName,
       role: params.role,
     },
@@ -89,6 +102,20 @@ function buildBrowserSafePayload(params: {
 
 export async function POST(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
+  let parsedBody: z.infer<typeof requestSchema> = {};
+
+  try {
+    const body = await _request
+      .json()
+      .catch(() => ({} as Record<string, unknown>));
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+    parsedBody = parsed.data;
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
 
   const { user, response } = await apiRequireActiveUser();
   if (response || !user) {
@@ -146,17 +173,41 @@ export async function POST(_request: Request, context: RouteContext) {
   );
 
   try {
-    const identity = await getOrCreateVoximplantIdentityForUser({
-      userId: user.id,
-      displayName: participantWithRole.displayName ?? user.name ?? null,
-      sessionId,
-      role,
-    });
+    const displayName = participantWithRole.displayName ?? user.name ?? "User";
+    const isOneTimeKeyRequest = Boolean(parsedBody.oneTimeKey);
+
+    const identityFlow = isOneTimeKeyRequest
+      ? await issueVoximplantBrowserCredentialsForUser({
+          userId: user.id,
+          displayName,
+          sessionId,
+          role,
+          userDomain: voximplantConfig.userDomain as string,
+          oneTimeKey: parsedBody.oneTimeKey as string,
+        })
+      : {
+          identity: await getOrCreateVoximplantIdentityForUser({
+            userId: user.id,
+            displayName,
+            sessionId,
+            role,
+          }),
+          sdkUsername: null,
+          credentials: null,
+        };
+
+    const sdkUsername =
+      identityFlow.sdkUsername ??
+      buildVoximplantSdkUsername(
+        identityFlow.identity.providerUsername,
+        voximplantConfig.userDomain as string,
+      );
 
     const browserSafe = buildBrowserSafePayload({
       sessionId,
-      providerUsername: identity.providerUsername,
-      displayName: participantWithRole.displayName ?? user.name ?? "User",
+      providerUsername: identityFlow.identity.providerUsername,
+      sdkUsername,
+      displayName,
       role,
       accountName: voximplantConfig.accountName as string,
       applicationName: voximplantConfig.applicationName as string,
@@ -164,17 +215,30 @@ export async function POST(_request: Request, context: RouteContext) {
       recording: voximplantConfig.recording,
     });
 
-    return NextResponse.json(
-      {
+    if (identityFlow.credentials) {
+      return NextResponse.json({
         ...browserSafe,
-        credentials: {
-          status: "implementation_pending",
-          message:
-            "Browser credential/token handoff is not implemented yet for production-safe Voximplant access.",
+        credentials: identityFlow.credentials,
+      });
+    }
+
+    return NextResponse.json({
+      ...browserSafe,
+      credentials: {
+        status: "one_time_key_required",
+        method: "one_time_key",
+        oneTimeKeyRequest: {
+          sdkMethod: "client.requestOneTimeKey({ username })",
+          ttlSeconds: 300,
         },
+        tokenExchange: {
+          endpoint: `/api/sessions/${encodeURIComponent(sessionId)}/voximplant/access`,
+          body: { oneTimeKey: "<key-from-sdk>" },
+          responseField: "credentials.oneTimeKeyHash",
+        },
+        sdkUsername: sdkUsername,
       },
-      { status: 501 },
-    );
+    });
   } catch (error) {
     if (error instanceof VoximplantIdentityDisabledError) {
       return NextResponse.json(
@@ -185,6 +249,13 @@ export async function POST(_request: Request, context: RouteContext) {
 
     if (error instanceof VoximplantIdentityProvisioningPendingError) {
       const providerUsername = error.identity?.providerUsername ?? null;
+      const fallbackSdkUsername =
+        providerUsername && voximplantConfig.userDomain
+          ? buildVoximplantSdkUsername(
+              providerUsername,
+              voximplantConfig.userDomain,
+            )
+          : null;
 
       return NextResponse.json(
         {
@@ -192,6 +263,7 @@ export async function POST(_request: Request, context: RouteContext) {
           sessionId,
           user: {
             providerUsername,
+            sdkUsername: fallbackSdkUsername,
             displayName: participantWithRole.displayName ?? user.name ?? "User",
             role,
           },
@@ -205,6 +277,21 @@ export async function POST(_request: Request, context: RouteContext) {
             status: "implementation_pending",
             message: error.message,
           },
+        },
+        { status: 501 },
+      );
+    }
+
+    if (
+      error instanceof VoximplantManagementApiNotImplementedError ||
+      error instanceof VoximplantManagementApiError
+    ) {
+      return NextResponse.json(
+        {
+          error: "Voximplant browser auth handoff is pending backend setup.",
+          code: "VOXIMPLANT_MANAGEMENT_API_SETUP_REQUIRED",
+          details:
+            "Management API integration is unavailable or misconfigured in this environment.",
         },
         { status: 501 },
       );
