@@ -1,4 +1,4 @@
-# Voximplant integration: negotiation room (Stages 1-3)
+# Voximplant integration: negotiation room (Stages 1-4)
 
 ## Scope of Stage 1
 
@@ -28,6 +28,17 @@ Stage 3 adds a production-oriented VoxEngine scenario artifact for later manual 
 - `docs/voximplant/neg-conf.main-room.scenario.js`
 
 This is a source/documentation artifact only. It is not wired into app runtime in this stage.
+
+## Scope of Stage 4
+
+Stage 4 adds backend foundation for durable provider identity and session-scoped access:
+
+- `VideoProviderIdentity` Prisma model;
+- additive migration for provider identity storage;
+- on-demand identity provisioning service boundary;
+- session-scoped endpoint: `POST /api/sessions/[sessionId]/voximplant/access`.
+
+Stage 4 still does not switch the negotiation room UI runtime from LiveKit to Voximplant.
 
 ## Provider switch behavior
 
@@ -150,6 +161,89 @@ Production blockers (as of Stage 3):
 - remove or disable development-only fallback before production rollout;
 - finalize reliable object-key handoff flow for `Recording.fileKey` persistence.
 
+## Stage 4 identity and access foundation
+
+### VideoProviderIdentity model
+
+Added additive identity storage with:
+
+- provider (`voximplant`);
+- local `userId` link;
+- durable `providerUsername` and `providerApplicationName`;
+- status (`active` | `disabled` | `failed`);
+- `lastUsedAt`, `lastProvisioningError`, optional `metadata`.
+
+Uniqueness constraints:
+
+- unique `(provider, userId)`;
+- unique `(provider, providerUsername)`.
+
+Migration is additive and safe for later `prisma migrate deploy`.
+
+### On-demand provisioning behavior
+
+When an authenticated active user requests Voximplant access for a negotiation session:
+
+1. backend verifies account auth/status;
+2. backend verifies session access using existing access-control rules;
+3. backend resolves user participant/role in the negotiation room;
+4. backend gets or creates local `VideoProviderIdentity`;
+5. remote Voximplant Management API provisioning remains behind a server-only adapter boundary.
+
+No bulk user sync is performed.
+
+### Username strategy
+
+Technical username format:
+
+- `ng_u_<safeUserIdOrHash>`
+
+Rules:
+
+- no email in username;
+- only safe technical characters;
+- deterministic per local user.
+
+### Session-scoped endpoint
+
+Added endpoint:
+
+- `POST /api/sessions/[sessionId]/voximplant/access`
+
+Behavior:
+
+- requires authenticated active account;
+- rejects unauthorized session access;
+- rejects guest-style Voximplant access in this stage;
+- resolves role as `participant_a` / `participant_b` / `facilitator` / `observer` / `unknown`;
+- returns browser-safe payload only.
+
+Browser-safe payload includes:
+
+- provider/session/user role metadata;
+- public connection identifiers (`accountName`, `applicationName`, `userDomain`);
+- recording feature flags (`enabled`, `audioOnly`, `audioMode`, `pauseEnabled`).
+
+Never returned to browser:
+
+- Management API credentials;
+- service account JSON;
+- API secrets;
+- private role instructions of other users.
+
+### Remaining Stage 4 blocker
+
+Browser credential/token handoff for Voximplant access is intentionally unresolved in this stage.
+
+- endpoint returns controlled `501 implementation_pending` for credential delivery;
+- auth/access/identity checks still execute before that response;
+- this avoids fake or insecure credential distribution.
+
+### Scenario authorization preparation
+
+Stage 4 identity endpoint provides trusted `providerUsername` mapping foundation.
+Future strict scenario authorization should validate recording controllers against trusted identity, not untrusted `payload.role`.
+
 ## Yandex pipeline compatibility expectation
 
 Future Voximplant recording integration must keep this provider-agnostic chain intact:
@@ -179,14 +273,13 @@ Operational rollback is provider-level:
 
 - set `VIDEO_PROVIDER=livekit`.
 
-## Explicit non-goals for Stages 1-3
+## Explicit non-goals for Stages 1-4
 
 - no runtime switch in negotiation room (`/room/[sessionId]`);
 - no changes to event lobby / lobby behavior;
 - no changes to existing LiveKit behavior;
 - no changes to Yandex SpeechKit / DeepSeek transcript cleanup / DeepSeek negotiation analysis pipelines;
-- no Prisma schema or migration changes;
-- no Voximplant user provisioning or `VideoProviderIdentity` implementation in these stages.
+- no exposure of provider management secrets to browser code.
 
 ## Stage 4 identity provisioning decision (documented, not implemented in Stage 1)
 

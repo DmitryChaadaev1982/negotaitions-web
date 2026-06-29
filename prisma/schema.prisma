@@ -185,6 +185,7 @@ model User {
   facilitatedTrainingEvents TrainingEvent[] @relation("TrainingEventFacilitator")
   eventParticipants   EventParticipant[]
   sessionParticipants SessionParticipant[]
+  videoProviderIdentities VideoProviderIdentity[]
   userSessions        UserSession[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
   targetedAdminActions AdminActionLog[]    @relation("AdminActionTarget")
@@ -207,6 +208,26 @@ model UserSession {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+model VideoProviderIdentity {
+  id                      String   @id @default(cuid())
+  provider                String
+  userId                  String
+  providerUsername        String
+  providerApplicationName String
+  status                  String
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  lastUsedAt              DateTime?
+  lastProvisioningError   String?
+  metadata                Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, userId])
+  @@unique([provider, providerUsername])
   @@index([userId])
 }
 
