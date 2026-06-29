@@ -1,3 +1,5 @@
+import type { VideoProvider } from "@/lib/voximplant/types";
+
 /**
  * Safe boolean env-var parser.
  *
@@ -32,6 +34,11 @@ export const autoTranscribeAfterRecording = getEnvBoolean(
 export type AiAnalysisProvider = "openai" | "yandex";
 export type TranscriptionProvider = "openai" | "yandex_speechkit";
 export type YandexSpeechKitContainerType = "MP3" | "WAV" | "OGG_OPUS";
+
+export function getVideoProvider(): VideoProvider {
+  const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
+  return raw === "voximplant" ? "voximplant" : "livekit";
+}
 
 export function getAiAnalysisProvider(): AiAnalysisProvider {
   const raw = process.env.AI_ANALYSIS_PROVIDER?.trim().toLowerCase();
