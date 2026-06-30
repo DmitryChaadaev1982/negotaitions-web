@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { AdminVoximplantWebhookOverridePanel } from "@/components/admin-voximplant-webhook-override-panel";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { PageHeader } from "@/components/page-header";
 import { SecondaryButton } from "@/components/ui/buttons";
@@ -10,6 +11,8 @@ import { useI18n } from "@/lib/i18n/useI18n";
 
 type HealthData = {
   config: {
+    videoProvider?: "livekit" | "voximplant";
+    videoProviderEnvValid?: boolean;
     aiAnalysisProvider?: "openai" | "yandex";
     transcriptionProvider?: "openai" | "yandex_speechkit";
     aiAnalysisProviderEnvValid?: boolean;
@@ -34,11 +37,55 @@ type HealthData = {
     yandexSpeechKitSpeakerLabelingEnabled?: boolean;
     yandexTranscriptEnhancementEnabled?: boolean;
     yandexSpeechKitRequiredKeysPresent?: boolean;
+    voximplantRecordingEnabled?: boolean;
+    voximplant?: {
+      accountName: boolean;
+      applicationName: boolean;
+      userDomain: boolean;
+      scenarioName: boolean;
+      ruleName: boolean;
+      recordingEnabled: boolean;
+      recordingAudioOnly: boolean;
+      recordingAudioMode: string;
+      recordingStorage: boolean;
+      managementApiConfigured: boolean;
+      managementAccountId: {
+        status:
+          | "configured_via_env"
+          | "configured_via_key_file"
+          | "missing"
+          | "invalid_key_file";
+        error?: string;
+      };
+      managementApplicationId?: {
+        status:
+          | "configured_via_env"
+          | "configured_via_key_file"
+          | "missing"
+          | "invalid_key_file";
+        error?: string;
+      };
+      apiKeyPath: boolean;
+      recordingWebhookSecret: boolean;
+      recordingWebhookBaseUrl: boolean;
+      recordingWebhookBaseUrlValue: string | null;
+      recordingWebhookOverrideEnabled: boolean;
+      recordingWebhookOverrideEnabledRaw?: string | null;
+      nodeEnv?: string;
+    };
     ffmpeg?: {
       available: boolean;
       path: string | null;
       source: "env" | "system" | "static" | null;
     };
+  };
+  voximplantRecordingWebhook?: {
+    nodeEnv: string;
+    overrideEnabledRaw: string | null;
+    overrideEnabled: boolean;
+    envDefault: string | null;
+    override: string | null;
+    effective: string | null;
   };
   hasRecentServiceErrors: boolean;
   recentEvents: Array<{
@@ -85,6 +132,82 @@ function ConfigRow({ label, configured }: { label: string; configured: boolean }
       >
         {configured ? t("admin.configured") : t("admin.missing")}
       </span>
+    </div>
+  );
+}
+
+function ConfigValueRow({
+  label,
+  value,
+  configured,
+}: {
+  label: string;
+  value: string | null;
+  configured: boolean;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span
+          className={
+            configured
+              ? "text-sm font-medium text-emerald-400"
+              : "text-sm font-medium text-amber-400"
+          }
+        >
+          {configured ? t("admin.configured") : t("admin.missing")}
+        </span>
+      </div>
+      {value ? (
+        <p className="mt-2 break-all font-mono text-xs text-slate-400">{value}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function ConfigStatusRow({
+  label,
+  diagnostic,
+}: {
+  label: string;
+  diagnostic?: {
+    status:
+      | "configured_via_env"
+      | "configured_via_key_file"
+      | "missing"
+      | "invalid_key_file";
+    error?: string;
+  };
+}) {
+  const { t } = useI18n();
+  const status = diagnostic?.status ?? "missing";
+
+  const statusLabel =
+    status === "configured_via_env"
+      ? t("admin.configStatusConfiguredViaEnv")
+      : status === "configured_via_key_file"
+        ? t("admin.configStatusConfiguredViaKeyFile")
+        : status === "invalid_key_file"
+          ? t("admin.configStatusInvalidKeyFile")
+          : t("admin.missing");
+
+  const statusClassName =
+    status === "missing" || status === "invalid_key_file"
+      ? "text-sm font-medium text-amber-400"
+      : "text-sm font-medium text-emerald-400";
+
+  return (
+    <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span className={statusClassName}>{statusLabel}</span>
+      </div>
+      {diagnostic?.error ? (
+        <p className="mt-2 text-xs text-rose-400">{diagnostic.error}</p>
+      ) : null}
     </div>
   );
 }
@@ -294,6 +417,10 @@ export function AdminDiagnosticsView() {
                 label={`TRANSCRIPTION_PROVIDER (${data.config.transcriptionProvider ?? "openai"})`}
                 configured={data.config.transcriptionProviderEnvValid ?? true}
               />
+              <ConfigRow
+                label={`VIDEO_PROVIDER (${data.config.videoProvider ?? "livekit"})`}
+                configured={data.config.videoProviderEnvValid ?? true}
+              />
               <ConfigRow label="LIVEKIT_URL" configured={data.config.livekitUrl} />
               <ConfigRow label="LIVEKIT_API_KEY" configured={data.config.livekitApiKey} />
               <ConfigRow label="LIVEKIT_API_SECRET" configured={data.config.livekitApiSecret} />
@@ -339,10 +466,105 @@ export function AdminDiagnosticsView() {
                 path={data.config.ffmpeg?.path ?? null}
                 source={data.config.ffmpeg?.source ?? null}
               />
+
+              <div className="pt-2">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("admin.voximplantConfiguration")}
+                </p>
+                <div className="space-y-2">
+                  <ConfigRow
+                    label="VOXIMPLANT_ACCOUNT_NAME"
+                    configured={data.config.voximplant?.accountName ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_APPLICATION_NAME"
+                    configured={data.config.voximplant?.applicationName ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_USER_DOMAIN"
+                    configured={data.config.voximplant?.userDomain ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_SCENARIO_NAME"
+                    configured={data.config.voximplant?.scenarioName ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_RULE_NAME"
+                    configured={data.config.voximplant?.ruleName ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_RECORDING_ENABLED"
+                    configured={data.config.voximplantRecordingEnabled ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_RECORDING_AUDIO_ONLY"
+                    configured={data.config.voximplant?.recordingAudioOnly ?? false}
+                  />
+                  <ConfigRow
+                    label={`VOXIMPLANT_RECORDING_AUDIO_MODE (${data.config.voximplant?.recordingAudioMode ?? "lossless"})`}
+                    configured={Boolean(data.config.voximplant?.recordingAudioMode)}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_RECORDING_STORAGE"
+                    configured={data.config.voximplant?.recordingStorage ?? false}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_MANAGEMENT_API (key or API_KEY_PATH)"
+                    configured={data.config.voximplant?.managementApiConfigured ?? false}
+                  />
+                  <ConfigStatusRow
+                    label="VOXIMPLANT_MANAGEMENT_ACCOUNT_ID"
+                    diagnostic={data.config.voximplant?.managementAccountId}
+                  />
+                  <ConfigStatusRow
+                    label="VOXIMPLANT_MANAGEMENT_APPLICATION_ID"
+                    diagnostic={data.config.voximplant?.managementApplicationId}
+                  />
+                  <ConfigRow
+                    label="VOXIMPLANT_RECORDING_WEBHOOK_SECRET"
+                    configured={data.config.voximplant?.recordingWebhookSecret ?? false}
+                  />
+                  <ConfigValueRow
+                    label="VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL"
+                    configured={data.config.voximplant?.recordingWebhookBaseUrl ?? false}
+                    value={data.config.voximplant?.recordingWebhookBaseUrlValue ?? null}
+                  />
+                  <ConfigValueRow
+                    label="VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED"
+                    configured={data.config.voximplant?.recordingWebhookOverrideEnabled ?? false}
+                    value={
+                      data.config.voximplant?.recordingWebhookOverrideEnabledRaw ??
+                      t("admin.unset")
+                    }
+                  />
+                </div>
+              </div>
             </>
           )}
         </CardContent>
       </Card>
+
+      {data?.voximplantRecordingWebhook ? (
+        <Card>
+          <CardHeader>
+            <h2 className="text-base font-semibold text-slate-50">
+              {t("admin.voximplantRecordingWebhook")}
+            </h2>
+          </CardHeader>
+          <CardContent>
+            <AdminVoximplantWebhookOverridePanel
+              initialState={data.voximplantRecordingWebhook}
+              onStateChange={(next) => {
+                setData((current) =>
+                  current
+                    ? { ...current, voximplantRecordingWebhook: next }
+                    : current,
+                );
+              }}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

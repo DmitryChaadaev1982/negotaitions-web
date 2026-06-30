@@ -350,6 +350,10 @@ export const en = {
     checkFfmpeg: "Check ffmpeg",
     configured: "Configured",
     missing: "Missing",
+    unset: "(unset)",
+    configStatusConfiguredViaEnv: "Configured via env",
+    configStatusConfiguredViaKeyFile: "Resolved from VOXIMPLANT_API_KEY_PATH",
+    configStatusInvalidKeyFile: "Invalid/unreadable key file",
     healthy: "Healthy",
     failed: "Failed",
     warning: "Warning",
@@ -366,6 +370,29 @@ export const en = {
     ffmpegSourceStatic: "Source: ffmpeg-static package",
     ffmpegUnavailableHint:
       "Compression and transcription will fail until ffmpeg is installed or available on PATH.",
+    voximplantConfiguration: "Voximplant",
+    voximplantRecordingWebhook: "Voximplant recording webhook URL",
+    voximplantWebhookNodeEnv: "NODE_ENV",
+    voximplantWebhookOverrideEnabledRaw: "VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED (env raw)",
+    voximplantWebhookOverrideEnabledEffective: "Effective overrideEnabled",
+    voximplantWebhookOverrideHint:
+      "Use a public HTTPS base URL only (for example https://abc.trycloudflare.com). Do not include /api/sessions/.... The webhook secret is never shown here.",
+    voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
+    voximplantWebhookSavedOverride: "Saved override",
+    voximplantWebhookEffectiveUrl: "Effective URL (scenarioMessage.webhookBaseUrl)",
+    voximplantWebhookInputLabel: "Public HTTPS base URL",
+    voximplantWebhookSaveOverride: "Save override",
+    voximplantWebhookResetOverride: "Reset to env default",
+    voximplantWebhookOverrideSaved:
+      "Override saved. New recording commands will use the effective URL immediately.",
+    voximplantWebhookOverrideCleared:
+      "Override cleared. Effective URL reverted to env default.",
+    voximplantWebhookOverrideDisabledExplicit:
+      "Runtime override is disabled because VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=false.",
+    voximplantWebhookOverrideDisabledDefault:
+      "Runtime override is disabled by default in production. Set VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=true to enable it.",
+    voximplantWebhookOverrideDisabledGeneric:
+      "Runtime override is disabled for this environment.",
   },
   recording: {
     recording: "Recording",

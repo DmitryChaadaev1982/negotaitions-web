@@ -709,6 +709,13 @@ model UserConsent {
   @@index([consentType])
 }
 
+model AppSetting {
+  key       String   @id
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model SessionParticipantAudioActivity {
   id                      String    @id @default(cuid())
   sessionId               String

@@ -123,3 +123,12 @@ export function getYandexTranscriptEnhancementMaxOutputTokens(): number {
 export function getVoximplantRecordingWebhookSecret(): string | null {
   return process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET?.trim() || null;
 }
+
+/**
+ * Env default for Voximplant recording webhook base URL (server-side only).
+ * Runtime admin override is stored in AppSetting — see recording-webhook-url.ts.
+ */
+export function getVoximplantRecordingWebhookBaseUrlFromEnv(): string | null {
+  const raw = process.env.VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL?.trim();
+  return raw || null;
+}

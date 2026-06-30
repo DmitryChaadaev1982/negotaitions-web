@@ -358,6 +358,16 @@ export type SharedRoomShellProps = {
   onControlStateChange: (state: ControlState) => void;
   /** Called when recording state changes. */
   onRecordingStateChange: (state: RoomRecordingState) => void;
+  /**
+   * Called after START negotiation action succeeds (post-consent).
+   * Voximplant room page uses this to trigger automatic recording start relay.
+   */
+  onNegotiationStarted?: () => void;
+  /**
+   * Called after FINISH negotiation action succeeds.
+   * Voximplant room page uses this to trigger automatic recording stop relay.
+   */
+  onNegotiationFinished?: () => void;
   /** Called when the presence heartbeat detects an invalid token. */
   onInvalidToken: () => void;
   /** Navigate away after leaving (for SessionClosedOverlay). */
@@ -464,6 +474,8 @@ export function SharedRoomShell({
   displayName,
   onControlStateChange,
   onRecordingStateChange,
+  onNegotiationStarted,
+  onNegotiationFinished,
   onInvalidToken,
   onLeave,
   leaveButton,
@@ -619,6 +631,8 @@ export function SharedRoomShell({
                 controlState={controlState}
                 onControlStateChange={onControlStateChange}
                 onRecordingStateChange={onRecordingStateChange}
+                onNegotiationStarted={onNegotiationStarted}
+                onNegotiationFinished={onNegotiationFinished}
               />
               {/* Provider-specific recording controls (Voximplant only) */}
               {recordingControls}

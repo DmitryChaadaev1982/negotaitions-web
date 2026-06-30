@@ -37,6 +37,8 @@ export type RecordingControlMessage = {
   sessionId?: string;
   /** Canonical conference name (negotiation-{sessionId}) for scenario-side parsing. */
   conferenceName?: string;
+  /** Public HTTPS app base URL for VoxEngine recording-status webhooks (no secret). */
+  webhookBaseUrl?: string;
   participantId?: string;
   role?: VoximplantRoomRole;
 };
@@ -52,6 +54,10 @@ export type RecordingStatusMessage = {
   pausedAt?: string | null;
   resumedAt?: string | null;
   errorCode?: string | null;
+  /** Stage 5.4.9: build ID stamped by vox:scenario:prepare; echoed from VoxEngine status messages. */
+  scenarioBuildId?: string | null;
+  /** Stage 5.4.9: source scenario name for runtime cross-check. */
+  scenarioSourceName?: string | null;
 };
 
 const CONTROL_ACTIONS: ReadonlySet<RecordingControlAction> = new Set([
@@ -141,6 +147,9 @@ export function isRecordingControlMessage(
   if (value.conferenceName !== undefined && typeof value.conferenceName !== "string") {
     return false;
   }
+  if (value.webhookBaseUrl !== undefined && typeof value.webhookBaseUrl !== "string") {
+    return false;
+  }
   if (value.participantId !== undefined && typeof value.participantId !== "string") {
     return false;
   }
@@ -196,6 +205,7 @@ type RecordingControlMessageOptions = {
   requestId: string;
   sessionId?: string;
   conferenceName?: string;
+  webhookBaseUrl?: string;
   participantId?: string;
   role?: VoximplantRoomRole;
 };
@@ -210,6 +220,7 @@ export function createRecordingControlMessage(
     requestId: options.requestId,
     sessionId: options.sessionId,
     conferenceName: options.conferenceName,
+    webhookBaseUrl: options.webhookBaseUrl,
     participantId: options.participantId,
     role: options.role,
   };

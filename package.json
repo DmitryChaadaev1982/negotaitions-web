@@ -11,7 +11,13 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
-    "test:all": "npm run lint && npm run build && npx prisma validate && npm run test:e2e"
+    "test:all": "npm run lint && npm run build && npx prisma validate && npm run test:e2e",
+    "smoke:vox-recording": "tsx scripts/smoke-voximplant-recording.ts",
+    "vox:scenario:prepare": "node scripts/voximplant-sync-scenario.mjs",
+    "vox:scenario:upload": "node scripts/voximplant-upload-scenario.mjs",
+    "vox:scenario:upload:direct": "node scripts/voximplant-upload-scenario-direct.mjs",
+    "vox:scenario:dry-run": "node scripts/voximplant-upload-scenario.mjs --dry-run",
+    "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -47,6 +53,7 @@
     "@types/pg": "^8.15.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@voximplant/voxengine-ci": "^34.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",

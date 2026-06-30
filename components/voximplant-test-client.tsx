@@ -201,6 +201,10 @@ type RecordingPanelState = {
   recordingUrl: string | null;
   recordingId: string | null;
   error: string | null;
+  /** Stage 5.4.9: scenario build ID echoed from VoxEngine recording_status messages. */
+  scenarioBuildId: string | null;
+  /** Stage 5.4.9: scenario source name echoed from VoxEngine recording_status messages. */
+  scenarioSourceName: string | null;
 };
 
 const INITIAL_RECORDING_PANEL: RecordingPanelState = {
@@ -214,6 +218,8 @@ const INITIAL_RECORDING_PANEL: RecordingPanelState = {
   recordingUrl: null,
   recordingId: null,
   error: null,
+  scenarioBuildId: null,
+  scenarioSourceName: null,
 };
 
 function genRequestId(): string {
@@ -457,6 +463,9 @@ export default function VoximplantTestClient({
       const requestId = msg.requestId ? String(msg.requestId) : null;
       const recUrl = msg.recordingUrl ? String(msg.recordingUrl) : null;
       const recId = msg.recordingId ? String(msg.recordingId) : null;
+      // Stage 5.4.9: capture scenario version diagnostic from VoxEngine reply.
+      const scenarioBuildId = msg.scenarioBuildId ? String(msg.scenarioBuildId) : null;
+      const scenarioSourceName = msg.scenarioSourceName ? String(msg.scenarioSourceName) : null;
 
       const panelStatus: RecordingPanelState["status"] =
         rawStatus === "recording" ? "recording" :
@@ -497,6 +506,9 @@ export default function VoximplantTestClient({
           recordingUrl: recUrl ?? prev.recordingUrl,
           recordingId: recId ?? prev.recordingId,
           error: panelStatus === "error" ? (message || "Recording error from scenario") : null,
+          // Stage 5.4.9: preserve last received scenario version fields; null means not yet received.
+          scenarioBuildId: scenarioBuildId ?? prev.scenarioBuildId,
+          scenarioSourceName: scenarioSourceName ?? prev.scenarioSourceName,
         };
       });
       setLastSdkEvent(`Scenario: ${rawStatus}`);
@@ -1289,6 +1301,18 @@ export default function VoximplantTestClient({
               <>
                 <dt className="text-rose-400">Error</dt>
                 <dd className="text-rose-300">{recordingPanel.error}</dd>
+              </>
+            ) : null}
+            {recordingPanel.scenarioBuildId ? (
+              <>
+                <dt className="text-slate-400">Scenario build (runtime)</dt>
+                <dd className="font-mono text-violet-300">{recordingPanel.scenarioBuildId}</dd>
+              </>
+            ) : null}
+            {recordingPanel.scenarioSourceName ? (
+              <>
+                <dt className="text-slate-400">Scenario source (runtime)</dt>
+                <dd className="font-mono text-slate-200">{recordingPanel.scenarioSourceName}</dd>
               </>
             ) : null}
           </dl>

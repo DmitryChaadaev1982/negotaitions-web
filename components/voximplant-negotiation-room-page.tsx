@@ -16,7 +16,7 @@
  */
 
 import { GradientButtonLink } from "@/components/ui/buttons";
-import { RecordingConsentModal } from "@/components/recording-consent-modal";
+import { RecordingDebugPanel } from "@/components/recording-debug-panel";
 import { SharedRoomShell } from "@/components/shared-room-shell";
 import VoximplantVideoLayout from "@/components/voximplant-video-layout";
 import { buildSessionMaterialsPath } from "@/lib/config";
@@ -35,7 +35,7 @@ import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Page props ───────────────────────────────────────────────────────────────
 
@@ -48,6 +48,7 @@ type VoximplantNegotiationRoomPageProps =
       disableInitialCamera?: boolean;
       disableInitialMic?: boolean;
       debugAudio?: boolean;
+      debugRecording?: boolean;
     }
   | {
       sessionId: string;
@@ -57,6 +58,7 @@ type VoximplantNegotiationRoomPageProps =
       disableInitialCamera?: boolean;
       disableInitialMic?: boolean;
       debugAudio?: boolean;
+      debugRecording?: boolean;
     };
 
 // ─── Audio diagnostics panel ──────────────────────────────────────────────────
@@ -223,19 +225,7 @@ function VoximplantLeaveButton({
   );
 }
 
-// ─── VoximplantRecordingControls ─────────────────────────────────────────────
-//
-// Stage 5.4: Recording start/stop control for facilitators.
-//
-// Flow:
-//  1. Facilitator clicks Start/Stop.
-//  2. Browser calls POST recording-control → receives { scenarioMessage }.
-//  3. Browser relays scenarioMessage via sendConferenceMessage().
-//  4. VoxEngine scenario records audio and later sends a status webhook.
-//  5. Webhook creates/updates Recording row; polling picks it up.
-//
-// Security: no secrets returned; relay failures show a safe UI error only.
-// Do not mark recording as completed client-side.
+// ─── Voximplant recording relay types ────────────────────────────────────────
 
 type RecordingControlResponse = {
   ok: boolean;
@@ -247,161 +237,6 @@ type RecordingControlResponse = {
   fileKeyHandoff?: "webhook";
   fileKeyHandoffDeferred?: boolean;
 };
-
-function VoximplantRecordingControls({
-  sessionId,
-  roomAuth,
-  joined,
-  sendConferenceMessage,
-  sendMessageAvailable,
-  recordingStatus,
-  onRecordingStateChange,
-}: {
-  sessionId: string;
-  roomAuth: RoomAuthToken;
-  joined: boolean;
-  sendConferenceMessage: (text: string) => boolean;
-  sendMessageAvailable: boolean;
-  recordingStatus: string | null | undefined;
-  onRecordingStateChange: (state: RoomRecordingState) => void;
-}) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [relayError, setRelayError] = useState<string | null>(null);
-  const [showRecordingConsent, setShowRecordingConsent] = useState(false);
-
-  const isActiveRecording =
-    recordingStatus === "RECORDING" || recordingStatus === "STARTING";
-  const isStoppingRecording = recordingStatus === "STOPPING" || recordingStatus === "STOPPED";
-  const canStart = joined && sendMessageAvailable && !isSubmitting && !isActiveRecording && !isStoppingRecording;
-  const canStop = joined && sendMessageAvailable && !isSubmitting && (isActiveRecording || recordingStatus === "STOPPING");
-
-  const runRecordingAction = useCallback(
-    async (action: "start" | "stop", recordingConsentConfirmed = false) => {
-      setIsSubmitting(true);
-      setRelayError(null);
-
-      try {
-        const body: Record<string, unknown> = {
-          ...roomAuthBody(roomAuth),
-          action,
-        };
-        if (action === "start") {
-          body.recordingConsentConfirmed = recordingConsentConfirmed;
-        }
-
-        const response = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/recording-control`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-
-        const payload = (await response.json().catch(() => ({}))) as RecordingControlResponse;
-
-        if (!response.ok) {
-          setRelayError(payload.error ?? "Recording control request failed.");
-          return;
-        }
-
-        // Update optimistic recording state from server response.
-        if (payload.recording) {
-          onRecordingStateChange(payload.recording);
-        }
-
-        // Relay the typed scenario message to the Voximplant conference.
-        if (payload.scenarioMessage) {
-          const relayed = sendConferenceMessage(JSON.stringify(payload.scenarioMessage));
-          if (!relayed) {
-            setRelayError(
-              "Recording command sent to server but could not be relayed to the conference. " +
-              "Ensure the conference is connected and the SDK version supports messaging.",
-            );
-          }
-        } else if (payload.provider === "voximplant") {
-          // scenarioMessage absent — server returned a dispatch but no message.
-          setRelayError("Server returned no scenario message to relay.");
-        }
-
-        if (payload.warning) {
-          setRelayError(payload.warning);
-        }
-      } catch {
-        setRelayError("Network error when sending recording command.");
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [roomAuth, sessionId, sendConferenceMessage, onRecordingStateChange],
-  );
-
-  const handleStartRecordingClick = useCallback(() => {
-    setShowRecordingConsent(true);
-  }, []);
-
-  const handleRecordingConsentConfirm = useCallback(() => {
-    setShowRecordingConsent(false);
-    void runRecordingAction("start", true);
-  }, [runRecordingAction]);
-
-  const handleRecordingConsentCancel = useCallback(() => {
-    setShowRecordingConsent(false);
-  }, []);
-
-  if (!joined) return null;
-
-  const buttonClass =
-    "inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60";
-
-  return (
-    <>
-      {showRecordingConsent ? (
-        <RecordingConsentModal
-          onConfirm={handleRecordingConsentConfirm}
-          onCancel={handleRecordingConsentCancel}
-        />
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-      {!sendMessageAvailable ? (
-        <p className="text-xs text-amber-400">
-          Запись недоступна: SDK не поддерживает отправку сообщений в конференцию.
-        </p>
-      ) : (
-        <>
-          {!isActiveRecording && !isStoppingRecording ? (
-            <button
-              type="button"
-              disabled={!canStart}
-              onClick={handleStartRecordingClick}
-              className={`${buttonClass} bg-rose-700 text-white hover:bg-rose-600`}
-              data-testid="vox-start-recording"
-            >
-              {isSubmitting && !isActiveRecording ? "Запуск..." : "Начать запись"}
-            </button>
-          ) : null}
-          {isActiveRecording || isStoppingRecording ? (
-            <button
-              type="button"
-              disabled={!canStop}
-              onClick={() => void runRecordingAction("stop")}
-              className={`${buttonClass} border border-slate-600 text-white hover:bg-slate-800`}
-              data-testid="vox-stop-recording"
-            >
-              {isSubmitting ? "Остановка..." : "Остановить запись"}
-            </button>
-          ) : null}
-        </>
-      )}
-      {relayError ? (
-        <p className="w-full text-xs text-rose-400" data-testid="vox-recording-relay-error">
-          {relayError}
-        </p>
-      ) : null}
-      </div>
-    </>
-  );
-}
 
 // ─── VoximplantNegotiationRoomPage ────────────────────────────────────────────
 
@@ -621,9 +456,235 @@ export default function VoximplantNegotiationRoomPage(
 
   const effectiveDisplayName = sidebar?.displayName || localDisplayName || "Участник";
 
+  // ── Automatic Voximplant recording relay ──────────────────────────────────
+  // Recording is tied to negotiation lifecycle: start → start recording,
+  // finish → stop recording. No separate UI button is shown.
+  // The browser relays a typed scenarioMessage to VoxEngine; the scenario
+  // handles actual recording and later sends a status webhook.
+
+  const [recordingRelayError, setRecordingRelayError] = useState<string | null>(null);
+
+  // ── Recording diagnostics (dev-only) ──────────────────────────────────────
+  // postRecordingDebug: fire-and-forget POST to diagnostics API.
+  // Never blocks user flow — errors are silently ignored.
+  const showRecordingDebug =
+    props.debugRecording === true ||
+    process.env.NEXT_PUBLIC_RECORDING_DEBUG_PANEL === "true";
+
+  const postRecordingDebug = useCallback(
+    (
+      step: string,
+      message: string,
+      data?: Record<string, unknown>,
+      level: "info" | "warn" | "error" | "success" = "info",
+    ) => {
+      if (!showRecordingDebug) return;
+      void fetch(`/api/debug/recording/${encodeURIComponent(props.sessionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "client", level, step, message, data }),
+      }).catch(() => {
+        // Non-blocking — ignore all errors.
+      });
+    },
+    [showRecordingDebug, props.sessionId],
+  );
+
+  /**
+   * True once the facilitator has initiated a recording start in this browser
+   * session. Used by the stop guard instead of recordingState, because:
+   *   - buildVoximplantRecordingDispatch does NOT write a DB recording row.
+   *   - The 1-second polling loop reads the DB and overwrites recordingState
+   *     with null/NOT_STARTED until VoxEngine's webhook fires.
+   *   - Relying on recordingState for the stop guard would suppress the only
+   *     stop call in the window between start relay and webhook arrival.
+   */
+  const recordingStartRequestedRef = useRef(false);
+  /** Prevents duplicate stop calls from double-clicks or re-renders. */
+  const stopInFlightRef = useRef(false);
+
+  const relayVoximplantRecording = useCallback(
+    async (action: "start" | "stop", consentGiven = false) => {
+      if (action === "start") {
+        // Guard: skip duplicate start if DB/UI already shows recording active.
+        const status = recordingState?.status;
+        if (status === "STARTING" || status === "RECORDING") {
+          console.log("[VoxRecording] start skipped — already", status);
+          postRecordingDebug("relayVoximplantRecording:start:skipped", `start skipped — already ${status}`, { status });
+          return;
+        }
+
+        // Conference must be connected to relay the start scenario message.
+        if (!joined || !sendMessageAvailable) {
+          setRecordingRelayError(
+            "Запись не может быть запущена: конференция ещё не подключена.",
+          );
+          postRecordingDebug("relayVoximplantRecording:start:notReady", "start skipped — conference not ready", { joined, sendMessageAvailable }, "warn");
+          return;
+        }
+      }
+
+      if (action === "stop") {
+        // Guard: skip stop when no start was ever attempted in this browser session.
+        // Do NOT use recordingState here — the DB recording row may not exist yet
+        // (VoxEngine webhook fires seconds after the start relay), so the polling
+        // loop would have overwritten recordingState with null/NOT_STARTED, causing
+        // a stale guard to suppress the only stop call.
+        if (!recordingStartRequestedRef.current) {
+          console.log("[VoxRecording] stop skipped — no start was attempted this session");
+          postRecordingDebug("relayVoximplantRecording:stop:skipped", "stop skipped — no start attempted this session", {}, "warn");
+          return;
+        }
+        // Guard: prevent duplicate stop calls.
+        if (stopInFlightRef.current) {
+          console.log("[VoxRecording] stop skipped — stop already in flight");
+          return;
+        }
+        stopInFlightRef.current = true;
+      }
+
+      setRecordingRelayError(null);
+
+      // Mark start as requested before the async call so the stop guard passes
+      // even if FINISH arrives before the start API response.
+      if (action === "start") {
+        recordingStartRequestedRef.current = true;
+        console.log("[VoxRecording] relayVoximplantRecording — start called");
+        postRecordingDebug("relayVoximplantRecording:start:called", "relayVoximplantRecording start called");
+      } else {
+        console.log("[VoxRecording] relayVoximplantRecording — stop called");
+        postRecordingDebug("relayVoximplantRecording:stop:called", "relayVoximplantRecording stop called");
+      }
+
+      try {
+        const body: Record<string, unknown> = {
+          ...roomAuthBody(roomAuth),
+          action,
+        };
+        if (action === "start") {
+          body.recordingConsentConfirmed = consentGiven;
+        }
+
+        postRecordingDebug(`recording-control:${action}:fetch`, `/recording-control ${action} fetch started`);
+
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(props.sessionId)}/recording-control`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+
+        const payload = (await response.json().catch(() => ({}))) as RecordingControlResponse;
+
+        console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.action, "recording.status:", payload.recording?.status);
+
+        if (!response.ok) {
+          postRecordingDebug(
+            `recording-control:${action}:response:error`,
+            `/recording-control ${action} failed: ${payload.error ?? response.status}`,
+            { status: response.status },
+            "error",
+          );
+          if (action === "start") {
+            setRecordingRelayError(payload.error ?? "Не удалось запустить запись.");
+          } else {
+            console.warn("[VoxRecording] stop request failed:", payload.error);
+          }
+          return;
+        }
+
+        postRecordingDebug(
+          `recording-control:${action}:response:ok`,
+          `/recording-control ${action} ok — recordingStatus=${payload.recording?.status ?? "null"}`,
+          {
+            provider: payload.provider ?? null,
+            recordingStatus: payload.recording?.status ?? null,
+            scenarioMessageAction: payload.scenarioMessage?.action ?? null,
+            webhookBaseUrl: payload.scenarioMessage?.webhookBaseUrl ?? null,
+          },
+          "success",
+        );
+
+        // Update optimistic recording state from server response.
+        if (payload.recording) {
+          setRecordingState(payload.recording);
+        }
+
+        // Relay the typed scenario message to the Voximplant conference.
+        if (payload.scenarioMessage) {
+          const relayed = sendConferenceMessage(JSON.stringify(payload.scenarioMessage));
+          console.log(`[VoxRecording] sendConferenceMessage ${action}:`, relayed ? "success" : "failed — conference not ready");
+          postRecordingDebug(
+            `sendConferenceMessage:${action}`,
+            `sendConferenceMessage ${action}: ${relayed ? "success" : "failed — conference not ready"}`,
+            { relayed },
+            relayed ? "success" : "error",
+          );
+          if (!relayed && action === "start") {
+            setRecordingRelayError(
+              "Команда записи отправлена, но не передана в конференцию. " +
+                "Проверьте подключение SDK.",
+            );
+          }
+        } else if (payload.provider === "voximplant") {
+          if (action === "start") {
+            setRecordingRelayError("Сервер не вернул сообщение для конференции.");
+            postRecordingDebug("recording-control:start:noScenarioMessage", "Server returned no scenarioMessage", {}, "error");
+          }
+        }
+
+        if (payload.warning && action === "start") {
+          setRecordingRelayError(payload.warning);
+          postRecordingDebug("recording-control:start:warning", payload.warning, {}, "warn");
+        }
+      } catch {
+        postRecordingDebug(`relayVoximplantRecording:${action}:networkError`, `network error during ${action} relay`, {}, "error");
+        if (action === "start") {
+          setRecordingRelayError("Ошибка сети при отправке команды записи.");
+        } else {
+          console.warn("[VoxRecording] stop relay network error (non-critical).");
+        }
+      } finally {
+        if (action === "stop") {
+          stopInFlightRef.current = false;
+        }
+      }
+    },
+    [
+      joined,
+      sendMessageAvailable,
+      roomAuth,
+      props.sessionId,
+      recordingState,
+      sendConferenceMessage,
+      setRecordingState,
+      postRecordingDebug,
+    ],
+  );
+
+  // Callbacks wired to FacilitatorRoomControls negotiation lifecycle.
+  const handleNegotiationStarted = useCallback(() => {
+    console.log("[VoxRecording] onNegotiationStarted callback invoked");
+    postRecordingDebug("handleNegotiationStarted:invoked", "handleNegotiationStarted invoked — triggering start");
+    void relayVoximplantRecording("start", true);
+  }, [relayVoximplantRecording, postRecordingDebug]);
+
+  const handleNegotiationFinished = useCallback(() => {
+    console.log("[VoxRecording] onNegotiationFinished callback invoked");
+    postRecordingDebug("handleNegotiationFinished:invoked", "handleNegotiationFinished invoked — triggering stop");
+    void relayVoximplantRecording("stop");
+  }, [relayVoximplantRecording, postRecordingDebug]);
+
   // ── Diagnostics ───────────────────────────────────────────────────────────
   const showDiagnostics =
     props.debugAudio === true || !!lastAudioError || !!lastRemoteAudioError;
+
+  const isFacilitator = effectiveParticipantType === "FACILITATOR";
+  const showRecordingDebugPanel =
+    isFacilitator &&
+    showRecordingDebug;
 
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
@@ -685,6 +746,16 @@ export default function VoximplantNegotiationRoomPage(
         displayName={effectiveDisplayName}
         onControlStateChange={setControlState}
         onRecordingStateChange={setRecordingState}
+        onNegotiationStarted={
+          effectiveParticipantType === "FACILITATOR"
+            ? handleNegotiationStarted
+            : undefined
+        }
+        onNegotiationFinished={
+          effectiveParticipantType === "FACILITATOR"
+            ? handleNegotiationFinished
+            : undefined
+        }
         onInvalidToken={handleInvalidToken}
         onLeave={() => void handleLeave()}
         // ── Voximplant-specific slots ────────────────────────────────────────
@@ -693,16 +764,13 @@ export default function VoximplantNegotiationRoomPage(
         speakingTracker={null}
         providerBanner={null}
         recordingControls={
-          effectiveParticipantType === "FACILITATOR" ? (
-            <VoximplantRecordingControls
-              sessionId={props.sessionId}
-              roomAuth={roomAuth}
-              joined={joined}
-              sendConferenceMessage={sendConferenceMessage}
-              sendMessageAvailable={sendMessageAvailable}
-              recordingStatus={recordingState?.status}
-              onRecordingStateChange={setRecordingState}
-            />
+          recordingRelayError && effectiveParticipantType === "FACILITATOR" ? (
+            <p
+              className="text-xs text-rose-400"
+              data-testid="vox-recording-relay-error"
+            >
+              {recordingRelayError}
+            </p>
           ) : null
         }
         mediaArea={
@@ -748,23 +816,34 @@ export default function VoximplantNegotiationRoomPage(
           ) : null
         }
         debugPanel={
-          showDiagnostics ? (
-            <AudioDiagnosticsPanel
-              joined={joined}
-              status={status}
-              conferenceName={conferenceName}
-              transportRole={transportRole}
-              micCaptureStatus={micCaptureStatus}
-              localAudioStreamCreated={localAudioStreamCreated}
-              localAudioStreamAddedToConference={localAudioStreamAddedToConference}
-              isMicMuted={isMicMuted}
-              micLevel={micLevel}
-              remoteStreamCount={remoteStreamCount}
-              remoteAudioElementCount={remoteAudioElementCount}
-              remotePlaybackBlocked={remotePlaybackBlocked}
-              lastAudioError={lastAudioError}
-              lastRemoteAudioError={lastRemoteAudioError}
-            />
+          showDiagnostics || showRecordingDebugPanel ? (
+            <>
+              {showDiagnostics && (
+                <AudioDiagnosticsPanel
+                  joined={joined}
+                  status={status}
+                  conferenceName={conferenceName}
+                  transportRole={transportRole}
+                  micCaptureStatus={micCaptureStatus}
+                  localAudioStreamCreated={localAudioStreamCreated}
+                  localAudioStreamAddedToConference={localAudioStreamAddedToConference}
+                  isMicMuted={isMicMuted}
+                  micLevel={micLevel}
+                  remoteStreamCount={remoteStreamCount}
+                  remoteAudioElementCount={remoteAudioElementCount}
+                  remotePlaybackBlocked={remotePlaybackBlocked}
+                  lastAudioError={lastAudioError}
+                  lastRemoteAudioError={lastRemoteAudioError}
+                />
+              )}
+              <RecordingDebugPanel
+                sessionId={props.sessionId}
+                participantId={
+                  props.authMode === "account" ? props.participantId : undefined
+                }
+                visible={showRecordingDebugPanel}
+              />
+            </>
           ) : null
         }
       />

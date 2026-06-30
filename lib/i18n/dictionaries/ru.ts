@@ -354,6 +354,10 @@ export const ru: Dictionary = {
     checkFfmpeg: "Проверить ffmpeg",
     configured: "Настроено",
     missing: "Отсутствует",
+    unset: "(не задано)",
+    configStatusConfiguredViaEnv: "Настроено через env",
+    configStatusConfiguredViaKeyFile: "Получено из VOXIMPLANT_API_KEY_PATH",
+    configStatusInvalidKeyFile: "Некорректный/нечитаемый key file",
     healthy: "Работает",
     failed: "Ошибка",
     warning: "Предупреждение",
@@ -370,6 +374,29 @@ export const ru: Dictionary = {
     ffmpegSourceStatic: "Источник: пакет ffmpeg-static",
     ffmpegUnavailableHint:
       "Сжатие и транскрибация будут недоступны, пока ffmpeg не установлен или не доступен в PATH.",
+    voximplantConfiguration: "Voximplant",
+    voximplantRecordingWebhook: "Webhook URL записи Voximplant",
+    voximplantWebhookNodeEnv: "NODE_ENV",
+    voximplantWebhookOverrideEnabledRaw: "VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED (env raw)",
+    voximplantWebhookOverrideEnabledEffective: "Эффективный overrideEnabled",
+    voximplantWebhookOverrideHint:
+      "Укажите публичный HTTPS базовый URL (например https://abc.trycloudflare.com). Не добавляйте /api/sessions/.... Секрет webhook здесь не отображается.",
+    voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
+    voximplantWebhookSavedOverride: "Сохранённый override",
+    voximplantWebhookEffectiveUrl: "Эффективный URL (scenarioMessage.webhookBaseUrl)",
+    voximplantWebhookInputLabel: "Публичный HTTPS базовый URL",
+    voximplantWebhookSaveOverride: "Сохранить override",
+    voximplantWebhookResetOverride: "Сбросить к env",
+    voximplantWebhookOverrideSaved:
+      "Override сохранён. Новые команды записи сразу используют эффективный URL.",
+    voximplantWebhookOverrideCleared:
+      "Override сброшен. Эффективный URL вернулся к значению из env.",
+    voximplantWebhookOverrideDisabledExplicit:
+      "Runtime override отключён, потому что VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=false.",
+    voximplantWebhookOverrideDisabledDefault:
+      "Runtime override по умолчанию отключён в production. Установите VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=true, чтобы включить его.",
+    voximplantWebhookOverrideDisabledGeneric:
+      "Runtime override отключён для текущего окружения.",
   },
   recording: {
     recording: "Запись",

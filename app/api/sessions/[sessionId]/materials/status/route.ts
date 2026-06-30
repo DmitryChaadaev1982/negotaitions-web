@@ -8,6 +8,7 @@ import {
 } from "@/app/generated/prisma/client";
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
 import {
@@ -300,6 +301,20 @@ export async function GET(request: Request, context: RouteContext) {
   const recordingStatus = recording?.status ?? null;
   const transcriptStatus = transcript?.status ?? null;
   const aiStatus = aiAnalysis?.status ?? null;
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "materials-status",
+    level: "info",
+    step: "materials-status:polled",
+    message: `materials/status polled: recordingFound=${Boolean(recording)} status=${recordingStatus ?? "null"}`,
+    data: {
+      recordingFound: Boolean(recording),
+      recordingStatus: recordingStatus ?? null,
+      fileKeyPresent: Boolean(recording?.fileKey),
+      transcriptStatus: transcriptStatus ?? null,
+    },
+  });
   const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
     transcript?.processingMetadata,
   );

@@ -22,6 +22,8 @@ type RoomPageProps = {
     media?: string;
     /** Pass ?debugAudio=1 to show the audio diagnostics panel. */
     debugAudio?: string;
+    /** Pass ?debugRecording=1 to show the recording diagnostics panel (dev-only). */
+    debugRecording?: string;
   }>;
 };
 
@@ -31,11 +33,12 @@ export default async function RoomPage({
 }: RoomPageProps) {
   const provider = getVideoProvider();
   const { sessionId } = await params;
-  const { joinToken, camera, mic, media, debugAudio } = await searchParams;
+  const { joinToken, camera, mic, media, debugAudio, debugRecording } = await searchParams;
   const trimmedJoinToken = (joinToken ?? "").trim();
   const disableInitialCamera = camera === "off" || media === "off";
   const disableInitialMic = mic === "off" || media === "off";
   const showDebugAudio = debugAudio === "1";
+  const showDebugRecording = debugRecording === "1";
   const { dictionary } = await getServerDictionary();
 
   if (!trimmedJoinToken) {
@@ -67,6 +70,7 @@ export default async function RoomPage({
         disableInitialCamera={disableInitialCamera}
         disableInitialMic={disableInitialMic}
         debugAudio={showDebugAudio}
+        debugRecording={showDebugRecording}
       />
     ) : (
       <VideoRoomPage

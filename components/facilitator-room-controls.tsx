@@ -35,6 +35,18 @@ type FacilitatorRoomControlsProps = {
     status: string;
     errorMessage: string | null;
   } | null) => void;
+  /**
+   * Called after the START negotiation action succeeds and recording consent
+   * was explicitly confirmed. Providers that manage their own recording
+   * lifecycle (e.g. Voximplant) use this to trigger automatic recording start.
+   */
+  onNegotiationStarted?: () => void;
+  /**
+   * Called after the FINISH negotiation action succeeds.
+   * Providers that manage their own recording lifecycle use this to trigger
+   * automatic recording stop.
+   */
+  onNegotiationFinished?: () => void;
 };
 
 type DurationControlsProps = {
@@ -184,6 +196,8 @@ export function FacilitatorRoomControls({
   controlState,
   onControlStateChange,
   onRecordingStateChange,
+  onNegotiationStarted,
+  onNegotiationFinished,
 }: FacilitatorRoomControlsProps) {
   const { t } = useI18n();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -221,13 +235,25 @@ export function FacilitatorRoomControls({
         if (payload.recordingWarning) {
           setRecordingWarning(payload.recordingWarning);
         }
+
+        // Notify provider-specific lifecycle listeners.
+        // onNegotiationStarted fires only when START succeeds — consent was
+        // already confirmed before runAction("START") was called.
+        if (action === "START") {
+          console.log("[FacilitatorControls] runAction START succeeded — invoking onNegotiationStarted");
+          onNegotiationStarted?.();
+        }
+        if (action === "FINISH") {
+          console.log("[FacilitatorControls] runAction FINISH succeeded — invoking onNegotiationFinished");
+          onNegotiationFinished?.();
+        }
       } catch (actionError) {
         console.error(actionError);
       } finally {
         setIsSubmitting(false);
       }
     },
-    [roomAuth, onControlStateChange, onRecordingStateChange, sessionId],
+    [roomAuth, onControlStateChange, onRecordingStateChange, sessionId, onNegotiationStarted, onNegotiationFinished],
   );
 
   /** For START action, show consent modal first. All other actions run directly. */

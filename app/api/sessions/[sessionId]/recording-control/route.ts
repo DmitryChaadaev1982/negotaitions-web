@@ -10,7 +10,13 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import { getVideoProvider } from "@/lib/env";
-import { buildVoximplantRecordingDispatch, getVoximplantRecordingStateFromDb } from "@/lib/voximplant/recording-dispatch";
+import {
+  buildVoximplantRecordingDispatch,
+  getVoximplantRecordingStateFromDb,
+  upsertVoximplantRecordingOnStart,
+  upsertVoximplantRecordingOnStop,
+} from "@/lib/voximplant/recording-dispatch";
+import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 export const runtime = "nodejs";
 
@@ -126,8 +132,34 @@ async function handleVoximplantRecording(
   sessionId: string,
   participantId: string,
 ) {
+  console.log(
+    `[recording-control] provider=voximplant action=${action} sessionId=${sessionId}`,
+  );
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "recording-control",
+    level: "info",
+    step: `recording-control:${action}:received`,
+    message: `recording-control ${action} received`,
+    data: {
+      provider: "voximplant",
+      action,
+      sessionId,
+      participantIdPresent: Boolean(participantId),
+    },
+  });
+
   if (action === "refresh") {
     const recording = await getVoximplantRecordingStateFromDb(sessionId);
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "recording-control",
+      level: "info",
+      step: "recording-control:refresh:db",
+      message: `refresh DB result: status=${recording.status}`,
+      data: { status: recording.status },
+    });
     return NextResponse.json({
       ok: true,
       provider: "voximplant" as const,
@@ -138,9 +170,46 @@ async function handleVoximplantRecording(
   }
 
   try {
-    const dispatch = buildVoximplantRecordingDispatch(action, {
+    const dispatch = await buildVoximplantRecordingDispatch(action, {
       sessionId,
       participantId,
+    });
+
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "scenario-message",
+      level: "info",
+      step: `recording-control:${action}:scenarioMessage`,
+      message: `scenarioMessage built for action=${action}`,
+      data: {
+        action: dispatch.scenarioMessage.action,
+        sessionId: dispatch.scenarioMessage.sessionId,
+        conferenceName: dispatch.scenarioMessage.conferenceName,
+        webhookBaseUrl: dispatch.scenarioMessage.webhookBaseUrl ?? null,
+        requestId: dispatch.scenarioMessage.requestId,
+      },
+    });
+
+    // Persist Recording row so webhook can find/update it and materials page shows status.
+    const persisted =
+      action === "start"
+        ? await upsertVoximplantRecordingOnStart(sessionId)
+        : await upsertVoximplantRecordingOnStop(sessionId);
+
+    console.log(
+      `[recording-control] vox ${action}: DB result recordingId=${persisted.id} status=${persisted.status}`,
+    );
+
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "recording-control",
+      level: persisted.status === "FAILED" ? "error" : "success",
+      step: `recording-control:${action}:db`,
+      message: `${action} DB result: recordingId=${persisted.id} status=${persisted.status}`,
+      data: {
+        recordingId: persisted.id,
+        status: persisted.status,
+      },
     });
 
     return NextResponse.json({
@@ -150,8 +219,9 @@ async function handleVoximplantRecording(
       scenarioMessage: dispatch.scenarioMessage,
       recordingConfig: dispatch.recordingConfig,
       recording: {
-        status: dispatch.recordingStatusPending,
-        errorMessage: null,
+        id: persisted.id,
+        status: persisted.status,
+        errorMessage: persisted.errorMessage,
       },
       fileKeyHandoff: "webhook" as const,
       fileKeyHandoffDeferred: false,
@@ -159,6 +229,13 @@ async function handleVoximplantRecording(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to build Voximplant recording dispatch.";
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "recording-control",
+      level: "error",
+      step: `recording-control:${action}:error`,
+      message,
+    });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

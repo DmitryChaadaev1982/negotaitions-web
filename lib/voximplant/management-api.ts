@@ -39,6 +39,24 @@ export class VoximplantManagementApiNotImplementedError extends Error {
   }
 }
 
+export type VoximplantManagementConfigFieldStatus =
+  | "configured_via_env"
+  | "configured_via_key_file"
+  | "missing"
+  | "invalid_key_file";
+
+export type VoximplantManagementConfigFieldDiagnostic = {
+  status: VoximplantManagementConfigFieldStatus;
+  error?: string;
+};
+
+export type VoximplantManagementApiDiagnostics = {
+  accountId: VoximplantManagementConfigFieldDiagnostic;
+  applicationId: VoximplantManagementConfigFieldDiagnostic;
+  apiAuth: VoximplantManagementConfigFieldDiagnostic;
+  apiKeyPathConfigured: boolean;
+};
+
 export class VoximplantManagementApiError extends Error {
   readonly code = "VOXIMPLANT_MANAGEMENT_API_ERROR";
   readonly method: string;
@@ -173,6 +191,101 @@ function getConfigFromApiKeyPath(apiKeyPath: string): Partial<ManagementConfig> 
             privateKey,
           }
         : undefined,
+  };
+}
+
+type KeyFilePeekResult =
+  | {
+      ok: true;
+      accountId: string;
+      applicationId: string;
+      hasApiKey: boolean;
+      hasServiceAccount: boolean;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+function peekKeyFileConfig(apiKeyPath: string): KeyFilePeekResult {
+  try {
+    const fileConfig = getConfigFromApiKeyPath(apiKeyPath);
+    return {
+      ok: true,
+      accountId: fileConfig.accountId ?? "",
+      applicationId: fileConfig.applicationId ?? "",
+      hasApiKey: fileConfig.auth?.type === "api_key",
+      hasServiceAccount: fileConfig.auth?.type === "service_account_jwt",
+    };
+  } catch (error) {
+    const message =
+      error instanceof VoximplantManagementApiNotImplementedError
+        ? error.message
+        : "Credentials file is unreadable or invalid JSON.";
+    return { ok: false, error: message };
+  }
+}
+
+function resolveManagementFieldDiagnostic(params: {
+  envValue: string;
+  fileValue: string;
+  apiKeyPath: string;
+  filePeek: KeyFilePeekResult | null;
+}): VoximplantManagementConfigFieldDiagnostic {
+  if (params.envValue) {
+    return { status: "configured_via_env" };
+  }
+  if (params.filePeek?.ok && params.fileValue) {
+    return { status: "configured_via_key_file" };
+  }
+  if (params.apiKeyPath && params.filePeek && !params.filePeek.ok) {
+    return { status: "invalid_key_file", error: params.filePeek.error };
+  }
+  return { status: "missing" };
+}
+
+/** Safe Management API config diagnostics without exposing secrets or file contents. */
+export function getVoximplantManagementApiDiagnostics(): VoximplantManagementApiDiagnostics {
+  const envApiKey = process.env.VOXIMPLANT_MANAGEMENT_API_KEY?.trim() ?? "";
+  const envAccountId = process.env.VOXIMPLANT_MANAGEMENT_ACCOUNT_ID?.trim() ?? "";
+  const envApplicationId =
+    process.env.VOXIMPLANT_MANAGEMENT_APPLICATION_ID?.trim() ?? "";
+  const apiKeyPath = process.env.VOXIMPLANT_API_KEY_PATH?.trim() ?? "";
+  const filePeek = apiKeyPath ? peekKeyFileConfig(apiKeyPath) : null;
+
+  const accountId = resolveManagementFieldDiagnostic({
+    envValue: envAccountId,
+    fileValue: filePeek?.ok ? filePeek.accountId : "",
+    apiKeyPath,
+    filePeek,
+  });
+
+  const applicationId = resolveManagementFieldDiagnostic({
+    envValue: envApplicationId,
+    fileValue: filePeek?.ok ? filePeek.applicationId : "",
+    apiKeyPath,
+    filePeek,
+  });
+
+  let apiAuth: VoximplantManagementConfigFieldDiagnostic;
+  if (envApiKey) {
+    apiAuth = { status: "configured_via_env" };
+  } else if (
+    filePeek?.ok &&
+    (filePeek.hasApiKey || filePeek.hasServiceAccount)
+  ) {
+    apiAuth = { status: "configured_via_key_file" };
+  } else if (apiKeyPath && filePeek && !filePeek.ok) {
+    apiAuth = { status: "invalid_key_file", error: filePeek.error };
+  } else {
+    apiAuth = { status: "missing" };
+  }
+
+  return {
+    accountId,
+    applicationId,
+    apiAuth,
+    apiKeyPathConfigured: Boolean(apiKeyPath),
   };
 }
 

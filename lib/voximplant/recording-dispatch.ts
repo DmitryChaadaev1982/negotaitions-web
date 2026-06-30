@@ -1,6 +1,8 @@
 import "server-only";
 
 /**
+ * Stage 5.4.6 — Voximplant recording persistence helpers added.
+ *
  * Stage 5.3 — Voximplant recording provider dispatch bridge.
  *
  * Architecture:
@@ -42,6 +44,10 @@ import "server-only";
  */
 
 import { nanoid } from "nanoid";
+import {
+  RecordingStatus as DbRecordingStatus,
+  RecordingType,
+} from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { RoomRecordingState } from "@/lib/room-provider/types";
 import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
@@ -53,6 +59,7 @@ import {
   type VoximplantRoomRole,
 } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
+import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url";
 
 /** Maps the recording-control route actions to the scenario message actions. */
 function mapActionToScenarioAction(
@@ -131,14 +138,14 @@ export type VoximplantRecordingDispatchResult = {
  * @param action - "start" | "stop" | "refresh"
  * @param context - Caller context for the message (sessionId, participantId, role)
  */
-export function buildVoximplantRecordingDispatch(
+export async function buildVoximplantRecordingDispatch(
   action: "start" | "stop" | "refresh",
   context: {
     sessionId: string;
     participantId?: string;
     role?: VoximplantRoomRole;
   },
-): VoximplantRecordingDispatchResult {
+): Promise<VoximplantRecordingDispatchResult> {
   let config;
   let warning: string | undefined;
 
@@ -152,10 +159,12 @@ export function buildVoximplantRecordingDispatch(
 
   const scenarioAction = mapActionToScenarioAction(action);
   const conferenceName = buildVoximplantConferenceName(context.sessionId);
+  const webhookBaseUrl = await getVoximplantRecordingWebhookBaseUrl();
   const scenarioMessage = createRecordingControlMessage(scenarioAction, {
     requestId: nanoid(12),
     sessionId: context.sessionId,
     conferenceName,
+    ...(webhookBaseUrl ? { webhookBaseUrl } : {}),
     participantId: context.participantId,
     role: context.role,
   });
@@ -180,6 +189,143 @@ export function buildVoximplantRecordingDispatch(
     warning,
     recordingStatusPending,
   };
+}
+
+// ─── Statuses that indicate recording is already active or done on start ─────
+
+const DO_NOT_OVERWRITE_ON_START = new Set<DbRecordingStatus>([
+  DbRecordingStatus.STARTING,
+  DbRecordingStatus.RECORDING,
+  DbRecordingStatus.PAUSED,
+  DbRecordingStatus.PROCESSING,
+  DbRecordingStatus.COMPLETED,
+]);
+
+type PersistedRecordingRef = {
+  id: string;
+  status: DbRecordingStatus;
+  errorMessage: string | null;
+};
+
+/**
+ * Create or update a Recording row for a Voximplant session on start.
+ *
+ * Rules:
+ *  - If no row: create with STARTING.
+ *  - If row is already STARTING/RECORDING/PAUSED/PROCESSING/COMPLETED: return as-is
+ *    (idempotent — repeated start does not create duplicates or overwrite active/terminal state).
+ *  - Otherwise (NOT_STARTED/FAILED/STOPPED): update to STARTING.
+ *
+ * Diagnostic log: non-secret, logs recordingId and status.
+ */
+export async function upsertVoximplantRecordingOnStart(
+  sessionId: string,
+): Promise<PersistedRecordingRef> {
+  const existing = await prisma.recording.findUnique({
+    where: { sessionId },
+    select: { id: true, status: true, errorMessage: true },
+  });
+
+  if (!existing) {
+    const created = await prisma.recording.create({
+      data: {
+        sessionId,
+        provider: "VOXIMPLANT",
+        status: DbRecordingStatus.STARTING,
+        recordingType: RecordingType.AUDIO_ONLY,
+        startedAt: new Date(),
+        errorMessage: null,
+      },
+      select: { id: true, status: true, errorMessage: true },
+    });
+    console.log(
+      `[recording-control] vox start: created recordingId=${created.id} status=${created.status}`,
+    );
+    return created;
+  }
+
+  if (DO_NOT_OVERWRITE_ON_START.has(existing.status)) {
+    console.log(
+      `[recording-control] vox start: idempotent recordingId=${existing.id} status=${existing.status}`,
+    );
+    return existing;
+  }
+
+  const updated = await prisma.recording.update({
+    where: { id: existing.id },
+    data: {
+      status: DbRecordingStatus.STARTING,
+      errorMessage: null,
+      startedAt: new Date(),
+    },
+    select: { id: true, status: true, errorMessage: true },
+  });
+  console.log(
+    `[recording-control] vox start: updated recordingId=${updated.id} status=${updated.status}`,
+  );
+  return updated;
+}
+
+/**
+ * Create or update a Recording row for a Voximplant session on stop.
+ *
+ * Rules:
+ *  - STOPPING is not a valid RecordingStatus enum value; STOPPED is used instead.
+ *  - If no row: create a recoverable row with STOPPED so the webhook can upgrade to COMPLETED.
+ *  - If row is COMPLETED: return as-is (do not overwrite terminal state).
+ *  - If row is already STOPPED or FAILED: return as-is (idempotent).
+ *  - Otherwise (STARTING/RECORDING/PAUSED/PROCESSING/NOT_STARTED): update to STOPPED.
+ *
+ * Diagnostic log: non-secret, logs recordingId and status.
+ */
+export async function upsertVoximplantRecordingOnStop(
+  sessionId: string,
+): Promise<PersistedRecordingRef> {
+  const existing = await prisma.recording.findUnique({
+    where: { sessionId },
+    select: { id: true, status: true, errorMessage: true },
+  });
+
+  if (!existing) {
+    const created = await prisma.recording.create({
+      data: {
+        sessionId,
+        provider: "VOXIMPLANT",
+        status: DbRecordingStatus.STOPPED,
+        recordingType: RecordingType.AUDIO_ONLY,
+        endedAt: new Date(),
+      },
+      select: { id: true, status: true, errorMessage: true },
+    });
+    console.log(
+      `[recording-control] vox stop: created recoverable recordingId=${created.id} status=${created.status}`,
+    );
+    return created;
+  }
+
+  if (
+    existing.status === DbRecordingStatus.COMPLETED ||
+    existing.status === DbRecordingStatus.STOPPED ||
+    existing.status === DbRecordingStatus.FAILED
+  ) {
+    console.log(
+      `[recording-control] vox stop: idempotent recordingId=${existing.id} status=${existing.status}`,
+    );
+    return existing;
+  }
+
+  const updated = await prisma.recording.update({
+    where: { id: existing.id },
+    data: {
+      status: DbRecordingStatus.STOPPED,
+      endedAt: new Date(),
+    },
+    select: { id: true, status: true, errorMessage: true },
+  });
+  console.log(
+    `[recording-control] vox stop: updated recordingId=${updated.id} status=${updated.status}`,
+  );
+  return updated;
 }
 
 /**

@@ -24,6 +24,7 @@ import {
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { getVideoProvider } from "@/lib/env";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -95,7 +96,11 @@ async function applyAutoTransitions(sessionId: string, now: Date) {
     });
 
     await closeLatestPauseInterval(sessionId, now);
-    await handleNegotiationFinishRecording(sessionId);
+    // LiveKit egress stop on auto-finish — skip for Voximplant provider
+    // (Voximplant recording stop is relayed by the browser via scenarioMessage).
+    if (getVideoProvider() === "livekit") {
+      await handleNegotiationFinishRecording(sessionId);
+    }
   }
 
   return session;
@@ -168,7 +173,13 @@ export async function POST(request: Request, context: RouteContext) {
 
     let recordingWarning: string | undefined;
 
-    if (action === "START") {
+    // LiveKit egress start/stop — skip entirely for Voximplant provider.
+    // For Voximplant, recording is orchestrated by the browser adapter:
+    // after this /control response, the client calls /recording-control and
+    // relays the typed scenarioMessage to the VoxEngine conference.
+    const isLiveKit = getVideoProvider() === "livekit";
+
+    if (action === "START" && isLiveKit) {
       const recordingResult = await handleNegotiationStartRecording(sessionId);
       if (recordingResult && !recordingResult.ok) {
         recordingWarning = recordingResult.warning;
@@ -179,7 +190,7 @@ export async function POST(request: Request, context: RouteContext) {
       await syncPauseIntervals(sessionId, action, now);
     }
 
-    if (action === "FINISH") {
+    if (action === "FINISH" && isLiveKit) {
       const stopResult = await handleNegotiationFinishRecording(sessionId);
       recordingWarning = stopResult.warning;
     }

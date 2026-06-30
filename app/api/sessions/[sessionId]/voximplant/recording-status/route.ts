@@ -7,6 +7,7 @@ import { RecordingStatus } from "@/app/generated/prisma/client";
 import { getVoximplantRecordingWebhookSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { getS3Config } from "@/lib/storage/s3";
+import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 /**
  * Stage 5.4 — Voximplant recording status webhook.
@@ -182,9 +183,44 @@ export async function POST(request: Request, context: RouteContext) {
   const signatureHeader = request.headers.get("x-voximplant-signature");
   const rawBody = Buffer.from(await request.arrayBuffer());
 
-  if (!validateWebhookSignature(rawBody, signatureHeader, secret)) {
+  const signaturePresent = Boolean(signatureHeader);
+  console.log(
+    `[vox-recording-webhook] hit sessionId=${sessionId} signaturePresent=${signaturePresent}`,
+  );
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "webhook",
+    level: "info",
+    step: "webhook:hit",
+    message: `webhook hit, signaturePresent=${signaturePresent}`,
+    data: { sessionId, signaturePresent },
+  });
+
+  const signatureValid = validateWebhookSignature(rawBody, signatureHeader, secret);
+  if (!signatureValid) {
+    console.warn(
+      `[vox-recording-webhook] invalid signature sessionId=${sessionId} signaturePresent=${signaturePresent}`,
+    );
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "webhook",
+      level: "error",
+      step: "webhook:signature:invalid",
+      message: "webhook signature validation failed",
+      data: { signaturePresent, signatureValid: false },
+    });
     return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
   }
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "webhook",
+    level: "success",
+    step: "webhook:signature:valid",
+    message: "webhook signature valid",
+    data: { signaturePresent, signatureValid: true },
+  });
 
   // ── Parse payload ─────────────────────────────────────────────────────────
   let rawJson: unknown;
@@ -222,6 +258,25 @@ export async function POST(request: Request, context: RouteContext) {
   const fileKey = rawObjectKey ? normalizeFileKey(rawObjectKey) : null;
   const hasFileKey = Boolean(fileKey);
 
+  console.log(
+    `[vox-recording-webhook] payload sessionId=${sessionId} status=${payload.status} fileKeyPresent=${hasFileKey}`,
+  );
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "webhook",
+    level: "info",
+    step: "webhook:payload",
+    message: `payload received: status=${payload.status} fileKeyPresent=${hasFileKey}`,
+    data: {
+      status: payload.status,
+      fileKeyPresent: hasFileKey,
+      normalizedFileKeyPresent: hasFileKey,
+      requestId: payload.requestId ?? null,
+      recordingId: payload.recordingId ?? null,
+    },
+  });
+
   // ── Map status ────────────────────────────────────────────────────────────
   const targetStatus = mapVoximplantStatusToDb(payload.status, hasFileKey);
 
@@ -243,7 +298,7 @@ export async function POST(request: Request, context: RouteContext) {
         return NextResponse.json({ ok: true, action: "skipped" });
       }
 
-      await prisma.recording.create({
+      const created = await prisma.recording.create({
         data: {
           sessionId,
           provider: "VOXIMPLANT",
@@ -268,8 +323,20 @@ export async function POST(request: Request, context: RouteContext) {
               ? (payload.message ?? payload.errorCode ?? "Recording failed.")
               : undefined,
         },
+        select: { id: true, status: true },
       });
 
+      console.log(
+        `[vox-recording-webhook] created recordingId=${created.id} status=${created.status} fileKeyPresent=${hasFileKey}`,
+      );
+      appendRecordingDebugEvent({
+        sessionId,
+        source: "webhook",
+        level: created.status === "COMPLETED" ? "success" : "info",
+        step: "webhook:db:created",
+        message: `Recording row created: recordingId=${created.id} status=${created.status}`,
+        data: { recordingId: created.id, status: created.status, fileKeyPresent: hasFileKey },
+      });
       return NextResponse.json({ ok: true, action: "created", status: targetStatus });
     }
 
@@ -319,9 +386,28 @@ export async function POST(request: Request, context: RouteContext) {
       data: updateData,
     });
 
+    console.log(
+      `[vox-recording-webhook] updated recordingId=${existing.id} status=${targetStatus} fileKeyPresent=${hasFileKey}`,
+    );
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "webhook",
+      level: targetStatus === "COMPLETED" ? "success" : "info",
+      step: "webhook:db:updated",
+      message: `Recording updated: recordingId=${existing.id} status=${targetStatus}`,
+      data: { recordingId: existing.id, status: targetStatus, fileKeyPresent: hasFileKey },
+    });
     return NextResponse.json({ ok: true, action: "updated", status: targetStatus });
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "DB update failed.";
     console.error("[vox-recording-webhook] DB update failed:", err);
+    appendRecordingDebugEvent({
+      sessionId,
+      source: "webhook",
+      level: "error",
+      step: "webhook:db:error",
+      message: `DB update failed: ${errMsg}`,
+    });
     return NextResponse.json({ error: "Internal error." }, { status: 500 });
   }
 }

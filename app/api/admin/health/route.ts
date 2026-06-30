@@ -7,6 +7,7 @@ import { hasRecentCriticalServiceErrors } from "@/lib/services/external-service-
 import { getMonthlyUsageSummary } from "@/lib/services/usage-counters";
 import { prisma } from "@/lib/prisma";
 import { apiRequireAdminUser } from "@/lib/auth/api-guards";
+import { getVoximplantRecordingWebhookUrlState, buildVoximplantRecordingWebhookUrlStateWithoutDb } from "@/lib/voximplant/recording-webhook-url";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,8 @@ export async function GET() {
 
   try {
 
-    const [hasRecentErrors, recentEvents, usage] = await Promise.all([
+    const [hasRecentErrors, recentEvents, usage, voximplantRecordingWebhook] =
+      await Promise.all([
       hasRecentCriticalServiceErrors(24).catch(() => false),
       prisma.externalServiceEvent
         .findMany({
@@ -34,10 +36,14 @@ export async function GET() {
         })
         .catch(() => []),
       getMonthlyUsageSummary().catch(() => emptyUsage),
+      getVoximplantRecordingWebhookUrlState().catch(() =>
+        buildVoximplantRecordingWebhookUrlStateWithoutDb(),
+      ),
     ]);
 
     return NextResponse.json({
       config: getEnvironmentConfigStatus(),
+      voximplantRecordingWebhook,
       hasRecentServiceErrors: hasRecentErrors,
       recentEvents: recentEvents.map((event) => ({
         id: event.id,
@@ -59,6 +65,7 @@ export async function GET() {
     return NextResponse.json(
       {
         config: getEnvironmentConfigStatus(),
+        voximplantRecordingWebhook: buildVoximplantRecordingWebhookUrlStateWithoutDb(),
         hasRecentServiceErrors: false,
         recentEvents: [],
         usage: emptyUsage,

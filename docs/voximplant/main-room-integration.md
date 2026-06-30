@@ -56,6 +56,52 @@ Stage 5.4 implements the Voximplant recording completion handoff to the canonica
 
 Stage 5.4.1 fixes wiring blockers: canonical conference naming (`negotiation-{sessionId}`), reliable sessionId in scenario/webhook messages, DB-backed refresh, consent gating, and accurate handoff flags.
 
+## Scope of Stage 5.4.2
+
+Stage 5.4.2 adds a runtime admin override for the Voximplant recording webhook base URL:
+
+- env default: `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL` (for example `https://negotaitions.ru`);
+- DB-backed override key: `voximplant.recording.webhookBaseUrlOverride` (`AppSetting` table);
+- admin UI on `/admin` (section «Webhook URL записи Voximplant»)
+- `recording-control` includes `scenarioMessage.webhookBaseUrl` from the effective value;
+- VoxEngine scenario may use `message.webhookBaseUrl` when `ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE=true`;
+- webhook secret remains server/scenario-side only — never in browser or `scenarioMessage`.
+
+### Local tunnel flow (Stage 5.4.2)
+
+1. Start the app: `npm run dev`
+2. Start a public tunnel, for example:
+   `cloudflared tunnel --url http://localhost:3000`
+3. Copy the HTTPS URL (for example `https://abc.trycloudflare.com`)
+4. Open `/admin` (Административная диагностика) as an admin user
+5. Paste the tunnel URL and click **Save override**
+6. Start Voximplant room recording — `recording-control` returns `scenarioMessage.webhookBaseUrl` with the effective URL
+7. Browser relays `scenarioMessage` unchanged to the conference
+8. VoxEngine sends recording-status webhooks to the tunnel URL
+9. Confirm `Recording.status` and `Recording.fileKey` update on the server
+
+No app restart is required when the tunnel URL changes — update the admin override at runtime.
+
+### Production flow (Stage 5.4.2)
+
+- Set `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL=https://negotaitions.ru` on the server
+- Set the same static `WEBHOOK_BASE_URL` in Voximplant Console as production fallback
+- Prefer `ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE=false` in the deployed scenario for strict production
+- Or keep override enabled only for trusted admin operations via `VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=true`
+
+### Webhook base URL environment variables (server)
+
+| Variable | Purpose |
+|---|---|
+| `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL` | Default public HTTPS base URL (no `/api/...` path) |
+| `VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED` | Allow admin runtime override (`true`/`false`; default `true` in development, `false` in production) |
+
+Security notes:
+
+- `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` / `WEBHOOK_SECRET` stay in `.env`/server and VoxEngine scenario only
+- `WEBHOOK_SECRET` is never sent to the browser
+- `webhookBaseUrl` is not secret but controls where VoxEngine posts recording status
+
 ### Canonical conference naming
 
 The negotiation room Voximplant conference name is:
@@ -93,6 +139,7 @@ Server-built `scenarioMessage` includes:
 | `requestId` | Correlation id (nanoid) |
 | `sessionId` | Application session id (from URL/route; not used alone for webhook auth) |
 | `conferenceName` | Canonical `negotiation-{sessionId}` for scenario-side parsing |
+| `webhookBaseUrl` | Optional public HTTPS app base URL for VoxEngine recording-status webhooks (Stage 5.4.2; no secret) |
 | `participantId` | Optional facilitator participant id |
 | `role` | Optional VoxRoomRole hint (untrusted; scenario auth is separate) |
 
