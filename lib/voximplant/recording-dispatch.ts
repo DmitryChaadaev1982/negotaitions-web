@@ -42,6 +42,9 @@ import "server-only";
  */
 
 import { nanoid } from "nanoid";
+import { prisma } from "@/lib/prisma";
+import type { RoomRecordingState } from "@/lib/room-provider/types";
+import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import {
   createRecordingControlMessage,
   type RecordingControlAction,
@@ -148,9 +151,11 @@ export function buildVoximplantRecordingDispatch(
   }
 
   const scenarioAction = mapActionToScenarioAction(action);
+  const conferenceName = buildVoximplantConferenceName(context.sessionId);
   const scenarioMessage = createRecordingControlMessage(scenarioAction, {
     requestId: nanoid(12),
     sessionId: context.sessionId,
+    conferenceName,
     participantId: context.participantId,
     role: context.role,
   });
@@ -174,5 +179,27 @@ export function buildVoximplantRecordingDispatch(
     recordingConfig,
     warning,
     recordingStatusPending,
+  };
+}
+
+/**
+ * Read the canonical Recording DB row for Voximplant refresh responses.
+ * Returns NOT_STARTED when no row exists yet.
+ */
+export async function getVoximplantRecordingStateFromDb(
+  sessionId: string,
+): Promise<NonNullable<RoomRecordingState>> {
+  const recording = await prisma.recording.findUnique({
+    where: { sessionId },
+    select: { status: true, errorMessage: true },
+  });
+
+  if (!recording) {
+    return { status: "NOT_STARTED", errorMessage: null };
+  }
+
+  return {
+    status: recording.status,
+    errorMessage: recording.errorMessage,
   };
 }

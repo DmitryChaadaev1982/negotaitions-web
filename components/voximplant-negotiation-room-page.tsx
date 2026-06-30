@@ -16,6 +16,7 @@
  */
 
 import { GradientButtonLink } from "@/components/ui/buttons";
+import { RecordingConsentModal } from "@/components/recording-consent-modal";
 import { SharedRoomShell } from "@/components/shared-room-shell";
 import VoximplantVideoLayout from "@/components/voximplant-video-layout";
 import { buildSessionMaterialsPath } from "@/lib/config";
@@ -243,6 +244,7 @@ type RecordingControlResponse = {
   recording?: { status: string; errorMessage: string | null } | null;
   warning?: string;
   error?: string;
+  fileKeyHandoff?: "webhook";
   fileKeyHandoffDeferred?: boolean;
 };
 
@@ -265,6 +267,7 @@ function VoximplantRecordingControls({
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [relayError, setRelayError] = useState<string | null>(null);
+  const [showRecordingConsent, setShowRecordingConsent] = useState(false);
 
   const isActiveRecording =
     recordingStatus === "RECORDING" || recordingStatus === "STARTING";
@@ -273,7 +276,7 @@ function VoximplantRecordingControls({
   const canStop = joined && sendMessageAvailable && !isSubmitting && (isActiveRecording || recordingStatus === "STOPPING");
 
   const runRecordingAction = useCallback(
-    async (action: "start" | "stop") => {
+    async (action: "start" | "stop", recordingConsentConfirmed = false) => {
       setIsSubmitting(true);
       setRelayError(null);
 
@@ -283,7 +286,7 @@ function VoximplantRecordingControls({
           action,
         };
         if (action === "start") {
-          body.recordingConsentConfirmed = true;
+          body.recordingConsentConfirmed = recordingConsentConfirmed;
         }
 
         const response = await fetch(
@@ -333,13 +336,33 @@ function VoximplantRecordingControls({
     [roomAuth, sessionId, sendConferenceMessage, onRecordingStateChange],
   );
 
+  const handleStartRecordingClick = useCallback(() => {
+    setShowRecordingConsent(true);
+  }, []);
+
+  const handleRecordingConsentConfirm = useCallback(() => {
+    setShowRecordingConsent(false);
+    void runRecordingAction("start", true);
+  }, [runRecordingAction]);
+
+  const handleRecordingConsentCancel = useCallback(() => {
+    setShowRecordingConsent(false);
+  }, []);
+
   if (!joined) return null;
 
   const buttonClass =
     "inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60";
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <>
+      {showRecordingConsent ? (
+        <RecordingConsentModal
+          onConfirm={handleRecordingConsentConfirm}
+          onCancel={handleRecordingConsentCancel}
+        />
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
       {!sendMessageAvailable ? (
         <p className="text-xs text-amber-400">
           Запись недоступна: SDK не поддерживает отправку сообщений в конференцию.
@@ -350,7 +373,7 @@ function VoximplantRecordingControls({
             <button
               type="button"
               disabled={!canStart}
-              onClick={() => void runRecordingAction("start")}
+              onClick={handleStartRecordingClick}
               className={`${buttonClass} bg-rose-700 text-white hover:bg-rose-600`}
               data-testid="vox-start-recording"
             >
@@ -375,7 +398,8 @@ function VoximplantRecordingControls({
           {relayError}
         </p>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 

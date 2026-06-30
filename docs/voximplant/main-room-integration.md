@@ -50,19 +50,69 @@ Stage 4.1 hardens provider identity and adds secure browser auth handoff primiti
 
 This stage still does not change negotiation room UI runtime and does not modify LiveKit behavior.
 
-## Scope of Stage 5.4
+## Scope of Stage 5.4 / 5.4.1
 
 Stage 5.4 implements the Voximplant recording completion handoff to the canonical `Recording.fileKey` and the existing Yandex SpeechKit pipeline.
+
+Stage 5.4.1 fixes wiring blockers: canonical conference naming (`negotiation-{sessionId}`), reliable sessionId in scenario/webhook messages, DB-backed refresh, consent gating, and accurate handoff flags.
+
+### Canonical conference naming
+
+The negotiation room Voximplant conference name is:
+
+```
+negotiation-{sessionId}
+```
+
+Helpers in `lib/voximplant/conference-name.ts`:
+
+- `buildVoximplantConferenceName(sessionId)` — used by access route and recording dispatch
+- `parseSessionIdFromVoximplantConferenceName(conferenceName)` — used by scenario artifact
+
+Do **not** use `ng-session-{sessionId}` or `VoxEngine.applicationName()` for sessionId resolution.
 
 ### Recording start/stop relay flow
 
 1. Facilitator clicks "Начать запись" (Start recording) in the room.
-2. Browser calls `POST /api/sessions/{sessionId}/recording-control` with `{ action: "start", recordingConsentConfirmed: true, participantId/joinToken }`.
-3. Server validates facilitator permission, builds a typed `RecordingControlMessage` (`type: "recording_control"`, `action: "start"`, `requestId: <nanoid>`), and returns it in `{ scenarioMessage }`.
-4. Browser relays `JSON.stringify(scenarioMessage)` to the Voximplant conference via `conference.sendMessage()`.
-5. VoxEngine scenario receives the message, validates authorization, and calls `VoxEngine.createRecorder(...)` with audio-only options.
-6. When `RecorderEvents.Started` fires, the scenario sends a `recording_status` message back to the browser AND sends a webhook to the server.
-7. Stop recording follows the same relay flow with `action: "stop"`.
+2. Browser shows the shared recording consent modal; user must confirm explicitly.
+3. Browser calls `POST /api/sessions/{sessionId}/recording-control` with `{ action: "start", recordingConsentConfirmed: true, participantId/joinToken }`.
+4. Server validates facilitator permission, builds a typed `RecordingControlMessage` with `sessionId`, `conferenceName`, and `requestId`, and returns it in `{ scenarioMessage }`.
+5. Browser relays `JSON.stringify(scenarioMessage)` unchanged to the Voximplant conference via `conference.sendMessage()`.
+6. VoxEngine scenario resolves `sessionId` from the message (not from `applicationName`), validates authorization, and calls `VoxEngine.createRecorder(...)` with audio-only options.
+7. When `RecorderEvents.Started` fires, the scenario sends a `recording_status` message back to the browser AND sends a signed webhook to the server.
+8. Stop recording follows the same relay flow with `action: "stop"`.
+
+### Scenario message fields (recording_control)
+
+Server-built `scenarioMessage` includes:
+
+| Field | Purpose |
+|---|---|
+| `type` | `"recording_control"` |
+| `action` | `"start"` \| `"stop"` \| `"status"` |
+| `requestId` | Correlation id (nanoid) |
+| `sessionId` | Application session id (from URL/route; not used alone for webhook auth) |
+| `conferenceName` | Canonical `negotiation-{sessionId}` for scenario-side parsing |
+| `participantId` | Optional facilitator participant id |
+| `role` | Optional VoxRoomRole hint (untrusted; scenario auth is separate) |
+
+Scenario sessionId resolution order:
+
+1. `recording_control.message.sessionId`
+2. parse from `recording_control.message.conferenceName`
+3. fail closed with `SESSION_ID_UNRESOLVED` error status
+
+### Refresh behavior (Voximplant)
+
+`POST /api/sessions/{sessionId}/recording-control` with `action: "refresh"`:
+
+- Does **not** dispatch a scenario message
+- Reads the canonical `Recording` DB row for the session
+- Returns `{ ok: true, provider: "voximplant", recording: { status, errorMessage } }`
+- Returns `{ status: "NOT_STARTED", errorMessage: null }` when no row exists yet
+- Sets `fileKeyHandoff: "webhook"` and `fileKeyHandoffDeferred: false`
+
+LiveKit refresh behavior is unchanged (reads DB + calls `refreshRecordingStatus`).
 
 ### Webhook endpoint
 
@@ -94,7 +144,7 @@ Set these as VoxEngine application environment variables in the Voximplant Conso
 | Variable | Value |
 |---|---|
 | `WEBHOOK_BASE_URL` | Public URL of your Next.js app (e.g. `https://yourapp.example.com`) |
-| `WEBHOOK_SECRET` | Same value as `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` on the server |
+| `WEBHOOK_SECRET` | Same value as `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` on the server (alias: `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`) |
 
 ### Status mapping
 
@@ -147,14 +197,16 @@ If `S3_BUCKET` is not configured or the objectKey does not start with the bucket
 
 ### Conference name → sessionId mapping
 
-The VoxEngine conference name is set to `ng-session-{sessionId}` by the server when issuing Voximplant access tokens (see `buildConferenceName()` in `lib/voximplant/config.ts`).
+The VoxEngine conference name is `negotiation-{sessionId}` (see `lib/voximplant/conference-name.ts`).
 
-The scenario extracts `sessionId` at startup:
+The scenario resolves `sessionId` from the server-built `recording_control` message:
+
 ```js
-sessionIdFromConference = extractSessionIdFromName(VoxEngine.applicationName());
+// Priority: message.sessionId → parse message.conferenceName → fail closed
+resolvedSessionId = resolveSessionId(payload);
 ```
 
-If the name does not match the `ng-session-` prefix, `sessionIdFromConference` is `null` and webhooks are skipped. The conference and recording continue working — only server-side status tracking is affected.
+`VoxEngine.applicationName()` is **not** used — it returns the static Voximplant application name, not the per-session conference name.
 
 ### Manual smoke-test steps
 
@@ -197,14 +249,17 @@ If the name does not match the `ng-session-` prefix, `sessionIdFromConference` i
 - `scenarioMessage` does not include Management API secrets.
 - `fileKey` is only returned to facilitators in `/materials/status`.
 
-### Limitations (as of Stage 5.4)
+### Limitations (as of Stage 5.4.1)
 
+- VoxEngine scenario artifact (`docs/voximplant/neg-conf.main-room.scenario.js`) must be **manually deployed** to Voximplant Console for runtime testing.
 - No real-time push from server to browser — recording state updates via 1-second polling of `/control-state`.
 - Browser `sendMessage` availability depends on the Voximplant WebSDK version; if unavailable, a UI error is shown and recording is blocked.
 - VoxEngine `crypto.createHmac()` availability depends on VoxEngine runtime version — if unavailable, webhooks are silently skipped and recording still works (server won't receive status updates in that case).
-- `VoxEngine.applicationName()` API may differ across VoxEngine versions; fallback via `customData()` is provided.
 - No automatic retry for failed webhooks — transient network errors may cause missed status updates (recording still works on Voximplant side).
-- Pause/resume UI is not exposed in this stage per design constraint.
+- No visible pause/resume recording UI (pause/resume may exist internally in scenario only).
+- Remote active speaker mapping deferred to Stage 5.5+.
+- Duplicate-user lock deferred to Stage 5.5+.
+- `STRICT_RECORDING_CONTROLLER_AUTH` may remain `false` in development; production requires trusted identity wiring.
 
 ## Scope of Stage 5
 

@@ -7,17 +7,23 @@
 // This file is a production-oriented VoxEngine scenario artifact for later
 // manual paste into Voximplant Console. It does NOT change app runtime behavior.
 //
-// Stage 5.4 additions:
+// Stage 5.4.1 additions:
 // - HTTP webhook to server on every recording status change;
 // - HMAC-SHA256 signature on each webhook using VOXIMPLANT_RECORDING_WEBHOOK_SECRET;
-// - sessionId is extracted from the conference name (format: ng-session-{sessionId}).
+// - sessionId resolved from recording_control message fields (not applicationName).
 //
-// Conference name → sessionId mapping:
-//   Conference name format: ng-session-{sessionId}
-//   (defined in lib/voximplant/config.ts buildConferenceName function)
-//   The scenario extracts sessionId by stripping the "ng-session-" prefix.
-//   If the conference name does not match the expected format, sessionId is null
-//   and webhooks are skipped (safe: recording still works; server won't receive status).
+// IMPORTANT: This artifact must be manually copied/deployed to Voximplant Console.
+// App runtime does not auto-deploy scenario changes.
+//
+// Canonical conference name format: negotiation-{sessionId}
+// (see lib/voximplant/conference-name.ts buildVoximplantConferenceName)
+//
+// sessionId resolution order (fail closed if none match):
+//   1. recording_control.message.sessionId
+//   2. parse from recording_control.message.conferenceName
+//   3. log error and skip webhook (recording may still work locally)
+//
+// Do NOT derive sessionId from VoxEngine.applicationName() — it is the static app name.
 //
 // Webhook endpoint:
 //   POST {WEBHOOK_BASE_URL}/api/sessions/{sessionId}/voximplant/recording-status
@@ -59,7 +65,8 @@ var DEVELOPMENT_ONLY_ALLOW_UNTRUSTED_CONTROLLER = true;
 // ── Webhook configuration (Stage 5.4) ──────────────────────────────────────
 //
 // Set WEBHOOK_BASE_URL to the public Next.js application URL.
-// Set WEBHOOK_SECRET to the value of VOXIMPLANT_RECORDING_WEBHOOK_SECRET env var.
+// Set WEBHOOK_SECRET to the value of VOXIMPLANT_RECORDING_WEBHOOK_SECRET env var
+// (also accepted as VOXIMPLANT_RECORDING_WEBHOOK_SECRET in process.env below).
 // Both must be set as VoxEngine application environment variables in the Voximplant console.
 //
 // If WEBHOOK_BASE_URL or WEBHOOK_SECRET are empty, webhook calls are skipped silently.
@@ -76,18 +83,19 @@ try {
   if (typeof process !== "undefined" && process.env) {
     if (process.env.WEBHOOK_BASE_URL) WEBHOOK_BASE_URL = String(process.env.WEBHOOK_BASE_URL).trim();
     if (process.env.WEBHOOK_SECRET) WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET).trim();
+    if (process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET) {
+      WEBHOOK_SECRET = String(process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET).trim();
+    }
   }
 } catch (envReadErr) {
   Logger.write("[neg-conf-prod] env read failed: " + safeToString(envReadErr));
 }
 
-// Conference name prefix used to extract sessionId.
-// Must match buildConferenceName() in lib/voximplant/config.ts.
-var CONFERENCE_NAME_PREFIX = "ng-session-";
+// Canonical conference name prefix — must match lib/voximplant/conference-name.ts.
+var CONFERENCE_NAME_PREFIX = "negotiation-";
 
-// Extracted from VoxEngine.applicationName() at scenario start.
-var conferenceName = "";
-var sessionIdFromConference = null;
+// Last sessionId resolved from a trusted recording_control message.
+var resolvedSessionId = null;
 
 var STARTING_TIMEOUT_MS = 10000;
 var STOPPING_TIMEOUT_MS = 10000;
@@ -159,15 +167,31 @@ function computeHmacSha256Hex(payload, secret) {
 }
 
 /**
- * Extract the sessionId from the VoxEngine conference/application name.
- * Expected format: "ng-session-{sessionId}"
- * Returns null if the name does not match the expected prefix.
+ * Parse sessionId from canonical conference name: negotiation-{sessionId}
  */
-function extractSessionIdFromName(name) {
+function parseSessionIdFromConferenceName(name) {
   if (!name || typeof name !== "string") return null;
   if (!name.startsWith(CONFERENCE_NAME_PREFIX)) return null;
   var id = name.slice(CONFERENCE_NAME_PREFIX.length);
   return id || null;
+}
+
+/**
+ * Resolve sessionId for webhook delivery.
+ * Priority: message.sessionId → parse message.conferenceName → cached resolvedSessionId.
+ * Never uses VoxEngine.applicationName().
+ */
+function resolveSessionId(context) {
+  if (context && context.sessionId) {
+    var direct = String(context.sessionId).trim();
+    if (direct) return direct;
+  }
+  if (context && context.conferenceName) {
+    var fromName = parseSessionIdFromConferenceName(String(context.conferenceName));
+    if (fromName) return fromName;
+  }
+  if (resolvedSessionId) return resolvedSessionId;
+  return null;
 }
 
 /**
@@ -184,7 +208,7 @@ function sendRecordingWebhook(sessionId, statusPayload, extraFields) {
     return;
   }
   if (!sessionId) {
-    log("webhook skipped: sessionId could not be determined from conference name");
+    log("webhook skipped: sessionId could not be resolved from recording_control message");
     return;
   }
 
@@ -473,6 +497,7 @@ function parseControlPayload(msgText) {
       action: action,
       requestId: requestId,
       sessionId: parsed.sessionId ? String(parsed.sessionId) : undefined,
+      conferenceName: parsed.conferenceName ? String(parsed.conferenceName) : undefined,
       participantId: parsed.participantId ? String(parsed.participantId) : undefined,
       role: parsed.role ? String(parsed.role) : undefined,
     };
@@ -494,7 +519,7 @@ function attachRecorderEventHandlers(commandRequestId) {
     var statusPayload = buildStatusPayload(commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
     sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
     // Stage 5.4: notify server via webhook.
-    sendRecordingWebhook(sessionIdFromConference, statusPayload, { startedAt: safeNowIso() });
+    sendRecordingWebhook(resolvedSessionId, statusPayload, { startedAt: safeNowIso() });
   }, "RecorderEvents.Started");
 
   addSafeEventListener(recorder, "RecorderEvents", "Stopped", function (e) {
@@ -507,7 +532,7 @@ function attachRecorderEventHandlers(commandRequestId) {
     sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_STOPPED, "Recording stopped.", null);
     recorder = null;
     // Stage 5.4: notify server via webhook — include objectKey so server can set fileKey.
-    sendRecordingWebhook(sessionIdFromConference, statusPayload, { stoppedAt: safeNowIso() });
+    sendRecordingWebhook(resolvedSessionId, statusPayload, { stoppedAt: safeNowIso() });
   }, "RecorderEvents.Stopped");
 
   addSafeEventListener(recorder, "RecorderEvents", "Error", function (e) {
@@ -517,7 +542,7 @@ function attachRecorderEventHandlers(commandRequestId) {
     sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     recorder = null;
     // Stage 5.4: notify server about recording error.
-    sendRecordingWebhook(sessionIdFromConference, statusPayload, null);
+    sendRecordingWebhook(resolvedSessionId, statusPayload, null);
   }, "RecorderEvents.Error");
 }
 
@@ -559,7 +584,7 @@ function startRecording(call, requestId) {
   resumedAt = null;
   sendStatus(call, requestId, STATE_STARTING, "Recording start requested.", null);
   // Stage 5.4: notify server that recording is starting.
-  sendRecordingWebhook(sessionIdFromConference, buildStatusPayload(requestId, STATE_STARTING, "Recording start requested.", null), { startedAt: safeNowIso() });
+  sendRecordingWebhook(resolvedSessionId, buildStatusPayload(requestId, STATE_STARTING, "Recording start requested.", null), { startedAt: safeNowIso() });
 
   try {
     var options = {
@@ -690,7 +715,7 @@ function stopRecording(call, requestId) {
   resumingWatchdogId = clearWatchdog(resumingWatchdogId);
   sendStatus(call, requestId, STATE_STOPPING, "Recording stop requested.", null);
   // Stage 5.4: notify server that recording is stopping.
-  sendRecordingWebhook(sessionIdFromConference, buildStatusPayload(requestId, STATE_STOPPING, "Recording stop requested.", null), null);
+  sendRecordingWebhook(resolvedSessionId, buildStatusPayload(requestId, STATE_STOPPING, "Recording stop requested.", null), null);
 
   try {
     if (typeof recorder.stop === "function") {
@@ -727,6 +752,20 @@ function sendCurrentStatus(call, requestId) {
 }
 
 function onRecordingControlMessage(call, payload) {
+  var sessionId = resolveSessionId(payload);
+  if (!sessionId) {
+    sendStatus(
+      call,
+      payload.requestId,
+      STATE_ERROR,
+      "Session ID could not be resolved from recording control message.",
+      "SESSION_ID_UNRESOLVED",
+    );
+    log("recording control rejected: sessionId unresolved requestId=" + payload.requestId);
+    return;
+  }
+  resolvedSessionId = sessionId;
+
   var auth = isAuthorizedRecordingController(call, payload);
   if (!auth.allowed) {
     sendStatus(call, payload.requestId, STATE_ERROR, "Recording control is not authorized.", "UNAUTHORIZED_RECORDING_CONTROLLER");
@@ -825,33 +864,7 @@ function handleIncomingCall(event) {
 }
 
 function onAppStarted() {
-  log("scenario started");
-
-  // Stage 5.4: extract sessionId from the VoxEngine application name.
-  // The application name is set to the conference name (ng-session-{sessionId})
-  // by the Voximplant access route in lib/voximplant/config.ts.
-  try {
-    if (typeof VoxEngine.applicationName === "function") {
-      conferenceName = String(VoxEngine.applicationName() || "");
-    } else if (typeof VoxEngine.customData === "function") {
-      // Fallback: some SDK versions expose metadata via customData.
-      var customData = VoxEngine.customData();
-      if (customData && typeof customData === "string") {
-        try {
-          var parsed = JSON.parse(customData);
-          if (parsed && parsed.conferenceName) conferenceName = String(parsed.conferenceName);
-        } catch (e) {
-          // Not JSON — use as-is.
-          conferenceName = customData;
-        }
-      }
-    }
-    sessionIdFromConference = extractSessionIdFromName(conferenceName);
-    log("conferenceName=" + conferenceName + " sessionId=" + (sessionIdFromConference || "null"));
-  } catch (nameErr) {
-    log("sessionId extraction failed: " + safeToString(nameErr));
-  }
-
+  log("scenario started — sessionId is resolved from recording_control messages, not applicationName");
   try {
     conference = VoxEngine.createConference({ hd_audio: true });
   } catch (e) {

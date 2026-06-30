@@ -35,6 +35,8 @@ export type RecordingControlMessage = {
   action: RecordingControlAction;
   requestId: string;
   sessionId?: string;
+  /** Canonical conference name (negotiation-{sessionId}) for scenario-side parsing. */
+  conferenceName?: string;
   participantId?: string;
   role?: VoximplantRoomRole;
 };
@@ -136,6 +138,9 @@ export function isRecordingControlMessage(
   if (value.sessionId !== undefined && typeof value.sessionId !== "string") {
     return false;
   }
+  if (value.conferenceName !== undefined && typeof value.conferenceName !== "string") {
+    return false;
+  }
   if (value.participantId !== undefined && typeof value.participantId !== "string") {
     return false;
   }
@@ -190,6 +195,7 @@ export function parseScenarioMessage(
 type RecordingControlMessageOptions = {
   requestId: string;
   sessionId?: string;
+  conferenceName?: string;
   participantId?: string;
   role?: VoximplantRoomRole;
 };
@@ -203,6 +209,7 @@ export function createRecordingControlMessage(
     action,
     requestId: options.requestId,
     sessionId: options.sessionId,
+    conferenceName: options.conferenceName,
     participantId: options.participantId,
     role: options.role,
   };

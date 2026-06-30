@@ -13,6 +13,7 @@ import {
   VoximplantIdentityDisabledError,
   VoximplantIdentityProvisioningPendingError,
 } from "@/lib/voximplant/identity";
+import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import {
   VoximplantManagementApiError,
   VoximplantManagementApiNotImplementedError,
@@ -84,7 +85,7 @@ function buildBrowserSafePayload(params: {
   return {
     provider: "voximplant" as const,
     sessionId: params.sessionId,
-    roomNameOrConferenceName: `negotiation-${params.sessionId}`,
+    roomNameOrConferenceName: buildVoximplantConferenceName(params.sessionId),
     user: {
       providerUsername: params.providerUsername,
       sdkUsername: params.sdkUsername,
