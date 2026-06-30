@@ -50,6 +50,253 @@ Stage 4.1 hardens provider identity and adds secure browser auth handoff primiti
 
 This stage still does not change negotiation room UI runtime and does not modify LiveKit behavior.
 
+## Scope of Stage 5.4
+
+Stage 5.4 implements the Voximplant recording completion handoff to the canonical `Recording.fileKey` and the existing Yandex SpeechKit pipeline.
+
+### Recording start/stop relay flow
+
+1. Facilitator clicks "Начать запись" (Start recording) in the room.
+2. Browser calls `POST /api/sessions/{sessionId}/recording-control` with `{ action: "start", recordingConsentConfirmed: true, participantId/joinToken }`.
+3. Server validates facilitator permission, builds a typed `RecordingControlMessage` (`type: "recording_control"`, `action: "start"`, `requestId: <nanoid>`), and returns it in `{ scenarioMessage }`.
+4. Browser relays `JSON.stringify(scenarioMessage)` to the Voximplant conference via `conference.sendMessage()`.
+5. VoxEngine scenario receives the message, validates authorization, and calls `VoxEngine.createRecorder(...)` with audio-only options.
+6. When `RecorderEvents.Started` fires, the scenario sends a `recording_status` message back to the browser AND sends a webhook to the server.
+7. Stop recording follows the same relay flow with `action: "stop"`.
+
+### Webhook endpoint
+
+```
+POST /api/sessions/{sessionId}/voximplant/recording-status
+```
+
+Authentication: `X-Voximplant-Signature: hmac-sha256={hex_signature}`
+- HMAC is computed over the raw JSON request body using `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`.
+- Requests without a valid signature are rejected with HTTP 401.
+- Requests when the secret is not configured are rejected with HTTP 503.
+
+### Webhook secret environment variable
+
+```
+VOXIMPLANT_RECORDING_WEBHOOK_SECRET=<random-secret-min-32-chars>
+```
+
+- **Server-side only** — never exposed to browser code.
+- Required on the Next.js server and as a VoxEngine scenario environment variable (`WEBHOOK_SECRET`).
+- Set the same value in both places.
+- Example local `.env.local` value: `VOXIMPLANT_RECORDING_WEBHOOK_SECRET=changeme_replace_with_32char_secret`
+- Do not commit the real secret.
+
+### Scenario webhook environment variables (Voximplant Console)
+
+Set these as VoxEngine application environment variables in the Voximplant Console:
+
+| Variable | Value |
+|---|---|
+| `WEBHOOK_BASE_URL` | Public URL of your Next.js app (e.g. `https://yourapp.example.com`) |
+| `WEBHOOK_SECRET` | Same value as `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` on the server |
+
+### Status mapping
+
+| Voximplant scenario status | Canonical `RecordingStatus` in DB |
+|---|---|
+| `starting` | `STARTING` |
+| `recording` | `RECORDING` |
+| `paused` | `RECORDING` |
+| `resuming` | `RECORDING` |
+| `stopping` | `STOPPED` |
+| `stopped` (no fileKey) | `STOPPED` |
+| `stopped` (with fileKey) | `COMPLETED` |
+| `error` | `FAILED` |
+| `idle` / `not_recording` | `NOT_STARTED` (no row created) |
+
+### objectKey → Recording.fileKey mapping
+
+Yandex Object Storage recording URL format:
+```
+https://storage.yandexcloud.net/{bucket}/{objectPath}
+```
+
+The VoxEngine scenario's `normalizeObjectKeyFromUrl()` extracts everything after `.net/`:
+```
+{bucket}/{objectPath}
+```
+
+The webhook handler strips the configured `S3_BUCKET` prefix to derive the `fileKey`:
+```
+{objectPath}   ← stored as Recording.fileKey
+```
+
+The resulting `fileKey` matches the format used by LiveKit recordings (`recordings/{sessionId}/{timestamp}-audio.mp4`) and is compatible with:
+- `downloadObjectToBuffer(fileKey)` — used by Yandex SpeechKit transcription
+- `getSignedDownloadUrl(fileKey)` — used by `/materials/status` to generate download links
+- `headObject(fileKey)` — used for storage validation
+
+If `S3_BUCKET` is not configured or the objectKey does not start with the bucket prefix, the objectKey is used as-is.
+
+### Idempotency strategy
+
+- `Recording.sessionId` is unique in the schema — one recording per session.
+- The webhook handler uses upsert semantics: `findUnique` + `create` or `update`.
+- Duplicate webhooks for the same status are handled by the state machine:
+  - `COMPLETED` cannot be overwritten by any non-COMPLETED status.
+  - `FAILED` can only be updated to another `FAILED` or `COMPLETED`.
+  - `STOPPED` can only be updated to `STOPPED` or `COMPLETED`.
+- A `stopped` webhook with `objectKey` that arrives after a `stopped` webhook without `objectKey` will upgrade the status from `STOPPED` to `COMPLETED` and set `fileKey`.
+- `idle` / `not_recording` webhooks do not create a Recording row if none exists.
+
+### Conference name → sessionId mapping
+
+The VoxEngine conference name is set to `ng-session-{sessionId}` by the server when issuing Voximplant access tokens (see `buildConferenceName()` in `lib/voximplant/config.ts`).
+
+The scenario extracts `sessionId` at startup:
+```js
+sessionIdFromConference = extractSessionIdFromName(VoxEngine.applicationName());
+```
+
+If the name does not match the `ng-session-` prefix, `sessionIdFromConference` is `null` and webhooks are skipped. The conference and recording continue working — only server-side status tracking is affected.
+
+### Manual smoke-test steps
+
+**Prerequisites:**
+1. `VIDEO_PROVIDER=voximplant` in env.
+2. `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` set to a non-empty value on both server and in Voximplant Console (`WEBHOOK_SECRET`).
+3. `WEBHOOK_BASE_URL` set to your app's public URL in Voximplant Console.
+4. VoxEngine scenario updated with Stage 5.4 artifact and deployed.
+5. `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT` configured.
+
+**Steps:**
+1. Facilitator joins room via `VIDEO_PROVIDER=voximplant`.
+2. Navigate to `/room/{sessionId}`.
+3. Confirm `RecordingIndicator` shows no status (no Recording row yet).
+4. Facilitator clicks "Начать запись".
+5. Confirm browser calls `POST /api/sessions/{id}/recording-control` → `{ ok: true, provider: "voximplant", scenarioMessage: {...} }`.
+6. Confirm `conference.sendMessage()` relay does not throw an error.
+7. Confirm VoxEngine logs show `recording_control action=start` received.
+8. Confirm VoxEngine sends webhook; server logs show `[vox-recording-webhook] ... action: created`.
+9. Confirm `RecordingIndicator` updates to `STARTING` → `RECORDING` within polling interval (~1s).
+10. Facilitator clicks "Остановить запись".
+11. Confirm VoxEngine sends `stopped` webhook with `objectKey`.
+12. Confirm server logs show `action: updated status: COMPLETED`.
+13. Confirm `Recording.fileKey` is populated (visible in `/materials/{sessionId}` for facilitator).
+14. Confirm `/materials/status` response shows `canStart: true` for transcription.
+15. Optionally start Yandex SpeechKit transcription — should succeed using `fileKey`.
+
+**LiveKit regression (run separately with `VIDEO_PROVIDER=livekit`):**
+1. Start/finish negotiation with LiveKit provider.
+2. Verify recording behavior unchanged (controlled via negotiation lifecycle).
+3. Verify `materials/status` still enables transcription after completed LiveKit recording.
+4. Verify Yandex SpeechKit flow unchanged.
+
+### Security checklist
+
+- Non-facilitator cannot start/stop recording: `recording-control` validates `ParticipantType.FACILITATOR`.
+- Webhook without secret → HTTP 401.
+- Webhook with wrong secret → HTTP 401 (constant-time comparison via `timingSafeEqual`).
+- Browser responses do not include `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`.
+- `scenarioMessage` does not include Management API secrets.
+- `fileKey` is only returned to facilitators in `/materials/status`.
+
+### Limitations (as of Stage 5.4)
+
+- No real-time push from server to browser — recording state updates via 1-second polling of `/control-state`.
+- Browser `sendMessage` availability depends on the Voximplant WebSDK version; if unavailable, a UI error is shown and recording is blocked.
+- VoxEngine `crypto.createHmac()` availability depends on VoxEngine runtime version — if unavailable, webhooks are silently skipped and recording still works (server won't receive status updates in that case).
+- `VoxEngine.applicationName()` API may differ across VoxEngine versions; fallback via `customData()` is provided.
+- No automatic retry for failed webhooks — transient network errors may cause missed status updates (recording still works on Voximplant side).
+- Pause/resume UI is not exposed in this stage per design constraint.
+
+## Scope of Stage 5
+
+Stage 5 wires the Voximplant client into the negotiation room (`/room/[sessionId]`) behind the provider flag while preserving the existing LiveKit path.
+
+### Provider switch location
+
+The provider boundary is implemented in:
+
+- `app/room/[sessionId]/page.tsx`
+
+Flow:
+
+- resolve authenticated participant exactly as before;
+- render `VideoRoomPage` for `VIDEO_PROVIDER=livekit` (and fallback values);
+- render `VoximplantNegotiationRoomPage` for `VIDEO_PROVIDER=voximplant`.
+
+This keeps lobby behavior unchanged and avoids touching existing LiveKit internals.
+
+### One-time-key browser auth flow (implemented)
+
+In `VIDEO_PROVIDER=voximplant` negotiation room runtime:
+
+1. browser calls `POST /api/sessions/[sessionId]/voximplant/access` with empty body;
+2. backend returns `credentials.status = "one_time_key_required"` and exact `user.sdkUsername`;
+3. browser initializes Voximplant WebSDK and calls `client.requestOneTimeKey({ username: sdkUsername })`;
+4. browser posts `{ oneTimeKey }` to the same endpoint;
+5. backend returns `credentials.status = "ready"` with `credentials.oneTimeKeyHash`;
+6. browser logs in using `client.loginOneTimeKey({ username: sdkUsername, hash: oneTimeKeyHash })`.
+
+Security notes:
+
+- browser uses the exact backend `sdkUsername` without rebuilding it;
+- password login is not used in negotiation room flow;
+- one-time-key hash is never rendered in UI diagnostics;
+- PoC endpoint `/api/voximplant-test/access` is not used.
+
+### New Stage 5 client files
+
+- `components/voximplant-negotiation-room-page.tsx`
+- `components/voximplant-video-layout.tsx`
+- `components/voximplant-room-sidebar.tsx`
+- `lib/voximplant/use-voximplant-room.ts`
+
+### Conference join behavior
+
+- conference name is always derived from backend `roomNameOrConferenceName`;
+- all participants in the same session join that shared conference name;
+- participant role is kept in client state (`participant_a`, `participant_b`, `facilitator`, `observer`, `unknown`);
+- facilitator joins muted by default.
+
+### Stage 5 media controls
+
+Implemented:
+
+- microphone mute/unmute;
+- camera on/off;
+- disconnect/leave.
+
+Deferred:
+
+- recording controls and recording asset handoff (Stage 6);
+- Yandex transcription / DeepSeek post-processing triggers from Voximplant recordings;
+- guest Voximplant browser access.
+
+### Sidebar and privacy behavior
+
+Stage 5 Voximplant page reuses existing room sidebar API data contract:
+
+- sidebar data is loaded from `GET /api/livekit/sidebar` using existing auth path;
+- private role briefing visibility remains controlled by existing server-side privacy logic in `lib/room-sidebar.ts`.
+
+### Local enable / rollback
+
+Enable Voximplant negotiation room locally:
+
+- set `VIDEO_PROVIDER=voximplant`;
+- ensure required Voximplant env vars are configured (`VOXIMPLANT_ACCOUNT_NAME`, `VOXIMPLANT_APPLICATION_NAME`, `VOXIMPLANT_USER_DOMAIN`, `VOXIMPLANT_SCENARIO_NAME`, `VOXIMPLANT_RULE_NAME`);
+- ensure Stage 4 identity migration is already applied in local DB.
+
+Rollback to LiveKit:
+
+- set `VIDEO_PROVIDER=livekit` (or unset `VIDEO_PROVIDER`).
+
+### Known Stage 5 limitations
+
+- recording controls are deferred to Stage 6;
+- Yandex SpeechKit pipeline is not triggered by Voximplant Stage 5 wiring;
+- DeepSeek transcript cleanup/analysis are not triggered by Voximplant Stage 5 wiring;
+- guest Voximplant access is deferred;
+- lobby/event lobby remains untouched.
+
 ## Provider switch behavior
 
 - `VIDEO_PROVIDER=livekit` is the default/fallback behavior.
@@ -84,6 +331,38 @@ Optional and server-only:
 
 - `VOXIMPLANT_API_KEY_PATH`
 - `VOXIMPLANT_RECORDING_STORAGE`
+
+### Management API credential resolution (server-side)
+
+Management API adapter supports two server-only configuration sources.
+
+Resolution order (highest priority first):
+
+1. explicit env vars:
+   - `VOXIMPLANT_MANAGEMENT_API_KEY`
+   - `VOXIMPLANT_MANAGEMENT_ACCOUNT_ID`
+   - `VOXIMPLANT_MANAGEMENT_APPLICATION_ID`
+2. fallback JSON from `VOXIMPLANT_API_KEY_PATH` (used only when any required env value is missing).
+
+Supported fallback JSON key aliases:
+
+- API key: `api_key`, `apiKey`, `key`, `token`
+- account id: `account_id`, `accountId`, `accountID`
+- application id: `application_id`, `applicationId`, `applicationID`
+
+Also supported for service-account JSON keys:
+
+- key id: `key_id`, `keyId`, `keyID`
+- private key: `private_key`, `privateKey`
+
+Notes:
+
+- env vars always win over JSON values when both are present;
+- `VOXIMPLANT_MANAGEMENT_APPLICATION_ID` from env is valid even if application id is absent in JSON;
+- if management application id is missing, backend can resolve it via `GetApplications` using `VOXIMPLANT_APPLICATION_NAME`;
+- if fallback JSON contains `account_id + key_id + private_key`, backend uses server-side JWT Bearer auth for Management API requests;
+- fallback file is read server-side only and is never exposed to browser responses;
+- diagnostics must remain non-secret (no file content, no key values, no raw local file path output).
 
 Security requirements:
 

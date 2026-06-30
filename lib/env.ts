@@ -114,3 +114,12 @@ export function getYandexTranscriptEnhancementMaxOutputTokens(): number {
   const raw = Number(process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS ?? "6000");
   return Number.isFinite(raw) && raw > 0 ? raw : 6000;
 }
+
+/**
+ * Server-side only. Returns the VOXIMPLANT_RECORDING_WEBHOOK_SECRET used to
+ * validate HMAC-SHA256 signatures on incoming VoxEngine recording-status webhooks.
+ * Returns null when the env var is absent or empty (webhook validation will reject all calls).
+ */
+export function getVoximplantRecordingWebhookSecret(): string | null {
+  return process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET?.trim() || null;
+}

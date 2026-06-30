@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 
 import VideoRoomPage from "@/components/video-room-page";
+import VoximplantNegotiationRoomPage from "@/components/voximplant-negotiation-room-page";
 import { getOptionalCurrentUser, requireActiveUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { getVideoProvider } from "@/lib/env";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { prisma } from "@/lib/prisma";
@@ -10,16 +12,30 @@ import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 
 type RoomPageProps = {
   params: Promise<{ sessionId: string }>;
-  searchParams: Promise<{ joinToken?: string }>;
+  searchParams: Promise<{
+    joinToken?: string;
+    /** Pass ?camera=off to skip initial camera capture (multi-user local testing). */
+    camera?: string;
+    /** Pass ?mic=off to skip initial microphone capture (multi-user local testing). */
+    mic?: string;
+    /** Pass ?media=off to skip both camera and microphone on initial join. */
+    media?: string;
+    /** Pass ?debugAudio=1 to show the audio diagnostics panel. */
+    debugAudio?: string;
+  }>;
 };
 
 export default async function RoomPage({
   params,
   searchParams,
 }: RoomPageProps) {
+  const provider = getVideoProvider();
   const { sessionId } = await params;
-  const { joinToken } = await searchParams;
+  const { joinToken, camera, mic, media, debugAudio } = await searchParams;
   const trimmedJoinToken = (joinToken ?? "").trim();
+  const disableInitialCamera = camera === "off" || media === "off";
+  const disableInitialMic = mic === "off" || media === "off";
+  const showDebugAudio = debugAudio === "1";
   const { dictionary } = await getServerDictionary();
 
   if (!trimmedJoinToken) {
@@ -43,7 +59,16 @@ export default async function RoomPage({
     }
 
     // Account mode: no joinToken in props; VideoRoomPage authenticates via cookie.
-    return (
+    return provider === "voximplant" ? (
+      <VoximplantNegotiationRoomPage
+        authMode="account"
+        sessionId={sessionId}
+        participantId={participant.id}
+        disableInitialCamera={disableInitialCamera}
+        disableInitialMic={disableInitialMic}
+        debugAudio={showDebugAudio}
+      />
+    ) : (
       <VideoRoomPage
         authMode="account"
         sessionId={sessionId}
