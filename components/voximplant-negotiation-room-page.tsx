@@ -155,6 +155,7 @@ function VoximplantControlBar({
   joined,
   disabled,
   micCaptureStatus,
+  micAllowed,
   isCameraOn,
   toggleMic,
   toggleCamera,
@@ -162,32 +163,42 @@ function VoximplantControlBar({
   joined: boolean;
   disabled?: boolean;
   micCaptureStatus: string;
+  micAllowed: boolean;
   isCameraOn: boolean;
   toggleMic: () => void;
   toggleCamera: () => void;
 }) {
-  const { t } = useI18n();
+  const micState: "on" | "off" | "locked" =
+    !micAllowed ? "locked" : micCaptureStatus === "active" ? "on" : "off";
+  const cameraState: "on" | "off" = isCameraOn ? "on" : "off";
   const micLabel =
-    micCaptureStatus === "active" ? t("room.microphone") + " (вкл)" : t("room.microphone") + " (выкл)";
+    micState === "on"
+      ? "Микрофон включён"
+      : micState === "locked"
+        ? "Микрофон заблокирован правилами сессии"
+        : "Микрофон выключен";
+  const cameraLabel = cameraState === "on" ? "Камера включена" : "Камера выключена";
+  const micClass =
+    micState === "on"
+      ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-100 hover:bg-emerald-900/55"
+      : micState === "locked"
+        ? "border-slate-500/60 bg-slate-700/40 text-slate-200 hover:bg-slate-700/55"
+        : "border-rose-500/60 bg-rose-900/35 text-rose-100 hover:bg-rose-900/50";
+  const cameraClass =
+    cameraState === "on"
+      ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-100 hover:bg-emerald-900/55"
+      : "border-rose-500/60 bg-rose-900/35 text-rose-100 hover:bg-rose-900/50";
 
   return (
-    <div className="lk-control-bar">
+    <div className="lk-control-bar flex items-center gap-2 px-3 py-2">
       <button
         type="button"
         onClick={toggleMic}
-        className={`lk-button ${
-          micCaptureStatus === "active"
-            ? ""
-            : micCaptureStatus === "unavailable" || micCaptureStatus === "error"
-              ? "text-red-400"
-              : "text-amber-400"
-        }`}
+        className={`lk-button rounded-md border px-3 py-1.5 text-sm font-medium ${micClass}`}
         disabled={!joined || disabled}
-        title={
-          micCaptureStatus === "unavailable"
-            ? "Микрофон недоступен — нажмите для повторной попытки"
-            : undefined
-        }
+        title={micLabel}
+        aria-label={micLabel}
+        data-state={micState}
         data-testid="vox-mic-toggle"
       >
         {micLabel}
@@ -195,11 +206,14 @@ function VoximplantControlBar({
       <button
         type="button"
         onClick={toggleCamera}
-        className={`lk-button ${isCameraOn ? "" : "text-amber-400"}`}
+        className={`lk-button rounded-md border px-3 py-1.5 text-sm font-medium ${cameraClass}`}
         disabled={!joined || disabled}
+        title={cameraLabel}
+        aria-label={cameraLabel}
+        data-state={cameraState}
         data-testid="vox-camera-toggle"
       >
-        {isCameraOn ? t("room.camera") + " (вкл)" : t("room.camera") + " (выкл)"}
+        {cameraLabel}
       </button>
     </div>
   );
@@ -282,7 +296,6 @@ export default function VoximplantNegotiationRoomPage(
     role: transportRole,
     localDisplayName,
     conferenceName,
-    participantType: hookParticipantType,
     localParticipant,
     remoteParticipants,
     isMicMuted,
@@ -471,13 +484,13 @@ export default function VoximplantNegotiationRoomPage(
   // Visible role NEVER comes from the raw VoxRoomRole (participant_a, facilitator…).
 
   const effectiveParticipantType: ParticipantType | null =
-    sidebar?.participantType ?? hookParticipantType ?? null;
+    sidebar?.participantType ?? null;
 
   const participantTypeLabel = effectiveParticipantType
     ? t(
         `participantType.${effectiveParticipantType}` as `participantType.${typeof effectiveParticipantType}`,
       )
-    : "Участник";
+    : t("participantType.OBSERVER");
 
   const effectiveDisplayName = sidebar?.displayName || localDisplayName || "Участник";
 
@@ -746,12 +759,7 @@ export default function VoximplantNegotiationRoomPage(
       toggleMic();
       return;
     }
-    if (
-      !shouldMuteByPolicy &&
-      policyMutedBySystemRef.current &&
-      isMicMuted &&
-      effectiveParticipantType === "PARTICIPANT"
-    ) {
+    if (!shouldMuteByPolicy && policyMutedBySystemRef.current && isMicMuted) {
       toggleMic();
       policyMutedBySystemRef.current = false;
       return;
@@ -813,7 +821,7 @@ export default function VoximplantNegotiationRoomPage(
         controlState={controlState}
         recordingState={recordingState}
         sessionCloseState={sessionCloseState}
-        participantType={effectiveParticipantType ?? "PARTICIPANT"}
+        participantType={effectiveParticipantType ?? "OBSERVER"}
         participantTypeLabel={participantTypeLabel}
         displayName={effectiveDisplayName}
         onControlStateChange={setControlState}
@@ -853,22 +861,26 @@ export default function VoximplantNegotiationRoomPage(
             localParticipant={localParticipant}
             remoteParticipants={remoteParticipants}
             roster={sidebar.roster}
+            currentParticipantId={sidebar.currentParticipantId}
             controlState={{
               ...controlState,
-              participantType: effectiveParticipantType ?? "PARTICIPANT",
+              participantType: effectiveParticipantType ?? "OBSERVER",
             }}
-            localParticipantType={effectiveParticipantType ?? "PARTICIPANT"}
+            localParticipantType={effectiveParticipantType ?? "OBSERVER"}
             localCaseRoleName={sidebar.caseRole?.name ?? null}
             isCameraOn={isCameraOn}
             isMicMuted={isMicMuted}
+            localMicSystemMuted={!controlState.micAllowed}
             micLevel={micLevel}
             localRoleLabel={participantTypeLabel}
+            showDiagnostics={Boolean(props.debugAudio || props.debugRecording)}
           />
         }
         controlBar={
           <VoximplantControlBar
             joined={joined}
             micCaptureStatus={micCaptureStatus}
+            micAllowed={controlState.micAllowed}
             isCameraOn={isCameraOn}
             toggleMic={toggleMic}
             toggleCamera={toggleCamera}

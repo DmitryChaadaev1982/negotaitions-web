@@ -143,4 +143,35 @@ test.describe("Vox room presence lease policy", () => {
     });
     expect(activeControl.ok()).toBeTruthy();
   });
+
+  test("stale connection cannot send heartbeat after takeover", async ({ request }) => {
+    const headers = {
+      ...cookieHeader(fixture.facilitatorCookie),
+      "Content-Type": "application/json",
+    };
+
+    const staleHeartbeat = await request.post(
+      `/api/sessions/${fixture.sessionId}/heartbeat`,
+      {
+        headers,
+        data: {
+          participantId: fixture.facilitatorParticipantId,
+          connectionId: "lease-A",
+        },
+      },
+    );
+    expect(staleHeartbeat.status()).toBe(409);
+
+    const activeHeartbeat = await request.post(
+      `/api/sessions/${fixture.sessionId}/heartbeat`,
+      {
+        headers,
+        data: {
+          participantId: fixture.facilitatorParticipantId,
+          connectionId: "lease-B",
+        },
+      },
+    );
+    expect(activeHeartbeat.ok()).toBeTruthy();
+  });
 });

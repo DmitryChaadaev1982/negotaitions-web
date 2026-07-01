@@ -23,6 +23,7 @@ export type SessionRosterEntry = {
 
 export type RoomSidebarData = {
   sessionId: string;
+  currentParticipantId: string;
   sessionTitle: string;
   visibility: "PUBLIC" | "PRIVATE";
   event: {

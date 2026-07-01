@@ -1,6 +1,10 @@
 "use client";
 
 import type { ParticipantType } from "@/app/generated/prisma/enums";
+import {
+  buildCameraEnablePlan,
+  isDuplicateVideoStreamError,
+} from "@/lib/voximplant/camera-toggle-logic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -942,7 +946,8 @@ export function useVoximplantRoom({
 
   const toggleCamera = useCallback(() => {
     const runtime = runtimeRef.current;
-    if (!runtime || runtime.videoOpPending) return;
+    if (!runtime?.conference || runtime.videoOpPending) return;
+    const conference = runtime.conference;
 
     runtime.videoOpPending = true;
     const nextOn = !isCameraOn;
@@ -950,53 +955,90 @@ export function useVoximplantRoom({
     void (async () => {
       try {
         if (!nextOn) {
-          // Turn camera off: release hardware tracks.
-          stopVoxStreamTracks(runtime.localVideoStream);
-          runtime.localVideoStream?.close?.();
-          runtime.localVideoStream = null;
-          runtime.videoStreamAdded = false;
-          setLocalParticipant(null);
+          // Turn camera off idempotently: keep conference stream slot and
+          // disable the existing track instead of re-adding another video stream later.
+          const existingMedia = streamToMediaStream(runtime.localVideoStream);
+          const videoTrack = existingMedia?.getVideoTracks()?.[0] ?? null;
+          if (videoTrack) {
+            videoTrack.enabled = false;
+          }
+          if (runtime.localVideoStream) {
+            setLocalParticipant({
+              id: "local",
+              displayName: localDisplayNameRef.current,
+              stream: streamToMediaStream(runtime.localVideoStream),
+            });
+          } else {
+            setLocalParticipant(null);
+          }
           setIsCameraOn(false);
         } else {
-          // Turn camera on: video-only stream, does not request audio.
-          let videoStream: VoxStream | null = null;
-          const restoreCameraFilter = installCameraErrorSuppressor();
-          try {
-            videoStream = await runtime.streamModule.streamManager.createVideoStream(
-              runtime.videoQuality,
-            );
-          } catch (e) {
-            addMediaWarning(
-              isNonFatalMediaError(e)
-                ? "Камера занята или недоступна. Вы остались в комнате без видео."
-                : `Не удалось включить камеру: ${toErrorMessage(e)}`,
-            );
-            return;
-          } finally {
-            restoreCameraFilter();
-          }
+          let videoStream = runtime.localVideoStream;
+          const existingMedia = streamToMediaStream(videoStream);
+          const existingTrack = existingMedia?.getVideoTracks()?.[0] ?? null;
+          const plan = buildCameraEnablePlan({
+            hasLocalVideoStream: Boolean(videoStream),
+            hasReusableTrack: Boolean(existingTrack),
+            videoStreamAlreadyAdded: runtime.videoStreamAdded,
+          });
 
-          if (!videoStream) return;
-
-          runtime.localVideoStream = videoStream;
-
-          if (!runtime.videoStreamAdded) {
+          if (plan.shouldReuseExistingTrack && existingTrack) {
+            existingTrack.enabled = true;
+          } else if (plan.shouldCreateVideoStream) {
+            const restoreCameraFilter = installCameraErrorSuppressor();
             try {
-              runtime.videoStreamAdded = await safeAddStream(runtime.conference!, videoStream);
-            } catch (addErr) {
-              addMediaWarning(
-                `Не удалось добавить видеопоток в конференцию: ${toErrorMessage(addErr)}`,
+              videoStream = await runtime.streamModule.streamManager.createVideoStream(
+                runtime.videoQuality,
               );
-              stopVoxStreamTracks(videoStream);
-              runtime.localVideoStream = null;
+            } catch (e) {
+              addMediaWarning(
+                isNonFatalMediaError(e)
+                  ? "Камера занята или недоступна. Вы остались в комнате без видео."
+                  : `Не удалось включить камеру: ${toErrorMessage(e)}`,
+              );
               return;
+            } finally {
+              restoreCameraFilter();
+            }
+            if (!videoStream) return;
+            runtime.localVideoStream = videoStream;
+
+            if (plan.shouldAddStreamToConference) {
+              try {
+                runtime.videoStreamAdded = await safeAddStream(conference, videoStream);
+              } catch (addErr) {
+                const message = toErrorMessage(addErr);
+                if (isDuplicateVideoStreamError(message)) {
+                  runtime.videoStreamAdded = true;
+                } else {
+                  addMediaWarning(
+                    `Не удалось добавить видеопоток в конференцию: ${message}`,
+                  );
+                  stopVoxStreamTracks(videoStream);
+                  runtime.localVideoStream = null;
+                  return;
+                }
+              }
+            } else if (!runtime.videoStreamAdded) {
+              try {
+                runtime.videoStreamAdded = await safeAddStream(conference, videoStream);
+              } catch (addErr) {
+                addMediaWarning(
+                  `Не удалось добавить видеопоток в конференцию: ${toErrorMessage(addErr)}`,
+                );
+                stopVoxStreamTracks(videoStream);
+                runtime.localVideoStream = null;
+                return;
+              }
             }
           }
 
+          // Recover gracefully for SDK state mismatches.
+          runtime.videoStreamAdded = runtime.videoStreamAdded || Boolean(runtime.localVideoStream);
           setLocalParticipant({
             id: "local",
             displayName: localDisplayNameRef.current,
-            stream: streamToMediaStream(videoStream),
+            stream: streamToMediaStream(runtime.localVideoStream),
           });
           setIsCameraOn(true);
           removeMediaWarningsByKeyword("камера");

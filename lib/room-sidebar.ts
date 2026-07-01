@@ -157,6 +157,7 @@ async function buildRoomSidebarData(
 
   return {
     sessionId: participant.sessionId,
+    currentParticipantId: participant.id,
     sessionTitle: participant.session.title,
     visibility: participant.session.visibility,
     event: participant.session.event

@@ -123,8 +123,14 @@ async function createParityFixture() {
     sessionId,
     facilitatorParticipantId,
     participant1Id,
+    participant2Id,
+    observer1Id,
+    role1Id,
+    role2Id,
     facilitatorCookie: await createUserSession(facilitatorUserId),
     participantCookie: await createUserSession(p1UserId),
+    participant2Cookie: await createUserSession(p2UserId),
+    observerCookie: await createUserSession(o1UserId),
   };
 }
 
@@ -200,23 +206,167 @@ test.describe("Vox room parity (API state)", () => {
     expect(pausedBody.negotiationState).toBe("PAUSED");
   });
 
-  test("audio policy state transitions are role-aware", async ({ request }) => {
-    const facilitatorState = await request.get(
-      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=parity-audio-fac&claimLease=1`,
-      { headers: cookieHeader(fixture.facilitatorCookie) },
+  test("unassigned participant never resolves as facilitator in Vox access", async ({ request }) => {
+    await query(
+      `UPDATE "SessionParticipant"
+         SET "sessionRoleId" = NULL, "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.participant1Id],
     );
-    expect(facilitatorState.ok()).toBeTruthy();
-    const facBody = (await facilitatorState.json()) as { negotiationState: string; micAllowed: boolean };
-    expect(facBody.negotiationState).toBe("PAUSED");
-    expect(facBody.micAllowed).toBe(false);
 
-    const participantState = await request.get(
-      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.participant1Id}&connectionId=parity-audio-p1&claimLease=1`,
+    const sidebarRes = await request.get(
+      `/api/livekit/sidebar?participantId=${fixture.participant1Id}&connectionId=parity-unassigned-p1&claimLease=1`,
       { headers: cookieHeader(fixture.participantCookie) },
     );
-    expect(participantState.ok()).toBeTruthy();
-    const pBody = (await participantState.json()) as { negotiationState: string; micAllowed: boolean };
-    expect(pBody.negotiationState).toBe("PAUSED");
-    expect(pBody.micAllowed).toBe(false);
+    expect(sidebarRes.ok()).toBeTruthy();
+    const sidebarBody = (await sidebarRes.json()) as {
+      participantType: string;
+      caseRole: { name: string } | null;
+    };
+    expect(sidebarBody.participantType).toBe("PARTICIPANT");
+    expect(sidebarBody.caseRole).toBeNull();
+
+    const voxAccess = await request.post(
+      `/api/sessions/${fixture.sessionId}/voximplant/access`,
+      {
+        headers: cookieHeader(fixture.participantCookie),
+        data: {},
+      },
+    );
+    expect(voxAccess.ok()).toBeTruthy();
+    const payload = (await voxAccess.json()) as { user: { role: string } };
+    expect(payload.user.role).toBe("unknown");
+    expect(payload.user.role).not.toBe("facilitator");
+  });
+
+  test("role reassignment is visible on subsequent sidebar fetch without reload", async ({ request }) => {
+    const before = await request.get(
+      `/api/livekit/sidebar?participantId=${fixture.participant1Id}&connectionId=parity-role-refresh&claimLease=1`,
+      { headers: cookieHeader(fixture.participantCookie) },
+    );
+    expect(before.ok()).toBeTruthy();
+    const beforeBody = (await before.json()) as { caseRole: { name: string } | null };
+    expect(beforeBody.caseRole).toBeNull();
+
+    await query(
+      `UPDATE "SessionParticipant"
+         SET "sessionRoleId" = $2, "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.participant1Id, fixture.role1Id],
+    );
+
+    const after = await request.get(
+      `/api/livekit/sidebar?participantId=${fixture.participant1Id}&connectionId=parity-role-refresh`,
+      { headers: cookieHeader(fixture.participantCookie) },
+    );
+    expect(after.ok()).toBeTruthy();
+    const afterBody = (await after.json()) as { caseRole: { name: string } | null };
+    expect(afterBody.caseRole?.name).toBe("Participant A");
+  });
+
+  test("participant can open session materials when access is allowed", async ({ request }) => {
+    const materials = await request.get(`/sessions/${fixture.sessionId}/materials`, {
+      headers: cookieHeader(fixture.participant2Cookie),
+    });
+    expect(materials.ok()).toBeTruthy();
+  });
+
+  test("audio policy transitions reset correctly across RUNNING/PAUSED/FINISHED", async ({ request }) => {
+    const facHeaders = cookieHeader(fixture.facilitatorCookie);
+    const pHeaders = cookieHeader(fixture.participantCookie);
+    const oHeaders = cookieHeader(fixture.observerCookie);
+    const facConnectionId = "parity-audio-fac";
+    const pConnectionId = "parity-audio-p1";
+    const oConnectionId = "parity-audio-o1";
+
+    const fetchState = async (
+      participantId: string,
+      headers: { Cookie: string },
+      connectionId: string,
+    ) => {
+      const res = await request.get(
+        `/api/sessions/${fixture.sessionId}/control-state?participantId=${participantId}&connectionId=${connectionId}&claimLease=1`,
+        { headers },
+      );
+      expect(res.ok()).toBeTruthy();
+      return (await res.json()) as {
+        negotiationState: string;
+        micAllowed: boolean;
+        cameraAllowed: boolean;
+      };
+    };
+
+    const pausedFac = await fetchState(fixture.facilitatorParticipantId, facHeaders, facConnectionId);
+    const pausedParticipant = await fetchState(fixture.participant1Id, pHeaders, pConnectionId);
+    const pausedObserver = await fetchState(fixture.observer1Id, oHeaders, oConnectionId);
+    expect(pausedFac.negotiationState).toBe("PAUSED");
+    expect(pausedParticipant.negotiationState).toBe("PAUSED");
+    expect(pausedObserver.negotiationState).toBe("PAUSED");
+    expect(pausedFac.cameraAllowed).toBe(true);
+    expect(pausedParticipant.cameraAllowed).toBe(true);
+    expect(pausedObserver.cameraAllowed).toBe(true);
+    expect(pausedFac.micAllowed).toBe(false);
+    expect(pausedParticipant.micAllowed).toBe(false);
+    expect(pausedObserver.micAllowed).toBe(false);
+
+    const resume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "RESUME",
+      },
+    });
+    expect(resume.ok()).toBeTruthy();
+
+    const resumedFac = await fetchState(fixture.facilitatorParticipantId, facHeaders, facConnectionId);
+    const resumedParticipant = await fetchState(fixture.participant1Id, pHeaders, pConnectionId);
+    const resumedObserver = await fetchState(fixture.observer1Id, oHeaders, oConnectionId);
+    expect(resumedFac.negotiationState).toBe("RUNNING");
+    expect(resumedParticipant.negotiationState).toBe("RUNNING");
+    expect(resumedObserver.negotiationState).toBe("RUNNING");
+    expect(resumedFac.micAllowed).toBe(false);
+    expect(resumedParticipant.micAllowed).toBe(true);
+    expect(resumedObserver.micAllowed).toBe(false);
+
+    const pause = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "PAUSE",
+      },
+    });
+    expect(pause.ok()).toBeTruthy();
+
+    const repausedFac = await fetchState(fixture.facilitatorParticipantId, facHeaders, facConnectionId);
+    const repausedParticipant = await fetchState(fixture.participant1Id, pHeaders, pConnectionId);
+    const repausedObserver = await fetchState(fixture.observer1Id, oHeaders, oConnectionId);
+    expect(repausedFac.negotiationState).toBe("PAUSED");
+    expect(repausedParticipant.negotiationState).toBe("PAUSED");
+    expect(repausedObserver.negotiationState).toBe("PAUSED");
+    expect(repausedFac.micAllowed).toBe(false);
+    expect(repausedParticipant.micAllowed).toBe(false);
+    expect(repausedObserver.micAllowed).toBe(false);
+
+    const finish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "FINISH",
+      },
+    });
+    expect(finish.ok()).toBeTruthy();
+
+    const finishedFac = await fetchState(fixture.facilitatorParticipantId, facHeaders, facConnectionId);
+    const finishedParticipant = await fetchState(fixture.participant1Id, pHeaders, pConnectionId);
+    const finishedObserver = await fetchState(fixture.observer1Id, oHeaders, oConnectionId);
+    expect(finishedFac.negotiationState).toBe("FINISHED");
+    expect(finishedParticipant.negotiationState).toBe("FINISHED");
+    expect(finishedObserver.negotiationState).toBe("FINISHED");
+    expect(finishedFac.micAllowed).toBe(true);
+    expect(finishedParticipant.micAllowed).toBe(true);
+    expect(finishedObserver.micAllowed).toBe(true);
   });
 });

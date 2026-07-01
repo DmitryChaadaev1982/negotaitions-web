@@ -594,7 +594,7 @@ export function SharedRoomShell({
           {!isDebriefMode ? (
             <GradientButtonLink
               href={materialsUrl}
-              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+              className="px-3 py-1.5 text-xs"
               data-testid="session-materials-link"
             >
               {t("room.sessionMaterials")}
