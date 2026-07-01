@@ -32,20 +32,51 @@ export type RoomAuthToken =
  */
 export function roomAuthBody(
   auth: RoomAuthToken,
+  extras?: { connectionId?: string; claimLease?: boolean },
 ): Record<string, string> {
-  if (auth.type === "joinToken") {
-    return { joinToken: auth.value };
+  const base: Record<string, string> =
+    auth.type === "joinToken"
+      ? { joinToken: auth.value }
+      : { participantId: auth.participantId };
+  if (!extras?.connectionId && !extras?.claimLease) {
+    return base;
   }
-  return { participantId: auth.participantId };
+  return {
+    ...base,
+    ...(extras?.connectionId ? { connectionId: extras.connectionId } : {}),
+    ...(extras?.claimLease ? { claimLease: "1" } : {}),
+  };
+}
+
+type RoomAuthQueryOptions = {
+  connectionId?: string;
+  claimLease?: boolean;
+};
+
+function appendExtraQuery(params: string, options?: RoomAuthQueryOptions) {
+  let next = params;
+  if (options?.connectionId) {
+    next = `${next}&connectionId=${encodeURIComponent(options.connectionId)}`;
+  }
+  if (options?.claimLease) {
+    next = `${next}&claimLease=1`;
+  }
+  return next;
 }
 
 /**
  * Build the query-string suffix for a GET room API request.
  * Example: `?${roomAuthQuery(auth)}`
  */
-export function roomAuthQuery(auth: RoomAuthToken): string {
+export function roomAuthQuery(auth: RoomAuthToken, options?: RoomAuthQueryOptions): string {
   if (auth.type === "joinToken") {
-    return `joinToken=${encodeURIComponent(auth.value)}`;
+    return appendExtraQuery(
+      `joinToken=${encodeURIComponent(auth.value)}`,
+      options,
+    );
   }
-  return `participantId=${encodeURIComponent(auth.participantId)}`;
+  return appendExtraQuery(
+    `participantId=${encodeURIComponent(auth.participantId)}`,
+    options,
+  );
 }

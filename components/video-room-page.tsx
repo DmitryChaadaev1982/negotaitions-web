@@ -28,7 +28,7 @@ import {
 } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +100,9 @@ function ConnectedRoom({
   onControlStateChange,
   onRecordingStateChange,
   onInvalidToken,
+  onStaleConnection,
+  roomConnectionId,
+  staleConnection,
 }: {
   roomAuth: RoomAuthToken;
   materialsUrl: string;
@@ -112,6 +115,9 @@ function ConnectedRoom({
   onControlStateChange: (state: ControlState) => void;
   onRecordingStateChange: (state: RoomRecordingState) => void;
   onInvalidToken: () => void;
+  onStaleConnection: () => void;
+  roomConnectionId: string;
+  staleConnection: boolean;
 }) {
   const router = useRouter();
 
@@ -152,6 +158,9 @@ function ConnectedRoom({
         onControlStateChange={onControlStateChange}
         onRecordingStateChange={onRecordingStateChange}
         onInvalidToken={onInvalidToken}
+        onStaleConnection={onStaleConnection}
+        connectionId={roomConnectionId}
+        staleConnection={staleConnection}
         onLeave={handleLeave}
         // LiveKit-specific slots
         audioRenderer={<RoomAudioRenderer />}
@@ -207,6 +216,11 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
         : `/sessions/${sessionId}/materials`,
     [roomAuth, sessionId],
   );
+  const roomConnectionSeed = useId();
+  const roomConnectionId = useMemo(
+    () => `room-${sessionId}-${roomConnectionSeed.replace(/:/g, "")}`,
+    [roomConnectionSeed, sessionId],
+  );
 
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
@@ -220,6 +234,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     closeMessageKey: null,
     closedBeforeNegotiation: false,
   });
+  const [staleConnection, setStaleConnection] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,11 +248,21 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           fetch("/api/livekit/token", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(roomAuthBody(roomAuth)),
+            body: JSON.stringify(
+              roomAuthBody(roomAuth, { connectionId: roomConnectionId, claimLease: true }),
+            ),
           }),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`),
           fetch(
-            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            `/api/livekit/sidebar?${roomAuthQuery(roomAuth, {
+              connectionId: roomConnectionId,
+              claimLease: true,
+            })}`,
+          ),
+          fetch(
+            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, {
+              connectionId: roomConnectionId,
+              claimLease: true,
+            })}`,
             { cache: "no-store" },
           ),
         ]);
@@ -261,6 +286,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
         }
 
         if (!sidebarResult.ok) {
+          if (sidebarResult.status === 409) {
+            setStaleConnection(true);
+            return;
+          }
           throw new Error(
             "error" in sidebarPayload && sidebarPayload.error
               ? sidebarPayload.error
@@ -269,6 +298,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
         }
 
         if (!controlResult.ok) {
+          if (controlResult.status === 409) {
+            setStaleConnection(true);
+            return;
+          }
           throw new Error(
             "error" in controlPayload && controlPayload.error
               ? controlPayload.error
@@ -321,7 +354,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [roomAuth, sessionId, t]);
+  }, [roomAuth, sessionId, roomConnectionId, t]);
 
   useEffect(() => {
     if (isLoading || error) {
@@ -334,10 +367,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       try {
         const [controlResponse, sidebarResponse] = await Promise.all([
           fetch(
-            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId })}`,
             { cache: "no-store" },
           ),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`, {
+          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId })}`, {
             cache: "no-store",
           }),
         ]);
@@ -351,11 +384,15 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
             closeMessageKey: nextState.closeMessageKey ?? null,
             closedBeforeNegotiation: nextState.closedBeforeNegotiation,
           });
+        } else if (controlResponse.status === 409) {
+          setStaleConnection(true);
         }
 
         if (sidebarResponse.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
+        } else if (sidebarResponse.status === 409) {
+          setStaleConnection(true);
         }
       } catch {
         // Ignore transient polling errors.
@@ -363,12 +400,15 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [error, isLoading, roomAuth, sessionId]);
+  }, [error, isLoading, roomAuth, sessionId, roomConnectionId]);
 
   const handleInvalidToken = useCallback(() => {
     clearRecoveryContext();
     setError(t("rejoin.sessionNoLongerAvailable"));
   }, [t]);
+  const handleStaleConnection = useCallback(() => {
+    setStaleConnection(true);
+  }, []);
 
   if (isLoading) {
     return (
@@ -406,6 +446,9 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       onControlStateChange={setControlState}
       onRecordingStateChange={setRecordingState}
       onInvalidToken={handleInvalidToken}
+      roomConnectionId={roomConnectionId}
+      staleConnection={staleConnection}
+      onStaleConnection={handleStaleConnection}
     />
   );
 }

@@ -29,6 +29,7 @@ function NegotiationStartConsentModal({
 type FacilitatorRoomControlsProps = {
   sessionId: string;
   roomAuth: RoomAuthToken;
+  connectionId?: string;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
   onRecordingStateChange?: (state: {
@@ -193,6 +194,7 @@ function DurationControls({
 export function FacilitatorRoomControls({
   sessionId,
   roomAuth,
+  connectionId,
   controlState,
   onControlStateChange,
   onRecordingStateChange,
@@ -214,7 +216,10 @@ export function FacilitatorRoomControls({
         const response = await fetch(`/api/sessions/${sessionId}/control`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...roomAuthBody(roomAuth), action }),
+          body: JSON.stringify({
+            ...roomAuthBody(roomAuth, { connectionId }),
+            action,
+          }),
         });
 
         const payload = (await response.json()) as ControlState & {
@@ -253,7 +258,15 @@ export function FacilitatorRoomControls({
         setIsSubmitting(false);
       }
     },
-    [roomAuth, onControlStateChange, onRecordingStateChange, sessionId, onNegotiationStarted, onNegotiationFinished],
+    [
+      roomAuth,
+      connectionId,
+      onControlStateChange,
+      onRecordingStateChange,
+      sessionId,
+      onNegotiationStarted,
+      onNegotiationFinished,
+    ],
   );
 
   /** For START action, show consent modal first. All other actions run directly. */

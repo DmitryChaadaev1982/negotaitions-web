@@ -370,6 +370,12 @@ export type SharedRoomShellProps = {
   onNegotiationFinished?: () => void;
   /** Called when the presence heartbeat detects an invalid token. */
   onInvalidToken: () => void;
+  /** Called when current tab becomes stale due to same-login takeover. */
+  onStaleConnection?: () => void;
+  /** Per-tab deterministic connection id for same-login lease. */
+  connectionId?: string;
+  /** Whether this tab has been superseded by a newer session connection. */
+  staleConnection?: boolean;
   /** Navigate away after leaving (for SessionClosedOverlay). */
   onLeave: () => void;
 
@@ -477,6 +483,9 @@ export function SharedRoomShell({
   onNegotiationStarted,
   onNegotiationFinished,
   onInvalidToken,
+  onStaleConnection,
+  connectionId,
+  staleConnection = false,
   onLeave,
   leaveButton,
   controlBar,
@@ -511,7 +520,9 @@ export function SharedRoomShell({
       <SessionRoomPresenceHeartbeat
         sessionId={sessionId}
         roomAuth={roomAuth}
+        connectionId={connectionId}
         onInvalidToken={onInvalidToken}
+        onStaleConnection={onStaleConnection}
       />
 
       {/* Session closed overlay (event-close / early close) */}
@@ -603,6 +614,14 @@ export function SharedRoomShell({
 
         {/* Left column: video + controls */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {staleConnection ? (
+            <div
+              className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+              data-testid="room-stale-connection-banner"
+            >
+              This tab is stale because a newer tab became active for this account.
+            </div>
+          ) : null}
           {/* Video layout */}
           <div className="min-h-0 flex-1 overflow-hidden bg-[#0f172a]">
             {mediaArea}
@@ -623,11 +642,12 @@ export function SharedRoomShell({
           {autoplayUnlockBanner}
 
           {/* Facilitator controls — hidden in debrief/closed states */}
-          {controlState.canControl && !sessionCloseState.isClosed ? (
+          {controlState.canControl && !sessionCloseState.isClosed && !staleConnection ? (
             <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3 space-y-2">
               <FacilitatorRoomControls
                 sessionId={sessionId}
                 roomAuth={roomAuth}
+                connectionId={connectionId}
                 controlState={controlState}
                 onControlStateChange={onControlStateChange}
                 onRecordingStateChange={onRecordingStateChange}

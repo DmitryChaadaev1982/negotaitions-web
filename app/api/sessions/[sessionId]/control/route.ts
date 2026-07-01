@@ -24,11 +24,13 @@ import {
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { getVideoProvider } from "@/lib/env";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   action: z.enum([
     "START_PREPARATION",
     "PAUSE_PREPARATION",
@@ -133,6 +135,24 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!participant) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+  }
+
+  if (participant.userId && parsed.data.connectionId) {
+    const leaseState = validateSessionRoomConnectionLease({
+      sessionId,
+      userId: participant.userId,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!leaseState.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionVersion: leaseState.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (participant.type !== ParticipantType.FACILITATOR) {

@@ -12,6 +12,9 @@ export type SessionRosterEntry = {
   displayName: string;
   participantType: ParticipantType;
   caseRoleName: string | null;
+  userId: string | null;
+  /** Voximplant provider username without @domain. */
+  voximplantProviderUsername: string | null;
   joinedAt: string | null;
   lastSeenAt: string | null;
   /** Phase 6.11B: DB sessionRoleId — null = unassigned. Only set for PARTICIPANT type. */

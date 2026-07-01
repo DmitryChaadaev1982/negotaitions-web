@@ -9,6 +9,7 @@ import {
 } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { getVideoProvider } from "@/lib/env";
 import {
   buildVoximplantRecordingDispatch,
@@ -23,6 +24,7 @@ export const runtime = "nodejs";
 const actionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   action: z.enum(["start", "stop", "refresh"]),
   // Required for start action: caller must explicitly confirm recording consent in UI.
   // Absent or false → 400 for start; ignored for stop/refresh.
@@ -59,6 +61,23 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+  if (participant.userId && parsed.data.connectionId) {
+    const leaseState = validateSessionRoomConnectionLease({
+      sessionId,
+      userId: participant.userId,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!leaseState.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionVersion: leaseState.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const session = await prisma.session.findUnique({

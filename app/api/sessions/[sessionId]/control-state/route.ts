@@ -12,6 +12,10 @@ import {
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import {
+  claimSessionRoomConnectionLease,
+  validateSessionRoomConnectionLease,
+} from "@/lib/session-room-connection-lease";
+import {
   buildSessionCloseState,
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
@@ -38,6 +42,50 @@ export async function GET(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Invalid join token." }, { status: 400 });
     }
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+  }
+
+  const connectionId = url.searchParams.get("connectionId")?.trim() ?? null;
+  const claimLease = url.searchParams.get("claimLease") === "1";
+  if (participant.userId && connectionId) {
+    let isCurrentConnectionActive = true;
+    let activeVersion = 0;
+    if (claimLease) {
+      const lease = claimSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId,
+      });
+      isCurrentConnectionActive = lease.isCurrentConnectionActive;
+      activeVersion = lease.version;
+    } else {
+      const leaseState = validateSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId,
+      });
+      if (leaseState.version === 0) {
+        const firstLease = claimSessionRoomConnectionLease({
+          sessionId,
+          userId: participant.userId,
+          connectionId,
+        });
+        activeVersion = firstLease.version;
+      } else {
+        isCurrentConnectionActive = leaseState.isCurrentConnectionActive;
+        activeVersion = leaseState.version;
+      }
+    }
+
+    if (!isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionVersion: activeVersion,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const now = new Date();

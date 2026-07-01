@@ -4,11 +4,58 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { getRoomSidebarData, getRoomSidebarDataByParticipantId } from "@/lib/room-sidebar";
 import { prisma } from "@/lib/prisma";
+import {
+  claimSessionRoomConnectionLease,
+  validateSessionRoomConnectionLease,
+} from "@/lib/session-room-connection-lease";
+
+function enforceConnectionLease(params: {
+  sessionId: string;
+  userId: string;
+  connectionId: string | null;
+  claimLease: boolean;
+}) {
+  if (!params.connectionId) {
+    return null;
+  }
+  if (params.claimLease) {
+    claimSessionRoomConnectionLease({
+      sessionId: params.sessionId,
+      userId: params.userId,
+      connectionId: params.connectionId,
+    });
+    return null;
+  }
+  const state = validateSessionRoomConnectionLease({
+    sessionId: params.sessionId,
+    userId: params.userId,
+    connectionId: params.connectionId,
+  });
+  if (state.version === 0) {
+    claimSessionRoomConnectionLease({
+      sessionId: params.sessionId,
+      userId: params.userId,
+      connectionId: params.connectionId,
+    });
+    return null;
+  }
+  if (!state.isCurrentConnectionActive) {
+    return {
+      error: "staleConnection",
+      code: "STALE_CONNECTION",
+      activeConnectionVersion: state.version,
+      status: 409 as const,
+    };
+  }
+  return null;
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const joinToken = url.searchParams.get("joinToken")?.trim() ?? null;
   const participantId = url.searchParams.get("participantId")?.trim() ?? null;
+  const connectionId = url.searchParams.get("connectionId")?.trim() ?? null;
+  const claimLease = url.searchParams.get("claimLease") === "1";
 
   if (!joinToken && !participantId) {
     return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
@@ -32,7 +79,7 @@ export async function GET(request: Request) {
     // Verify the user owns or may use this participant before returning sidebar data.
     const participantForToken = await prisma.sessionParticipant.findUnique({
       where: { joinToken },
-      select: { id: true, joinToken: true, userId: true },
+      select: { id: true, joinToken: true, userId: true, sessionId: true },
     });
 
     if (!participantForToken) {
@@ -41,6 +88,27 @@ export async function GET(request: Request) {
 
     if (participantForToken.userId && participantForToken.userId !== user.id) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    if (participantForToken.userId) {
+      const leaseError = enforceConnectionLease({
+        sessionId: participantForToken.sessionId,
+        userId: participantForToken.userId,
+        connectionId,
+        claimLease,
+      });
+      if (leaseError) {
+        return NextResponse.json(
+          {
+            error: leaseError.error,
+            code: "code" in leaseError ? leaseError.code : undefined,
+            activeConnectionVersion:
+              "activeConnectionVersion" in leaseError
+                ? leaseError.activeConnectionVersion
+                : undefined,
+          },
+          { status: leaseError.status },
+        );
+      }
     }
 
     const sidebar = await getRoomSidebarData(participantForToken.joinToken);
@@ -56,6 +124,7 @@ export async function GET(request: Request) {
     select: {
       id: true,
       userId: true,
+      sessionId: true,
     },
   });
 
@@ -66,6 +135,28 @@ export async function GET(request: Request) {
   const isOwner = participant.userId === user.id;
   if (!isOwner) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  if (participant.userId) {
+    const leaseError = enforceConnectionLease({
+      sessionId: participant.sessionId,
+      userId: participant.userId,
+      connectionId,
+      claimLease,
+    });
+    if (leaseError) {
+      return NextResponse.json(
+        {
+          error: leaseError.error,
+          code: "code" in leaseError ? leaseError.code : undefined,
+          activeConnectionVersion:
+            "activeConnectionVersion" in leaseError
+              ? leaseError.activeConnectionVersion
+              : undefined,
+        },
+        { status: leaseError.status },
+      );
+    }
   }
 
   const sidebar = await getRoomSidebarDataByParticipantId(participant.id);

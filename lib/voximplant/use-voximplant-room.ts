@@ -155,6 +155,7 @@ type AccessReadyPayload = {
 type VoxRoomParticipant = {
   id: string;
   displayName: string;
+  endpointUsername?: string | null;
   stream: MediaStream | null;
 };
 
@@ -724,6 +725,7 @@ export function useVoximplantRoom({
       upsertRemote({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
+        endpointUsername: endpoint.userName ?? null,
         stream: streamToMediaStream(stream),
       });
     },

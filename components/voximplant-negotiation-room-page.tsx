@@ -35,7 +35,7 @@ import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 // ─── Page props ───────────────────────────────────────────────────────────────
 
@@ -153,12 +153,14 @@ function AudioDiagnosticsPanel({
 
 function VoximplantControlBar({
   joined,
+  disabled,
   micCaptureStatus,
   isCameraOn,
   toggleMic,
   toggleCamera,
 }: {
   joined: boolean;
+  disabled?: boolean;
   micCaptureStatus: string;
   isCameraOn: boolean;
   toggleMic: () => void;
@@ -180,7 +182,7 @@ function VoximplantControlBar({
               ? "text-red-400"
               : "text-amber-400"
         }`}
-        disabled={!joined}
+        disabled={!joined || disabled}
         title={
           micCaptureStatus === "unavailable"
             ? "Микрофон недоступен — нажмите для повторной попытки"
@@ -194,7 +196,7 @@ function VoximplantControlBar({
         type="button"
         onClick={toggleCamera}
         className={`lk-button ${isCameraOn ? "" : "text-amber-400"}`}
-        disabled={!joined}
+        disabled={!joined || disabled}
         data-testid="vox-camera-toggle"
       >
         {isCameraOn ? t("room.camera") + " (вкл)" : t("room.camera") + " (выкл)"}
@@ -234,6 +236,7 @@ type RecordingControlResponse = {
   recording?: { status: string; errorMessage: string | null } | null;
   warning?: string;
   error?: string;
+  code?: string;
   fileKeyHandoff?: "webhook";
   fileKeyHandoffDeferred?: boolean;
 };
@@ -261,6 +264,12 @@ export default function VoximplantNegotiationRoomPage(
         ? buildSessionMaterialsPath(roomAuth.value)
         : `/sessions/${props.sessionId}/materials`,
     [props.sessionId, roomAuth],
+  );
+
+  const roomConnectionSeed = useId();
+  const roomConnectionId = useMemo(
+    () => `room-${props.sessionId}-${roomConnectionSeed.replace(/:/g, "")}`,
+    [props.sessionId, roomConnectionSeed],
   );
 
   // ── Media hook (Voximplant) ────────────────────────────────────────────────
@@ -315,6 +324,7 @@ export default function VoximplantNegotiationRoomPage(
     closeMessageKey: null,
     closedBeforeNegotiation: false,
   });
+  const [staleConnection, setStaleConnection] = useState(false);
 
   // Initial load of sidebar + control state
   useEffect(() => {
@@ -326,11 +336,14 @@ export default function VoximplantNegotiationRoomPage(
 
       try {
         const [sidebarResult, controlResult] = await Promise.all([
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`, {
-            cache: "no-store",
-          }),
           fetch(
-            `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            `/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined, claimLease: true })}`,
+            {
+            cache: "no-store",
+            },
+          ),
+          fetch(
+            `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined, claimLease: true })}`,
             { cache: "no-store" },
           ),
         ]);
@@ -349,6 +362,10 @@ export default function VoximplantNegotiationRoomPage(
           | { error?: string };
 
         if (!sidebarResult.ok) {
+          if (sidebarResult.status === 409) {
+            setStaleConnection(true);
+            return;
+          }
           throw new Error(
             "error" in sidebarPayload && sidebarPayload.error
               ? sidebarPayload.error
@@ -356,6 +373,10 @@ export default function VoximplantNegotiationRoomPage(
           );
         }
         if (!controlResult.ok) {
+          if (controlResult.status === 409) {
+            setStaleConnection(true);
+            return;
+          }
           throw new Error(
             "error" in controlPayload && controlPayload.error
               ? controlPayload.error
@@ -393,7 +414,7 @@ export default function VoximplantNegotiationRoomPage(
     return () => {
       cancelled = true;
     };
-  }, [roomAuth, props.sessionId, t]);
+  }, [roomAuth, props.sessionId, roomConnectionId, t]);
 
   // Polling (mirrors VideoRoomPage — 1-second interval)
   useEffect(() => {
@@ -405,10 +426,10 @@ export default function VoximplantNegotiationRoomPage(
       try {
         const [controlResponse, sidebarResponse] = await Promise.all([
           fetch(
-            `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth)}`,
+            `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
             { cache: "no-store" },
           ),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth)}`, {
+          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`, {
             cache: "no-store",
           }),
         ]);
@@ -427,11 +448,15 @@ export default function VoximplantNegotiationRoomPage(
             closeMessageKey: nextState.closeMessageKey ?? null,
             closedBeforeNegotiation: nextState.closedBeforeNegotiation,
           });
+        } else if (controlResponse.status === 409) {
+          setStaleConnection(true);
         }
 
         if (sidebarResponse.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
+        } else if (sidebarResponse.status === 409) {
+          setStaleConnection(true);
         }
       } catch {
         // Ignore transient polling errors.
@@ -439,7 +464,7 @@ export default function VoximplantNegotiationRoomPage(
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [businessLoading, businessError, roomAuth, props.sessionId]);
+  }, [businessLoading, businessError, roomAuth, props.sessionId, roomConnectionId]);
 
   // ── Identity resolution ────────────────────────────────────────────────────
   // Sidebar is always authoritative. Hook value is the transport-level fallback.
@@ -558,7 +583,7 @@ export default function VoximplantNegotiationRoomPage(
 
       try {
         const body: Record<string, unknown> = {
-          ...roomAuthBody(roomAuth),
+          ...roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
           action,
         };
         if (action === "start") {
@@ -581,6 +606,10 @@ export default function VoximplantNegotiationRoomPage(
         console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.action, "recording.status:", payload.recording?.status);
 
         if (!response.ok) {
+          if (response.status === 409 && payload.code === "STALE_CONNECTION") {
+            setStaleConnection(true);
+            return;
+          }
           postRecordingDebug(
             `recording-control:${action}:response:error`,
             `/recording-control ${action} failed: ${payload.error ?? response.status}`,
@@ -656,6 +685,7 @@ export default function VoximplantNegotiationRoomPage(
       joined,
       sendMessageAvailable,
       roomAuth,
+      roomConnectionId,
       props.sessionId,
       recordingState,
       sendConferenceMessage,
@@ -695,6 +725,48 @@ export default function VoximplantNegotiationRoomPage(
   const handleInvalidToken = useCallback(() => {
     clearRecoveryContext();
   }, []);
+  const handleStaleConnection = useCallback(() => {
+    setStaleConnection(true);
+  }, []);
+  const policyMutedBySystemRef = useRef(false);
+
+  useEffect(() => {
+    if (staleConnection && joined) {
+      void leave();
+    }
+  }, [joined, leave, staleConnection]);
+
+  useEffect(() => {
+    if (!joined || staleConnection || !controlState || !effectiveParticipantType) {
+      return;
+    }
+    const shouldMuteByPolicy = !controlState.micAllowed;
+    if (shouldMuteByPolicy && !isMicMuted) {
+      policyMutedBySystemRef.current = true;
+      toggleMic();
+      return;
+    }
+    if (
+      !shouldMuteByPolicy &&
+      policyMutedBySystemRef.current &&
+      isMicMuted &&
+      effectiveParticipantType === "PARTICIPANT"
+    ) {
+      toggleMic();
+      policyMutedBySystemRef.current = false;
+      return;
+    }
+    if (!shouldMuteByPolicy && !isMicMuted) {
+      policyMutedBySystemRef.current = false;
+    }
+  }, [
+    controlState,
+    effectiveParticipantType,
+    isMicMuted,
+    joined,
+    staleConnection,
+    toggleMic,
+  ]);
 
   // ── Loading / error states ─────────────────────────────────────────────────
   const isLoading = mediaLoading || businessLoading;
@@ -746,6 +818,8 @@ export default function VoximplantNegotiationRoomPage(
         displayName={effectiveDisplayName}
         onControlStateChange={setControlState}
         onRecordingStateChange={setRecordingState}
+        connectionId={roomConnectionId ?? undefined}
+        staleConnection={staleConnection}
         onNegotiationStarted={
           effectiveParticipantType === "FACILITATOR"
             ? handleNegotiationStarted
@@ -757,6 +831,7 @@ export default function VoximplantNegotiationRoomPage(
             : undefined
         }
         onInvalidToken={handleInvalidToken}
+        onStaleConnection={handleStaleConnection}
         onLeave={() => void handleLeave()}
         // ── Voximplant-specific slots ────────────────────────────────────────
         audioRenderer={null}
@@ -777,6 +852,13 @@ export default function VoximplantNegotiationRoomPage(
           <VoximplantVideoLayout
             localParticipant={localParticipant}
             remoteParticipants={remoteParticipants}
+            roster={sidebar.roster}
+            controlState={{
+              ...controlState,
+              participantType: effectiveParticipantType ?? "PARTICIPANT",
+            }}
+            localParticipantType={effectiveParticipantType ?? "PARTICIPANT"}
+            localCaseRoleName={sidebar.caseRole?.name ?? null}
             isCameraOn={isCameraOn}
             isMicMuted={isMicMuted}
             micLevel={micLevel}
@@ -790,6 +872,7 @@ export default function VoximplantNegotiationRoomPage(
             isCameraOn={isCameraOn}
             toggleMic={toggleMic}
             toggleCamera={toggleCamera}
+            disabled={staleConnection}
           />
         }
         leaveButton={
