@@ -101,7 +101,8 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (
-    recording.status !== RecordingStatus.COMPLETED ||
+    (recording.status !== RecordingStatus.COMPLETED &&
+      recording.status !== RecordingStatus.STOPPED) ||
     !recording.fileKey
   ) {
     return NextResponse.json(

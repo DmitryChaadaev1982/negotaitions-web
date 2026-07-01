@@ -87,9 +87,20 @@ function resolveRecordingProcessingStage(status: RecordingStatus): string {
   }
 }
 
+function isRecordingReadyForTranscription(
+  status: RecordingStatus | null,
+  hasFileKey: boolean,
+): boolean {
+  if (!status || !hasFileKey) {
+    return false;
+  }
+  return status === RecordingStatus.COMPLETED || status === RecordingStatus.STOPPED;
+}
+
 function resolveTranscriptProcessingStage(
   transcriptStatus: TranscriptStatus | null,
   recordingStatus: RecordingStatus | null,
+  recordingHasFileKey: boolean,
   transcriptHasText: boolean,
   enhancementStatus: ReturnType<typeof resolveTranscriptEnhancementStatus>,
 ): string {
@@ -118,13 +129,13 @@ function resolveTranscriptProcessingStage(
   if (
     !recordingStatus ||
     recordingStatus === RecordingStatus.NOT_STARTED ||
-    (recordingStatus !== RecordingStatus.COMPLETED &&
+    (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
       !ACTIVE_RECORDING_STATUSES.has(recordingStatus))
   ) {
     return "waiting_for_recording";
   }
 
-  if (recordingStatus !== RecordingStatus.COMPLETED) {
+  if (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey)) {
     return "waiting_for_recording";
   }
 
@@ -163,7 +174,9 @@ function sanitizeTranscriptErrorMessage(message: string | null): string | null {
 
 function computeShouldPoll(
   recordingStatus: RecordingStatus | null,
+  recordingHasFileKey: boolean,
   transcriptStatus: TranscriptStatus | null,
+  transcriptEnhancementInProgress: boolean,
   aiStatus: AiAnalysisStatus | null,
   isParticipantOrObserver = false,
   transcriptHasText = false,
@@ -175,7 +188,7 @@ function computeShouldPoll(
   if (
     recordingStatus &&
     (ACTIVE_RECORDING_STATUSES.has(recordingStatus) ||
-      recordingStatus === RecordingStatus.STOPPED)
+      (recordingStatus === RecordingStatus.STOPPED && !recordingHasFileKey))
   ) {
     return true;
   }
@@ -183,7 +196,7 @@ function computeShouldPoll(
   // When disabled, the recording-ready state is stable and no auto-job will start.
   if (
     autoTranscribeEnabled &&
-    recordingStatus === RecordingStatus.COMPLETED &&
+    isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
     !transcriptHasText &&
     !hasRunningTranscription &&
     transcriptStatus !== TranscriptStatus.FAILED
@@ -191,6 +204,9 @@ function computeShouldPoll(
     return true;
   }
   if (transcriptStatus && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus)) {
+    return true;
+  }
+  if (transcriptEnhancementInProgress) {
     return true;
   }
   if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
@@ -304,6 +320,11 @@ export async function GET(request: Request, context: RouteContext) {
   const aiAnalysis = session.aiAnalysis;
 
   const recordingStatus = recording?.status ?? null;
+  const recordingHasFileKey = Boolean(recording?.fileKey);
+  const recordingReadyForTranscription = isRecordingReadyForTranscription(
+    recordingStatus,
+    recordingHasFileKey,
+  );
   const transcriptStatus = transcript?.status ?? null;
   const aiStatus = aiAnalysis?.status ?? null;
 
@@ -398,18 +419,21 @@ export async function GET(request: Request, context: RouteContext) {
   if (
     canViewRecording &&
     recording?.fileKey &&
-    recording.status === RecordingStatus.COMPLETED
+    recordingReadyForTranscription
   ) {
     downloadUrl = await getSignedDownloadUrl(recording.fileKey, 900);
   }
 
   const recordingStage = recordingStatus
-    ? resolveRecordingProcessingStage(recordingStatus)
+    ? recordingReadyForTranscription
+      ? "ready"
+      : resolveRecordingProcessingStage(recordingStatus)
     : "not_available";
 
   const transcriptStage = resolveTranscriptProcessingStage(
     transcriptStatus,
     recordingStatus,
+    recordingHasFileKey,
     transcriptHasText,
     transcriptEnhancementStatus,
   );
@@ -424,7 +448,9 @@ export async function GET(request: Request, context: RouteContext) {
   const sessionIsFinished = session.negotiationState === "FINISHED";
   const shouldPoll = computeShouldPoll(
     recordingStatus,
+    recordingHasFileKey,
     transcriptStatus,
+    transcriptEnhancementStatus === "IN_PROGRESS",
     aiStatus,
     isParticipantOrObserver,
     transcriptHasText,
@@ -439,15 +465,15 @@ export async function GET(request: Request, context: RouteContext) {
     !hasRunningTranscription &&
     !transcriptCompleted &&
     transcript?.status !== TranscriptStatus.FAILED &&
-    recording?.status === RecordingStatus.COMPLETED &&
-    Boolean(recording.fileKey) &&
+    recordingReadyForTranscription &&
+    Boolean(recording?.fileKey) &&
     !transcriptHasText;
 
   const canRetryTranscription =
     canRunTranscription &&
     !hasRunningTranscription &&
     transcript?.status === TranscriptStatus.FAILED &&
-    recording?.status === RecordingStatus.COMPLETED &&
+    recordingReadyForTranscription &&
     Boolean(recording?.fileKey);
 
   const canStopTranscription = canRunTranscription && hasRunningTranscription;
@@ -457,7 +483,7 @@ export async function GET(request: Request, context: RouteContext) {
     canRunTranscription &&
     !hasRunningTranscription &&
     transcriptCompleted &&
-    recording?.status === RecordingStatus.COMPLETED &&
+    recordingReadyForTranscription &&
     Boolean(recording?.fileKey);
 
   const sessionRoleRecord = await prisma.sessionRole.findUnique({
@@ -567,6 +593,8 @@ export async function GET(request: Request, context: RouteContext) {
           streamUrl: downloadUrl,
           canRefreshStatus: isFacilitator,
           processingStage: recordingStage,
+          readyByFilePresenceFallback:
+            recording.status === RecordingStatus.STOPPED && Boolean(recording.fileKey),
         }
       : null,
     transcription: transcript

@@ -12,6 +12,7 @@ import {
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
 import {
+  getAudioTranscriptionQualityProfile,
   getAudioRecordingTargetBitrateKbps,
   getAudioTranscriptionChannels,
   getAudioTranscriptionMaxFileBytes,
@@ -58,6 +59,18 @@ import {
 } from "@/lib/test-mode";
 
 export const runtime = "nodejs";
+
+function resolveCompressedExtension(
+  fileName: string,
+): "webm" | "mp3" | "wav" | "ogg" | "opus" {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith(".mp3")) return "mp3";
+  if (normalized.endsWith(".wav")) return "wav";
+  if (normalized.endsWith(".ogg")) return "ogg";
+  if (normalized.endsWith(".opus")) return "opus";
+  if (normalized.endsWith(".webm")) return "webm";
+  return "webm";
+}
 
 const transcribeSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -175,7 +188,11 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Recording not found." }, { status: 404 });
   }
 
-  if (recording.status !== RecordingStatus.COMPLETED || !recording.fileKey) {
+  if (
+    (recording.status !== RecordingStatus.COMPLETED &&
+      recording.status !== RecordingStatus.STOPPED) ||
+    !recording.fileKey
+  ) {
     return NextResponse.json(
       { error: "No recording file available yet." },
       { status: 400 },
@@ -327,7 +344,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
 
     const timestamp = Date.now();
-    const extension = compression.compressedFileName.endsWith(".mp3") ? "mp3" : "webm";
+    const extension = resolveCompressedExtension(compression.compressedFileName);
     const compressedFileKey = buildCompressedFileKey(sessionId, timestamp, extension);
 
     await uploadBufferToS3(
@@ -344,7 +361,10 @@ export async function POST(request: Request, context: RouteContext) {
         compressedFileName: compression.compressedFileName,
         compressedMimeType: compression.compressedMimeType,
         compressedSizeBytes: compression.compressedSizeBytes,
-        compressionStatus: CompressionStatus.COMPLETED,
+        compressionStatus:
+          compression.codecUsed === "passthrough"
+            ? CompressionStatus.SKIPPED
+            : CompressionStatus.COMPLETED,
         compressionError: null,
       },
     });
@@ -389,6 +409,7 @@ export async function POST(request: Request, context: RouteContext) {
     const processingMetadata = {
       transcriptionProvider,
       recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
+      transcriptionQualityProfile: getAudioTranscriptionQualityProfile(),
       transcriptionBitrateKbps: getAudioTranscriptionTargetBitrateKbps(),
       sampleRate: getAudioTranscriptionSampleRate(),
       channels: getAudioTranscriptionChannels(),
@@ -508,7 +529,10 @@ export async function POST(request: Request, context: RouteContext) {
       warnings: transcription.warnings as TranscriptionWarningCode[],
       recording: {
         compressedSizeBytes: compression.compressedSizeBytes,
-        compressionStatus: CompressionStatus.COMPLETED,
+        compressionStatus:
+          compression.codecUsed === "passthrough"
+            ? CompressionStatus.SKIPPED
+            : CompressionStatus.COMPLETED,
       },
     });
   } catch (error) {

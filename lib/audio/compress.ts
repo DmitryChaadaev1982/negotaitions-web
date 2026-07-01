@@ -16,10 +16,13 @@ import { CompressionStatus, ExternalService } from "@/app/generated/prisma/clien
  */
 export const MP3_MIN_BITRATE_KBPS = 32;
 import {
+  getAudioTranscriptionQualityProfile,
   getAudioTranscriptionChannels,
+  getAudioTranscriptionMaxFileBytes,
   getAudioTranscriptionSampleRate,
   getAudioTranscriptionTargetBitrateKbps,
 } from "@/lib/audio/config";
+import { shouldReuseOriginalAudioForTranscription } from "@/lib/audio/transcription-file-selection";
 import { handleExternalServiceFailure } from "@/lib/services/external-service-events";
 import { prisma } from "@/lib/prisma";
 
@@ -28,7 +31,7 @@ export type CompressionResult = {
   compressedFileName: string;
   compressedMimeType: string;
   compressedSizeBytes: number;
-  codecUsed: "libopus" | "libmp3lame";
+  codecUsed: "libopus" | "libmp3lame" | "pcm_s16le" | "passthrough";
   bitrateUsed: number;
 };
 
@@ -163,11 +166,11 @@ function runFfmpeg(
   inputPath: string,
   outputPath: string,
   options: {
-    codec: "libopus" | "libmp3lame";
+    codec: "libopus" | "libmp3lame" | "pcm_s16le";
     bitrateKbps: number;
     sampleRate: number;
     channels: number;
-    format: "webm" | "mp3";
+    format: "webm" | "mp3" | "wav";
   },
 ) {
   const ffmpegPath = getFfmpegPath();
@@ -176,18 +179,33 @@ function runFfmpeg(
   }
 
   return new Promise<void>((resolve, reject) => {
-    ffmpeg(inputPath)
+    const command = ffmpeg(inputPath)
       .setFfmpegPath(ffmpegPath)
       .noVideo()
       .audioCodec(options.codec)
-      .audioBitrate(`${options.bitrateKbps}k`)
       .audioFrequency(options.sampleRate)
       .audioChannels(options.channels)
-      .format(options.format)
+      .format(options.format);
+
+    if (options.codec !== "pcm_s16le") {
+      command.audioBitrate(`${options.bitrateKbps}k`);
+    }
+
+    command
       .on("error", (error) => reject(error))
       .on("end", () => resolve())
       .save(outputPath);
   });
+}
+
+function inferMimeTypeFromFileName(fileName: string) {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith(".mp3")) return "audio/mpeg";
+  if (normalized.endsWith(".wav")) return "audio/wav";
+  if (normalized.endsWith(".ogg")) return "audio/ogg";
+  if (normalized.endsWith(".opus")) return "audio/ogg";
+  if (normalized.endsWith(".webm")) return "audio/webm";
+  return "application/octet-stream";
 }
 
 export async function compressAudioForTranscription(
@@ -195,6 +213,7 @@ export async function compressAudioForTranscription(
   inputFileName: string,
   options?: { recordingId?: string; sessionId?: string },
 ) {
+  const qualityProfile = getAudioTranscriptionQualityProfile();
   const sampleRate = getAudioTranscriptionSampleRate();
   const channels = getAudioTranscriptionChannels();
   const targetBitrateKbps = getAudioTranscriptionTargetBitrateKbps();
@@ -212,7 +231,55 @@ export async function compressAudioForTranscription(
   }
 
   try {
+    const reuseOriginalDecision = shouldReuseOriginalAudioForTranscription(
+      inputBuffer.length,
+      inputFileName,
+      getAudioTranscriptionMaxFileBytes(),
+    );
+    if (reuseOriginalDecision.shouldReuseOriginal) {
+      if (options?.recordingId) {
+        await prisma.recording.update({
+          where: { id: options.recordingId },
+          data: { compressionStatus: CompressionStatus.SKIPPED, compressionError: null },
+        });
+      }
+      return {
+        compressedBuffer: inputBuffer,
+        compressedFileName: inputFileName,
+        compressedMimeType: inferMimeTypeFromFileName(inputFileName),
+        compressedSizeBytes: inputBuffer.length,
+        codecUsed: "passthrough" as const,
+        bitrateUsed: 0,
+      };
+    }
+
     await writeFile(inputPath, inputBuffer);
+
+    if (qualityProfile === "diagnostic") {
+      const wavPath = join(tempDir, "transcription.wav");
+      await runFfmpeg(inputPath, wavPath, {
+        codec: "pcm_s16le",
+        bitrateKbps: targetBitrateKbps,
+        sampleRate,
+        channels,
+        format: "wav",
+      });
+      const compressedBuffer = await readFile(wavPath);
+      if (options?.recordingId) {
+        await prisma.recording.update({
+          where: { id: options.recordingId },
+          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
+        });
+      }
+      return {
+        compressedBuffer,
+        compressedFileName: "transcription.wav",
+        compressedMimeType: "audio/wav",
+        compressedSizeBytes: compressedBuffer.length,
+        codecUsed: "pcm_s16le" as const,
+        bitrateUsed: targetBitrateKbps,
+      };
+    }
 
     try {
       await runFfmpeg(inputPath, webmPath, {
@@ -228,7 +295,7 @@ export async function compressAudioForTranscription(
       if (options?.recordingId) {
         await prisma.recording.update({
           where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.COMPLETED },
+          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
         });
       }
 
@@ -255,7 +322,7 @@ export async function compressAudioForTranscription(
       if (options?.recordingId) {
         await prisma.recording.update({
           where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.COMPLETED },
+          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
         });
       }
 

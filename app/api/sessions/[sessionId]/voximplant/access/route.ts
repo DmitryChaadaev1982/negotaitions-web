@@ -20,6 +20,7 @@ import {
 } from "@/lib/voximplant/management-api";
 import type { VoximplantRoomRole } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
+import { getVoximplantAudioProcessingProfile } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -81,6 +82,7 @@ function buildBrowserSafePayload(params: {
     audioMode: "lossless" | "hd_mp3";
     pauseEnabled: boolean;
   };
+  audioProcessingProfile: "speech" | "raw_diagnostic";
 }) {
   return {
     provider: "voximplant" as const,
@@ -98,6 +100,7 @@ function buildBrowserSafePayload(params: {
       userDomain: params.userDomain,
     },
     recording: params.recording,
+    audioProcessingProfile: params.audioProcessingProfile,
   };
 }
 
@@ -214,6 +217,7 @@ export async function POST(_request: Request, context: RouteContext) {
       applicationName: voximplantConfig.applicationName as string,
       userDomain: voximplantConfig.userDomain as string,
       recording: voximplantConfig.recording,
+      audioProcessingProfile: getVoximplantAudioProcessingProfile(),
     });
 
     if (identityFlow.credentials) {
@@ -274,6 +278,7 @@ export async function POST(_request: Request, context: RouteContext) {
             userDomain: voximplantConfig.userDomain,
           },
           recording: voximplantConfig.recording,
+          audioProcessingProfile: getVoximplantAudioProcessingProfile(),
           credentials: {
             status: "implementation_pending",
             message: error.message,

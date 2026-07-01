@@ -1743,6 +1743,7 @@ function shouldPollFromSnapshot(
     "downloading",
     "compressing",
     "transcribing",
+    "enhancing",
   ]);
   const activeAi = new Set<ProcessingAiAnalysisStatus>(["queued", "analyzing"]);
   return (

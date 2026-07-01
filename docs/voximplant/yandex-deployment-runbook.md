@@ -1,0 +1,165 @@
+# Yandex Deployment Runbook (Voximplant Stack)
+
+## 1) Local validation before deploy
+
+```bash
+git status --short
+npm run lint
+npm run build
+npx prisma validate
+npx prisma generate
+```
+
+Playwright baseline (DB required):
+
+```powershell
+$env:DATABASE_URL="postgresql://negotiations:negotiations_password@localhost:5432/negotiations_vox_test"
+npx playwright test tests/e2e/voximplant-room-parity.spec.ts
+npx playwright test tests/e2e/voximplant-event-lobby.spec.ts
+```
+
+If `3100` is busy:
+
+```powershell
+$env:PLAYWRIGHT_PORT="3000"
+```
+
+## 2) Build and runtime commands
+
+```bash
+npm ci
+npx prisma generate
+npm run build
+npm run start
+```
+
+## 3) Database migration commands
+
+Current Stage 3: no new migration required.
+
+Standard production procedure:
+
+```bash
+npx prisma migrate deploy
+npx prisma generate
+```
+
+## 4) Safe env template (no secrets)
+
+```env
+VIDEO_PROVIDER=voximplant
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db>
+NEXTAUTH_URL=https://<domain>
+NEXTAUTH_SECRET=<secret>
+
+VOXIMPLANT_ACCOUNT_NAME=<account>
+VOXIMPLANT_APPLICATION_NAME=<app>
+VOXIMPLANT_USER_DOMAIN=<app>.<account>.voximplant.com
+VOXIMPLANT_SCENARIO_NAME=<scenario>
+VOXIMPLANT_RULE_NAME=<rule>
+VOXIMPLANT_API_KEY_PATH=/secure/path/to/voximplant-key.json
+
+VOXIMPLANT_RECORDING_ENABLED=true
+VOXIMPLANT_RECORDING_VIDEO=false
+VOXIMPLANT_RECORDING_AUDIO_ONLY=true
+VOXIMPLANT_RECORDING_AUDIO_MODE=lossless
+VOXIMPLANT_RECORDING_PAUSE_ENABLED=false
+VOXIMPLANT_RECORDING_WEBHOOK_SECRET=<secret>
+VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL=https://<public-domain>
+
+S3_ENDPOINT=https://storage.yandexcloud.net
+S3_REGION=ru-central1
+S3_BUCKET=<bucket>
+S3_ACCESS_KEY_ID=<key>
+S3_SECRET_ACCESS_KEY=<secret>
+
+TRANSCRIPTION_PROVIDER=yandex_speechkit
+YANDEX_FOLDER_ID=<folder-id>
+YANDEX_API_KEY=<api-key>
+YANDEX_SPEECHKIT_MODEL=general:rc
+YANDEX_SPEECHKIT_LANGUAGE=ru-RU
+YANDEX_SPEECHKIT_ENABLE_SPEAKER_LABELING=true
+YANDEX_SPEECHKIT_TEXT_NORMALIZATION_ENABLED=true
+YANDEX_SPEECHKIT_LITERATURE_TEXT=true
+YANDEX_SPEECHKIT_PROFANITY_FILTER=false
+YANDEX_SPEECHKIT_PHONE_FORMATTING=false
+
+YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED=true
+YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL=deepseek-v4-flash
+YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS=6000
+
+AUDIO_RECORDING_TARGET_BITRATE_KBPS=128
+AUDIO_TRANSCRIPTION_TARGET_BITRATE_KBPS=96
+AUDIO_TRANSCRIPTION_SAMPLE_RATE=48000
+AUDIO_TRANSCRIPTION_CHANNELS=1
+AUDIO_TRANSCRIPTION_MAX_FILE_MB=24
+
+RECORDING_DEBUG_PANEL=false
+NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
+```
+
+## 5) Voximplant console checklist
+
+- App/rule/scenario names match env.
+- Recording is enabled in scenario flow where expected.
+- Scenario webhook calls route:
+  - `POST /api/sessions/{sessionId}/voximplant/recording-status`
+- HMAC header is sent: `X-Voximplant-Signature: hmac-sha256=<hex>`.
+
+## 6) Webhook URL setup
+
+- Use public HTTPS URL in `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL`.
+- Do not hard-code local tunnel URL in source.
+- For local smoke, temporary tunnel is acceptable via env/admin override only.
+
+## 7) Recording storage setup
+
+- Ensure bucket exists and app credentials have read/write permissions.
+- Validate upload/download with admin health endpoint or a test recording.
+
+## 8) Yandex SpeechKit setup
+
+- Verify API key and folder permissions.
+- Confirm selected model/language are valid.
+- Validate one known sample through transcription endpoint.
+
+## 9) Yandex AI / DeepSeek setup
+
+- Verify transcript enhancement model is reachable.
+- If disabled, ensure fallback behavior is acceptable for demo.
+
+## 10) Audio preparation setup
+
+- Keep current Stage 3 POC values:
+  - `AUDIO_RECORDING_TARGET_BITRATE_KBPS=128`
+  - `AUDIO_TRANSCRIPTION_TARGET_BITRATE_KBPS=96`
+  - `AUDIO_TRANSCRIPTION_SAMPLE_RATE=48000`
+  - `AUDIO_TRANSCRIPTION_CHANNELS=1`
+  - `AUDIO_TRANSCRIPTION_MAX_FILE_MB=24`
+- `AUDIO_TRANSCRIPTION_MAX_FILE_MB` is a compression threshold.
+- If source file is below threshold and container is compatible, original file is reused without recompression.
+- Compression/transcoding remains enabled for large or incompatible source files.
+
+## 11) Domain and HTTPS requirements
+
+- HTTPS required for webhook callbacks and auth flows.
+- Stable DNS + TLS cert required in production.
+
+## 12) Post-deploy smoke test
+
+1. Open event.
+2. Join facilitator + participants + observers.
+3. Start session and recording.
+4. Stop recording and verify webhook completion.
+5. Trigger transcription.
+6. Verify analysis generation.
+7. Verify observer-safe materials visibility.
+
+## 13) Rollback/checkpoint instructions
+
+- Keep deploy aligned with checkpoint tags:
+  - `checkpoint/vox-room-parity-stage-1`
+  - `checkpoint/vox-event-lobby-stage-2`
+- For regression rollback, redeploy previous stable image and env snapshot.
+- If transcription quality regresses, return to `standard` profile and re-run A/B procedure.
+

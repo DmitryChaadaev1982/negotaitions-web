@@ -153,6 +153,7 @@ type AccessReadyPayload = {
     applicationName: string;
     userDomain: string;
   };
+  audioProcessingProfile?: "speech" | "raw_diagnostic";
   credentials:
     | {
         status: "one_time_key_required";
@@ -452,6 +453,7 @@ export function useVoximplantRoom({
   const isJoiningRef = useRef(false);
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
+  const audioProcessingEnabledRef = useRef(true);
 
   // ── React state ──────────────────────────────────────────────────────────
   const [isLoading, setIsLoading] = useState(true);
@@ -856,9 +858,11 @@ export function useVoximplantRoom({
             setMicCaptureStatus("requesting");
             try {
               // Audio-only: only requests microphone, no video constraint.
-              const audioStream = await runtime.streamModule.streamManager.createAudioStream({
-                audioProcessing: true,
-              });
+              const audioStream = await runtime.streamModule.streamManager.createAudioStream(
+                {
+                  audioProcessing: audioProcessingEnabledRef.current,
+                },
+              );
               runtime.localAudioStream = audioStream;
               setLocalAudioStreamCreated(true);
 
@@ -1067,6 +1071,8 @@ export function useVoximplantRoom({
         const roomName = initialPayload.roomNameOrConferenceName;
         const displayName = initialPayload.user.displayName || "User";
         const userRole = initialPayload.user.role ?? "unknown";
+        audioProcessingEnabledRef.current =
+          initialPayload.audioProcessingProfile !== "raw_diagnostic";
 
         setRole(userRole);
         setParticipantType(mapParticipantType(userRole));
@@ -1155,7 +1161,7 @@ export function useVoximplantRoom({
           setMicCaptureStatus("requesting");
           try {
             localAudioStream = await streamModule.streamManager.createAudioStream({
-              audioProcessing: true,
+              audioProcessing: audioProcessingEnabledRef.current,
             });
             setLocalAudioStreamCreated(true);
           } catch (audioError) {

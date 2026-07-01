@@ -34,6 +34,7 @@ export const autoTranscribeAfterRecording = getEnvBoolean(
 export type AiAnalysisProvider = "openai" | "yandex";
 export type TranscriptionProvider = "openai" | "yandex_speechkit";
 export type YandexSpeechKitContainerType = "MP3" | "WAV" | "OGG_OPUS";
+export type VoximplantAudioProcessingProfile = "speech" | "raw_diagnostic";
 
 export function getVideoProvider(): VideoProvider {
   const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
@@ -131,4 +132,9 @@ export function getVoximplantRecordingWebhookSecret(): string | null {
 export function getVoximplantRecordingWebhookBaseUrlFromEnv(): string | null {
   const raw = process.env.VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL?.trim();
   return raw || null;
+}
+
+export function getVoximplantAudioProcessingProfile(): VoximplantAudioProcessingProfile {
+  const raw = process.env.VOXIMPLANT_AUDIO_PROCESSING_PROFILE?.trim().toLowerCase();
+  return raw === "raw_diagnostic" ? "raw_diagnostic" : "speech";
 }

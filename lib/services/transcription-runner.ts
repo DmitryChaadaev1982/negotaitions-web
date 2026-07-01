@@ -9,6 +9,7 @@ import {
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
 import {
+  getAudioTranscriptionQualityProfile,
   getAudioRecordingTargetBitrateKbps,
   getAudioTranscriptionChannels,
   getAudioTranscriptionMaxFileBytes,
@@ -45,6 +46,18 @@ import {
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { getMockExternalServiceError } from "@/lib/test-mode";
+
+function resolveCompressedExtension(
+  fileName: string,
+): "webm" | "mp3" | "wav" | "ogg" | "opus" {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith(".mp3")) return "mp3";
+  if (normalized.endsWith(".wav")) return "wav";
+  if (normalized.endsWith(".ogg")) return "ogg";
+  if (normalized.endsWith(".opus")) return "opus";
+  if (normalized.endsWith(".webm")) return "webm";
+  return "webm";
+}
 
 export const MANUAL_TRANSCRIPTION_STOP_SENTINEL = "__MANUAL_TRANSCRIPTION_STOP__";
 
@@ -281,7 +294,7 @@ export async function runRealTranscription(
     await throwIfTranscriptionStoppedManually(transcriptId);
 
     const timestamp = Date.now();
-    const extension = compression.compressedFileName.endsWith(".mp3") ? "mp3" : "webm";
+    const extension = resolveCompressedExtension(compression.compressedFileName);
     const compressedFileKey = buildCompressedFileKey(sessionId, timestamp, extension);
 
     await uploadBufferToS3(
@@ -298,7 +311,10 @@ export async function runRealTranscription(
         compressedFileName: compression.compressedFileName,
         compressedMimeType: compression.compressedMimeType,
         compressedSizeBytes: compression.compressedSizeBytes,
-        compressionStatus: CompressionStatus.COMPLETED,
+        compressionStatus:
+          compression.codecUsed === "passthrough"
+            ? CompressionStatus.SKIPPED
+            : CompressionStatus.COMPLETED,
         compressionError: null,
       },
     });
@@ -371,6 +387,7 @@ export async function runRealTranscription(
     const processingMetadata = {
       transcriptionProvider,
       recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
+      transcriptionQualityProfile: getAudioTranscriptionQualityProfile(),
       transcriptionBitrateKbps: getAudioTranscriptionTargetBitrateKbps(),
       sampleRate: getAudioTranscriptionSampleRate(),
       channels: getAudioTranscriptionChannels(),

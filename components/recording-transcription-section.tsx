@@ -1156,7 +1156,7 @@ export function RecordingTranscriptionSection({
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-                    <p className="text-xs text-slate-500">{t("recording.compressedFileSize")}</p>
+                    <p className="text-xs text-slate-500">{t("recording.transcriptionFileSize")}</p>
                     <p className="text-sm text-slate-200">
                       {formatBytes(recording?.compressedSizeBytes ?? null)}
                     </p>
@@ -1175,7 +1175,11 @@ export function RecordingTranscriptionSection({
                   </p>
                 ) : null}
 
-                <p className="text-sm text-slate-400">{t("recording.compressionInfo")}</p>
+                <p className="text-sm text-slate-400">
+                  {recording?.compressionStatus === "SKIPPED"
+                    ? t("recording.originalWithoutRecompression")
+                    : t("recording.compressionInfo")}
+                </p>
               </>
             ) : (
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2">
