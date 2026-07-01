@@ -5,6 +5,8 @@ import { ParticipantType } from "@/app/generated/prisma/client";
 import { refreshRecordingStatus } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import { getVideoProvider } from "@/lib/env";
+import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 export const runtime = "nodejs";
 
@@ -43,14 +45,54 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
+  const provider = getVideoProvider();
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
   });
+
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "refresh-recording",
+    level: "info",
+    step: "refresh-recording:called",
+    message: `refresh-recording called, provider=${provider} recordingFound=${Boolean(recording)}`,
+    data: {
+      provider,
+      recordingFound: Boolean(recording),
+      status: recording?.status ?? null,
+    },
+  });
+
+  // For Voximplant: recording status is updated exclusively by the VoxEngine
+  // webhook (/voximplant/recording-status). Calling LiveKit egress here would
+  // be wrong. Return the current DB row directly (null when not yet created).
+  if (provider === "voximplant") {
+    if (!recording) {
+      return NextResponse.json({ recording: null });
+    }
+    return NextResponse.json({
+      recording: {
+        id: recording.id,
+        status: recording.status,
+        recordingType: recording.recordingType,
+        fileKey: recording.fileKey,
+        fileName: recording.fileName,
+        originalSizeBytes: recording.originalSizeBytes,
+        compressedSizeBytes: recording.compressedSizeBytes,
+        compressionStatus: recording.compressionStatus,
+        compressionError: recording.compressionError,
+        startedAt: recording.startedAt?.toISOString() ?? null,
+        endedAt: recording.endedAt?.toISOString() ?? null,
+        errorMessage: recording.errorMessage,
+      },
+    });
+  }
 
   if (!recording) {
     return NextResponse.json({ error: "No recording available yet." }, { status: 404 });
   }
 
+  // LiveKit: refresh status via egress API.
   const updated = await refreshRecordingStatus(recording);
 
   return NextResponse.json({
@@ -63,6 +105,7 @@ export async function POST(request: Request, context: RouteContext) {
       originalSizeBytes: updated.originalSizeBytes,
       compressedSizeBytes: updated.compressedSizeBytes,
       compressionStatus: updated.compressionStatus,
+      compressionError: null,
       startedAt: updated.startedAt?.toISOString() ?? null,
       endedAt: updated.endedAt?.toISOString() ?? null,
       errorMessage: updated.errorMessage,

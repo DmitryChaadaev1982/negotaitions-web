@@ -77,11 +77,39 @@ export async function getRoomSidebarDataByParticipantId(
   return buildRoomSidebarData(participant);
 }
 
-function buildRoomSidebarData(
+async function buildRoomSidebarData(
   participant: RoomSidebarParticipant | null,
-): RoomSidebarData | null {
+): Promise<RoomSidebarData | null> {
   if (!participant) {
     return null;
+  }
+
+  const userIds = Array.from(
+    new Set(
+      participant.session.participants
+        .map((entry) => entry.userId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const voximplantIdentityRows =
+    userIds.length > 0
+      ? await prisma.videoProviderIdentity.findMany({
+          where: {
+            provider: "voximplant",
+            status: "active",
+            userId: { in: userIds },
+          },
+          select: {
+            userId: true,
+            providerUsername: true,
+          },
+        })
+      : [];
+  const voximplantUsernameByUserId = new Map<string, string>();
+  for (const row of voximplantIdentityRows) {
+    if (!voximplantUsernameByUserId.has(row.userId)) {
+      voximplantUsernameByUserId.set(row.userId, row.providerUsername);
+    }
   }
 
   const facilitatorBriefings =
@@ -103,6 +131,10 @@ function buildRoomSidebarData(
     displayName: sessionParticipant.displayName,
     participantType: sessionParticipant.type,
     caseRoleName: sessionParticipant.sessionRole?.name ?? null,
+    userId: sessionParticipant.userId ?? null,
+    voximplantProviderUsername: sessionParticipant.userId
+      ? (voximplantUsernameByUserId.get(sessionParticipant.userId) ?? null)
+      : null,
     joinedAt: sessionParticipant.joinedAt?.toISOString() ?? null,
     lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
     // Phase 6.11B: expose sessionRoleId only; no private briefing data.
@@ -125,6 +157,7 @@ function buildRoomSidebarData(
 
   return {
     sessionId: participant.sessionId,
+    currentParticipantId: participant.id,
     sessionTitle: participant.session.title,
     visibility: participant.session.visibility,
     event: participant.session.event

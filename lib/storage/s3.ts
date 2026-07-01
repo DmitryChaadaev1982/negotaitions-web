@@ -336,7 +336,7 @@ export async function getSignedDownloadUrl(
 export function buildCompressedFileKey(
   sessionId: string,
   timestamp: number,
-  extension: "webm" | "mp3",
+  extension: "webm" | "mp3" | "wav" | "ogg" | "opus",
 ) {
   return `recordings/${sessionId}/compressed/${timestamp}-transcription.${extension}`;
 }

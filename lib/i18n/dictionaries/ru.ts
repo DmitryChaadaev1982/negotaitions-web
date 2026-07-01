@@ -82,6 +82,8 @@ export const ru: Dictionary = {
     eventDurationMinutes: "Длительность встречи (минуты)",
     welcome: "Добро пожаловать, {name}",
     comingLater: "Скоро",
+    retry: "Повторить",
+    you: "вы",
   },
   cases: {
     title: "Кейсы",
@@ -354,6 +356,10 @@ export const ru: Dictionary = {
     checkFfmpeg: "Проверить ffmpeg",
     configured: "Настроено",
     missing: "Отсутствует",
+    unset: "(не задано)",
+    configStatusConfiguredViaEnv: "Настроено через env",
+    configStatusConfiguredViaKeyFile: "Получено из VOXIMPLANT_API_KEY_PATH",
+    configStatusInvalidKeyFile: "Некорректный/нечитаемый key file",
     healthy: "Работает",
     failed: "Ошибка",
     warning: "Предупреждение",
@@ -370,6 +376,29 @@ export const ru: Dictionary = {
     ffmpegSourceStatic: "Источник: пакет ffmpeg-static",
     ffmpegUnavailableHint:
       "Сжатие и транскрибация будут недоступны, пока ffmpeg не установлен или не доступен в PATH.",
+    voximplantConfiguration: "Voximplant",
+    voximplantRecordingWebhook: "Webhook URL записи Voximplant",
+    voximplantWebhookNodeEnv: "NODE_ENV",
+    voximplantWebhookOverrideEnabledRaw: "VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED (env raw)",
+    voximplantWebhookOverrideEnabledEffective: "Эффективный overrideEnabled",
+    voximplantWebhookOverrideHint:
+      "Укажите публичный HTTPS базовый URL (например https://abc.trycloudflare.com). Не добавляйте /api/sessions/.... Секрет webhook здесь не отображается.",
+    voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
+    voximplantWebhookSavedOverride: "Сохранённый override",
+    voximplantWebhookEffectiveUrl: "Эффективный URL (scenarioMessage.webhookBaseUrl)",
+    voximplantWebhookInputLabel: "Публичный HTTPS базовый URL",
+    voximplantWebhookSaveOverride: "Сохранить override",
+    voximplantWebhookResetOverride: "Сбросить к env",
+    voximplantWebhookOverrideSaved:
+      "Override сохранён. Новые команды записи сразу используют эффективный URL.",
+    voximplantWebhookOverrideCleared:
+      "Override сброшен. Эффективный URL вернулся к значению из env.",
+    voximplantWebhookOverrideDisabledExplicit:
+      "Runtime override отключён, потому что VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=false.",
+    voximplantWebhookOverrideDisabledDefault:
+      "Runtime override по умолчанию отключён в production. Установите VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=true, чтобы включить его.",
+    voximplantWebhookOverrideDisabledGeneric:
+      "Runtime override отключён для текущего окружения.",
   },
   recording: {
     recording: "Запись",
@@ -409,7 +438,9 @@ export const ru: Dictionary = {
     russian: "Русский",
     english: "Английский",
     originalFileSize: "Размер исходного файла",
-    compressedFileSize: "Размер сжатого файла",
+    compressedFileSize: "Размер файла для транскрибации",
+    transcriptionFileSize: "Размер файла для транскрибации",
+    originalWithoutRecompression: "Используется исходный файл без повторного сжатия",
     compressionStatus: "Статус сжатия",
     compressingAudio: "Сжатие аудио",
     audioCompressed: "Аудио сжато",
@@ -461,6 +492,14 @@ export const ru: Dictionary = {
     saveManualSpeakerAttribution: "Сохранить ручное присвоение",
     manualSpeakerTurnPlaceholder: "Текст реплики",
     selectParticipant: "Выберите участника",
+    transcriptEnhancementSuggested:
+      "Рекомендуется дополнительное улучшение качества транскрипта.",
+    transcriptEnhancementReasons: "Причины",
+    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта...",
+    transcriptEnhancementCompleted: "Улучшение качества транскрипта завершено.",
+    transcriptEnhancementMayTakeTime:
+      "Улучшение выполняется отдельным AI-шагом и может занять заметное время.",
     speakerSlotLabel: "Говорящий",
     speakerSlotHint: "Пометьте реплику номером говорящего. Все реплики с одинаковой меткой будут одновременно привязаны к одному участнику.",
     diarizedTranscriptCopied: "Транскрипт с говорящими скопирован",
@@ -626,6 +665,12 @@ export const ru: Dictionary = {
     transcriptionDownloading: "Загружаем запись для транскрибации.",
     transcriptionCompressing: "Подготавливаем аудио для транскрибации.",
     transcriptionInProgress: "Идёт транскрибация.",
+    transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта.",
+    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    transcriptEnhancementRecommended:
+      "Система рекомендует выполнить дополнительное улучшение качества транскрипта.",
+    transcriptEnhancementMayTakeTime:
+      "Это отдельный AI-шаг и он может занять заметное время.",
     transcriptionInProgressDescription: "Пожалуйста, подождите. Транскрипт обновится автоматически.",
     transcriptReady: "Транскрипт готов.",
     transcriptionFailed: "Ошибка транскрибации.",
@@ -861,6 +906,39 @@ export const ru: Dictionary = {
     recordingCompletedIndicator: "Запись завершена",
     recordingFailedWarning:
       "Переговоры начались, но запись не запустилась. Проверьте лимит LiveKit Egress, оплату или настройки хранилища.",
+    thisTabIsStale:
+      "Эта вкладка устарела, потому что для этого аккаунта активирована более новая вкладка.",
+    mediaMicOn: "Микрофон включён",
+    mediaMicOff: "Микрофон выключен",
+    mediaMicLocked: "Микрофон заблокирован правилами сессии",
+    mediaCameraOn: "Камера включена",
+    mediaCameraOff: "Камера выключена",
+    mediaCameraBusyOrUnavailable: "Камера занята или недоступна",
+    videoOn: "Видео включено",
+    notConnected: "Не подключён",
+    participantA: "Участник A",
+    participantB: "Участник B",
+    participants: "Участники",
+    facilitator: "Фасилитатор",
+    timer: "Таймер",
+    observer: "Наблюдатель",
+    unknownRole: "Неизвестная роль",
+    unsupportedParticipantType: "Неподдерживаемый тип участника",
+    slotParticipantAEmpty: "Слот участника A пуст.",
+    slotParticipantBEmpty: "Слот участника B пуст.",
+    slotFacilitatorEmpty: "Слот фасилитатора пуст.",
+    observersNotConnected: "Наблюдатели пока не подключены",
+    diagnosticsUnknownEndpoints: "Диагностика / неизвестные endpoint",
+    unknownEndpoint: "Неизвестный endpoint",
+    unknownMicState: "Состояние микрофона неизвестно",
+    unknownEndpointsNotDetected: "Неизвестные endpoint не обнаружены.",
+    remoteMicDerivedByPolicy: "Состояние микрофона рассчитано по правилам сессии",
+    duplicateEndpointSuppressed:
+      "Дубликат endpoint скрыт детерминированным сопоставлением",
+    unknownParticipant: "Неизвестный участник",
+    autoplayBlocked:
+      "Браузер заблокировал звук — нажмите «Разрешить звук» для воспроизведения.",
+    allowAudio: "Разрешить звук",
     // Debrief mode
     debrief: "Разбор",
     debriefTitle: "Разбор",
@@ -1010,8 +1088,20 @@ export const ru: Dictionary = {
     hostLabel: "Ведущий",
     cameraUnavailable:
       "Камера недоступна. Возможно, её использует другая вкладка или приложение. Вы всё ещё можете смотреть других — включите камеру кнопкой ниже, когда будете готовы.",
+    cameraBusyOrUnavailable: "Камера занята или недоступна",
     microphoneUnavailable:
       "Микрофон недоступен. Возможно, его использует другая вкладка или приложение. Включите его кнопкой ниже, когда будете готовы.",
+    voxLobbyWaitingForPreviousDisconnect:
+      "Ожидание завершения предыдущего подключения Vox...",
+    voxLobbyAuthorizing: "Авторизация в Vox-лобби...",
+    voxLobbyConnected: "Подключено",
+    voxLobbyDisconnected: "Отключено: {reason}",
+    voxLobbyUnableToConnect: "Не удалось подключиться к Vox-лобби.",
+    lobbyTakeoverDisconnected:
+      "Вы вошли в это лобби в другой вкладке. Эта вкладка отключена.",
+    reconnectLobby: "Переподключиться",
+    lobbyActionsDisabledInStaleTab:
+      "Действия в этой вкладке отключены до переподключения.",
     singleDeviceHint:
       "Тестируете на одном компьютере? Только одна вкладка браузера может использовать камеру. Используйте разные устройства или включите камеру только в одной вкладке.",
     copyEventJoinLink: "Скопировать ссылку на встречу",

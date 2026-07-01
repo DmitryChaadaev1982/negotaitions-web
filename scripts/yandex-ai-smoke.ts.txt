@@ -1,0 +1,61 @@
+import { loadEnvConfig } from "@next/env";
+import OpenAI from "openai";
+
+loadEnvConfig(process.cwd());
+
+async function main() {
+  const folderId = process.env.YANDEX_FOLDER_ID;
+  const apiKey = process.env.YANDEX_API_KEY;
+  const baseURL = process.env.YANDEX_AI_BASE_URL || "https://ai.api.cloud.yandex.net/v1";
+  const modelName = process.env.YANDEX_AI_MODEL || "deepseek-v4-flash";
+
+  if (!folderId) {
+    throw new Error("YANDEX_FOLDER_ID is missing");
+  }
+
+  if (!apiKey) {
+    throw new Error("YANDEX_API_KEY is missing");
+  }
+
+  const client = new OpenAI({
+    apiKey,
+    baseURL,
+    defaultHeaders: {
+      "x-folder-id": folderId,
+      "x-data-logging-enabled": "false",
+    },
+  });
+
+  const model = `gpt://${folderId}/${modelName}`;
+
+  console.log("Testing Yandex AI Studio...");
+  console.log(`Model: ${modelName}`);
+  console.log(`Folder ID present: ${Boolean(folderId)}`);
+  console.log(`API key present: ${Boolean(apiKey)}`);
+
+  const response = await client.chat.completions.create({
+    model,
+    temperature: 0.2,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Ты помощник для анализа переговоров. Отвечай кратко и структурированно.",
+      },
+      {
+        role: "user",
+        content:
+          "Проанализируй короткую ситуацию: покупатель просит скидку, продавец не хочет снижать цену, но готов добавить бонус. Дай 3 рекомендации продавцу.",
+      },
+    ],
+  });
+
+  console.log("Response:");
+  console.log(response.choices[0]?.message?.content);
+}
+
+main().catch((error) => {
+  console.error("Yandex AI smoke test failed:");
+  console.error(error);
+  process.exitCode = 1;
+});

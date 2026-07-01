@@ -77,11 +77,12 @@ export function isMicAllowed(
     case NegotiationState.PREPARATION_RUNNING:
     case NegotiationState.PREPARATION_PAUSED:
     case NegotiationState.READY_TO_START:
-    case NegotiationState.PAUSED:
     case NegotiationState.FINISHED:
       return true;
     case NegotiationState.RUNNING:
       return participantType === ParticipantType.PARTICIPANT;
+    case NegotiationState.PAUSED:
+      return false;
     default:
       return true;
   }

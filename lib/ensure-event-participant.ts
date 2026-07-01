@@ -22,6 +22,7 @@ export async function ensureUserEventParticipant(
   // Quick read before entering a transaction.
   const existing = await prisma.eventParticipant.findFirst({
     where: { eventId, userId: user.id },
+    orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
   });
   if (existing) return existing;
 
@@ -36,6 +37,7 @@ export async function ensureUserEventParticipant(
           // Re-check inside the transaction to prevent duplicate rows.
           const existingInTx = await tx.eventParticipant.findFirst({
             where: { eventId, userId: user.id },
+            orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
           });
           if (existingInTx) return existingInTx;
 

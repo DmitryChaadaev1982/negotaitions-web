@@ -8,7 +8,7 @@ const globalForPrisma = globalThis as unknown as {
   prismaClientVersion: string | undefined;
 };
 
-const PRISMA_CLIENT_VERSION = "20260622210000-session-pause-interval";
+const PRISMA_CLIENT_VERSION = "20260629200500-add-video-provider-identity";
 
 function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;

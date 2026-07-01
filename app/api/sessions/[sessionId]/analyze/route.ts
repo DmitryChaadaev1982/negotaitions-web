@@ -15,7 +15,7 @@ import {
 } from "@/lib/ai/session-analysis-context";
 import {
   createMockAnalysisOutput,
-  isOpenAiConfiguredForAnalysis,
+  isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
 } from "@/lib/ai/negotiation-analysis";
 import { getOptionalCurrentUser } from "@/lib/auth";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
+import { getAiAnalysisProvider } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -111,9 +112,15 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  if (!isAiAnalysisMockMode() && !isOpenAiConfiguredForAnalysis()) {
+  if (!isAiAnalysisMockMode() && !isAiAnalysisConfiguredForSelectedProvider()) {
+    const provider = getAiAnalysisProvider();
     return NextResponse.json(
-      { error: "OpenAI API key is missing." },
+      {
+        error:
+          provider === "yandex"
+            ? "Yandex AI configuration is missing."
+            : "OpenAI API key is missing.",
+      },
       { status: 503 },
     );
   }
@@ -297,6 +304,7 @@ async function processRealAnalysis(
   analysisId: string,
   language: string,
 ) {
+  const provider = getAiAnalysisProvider();
   try {
     const analysisContext = await buildSessionAnalysisContext(sessionId);
     if (!analysisContext) {
@@ -337,7 +345,7 @@ async function processRealAnalysis(
       error instanceof Error ? error.message : "AI analysis failed.";
 
     const classified = classifyExternalServiceError(
-      ExternalService.OPENAI,
+      provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
       error,
       "ai_analysis",
     );
@@ -347,7 +355,7 @@ async function processRealAnalysis(
       errorMessage.includes("non-JSON response");
 
     await logExternalServiceEvent({
-      service: ExternalService.OPENAI,
+      service: provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
       severity: ExternalServiceEventSeverity.ERROR,
       errorCode: isJsonValidationError
         ? ExternalServiceErrorCode.UNKNOWN

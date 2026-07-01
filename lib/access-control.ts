@@ -40,6 +40,8 @@ export type CurrentUserEventAccess = {
   hasTokenParticipant: boolean;
   /** true when the user has an EventInvite by userId or by normalized email */
   hasEmailInvite: boolean;
+  /** true when authenticated ACTIVE user can enter open PUBLIC events */
+  hasPublicAccess: boolean;
 };
 
 export type CurrentUserSessionAccess = {
@@ -73,7 +75,8 @@ export function canAccessEvent(access: CurrentUserEventAccess) {
     access.hasUserParticipant ||
     access.hasTokenParticipant ||
     access.isHostToken ||
-    access.hasEmailInvite
+    access.hasEmailInvite ||
+    access.hasPublicAccess
   );
 }
 
@@ -182,6 +185,7 @@ export async function getCurrentUserEventAccess(
             eventId,
             participantToken,
           },
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
         })
       : Promise.resolve(null),
     user
@@ -190,6 +194,7 @@ export async function getCurrentUserEventAccess(
             eventId,
             userId: user.id,
           },
+          orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
         })
       : Promise.resolve(null),
     user
@@ -226,8 +231,18 @@ export async function getCurrentUserEventAccess(
         eventId,
         isHost: true,
       },
+      orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
     });
   }
+
+  const isPublicOpenEvent =
+    event.visibility === "PUBLIC" &&
+    event.deletedAt === null &&
+    event.status !== "CANCELLED" &&
+    event.status !== "COMPLETED";
+  const hasPublicAccess = Boolean(
+    user && (admin || user.status === "ACTIVE") && isPublicOpenEvent,
+  );
 
   return {
     event,
@@ -242,6 +257,7 @@ export async function getCurrentUserEventAccess(
     hasUserParticipant: userParticipant !== null,
     hasTokenParticipant: tokenParticipant !== null,
     hasEmailInvite: emailInvite !== null,
+    hasPublicAccess,
   };
 }
 

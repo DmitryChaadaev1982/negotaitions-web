@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { validateEventLobbyConnectionLease } from "@/lib/event-lobby-connection-lease";
 import { flagsFromPreference } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventUnavailable } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
@@ -45,6 +46,25 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (!access) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });
+  }
+
+  if (parsed.data.connectionId) {
+    const lease = validateEventLobbyConnectionLease({
+      eventId,
+      userId: user.id,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!lease.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionId: lease.activeConnectionId,
+          leaseVersion: lease.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (isEventUnavailable(access.event)) {

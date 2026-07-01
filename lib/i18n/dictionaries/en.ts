@@ -80,6 +80,8 @@ export const en = {
     eventDurationMinutes: "Event duration (minutes)",
     welcome: "Welcome, {name}",
     comingLater: "Coming later",
+    retry: "Retry",
+    you: "you",
   },
   cases: {
     title: "Cases",
@@ -350,6 +352,10 @@ export const en = {
     checkFfmpeg: "Check ffmpeg",
     configured: "Configured",
     missing: "Missing",
+    unset: "(unset)",
+    configStatusConfiguredViaEnv: "Configured via env",
+    configStatusConfiguredViaKeyFile: "Resolved from VOXIMPLANT_API_KEY_PATH",
+    configStatusInvalidKeyFile: "Invalid/unreadable key file",
     healthy: "Healthy",
     failed: "Failed",
     warning: "Warning",
@@ -366,6 +372,29 @@ export const en = {
     ffmpegSourceStatic: "Source: ffmpeg-static package",
     ffmpegUnavailableHint:
       "Compression and transcription will fail until ffmpeg is installed or available on PATH.",
+    voximplantConfiguration: "Voximplant",
+    voximplantRecordingWebhook: "Voximplant recording webhook URL",
+    voximplantWebhookNodeEnv: "NODE_ENV",
+    voximplantWebhookOverrideEnabledRaw: "VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED (env raw)",
+    voximplantWebhookOverrideEnabledEffective: "Effective overrideEnabled",
+    voximplantWebhookOverrideHint:
+      "Use a public HTTPS base URL only (for example https://abc.trycloudflare.com). Do not include /api/sessions/.... The webhook secret is never shown here.",
+    voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
+    voximplantWebhookSavedOverride: "Saved override",
+    voximplantWebhookEffectiveUrl: "Effective URL (scenarioMessage.webhookBaseUrl)",
+    voximplantWebhookInputLabel: "Public HTTPS base URL",
+    voximplantWebhookSaveOverride: "Save override",
+    voximplantWebhookResetOverride: "Reset to env default",
+    voximplantWebhookOverrideSaved:
+      "Override saved. New recording commands will use the effective URL immediately.",
+    voximplantWebhookOverrideCleared:
+      "Override cleared. Effective URL reverted to env default.",
+    voximplantWebhookOverrideDisabledExplicit:
+      "Runtime override is disabled because VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=false.",
+    voximplantWebhookOverrideDisabledDefault:
+      "Runtime override is disabled by default in production. Set VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED=true to enable it.",
+    voximplantWebhookOverrideDisabledGeneric:
+      "Runtime override is disabled for this environment.",
   },
   recording: {
     recording: "Recording",
@@ -405,7 +434,9 @@ export const en = {
     russian: "Russian",
     english: "English",
     originalFileSize: "Original file size",
-    compressedFileSize: "Compressed file size",
+    compressedFileSize: "Transcription file size",
+    transcriptionFileSize: "Transcription file size",
+    originalWithoutRecompression: "Original file is used without recompression",
     compressionStatus: "Compression status",
     compressingAudio: "Compressing audio",
     audioCompressed: "Audio compressed",
@@ -478,6 +509,14 @@ export const en = {
     saveManualSpeakerAttribution: "Save manual attribution",
     manualSpeakerTurnPlaceholder: "Turn text",
     selectParticipant: "Select participant",
+    transcriptEnhancementSuggested:
+      "Additional transcript quality enhancement is recommended.",
+    transcriptEnhancementReasons: "Reasons",
+    runTranscriptEnhancement: "Enhance transcript quality",
+    transcriptEnhancementInProgress: "Transcript quality enhancement in progress...",
+    transcriptEnhancementCompleted: "Transcript quality enhancement completed.",
+    transcriptEnhancementMayTakeTime:
+      "This is a separate AI step and may take noticeable time.",
     speakerSlotLabel: "Speaker",
     speakerSlotHint: "Tag this turn with a speaker number. All turns with the same tag will be assigned to the same participant at once.",
     diarizedTranscriptCopied: "Diarized transcript copied",
@@ -622,6 +661,12 @@ export const en = {
     transcriptionDownloading: "Downloading recording for transcription.",
     transcriptionCompressing: "Preparing audio for transcription.",
     transcriptionInProgress: "Transcription is in progress.",
+    transcriptEnhancementInProgress: "Transcript quality enhancement is in progress.",
+    runTranscriptEnhancement: "Enhance transcript quality",
+    transcriptEnhancementRecommended:
+      "System recommends running additional transcript quality enhancement.",
+    transcriptEnhancementMayTakeTime:
+      "This is a separate AI step and may take noticeable time.",
     transcriptionInProgressDescription: "Please wait. The transcript will update automatically.",
     transcriptReady: "Transcript is ready.",
     transcriptionFailed: "Transcription failed.",
@@ -857,6 +902,39 @@ export const en = {
     recordingCompletedIndicator: "Recording completed",
     recordingFailedWarning:
       "Negotiation started, but recording failed. Check LiveKit Egress quota, billing, or storage configuration.",
+    thisTabIsStale:
+      "This tab is stale because a newer tab became active for this account.",
+    mediaMicOn: "Mic on",
+    mediaMicOff: "Mic off",
+    mediaMicLocked: "Mic is locked by session rules",
+    mediaCameraOn: "Camera on",
+    mediaCameraOff: "Camera off",
+    mediaCameraBusyOrUnavailable: "Camera is busy or unavailable",
+    videoOn: "Video on",
+    notConnected: "Not connected",
+    participantA: "Participant A",
+    participantB: "Participant B",
+    participants: "Participants",
+    facilitator: "Facilitator",
+    timer: "Timer",
+    observer: "Observer",
+    unknownRole: "Unknown role",
+    unsupportedParticipantType: "Unsupported participant type",
+    slotParticipantAEmpty: "Participant A slot is empty.",
+    slotParticipantBEmpty: "Participant B slot is empty.",
+    slotFacilitatorEmpty: "Facilitator slot is empty.",
+    observersNotConnected: "Observers are not connected yet",
+    diagnosticsUnknownEndpoints: "Diagnostics / Unknown Endpoints",
+    unknownEndpoint: "Unknown endpoint",
+    unknownMicState: "Mic state is unknown",
+    unknownEndpointsNotDetected: "Unknown endpoints are not detected.",
+    remoteMicDerivedByPolicy: "Mic state derived by session policy",
+    duplicateEndpointSuppressed:
+      "Duplicate endpoint suppressed by deterministic mapping",
+    unknownParticipant: "Unknown participant",
+    autoplayBlocked:
+      "Browser blocked audio playback - click Allow audio to continue.",
+    allowAudio: "Allow audio",
     // Debrief mode
     debrief: "Debrief",
     debriefTitle: "Debrief",
@@ -1006,8 +1084,20 @@ export const en = {
     hostLabel: "Host",
     cameraUnavailable:
       "Camera is unavailable. Another browser tab or app may be using it. You can still watch others — enable the camera with the button below when ready.",
+    cameraBusyOrUnavailable: "Camera is busy or unavailable",
     microphoneUnavailable:
       "Microphone is unavailable. Another browser tab or app may be using it. Enable it with the button below when ready.",
+    voxLobbyWaitingForPreviousDisconnect:
+      "Waiting for previous Vox connection to disconnect...",
+    voxLobbyAuthorizing: "Authorizing Vox lobby...",
+    voxLobbyConnected: "Connected",
+    voxLobbyDisconnected: "Disconnected: {reason}",
+    voxLobbyUnableToConnect: "Unable to connect to Vox lobby.",
+    lobbyTakeoverDisconnected:
+      "You joined this lobby in another tab. This tab has been disconnected.",
+    reconnectLobby: "Reconnect lobby",
+    lobbyActionsDisabledInStaleTab:
+      "Actions are disabled in this tab until you reconnect.",
     singleDeviceHint:
       "Testing on one computer? Only one browser tab can use the camera at a time. Use different devices or turn on the camera in one tab only.",
     copyEventJoinLink: "Copy event join link",

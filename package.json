@@ -11,7 +11,14 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
-    "test:all": "npm run lint && npm run build && npx prisma validate && npm run test:e2e"
+    "test:all": "npm run lint && npm run build && npx prisma validate && npm run test:e2e",
+    "smoke:vox-recording": "tsx scripts/smoke-voximplant-recording.ts",
+    "vox:scenario:prepare": "node scripts/voximplant-sync-scenario.mjs",
+    "vox:scenario:upload": "node scripts/voximplant-upload-scenario.mjs",
+    "vox:scenario:upload:direct": "node scripts/voximplant-upload-scenario-direct.mjs",
+    "vox:scenario:dry-run": "node scripts/voximplant-upload-scenario.mjs --dry-run",
+    "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs",
+    "inspect:audio": "tsx scripts/inspect-audio-recording.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -23,6 +30,7 @@
     "@livekit/components-styles": "^1.2.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@voximplant/websdk": "^5.1.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
     "ffmpeg-static": "^5.3.0",
@@ -46,6 +54,7 @@
     "@types/pg": "^8.15.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@voximplant/voxengine-ci": "^34.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",

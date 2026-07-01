@@ -139,6 +139,35 @@ type BuildEventStateInput = {
   userId?: string | null;
 };
 
+function participantIdentityKey(participant: EventParticipant): string {
+  return participant.userId
+    ? `user:${participant.userId}`
+    : `participant:${participant.id}`;
+}
+
+function participantRecencyMs(participant: EventParticipant): number {
+  return (
+    participant.lastSeenAt?.getTime() ??
+    participant.updatedAt.getTime() ??
+    participant.createdAt.getTime()
+  );
+}
+
+function shouldReplaceCanonicalParticipant(
+  current: EventParticipant,
+  candidate: EventParticipant,
+): boolean {
+  if (!current.isHost && candidate.isHost) {
+    return true;
+  }
+  const currentRecency = participantRecencyMs(current);
+  const candidateRecency = participantRecencyMs(candidate);
+  if (candidateRecency !== currentRecency) {
+    return candidateRecency > currentRecency;
+  }
+  return candidate.createdAt.getTime() > current.createdAt.getTime();
+}
+
 function getAssignmentDurationDefaults(
   selectedCase: {
     defaultPreparationDurationSeconds: number;
@@ -270,6 +299,26 @@ export async function buildEventState(
     input.event.assignmentDraft,
     getAssignmentDurationDefaults(selectedCaseRecord),
   );
+  const canonicalParticipantsByIdentity = new Map<string, EventParticipant>();
+  for (const participant of participants) {
+    const identityKey = participantIdentityKey(participant);
+    const existing = canonicalParticipantsByIdentity.get(identityKey);
+    if (!existing || shouldReplaceCanonicalParticipant(existing, participant)) {
+      canonicalParticipantsByIdentity.set(identityKey, participant);
+    }
+  }
+
+  const canonicalParticipants = participants.filter((participant) => {
+    const identityKey = participantIdentityKey(participant);
+    return canonicalParticipantsByIdentity.get(identityKey)?.id === participant.id;
+  });
+  const participantIdToCanonicalId = new Map<string, string>();
+  for (const participant of participants) {
+    const identityKey = participantIdentityKey(participant);
+    const canonical = canonicalParticipantsByIdentity.get(identityKey);
+    participantIdToCanonicalId.set(participant.id, canonical?.id ?? participant.id);
+  }
+
   const activeAssignmentsByEventParticipantId = new Map<
     string,
     (typeof sessionParticipantAssignments)[number]
@@ -279,17 +328,26 @@ export async function buildEventState(
     if (
       assignment.eventParticipantId &&
       isSessionActiveForAssignment(assignment.session) &&
-      !activeAssignmentsByEventParticipantId.has(assignment.eventParticipantId)
+      !activeAssignmentsByEventParticipantId.has(
+        participantIdToCanonicalId.get(assignment.eventParticipantId) ??
+          assignment.eventParticipantId,
+      )
     ) {
+      const canonicalEventParticipantId =
+        participantIdToCanonicalId.get(assignment.eventParticipantId) ??
+        assignment.eventParticipantId;
       activeAssignmentsByEventParticipantId.set(
-        assignment.eventParticipantId,
+        canonicalEventParticipantId,
         assignment,
       );
     }
   }
 
-  const currentParticipantId = input.currentParticipant?.id ?? null;
-  const mappedParticipants = participants.map((participant) =>
+  const currentParticipantId = input.currentParticipant?.id
+    ? (participantIdToCanonicalId.get(input.currentParticipant.id) ??
+      input.currentParticipant.id)
+    : null;
+  const mappedParticipants = canonicalParticipants.map((participant) =>
     mapEventParticipant({
       participant,
       activeAssignment:
@@ -325,7 +383,21 @@ export async function buildEventState(
       lobbyRoomName: input.event.lobbyRoomName,
       publicJoinCode: input.event.publicJoinCode,
     },
-    currentParticipant: input.currentParticipant
+    currentParticipant:
+      currentParticipantId &&
+      mappedParticipants.find((participant) => participant.id === currentParticipantId)
+        ? {
+            id: currentParticipantId,
+            displayName:
+              mappedParticipants.find(
+                (participant) => participant.id === currentParticipantId,
+              )?.displayName ?? input.currentParticipant?.displayName ?? "",
+            preference:
+              mappedParticipants.find(
+                (participant) => participant.id === currentParticipantId,
+              )?.preference ?? input.currentParticipant?.preference ?? "UNDECIDED",
+          }
+        : input.currentParticipant
       ? {
           id: input.currentParticipant.id,
           displayName: input.currentParticipant.displayName,

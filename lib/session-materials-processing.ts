@@ -13,6 +13,7 @@ export type ProcessingTranscriptionStatus =
   | "downloading"
   | "compressing"
   | "transcribing"
+  | "enhancing"
   | "ready"
   | "failed";
 

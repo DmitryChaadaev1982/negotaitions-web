@@ -204,6 +204,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
     deletedAt: session.isDeleted ? new Date().toISOString() : null,
   });
   const canManageRolesBeforePreparation = session.negotiationState === "PREPARATION";
+  const canAddParticipants = !isReadOnly && session.negotiationState !== "FINISHED";
 
   // Phase 6.11B: participants eligible for role assignment (joined, PARTICIPANT type).
   const roleManagementParticipants = session.participants
@@ -402,7 +403,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
         </Card>
       ) : null}
 
-      {!isReadOnly ? (
+      {canAddParticipants ? (
         <Card>
           <CardHeader>
             <h2 className="text-base font-semibold text-slate-50">

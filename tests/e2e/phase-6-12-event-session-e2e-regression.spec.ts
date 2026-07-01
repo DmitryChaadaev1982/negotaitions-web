@@ -513,13 +513,16 @@ test.describe("Phase 6.12 - DB/API regression", () => {
     const facilitator = await createActiveUser("p612_ai_fac");
     const partA = await createActiveUser("p612_ai_a");
     const partB = await createActiveUser("p612_ai_b");
+  const observer = await createActiveUser("p612_ai_obs");
     const aCookie = `auth_session=${await createUserSession(partA.id)}`;
+  const observerCookie = `auth_session=${await createUserSession(observer.id)}`;
     const { caseId } = await createCaseWithRoles(facilitator.id);
     const sessionId = await createSession({ caseId, facilitatorId: facilitator.id, visibility: "PRIVATE" });
     const roles = await getSessionRoleIds(sessionId);
     await addSessionParticipant({ sessionId, userId: facilitator.id, displayName: "Fac", type: "FACILITATOR" });
     const a = await addSessionParticipant({ sessionId, userId: partA.id, displayName: "A", type: "PARTICIPANT", sessionRoleId: roles[0]!.id });
     const b = await addSessionParticipant({ sessionId, userId: partB.id, displayName: "B", type: "PARTICIPANT", sessionRoleId: roles[1]!.id });
+  const obs = await addSessionParticipant({ sessionId, userId: observer.id, displayName: "Obs", type: "OBSERVER" });
     await query(`UPDATE "Session" SET "negotiationState"='FINISHED' WHERE "id"=$1`, [sessionId]);
 
     const sharedJson = {
@@ -562,6 +565,23 @@ test.describe("Phase 6.12 - DB/API regression", () => {
     expect(json).not.toContain("rawPrompt");
     expect(json).not.toContain("analysisContext");
     expect(json).not.toContain("facilitatorNotes");
+
+  const observerRes = await request.get(
+    `/api/sessions/${sessionId}/materials/status?participantId=${obs.participantId}`,
+    {
+      headers: { Cookie: observerCookie },
+    },
+  );
+  expect(observerRes.status()).toBe(200);
+  const observerData = (await observerRes.json()) as {
+    aiAnalysis: { canView: boolean; analysisJson: unknown; visibility: string | null };
+  };
+  expect(observerData.aiAnalysis.canView).toBe(true);
+  expect(observerData.aiAnalysis.visibility).toBeNull();
+  const observerJson = JSON.stringify(observerData.aiAnalysis.analysisJson ?? {});
+  expect(observerJson).not.toContain("participantPersonalFeedback");
+  expect(observerJson).not.toContain(a.participantId);
+  expect(observerJson).not.toContain(b.participantId);
   });
 
   test("T22 - Transcription status exposed consistently via materials/status and room control-state", async ({ request }) => {

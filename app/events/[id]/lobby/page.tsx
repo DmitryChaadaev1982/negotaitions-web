@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { EventLobbyView } from "@/components/event-lobby-view";
 import { getOptionalCurrentUser } from "@/lib/auth";
+import { getVideoProvider } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export default async function EventLobbyPage({
   const { id } = await params;
   const { hostToken, participantToken } = await searchParams;
   const user = await getOptionalCurrentUser();
+  const videoProvider = getVideoProvider();
 
   if (!hostToken && !participantToken && !user) {
     // Redirect unauthenticated users to login so they can return here after signing in.
@@ -30,8 +32,14 @@ export default async function EventLobbyPage({
   // into HTML/Flight payloads. Keep token access server-side and pass it only for
   // legacy token-based flows under neutral key names.
   if (user) {
-    return <EventLobbyView eventId={id} />;
+    return <EventLobbyView eventId={id} videoProvider={videoProvider} />;
   }
 
-  return <EventLobbyView eventId={id} tokenAccess={{ h: hostToken, p: participantToken }} />;
+  return (
+    <EventLobbyView
+      eventId={id}
+      videoProvider={videoProvider}
+      tokenAccess={{ h: hostToken, p: participantToken }}
+    />
+  );
 }

@@ -8,7 +8,13 @@ import {
 } from "@/app/generated/prisma/client";
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
+import {
+  getAnalysisForFacilitator,
+  getAnalysisForObserver,
+  getAnalysisForParticipant,
+} from "@/lib/analysis-visibility";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
 import {
   isAiAnalysisOutdated,
@@ -41,6 +47,25 @@ const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
   AiAnalysisStatus.ANALYZING,
 ]);
 
+function asMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function resolveTranscriptEnhancementStatus(
+  processingMetadata: unknown,
+): "NOT_AVAILABLE" | "IDLE" | "SUGGESTED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" {
+  const metadata = asMetadata(processingMetadata);
+  const enhancement = asMetadata(metadata.transcriptEnhancement);
+  const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
+  const status = enhancement.status;
+  if (status === "IN_PROGRESS") return "IN_PROGRESS";
+  if (status === "FAILED") return "FAILED";
+  if (status === "COMPLETED") return "COMPLETED";
+  if (recommendation.suggested === true) return "SUGGESTED";
+  if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
+  return "NOT_AVAILABLE";
+}
+
 function resolveRecordingProcessingStage(status: RecordingStatus): string {
   switch (status) {
     case RecordingStatus.NOT_STARTED:
@@ -62,11 +87,26 @@ function resolveRecordingProcessingStage(status: RecordingStatus): string {
   }
 }
 
+function isRecordingReadyForTranscription(
+  status: RecordingStatus | null,
+  hasFileKey: boolean,
+): boolean {
+  if (!status || !hasFileKey) {
+    return false;
+  }
+  return status === RecordingStatus.COMPLETED || status === RecordingStatus.STOPPED;
+}
+
 function resolveTranscriptProcessingStage(
   transcriptStatus: TranscriptStatus | null,
   recordingStatus: RecordingStatus | null,
+  recordingHasFileKey: boolean,
   transcriptHasText: boolean,
+  enhancementStatus: ReturnType<typeof resolveTranscriptEnhancementStatus>,
 ): string {
+  if (enhancementStatus === "IN_PROGRESS") {
+    return "enhancing";
+  }
   if (transcriptStatus === TranscriptStatus.COMPLETED) {
     return transcriptHasText ? "ready" : "not_started";
   }
@@ -89,13 +129,13 @@ function resolveTranscriptProcessingStage(
   if (
     !recordingStatus ||
     recordingStatus === RecordingStatus.NOT_STARTED ||
-    (recordingStatus !== RecordingStatus.COMPLETED &&
+    (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
       !ACTIVE_RECORDING_STATUSES.has(recordingStatus))
   ) {
     return "waiting_for_recording";
   }
 
-  if (recordingStatus !== RecordingStatus.COMPLETED) {
+  if (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey)) {
     return "waiting_for_recording";
   }
 
@@ -134,7 +174,9 @@ function sanitizeTranscriptErrorMessage(message: string | null): string | null {
 
 function computeShouldPoll(
   recordingStatus: RecordingStatus | null,
+  recordingHasFileKey: boolean,
   transcriptStatus: TranscriptStatus | null,
+  transcriptEnhancementInProgress: boolean,
   aiStatus: AiAnalysisStatus | null,
   isParticipantOrObserver = false,
   transcriptHasText = false,
@@ -146,7 +188,7 @@ function computeShouldPoll(
   if (
     recordingStatus &&
     (ACTIVE_RECORDING_STATUSES.has(recordingStatus) ||
-      recordingStatus === RecordingStatus.STOPPED)
+      (recordingStatus === RecordingStatus.STOPPED && !recordingHasFileKey))
   ) {
     return true;
   }
@@ -154,13 +196,17 @@ function computeShouldPoll(
   // When disabled, the recording-ready state is stable and no auto-job will start.
   if (
     autoTranscribeEnabled &&
-    recordingStatus === RecordingStatus.COMPLETED &&
+    isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
     !transcriptHasText &&
-    !hasRunningTranscription
+    !hasRunningTranscription &&
+    transcriptStatus !== TranscriptStatus.FAILED
   ) {
     return true;
   }
   if (transcriptStatus && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus)) {
+    return true;
+  }
+  if (transcriptEnhancementInProgress) {
     return true;
   }
   if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
@@ -216,6 +262,7 @@ export async function GET(request: Request, context: RouteContext) {
           id: true,
           status: true,
           text: true,
+          diarizedText: true,
           language: true,
           transcriptionModel: true,
           errorMessage: true,
@@ -226,6 +273,7 @@ export async function GET(request: Request, context: RouteContext) {
           hasSpeakerDiarization: true,
           diarizationStatus: true,
           retranscribeCount: true,
+          processingMetadata: true,
           speakerMappingStatus: true,
           speakerMappingConfirmedAt: true,
           speakerMapping: true,
@@ -272,13 +320,37 @@ export async function GET(request: Request, context: RouteContext) {
   const aiAnalysis = session.aiAnalysis;
 
   const recordingStatus = recording?.status ?? null;
+  const recordingHasFileKey = Boolean(recording?.fileKey);
+  const recordingReadyForTranscription = isRecordingReadyForTranscription(
+    recordingStatus,
+    recordingHasFileKey,
+  );
   const transcriptStatus = transcript?.status ?? null;
   const aiStatus = aiAnalysis?.status ?? null;
 
-  const transcriptHasText = Boolean(transcript?.text?.trim());
+  appendRecordingDebugEvent({
+    sessionId,
+    source: "materials-status",
+    level: "info",
+    step: "materials-status:polled",
+    message: `materials/status polled: recordingFound=${Boolean(recording)} status=${recordingStatus ?? "null"}`,
+    data: {
+      recordingFound: Boolean(recording),
+      recordingStatus: recordingStatus ?? null,
+      fileKeyPresent: Boolean(recording?.fileKey),
+      transcriptStatus: transcriptStatus ?? null,
+    },
+  });
+  const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
+    transcript?.processingMetadata,
+  );
+
+  const transcriptHasText = Boolean(
+    transcript?.text?.trim() || transcript?.diarizedText?.trim(),
+  );
   const hasRunningTranscription =
-    transcriptStatus !== null &&
-    ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus);
+    transcriptEnhancementStatus === "IN_PROGRESS" ||
+    (transcriptStatus !== null && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus));
 
   const canViewRecording = true;
   // Phase 5 observer transcript decision (Part 7):
@@ -347,19 +419,23 @@ export async function GET(request: Request, context: RouteContext) {
   if (
     canViewRecording &&
     recording?.fileKey &&
-    recording.status === RecordingStatus.COMPLETED
+    recordingReadyForTranscription
   ) {
     downloadUrl = await getSignedDownloadUrl(recording.fileKey, 900);
   }
 
   const recordingStage = recordingStatus
-    ? resolveRecordingProcessingStage(recordingStatus)
+    ? recordingReadyForTranscription
+      ? "ready"
+      : resolveRecordingProcessingStage(recordingStatus)
     : "not_available";
 
   const transcriptStage = resolveTranscriptProcessingStage(
     transcriptStatus,
     recordingStatus,
+    recordingHasFileKey,
     transcriptHasText,
+    transcriptEnhancementStatus,
   );
 
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
@@ -372,7 +448,9 @@ export async function GET(request: Request, context: RouteContext) {
   const sessionIsFinished = session.negotiationState === "FINISHED";
   const shouldPoll = computeShouldPoll(
     recordingStatus,
+    recordingHasFileKey,
     transcriptStatus,
+    transcriptEnhancementStatus === "IN_PROGRESS",
     aiStatus,
     isParticipantOrObserver,
     transcriptHasText,
@@ -386,15 +464,16 @@ export async function GET(request: Request, context: RouteContext) {
     canRunTranscription &&
     !hasRunningTranscription &&
     !transcriptCompleted &&
-    recording?.status === RecordingStatus.COMPLETED &&
-    Boolean(recording.fileKey) &&
+    transcript?.status !== TranscriptStatus.FAILED &&
+    recordingReadyForTranscription &&
+    Boolean(recording?.fileKey) &&
     !transcriptHasText;
 
   const canRetryTranscription =
     canRunTranscription &&
     !hasRunningTranscription &&
     transcript?.status === TranscriptStatus.FAILED &&
-    recording?.status === RecordingStatus.COMPLETED &&
+    recordingReadyForTranscription &&
     Boolean(recording?.fileKey);
 
   const canStopTranscription = canRunTranscription && hasRunningTranscription;
@@ -404,7 +483,7 @@ export async function GET(request: Request, context: RouteContext) {
     canRunTranscription &&
     !hasRunningTranscription &&
     transcriptCompleted &&
-    recording?.status === RecordingStatus.COMPLETED &&
+    recordingReadyForTranscription &&
     Boolean(recording?.fileKey);
 
   const sessionRoleRecord = await prisma.sessionRole.findUnique({
@@ -413,39 +492,20 @@ export async function GET(request: Request, context: RouteContext) {
   });
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
-  // For facilitators: full analysis. For participants/observers: shared sanitized version only.
-  const rawAnalysisJsonForUser = isFacilitator
-    ? (aiAnalysis?.analysisJson ?? null)
+  const fullAnalysisJson =
+    (aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null;
+  const sharedAnalysisJson =
+    (aiAnalysis?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null;
+  const analysisJsonForUser = isFacilitator
+    ? getAnalysisForFacilitator(fullAnalysisJson)
     : isSharedWithSession
-      ? (aiAnalysis?.sharedAnalysisJson ?? null)
+      ? isObserver
+        ? getAnalysisForObserver(sharedAnalysisJson)
+        : getAnalysisForParticipant(sharedAnalysisJson, {
+            participantId: participant.id,
+            displayName: participant.displayName,
+          })
       : null;
-
-  // Filter participantPersonalFeedback: each participant sees only their own section;
-  // facilitators see all sections.
-  let analysisJsonForUser = rawAnalysisJsonForUser;
-  if (!isFacilitator && rawAnalysisJsonForUser) {
-    const {
-      filterPersonalFeedbackForParticipant,
-      sanitizeSharedAiAnalysisForParticipant,
-    } = await import("@/lib/privacy/serializers");
-    const sanitizedShared = sanitizeSharedAiAnalysisForParticipant(
-      rawAnalysisJsonForUser as NegotiationAnalysisOutput,
-    );
-
-    if (isObserver) {
-      const observerSafe = {
-        ...(sanitizedShared as NegotiationAnalysisOutput),
-      };
-      delete (observerSafe as { participantPersonalFeedback?: unknown })
-        .participantPersonalFeedback;
-      analysisJsonForUser = observerSafe as NegotiationAnalysisOutput;
-    } else {
-      analysisJsonForUser = filterPersonalFeedbackForParticipant(
-        sanitizedShared,
-        { participantId: participant.id, displayName: participant.displayName },
-      );
-    }
-  }
 
   const executiveSummaryForUser = isFacilitator
     ? (aiAnalysis?.executiveSummary ?? null)
@@ -533,6 +593,8 @@ export async function GET(request: Request, context: RouteContext) {
           streamUrl: downloadUrl,
           canRefreshStatus: isFacilitator,
           processingStage: recordingStage,
+          readyByFilePresenceFallback:
+            recording.status === RecordingStatus.STOPPED && Boolean(recording.fileKey),
         }
       : null,
     transcription: transcript
@@ -560,6 +622,28 @@ export async function GET(request: Request, context: RouteContext) {
             : null,
           speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
           speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,
+          processingMetadata: isFacilitator ? (transcript.processingMetadata ?? null) : null,
+          enhancement: isFacilitator
+            ? {
+                status: transcriptEnhancementStatus,
+                available:
+                  asMetadata(transcript.processingMetadata).transcriptionProvider ===
+                  "yandex_speechkit",
+                suggested:
+                  asMetadata(
+                    asMetadata(transcript.processingMetadata)
+                      .transcriptEnhancementRecommendation,
+                  ).suggested === true,
+                reasons:
+                  (asMetadata(
+                    asMetadata(transcript.processingMetadata)
+                      .transcriptEnhancementRecommendation,
+                  ).reasons as string[] | undefined) ?? [],
+                error:
+                  (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
+                    .error as string | undefined) ?? null,
+              }
+            : null,
         }
       : {
           id: null,
@@ -578,6 +662,7 @@ export async function GET(request: Request, context: RouteContext) {
           speakerMappingStatus: null,
           speakerMappingRequired: false,
           speakerMappingConfirmed: null,
+          enhancement: null,
         },
     aiAnalysis: aiAnalysisResponse,
     processing: {

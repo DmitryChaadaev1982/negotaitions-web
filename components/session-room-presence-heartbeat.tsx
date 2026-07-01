@@ -9,13 +9,17 @@ import { PRESENCE_HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
 type SessionRoomPresenceHeartbeatProps = {
   sessionId: string;
   roomAuth: RoomAuthToken;
+  connectionId?: string;
   onInvalidToken?: () => void;
+  onStaleConnection?: () => void;
 };
 
 export function SessionRoomPresenceHeartbeat({
   sessionId,
   roomAuth,
+  connectionId,
   onInvalidToken,
+  onStaleConnection,
 }: SessionRoomPresenceHeartbeatProps) {
   useEffect(() => {
     let cancelled = false;
@@ -27,12 +31,16 @@ export function SessionRoomPresenceHeartbeat({
         const response = await fetch(heartbeatUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(roomAuthBody(roomAuth)),
+          body: JSON.stringify(roomAuthBody(roomAuth, { connectionId })),
           keepalive: true,
         });
 
         if (response.status === 403 && !cancelled) {
           onInvalidToken?.();
+          return;
+        }
+        if (response.status === 409 && !cancelled) {
+          onStaleConnection?.();
         }
       } catch {
         // Ignore transient network errors; the next heartbeat will retry.
@@ -60,7 +68,7 @@ export function SessionRoomPresenceHeartbeat({
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [roomAuth, onInvalidToken, sessionId]);
+  }, [connectionId, roomAuth, onInvalidToken, onStaleConnection, sessionId]);
 
   return null;
 }

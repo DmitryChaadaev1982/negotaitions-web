@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import {
+  claimEventLobbyConnectionLease,
+  validateEventLobbyConnectionLease,
+} from "@/lib/event-lobby-connection-lease";
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { buildEventState } from "@/lib/event-state";
@@ -19,6 +23,10 @@ export async function GET(request: Request, context: RouteContext) {
     hostToken: searchParams.get("hostToken") ?? undefined,
     participantToken: searchParams.get("participantToken") ?? undefined,
   });
+  const connectionId = searchParams.get("connectionId")?.trim() || undefined;
+  const claimLease =
+    searchParams.get("claimLease") === "1" ||
+    searchParams.get("claimLease") === "true";
 
   if (!parsed.success) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 400 });
@@ -42,6 +50,31 @@ export async function GET(request: Request, context: RouteContext) {
   let { currentParticipant } = access;
   if (!currentParticipant && user && (isAdmin(user) || user.status === "ACTIVE")) {
     currentParticipant = await ensureUserEventParticipant(eventId, user);
+  }
+
+  if (user && connectionId) {
+    const lease = claimLease
+      ? claimEventLobbyConnectionLease({
+          eventId,
+          userId: user.id,
+          connectionId,
+        })
+      : validateEventLobbyConnectionLease({
+          eventId,
+          userId: user.id,
+          connectionId,
+        });
+    if (!lease.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionId: lease.activeConnectionId,
+          leaseVersion: lease.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const state = await buildEventState({

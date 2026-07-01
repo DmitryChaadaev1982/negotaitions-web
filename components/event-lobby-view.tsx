@@ -3,13 +3,14 @@
 import "@livekit/components-styles";
 import "@/styles/livekit-overrides.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { ConnectionStatusBadge } from "@/components/connection-status-badge";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
+import { EventLobbyVoximplantRoom } from "@/components/event-lobby-voximplant-room";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
 import {
@@ -33,6 +34,7 @@ const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 
 type EventLobbyViewProps = {
   eventId: string;
+  videoProvider: "livekit" | "voximplant";
   tokenAccess?: {
     h?: string;
     p?: string;
@@ -49,10 +51,15 @@ type LiveKitTokenResponse = {
 
 function deviceWarningLabel(
   warning: string | null,
-  t: (key: "events.cameraUnavailable" | "events.microphoneUnavailable") => string,
+  t: (
+    key:
+      | "events.cameraUnavailable"
+      | "events.cameraBusyOrUnavailable"
+      | "events.microphoneUnavailable",
+  ) => string,
 ) {
-  if (warning === "cameraUnavailable") {
-    return t("events.cameraUnavailable");
+  if (warning === "cameraUnavailable" || warning === "cameraBusyOrUnavailable") {
+    return t("events.cameraBusyOrUnavailable");
   }
   if (warning === "microphoneUnavailable") {
     return t("events.microphoneUnavailable");
@@ -62,6 +69,7 @@ function deviceWarningLabel(
 
 export function EventLobbyView({
   eventId,
+  videoProvider,
   tokenAccess,
 }: EventLobbyViewProps) {
   const hostAccessToken = tokenAccess?.h;
@@ -69,6 +77,7 @@ export function EventLobbyView({
   const { t } = useI18n();
   const [state, setState] = useState<EventStateResponse | null>(null);
   const [liveKit, setLiveKit] = useState<LiveKitTokenResponse | null>(null);
+  const [voxReady, setVoxReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
@@ -79,6 +88,12 @@ export function EventLobbyView({
   const [isCompletingEvent, setIsCompletingEvent] = useState(false);
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
+  const [staleConnection, setStaleConnection] = useState(false);
+  const lobbyConnectionSeed = useId();
+  const lobbyConnectionId = useMemo(
+    () => `event-lobby-${eventId}-${lobbyConnectionSeed.replace(/:/g, "")}`,
+    [eventId, lobbyConnectionSeed],
+  );
 
   const accessQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -96,6 +111,8 @@ export function EventLobbyView({
         ...(participantAccessToken
           ? { participantToken: participantAccessToken }
           : {}),
+        connectionId: lobbyConnectionId,
+        claimLease: true,
       }),
     });
 
@@ -108,20 +125,73 @@ export function EventLobbyView({
       setError("eventUnavailable");
       return "eventUnavailable" as const;
     }
+    if (tokenResponse.status === 409) {
+      const payload = (await tokenResponse.json().catch(() => ({}))) as {
+        code?: string;
+      };
+      if (payload.code === "STALE_CONNECTION") {
+        setStaleConnection(true);
+        return "staleConnection" as const;
+      }
+    }
 
     setLiveKit(null);
     return "retryableError" as const;
-  }, [eventId, hostAccessToken, participantAccessToken]);
+  }, [eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
 
-  const fetchState = useCallback(async () => {
+  const fetchVoxAccess = useCallback(async () => {
+    const response = await fetch(`/api/events/${eventId}/voximplant-access`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+        ...(participantAccessToken
+          ? { participantToken: participantAccessToken }
+          : {}),
+        connectionId: lobbyConnectionId,
+        claimLease: true,
+      }),
+    });
+    if (response.ok) {
+      setVoxReady(true);
+      return "ok" as const;
+    }
+    if (response.status === 410) {
+      setError("eventUnavailable");
+      return "eventUnavailable" as const;
+    }
+    if (response.status === 409) {
+      const payload = (await response.json().catch(() => ({}))) as { code?: string };
+      if (payload.code === "STALE_CONNECTION") {
+        setStaleConnection(true);
+        return "staleConnection" as const;
+      }
+    }
+    setVoxReady(false);
+    return "retryableError" as const;
+  }, [eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
+
+  const fetchState = useCallback(async (claimLease = false) => {
+    const params = new URLSearchParams(accessQuery);
+    params.set("connectionId", lobbyConnectionId);
+    if (claimLease) {
+      params.set("claimLease", "1");
+    }
     const response = await fetch(
-      `/api/events/${eventId}/state?${accessQuery}`,
+      `/api/events/${eventId}/state?${params.toString()}`,
       { cache: "no-store" },
     );
 
     if (response.status === 410) {
       setError("eventUnavailable");
       return null;
+    }
+    if (response.status === 409) {
+      const payload = (await response.json().catch(() => ({}))) as { code?: string };
+      if (payload.code === "STALE_CONNECTION") {
+        setStaleConnection(true);
+        return null;
+      }
     }
 
     if (!response.ok) {
@@ -133,7 +203,7 @@ export function EventLobbyView({
     setState(data);
     setError(null);
     return data;
-  }, [accessQuery, eventId]);
+  }, [accessQuery, eventId, lobbyConnectionId]);
 
   useEffect(() => {
     let active = true;
@@ -142,15 +212,30 @@ export function EventLobbyView({
       try {
         let stateData: EventStateResponse | null = null;
         for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
-          const stateResponse = await fetch(`/api/events/${eventId}/state?${accessQuery}`, {
-            cache: "no-store",
-          });
+          const params = new URLSearchParams(accessQuery);
+          params.set("connectionId", lobbyConnectionId);
+          params.set("claimLease", "1");
+          const stateResponse = await fetch(
+            `/api/events/${eventId}/state?${params.toString()}`,
+            {
+              cache: "no-store",
+            },
+          );
 
           if (!active) return;
 
           if (stateResponse.status === 410) {
             setError("eventUnavailable");
             return;
+          }
+          if (stateResponse.status === 409) {
+            const payload = (await stateResponse.json().catch(() => ({}))) as {
+              code?: string;
+            };
+            if (payload.code === "STALE_CONNECTION") {
+              setStaleConnection(true);
+              return;
+            }
           }
 
           if (stateResponse.ok) {
@@ -178,11 +263,18 @@ export function EventLobbyView({
         }
 
         for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
-          const tokenFetchResult = await fetchLiveKitToken();
+          const providerFetchResult =
+            videoProvider === "voximplant"
+              ? await fetchVoxAccess()
+              : await fetchLiveKitToken();
           if (!active) {
             return;
           }
-          if (tokenFetchResult === "ok" || tokenFetchResult === "eventUnavailable") {
+          if (
+            providerFetchResult === "ok" ||
+            providerFetchResult === "eventUnavailable" ||
+            providerFetchResult === "staleConnection"
+          ) {
             return;
           }
           await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
@@ -203,25 +295,52 @@ export function EventLobbyView({
     return () => {
       active = false;
     };
-  }, [accessQuery, eventId, fetchLiveKitToken]);
+  }, [
+    accessQuery,
+    eventId,
+    fetchLiveKitToken,
+    fetchVoxAccess,
+    lobbyConnectionId,
+    videoProvider,
+  ]);
 
   useEffect(() => {
+    if (staleConnection) {
+      return;
+    }
     const interval = window.setInterval(() => {
       void (async () => {
         const latestState = await fetchState();
         if (
           latestState &&
           latestState.event.status !== "COMPLETED" &&
+          videoProvider === "livekit" &&
           !liveKit
         ) {
           await fetchLiveKitToken();
+        }
+        if (
+          latestState &&
+          latestState.event.status !== "COMPLETED" &&
+          videoProvider === "voximplant" &&
+          !voxReady
+        ) {
+          await fetchVoxAccess();
         }
         touchRecoveryContext();
       })();
     }, 2500);
 
     return () => window.clearInterval(interval);
-  }, [fetchLiveKitToken, fetchState, liveKit]);
+  }, [
+    fetchLiveKitToken,
+    fetchState,
+    fetchVoxAccess,
+    liveKit,
+    staleConnection,
+    videoProvider,
+    voxReady,
+  ]);
 
   useEffect(() => {
     if (!state) {
@@ -250,11 +369,15 @@ export function EventLobbyView({
 
   const updateHost = useCallback(
     async (payload: Record<string, unknown>) => {
+      if (staleConnection) {
+        return;
+      }
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+          connectionId: lobbyConnectionId,
           ...payload,
         }),
       });
@@ -262,13 +385,23 @@ export function EventLobbyView({
       if (response.ok) {
         const data = (await response.json()) as EventStateResponse;
         setState(data);
+      } else if (response.status === 409) {
+        const stalePayload = (await response.json().catch(() => ({}))) as {
+          code?: string;
+        };
+        if (stalePayload.code === "STALE_CONNECTION") {
+          setStaleConnection(true);
+        }
       }
     },
-    [eventId, hostAccessToken],
+    [eventId, hostAccessToken, lobbyConnectionId, staleConnection],
   );
 
   const updatePreference = useCallback(
     async (preference: string) => {
+      if (staleConnection) {
+        return;
+      }
       setState((current) =>
         current?.currentParticipant
           ? {
@@ -293,6 +426,7 @@ export function EventLobbyView({
           ...(participantAccessToken
             ? { participantToken: participantAccessToken }
             : {}),
+          connectionId: lobbyConnectionId,
           preference,
         }),
       });
@@ -300,14 +434,22 @@ export function EventLobbyView({
       if (response.ok) {
         const data = (await response.json()) as EventStateResponse;
         setState(data);
+      } else if (response.status === 409) {
+        const stalePayload = (await response.json().catch(() => ({}))) as {
+          code?: string;
+        };
+        if (stalePayload.code === "STALE_CONNECTION") {
+          setStaleConnection(true);
+        }
       } else {
         await fetchState();
       }
     },
-    [eventId, fetchState, participantAccessToken],
+    [eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
   );
 
   const createSession = useCallback(async () => {
+    if (staleConnection) return;
     if (!state) return;
 
     setIsCreatingSession(true);
@@ -320,6 +462,7 @@ export function EventLobbyView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+          connectionId: lobbyConnectionId,
           caseId: selectedCase?.id,
           roomLabel: state.assignmentDraft.roomLabel || undefined,
           preparationDurationSeconds:
@@ -342,6 +485,14 @@ export function EventLobbyView({
       if (response.ok) {
         const data = await response.json();
         setState(data.state as EventStateResponse);
+      } else if (response.status === 409) {
+        const stalePayload = (await response.json().catch(() => ({}))) as {
+          code?: string;
+        };
+        if (stalePayload.code === "STALE_CONNECTION") {
+          setStaleConnection(true);
+          return;
+        }
       } else {
         const data = (await response.json()) as {
           error?: string;
@@ -360,7 +511,7 @@ export function EventLobbyView({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [eventId, hostAccessToken, state, t]);
+  }, [eventId, hostAccessToken, lobbyConnectionId, staleConnection, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
@@ -506,6 +657,7 @@ export function EventLobbyView({
         ),
       )
     : [];
+  const staleLobbyMessage = t("events.lobbyTakeoverDisconnected");
 
   if (isEventCompleted) {
     return (
@@ -519,7 +671,7 @@ export function EventLobbyView({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#020617]" data-testid="event-lobby-page">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#020617]" data-testid="event-lobby-page">
       {/* Render in all lobby modes. In account mode (no token), the heartbeat
           endpoint resolves presence via the authenticated user session. */}
       <EventLobbyPresence
@@ -564,9 +716,9 @@ export function EventLobbyView({
         ) : null}
       </header>
 
-      <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-4 lg:flex-row lg:overflow-hidden">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-hidden p-4 lg:flex-row">
         <section
-          className="glass-panel flex min-h-[420px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25 lg:min-h-0"
+          className="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25"
           data-testid="event-lobby-video-area"
         >
           <div className="shrink-0 border-b border-slate-600/25 px-4 py-3">
@@ -576,16 +728,53 @@ export function EventLobbyView({
             </p>
             <p className="mt-1 text-[11px] text-slate-500">{t("events.singleDeviceHint")}</p>
           </div>
-          <div className="relative min-h-[360px] flex-1 bg-black/40">
+          <div className="relative min-h-0 flex-1 overflow-hidden bg-black/40">
+            {staleConnection ? (
+              <div
+                className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+                data-testid="event-lobby-stale-connection-banner"
+              >
+                <p>{staleLobbyMessage}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <SecondaryButton
+                    type="button"
+                    className="px-2 py-1 text-xs"
+                    onClick={() => window.location.reload()}
+                    data-testid="event-lobby-reconnect-button"
+                  >
+                    {t("events.reconnectLobby")}
+                  </SecondaryButton>
+                  <SecondaryButtonLink
+                    href="/events"
+                    className="px-2 py-1 text-xs"
+                    data-testid="event-lobby-return-events-button"
+                  >
+                    {t("events.backToEventsCompact")}
+                  </SecondaryButtonLink>
+                </div>
+              </div>
+            ) : null}
             {deviceWarning ? (
               <p className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
                 {deviceWarningLabel(deviceWarning, t)}
               </p>
             ) : null}
-            {liveKit ? (
+            {staleConnection ? (
+              <div className="flex h-full items-center justify-center p-6 text-center">
+                <p className="max-w-md text-sm text-amber-200">{staleLobbyMessage}</p>
+              </div>
+            ) : videoProvider === "livekit" && liveKit ? (
               <EventLobbyVideoRoom
                 token={liveKit.token}
                 serverUrl={liveKit.serverUrl}
+                onDeviceWarning={setDeviceWarning}
+              />
+            ) : videoProvider === "voximplant" && voxReady ? (
+              <EventLobbyVoximplantRoom
+                eventId={eventId}
+                hostToken={hostAccessToken}
+                participantToken={participantAccessToken}
+                connectionId={lobbyConnectionId}
                 onDeviceWarning={setDeviceWarning}
               />
             ) : (
@@ -596,7 +785,7 @@ export function EventLobbyView({
           </div>
         </section>
 
-        <aside className="glass-panel flex w-full flex-col gap-4 overflow-y-auto rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 xl:w-[420px]">
+        <aside className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-y-auto rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 xl:w-[420px]">
           {state.currentParticipant ? (
             <GlassCard elevated>
               <GlassCardHeader>
@@ -627,17 +816,28 @@ export function EventLobbyView({
                     <button
                       key={value}
                       type="button"
-                      onClick={() => void updatePreference(value)}
+                      disabled={staleConnection}
+                      onClick={() => {
+                        if (!staleConnection) {
+                          void updatePreference(value);
+                        }
+                      }}
                       className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
                         state.currentParticipant?.preference === value
                           ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
                           : "border-slate-600/40 bg-slate-900/50 text-slate-300 hover:border-slate-500/50"
-                      }`}
+                      } ${staleConnection ? "cursor-not-allowed opacity-50 hover:border-slate-600/40" : ""}`}
+                      aria-disabled={staleConnection}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
+                {staleConnection ? (
+                  <p className="text-xs text-amber-300">
+                    {t("events.lobbyActionsDisabledInStaleTab")}
+                  </p>
+                ) : null}
               </GlassCardContent>
             </GlassCard>
           ) : null}
@@ -728,7 +928,7 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          {isEventOwner ? (
+          {isEventOwner && !staleConnection ? (
             <EventHostControlsPanel
               state={state}
               draft={draft}

@@ -1,25 +1,72 @@
+export type AudioTranscriptionQualityProfile =
+  | "standard"
+  | "high"
+  | "diagnostic";
+
+function parsePositiveNumber(rawValue: string | undefined, fallback: number) {
+  const value = Number(rawValue ?? String(fallback));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function getProfileDefaultBitrateKbps(profile: AudioTranscriptionQualityProfile) {
+  if (profile === "high") return 96;
+  if (profile === "diagnostic") return 128;
+  return 24;
+}
+
+function getProfileDefaultSampleRate(profile: AudioTranscriptionQualityProfile) {
+  if (profile === "high" || profile === "diagnostic") return 48000;
+  return 16000;
+}
+
+function getProfileDefaultChannels() {
+  return 1;
+}
+
+function getProfileDefaultMaxFileMb(profile: AudioTranscriptionQualityProfile) {
+  if (profile === "high" || profile === "diagnostic") return 100;
+  return 24;
+}
+
+export function getAudioTranscriptionQualityProfile(): AudioTranscriptionQualityProfile {
+  const raw = process.env.AUDIO_TRANSCRIPTION_QUALITY_PROFILE?.trim().toLowerCase();
+  if (raw === "high") return "high";
+  if (raw === "diagnostic") return "diagnostic";
+  return "standard";
+}
+
 export function getAudioRecordingTargetBitrateKbps() {
-  const value = Number(process.env.AUDIO_RECORDING_TARGET_BITRATE_KBPS ?? "32");
-  return Number.isFinite(value) && value > 0 ? value : 32;
+  return parsePositiveNumber(process.env.AUDIO_RECORDING_TARGET_BITRATE_KBPS, 32);
 }
 
 export function getAudioTranscriptionTargetBitrateKbps() {
-  const value = Number(process.env.AUDIO_TRANSCRIPTION_TARGET_BITRATE_KBPS ?? "24");
-  return Number.isFinite(value) && value > 0 ? value : 24;
+  const profile = getAudioTranscriptionQualityProfile();
+  return parsePositiveNumber(
+    process.env.AUDIO_TRANSCRIPTION_TARGET_BITRATE_KBPS,
+    getProfileDefaultBitrateKbps(profile),
+  );
 }
 
 export function getAudioTranscriptionSampleRate() {
-  const value = Number(process.env.AUDIO_TRANSCRIPTION_SAMPLE_RATE ?? "16000");
-  return Number.isFinite(value) && value > 0 ? value : 16000;
+  const profile = getAudioTranscriptionQualityProfile();
+  return parsePositiveNumber(
+    process.env.AUDIO_TRANSCRIPTION_SAMPLE_RATE,
+    getProfileDefaultSampleRate(profile),
+  );
 }
 
 export function getAudioTranscriptionChannels() {
-  const value = Number(process.env.AUDIO_TRANSCRIPTION_CHANNELS ?? "1");
-  return Number.isFinite(value) && value > 0 ? value : 1;
+  return parsePositiveNumber(
+    process.env.AUDIO_TRANSCRIPTION_CHANNELS,
+    getProfileDefaultChannels(),
+  );
 }
 
 export function getAudioTranscriptionMaxFileBytes() {
-  const mb = Number(process.env.AUDIO_TRANSCRIPTION_MAX_FILE_MB ?? "24");
-  const safeMb = Number.isFinite(mb) && mb > 0 ? mb : 24;
+  const profile = getAudioTranscriptionQualityProfile();
+  const safeMb = parsePositiveNumber(
+    process.env.AUDIO_TRANSCRIPTION_MAX_FILE_MB,
+    getProfileDefaultMaxFileMb(profile),
+  );
   return safeMb * 1024 * 1024;
 }

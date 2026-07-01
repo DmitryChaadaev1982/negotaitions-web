@@ -24,10 +24,13 @@ import {
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
+import { getVideoProvider } from "@/lib/env";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   action: z.enum([
     "START_PREPARATION",
     "PAUSE_PREPARATION",
@@ -95,7 +98,11 @@ async function applyAutoTransitions(sessionId: string, now: Date) {
     });
 
     await closeLatestPauseInterval(sessionId, now);
-    await handleNegotiationFinishRecording(sessionId);
+    // LiveKit egress stop on auto-finish — skip for Voximplant provider
+    // (Voximplant recording stop is relayed by the browser via scenarioMessage).
+    if (getVideoProvider() === "livekit") {
+      await handleNegotiationFinishRecording(sessionId);
+    }
   }
 
   return session;
@@ -128,6 +135,24 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!participant) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+  }
+
+  if (participant.userId && parsed.data.connectionId) {
+    const leaseState = validateSessionRoomConnectionLease({
+      sessionId,
+      userId: participant.userId,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!leaseState.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionVersion: leaseState.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (participant.type !== ParticipantType.FACILITATOR) {
@@ -168,7 +193,13 @@ export async function POST(request: Request, context: RouteContext) {
 
     let recordingWarning: string | undefined;
 
-    if (action === "START") {
+    // LiveKit egress start/stop — skip entirely for Voximplant provider.
+    // For Voximplant, recording is orchestrated by the browser adapter:
+    // after this /control response, the client calls /recording-control and
+    // relays the typed scenarioMessage to the VoxEngine conference.
+    const isLiveKit = getVideoProvider() === "livekit";
+
+    if (action === "START" && isLiveKit) {
       const recordingResult = await handleNegotiationStartRecording(sessionId);
       if (recordingResult && !recordingResult.ok) {
         recordingWarning = recordingResult.warning;
@@ -179,7 +210,7 @@ export async function POST(request: Request, context: RouteContext) {
       await syncPauseIntervals(sessionId, action, now);
     }
 
-    if (action === "FINISH") {
+    if (action === "FINISH" && isLiveKit) {
       const stopResult = await handleNegotiationFinishRecording(sessionId);
       recordingWarning = stopResult.warning;
     }

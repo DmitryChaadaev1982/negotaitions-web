@@ -43,3 +43,20 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+.env.local
+
+tmp/
+
+# VoxEngine CI — generated upload staging folder (set via VOX_CI_ROOT_PATH)
+voxengine-ci/
+.voxengine-ci/
+
+# Voximplant service account credentials (never commit)
+# VOX_CI_CREDENTIALS points to one of these files
+*voximplant*service-account*.json
+*voximplant*credentials*.json
+*-private.json
+
+# Local scenario sync state (non-sensitive, but machine-specific)
+.vox-scenario-build-id
