@@ -90,7 +90,7 @@ test.describe("Vox roster-first layout model", () => {
     );
     expect(source).toContain("testId=\"vox-zone-observers\"");
     expect(source).toContain("vox-observers-empty-state");
-    expect(source).toContain("Наблюдатели пока не подключены");
+    expect(source).toContain("t(\"room.observersNotConnected\")");
     expect(source).toContain("justify-center");
   });
 
@@ -259,18 +259,18 @@ test.describe("Vox camera toggle idempotency helpers", () => {
     expect(isDuplicateVideoStreamError("Permission denied for camera device")).toBe(false);
   });
 
-  test("control bar exposes explicit state labels for accessibility", () => {
-    const source = readFileSync(
-      "components/voximplant-negotiation-room-page.tsx",
-      "utf-8",
-    );
-    expect(source).toContain("Микрофон включён");
-    expect(source).toContain("Микрофон выключен");
-    expect(source).toContain("Камера включена");
-    expect(source).toContain("Камера выключена");
-    expect(source).toContain("Микрофон заблокирован правилами сессии");
+  test("shared media controls expose explicit state labels and visual states", () => {
+    const source = readFileSync("components/voximplant-media-controls.tsx", "utf-8");
+    expect(source).toContain("t(\"room.mediaMicOn\")");
+    expect(source).toContain("t(\"room.mediaMicOff\")");
+    expect(source).toContain("t(\"room.mediaCameraOn\")");
+    expect(source).toContain("t(\"room.mediaCameraOff\")");
+    expect(source).toContain("t(\"room.mediaCameraBusyOrUnavailable\")");
     expect(source).toContain("data-state={micState}");
     expect(source).toContain("data-state={cameraState}");
+    expect(source).toContain("border-emerald-500/60");
+    expect(source).toContain("border-rose-500/60");
+    expect(source).toContain("border-slate-500/60");
   });
 
   test("active speaker highlight is not assigned to arbitrary remote tiles", () => {
@@ -279,5 +279,44 @@ test.describe("Vox camera toggle idempotency helpers", () => {
       "utf-8",
     );
     expect(source).toContain("isSpeaking={tile.isLocal ? isSpeaking : false}");
+  });
+
+  test("lobby layout keeps side panel and video pane independent", () => {
+    const source = readFileSync("components/event-lobby-view.tsx", "utf-8");
+    expect(source).toContain("h-dvh");
+    expect(source).toContain("min-h-0");
+    expect(source).toContain("overflow-hidden");
+    expect(source).toContain("overflow-y-auto");
+  });
+
+  test("lobby video grid no longer uses stretching auto-rows-fr", () => {
+    const source = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
+    expect(source).not.toContain("auto-rows-fr");
+    expect(source).toContain("content-start");
+    expect(source).toContain("max-w-[420px]");
+  });
+
+  test("lobby and room use Vox lifecycle sequencing for transition", () => {
+    const lobbySource = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
+    const roomSource = readFileSync("lib/voximplant/use-voximplant-room.ts", "utf-8");
+    expect(lobbySource).toContain("waitForVoxClientIdle");
+    expect(lobbySource).toContain("registerVoxClientDisconnect");
+    expect(roomSource).toContain("waitForVoxClientIdle");
+    expect(roomSource).toContain("registerVoxClientDisconnect");
+  });
+
+  test("required RU/EN media labels exist in dictionaries", () => {
+    const ru = readFileSync("lib/i18n/dictionaries/ru.ts", "utf-8");
+    const en = readFileSync("lib/i18n/dictionaries/en.ts", "utf-8");
+    expect(ru).toContain("mediaMicOn: \"Микрофон включён\"");
+    expect(ru).toContain("mediaMicOff: \"Микрофон выключен\"");
+    expect(ru).toContain("mediaCameraOn: \"Камера включена\"");
+    expect(ru).toContain("mediaCameraOff: \"Камера выключена\"");
+    expect(ru).toContain("mediaCameraBusyOrUnavailable: \"Камера занята или недоступна\"");
+    expect(en).toContain("mediaMicOn: \"Mic on\"");
+    expect(en).toContain("mediaMicOff: \"Mic off\"");
+    expect(en).toContain("mediaCameraOn: \"Camera on\"");
+    expect(en).toContain("mediaCameraOff: \"Camera off\"");
+    expect(en).toContain("mediaCameraBusyOrUnavailable: \"Camera is busy or unavailable\"");
   });
 });

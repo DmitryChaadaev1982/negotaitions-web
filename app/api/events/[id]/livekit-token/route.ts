@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import {
+  claimEventLobbyConnectionLease,
+  validateEventLobbyConnectionLease,
+} from "@/lib/event-lobby-connection-lease";
+import { getVideoProvider } from "@/lib/env";
+import {
   createEventLobbyLiveKitAccessToken,
   getLiveKitConfig,
 } from "@/lib/livekit";
@@ -19,6 +24,12 @@ type RouteContext = {
 
 export async function POST(request: Request, context: RouteContext) {
   const { id: eventId } = await context.params;
+  if (getVideoProvider() !== "livekit") {
+    return NextResponse.json(
+      { error: "providerMismatch", code: "LIVEKIT_LOBBY_DISABLED" },
+      { status: 409 },
+    );
+  }
   const config = getLiveKitConfig();
 
   if (!config) {
@@ -47,6 +58,31 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!access) {
     return NextResponse.json({ error: "invalidAccess" }, { status: 403 });
+  }
+
+  if (user && parsed.data.connectionId) {
+    const lease = parsed.data.claimLease
+      ? claimEventLobbyConnectionLease({
+          eventId,
+          userId: user.id,
+          connectionId: parsed.data.connectionId,
+        })
+      : validateEventLobbyConnectionLease({
+          eventId,
+          userId: user.id,
+          connectionId: parsed.data.connectionId,
+        });
+    if (!lease.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionId: lease.activeConnectionId,
+          leaseVersion: lease.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (isEventUnavailable(access.event)) {

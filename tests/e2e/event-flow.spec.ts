@@ -1,14 +1,18 @@
+import { createHash, randomBytes } from "crypto";
+
 import { expect, test } from "@playwright/test";
 
 import {
   cleanupE2eData,
   countEventParticipants,
+  createActiveUser,
   createE2eCase,
   createE2eEvent,
   getEventParticipants,
   getSession,
   getTrainingEvent,
   participantByName,
+  query,
 } from "./helpers/db";
 
 test.describe.configure({ mode: "serial" });
@@ -21,59 +25,45 @@ test.afterAll(async () => {
   await cleanupE2eData();
 });
 
-test("event lobby join and rejoin do not duplicate participant", async ({
+async function createUserSessionCookie(userId: string) {
+  const rawToken = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  await query(
+    `INSERT INTO "UserSession"
+       ("id","userId","sessionTokenHash","expiresAt","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,NOW() + INTERVAL '30 days',NOW())`,
+    [userId, tokenHash],
+  );
+  return `auth_session=${rawToken}`;
+}
+
+test("account-first join redirects unauth users and prevents duplicate event participants", async ({
   page,
   request,
 }) => {
   const event = await createE2eEvent({ title: "E2E Club Event Rejoin" });
+  await query(`UPDATE "TrainingEvent" SET "visibility"='PUBLIC' WHERE "id"=$1`, [event.id]);
+  const user = await createActiveUser();
+  const authCookie = await createUserSessionCookie(user.id);
 
-  await page.goto(`/events/join/${event.publicJoinCode}`);
-  await page.getByTestId("event-join-name-input").fill("Igor");
-  await page.locator('input[name="preference"][value="PLAY"]').check();
-  await page.getByTestId("join-event-button").click();
+  await page.goto(`/events/${event.id}/join`);
+  await expect(page).toHaveURL(new RegExp(`/login\\?returnUrl=.*events%2F${event.id}%2Fjoin`));
 
-  await expect(page).toHaveURL(new RegExp(`/events/${event.id}/lobby`));
-  await expect
-    .poll(async () => countEventParticipants(event.id))
-    .toBe(1);
-
-  const [igor] = await getEventParticipants(event.id);
-  expect(igor?.displayName).toBe("Igor");
-
-  const validationResponse = await request.post("/api/rejoin/validate", {
-    data: {
-      type: "EVENT_LOBBY",
-      eventId: event.id,
-      participantToken: igor!.participantToken,
-    },
+  const stateBefore = await request.get(`/api/events/${event.id}/state`, {
+    headers: { Cookie: authCookie },
   });
-  const validation = await validationResponse.json();
-  expect(validation.valid).toBe(true);
+  expect(stateBefore.ok()).toBeTruthy();
+  await expect.poll(async () => countEventParticipants(event.id)).toBe(1);
 
-  await page.evaluate(
-    ({ eventId, participantToken }) => {
-      window.localStorage.setItem(
-        "negotaitions.recovery.v1",
-        JSON.stringify({
-          type: "EVENT_LOBBY",
-          eventId,
-          participantToken,
-          displayName: "Igor",
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-    },
-    { eventId: event.id, participantToken: igor!.participantToken },
-  );
+  const stateAfter = await request.get(`/api/events/${event.id}/state`, {
+    headers: { Cookie: authCookie },
+  });
+  expect(stateAfter.ok()).toBeTruthy();
+  await expect.poll(async () => countEventParticipants(event.id)).toBe(1);
 
-  await page.reload();
-  await expect
-    .poll(async () => countEventParticipants(event.id))
-    .toBe(1);
-
-  await expect
-    .poll(async () => countEventParticipants(event.id))
-    .toBe(1);
+  const participants = await getEventParticipants(event.id);
+  expect(participants).toHaveLength(1);
+  expect(participants[0]?.displayName).toBeTruthy();
 });
 
 test("event session keeps event, preparation, and negotiation durations separate", async ({

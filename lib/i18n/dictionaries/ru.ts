@@ -82,6 +82,8 @@ export const ru: Dictionary = {
     eventDurationMinutes: "Длительность встречи (минуты)",
     welcome: "Добро пожаловать, {name}",
     comingLater: "Скоро",
+    retry: "Повторить",
+    you: "вы",
   },
   cases: {
     title: "Кейсы",
@@ -902,6 +904,39 @@ export const ru: Dictionary = {
     recordingCompletedIndicator: "Запись завершена",
     recordingFailedWarning:
       "Переговоры начались, но запись не запустилась. Проверьте лимит LiveKit Egress, оплату или настройки хранилища.",
+    thisTabIsStale:
+      "Эта вкладка устарела, потому что для этого аккаунта активирована более новая вкладка.",
+    mediaMicOn: "Микрофон включён",
+    mediaMicOff: "Микрофон выключен",
+    mediaMicLocked: "Микрофон заблокирован правилами сессии",
+    mediaCameraOn: "Камера включена",
+    mediaCameraOff: "Камера выключена",
+    mediaCameraBusyOrUnavailable: "Камера занята или недоступна",
+    videoOn: "Видео включено",
+    notConnected: "Не подключён",
+    participantA: "Участник A",
+    participantB: "Участник B",
+    participants: "Участники",
+    facilitator: "Фасилитатор",
+    timer: "Таймер",
+    observer: "Наблюдатель",
+    unknownRole: "Неизвестная роль",
+    unsupportedParticipantType: "Неподдерживаемый тип участника",
+    slotParticipantAEmpty: "Слот участника A пуст.",
+    slotParticipantBEmpty: "Слот участника B пуст.",
+    slotFacilitatorEmpty: "Слот фасилитатора пуст.",
+    observersNotConnected: "Наблюдатели пока не подключены",
+    diagnosticsUnknownEndpoints: "Диагностика / неизвестные endpoint",
+    unknownEndpoint: "Неизвестный endpoint",
+    unknownMicState: "Состояние микрофона неизвестно",
+    unknownEndpointsNotDetected: "Неизвестные endpoint не обнаружены.",
+    remoteMicDerivedByPolicy: "Состояние микрофона рассчитано по правилам сессии",
+    duplicateEndpointSuppressed:
+      "Дубликат endpoint скрыт детерминированным сопоставлением",
+    unknownParticipant: "Неизвестный участник",
+    autoplayBlocked:
+      "Браузер заблокировал звук — нажмите «Разрешить звук» для воспроизведения.",
+    allowAudio: "Разрешить звук",
     // Debrief mode
     debrief: "Разбор",
     debriefTitle: "Разбор",
@@ -1051,8 +1086,20 @@ export const ru: Dictionary = {
     hostLabel: "Ведущий",
     cameraUnavailable:
       "Камера недоступна. Возможно, её использует другая вкладка или приложение. Вы всё ещё можете смотреть других — включите камеру кнопкой ниже, когда будете готовы.",
+    cameraBusyOrUnavailable: "Камера занята или недоступна",
     microphoneUnavailable:
       "Микрофон недоступен. Возможно, его использует другая вкладка или приложение. Включите его кнопкой ниже, когда будете готовы.",
+    voxLobbyWaitingForPreviousDisconnect:
+      "Ожидание завершения предыдущего подключения Vox...",
+    voxLobbyAuthorizing: "Авторизация в Vox-лобби...",
+    voxLobbyConnected: "Подключено",
+    voxLobbyDisconnected: "Отключено: {reason}",
+    voxLobbyUnableToConnect: "Не удалось подключиться к Vox-лобби.",
+    lobbyTakeoverDisconnected:
+      "Вы вошли в это лобби в другой вкладке. Эта вкладка отключена.",
+    reconnectLobby: "Переподключиться",
+    lobbyActionsDisabledInStaleTab:
+      "Действия в этой вкладке отключены до переподключения.",
     singleDeviceHint:
       "Тестируете на одном компьютере? Только одна вкладка браузера может использовать камеру. Используйте разные устройства или включите камеру только в одной вкладке.",
     copyEventJoinLink: "Скопировать ссылку на встречу",

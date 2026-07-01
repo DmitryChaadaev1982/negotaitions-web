@@ -52,10 +52,21 @@ export const eventAccessQuerySchema = z.object({
 export const eventLiveKitTokenSchema = z.object({
   hostToken: z.string().optional(),
   participantToken: z.string().optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
+  claimLease: z.boolean().optional(),
+});
+
+export const eventVoximplantAccessSchema = z.object({
+  hostToken: z.string().optional(),
+  participantToken: z.string().optional(),
+  oneTimeKey: z.string().trim().min(1).max(512).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
+  claimLease: z.boolean().optional(),
 });
 
 export const updateEventHostSchema = z.object({
   hostToken: z.string().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   selectedCaseId: z.string().nullable().optional(),
   assignmentDraft: z
     .object({
@@ -73,11 +84,13 @@ export const updateEventHostSchema = z.object({
 
 export const updateEventParticipantSchema = z.object({
   participantToken: z.string().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   preference: z.enum(["UNDECIDED", "PLAY", "OBSERVE", "FACILITATE"]),
 });
 
 export const createEventSessionSchema = z.object({
   hostToken: z.string().min(1).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
   caseId: z.string().min(1).optional(),
   roomLabel: z.string().trim().max(80).optional(),
   preparationDurationSeconds: z.number().int().min(0).max(60 * 60).optional(),

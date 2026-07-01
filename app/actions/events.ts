@@ -570,6 +570,7 @@ export async function joinTrainingEvent(
 
       const existingByUser = await prisma.eventParticipant.findFirst({
         where: { eventId, userId: currentUser.id },
+        orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
       });
 
       if (existingByUser && existingByUser.id !== existing.id) {
@@ -600,6 +601,7 @@ export async function joinTrainingEvent(
   // Check if user is already a participant (duplicate prevention).
   const existingByUser = await prisma.eventParticipant.findFirst({
     where: { eventId, userId: currentUser.id },
+    orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
   });
 
   if (existingByUser) {
@@ -627,6 +629,7 @@ export async function joinTrainingEvent(
         async (tx) => {
           const existingInTransaction = await tx.eventParticipant.findFirst({
             where: { eventId, userId: currentUser.id },
+            orderBy: [{ lastSeenAt: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
           });
 
           if (existingInTransaction) {

@@ -619,7 +619,7 @@ export function SharedRoomShell({
               className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
               data-testid="room-stale-connection-banner"
             >
-              This tab is stale because a newer tab became active for this account.
+              {t("room.thisTabIsStale")}
             </div>
           ) : null}
           {/* Video layout */}

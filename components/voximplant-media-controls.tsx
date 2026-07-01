@@ -1,0 +1,86 @@
+"use client";
+
+import { useI18n } from "@/lib/i18n/useI18n";
+
+type MediaControlState = "on" | "off" | "locked";
+
+type VoximplantMediaControlsProps = {
+  joined: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+  micState: MediaControlState;
+  cameraState: MediaControlState;
+  onToggleMic: () => void;
+  onToggleCamera: () => void;
+  statusText?: string | null;
+  testIdPrefix?: string;
+};
+
+function stateClass(state: MediaControlState): string {
+  if (state === "on") {
+    return "border-emerald-500/60 bg-emerald-900/40 text-emerald-100 hover:bg-emerald-900/55";
+  }
+  if (state === "locked") {
+    return "border-slate-500/60 bg-slate-700/40 text-slate-200 hover:bg-slate-700/55";
+  }
+  return "border-rose-500/60 bg-rose-900/35 text-rose-100 hover:bg-rose-900/50";
+}
+
+export function VoximplantMediaControls({
+  joined,
+  disabled,
+  busy,
+  micState,
+  cameraState,
+  onToggleMic,
+  onToggleCamera,
+  statusText,
+  testIdPrefix = "vox",
+}: VoximplantMediaControlsProps) {
+  const { t } = useI18n();
+
+  const micLabel =
+    micState === "on"
+      ? t("room.mediaMicOn")
+      : micState === "locked"
+        ? t("room.mediaMicLocked")
+        : t("room.mediaMicOff");
+  const cameraLabel =
+    cameraState === "on"
+      ? t("room.mediaCameraOn")
+      : cameraState === "locked"
+        ? t("room.mediaCameraBusyOrUnavailable")
+        : t("room.mediaCameraOff");
+
+  return (
+    <div className="lk-control-bar flex items-center gap-2 px-3 py-2">
+      <button
+        type="button"
+        onClick={onToggleMic}
+        className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${stateClass(micState)}`}
+        disabled={!joined || disabled || busy}
+        title={micLabel}
+        aria-label={micLabel}
+        data-state={micState}
+        data-testid={`${testIdPrefix}-mic-toggle`}
+      >
+        {micLabel}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleCamera}
+        className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${stateClass(cameraState)}`}
+        disabled={!joined || disabled || busy}
+        title={cameraLabel}
+        aria-label={cameraLabel}
+        data-state={cameraState}
+        data-testid={`${testIdPrefix}-camera-toggle`}
+      >
+        {cameraLabel}
+      </button>
+      {statusText ? (
+        <span className="ml-auto text-xs text-slate-400">{statusText}</span>
+      ) : null}
+    </div>
+  );
+}

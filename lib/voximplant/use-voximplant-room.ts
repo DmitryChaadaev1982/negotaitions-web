@@ -5,6 +5,17 @@ import {
   buildCameraEnablePlan,
   isDuplicateVideoStreamError,
 } from "@/lib/voximplant/camera-toggle-logic";
+import {
+  registerVoxClientDisconnect,
+  waitForVoxClientIdle,
+} from "@/lib/voximplant/browser-client-lifecycle";
+import {
+  installVoxCameraErrorSuppressor,
+  installVoxRuntimeErrorSuppressor,
+  isAlreadyExistsStreamError,
+  isRecoverableVoxMediaError,
+  toVoxErrorMessage,
+} from "@/lib/voximplant/media-error-utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -193,6 +204,7 @@ type UseVoximplantRoomResult = {
   remoteParticipants: VoxRoomParticipant[];
   isMicMuted: boolean;
   isCameraOn: boolean;
+  cameraUnavailable: boolean;
   /** Non-fatal Russian-language device acquisition warnings shown to the user. */
   mediaWarnings: string[];
   toggleMic: () => void;
@@ -279,9 +291,7 @@ type RuntimeState = {
 // ─── Pure utility functions ───────────────────────────────────────────────────
 
 function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "Unknown Voximplant error.";
+  return toVoxErrorMessage(error);
 }
 
 /**
@@ -289,22 +299,7 @@ function toErrorMessage(error: unknown): string {
  * device busy, permission denied, device not found.
  */
 function isNonFatalMediaError(error: unknown): boolean {
-  const name = error instanceof Error ? error.name : "";
-  const message = toErrorMessage(error).toLowerCase();
-  return (
-    name === "NotReadableError" ||
-    name === "NotAllowedError" ||
-    name === "NotFoundError" ||
-    name === "OverconstrainedError" ||
-    message.includes("notreadableerror") ||
-    message.includes("notallowederror") ||
-    message.includes("notfounderror") ||
-    message.includes("device in use") ||
-    message.includes("permission denied") ||
-    message.includes("could not start video source") ||
-    message.includes("could not start audio source") ||
-    message.includes("overconstrained")
-  );
+  return isRecoverableVoxMediaError(error);
 }
 
 /**
@@ -312,12 +307,7 @@ function isNonFatalMediaError(error: unknown): boolean {
  * These indicate the conference already registered a stream of that type.
  */
 function isAlreadyExistsError(error: unknown): boolean {
-  const message = toErrorMessage(error).toLowerCase();
-  return (
-    message.includes("already exists") ||
-    message.includes("streamupdatefailed") ||
-    message.includes("stream with type")
-  );
+  return isAlreadyExistsStreamError(error);
 }
 
 /** Stop all underlying browser MediaStreamTracks to release the hardware device. */
@@ -447,34 +437,7 @@ function getAudioContextCtor(): typeof AudioContext | null {
  * Always call the returned restore function (in a finally block).
  */
 function installCameraErrorSuppressor(): () => void {
-  if (typeof process === "undefined" || process.env.NODE_ENV !== "development") {
-    return () => {};
-  }
-  const original = console.error;
-  console.error = (...args: Parameters<typeof console.error>) => {
-    const combined = args
-      .map((a) =>
-        typeof a === "string"
-          ? a
-          : a instanceof Error
-            ? `${a.name}: ${a.message}`
-            : String(a),
-      )
-      .join(" ");
-    const lower = combined.toLowerCase();
-    const isCameraDeviceBusy =
-      (lower.includes("[streammanager]") && lower.includes("notreadableerror")) ||
-      lower.includes("notreadableerror: device in use") ||
-      (lower.includes("device in use") && lower.includes("[streammanager]"));
-    if (!isCameraDeviceBusy) {
-      original.apply(console, args);
-    }
-    // Suppressed: known Voximplant WebSDK camera-busy message.
-    // The UI warning is displayed separately via mediaWarnings state.
-  };
-  return () => {
-    console.error = original;
-  };
+  return installVoxCameraErrorSuppressor();
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -504,6 +467,7 @@ export function useVoximplantRoom({
   const [remoteParticipants, setRemoteParticipants] = useState<VoxRoomParticipant[]>([]);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [cameraUnavailable, setCameraUnavailable] = useState(false);
   const [mediaWarnings, setMediaWarnings] = useState<string[]>([]);
   // Audio diagnostics
   const [micCaptureStatus, setMicCaptureStatus] = useState<MicCaptureStatus>("not_requested");
@@ -789,7 +753,7 @@ export function useVoximplantRoom({
     runtime.localAudioStream?.close?.();
     runtime.localVideoStream?.close?.();
 
-    try { await runtime.core.client.disconnect(); } catch { /* ignore */ }
+    await registerVoxClientDisconnect(runtime.core.client.disconnect());
 
     runtimeRef.current = null;
   }, []);
@@ -807,6 +771,7 @@ export function useVoximplantRoom({
     setLocalParticipant(null);
     setIsMicMuted(false);
     setIsCameraOn(false);
+    setCameraUnavailable(false);
     setIsLeaving(false);
     setMicCaptureStatus("not_requested");
     setLocalAudioStreamCreated(false);
@@ -962,6 +927,7 @@ export function useVoximplantRoom({
           if (videoTrack) {
             videoTrack.enabled = false;
           }
+          setCameraUnavailable(false);
           if (runtime.localVideoStream) {
             setLocalParticipant({
               id: "local",
@@ -991,6 +957,9 @@ export function useVoximplantRoom({
                 runtime.videoQuality,
               );
             } catch (e) {
+              if (isNonFatalMediaError(e)) {
+                setCameraUnavailable(true);
+              }
               addMediaWarning(
                 isNonFatalMediaError(e)
                   ? "Камера занята или недоступна. Вы остались в комнате без видео."
@@ -1035,6 +1004,7 @@ export function useVoximplantRoom({
 
           // Recover gracefully for SDK state mismatches.
           runtime.videoStreamAdded = runtime.videoStreamAdded || Boolean(runtime.localVideoStream);
+          setCameraUnavailable(false);
           setLocalParticipant({
             id: "local",
             displayName: localDisplayNameRef.current,
@@ -1055,6 +1025,7 @@ export function useVoximplantRoom({
 
   useEffect(() => {
     mountedRef.current = true;
+    const restoreRuntimeSuppressor = installVoxRuntimeErrorSuppressor();
 
     const join = async () => {
       if (isJoiningRef.current) return;
@@ -1062,6 +1033,9 @@ export function useVoximplantRoom({
       setError(null);
 
       try {
+        setStatus("Ожидание завершения предыдущего подключения...");
+        await waitForVoxClientIdle();
+
         // Step 1 — fetch initial access token.
         const initialResponse = await fetch(
           `/api/sessions/${encodeURIComponent(sessionId)}/voximplant/access`,
@@ -1214,6 +1188,7 @@ export function useVoximplantRoom({
               initialWarnings.push(
                 "Камера занята или недоступна. Вы остались в комнате без видео.",
               );
+              setCameraUnavailable(true);
             } else {
               throw videoError;
             }
@@ -1322,6 +1297,7 @@ export function useVoximplantRoom({
 
         const cameraActive = localVideoStream !== null;
         setIsCameraOn(cameraActive);
+        setCameraUnavailable(!cameraActive && !disableInitialCamera);
         if (cameraActive) {
           setLocalParticipant({
             id: "local",
@@ -1354,6 +1330,7 @@ export function useVoximplantRoom({
 
     return () => {
       mountedRef.current = false;
+      restoreRuntimeSuppressor();
       void cleanup();
     };
   }, [
@@ -1383,6 +1360,7 @@ export function useVoximplantRoom({
       remoteParticipants,
       isMicMuted,
       isCameraOn,
+      cameraUnavailable,
       mediaWarnings,
       toggleMic,
       toggleCamera,
@@ -1407,6 +1385,7 @@ export function useVoximplantRoom({
       isLeaving,
       isLoading,
       isMicMuted,
+      cameraUnavailable,
       joined,
       lastAudioError,
       lastRemoteAudioError,

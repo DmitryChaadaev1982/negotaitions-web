@@ -2,13 +2,13 @@
 
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { RoomTimerPanel } from "@/components/room-timer-panel";
+import { useI18n } from "@/lib/i18n/useI18n";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import {
   resolveRemoteMicStateByPolicy,
   resolveConnectionState,
   resolveRosterVisualRoles,
-  shouldShowDiagnosticsSection,
   type RosterConnectionState,
   type TileMicState,
 } from "@/lib/voximplant/room-layout-model";
@@ -47,20 +47,20 @@ function VideoTile({
   title,
   subtitle,
   micState,
+  micStateLabel,
   micStateHint,
   micLevel,
   isSpeaking,
-  diagnostic,
 }: {
   participant: VoxTileParticipant;
   muted: boolean;
   title: string;
   subtitle?: string;
   micState: TileMicState;
+  micStateLabel: string;
   micStateHint?: string;
   micLevel?: number;
   isSpeaking?: boolean;
-  diagnostic?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -105,15 +105,8 @@ function VideoTile({
             title={micStateHint}
             aria-label={micStateHint}
           >
-            {micState === "on"
-              ? "Микрофон включён"
-              : micState === "system_muted"
-                ? "Микрофон заблокирован правилами сессии"
-                : "Микрофон выключен"}
+            {micStateLabel}
           </span>
-          {diagnostic ? (
-            <span className="block truncate text-[10px] text-amber-300">{diagnostic}</span>
-          ) : null}
         </div>
         {micLevel !== undefined && (
           <MicLevelBar level={micLevel} muted={muted} />
@@ -131,25 +124,11 @@ function NoVideoPlaceholder({ message }: { message: string }) {
   );
 }
 
-type ResolvedRoleInfo = {
-  participantType: ParticipantType | null;
-  roleLabel: string | null;
-  caseRoleName: string | null;
-  diagnosticLabel: string | null;
-};
-
-type ResolvedVoxTile = {
-  participant: VoxTileParticipant;
-  role: ResolvedRoleInfo;
-};
-
 type ResolvedRosterTile = {
   rosterEntry: SessionRosterEntry;
   participant: VoxTileParticipant;
   matchedRemoteId: string | null;
   zone: "facilitator" | "participant_a" | "participant_b" | "observer" | "unknown";
-  roleLabel: string;
-  diagnosticLabel: string | null;
   connectionState: RosterConnectionState;
   isLocal: boolean;
 };
@@ -161,23 +140,19 @@ function normalizeEndpointUsername(value: string | null | undefined): string | n
   return normalized.includes("@") ? normalized.split("@")[0] ?? null : normalized;
 }
 
-function roleLabelFromParticipantType(participantType: ParticipantType): string {
-  if (participantType === "FACILITATOR") return "Facilitator";
-  if (participantType === "OBSERVER") return "Observer";
-  return "Participant";
-}
-
 function RoleSection({
   title,
   testId,
+  className,
   children,
 }: {
   title: string;
   testId: string;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-2" data-testid={testId}>
+    <section className={`space-y-2 ${className ?? ""}`} data-testid={testId}>
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h3>
       {children}
     </section>
@@ -197,7 +172,6 @@ export default function VoximplantVideoLayout({
   localMicSystemMuted,
   micLevel,
   localRoleLabel,
-  showDiagnostics,
 }: {
   localParticipant: VoxTileParticipant | null;
   remoteParticipants: VoxTileParticipant[];
@@ -215,22 +189,10 @@ export default function VoximplantVideoLayout({
    * Resolved server-side via the sidebar API — same source as the LiveKit room.
    */
   localRoleLabel?: string;
-  showDiagnostics?: boolean;
 }) {
+  const { t } = useI18n();
   const isSpeaking =
     !isMicMuted && micLevel !== undefined && micLevel > SPEAKING_THRESHOLD;
-
-  const rosterByVoxUsername = useMemo(() => {
-    const map = new Map<string, SessionRosterEntry>();
-    for (const entry of roster) {
-      const normalized = normalizeEndpointUsername(entry.voximplantProviderUsername);
-      if (!normalized) continue;
-      if (!map.has(normalized)) {
-        map.set(normalized, entry);
-      }
-    }
-    return map;
-  }, [roster]);
 
   const remoteByVoxUsername = useMemo(() => {
     const map = new Map<string, VoxTileParticipant>();
@@ -272,8 +234,6 @@ export default function VoximplantVideoLayout({
 
       const visual = visualRolesByRosterId.get(entry.id) ?? {
         zone: "unknown" as const,
-        roleLabel: "Unknown role",
-        diagnosticLabel: "Unsupported participant type",
       };
       const connectionState = resolveConnectionState({
         hasVideoStream: Boolean(participant.stream),
@@ -286,70 +246,42 @@ export default function VoximplantVideoLayout({
         participant,
         matchedRemoteId: matchedRemote?.id ?? null,
         zone: visual.zone,
-        roleLabel: visual.roleLabel,
-        diagnosticLabel: visual.diagnosticLabel,
         connectionState,
         isLocal,
       };
     });
   }, [currentParticipantId, isCameraOn, localParticipant, remoteByVoxUsername, roster, visualRolesByRosterId]);
 
-  const usedRemoteIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const tile of resolvedRosterTiles) {
-      if (tile.isLocal || !tile.matchedRemoteId) {
-        continue;
-      }
-      ids.add(tile.matchedRemoteId);
-    }
-    return ids;
-  }, [resolvedRosterTiles]);
-
-  const unknownTiles = useMemo<ResolvedVoxTile[]>(() => {
-    const leftovers = remoteParticipants.filter((participant) => !usedRemoteIds.has(participant.id));
-    return leftovers.map((participant) => {
-      const endpointUsername = normalizeEndpointUsername(participant.endpointUsername);
-      const rosterEntry = endpointUsername ? rosterByVoxUsername.get(endpointUsername) : null;
-      return {
-        participant,
-        role: {
-          participantType: null,
-          roleLabel: null,
-          caseRoleName: rosterEntry?.caseRoleName ?? null,
-          diagnosticLabel: rosterEntry
-            ? "Duplicate endpoint suppressed by deterministic mapping"
-            : "Unknown participant",
-        },
-      };
-    });
-  }, [remoteParticipants, rosterByVoxUsername, usedRemoteIds]);
-
   const facilitatorTiles = resolvedRosterTiles.filter((tile) => tile.zone === "facilitator");
   const observerTiles = resolvedRosterTiles.filter((tile) => tile.zone === "observer");
   const participantATiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_b");
-  const unknownRosterTiles = resolvedRosterTiles.filter((tile) => tile.zone === "unknown");
-  const diagnosticsVisible = shouldShowDiagnosticsSection({
-    unknownRosterCount: unknownRosterTiles.length,
-    unknownEndpointCount: unknownTiles.length,
-    debugEnabled: Boolean(showDiagnostics),
-  });
 
-  const localSubtitle = `${localRoleLabel ?? roleLabelFromParticipantType(localParticipantType)}${
+  const localSubtitle = `${localRoleLabel ?? t(`participantType.${localParticipantType}` as `participantType.${typeof localParticipantType}`)}${
     localCaseRoleName ? ` · ${localCaseRoleName}` : ""
-  }${isMicMuted ? " · Muted" : ""}${!isCameraOn ? " · Camera off" : ""}`;
+  }${isMicMuted ? ` · ${t("room.mediaMicOff")}` : ""}${!isCameraOn ? ` · ${t("room.mediaCameraOff")}` : ""}`;
 
   const toStateLabel = (state: RosterConnectionState): string => {
-    if (state === "video_on") return "Видео включено";
-    if (state === "camera_off") return "Камера выключена";
-    if (state === "connecting") return "Подключение видео";
-    return "Не в сети";
+    if (state === "video_on") return t("room.videoOn");
+    if (state === "camera_off") return t("room.mediaCameraOff");
+    if (state === "connecting") return t("room.connectingVideo");
+    return t("room.notConnected");
   };
 
   const renderRosterTile = (
     tile: ResolvedRosterTile,
     options?: { observerCompact?: boolean },
   ) => {
+    const localizedRoleLabel =
+      tile.zone === "facilitator"
+        ? t("room.facilitator")
+        : tile.zone === "participant_a"
+          ? t("room.participantA")
+          : tile.zone === "participant_b"
+            ? t("room.participantB")
+            : tile.zone === "observer"
+              ? t("room.observer")
+              : t("room.unknownRole");
     const tileMicState: TileMicState = tile.isLocal
       ? localMicSystemMuted
         ? "system_muted"
@@ -362,26 +294,32 @@ export default function VoximplantVideoLayout({
         });
     const tileMicStateHint = tile.isLocal
       ? tileMicState === "system_muted"
-        ? "Микрофон заблокирован правилами сессии"
+        ? t("room.mediaMicLocked")
         : tileMicState === "on"
-          ? "Микрофон включён"
-          : "Микрофон выключен"
+          ? t("room.mediaMicOn")
+          : t("room.mediaMicOff")
       : tileMicState === "system_muted"
-        ? "Микрофон заблокирован правилами сессии"
-        : "Состояние микрофона рассчитано по правилам сессии";
+        ? t("room.mediaMicLocked")
+        : t("room.remoteMicDerivedByPolicy");
+    const tileMicStateLabel =
+      tileMicState === "system_muted"
+        ? t("room.mediaMicLocked")
+        : tileMicState === "on"
+          ? t("room.mediaMicOn")
+          : t("room.mediaMicOff");
     const subtitle = tile.isLocal
       ? `${localSubtitle} · ${toStateLabel(tile.connectionState)}`
-      : `${tile.roleLabel}${tile.rosterEntry.caseRoleName ? ` · ${tile.rosterEntry.caseRoleName}` : ""} · ${toStateLabel(tile.connectionState)}`;
+      : `${localizedRoleLabel}${tile.rosterEntry.caseRoleName ? ` · ${tile.rosterEntry.caseRoleName}` : ""} · ${toStateLabel(tile.connectionState)}`;
     return (
       <div key={tile.rosterEntry.id} className={options?.observerCompact ? "w-[220px] max-w-full shrink-0" : ""}>
         <VideoTile
           participant={tile.participant}
           muted={tile.isLocal}
-          title={tile.isLocal ? `${tile.rosterEntry.displayName} (you)` : tile.rosterEntry.displayName}
+          title={tile.isLocal ? `${tile.rosterEntry.displayName} (${t("common.you")})` : tile.rosterEntry.displayName}
           subtitle={subtitle}
           micState={tileMicState}
+          micStateLabel={tileMicStateLabel}
           micStateHint={tileMicStateHint}
-          diagnostic={tile.diagnosticLabel ?? undefined}
           micLevel={tile.isLocal ? micLevel : undefined}
           isSpeaking={tile.isLocal ? isSpeaking : false}
         />
@@ -390,9 +328,9 @@ export default function VoximplantVideoLayout({
   };
 
   return (
-    <section className="min-h-0 flex-1 overflow-auto p-3" data-testid="vox-layout-root">
-      <div className="space-y-3">
-        <RoleSection title="Observers" testId="vox-zone-observers">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden p-2" data-testid="vox-layout-root">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <RoleSection title={t("room.observersSection")} testId="vox-zone-observers">
           {observerTiles.length > 0 ? (
             <div className="flex flex-wrap justify-center gap-2 pb-1" data-testid="vox-observer-row">
               {observerTiles.map((tile) => renderRosterTile(tile, { observerCompact: true }))}
@@ -402,74 +340,52 @@ export default function VoximplantVideoLayout({
               className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 px-3 py-1 text-xs text-slate-300"
               data-testid="vox-observers-empty-state"
             >
-              Наблюдатели пока не подключены
+              {t("room.observersNotConnected")}
             </div>
           )}
         </RoleSection>
 
-        <div className="hidden gap-3 lg:grid lg:grid-cols-[38%_24%_38%]" data-testid="vox-zone-main-desktop">
-          <RoleSection title="Participant A" testId="vox-zone-participant-a">
-            {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message="Participant A slot is empty." />}
+        <div
+          className="hidden min-h-0 flex-1 gap-2 lg:grid lg:grid-cols-[38%_24%_38%]"
+          data-testid="vox-zone-main-desktop"
+        >
+          <RoleSection title={t("room.participantA")} testId="vox-zone-participant-a" className="min-h-0">
+            {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
           </RoleSection>
 
-          <div className="space-y-3" data-testid="vox-zone-center">
-            <RoleSection title="Timer" testId="vox-zone-timer">
+          <div className="flex min-h-0 flex-col gap-2" data-testid="vox-zone-center">
+            <RoleSection title={t("room.timer")} testId="vox-zone-timer" className="shrink-0">
               <RoomTimerPanel controlState={controlState} />
             </RoleSection>
-            <RoleSection title="Facilitator" testId="vox-zone-facilitator">
+            <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 flex-1">
               {facilitatorTiles.length > 0
                 ? facilitatorTiles.map((tile) => renderRosterTile(tile))
-                : <NoVideoPlaceholder message="Facilitator slot is empty." />}
+                : <NoVideoPlaceholder message={t("room.slotFacilitatorEmpty")} />}
             </RoleSection>
           </div>
 
-          <RoleSection title="Participant B" testId="vox-zone-participant-b">
-            {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message="Participant B slot is empty." />}
+          <RoleSection title={t("room.participantB")} testId="vox-zone-participant-b" className="min-h-0">
+            {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
           </RoleSection>
         </div>
 
-        <div className="space-y-3 lg:hidden" data-testid="vox-zone-main-mobile">
-          <RoleSection title="Timer" testId="vox-zone-timer-mobile">
+        <div className="space-y-2 overflow-auto lg:hidden" data-testid="vox-zone-main-mobile">
+          <RoleSection title={t("room.timer")} testId="vox-zone-timer-mobile">
             <RoomTimerPanel controlState={controlState} />
           </RoleSection>
-          <RoleSection title="Participants" testId="vox-zone-participants-mobile">
+          <RoleSection title={t("room.participants")} testId="vox-zone-participants-mobile">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message="Participant A slot is empty." />}
-              {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message="Participant B slot is empty." />}
+              {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
+              {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
             </div>
           </RoleSection>
-          <RoleSection title="Facilitator" testId="vox-zone-facilitator-mobile">
+          <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator-mobile">
             {facilitatorTiles.length > 0
               ? facilitatorTiles.map((tile) => renderRosterTile(tile))
-              : <NoVideoPlaceholder message="Facilitator slot is empty." />}
+              : <NoVideoPlaceholder message={t("room.slotFacilitatorEmpty")} />}
           </RoleSection>
         </div>
 
-        {diagnosticsVisible ? (
-          <RoleSection title="Diagnostics / Unknown Endpoints" testId="vox-zone-unknown">
-            {unknownRosterTiles.length > 0 || unknownTiles.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {unknownRosterTiles.map((tile) => renderRosterTile(tile))}
-                {unknownTiles.map((tile) => (
-                  <VideoTile
-                    key={tile.participant.id}
-                    participant={tile.participant}
-                    muted={false}
-                    title={tile.participant.displayName}
-                    subtitle="Unknown endpoint"
-                    micState="off"
-                    micStateHint="Состояние микрофона неизвестно"
-                    diagnostic={tile.role.diagnosticLabel ?? undefined}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-slate-400" data-testid="vox-diagnostics-empty">
-                Unknown endpoints are not detected.
-              </p>
-            )}
-          </RoleSection>
-        ) : null}
       </div>
     </section>
   );

@@ -80,6 +80,8 @@ export const en = {
     eventDurationMinutes: "Event duration (minutes)",
     welcome: "Welcome, {name}",
     comingLater: "Coming later",
+    retry: "Retry",
+    you: "you",
   },
   cases: {
     title: "Cases",
@@ -898,6 +900,39 @@ export const en = {
     recordingCompletedIndicator: "Recording completed",
     recordingFailedWarning:
       "Negotiation started, but recording failed. Check LiveKit Egress quota, billing, or storage configuration.",
+    thisTabIsStale:
+      "This tab is stale because a newer tab became active for this account.",
+    mediaMicOn: "Mic on",
+    mediaMicOff: "Mic off",
+    mediaMicLocked: "Mic is locked by session rules",
+    mediaCameraOn: "Camera on",
+    mediaCameraOff: "Camera off",
+    mediaCameraBusyOrUnavailable: "Camera is busy or unavailable",
+    videoOn: "Video on",
+    notConnected: "Not connected",
+    participantA: "Participant A",
+    participantB: "Participant B",
+    participants: "Participants",
+    facilitator: "Facilitator",
+    timer: "Timer",
+    observer: "Observer",
+    unknownRole: "Unknown role",
+    unsupportedParticipantType: "Unsupported participant type",
+    slotParticipantAEmpty: "Participant A slot is empty.",
+    slotParticipantBEmpty: "Participant B slot is empty.",
+    slotFacilitatorEmpty: "Facilitator slot is empty.",
+    observersNotConnected: "Observers are not connected yet",
+    diagnosticsUnknownEndpoints: "Diagnostics / Unknown Endpoints",
+    unknownEndpoint: "Unknown endpoint",
+    unknownMicState: "Mic state is unknown",
+    unknownEndpointsNotDetected: "Unknown endpoints are not detected.",
+    remoteMicDerivedByPolicy: "Mic state derived by session policy",
+    duplicateEndpointSuppressed:
+      "Duplicate endpoint suppressed by deterministic mapping",
+    unknownParticipant: "Unknown participant",
+    autoplayBlocked:
+      "Browser blocked audio playback - click Allow audio to continue.",
+    allowAudio: "Allow audio",
     // Debrief mode
     debrief: "Debrief",
     debriefTitle: "Debrief",
@@ -1047,8 +1082,20 @@ export const en = {
     hostLabel: "Host",
     cameraUnavailable:
       "Camera is unavailable. Another browser tab or app may be using it. You can still watch others — enable the camera with the button below when ready.",
+    cameraBusyOrUnavailable: "Camera is busy or unavailable",
     microphoneUnavailable:
       "Microphone is unavailable. Another browser tab or app may be using it. Enable it with the button below when ready.",
+    voxLobbyWaitingForPreviousDisconnect:
+      "Waiting for previous Vox connection to disconnect...",
+    voxLobbyAuthorizing: "Authorizing Vox lobby...",
+    voxLobbyConnected: "Connected",
+    voxLobbyDisconnected: "Disconnected: {reason}",
+    voxLobbyUnableToConnect: "Unable to connect to Vox lobby.",
+    lobbyTakeoverDisconnected:
+      "You joined this lobby in another tab. This tab has been disconnected.",
+    reconnectLobby: "Reconnect lobby",
+    lobbyActionsDisabledInStaleTab:
+      "Actions are disabled in this tab until you reconnect.",
     singleDeviceHint:
       "Testing on one computer? Only one browser tab can use the camera at a time. Use different devices or turn on the camera in one tab only.",
     copyEventJoinLink: "Copy event join link",

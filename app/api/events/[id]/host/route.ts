@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { createSessionFromEvent } from "@/lib/create-event-session";
+import { validateEventLobbyConnectionLease } from "@/lib/event-lobby-connection-lease";
 import { parseAssignmentDraft } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventDeletedOrCancelled } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
@@ -41,6 +42,25 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  if (user && parsed.data.connectionId) {
+    const lease = validateEventLobbyConnectionLease({
+      eventId,
+      userId: user.id,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!lease.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionId: lease.activeConnectionId,
+          leaseVersion: lease.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (isEventDeletedOrCancelled(access.event)) {
@@ -129,6 +149,25 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!access?.isHost) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  if (user && parsed.data.connectionId) {
+    const lease = validateEventLobbyConnectionLease({
+      eventId,
+      userId: user.id,
+      connectionId: parsed.data.connectionId,
+    });
+    if (!lease.isCurrentConnectionActive) {
+      return NextResponse.json(
+        {
+          error: "staleConnection",
+          code: "STALE_CONNECTION",
+          activeConnectionId: lease.activeConnectionId,
+          leaseVersion: lease.version,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (isEventDeletedOrCancelled(access.event)) {

@@ -10,6 +10,11 @@ import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
+import {
+  getAnalysisForFacilitator,
+  getAnalysisForObserver,
+  getAnalysisForParticipant,
+} from "@/lib/analysis-visibility";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
 import {
   isAiAnalysisOutdated,
@@ -461,39 +466,20 @@ export async function GET(request: Request, context: RouteContext) {
   });
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
-  // For facilitators: full analysis. For participants/observers: shared sanitized version only.
-  const rawAnalysisJsonForUser = isFacilitator
-    ? (aiAnalysis?.analysisJson ?? null)
+  const fullAnalysisJson =
+    (aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null;
+  const sharedAnalysisJson =
+    (aiAnalysis?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null;
+  const analysisJsonForUser = isFacilitator
+    ? getAnalysisForFacilitator(fullAnalysisJson)
     : isSharedWithSession
-      ? (aiAnalysis?.sharedAnalysisJson ?? null)
+      ? isObserver
+        ? getAnalysisForObserver(sharedAnalysisJson)
+        : getAnalysisForParticipant(sharedAnalysisJson, {
+            participantId: participant.id,
+            displayName: participant.displayName,
+          })
       : null;
-
-  // Filter participantPersonalFeedback: each participant sees only their own section;
-  // facilitators see all sections.
-  let analysisJsonForUser = rawAnalysisJsonForUser;
-  if (!isFacilitator && rawAnalysisJsonForUser) {
-    const {
-      filterPersonalFeedbackForParticipant,
-      sanitizeSharedAiAnalysisForParticipant,
-    } = await import("@/lib/privacy/serializers");
-    const sanitizedShared = sanitizeSharedAiAnalysisForParticipant(
-      rawAnalysisJsonForUser as NegotiationAnalysisOutput,
-    );
-
-    if (isObserver) {
-      const observerSafe = {
-        ...(sanitizedShared as NegotiationAnalysisOutput),
-      };
-      delete (observerSafe as { participantPersonalFeedback?: unknown })
-        .participantPersonalFeedback;
-      analysisJsonForUser = observerSafe as NegotiationAnalysisOutput;
-    } else {
-      analysisJsonForUser = filterPersonalFeedbackForParticipant(
-        sanitizedShared,
-        { participantId: participant.id, displayName: participant.displayName },
-      );
-    }
-  }
 
   const executiveSummaryForUser = isFacilitator
     ? (aiAnalysis?.executiveSummary ?? null)
