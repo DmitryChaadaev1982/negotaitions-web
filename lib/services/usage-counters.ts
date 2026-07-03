@@ -159,8 +159,11 @@ export async function getMonthlyUsageSummary() {
 
   return {
     livekitRecordingMinutes: byMetric(ExternalService.LIVEKIT, "egress_recording_minutes"),
+    voximplantConferenceMinutes: 0,
     openAiTranscriptionMinutes: byMetric(ExternalService.OPENAI, "transcription_minutes"),
     openAiTranscriptionBytes: byMetric(ExternalService.OPENAI, "transcription_bytes"),
+    yandexSpeechKitMinutes: 0,
+    yandexAiAnalysisRuns: 0,
     storageUploadedBytes: byMetric(
       ExternalService.YANDEX_OBJECT_STORAGE,
       "uploaded_bytes",

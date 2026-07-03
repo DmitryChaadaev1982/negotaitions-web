@@ -8,7 +8,12 @@ export const ru: Dictionary = {
     events: "Встречи",
     reports: "Отчёты",
     admin: "Административная диагностика",
+    adminDiagnostics: "Административная диагностика",
     adminUsers: "Управление пользователями",
+    adminCounters: "Счётчики использования",
+    adminServiceLog: "Лог сервисов",
+    negotiationTrainings: "Переговорные тренировки",
+    administration: "Администрирование",
   },
   common: {
     create: "Создать",
@@ -346,7 +351,7 @@ export const ru: Dictionary = {
     externalServices: "Внешние сервисы",
     serviceChecks: "Проверки сервисов",
     environmentConfiguration: "Конфигурация окружения",
-    recentServiceEvents: "Последние события сервисов",
+    recentServiceEvents: "Лог сервисов",
     usageCounters: "Счётчики использования",
     usageDisclaimer:
       "Примерная локальная оценка использования по событиям приложения. Фактический биллинг провайдера может отличаться.",
@@ -354,6 +359,7 @@ export const ru: Dictionary = {
     checkStorage: "Проверить Yandex Object Storage",
     checkOpenAi: "Проверить OpenAI",
     checkFfmpeg: "Проверить ffmpeg",
+    checkVoximplant: "Проверить Voximplant",
     configured: "Настроено",
     missing: "Отсутствует",
     unset: "(не задано)",
@@ -1276,7 +1282,7 @@ export const ru: Dictionary = {
     consentMvpDataLimitation:
       "Я понимаю, что NegotAItions является учебной MVP-площадкой и не предназначен для загрузки реальных персональных данных третьих лиц, коммерческой тайны, конфиденциальных сведений, медицинских данных, финансовых реквизитов или иных чувствительных данных.",
     consentExternalInfrastructure:
-      "Я понимаю, что сервис может использовать инфраструктуру и внешние технологические сервисы, расположенные за пределами моей страны, включая ЕС и США.",
+      "Я понимаю, что данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации.",
     consentRequired: "Для регистрации необходимо принять все обязательные соглашения.",
     // Recording consent
     recordingConsentTitle: "Требуется согласие на запись",

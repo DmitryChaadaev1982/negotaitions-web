@@ -6,6 +6,7 @@ import { canAccessSession, getCurrentUserSessionAccess } from "@/lib/access-cont
 import { apiRequireActiveUser } from "@/lib/auth/api-guards";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import { prisma } from "@/lib/prisma";
+import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import {
   buildVoximplantSdkUsername,
   getOrCreateVoximplantIdentityForUser,
@@ -156,6 +157,27 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Participant not found." }, { status: 404 });
   }
 
+  const allSessionParticipants = await prisma.sessionParticipant.findMany({
+    where: { sessionId },
+    select: {
+      id: true,
+      type: true,
+      userId: true,
+      createdAt: true,
+    },
+  });
+
+  const sessionOwner = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { facilitatorId: true },
+  });
+
+  const effectiveType = resolveSessionParticipantType(
+    { id: participantWithRole.id, type: participantWithRole.type },
+    allSessionParticipants,
+    sessionOwner?.facilitatorId ?? null,
+  );
+
   let voximplantConfig;
   try {
     voximplantConfig = getVoximplantConfig({
@@ -172,7 +194,7 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const role = resolveParticipantRole(
-    participantWithRole.type,
+    effectiveType,
     participantWithRole.sessionRole?.name ?? null,
   );
 

@@ -842,13 +842,11 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          <GlassCard elevated data-testid="participant-list">
-            <GlassCardHeader>
-              <h3 className="text-sm font-semibold text-slate-50">
-                {t("events.participantsInLobby")}
-              </h3>
-            </GlassCardHeader>
-            <GlassCardContent className="space-y-2">
+          <details open className="rounded-2xl border border-slate-700/40 bg-slate-900/20" data-testid="lobby-panel-participants">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-50">
+              {t("events.participantsInLobby")}
+            </summary>
+            <div className="border-t border-slate-700/30 px-4 py-3 space-y-2">
               {state.participants.length === 0 ? (
                 <p className="text-sm text-slate-400">{t("events.noParticipantsYet")}</p>
               ) : (
@@ -889,20 +887,20 @@ export function EventLobbyView({
                   </div>
                 ))
               )}
-            </GlassCardContent>
-          </GlassCard>
+            </div>
+          </details>
 
           {state.selectedCase && !isEventOwner ? (
-            <GlassCard elevated>
-              <GlassCardHeader>
+            <details open className="rounded-2xl border border-slate-700/40 bg-slate-900/20" data-testid="lobby-panel-selected-case">
+              <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-50">
+                {t("events.selectedCase")}
+              </summary>
+              <div className="border-t border-slate-700/30 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-slate-50">
-                    {t("events.selectedCase")}
-                  </h3>
                   <CaseLanguageBadge caseLanguage={state.selectedCase.caseLanguage} />
                 </div>
-              </GlassCardHeader>
-              <GlassCardContent className="space-y-3 text-sm">
+              </div>
+              <div className="px-4 pb-4 space-y-3 text-sm">
                 <p className="font-medium text-slate-100">{state.selectedCase.title}</p>
                 <DifficultyBadge difficulty={state.selectedCase.difficulty} />
                 <p className="text-xs text-slate-400">
@@ -924,8 +922,8 @@ export function EventLobbyView({
                 <p className="whitespace-pre-wrap text-xs leading-5 text-slate-400">
                   {state.selectedCase.businessContext}
                 </p>
-              </GlassCardContent>
-            </GlassCard>
+              </div>
+            </details>
           ) : null}
 
           {isEventOwner && !staleConnection ? (

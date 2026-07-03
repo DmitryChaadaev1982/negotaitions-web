@@ -125,11 +125,7 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
         <p className="text-xs font-medium text-amber-200">{t("legal.privateRoleDataWarning")}</p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-50">{t("admin.userManagement")}</h1>
-          <p className="mt-1 text-sm text-slate-400">{t("admin.users")}</p>
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
           <Link
             href="/admin"
@@ -142,6 +138,18 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
             className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200"
           >
             {t("admin.userManagement")}
+          </Link>
+          <Link
+            href="/admin/counters"
+            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+          >
+            {t("admin.usageCounters")}
+          </Link>
+          <Link
+            href="/admin/log"
+            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+          >
+            {t("admin.recentServiceEvents")}
           </Link>
         </div>
       </div>

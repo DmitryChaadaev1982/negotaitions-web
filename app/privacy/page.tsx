@@ -79,7 +79,7 @@ export default async function PrivacyPage() {
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100">9. Инфраструктура и внешние провайдеры</h2>
-                <p>MVP-версия сервиса может использовать инфраструктуру и AI-сервисы, расположенные за пределами Российской Федерации, включая ЕС и США (LiveKit, OpenAI, Yandex Object Storage). Передача данных осуществляется по защищённым каналам TLS.</p>
+                <p>Данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации. Передача данных осуществляется по защищённым каналам TLS.</p>
               </section>
 
               <section>
@@ -144,7 +144,7 @@ export default async function PrivacyPage() {
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100">9. Infrastructure & External Providers</h2>
-                <p>The MVP version of this service may use infrastructure and AI services located outside the Russian Federation, including the EU and USA (LiveKit, OpenAI, Yandex Object Storage). Data is transmitted over TLS-secured connections.</p>
+                <p>Data is stored and processed on infrastructure located in the Russian Federation. Data is transmitted over TLS-secured connections.</p>
               </section>
 
               <section>

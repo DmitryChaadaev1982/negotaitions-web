@@ -6,7 +6,12 @@ export const en = {
     events: "Events",
     reports: "Reports",
     admin: "Admin diagnostics",
+    adminDiagnostics: "Administrative diagnostics",
     adminUsers: "User management",
+    adminCounters: "Usage counters",
+    adminServiceLog: "Service log",
+    negotiationTrainings: "Negotiation trainings",
+    administration: "Administration",
   },
   common: {
     create: "Create",
@@ -342,7 +347,7 @@ export const en = {
     externalServices: "External services",
     serviceChecks: "Service checks",
     environmentConfiguration: "Environment configuration",
-    recentServiceEvents: "Recent service events",
+    recentServiceEvents: "Service log",
     usageCounters: "Usage counters",
     usageDisclaimer:
       "Approximate local usage based on application events. Actual vendor billing may differ.",
@@ -350,6 +355,7 @@ export const en = {
     checkStorage: "Check Yandex Object Storage",
     checkOpenAi: "Check OpenAI config",
     checkFfmpeg: "Check ffmpeg",
+    checkVoximplant: "Check Voximplant config",
     configured: "Configured",
     missing: "Missing",
     unset: "(unset)",
@@ -1272,7 +1278,7 @@ export const en = {
     consentMvpDataLimitation:
       "I understand that NegotAItions is a training MVP platform and is not intended for uploading real personal data of third parties, trade secrets, confidential information, medical data, financial credentials, or other sensitive data.",
     consentExternalInfrastructure:
-      "I understand that the service may use infrastructure and external technology providers located outside my country, including the EU and the US.",
+      "I understand that data is stored and processed on infrastructure located in the Russian Federation.",
     consentRequired: "You must accept all required agreements to register.",
     // Recording consent
     recordingConsentTitle: "Recording consent required",

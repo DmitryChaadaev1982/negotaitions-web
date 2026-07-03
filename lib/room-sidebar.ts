@@ -3,6 +3,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { getEventLobbyUrl } from "@/lib/config";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { prisma } from "@/lib/prisma";
+import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
@@ -21,6 +22,7 @@ const roomSidebarParticipantInclude = {
   session: {
     select: {
       title: true,
+      facilitatorId: true,
       visibility: true,
       durationSeconds: true,
       snapshotBusinessContext: true,
@@ -112,8 +114,26 @@ async function buildRoomSidebarData(
     }
   }
 
+  const normalizedTypeByParticipantId = new Map<string, ParticipantType>();
+  for (const sessionParticipant of participant.session.participants) {
+    normalizedTypeByParticipantId.set(
+      sessionParticipant.id,
+      resolveSessionParticipantType(
+        {
+          id: sessionParticipant.id,
+          type: sessionParticipant.type,
+        },
+        participant.session.participants,
+        participant.session.facilitatorId ?? null,
+      ),
+    );
+  }
+
+  const currentParticipantEffectiveType =
+    normalizedTypeByParticipantId.get(participant.id) ?? participant.type;
+
   const facilitatorBriefings =
-    participant.type === ParticipantType.FACILITATOR
+    currentParticipantEffectiveType === ParticipantType.FACILITATOR
       ? participant.session.participants
           .filter(
             (sessionParticipant) =>
@@ -129,7 +149,9 @@ async function buildRoomSidebarData(
   const roster = participant.session.participants.map((sessionParticipant) => ({
     id: sessionParticipant.id,
     displayName: sessionParticipant.displayName,
-    participantType: sessionParticipant.type,
+    participantType:
+      normalizedTypeByParticipantId.get(sessionParticipant.id) ??
+      sessionParticipant.type,
     caseRoleName: sessionParticipant.sessionRole?.name ?? null,
     userId: sessionParticipant.userId ?? null,
     voximplantProviderUsername: sessionParticipant.userId
@@ -138,20 +160,23 @@ async function buildRoomSidebarData(
     joinedAt: sessionParticipant.joinedAt?.toISOString() ?? null,
     lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
     // Phase 6.11B: expose sessionRoleId only; no private briefing data.
-    sessionRoleId: sessionParticipant.type === ParticipantType.PARTICIPANT
+    sessionRoleId:
+      (normalizedTypeByParticipantId.get(sessionParticipant.id) ??
+        sessionParticipant.type) === ParticipantType.PARTICIPANT
       ? (sessionParticipant.sessionRoleId ?? null)
       : undefined,
   }));
 
   // Phase 6.11B: for facilitators, include assignable session roles for role management panel.
   const sessionRolesForFacilitator =
-    participant.type === ParticipantType.FACILITATOR
+    currentParticipantEffectiveType === ParticipantType.FACILITATOR
       ? participant.session.sessionRoles
           .filter((r) => isAssignableCaseRole(r.name))
           .map((r) => ({ id: r.id, name: r.name }))
       : [];
 
-  const isParticipantType = participant.type === ParticipantType.PARTICIPANT;
+  const isParticipantType =
+    currentParticipantEffectiveType === ParticipantType.PARTICIPANT;
   // Phase 6.11B: unassigned PARTICIPANT has no sessionRole.
   const hasAssignedRole = !isParticipantType || participant.sessionRole !== null;
 
@@ -170,14 +195,14 @@ async function buildRoomSidebarData(
               ? `/events/${participant.session.event.id}/lobby`
               : getEventLobbyUrl(participant.session.event.id, {
                   hostToken:
-                    participant.type === ParticipantType.FACILITATOR
+                    currentParticipantEffectiveType === ParticipantType.FACILITATOR
                       ? participant.session.event.hostToken
                       : undefined,
                   participantToken: participant.eventParticipant?.participantToken,
                 }),
         }
       : null,
-    participantType: participant.type,
+    participantType: currentParticipantEffectiveType,
     displayName: participant.displayName,
     notes: participant.notes,
     durationSeconds: participant.session.durationSeconds,

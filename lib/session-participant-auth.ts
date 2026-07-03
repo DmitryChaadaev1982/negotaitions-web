@@ -14,6 +14,7 @@ export async function getSessionParticipantByJoinToken(
         select: {
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
+          facilitatorId: true,
         },
       },
     },

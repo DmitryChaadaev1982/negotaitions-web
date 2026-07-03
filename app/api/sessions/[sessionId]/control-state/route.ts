@@ -105,6 +105,7 @@ export async function GET(request: Request, context: RouteContext) {
         where: { id: sessionId },
         data: getAutoFinishPreparationUpdateData(session, now),
         select: {
+          facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
         },
@@ -117,6 +118,7 @@ export async function GET(request: Request, context: RouteContext) {
         where: { id: sessionId },
         data: updateData,
         select: {
+          facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
         },

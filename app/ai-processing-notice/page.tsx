@@ -33,12 +33,12 @@ export default async function AiProcessingNoticePage() {
             <>
               <section className="rounded-lg border border-amber-500/40 bg-amber-900/20 px-5 py-4">
                 <h2 className="text-lg font-semibold text-amber-100 mb-2">⚠️ Важное предупреждение</h2>
-                <p className="text-amber-200 text-sm">Функции транскрибации и AI-анализа могут передавать данные сессии внешним AI-провайдерам, расположенным за пределами Российской Федерации. Никогда не загружайте конфиденциальные данные в кейсы или сессии.</p>
+                <p className="text-amber-200 text-sm">Данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации. Никогда не загружайте конфиденциальные данные в кейсы или сессии.</p>
               </section>
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100 mb-2">1. Внешние AI-провайдеры</h2>
-                <p>Для транскрибации и AI-разбора переговоров используются внешние AI-сервисы (в частности, OpenAI). Данные могут обрабатываться на серверах, расположенных в ЕС или США, в соответствии с политикой конфиденциальности соответствующего провайдера.</p>
+                <p>Для транскрибации и AI-разбора переговоров используются внешние AI-сервисы (в частности, OpenAI). Данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации.</p>
               </section>
 
               <section>
@@ -77,12 +77,12 @@ export default async function AiProcessingNoticePage() {
             <>
               <section className="rounded-lg border border-amber-500/40 bg-amber-900/20 px-5 py-4">
                 <h2 className="text-lg font-semibold text-amber-100 mb-2">⚠️ Important warning</h2>
-                <p className="text-amber-200 text-sm">Transcription and AI analysis features may transmit session data to external AI providers located outside your country. Never upload confidential data to cases or sessions.</p>
+                <p className="text-amber-200 text-sm">Data is stored and processed on infrastructure located in the Russian Federation. Never upload confidential data to cases or sessions.</p>
               </section>
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100 mb-2">1. External AI Providers</h2>
-                <p>Transcription and AI analysis of negotiations use external AI services (in particular, OpenAI). Data may be processed on servers located in the EU or USA, subject to the respective provider&apos;s privacy policy.</p>
+                <p>Transcription and AI analysis of negotiations use external AI services (in particular, OpenAI). Data is stored and processed on infrastructure located in the Russian Federation.</p>
               </section>
 
               <section>

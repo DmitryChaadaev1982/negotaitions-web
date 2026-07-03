@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { AdminVoximplantWebhookOverridePanel } from "@/components/admin-voximplant-webhook-override-panel";
 import { Card, CardContent, CardHeader } from "@/components/card";
-import { PageHeader } from "@/components/page-header";
 import { SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
 
@@ -78,6 +78,15 @@ type HealthData = {
       path: string | null;
       source: "env" | "system" | "static" | null;
     };
+    envGroups?: Array<{
+      group: string;
+      items: Array<{
+        key: string;
+        configured: boolean;
+        isSecret: boolean;
+        value: string | null;
+      }>;
+    }>;
   };
   voximplantRecordingWebhook?: {
     nodeEnv: string;
@@ -102,8 +111,11 @@ type HealthData = {
   }>;
   usage: {
     livekitRecordingMinutes: number;
+    voximplantConferenceMinutes: number;
     openAiTranscriptionMinutes: number;
     openAiTranscriptionBytes: number;
+    yandexSpeechKitMinutes: number;
+    yandexAiAnalysisRuns: number;
     storageUploadedBytes: number;
     storageDownloadedBytes: number;
     recordingsCreated: number;
@@ -117,149 +129,45 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function ConfigRow({ label, configured }: { label: string; configured: boolean }) {
-  const { t } = useI18n();
-
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-      <span className="text-sm text-slate-300">{label}</span>
-      <span
-        className={
-          configured
-            ? "text-sm font-medium text-emerald-400"
-            : "text-sm font-medium text-amber-400"
-        }
-      >
-        {configured ? t("admin.configured") : t("admin.missing")}
-      </span>
-    </div>
-  );
-}
-
-function ConfigValueRow({
+function EnvValueRow({
   label,
-  value,
   configured,
+  value,
 }: {
   label: string;
-  value: string | null;
   configured: boolean;
+  value: string | null;
 }) {
   const { t } = useI18n();
 
   return (
     <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-slate-300">{label}</span>
         <span
           className={
             configured
-              ? "text-sm font-medium text-emerald-400"
-              : "text-sm font-medium text-amber-400"
+              ? "text-xs font-medium text-emerald-400"
+              : "text-xs font-medium text-amber-400"
           }
         >
           {configured ? t("admin.configured") : t("admin.missing")}
         </span>
       </div>
-      {value ? (
-        <p className="mt-2 break-all font-mono text-xs text-slate-400">{value}</p>
-      ) : null}
+      <p className="mt-2 break-all font-mono text-xs text-slate-400">
+        {value ?? "—"}
+      </p>
     </div>
   );
 }
 
-function ConfigStatusRow({
-  label,
-  diagnostic,
-}: {
-  label: string;
-  diagnostic?: {
-    status:
-      | "configured_via_env"
-      | "configured_via_key_file"
-      | "missing"
-      | "invalid_key_file";
-    error?: string;
-  };
-}) {
-  const { t } = useI18n();
-  const status = diagnostic?.status ?? "missing";
+type AdminDiagnosticsViewProps = {
+  mode?: "all" | "counters" | "log";
+};
 
-  const statusLabel =
-    status === "configured_via_env"
-      ? t("admin.configStatusConfiguredViaEnv")
-      : status === "configured_via_key_file"
-        ? t("admin.configStatusConfiguredViaKeyFile")
-        : status === "invalid_key_file"
-          ? t("admin.configStatusInvalidKeyFile")
-          : t("admin.missing");
-
-  const statusClassName =
-    status === "missing" || status === "invalid_key_file"
-      ? "text-sm font-medium text-amber-400"
-      : "text-sm font-medium text-emerald-400";
-
-  return (
-    <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm text-slate-300">{label}</span>
-        <span className={statusClassName}>{statusLabel}</span>
-      </div>
-      {diagnostic?.error ? (
-        <p className="mt-2 text-xs text-rose-400">{diagnostic.error}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function FfmpegConfigRow({
-  available,
-  path,
-  source,
-}: {
-  available: boolean;
-  path: string | null;
-  source: "env" | "system" | "static" | null;
-}) {
-  const { t } = useI18n();
-
-  const sourceLabel =
-    source === "env"
-      ? t("admin.ffmpegSourceEnv")
-      : source === "system"
-        ? t("admin.ffmpegSourceSystem")
-        : source === "static"
-          ? t("admin.ffmpegSourceStatic")
-          : null;
-
-  return (
-    <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm text-slate-300">ffmpeg</span>
-        <span
-          className={
-            available
-              ? "text-sm font-medium text-emerald-400"
-              : "text-sm font-medium text-amber-400"
-          }
-        >
-          {available ? t("admin.configured") : t("admin.missing")}
-        </span>
-      </div>
-      {available && path ? (
-        <div className="mt-2 space-y-1 text-xs text-slate-500">
-          {sourceLabel ? <p>{sourceLabel}</p> : null}
-          <p className="break-all font-mono text-slate-400">{path}</p>
-        </div>
-      ) : (
-        <p className="mt-2 text-xs text-slate-500">{t("admin.ffmpegUnavailableHint")}</p>
-      )}
-    </div>
-  );
-}
-
-export function AdminDiagnosticsView() {
+export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps) {
   const { t, locale } = useI18n();
+  const pathname = usePathname();
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [checkMessage, setCheckMessage] = useState<string | null>(null);
@@ -354,6 +262,14 @@ export function AdminDiagnosticsView() {
       second: "2-digit",
     }).format(new Date(iso));
 
+  const showDiagnostics = mode === "all";
+  const showCounters = mode === "counters";
+  const showLog = mode === "log";
+  const adminNavClassName = (active: boolean) =>
+    active
+      ? "rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200"
+      : "rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100";
+
   return (
     <div className="space-y-8">
       {/* Admin private-data warning label */}
@@ -365,26 +281,46 @@ export function AdminDiagnosticsView() {
         <p className="text-xs font-medium text-amber-200">{t("legal.privateRoleDataWarning")}</p>
       </div>
 
-      <PageHeader
-        title={t("admin.title")}
-        description={t("admin.externalServices")}
-        action={
-          <div className="flex items-center gap-2">
-            <Link
-              href="/admin"
-              className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200"
-            >
-              {t("nav.admin")}
-            </Link>
-            <Link
-              href="/admin/users"
-              className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
-            >
-              {t("admin.userManagement")}
-            </Link>
-          </div>
-        }
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href="/admin"
+          className={adminNavClassName(pathname === "/admin")}
+        >
+          {t("nav.admin")}
+        </Link>
+        <Link
+          href="/admin/users"
+          className={adminNavClassName(pathname.startsWith("/admin/users"))}
+        >
+          {t("admin.userManagement")}
+        </Link>
+        <Link
+          href="/admin/counters"
+          className={adminNavClassName(pathname.startsWith("/admin/counters"))}
+        >
+          {t("admin.usageCounters")}
+        </Link>
+        <Link
+          href="/admin/log"
+          className={adminNavClassName(pathname.startsWith("/admin/log"))}
+        >
+          {t("admin.recentServiceEvents")}
+        </Link>
+      </div>
+
+      {showDiagnostics ? (
+        <div className="flex flex-wrap gap-2 text-xs">
+          <a href="#admin-env-config" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
+            {t("admin.environmentConfiguration")}
+          </a>
+          <a href="#admin-voximplant-webhook" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
+            {t("admin.voximplantRecordingWebhook")}
+          </a>
+          <a href="#admin-service-checks" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
+            {t("admin.serviceChecks")}
+          </a>
+        </div>
+      ) : null}
 
       {loadError ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
@@ -398,7 +334,8 @@ export function AdminDiagnosticsView() {
         </div>
       ) : null}
 
-      <Card>
+      {showDiagnostics ? (
+      <Card id="admin-env-config">
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-50">
             {t("admin.environmentConfiguration")}
@@ -409,143 +346,55 @@ export function AdminDiagnosticsView() {
             <p className="text-sm text-slate-400">{t("common.loading")}...</p>
           ) : (
             <>
-              <ConfigRow
-                label={`AI_ANALYSIS_PROVIDER (${data.config.aiAnalysisProvider ?? "openai"})`}
-                configured={data.config.aiAnalysisProviderEnvValid ?? true}
-              />
-              <ConfigRow
-                label={`TRANSCRIPTION_PROVIDER (${data.config.transcriptionProvider ?? "openai"})`}
-                configured={data.config.transcriptionProviderEnvValid ?? true}
-              />
-              <ConfigRow
-                label={`VIDEO_PROVIDER (${data.config.videoProvider ?? "livekit"})`}
-                configured={data.config.videoProviderEnvValid ?? true}
-              />
-              <ConfigRow label="LIVEKIT_URL" configured={data.config.livekitUrl} />
-              <ConfigRow label="LIVEKIT_API_KEY" configured={data.config.livekitApiKey} />
-              <ConfigRow label="LIVEKIT_API_SECRET" configured={data.config.livekitApiSecret} />
-              <ConfigRow label="S3_BUCKET" configured={data.config.s3Bucket} />
-              <ConfigRow label="S3_REGION" configured={data.config.s3Region} />
-              <ConfigRow label="S3_ENDPOINT" configured={data.config.s3Endpoint} />
-              <ConfigRow label="S3_ACCESS_KEY_ID" configured={data.config.s3AccessKeyId} />
-              <ConfigRow label="S3_SECRET_ACCESS_KEY" configured={data.config.s3SecretAccessKey} />
-              <ConfigRow label="OPENAI_API_KEY" configured={data.config.openAiApiKey} />
-              <ConfigRow label="YANDEX_FOLDER_ID" configured={data.config.yandexFolderId ?? false} />
-              <ConfigRow label="YANDEX_API_KEY" configured={data.config.yandexApiKey ?? false} />
-              <ConfigRow label="YANDEX_AI_MODEL" configured={data.config.yandexAiModel ?? false} />
-              <ConfigRow
-                label={`YANDEX_SPEECHKIT_MODEL (${data.config.yandexSpeechKitModelValue ?? "general:rc"})`}
-                configured={data.config.yandexSpeechKitModel ?? false}
-              />
-              <ConfigRow
-                label={`YANDEX_SPEECHKIT_LANGUAGE (${data.config.yandexSpeechKitLanguageValue ?? "ru-RU"})`}
-                configured={Boolean(data.config.yandexSpeechKitLanguageValue)}
-              />
-              <ConfigRow
-                label="YANDEX_SPEECHKIT_TEXT_NORMALIZATION_ENABLED"
-                configured={data.config.yandexSpeechKitNormalizationEnabled ?? false}
-              />
-              <ConfigRow
-                label="YANDEX_SPEECHKIT_LITERATURE_TEXT"
-                configured={data.config.yandexSpeechKitLiteratureTextEnabled ?? false}
-              />
-              <ConfigRow
-                label="YANDEX_SPEECHKIT_ENABLE_SPEAKER_LABELING"
-                configured={data.config.yandexSpeechKitSpeakerLabelingEnabled ?? false}
-              />
-              <ConfigRow
-                label="YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED"
-                configured={data.config.yandexTranscriptEnhancementEnabled ?? false}
-              />
-              <ConfigRow
-                label="YANDEX_SPEECHKIT_REQUIRED_KEYS_PRESENT"
-                configured={data.config.yandexSpeechKitRequiredKeysPresent ?? false}
-              />
-              <FfmpegConfigRow
-                available={data.config.ffmpeg?.available ?? false}
-                path={data.config.ffmpeg?.path ?? null}
-                source={data.config.ffmpeg?.source ?? null}
-              />
+              {data.config.envGroups?.map((group, index) => {
+                const groupKey = group.group ?? `ungrouped-${index}`;
+                if (group.items.length === 0) return null;
 
-              <div className="pt-2">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {t("admin.voximplantConfiguration")}
-                </p>
-                <div className="space-y-2">
-                  <ConfigRow
-                    label="VOXIMPLANT_ACCOUNT_NAME"
-                    configured={data.config.voximplant?.accountName ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_APPLICATION_NAME"
-                    configured={data.config.voximplant?.applicationName ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_USER_DOMAIN"
-                    configured={data.config.voximplant?.userDomain ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_SCENARIO_NAME"
-                    configured={data.config.voximplant?.scenarioName ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_RULE_NAME"
-                    configured={data.config.voximplant?.ruleName ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_RECORDING_ENABLED"
-                    configured={data.config.voximplantRecordingEnabled ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_RECORDING_AUDIO_ONLY"
-                    configured={data.config.voximplant?.recordingAudioOnly ?? false}
-                  />
-                  <ConfigRow
-                    label={`VOXIMPLANT_RECORDING_AUDIO_MODE (${data.config.voximplant?.recordingAudioMode ?? "lossless"})`}
-                    configured={Boolean(data.config.voximplant?.recordingAudioMode)}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_RECORDING_STORAGE"
-                    configured={data.config.voximplant?.recordingStorage ?? false}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_MANAGEMENT_API (key or API_KEY_PATH)"
-                    configured={data.config.voximplant?.managementApiConfigured ?? false}
-                  />
-                  <ConfigStatusRow
-                    label="VOXIMPLANT_MANAGEMENT_ACCOUNT_ID"
-                    diagnostic={data.config.voximplant?.managementAccountId}
-                  />
-                  <ConfigStatusRow
-                    label="VOXIMPLANT_MANAGEMENT_APPLICATION_ID"
-                    diagnostic={data.config.voximplant?.managementApplicationId}
-                  />
-                  <ConfigRow
-                    label="VOXIMPLANT_RECORDING_WEBHOOK_SECRET"
-                    configured={data.config.voximplant?.recordingWebhookSecret ?? false}
-                  />
-                  <ConfigValueRow
-                    label="VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL"
-                    configured={data.config.voximplant?.recordingWebhookBaseUrl ?? false}
-                    value={data.config.voximplant?.recordingWebhookBaseUrlValue ?? null}
-                  />
-                  <ConfigValueRow
-                    label="VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED"
-                    configured={data.config.voximplant?.recordingWebhookOverrideEnabled ?? false}
-                    value={
-                      data.config.voximplant?.recordingWebhookOverrideEnabledRaw ??
-                      t("admin.unset")
-                    }
-                  />
-                </div>
-              </div>
+                if (group.group === null) {
+                  return (
+                    <div key={groupKey} className="grid gap-2">
+                      {group.items.map((item) => (
+                        <EnvValueRow
+                          key={`${groupKey}-${item.key}`}
+                          label={item.key}
+                          configured={item.configured}
+                          value={item.value}
+                        />
+                      ))}
+                    </div>
+                  );
+                }
+
+                return (
+                  <details
+                    key={groupKey}
+                    open
+                    className="rounded-xl border border-slate-700/40 bg-slate-900/30"
+                  >
+                    <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-100">
+                      {group.group}
+                    </summary>
+                    <div className="grid gap-2 border-t border-slate-700/40 px-4 py-3">
+                      {group.items.map((item) => (
+                        <EnvValueRow
+                          key={`${groupKey}-${item.key}`}
+                          label={item.key}
+                          configured={item.configured}
+                          value={item.value}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                );
+              })}
             </>
           )}
         </CardContent>
       </Card>
+      ) : null}
 
-      {data?.voximplantRecordingWebhook ? (
-        <Card>
+      {showDiagnostics && data?.voximplantRecordingWebhook ? (
+        <Card id="admin-voximplant-webhook">
           <CardHeader>
             <h2 className="text-base font-semibold text-slate-50">
               {t("admin.voximplantRecordingWebhook")}
@@ -566,7 +415,8 @@ export function AdminDiagnosticsView() {
         </Card>
       ) : null}
 
-      <Card>
+      {showDiagnostics ? (
+      <Card id="admin-service-checks">
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-50">
             {t("admin.serviceChecks")}
@@ -598,13 +448,21 @@ export function AdminDiagnosticsView() {
             >
               {t("admin.checkFfmpeg")}
             </SecondaryButton>
+            <SecondaryButton
+              disabled={checkRunning}
+              onClick={() => void runCheck("/api/admin/check-voximplant")}
+            >
+              {t("admin.checkVoximplant")}
+            </SecondaryButton>
           </div>
           {checkMessage ? (
             <p className="text-sm text-slate-400">{checkMessage}</p>
           ) : null}
         </CardContent>
       </Card>
+      ) : null}
 
+      {showLog ? (
       <Card>
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-50">
@@ -662,7 +520,9 @@ export function AdminDiagnosticsView() {
           )}
         </CardContent>
       </Card>
+      ) : null}
 
+      {showCounters ? (
       <Card>
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-50">
@@ -680,9 +540,33 @@ export function AdminDiagnosticsView() {
                 </p>
               </div>
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+                <p className="text-xs text-slate-500">Voximplant conference minutes</p>
+                <p className="text-lg font-semibold text-slate-100">
+                  {data.usage.voximplantConferenceMinutes > 0
+                    ? data.usage.voximplantConferenceMinutes.toFixed(1)
+                    : "not available"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
                 <p className="text-xs text-slate-500">OpenAI transcription minutes</p>
                 <p className="text-lg font-semibold text-slate-100">
                   {data.usage.openAiTranscriptionMinutes.toFixed(1)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+                <p className="text-xs text-slate-500">Yandex SpeechKit minutes</p>
+                <p className="text-lg font-semibold text-slate-100">
+                  {data.usage.yandexSpeechKitMinutes > 0
+                    ? data.usage.yandexSpeechKitMinutes.toFixed(1)
+                    : "not available"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+                <p className="text-xs text-slate-500">Yandex AI analysis runs</p>
+                <p className="text-lg font-semibold text-slate-100">
+                  {data.usage.yandexAiAnalysisRuns > 0
+                    ? data.usage.yandexAiAnalysisRuns
+                    : "not available"}
                 </p>
               </div>
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
@@ -713,6 +597,7 @@ export function AdminDiagnosticsView() {
           ) : null}
         </CardContent>
       </Card>
+      ) : null}
     </div>
   );
 }

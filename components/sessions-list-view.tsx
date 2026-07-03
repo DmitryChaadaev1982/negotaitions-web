@@ -1,11 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { DeleteSessionButton } from "@/components/delete-session-button";
+import {
+  getListActionButtonClassName,
+  ListActionGroup,
+  ListActionLink,
+} from "@/components/list-action-button";
 import { PageHeader } from "@/components/page-header";
 import { SessionStatusBadge } from "@/components/session-status-badge";
+import {
+  ListFilterBar,
+  ListFilterChip,
+  ListFilterGroup,
+  ListFilterGroups,
+  ListFilterInput,
+  ListFilterResetButton,
+  SortHeaderButton,
+} from "@/components/table-list-controls";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import { GradientButtonLink } from "@/components/ui/buttons";
 import {
@@ -61,6 +76,94 @@ type SessionsListViewProps = {
   sessions: SessionRow[];
 };
 
+const SESSION_STATUS_FILTERS = [
+  "all",
+  "unfinished",
+  "draft",
+  "preparation",
+  "active",
+  "completed",
+  "cancelled",
+] as const;
+
+type SessionStatusFilter = (typeof SESSION_STATUS_FILTERS)[number];
+
+const SESSION_AI_FILTERS = ["all", "with", "without"] as const;
+type SessionAiFilter = (typeof SESSION_AI_FILTERS)[number];
+
+const SESSION_SORT_FIELDS = [
+  "createdAt",
+  "title",
+  "status",
+  "participants",
+] as const;
+type SessionSortField = (typeof SESSION_SORT_FIELDS)[number];
+
+type SortDirection = "asc" | "desc";
+
+function parseSessionStatusFilter(value: string | null): SessionStatusFilter {
+  return (SESSION_STATUS_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as SessionStatusFilter)
+    : "all";
+}
+
+function parseSessionAiFilter(value: string | null): SessionAiFilter {
+  return (SESSION_AI_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as SessionAiFilter)
+    : "all";
+}
+
+function parseSessionSortField(value: string | null): SessionSortField {
+  return (SESSION_SORT_FIELDS as readonly string[]).includes(value ?? "")
+    ? (value as SessionSortField)
+    : "createdAt";
+}
+
+function parseSortDirection(value: string | null): SortDirection {
+  return value === "asc" || value === "desc" ? value : "desc";
+}
+
+function sortDirectionForSessionField(field: SessionSortField): SortDirection {
+  return field === "title" ? "asc" : "desc";
+}
+
+function hasAiAnalysis(session: SessionRow): boolean {
+  return session.aiStage != null && session.aiStage !== "not_started";
+}
+
+function matchesSessionStatusFilter(
+  session: SessionRow,
+  filter: SessionStatusFilter,
+): boolean {
+  if (filter === "all") return true;
+  if (filter === "unfinished") return session.status !== "FINISHED";
+  if (filter === "draft") return session.status === "DRAFT" || session.status === "READY";
+  if (filter === "preparation") {
+    return (
+      session.status === "PREPARATION" ||
+      session.status === "PREPARATION_RUNNING" ||
+      session.status === "PREPARATION_PAUSED" ||
+      session.status === "READY_TO_START"
+    );
+  }
+  if (filter === "active") return session.status === "RUNNING" || session.status === "PAUSED";
+  if (filter === "completed") return session.status === "FINISHED";
+  if (filter === "cancelled") return session.closedByEventAt != null;
+  return true;
+}
+
+const SESSION_STATUS_SORT_RANK: Record<SessionDisplayStatus, number> = {
+  DRAFT: 1,
+  READY: 2,
+  PREPARATION: 3,
+  PREPARATION_RUNNING: 4,
+  PREPARATION_PAUSED: 5,
+  READY_TO_START: 6,
+  RUNNING: 7,
+  PAUSED: 8,
+  FINISHED: 9,
+};
+
 // ── AI pipeline status mini-badge ─────────────────────────────────────────
 
 function aiStageTone(stage: string | null): string {
@@ -96,7 +199,7 @@ function AiStatusCell({ session }: { session: SessionRow }) {
           : null;
 
   return (
-    <div className="flex flex-col gap-1 min-w-[10rem]">
+    <div className="flex min-w-0 flex-col gap-1">
       {speakerMappingRequired ? (
         <span className="text-xs font-medium text-amber-400" data-testid="sessions-speaker-mapping-required-badge">
           {t("room.speakerMappingRequired")}
@@ -133,8 +236,33 @@ function AiStatusCell({ session }: { session: SessionRow }) {
 
 export function SessionsListView({ sessions: initialSessions }: SessionsListViewProps) {
   const { t, locale } = useI18n();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [sessionStats, setSessionStats] = useState<SessionOverviewStats[]>([]);
   const sessions = applySessionOverviewStats(initialSessions, sessionStats);
+  const query = searchParams.get("q")?.trim() ?? "";
+  const statusFilter = parseSessionStatusFilter(searchParams.get("status"));
+  const aiFilter = parseSessionAiFilter(searchParams.get("ai"));
+  const eventIdFilter = searchParams.get("eventId")?.trim() ?? "";
+  const rawSortField = searchParams.get("sort");
+  const sortField = rawSortField === "online" ? "participants" : parseSessionSortField(rawSortField);
+  const sortDirection = parseSortDirection(searchParams.get("dir"));
+
+  const replaceSearchParams = (updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (!value) {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    const nextQuery = params.toString();
+    router.replace(nextQuery.length > 0 ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +308,84 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
       year: "numeric",
     }).format(new Date(iso));
 
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = query.toLocaleLowerCase();
+    return sessions.filter((session) => {
+      if (eventIdFilter.length > 0 && session.eventId !== eventIdFilter) {
+        return false;
+      }
+
+      if (!matchesSessionStatusFilter(session, statusFilter)) {
+        return false;
+      }
+
+      if (aiFilter === "with" && !hasAiAnalysis(session)) {
+        return false;
+      }
+
+      if (aiFilter === "without" && hasAiAnalysis(session)) {
+        return false;
+      }
+
+      if (normalizedQuery.length === 0) {
+        return true;
+      }
+
+      return [
+        session.title,
+        session.caseTitle,
+        session.eventTitle ?? "",
+      ]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery);
+    });
+  }, [aiFilter, eventIdFilter, query, sessions, statusFilter]);
+
+  const sortedSessions = useMemo(() => {
+    const result = [...filteredSessions];
+    result.sort((left, right) => {
+      let comparison = 0;
+      switch (sortField) {
+        case "title":
+          comparison = left.title.localeCompare(right.title, locale);
+          break;
+        case "status":
+          comparison = SESSION_STATUS_SORT_RANK[left.status] - SESSION_STATUS_SORT_RANK[right.status];
+          break;
+        case "participants":
+          comparison = left.participantCount - right.participantCount;
+          break;
+        case "createdAt":
+        default:
+          comparison = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+          break;
+      }
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+    return result;
+  }, [filteredSessions, locale, sortDirection, sortField]);
+
+  const activeEventTitle =
+    eventIdFilter.length > 0
+      ? sessions.find((session) => session.eventId === eventIdFilter)?.eventTitle ?? eventIdFilter
+      : null;
+
+  const toggleSort = (field: SessionSortField) => {
+    if (sortField === field) {
+      replaceSearchParams({
+        sort: field,
+        dir: sortDirection === "asc" ? "desc" : "asc",
+      });
+      return;
+    }
+    replaceSearchParams({
+      sort: field,
+      dir: sortDirectionForSessionField(field),
+    });
+  };
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -202,32 +408,167 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
           }
         />
       ) : (
-        <DataTable>
-          <DataTableElement>
+        <>
+          <ListFilterBar>
+            <ListFilterGroups>
+              <ListFilterGroup label={locale === "ru" ? "Поиск" : "Search"} className="min-w-[14rem] flex-1">
+                <ListFilterInput
+                  value={query}
+                  onChange={(value) => replaceSearchParams({ q: value || null })}
+                  placeholder={locale === "ru" ? "Поиск..." : "Search..."}
+                />
+              </ListFilterGroup>
+              <ListFilterGroup label={locale === "ru" ? "Статус" : "Status"}>
+                <ListFilterChip
+                  active={statusFilter === "all"}
+                  onClick={() => replaceSearchParams({ status: null })}
+                >
+                  {locale === "ru" ? "Все статусы" : "All statuses"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "unfinished"}
+                  onClick={() => replaceSearchParams({ status: "unfinished" })}
+                >
+                  {locale === "ru" ? "Незавершённые" : "Unfinished"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "preparation"}
+                  onClick={() => replaceSearchParams({ status: "preparation" })}
+                >
+                  {locale === "ru" ? "Подготовка" : "Preparation"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "active"}
+                  onClick={() => replaceSearchParams({ status: "active" })}
+                >
+                  {locale === "ru" ? "Активные" : "Active"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "completed"}
+                  onClick={() => replaceSearchParams({ status: "completed" })}
+                >
+                  {locale === "ru" ? "Завершённые" : "Completed"}
+                </ListFilterChip>
+              </ListFilterGroup>
+              <ListFilterGroup label={locale === "ru" ? "AI-разбор" : "AI analysis"}>
+                <ListFilterChip
+                  active={aiFilter === "all"}
+                  onClick={() => replaceSearchParams({ ai: null })}
+                >
+                  {locale === "ru" ? "Любой" : "Any"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={aiFilter === "with"}
+                  onClick={() => replaceSearchParams({ ai: "with" })}
+                >
+                  {locale === "ru" ? "С анализом" : "With analysis"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={aiFilter === "without"}
+                  onClick={() => replaceSearchParams({ ai: "without" })}
+                >
+                  {locale === "ru" ? "Без анализа" : "Without analysis"}
+                </ListFilterChip>
+              </ListFilterGroup>
+              {activeEventTitle ? (
+                <ListFilterGroup
+                  label={locale === "ru" ? "Встреча" : "Event"}
+                  className="min-w-[14rem]"
+                >
+                  <span
+                    className="rounded-md bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 ring-1 ring-inset ring-cyan-500/30"
+                    data-testid="sessions-event-filter-chip"
+                  >
+                    {locale === "ru"
+                      ? `Сессии встречи: ${activeEventTitle}`
+                      : `Event sessions: ${activeEventTitle}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-xs text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
+                    onClick={() => replaceSearchParams({ eventId: null })}
+                  >
+                    {locale === "ru" ? "Убрать фильтр встречи" : "Clear event filter"}
+                  </button>
+                </ListFilterGroup>
+              ) : null}
+              <div className="ml-auto flex items-end">
+                <ListFilterResetButton
+                  onClick={() =>
+                    replaceSearchParams({
+                      q: null,
+                      status: null,
+                      ai: null,
+                      eventId: null,
+                      sort: null,
+                      dir: null,
+                    })
+                  }
+                >
+                  {locale === "ru" ? "Сбросить" : "Reset"}
+                </ListFilterResetButton>
+              </div>
+            </ListFilterGroups>
+          </ListFilterBar>
+          <DataTable scrollAreaClassName="max-h-[calc(100vh-260px)] overflow-auto overscroll-contain">
+          <DataTableElement className="min-w-[1120px] w-full table-fixed">
             <DataTableHead>
-              <DataTableHeaderCell>{t("common.title")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("common.caseLabel")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("events.eventColumn")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("common.status")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("sessions.aiAnalysis")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("sessions.participants")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("common.onlineNow")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("common.negotiationDuration")}</DataTableHeaderCell>
-              <DataTableHeaderCell>{t("common.created")}</DataTableHeaderCell>
-              <DataTableHeaderCell align="right">{t("common.actions")}</DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[15%] px-1.5 py-1.5">
+                <SortHeaderButton
+                  active={sortField === "title"}
+                  direction={sortDirection}
+                  onClick={() => toggleSort("title")}
+                >
+                  {t("common.title")}
+                </SortHeaderButton>
+              </DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[11%] px-1.5 py-1.5">{t("common.caseLabel")}</DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[7%] px-1.5 py-1.5">
+                {locale === "ru" ? "ДЛИТ." : "DUR."}
+              </DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[11%] px-1.5 py-1.5">{t("events.eventColumn")}</DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[11%] px-1.5 py-1.5">
+                <SortHeaderButton
+                  active={sortField === "status"}
+                  direction={sortDirection}
+                  onClick={() => toggleSort("status")}
+                >
+                  {t("common.status")}
+                </SortHeaderButton>
+              </DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[12%] px-1.5 py-1.5">{t("sessions.aiAnalysis")}</DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[12%] px-1.5 py-1.5">
+                <SortHeaderButton
+                  active={sortField === "participants"}
+                  direction={sortDirection}
+                  onClick={() => toggleSort("participants")}
+                >
+                  {locale === "ru" ? "Активность" : "Activity"}
+                </SortHeaderButton>
+              </DataTableHeaderCell>
+              <DataTableHeaderCell align="right" className="w-[14%] px-1.5 py-1.5">{t("common.actions")}</DataTableHeaderCell>
+              <DataTableHeaderCell className="w-[5%] px-1.5 py-1.5">
+                <SortHeaderButton
+                  active={sortField === "createdAt"}
+                  direction={sortDirection}
+                  onClick={() => toggleSort("createdAt")}
+                >
+                  {t("common.created")}
+                </SortHeaderButton>
+              </DataTableHeaderCell>
             </DataTableHead>
             <DataTableBody>
-              {sessions.map((session) => (
-                <DataTableRow key={session.id}>
-                  <DataTableCell>
-                    <div className="flex items-center gap-2">
+              {sortedSessions.map((session) => (
+                <DataTableRow key={session.id} className="align-top" data-testid="session-row">
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
+                    <div className="flex min-w-0 items-start gap-2">
                       {/**
                        * Non-managers can access PUBLIC/open sessions via the room entrypoint.
                        * The detail page is manager-only, so route title clicks accordingly.
                        */}
                       <Link
                         href={session.canManage ? `/sessions/${session.id}` : session.roomUrl}
-                        className="font-medium text-slate-50 hover:text-blue-300"
+                        className="line-clamp-3 min-w-0 font-medium leading-5 text-slate-50 hover:text-blue-300"
                       >
                         {session.title}
                       </Link>
@@ -241,11 +582,18 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                       </p>
                     ) : null}
                   </DataTableCell>
-                  <DataTableCell>{session.caseTitle}</DataTableCell>
-                  <DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
+                    <p className="line-clamp-3 leading-5 text-slate-200">{session.caseTitle}</p>
+                  </DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
+                    {locale === "ru"
+                      ? `${session.durationMinutes} мин.`
+                      : `${session.durationMinutes} min.`}
+                  </DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
                     {session.eventTitle ? (
-                      <div className="max-w-[14rem]">
-                        <p className="truncate text-sm text-slate-200">
+                      <div className="min-w-0 max-w-[14rem]">
+                        <p className="line-clamp-2 leading-5 text-slate-200">
                           {session.eventTitle}
                         </p>
                         {session.eventStatus ? (
@@ -258,67 +606,88 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                       <span className="text-slate-500">—</span>
                     )}
                   </DataTableCell>
-                  <DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
                     <SessionStatusBadge status={session.status} />
                   </DataTableCell>
-                  <DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
                     <AiStatusCell session={session} />
                   </DataTableCell>
-                  <DataTableCell>{session.participantCount}</DataTableCell>
-                  <DataTableCell>
-                    {isSessionActiveForPresence(session)
-                      ? session.onlineParticipantCount
-                      : "—"}
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">
+                    <div className="flex flex-wrap gap-1">
+                      <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300">
+                        {locale === "ru" ? "Участн." : "Participants"} {session.participantCount}
+                      </span>
+                      <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300">
+                        {locale === "ru" ? "Онлайн" : "Online"}{" "}
+                        {isSessionActiveForPresence(session)
+                          ? session.onlineParticipantCount
+                          : "—"}
+                      </span>
+                    </div>
                   </DataTableCell>
-                  <DataTableCell>
-                    {t("common.negotiationDurationValue", {
-                      minutes: session.durationMinutes,
-                    })}
-                  </DataTableCell>
-                  <DataTableCell>{formatDate(session.createdAt)}</DataTableCell>
-                  <DataTableCell align="right">
-                    <div className="flex flex-wrap items-center justify-end gap-3">
+                  <DataTableCell align="right" className="max-w-[10rem] px-1.5 py-1 align-top text-xs">
+                    <ListActionGroup className="flex-nowrap flex-col items-end gap-1">
                       {session.eventLobbyUrl ? (
-                        <Link
+                        <ListActionLink
                           href={session.eventLobbyUrl}
-                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          variant="primary"
+                          className="h-6 px-1.5 text-[10px]"
                           data-testid="open-event-lobby-button"
                         >
                           {t("events.openLobby")}
-                        </Link>
+                        </ListActionLink>
                       ) : null}
                       {session.status !== "FINISHED" ? (
-                        <Link
+                        <ListActionLink
                           href={session.roomUrl}
-                          className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                          variant="primary"
+                          className="h-6 px-1.5 text-[10px]"
                         >
                           {t("dashboard.openRoom")}
-                        </Link>
+                        </ListActionLink>
                       ) : null}
-                      <Link
+                      <ListActionLink
                         href={session.materialsUrl}
-                        className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                        variant="secondary"
+                        className="h-6 px-1.5 text-[10px]"
                       >
                         {t("dashboard.openMaterials")}
-                      </Link>
+                      </ListActionLink>
                       {session.canManage ? (
                         <>
-                          <Link
+                          <ListActionLink
                             href={`/sessions/${session.id}`}
-                            className="text-sm font-medium text-cyan-400 hover:text-cyan-300"
+                            variant="secondary"
+                            className="h-6 px-1.5 text-[10px]"
                           >
                             {t("common.manage")}
-                          </Link>
-                          <DeleteSessionButton sessionId={session.id} />
+                          </ListActionLink>
+                          <DeleteSessionButton
+                            sessionId={session.id}
+                            className={getListActionButtonClassName("danger", "h-6 px-1.5 text-[10px]")}
+                          />
                         </>
                       ) : null}
-                    </div>
+                    </ListActionGroup>
                   </DataTableCell>
+                  <DataTableCell className="px-1.5 py-1 align-top text-xs">{formatDate(session.createdAt)}</DataTableCell>
                 </DataTableRow>
               ))}
+              {sortedSessions.length === 0 ? (
+                <DataTableRow>
+                  <DataTableCell
+                    colSpan={9}
+                    className="px-3 py-6 text-center text-sm text-slate-400"
+                    align="left"
+                  >
+                    {locale === "ru" ? "Ничего не найдено по текущим фильтрам." : "No sessions match the current filters."}
+                  </DataTableCell>
+                </DataTableRow>
+              ) : null}
             </DataTableBody>
           </DataTableElement>
         </DataTable>
+        </>
       )}
     </div>
   );
