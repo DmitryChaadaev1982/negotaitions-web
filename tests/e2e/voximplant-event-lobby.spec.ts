@@ -268,7 +268,12 @@ test("session creation from event preserves role assignment and account room pat
 test("lobby camera busy path reports localized warning key and keeps controls shared", async () => {
   const lobbySource = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
   const viewSource = readFileSync("components/event-lobby-view.tsx", "utf-8");
+  const roomLayoutSource = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
   expect(lobbySource).toContain("onDeviceWarning?.(\"cameraBusyOrUnavailable\")");
   expect(lobbySource).toContain("VoximplantMediaControls");
+  expect(lobbySource).toContain("VoximplantParticipantTile");
+  expect(roomLayoutSource).toContain("VoximplantParticipantTile");
+  expect(lobbySource).toContain("micState");
+  expect(lobbySource).toContain("room.unknownMicState");
   expect(viewSource).toContain("events.cameraBusyOrUnavailable");
 });

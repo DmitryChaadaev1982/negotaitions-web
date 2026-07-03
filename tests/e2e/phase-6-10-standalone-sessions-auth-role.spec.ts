@@ -256,7 +256,7 @@ test.describe("Part 3 - Account-based participant add (no guest)", () => {
     const ownerToken = await createUserSession(owner.id);
     const { sessionId, sessionRole1Id } = await createStandaloneSession(owner.id);
 
-    const response = await request.post(`/api/sessions/${sessionId}/participants`, {
+    await request.post(`/api/sessions/${sessionId}/participants`, {
       headers: {
         Cookie: `auth_session=${ownerToken}`,
         "Content-Type": "application/json",
@@ -346,6 +346,68 @@ test.describe("Part 3 - Account-based participant add (no guest)", () => {
 // ─── Part 4 + 6: Session access semantics ─────────────────────────────────────
 
 test.describe("Part 4+6 - Standalone session access semantics", () => {
+  test("admin joining another user's standalone session is observer, not facilitator", async ({ request }) => {
+    const owner = await createActiveUser("p610_admin_join_owner", "Owner User");
+    const admin = await createActiveUser("p610_admin_join_admin", "Admin User", "ADMIN");
+    const adminToken = await createUserSession(admin.id);
+    const { sessionId } = await createStandaloneSession(owner.id, "PRIVATE");
+
+    await createSessionInviteForUser(sessionId, admin.id, owner.id);
+
+    const roomResponse = await request.get(`/room/${sessionId}`, {
+      headers: { Cookie: `auth_session=${adminToken}` },
+      maxRedirects: 5,
+    });
+    expect([200, 302, 303]).toContain(roomResponse.status());
+
+    const adminParticipantRows = await query<{ type: "OBSERVER" | "PARTICIPANT" | "FACILITATOR" }>(
+      `SELECT "type" FROM "SessionParticipant" WHERE "sessionId"=$1 AND "userId"=$2`,
+      [sessionId, admin.id],
+    );
+    expect(adminParticipantRows).toHaveLength(1);
+    expect(adminParticipantRows[0]?.type).toBe("OBSERVER");
+
+    const facilitatorRows = await query<{ id: string }>(
+      `SELECT "id" FROM "SessionParticipant" WHERE "sessionId"=$1 AND "type"='FACILITATOR'`,
+      [sessionId],
+    );
+    expect(facilitatorRows).toHaveLength(1);
+  });
+
+  test("sidebar payload has no duplicate facilitators", async ({ request }) => {
+    const owner = await createActiveUser("p610_sidebar_owner", "Sidebar Owner");
+    const admin = await createActiveUser("p610_sidebar_admin", "Sidebar Admin", "ADMIN");
+    const adminToken = await createUserSession(admin.id);
+    const { sessionId } = await createStandaloneSession(owner.id, "PRIVATE");
+    await createSessionInviteForUser(sessionId, admin.id, owner.id);
+
+    await request.get(`/room/${sessionId}`, {
+      headers: { Cookie: `auth_session=${adminToken}` },
+      maxRedirects: 5,
+    });
+
+    const adminParticipantRows = await query<{ id: string }>(
+      `SELECT "id" FROM "SessionParticipant" WHERE "sessionId"=$1 AND "userId"=$2`,
+      [sessionId, admin.id],
+    );
+    expect(adminParticipantRows).toHaveLength(1);
+
+    const sidebarResponse = await request.get(
+      `/api/livekit/sidebar?participantId=${adminParticipantRows[0]!.id}`,
+      {
+        headers: { Cookie: `auth_session=${adminToken}` },
+      },
+    );
+    expect(sidebarResponse.ok()).toBeTruthy();
+    const sidebar = (await sidebarResponse.json()) as {
+      roster: Array<{ participantType: "FACILITATOR" | "PARTICIPANT" | "OBSERVER" }>;
+    };
+    const facilitatorCount = sidebar.roster.filter(
+      (entry) => entry.participantType === "FACILITATOR",
+    ).length;
+    expect(facilitatorCount).toBe(1);
+  });
+
   test("invited registered user can access private session", async ({ request }) => {
     const owner = await createActiveUser("p610_acc_owner", "Acc Owner");
     const invited = await createActiveUser("p610_acc_inv", "Invited User");

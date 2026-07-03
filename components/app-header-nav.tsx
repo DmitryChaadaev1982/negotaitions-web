@@ -13,46 +13,85 @@ type AppHeaderNavProps = {
 
 export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) {
   const pathname = usePathname();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const fullLogoSpacingClass = locale === "ru" ? "sm:mr-4 lg:mr-5" : "sm:mr-1 lg:mr-2";
 
-  const navItems = [
-    { href: "/dashboard", label: t("nav.dashboard"), testId: "nav-dashboard" },
+  const trainingsItems = [
     { href: "/cases", label: t("nav.cases"), testId: "nav-cases" },
     { href: "/events", label: t("nav.events"), testId: "nav-events" },
     { href: "/sessions", label: t("nav.sessions"), testId: "nav-sessions" },
-    ...(adminFlag
-      ? [
-          { href: "/admin", label: t("nav.admin"), testId: "nav-admin" },
-          { href: "/admin/users", label: t("nav.adminUsers"), testId: "nav-admin-users" },
-        ]
-      : []),
   ];
 
   return (
-    <div className="flex items-center gap-6 sm:gap-10">
-      <BrandLogo size="md" />
-      <nav className="flex items-center gap-1">
-        {navItems.map((item) => {
-          const isActive =
-            pathname === item.href ||
-            (item.href !== "/dashboard" && pathname.startsWith(item.href));
+    <div className="flex items-center gap-4 sm:gap-6">
+      <BrandLogo
+        size="md"
+        variant="full"
+        priority
+        className={cn("hidden sm:inline-flex max-w-[320px]", fullLogoSpacingClass)}
+      />
+      <BrandLogo
+        size="md"
+        variant="compact"
+        priority
+        className="sm:hidden"
+      />
+      <nav className="flex items-center gap-3">
+        <Link
+          href="/dashboard"
+          data-testid="nav-dashboard"
+          className={cn(
+            "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
+            pathname === "/dashboard"
+              ? "nav-pill-active"
+              : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
+          )}
+        >
+          {t("nav.dashboard")}
+        </Link>
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              data-testid={item.testId}
-              className={cn(
-                "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
-                isActive
-                  ? "nav-pill-active"
-                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
-              )}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
+        <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 px-2 py-1">
+          <p className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-500">
+            {t("nav.negotiationTrainings")}
+          </p>
+          <div className="flex items-center gap-1">
+            {trainingsItems.map((item) => {
+              const isActive =
+                pathname === item.href ||
+                (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  data-testid={item.testId}
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200",
+                    isActive
+                      ? "nav-pill-active"
+                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+
+        {adminFlag ? (
+          <Link
+            href="/admin"
+            data-testid="nav-admin"
+            className={cn(
+              "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
+              pathname === "/admin" || pathname.startsWith("/admin/")
+                ? "nav-pill-active"
+                : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
+            )}
+          >
+            {t("nav.administration")}
+          </Link>
+        ) : null}
       </nav>
     </div>
   );

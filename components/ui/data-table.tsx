@@ -4,13 +4,15 @@ import { cn } from "@/lib/cn";
 export function DataTable({
   children,
   className,
+  scrollAreaClassName,
 }: {
   children: React.ReactNode;
   className?: string;
+  scrollAreaClassName?: string;
 }) {
   return (
     <GlassCard elevated className={cn("overflow-hidden", className)}>
-      <div className="overflow-x-auto">{children}</div>
+      <div className={cn("overflow-x-auto", scrollAreaClassName)}>{children}</div>
     </GlassCard>
   );
 }
@@ -40,15 +42,20 @@ export function DataTableHead({ children }: { children: React.ReactNode }) {
 export function DataTableHeaderCell({
   children,
   align = "left",
+  className,
+  ...props
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
-}) {
+  className?: string;
+} & Omit<React.ThHTMLAttributes<HTMLTableCellElement>, "className" | "children">) {
   return (
     <th
+      {...props}
       className={cn(
         "px-6 py-3.5 text-xs font-semibold uppercase tracking-wider text-slate-400",
         align === "right" ? "text-right" : "text-left",
+        className,
       )}
     >
       {children}
@@ -63,12 +70,14 @@ export function DataTableBody({ children }: { children: React.ReactNode }) {
 export function DataTableRow({
   children,
   className,
+  ...props
 }: {
   children: React.ReactNode;
   className?: string;
-}) {
+} & Omit<React.HTMLAttributes<HTMLTableRowElement>, "className" | "children">) {
   return (
     <tr
+      {...props}
       className={cn(
         "transition-colors hover:bg-slate-800/50",
         className,
@@ -83,13 +92,15 @@ export function DataTableCell({
   children,
   align = "left",
   className,
+  ...props
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
   className?: string;
-}) {
+} & Omit<React.TdHTMLAttributes<HTMLTableCellElement>, "className" | "children">) {
   return (
     <td
+      {...props}
       className={cn(
         "px-6 py-4 text-sm text-slate-300",
         align === "right" ? "text-right" : "text-left",

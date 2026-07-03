@@ -13,8 +13,11 @@ export const runtime = "nodejs";
 
 const emptyUsage = {
   livekitRecordingMinutes: 0,
+  voximplantConferenceMinutes: 0,
   openAiTranscriptionMinutes: 0,
   openAiTranscriptionBytes: 0,
+  yandexSpeechKitMinutes: 0,
+  yandexAiAnalysisRuns: 0,
   storageUploadedBytes: 0,
   storageDownloadedBytes: 0,
   recordingsCreated: 0,

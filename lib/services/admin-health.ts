@@ -21,6 +21,7 @@ import {
 } from "@/lib/voximplant/recording-webhook-url";
 import { getLiveKitConfig } from "@/lib/livekit";
 import { createEgressClient } from "@/lib/livekit-egress";
+import { getAdminEnvironmentDisplayGroups } from "@/lib/services/admin-env-display";
 import { checkOpenAiHealth, isOpenAiConfigured } from "@/lib/services/openai-transcription";
 import { checkStorageHealth } from "@/lib/storage/s3";
 
@@ -97,6 +98,7 @@ export function getEnvironmentConfigStatus() {
     ffmpeg: getFfmpegStatus(),
     voximplant,
     voximplantRecordingEnabled: getEnvBoolean("VOXIMPLANT_RECORDING_ENABLED", false),
+    envGroups: getAdminEnvironmentDisplayGroups(),
   };
 }
 
@@ -121,6 +123,50 @@ export async function checkLiveKitHealth() {
       message: error instanceof Error ? error.message : "LiveKit check failed.",
     };
   }
+}
+
+export async function checkVoximplantHealth() {
+  const config = getVoximplantConfig({ requireForRuntime: false });
+  const requiredConfigured =
+    Boolean(config.accountName) &&
+    Boolean(config.applicationName) &&
+    Boolean(config.userDomain) &&
+    Boolean(config.scenarioName) &&
+    Boolean(config.ruleName);
+  const webhookSecretConfigured = Boolean(getVoximplantRecordingWebhookSecret());
+  const managementDiagnostics = getVoximplantManagementApiDiagnostics();
+  const managementReady =
+    managementDiagnostics.apiAuth.status === "configured_via_env" ||
+    managementDiagnostics.apiAuth.status === "configured_via_key_file";
+
+  if (!requiredConfigured) {
+    return {
+      ok: false,
+      message:
+        "Voximplant config is incomplete (account/app/domain/scenario/rule).",
+    };
+  }
+
+  if (!webhookSecretConfigured) {
+    return {
+      ok: false,
+      message: "Voximplant recording webhook secret is not configured.",
+    };
+  }
+
+  if (!managementReady) {
+    return {
+      ok: false,
+      message:
+        "Voximplant management API credentials are not configured. Config-level validation only.",
+    };
+  }
+
+  return {
+    ok: true,
+    message:
+      "Voximplant config is valid (env-level check). Live API call is skipped for safety.",
+  };
 }
 
 export async function getAdminHealthSummary() {

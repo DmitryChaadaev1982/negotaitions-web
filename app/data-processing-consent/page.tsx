@@ -74,7 +74,7 @@ export default async function DataProcessingConsentPage() {
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100 mb-2">5. Трансграничная передача данных</h2>
-                <p className="text-amber-200">Данные могут обрабатываться внешними провайдерами, расположенными за пределами Российской Федерации, включая ЕС и США (LiveKit, OpenAI, Yandex Object Storage). Продолжая использование сервиса, вы даёте согласие на такую передачу.</p>
+                <p className="text-amber-200">Данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации.</p>
               </section>
 
               <section>
@@ -127,7 +127,7 @@ export default async function DataProcessingConsentPage() {
 
               <section>
                 <h2 className="text-xl font-semibold text-slate-100 mb-2">5. Cross-Border Data Transfer</h2>
-                <p className="text-amber-200">Data may be processed by external providers located outside your country, including the EU and USA (LiveKit, OpenAI, Yandex Object Storage). By continuing to use the service, you consent to such transfer.</p>
+                <p className="text-amber-200">Data is stored and processed on infrastructure located in the Russian Federation.</p>
               </section>
 
               <section>

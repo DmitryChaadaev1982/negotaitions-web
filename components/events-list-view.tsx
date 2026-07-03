@@ -1,15 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import {
+  ListActionButton,
+  ListActionGroup,
+  ListActionLink,
+} from "@/components/list-action-button";
 import { PageHeader } from "@/components/page-header";
+import {
+  ListFilterBar,
+  ListFilterChip,
+  ListFilterGroup,
+  ListFilterGroups,
+  ListFilterInput,
+  ListFilterResetButton,
+  SortHeaderButton,
+} from "@/components/table-list-controls";
 import { GradientButtonLink } from "@/components/ui/buttons";
 import { GlassCard } from "@/components/ui/glass-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/badge";
 import { VisibilityBadge } from "@/components/visibility-badge";
-import { cn } from "@/lib/cn";
 import { getEventJoinUrl, getEventPublicJoinUrl } from "@/lib/config";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
@@ -51,9 +64,6 @@ type EventRow = {
   ownerLabel?: string | null;
 };
 
-const compactButtonClass =
-  "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617] disabled:cursor-not-allowed disabled:opacity-40";
-
 function canEnterEventLobby(status: EventRow["status"]) {
   return status !== "COMPLETED" && status !== "CANCELLED";
 }
@@ -81,6 +91,81 @@ function eventStatusBadgeVariant(
 type EventsListViewProps = {
   events: EventRow[];
 };
+
+const EVENT_STATUS_FILTERS = [
+  "all",
+  "unfinished",
+  "active",
+  "completed",
+  "cancelled",
+] as const;
+type EventStatusFilter = (typeof EVENT_STATUS_FILTERS)[number];
+
+const EVENT_VISIBILITY_FILTERS = ["all", "public", "private"] as const;
+type EventVisibilityFilter = (typeof EVENT_VISIBILITY_FILTERS)[number];
+
+const EVENT_ACTIVITY_FILTERS = [
+  "all",
+  "hasActiveSessions",
+  "hasSessions",
+  "withoutSessions",
+] as const;
+type EventActivityFilter = (typeof EVENT_ACTIVITY_FILTERS)[number];
+
+const EVENT_SORT_FIELDS = [
+  "updatedAt",
+  "createdAt",
+  "title",
+  "status",
+  "activeSessions",
+  "totalSessions",
+] as const;
+type EventSortField = (typeof EVENT_SORT_FIELDS)[number];
+type SortDirection = "asc" | "desc";
+
+const EVENT_STATUS_SORT_RANK: Record<EventRow["status"], number> = {
+  DRAFT: 1,
+  LOBBY_OPEN: 2,
+  SESSION_CREATED: 3,
+  COMPLETED: 4,
+  CANCELLED: 5,
+};
+
+function parseEventStatusFilter(value: string | null): EventStatusFilter {
+  return (EVENT_STATUS_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as EventStatusFilter)
+    : "all";
+}
+
+function parseEventVisibilityFilter(value: string | null): EventVisibilityFilter {
+  return (EVENT_VISIBILITY_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as EventVisibilityFilter)
+    : "all";
+}
+
+function parseEventActivityFilter(value: string | null): EventActivityFilter {
+  return (EVENT_ACTIVITY_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as EventActivityFilter)
+    : "all";
+}
+
+function parseEventSortField(value: string | null): EventSortField {
+  return (EVENT_SORT_FIELDS as readonly string[]).includes(value ?? "")
+    ? (value as EventSortField)
+    : "updatedAt";
+}
+
+function parseSortDirection(value: string | null): SortDirection {
+  return value === "asc" || value === "desc" ? value : "desc";
+}
+
+function sortDirectionForEventField(field: EventSortField): SortDirection {
+  return field === "title" ? "asc" : "desc";
+}
+
+function isUnfinishedEvent(status: EventRow["status"]): boolean {
+  return status !== "COMPLETED" && status !== "CANCELLED";
+}
 
 function EventActivitySummary({ event }: { event: EventRow }) {
   const { t } = useI18n();
@@ -158,71 +243,44 @@ function EventRowActions({ event, copyId, onCopyLink }: {
   const { t } = useI18n();
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <ListActionGroup>
       {canEnterEventLobby(event.status) ? (
-        <Link
+        <ListActionLink
           href={`/events/${event.id}/lobby`}
-          className={cn(
-            compactButtonClass,
-            "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-500/25 hover:bg-cyan-500/25 hover:text-cyan-200",
-          )}
+          variant="primary"
           title={t("events.openLobby")}
           aria-label={t("events.openLobby")}
           data-testid="open-event-lobby-button"
         >
           {t("events.actionOpen")}
-        </Link>
+        </ListActionLink>
       ) : null}
       {event.canManage && canEnterEventLobby(event.status) ? (
-        <Link
+        <ListActionLink
           href={`/events/${event.id}/edit`}
-          className={cn(
-            compactButtonClass,
-            "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
-          )}
+          variant="secondary"
           title={t("events.editEvent")}
           aria-label={t("events.editEvent")}
           data-testid="edit-event-button"
         >
           {t("events.actionEdit")}
-        </Link>
+        </ListActionLink>
       ) : null}
-      {event.sessionCount > 0 && event.primarySessionId ? (
-        <Link
+      {event.totalSessions > 0 ? (
+        <ListActionLink
           href={`/sessions?eventId=${event.id}`}
-          className={cn(
-            compactButtonClass,
-            "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
-          )}
+          variant="secondary"
           title={t("events.sessionsInThisEvent")}
           aria-label={t("events.sessionsInThisEvent")}
           data-testid="view-event-sessions-button"
         >
           {t("events.sessions")}
-        </Link>
-      ) : null}
-      {event.sessionCount > 0 && event.primarySessionId ? (
-        <Link
-          href={`/sessions/${event.primarySessionId}/materials`}
-          className={cn(
-            compactButtonClass,
-            "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
-          )}
-          title={t("events.materials")}
-          aria-label={t("events.materials")}
-          data-testid={
-            event.status === "COMPLETED"
-              ? "open-event-results-button"
-              : "event-materials-button"
-          }
-        >
-          {t("events.materials")}
-        </Link>
+        </ListActionLink>
       ) : null}
       {event.canManage ? (
-        <button
+        <ListActionButton
           type="button"
-          className="inline-flex h-8 shrink-0 items-center justify-center px-2 text-xs font-medium text-blue-400 underline decoration-blue-400/60 underline-offset-2 transition-colors hover:text-blue-300 hover:decoration-blue-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617]"
+          variant="link"
           title={
             event.visibility === "PUBLIC"
               ? t("events.copyEventJoinLink")
@@ -237,7 +295,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           onClick={() => onCopyLink(event)}
         >
           {copyId === event.id ? t("events.linkCopied") : t("events.actionLink")}
-        </button>
+        </ListActionButton>
       ) : null}
       {canCompleteEvent(event) ? (
         <form
@@ -253,49 +311,67 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           }}
         >
           <input type="hidden" name="eventId" value={event.id} />
-          <button
+          <ListActionButton
             type="submit"
-            className={cn(
-              compactButtonClass,
-              "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
-            )}
+            variant="secondary"
             title={t("events.completeEvent")}
             aria-label={t("events.completeEvent")}
             data-testid="complete-event-button"
           >
             {t("events.actionComplete")}
-          </button>
+          </ListActionButton>
         </form>
       ) : null}
       {canCompleteEvent(event) ? (
         <form action={cancelTrainingEvent}>
           <input type="hidden" name="eventId" value={event.id} />
-          <button
+          <ListActionButton
             type="submit"
-            className={cn(
-              compactButtonClass,
-              "bg-rose-500/10 text-rose-300 ring-1 ring-inset ring-rose-500/25 hover:bg-rose-500/20 hover:text-rose-200",
-            )}
+            variant="danger"
             title={t("common.cancel")}
             aria-label={t("common.cancel")}
             data-testid="cancel-event-button"
           >
             {t("common.cancel")}
-          </button>
+          </ListActionButton>
         </form>
       ) : null}
-    </div>
+    </ListActionGroup>
   );
 }
 
 export function EventsListView({ events: initialEvents }: EventsListViewProps) {
   const { t, locale } = useI18n();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [eventStats, setEventStats] = useState<EventOverviewStats[]>([]);
   const [copyId, setCopyId] = useState<string | null>(null);
   const events = useMemo(
     () => applyEventOverviewStats(initialEvents, eventStats),
     [eventStats, initialEvents],
   );
+  const query = searchParams.get("q")?.trim() ?? "";
+  const statusFilter = parseEventStatusFilter(searchParams.get("status"));
+  const visibilityFilter = parseEventVisibilityFilter(searchParams.get("visibility"));
+  const activityFilter = parseEventActivityFilter(searchParams.get("activity"));
+  const sortField = parseEventSortField(searchParams.get("sort"));
+  const sortDirection = parseSortDirection(searchParams.get("dir"));
+
+  const replaceSearchParams = (updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (!value) {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    const nextQuery = params.toString();
+    router.replace(nextQuery.length > 0 ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -355,6 +431,96 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
     window.setTimeout(() => setCopyId(null), 2000);
   };
 
+  const filteredEvents = useMemo(() => {
+    const normalizedQuery = query.toLocaleLowerCase();
+    return events.filter((event) => {
+      if (statusFilter === "unfinished" && !isUnfinishedEvent(event.status)) {
+        return false;
+      }
+      if (statusFilter === "active" && !isEventActiveForPresence(event.status)) {
+        return false;
+      }
+      if (statusFilter === "completed" && event.status !== "COMPLETED") {
+        return false;
+      }
+      if (statusFilter === "cancelled" && event.status !== "CANCELLED") {
+        return false;
+      }
+
+      if (
+        visibilityFilter !== "all" &&
+        event.visibility !== visibilityFilter.toUpperCase()
+      ) {
+        return false;
+      }
+
+      if (activityFilter === "hasActiveSessions" && event.activeSessions <= 0) {
+        return false;
+      }
+      if (activityFilter === "hasSessions" && event.totalSessions <= 0) {
+        return false;
+      }
+      if (activityFilter === "withoutSessions" && event.totalSessions > 0) {
+        return false;
+      }
+
+      if (normalizedQuery.length === 0) {
+        return true;
+      }
+
+      return event.title.toLocaleLowerCase().includes(normalizedQuery);
+    });
+  }, [activityFilter, events, query, statusFilter, visibilityFilter]);
+
+  const sortedEvents = useMemo(() => {
+    const result = [...filteredEvents];
+    result.sort((left, right) => {
+      let comparison = 0;
+      switch (sortField) {
+        case "title":
+          comparison = left.title.localeCompare(right.title, locale);
+          break;
+        case "status":
+          comparison = EVENT_STATUS_SORT_RANK[left.status] - EVENT_STATUS_SORT_RANK[right.status];
+          break;
+        case "activeSessions":
+          comparison = left.activeSessions - right.activeSessions;
+          break;
+        case "totalSessions":
+          comparison = left.totalSessions - right.totalSessions;
+          break;
+        case "createdAt":
+          comparison =
+            new Date(left.scheduledAt ?? 0).getTime() -
+            new Date(right.scheduledAt ?? 0).getTime();
+          break;
+        case "updatedAt":
+        default:
+          comparison =
+            new Date(left.latestActivityAt ?? left.scheduledAt ?? 0).getTime() -
+            new Date(right.latestActivityAt ?? right.scheduledAt ?? 0).getTime();
+          break;
+      }
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+    return result;
+  }, [filteredEvents, locale, sortDirection, sortField]);
+
+  const toggleSort = (field: EventSortField) => {
+    if (sortField === field) {
+      replaceSearchParams({
+        sort: field,
+        dir: sortDirection === "asc" ? "desc" : "asc",
+      });
+      return;
+    }
+    replaceSearchParams({
+      sort: field,
+      dir: sortDirectionForEventField(field),
+    });
+  };
+
   return (
     <div className="space-y-8" data-testid="events-page">
       <PageHeader
@@ -378,32 +544,132 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
         />
       ) : (
         <>
+          <ListFilterBar>
+            <ListFilterGroups>
+              <ListFilterGroup label={locale === "ru" ? "Поиск" : "Search"} className="min-w-[14rem] flex-1">
+                <ListFilterInput
+                  value={query}
+                  onChange={(value) => replaceSearchParams({ q: value || null })}
+                  placeholder={locale === "ru" ? "Поиск..." : "Search..."}
+                />
+              </ListFilterGroup>
+              <ListFilterGroup label={locale === "ru" ? "Статус" : "Status"}>
+                <ListFilterChip
+                  active={statusFilter === "all"}
+                  onClick={() => replaceSearchParams({ status: null })}
+                >
+                  {locale === "ru" ? "Все статусы" : "All statuses"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "unfinished"}
+                  onClick={() => replaceSearchParams({ status: "unfinished" })}
+                >
+                  {locale === "ru" ? "Незавершённые" : "Unfinished"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "active"}
+                  onClick={() => replaceSearchParams({ status: "active" })}
+                >
+                  {locale === "ru" ? "Активные" : "Active"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={statusFilter === "completed"}
+                  onClick={() => replaceSearchParams({ status: "completed" })}
+                >
+                  {locale === "ru" ? "Завершённые" : "Completed"}
+                </ListFilterChip>
+              </ListFilterGroup>
+              <ListFilterGroup label={locale === "ru" ? "Видимость" : "Visibility"}>
+                <ListFilterChip
+                  active={visibilityFilter === "all"}
+                  onClick={() => replaceSearchParams({ visibility: null })}
+                >
+                  {locale === "ru" ? "Любая" : "Any"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={visibilityFilter === "public"}
+                  onClick={() => replaceSearchParams({ visibility: "public" })}
+                >
+                  {locale === "ru" ? "Публичные" : "Public"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={visibilityFilter === "private"}
+                  onClick={() => replaceSearchParams({ visibility: "private" })}
+                >
+                  {locale === "ru" ? "Приватные" : "Private"}
+                </ListFilterChip>
+              </ListFilterGroup>
+              <ListFilterGroup label={locale === "ru" ? "Активность" : "Activity"}>
+                <ListFilterChip
+                  active={activityFilter === "all"}
+                  onClick={() => replaceSearchParams({ activity: null })}
+                >
+                  {locale === "ru" ? "Любая" : "Any"}
+                </ListFilterChip>
+                <ListFilterChip
+                  active={activityFilter === "hasActiveSessions"}
+                  onClick={() => replaceSearchParams({ activity: "hasActiveSessions" })}
+                >
+                  {locale === "ru" ? "С активными сессиями" : "With active sessions"}
+                </ListFilterChip>
+              </ListFilterGroup>
+              <div className="ml-auto flex items-end">
+                <ListFilterResetButton
+                  onClick={() =>
+                    replaceSearchParams({
+                      q: null,
+                      status: null,
+                      visibility: null,
+                      activity: null,
+                      sort: null,
+                      dir: null,
+                    })
+                  }
+                >
+                  {locale === "ru" ? "Сбросить" : "Reset"}
+                </ListFilterResetButton>
+              </div>
+            </ListFilterGroups>
+          </ListFilterBar>
           <GlassCard elevated className="hidden overflow-hidden md:block">
-            <table className="w-full table-fixed divide-y divide-slate-700/40">
+            <div className="max-h-[calc(100vh-260px)] overflow-auto overscroll-contain">
+            <table className="min-w-[980px] w-full table-fixed divide-y divide-slate-700/40 xl:min-w-full">
               <thead className="bg-slate-900/80">
                 <tr>
-                  <th className="w-[34%] px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    {t("events.eventColumn")}
+                  <th className="w-[30%] px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <SortHeaderButton
+                      active={sortField === "title"}
+                      direction={sortDirection}
+                      onClick={() => toggleSort("title")}
+                    >
+                      {t("events.eventColumn")}
+                    </SortHeaderButton>
                   </th>
-                  <th className="w-[16%] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    {t("common.status")}
+                  <th className="w-[12%] px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <SortHeaderButton
+                      active={sortField === "status"}
+                      direction={sortDirection}
+                      onClick={() => toggleSort("status")}
+                    >
+                      {t("common.status")}
+                    </SortHeaderButton>
                   </th>
-                  <th className="w-[30%] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <th className="w-[33%] px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
                     {t("events.activity")}
                   </th>
-                  <th className="w-[20%] px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <th className="w-[25%] px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
                     {t("common.actions")}
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/30">
-                {events.map((event) => (
+                {sortedEvents.map((event) => (
                   <tr
                     key={event.id}
                     className="transition-colors hover:bg-slate-800/50"
                     data-testid="event-row"
                   >
-                    <td className="px-4 py-3 align-top">
+                    <td className="px-3 py-2.5 align-top text-xs">
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-2">
                           <p
@@ -430,13 +696,13 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                         </p>
                       </div>
                     </td>
-                    <td className="px-3 py-3 align-top">
+                    <td className="px-3 py-2.5 align-top text-xs">
                       <EventStatusBadge status={event.status} />
                     </td>
-                    <td className="px-3 py-3 align-top">
+                    <td className="px-3 py-2.5 align-top text-xs">
                       <EventActivitySummary event={event} />
                     </td>
-                    <td className="px-4 py-3 align-top">
+                    <td className="px-3 py-2.5 align-top text-xs">
                       <EventRowActions
                         event={event}
                         copyId={copyId}
@@ -445,12 +711,20 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
                     </td>
                   </tr>
                 ))}
+                {sortedEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-400">
+                      {locale === "ru" ? "Ничего не найдено по текущим фильтрам." : "No events match the current filters."}
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
+            </div>
           </GlassCard>
 
           <div className="space-y-3 md:hidden">
-            {events.map((event) => (
+            {sortedEvents.map((event) => (
               <div key={event.id} data-testid="event-row">
                 <GlassCard elevated className="p-4" data-testid="event-card">
                 <div className="space-y-3">
@@ -492,6 +766,11 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
               </GlassCard>
               </div>
             ))}
+            {sortedEvents.length === 0 ? (
+              <GlassCard elevated className="p-4 text-center text-sm text-slate-400">
+                {locale === "ru" ? "Ничего не найдено по текущим фильтрам." : "No events match the current filters."}
+              </GlassCard>
+            ) : null}
           </div>
         </>
       )}

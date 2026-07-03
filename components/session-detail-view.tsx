@@ -328,6 +328,24 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
               {t("common.created")} {formatDate(session.createdAt)}
             </span>
           </div>
+          <div className="mt-4 rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-400">
+              {t("sessions.sessionLink")}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="truncate text-sm font-mono text-slate-300">
+                {session.sessionUrl}
+              </span>
+              <button
+                type="button"
+                onClick={handleCopySessionLink}
+                className="shrink-0 text-xs font-medium text-cyan-400 hover:text-cyan-300"
+                data-testid="copy-session-link-button"
+              >
+                {linkCopied ? t("events.linkCopied") : t("sessions.copySessionLink")}
+              </button>
+            </div>
+          </div>
         </GlassCardContent>
       </GlassCard>
 
@@ -360,47 +378,21 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
         </CardContent>
       </Card>
 
-      {session.facilitatorParticipant ? (
-        <SessionPostProcessingPanel
-          sessionId={session.id}
-          roomAuth={{ type: "account", participantId: session.facilitatorParticipant.id }}
-          readOnly={isReadOnly}
-          autoTranscribeEnabled={autoTranscribeEnabled}
-          variant="page"
-          participantType="FACILITATOR"
-        />
-      ) : null}
-
       {/* Session link sharing (standalone sessions — no linkedEvent) */}
       {!session.linkedEvent ? (
-        <Card>
-          <CardHeader>
-            <h2 className="text-base font-semibold text-slate-50">
-              {t("sessions.sessionLink")}
-            </h2>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <details className="group rounded-xl border border-slate-700/40 bg-slate-900/30">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-200">
+            {t("sessions.sessionLink")}
+          </summary>
+          <div className="border-t border-slate-700/40 px-4 py-3">
             <p className="text-sm text-slate-400">
               {t("sessions.participantsUseSharedLink")}
             </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="truncate text-sm font-mono text-slate-300">
-                {session.sessionUrl}
-              </span>
-              <button
-                type="button"
-                onClick={handleCopySessionLink}
-                className="shrink-0 text-sm font-medium text-cyan-400 hover:text-cyan-300"
-                data-testid="copy-session-link-button"
-              >
-                {linkCopied ? t("events.linkCopied") : t("sessions.copySessionLink")}
-              </button>
-            </div>
-            <p className="text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-500">
               {t("sessions.individualLinksRemoved")}
             </p>
-          </CardContent>
-        </Card>
+          </div>
+        </details>
       ) : null}
 
       {canAddParticipants ? (
@@ -463,6 +455,17 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
           )}
         </CardContent>
       </Card>
+
+      {session.facilitatorParticipant ? (
+        <SessionPostProcessingPanel
+          sessionId={session.id}
+          roomAuth={{ type: "account", participantId: session.facilitatorParticipant.id }}
+          readOnly={isReadOnly}
+          autoTranscribeEnabled={autoTranscribeEnabled}
+          variant="page"
+          participantType="FACILITATOR"
+        />
+      ) : null}
 
       {session.participants.length > 0 ? (
         <Card>

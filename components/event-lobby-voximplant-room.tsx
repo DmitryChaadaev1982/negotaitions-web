@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VoximplantMediaControls } from "@/components/voximplant-media-controls";
+import { VoximplantParticipantTile } from "@/components/voximplant-participant-tile";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
   registerVoxClientDisconnect,
@@ -116,6 +117,7 @@ type VoxLobbyParticipant = {
   identityKey: string;
   displayName: string;
   stream: MediaStream | null;
+  micState: "on" | "off" | "unknown";
   updatedAtMs: number;
 };
 
@@ -221,27 +223,27 @@ function stopVoxStreamTracks(stream: VoxStream | null): void {
   }
 }
 
-function EventLobbyVoxVideoTile({ participant, muted }: { participant: VoxLobbyParticipant; muted: boolean }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    if (!videoRef.current) return;
-    videoRef.current.srcObject = participant.stream;
-  }, [participant.stream]);
-
+function EventLobbyVoxVideoTile({
+  participant,
+  muted,
+  micStateLabel,
+  micStateHint,
+}: {
+  participant: VoxLobbyParticipant;
+  muted: boolean;
+  micStateLabel: string;
+  micStateHint: string;
+}) {
   return (
-    <div className="relative aspect-video w-full max-w-[420px] overflow-hidden rounded-xl border border-slate-600/30 bg-slate-900 shadow-lg">
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={muted}
-        className="h-full w-full bg-slate-950 object-cover"
-      />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 py-2">
-        <p className="truncate text-sm font-medium text-white">{participant.displayName}</p>
-      </div>
-    </div>
+    <VoximplantParticipantTile
+      stream={participant.stream}
+      muted={muted}
+      title={participant.displayName}
+      micState={participant.micState === "on" ? "on" : participant.micState === "off" ? "off" : "unknown"}
+      micStateLabel={micStateLabel}
+      micStateHint={micStateHint}
+      className="w-full max-w-[420px]"
+    />
   );
 }
 
@@ -501,6 +503,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
 
         const applyRemoteVideo = (endpoint: VoxEndpoint) => {
           const stream = endpoint.getAnyVideoStreams()[0] ?? null;
+          const hasAudio = endpoint.getAnyAudioStreams().length > 0;
           const identityKey = normalizeEndpointIdentity(
             endpoint.userName || endpoint.displayName || endpoint.id,
           );
@@ -509,6 +512,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             identityKey,
             displayName: endpoint.displayName || endpoint.userName || endpoint.id,
             stream: streamToMediaStream(stream),
+            micState: hasAudio ? "on" : "unknown",
             updatedAtMs: Date.now(),
           });
         };
@@ -631,6 +635,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           ),
           displayName: readyPayload.user.displayName,
           stream: streamToMediaStream(localVideoStream),
+          micState: localAudioStream ? "on" : "off",
           updatedAtMs: Date.now(),
         });
 
@@ -676,6 +681,9 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           track.enabled = true;
           runtime.conference.unmuteMicrophone();
           setIsMicMuted(false);
+          setLocalParticipant((current) =>
+            current ? { ...current, micState: "on", updatedAtMs: Date.now() } : current,
+          );
         }
       } else {
         const track = streamToMediaStream(runtime.localAudioStream)?.getAudioTracks()[0] ?? null;
@@ -684,6 +692,9 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         }
         runtime.conference.muteMicrophone();
         setIsMicMuted(true);
+        setLocalParticipant((current) =>
+          current ? { ...current, micState: "off", updatedAtMs: Date.now() } : current,
+        );
       }
     } finally {
       setIsBusy(false);
@@ -761,16 +772,36 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           <div className="flex h-full items-center justify-center p-6 text-sm text-slate-400">{status || t("common.loading")}</div>
         ) : (
           <div className="grid h-full min-h-0 grid-cols-1 content-start justify-items-center gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
-            {sortedParticipants.map((participant) => (
-              <EventLobbyVoxVideoTile
-                key={participant.id}
-                participant={participant}
-                muted={participant.id === "local"}
-              />
-            ))}
+            {sortedParticipants.map((participant) => {
+              const isLocal = participant.id === "local";
+              const micStateLabel =
+                participant.micState === "on"
+                  ? t("room.mediaMicOn")
+                  : participant.micState === "off"
+                    ? t("room.mediaMicOff")
+                    : t("room.unknownMicState");
+              const micStateHint =
+                participant.micState === "unknown"
+                  ? t("room.unknownMicState")
+                  : isLocal
+                    ? micStateLabel
+                    : t("room.remoteMicDerivedByPolicy");
+              return (
+                <EventLobbyVoxVideoTile
+                  key={participant.id}
+                  participant={participant}
+                  muted={isLocal}
+                  micStateLabel={micStateLabel}
+                  micStateHint={micStateHint}
+                />
+              );
+            })}
           </div>
         )}
       </div>
+      <p className="px-3 pb-2 text-[11px] text-slate-500">
+        {t("room.remoteMicDerivedByPolicy")}
+      </p>
       <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-3 py-2">
         <VoximplantMediaControls
           joined={joined}

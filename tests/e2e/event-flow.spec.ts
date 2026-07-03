@@ -135,3 +135,54 @@ test("event session keeps event, preparation, and negotiation durations separate
   expect(stateText).not.toContain("E2E_PRIVATE_ALEX_ONLY");
 });
 
+test("event-created session keeps explicitly assigned admin participant role", async ({
+  request,
+}) => {
+  const negotiationCase = await createE2eCase();
+  const event = await createE2eEvent({ withParticipants: true, title: "E2E Event Admin Assigned Role" });
+  const adminUser = await createActiveUser("event_admin_assigned", "Event Admin", "ADMIN");
+  const participants = await getEventParticipants(event.id);
+  const dmitry = participantByName(participants, "Dmitry");
+  const igor = participantByName(participants, "Igor");
+  const alex = participantByName(participants, "Alex");
+  const serg = participantByName(participants, "Serg");
+  const [buyerRole, sellerRole] = negotiationCase.roles;
+
+  await query(
+    `UPDATE "EventParticipant" SET "userId"=$2 WHERE "id"=$1`,
+    [serg.id, adminUser.id],
+  );
+
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    data: {
+      hostToken: event.hostToken,
+      selectedCaseId: negotiationCase.id,
+      assignmentDraft: {
+        facilitatorEventParticipantId: dmitry.id,
+        roleAssignments: {
+          [buyerRole.id]: igor.id,
+          [sellerRole.id]: alex.id,
+        },
+        observerEventParticipantIds: [serg.id],
+        preparationDurationMinutes: 5,
+        negotiationDurationMinutes: 15,
+      },
+    },
+  });
+  expect(patchResponse.ok()).toBeTruthy();
+
+  const createResponse = await request.post(`/api/events/${event.id}/host`, {
+    data: { hostToken: event.hostToken },
+  });
+  expect(createResponse.ok()).toBeTruthy();
+  const body = (await createResponse.json()) as { session: { id: string } };
+
+  const rows = await query<{ type: string }>(
+    `SELECT "type" FROM "SessionParticipant" WHERE "sessionId"=$1 AND "userId"=$2`,
+    [body.session.id, adminUser.id],
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.type).toBe("OBSERVER");
+});
+
+
