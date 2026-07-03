@@ -13,7 +13,8 @@ type AppHeaderNavProps = {
 
 export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) {
   const pathname = usePathname();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const fullLogoSpacingClass = locale === "ru" ? "sm:mr-4 lg:mr-5" : "sm:mr-1 lg:mr-2";
 
   const trainingsItems = [
     { href: "/cases", label: t("nav.cases"), testId: "nav-cases" },
@@ -22,8 +23,19 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
   ];
 
   return (
-    <div className="flex items-center gap-6 sm:gap-10">
-      <BrandLogo size="md" />
+    <div className="flex items-center gap-4 sm:gap-6">
+      <BrandLogo
+        size="md"
+        variant="full"
+        priority
+        className={cn("hidden sm:inline-flex max-w-[320px]", fullLogoSpacingClass)}
+      />
+      <BrandLogo
+        size="md"
+        variant="compact"
+        priority
+        className="sm:hidden"
+      />
       <nav className="flex items-center gap-3">
         <Link
           href="/dashboard"

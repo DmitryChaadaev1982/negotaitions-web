@@ -13,6 +13,21 @@ export const en = {
     negotiationTrainings: "Negotiation trainings",
     administration: "Administration",
   },
+  brand: {
+    alt: "NegotAItions — AI-powered negotiation training",
+  },
+  footer: {
+    legalInformation: "Legal information",
+    support: "Support",
+    about: "About",
+    termsOfUse: "Terms of use",
+    faq: "FAQ",
+    comingSoon: "Coming soon",
+    open: "Open",
+    copyright: "© 2026 Dmitry Chaadaev. All rights reserved.",
+    ipNotice:
+      "All materials, design, training scenarios, texts, product structure, and software code are protected by copyright law. Unauthorized use, copying, or distribution is prohibited.",
+  },
   common: {
     create: "Create",
     save: "Save",

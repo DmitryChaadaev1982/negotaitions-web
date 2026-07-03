@@ -1,37 +1,88 @@
+"use client";
+
 import Link from "next/link";
 
 import { cn } from "@/lib/cn";
+import { useI18n } from "@/lib/i18n/useI18n";
 
 type BrandLogoProps = {
   className?: string;
   size?: "sm" | "md" | "lg" | "xl";
   href?: string;
   glow?: boolean;
+  variant?: "full" | "compact" | "session" | "icon";
+  priority?: boolean;
 };
 
-const sizeClasses = {
-  sm: "text-base",
-  md: "text-xl",
-  lg: "text-3xl",
-  xl: "text-4xl sm:text-5xl lg:text-6xl",
-};
+const logoSizeClasses = {
+  full: {
+    sm: "h-10 max-w-[240px]",
+    md: "h-12 max-w-[340px]",
+    lg: "h-14 max-w-[360px]",
+    xl: "h-20 max-w-[560px]",
+  },
+  compact: {
+    sm: "h-8 max-w-[180px]",
+    md: "h-10 max-w-[220px]",
+    lg: "h-12 max-w-[260px]",
+    xl: "h-14 max-w-[360px]",
+  },
+  session: {
+    sm: "h-12 max-w-[300px]",
+    md: "h-14 max-w-[360px]",
+    lg: "h-16 max-w-[380px]",
+    xl: "h-20 max-w-[460px]",
+  },
+  icon: {
+    sm: "h-6 w-6",
+    md: "h-8 w-8",
+    lg: "h-10 w-10",
+    xl: "h-14 w-14",
+  },
+} as const;
+
+const localizedLogoSources = {
+  ru: {
+    full: "/brand/negotaitions-logo-full-ru.png",
+    compact: "/brand/negotaitions-logo-compact-ru.png",
+    session: "/brand/negotaitions-logo-session-ru.png",
+    icon: "/brand/negotaitions-icon.png",
+  },
+  en: {
+    full: "/brand/negotaitions-logo-full-en.png",
+    compact: "/brand/negotaitions-logo-compact-en.png",
+    session: "/brand/negotaitions-logo-session-en.png",
+    icon: "/brand/negotaitions-icon.png",
+  },
+} as const;
 
 export function BrandLogo({
   className,
   size = "md",
   href = "/dashboard",
   glow = false,
+  variant = "full",
+  priority: _priority = false,
 }: BrandLogoProps) {
+  const { t, locale } = useI18n();
+  const localeKey = locale === "ru" ? "ru" : "en";
+
   const content = (
     <span
       className={cn(
-        "font-bold tracking-tight text-slate-50",
-        sizeClasses[size],
+        "inline-flex shrink-0",
+        logoSizeClasses[variant][size],
         glow && "drop-shadow-[0_0_20px_rgba(34,211,238,0.2)]",
         className,
       )}
     >
-      Negot<span className="brand-ai-gradient">AI</span>tions
+      <img
+        src={localizedLogoSources[localeKey][variant]}
+        alt={t("brand.alt")}
+        className="block h-full w-auto object-contain"
+        loading={_priority ? "eager" : "lazy"}
+        decoding="async"
+      />
     </span>
   );
 
@@ -39,7 +90,8 @@ export function BrandLogo({
     return (
       <Link
         href={href}
-        className="inline-block transition-opacity hover:opacity-90"
+        className="inline-flex transition-opacity hover:opacity-90"
+        aria-label={t("brand.alt")}
       >
         {content}
       </Link>

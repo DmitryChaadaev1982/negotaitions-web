@@ -691,7 +691,20 @@ export function EventLobbyView({
             >
               {t("events.backToEventsCompact")}
             </SecondaryButtonLink>
-            <BrandLogo size="sm" href={isHost ? "/events" : undefined} />
+            <BrandLogo
+              size="sm"
+              variant="session"
+              priority
+              href={isHost ? "/events" : undefined}
+              className="hidden sm:inline-flex"
+            />
+            <BrandLogo
+              size="sm"
+              variant="compact"
+              priority
+              href={isHost ? "/events" : undefined}
+              className="sm:hidden"
+            />
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-cyan-400/80">
                 {t("events.eventLobby")}

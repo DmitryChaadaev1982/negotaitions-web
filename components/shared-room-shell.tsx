@@ -43,6 +43,7 @@ import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
 import { SessionRoleManagementPanel } from "@/components/session-role-management-panel";
 import { SessionRoomPresenceHeartbeat } from "@/components/session-room-presence-heartbeat";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { GradientButtonLink, SecondaryButtonLink } from "@/components/ui/buttons";
 import { VisibilityBadge } from "@/components/visibility-badge";
@@ -542,33 +543,49 @@ export function SharedRoomShell({
         className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3"
         data-testid="session-room-header"
       >
-        <div className="min-w-0 space-y-2">
-          <div className="flex items-center gap-2">
-            {/* Session title — always the domain title, never the provider conference name */}
-            <p className="truncate text-sm font-semibold text-slate-50">
-              {sidebar.sessionTitle}
+        <div className="flex min-w-0 items-start gap-3">
+          <BrandLogo
+            variant="session"
+            size="sm"
+            priority
+            href="/dashboard"
+            className="hidden sm:inline-flex"
+          />
+          <BrandLogo
+            variant="compact"
+            size="sm"
+            priority
+            href="/dashboard"
+            className="sm:hidden"
+          />
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-center gap-2">
+              {/* Session title — always the domain title, never the provider conference name */}
+              <p className="truncate text-sm font-semibold text-slate-50">
+                {sidebar.sessionTitle}
+              </p>
+              <VisibilityBadge visibility={sidebar.visibility} showLabel={false} />
+            </div>
+            <p className="truncate text-xs text-slate-400">
+              {displayName} · {participantTypeLabel}
             </p>
-            <VisibilityBadge visibility={sidebar.visibility} showLabel={false} />
+            {isDebriefMode ? (
+              <span
+                className="inline-block rounded-full border border-amber-500/40 bg-amber-900/20 px-2 py-0.5 text-xs text-amber-300"
+                data-testid="debrief-mode-badge"
+              >
+                {t("room.debriefTitle")}
+              </span>
+            ) : (
+              <RecordingIndicator
+                status={recordingState?.status}
+                negotiationState={controlState.negotiationState}
+                participantType={participantType}
+                isFacilitator={controlState.canControl}
+                errorMessage={recordingState?.errorMessage}
+              />
+            )}
           </div>
-          <p className="truncate text-xs text-slate-400">
-            {displayName} · {participantTypeLabel}
-          </p>
-          {isDebriefMode ? (
-            <span
-              className="inline-block rounded-full border border-amber-500/40 bg-amber-900/20 px-2 py-0.5 text-xs text-amber-300"
-              data-testid="debrief-mode-badge"
-            >
-              {t("room.debriefTitle")}
-            </span>
-          ) : (
-            <RecordingIndicator
-              status={recordingState?.status}
-              negotiationState={controlState.negotiationState}
-              participantType={participantType}
-              isFacilitator={controlState.canControl}
-              errorMessage={recordingState?.errorMessage}
-            />
-          )}
         </div>
         <div className="flex items-center gap-3">
           <SecondaryButtonLink
