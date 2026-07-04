@@ -514,6 +514,8 @@ export const en = {
     copyDiarizedTranscript: "Copy diarized transcript",
     speakerLabelsNotReturned:
       "Speaker labels were not returned by the transcription model.",
+    rawSpeakerPrefix: "raw:",
+    mappingRequiredShort: "mapping required",
     diarizationFailed:
       "Transcription succeeded, but speaker separation failed.",
     noSpeakerLabelsDetected: "No speaker labels detected.",

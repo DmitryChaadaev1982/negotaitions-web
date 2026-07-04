@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  REMOTE_SPEAKING_LEVEL_THRESHOLD,
+  REMOTE_SPEAKING_RELEASE_MULTIPLIER,
+} from "@/lib/telemetry/speaking-activity-config";
 
 /**
  * Lightweight client-side speaking-state tracker for Voximplant remote streams.
@@ -18,9 +22,10 @@ import { useEffect, useRef, useState } from "react";
  */
 
 /** Speaking detection threshold (level 0..100). Matches the lobby meter. */
-export const SPEAKING_LEVEL_THRESHOLD = 8;
+export const SPEAKING_LEVEL_THRESHOLD = REMOTE_SPEAKING_LEVEL_THRESHOLD;
 /** Hysteresis floor: only drop the speaking flag below this level. */
-const SPEAKING_LEVEL_RELEASE = SPEAKING_LEVEL_THRESHOLD * 0.6;
+const SPEAKING_LEVEL_RELEASE =
+  SPEAKING_LEVEL_THRESHOLD * REMOTE_SPEAKING_RELEASE_MULTIPLIER;
 
 export function getAudioContextCtor(): typeof AudioContext | null {
   if (typeof window === "undefined") return null;

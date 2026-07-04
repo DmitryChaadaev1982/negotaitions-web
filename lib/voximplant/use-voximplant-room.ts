@@ -9,6 +9,7 @@ import {
   registerVoxClientDisconnect,
   waitForVoxClientIdle,
 } from "@/lib/voximplant/browser-client-lifecycle";
+import { AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER } from "@/lib/telemetry/speaking-activity-config";
 import {
   installVoxCameraErrorSuppressor,
   installVoxRuntimeErrorSuppressor,
@@ -219,6 +220,8 @@ type UseVoximplantRoomResult = {
   lastAudioError: string | null;
   /** Live local microphone level 0–100 (from AnalyserNode, ~15fps). */
   micLevel: number;
+  /** Whether Vox audio processing profile is active. */
+  audioProcessingEnabled: boolean;
   /** Number of remote video endpoints currently tracked. */
   remoteStreamCount: number;
   /** Number of HTMLAudioElement objects created for remote audio. */
@@ -477,6 +480,7 @@ export function useVoximplantRoom({
   const [localAudioStreamAddedToConference, setLocalAudioStreamAddedToConference] = useState(false);
   const [lastAudioError, setLastAudioError] = useState<string | null>(null);
   const [micLevel, setMicLevel] = useState(0);
+  const [audioProcessingEnabled, setAudioProcessingEnabled] = useState(true);
   const [remoteAudioElementCount, setRemoteAudioElementCount] = useState(0);
   const [remotePlaybackBlocked, setRemotePlaybackBlocked] = useState(false);
   const [lastRemoteAudioError, setLastRemoteAudioError] = useState<string | null>(null);
@@ -559,7 +563,10 @@ export function useVoximplantRoom({
             sumSq += n * n;
           }
           const rms = Math.sqrt(sumSq / dataArray.length);
-          const level = Math.min(100, Math.round(rms * 300));
+          const level = Math.min(
+            100,
+            Math.round(rms * AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER),
+          );
           setMicLevel(level);
         };
 
@@ -782,6 +789,7 @@ export function useVoximplantRoom({
     setRemoteAudioElementCount(0);
     setRemotePlaybackBlocked(false);
     setSendMessageAvailable(false);
+    setAudioProcessingEnabled(true);
   }, [cleanup, isLeaving]);
 
   // ── Endpoint subscription ─────────────────────────────────────────────────
@@ -1073,6 +1081,7 @@ export function useVoximplantRoom({
         const userRole = initialPayload.user.role ?? "unknown";
         audioProcessingEnabledRef.current =
           initialPayload.audioProcessingProfile !== "raw_diagnostic";
+        setAudioProcessingEnabled(audioProcessingEnabledRef.current);
 
         setRole(userRole);
         setParticipantType(mapParticipantType(userRole));
@@ -1376,6 +1385,7 @@ export function useVoximplantRoom({
       localAudioStreamAddedToConference,
       lastAudioError,
       micLevel,
+      audioProcessingEnabled,
       remoteStreamCount: remoteParticipants.length,
       remoteAudioElementCount,
       remotePlaybackBlocked,
@@ -1403,6 +1413,7 @@ export function useVoximplantRoom({
       mediaWarnings,
       micCaptureStatus,
       micLevel,
+      audioProcessingEnabled,
       participantType,
       remoteAudioElementCount,
       remoteParticipants,

@@ -498,6 +498,8 @@ export const ru: Dictionary = {
     copyDiarizedTranscript: "Скопировать транскрипт с говорящими",
     speakerLabelsNotReturned:
       "Модель транскрибации не вернула метки говорящих.",
+    rawSpeakerPrefix: "raw:",
+    mappingRequiredShort: "требуется сопоставление",
     diarizationFailed:
       "Транскрибация выполнена, но разделить говорящих не удалось.",
     noSpeakerLabelsDetected: "Метки говорящих не обнаружены.",

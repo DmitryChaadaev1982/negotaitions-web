@@ -196,6 +196,7 @@ export default function VoximplantNegotiationRoomPage(
     // Audio diagnostics
     micCaptureStatus,
     micLevel,
+    audioProcessingEnabled,
     remotePlaybackBlocked,
     unlockAudioPlayback,
     // Stage 5.4: recording relay
@@ -751,6 +752,7 @@ export default function VoximplantNegotiationRoomPage(
             muted={isMicMuted || !controlState.micAllowed}
             enabled={joined && !staleConnection}
             connectionId={roomConnectionId ?? undefined}
+            audioProcessingEnabled={audioProcessingEnabled}
           />
         }
         providerBanner={null}

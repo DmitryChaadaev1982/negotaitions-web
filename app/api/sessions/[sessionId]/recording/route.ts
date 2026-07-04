@@ -19,6 +19,10 @@ function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
+  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(_request.url);
@@ -112,8 +116,12 @@ export async function GET(_request: Request, context: RouteContext) {
             language: session.transcript.language,
             transcriptionModel: session.transcript.transcriptionModel,
             hasSpeakerDiarization: session.transcript.hasSpeakerDiarization,
-            speakerMapping:
-              (session.transcript.speakerMapping as SpeakerMapping | null) ?? null,
+            speakerMappingStatus: session.transcript.speakerMappingStatus ?? "NOT_REQUIRED",
+            speakerMapping: isSpeakerMappingDisplayable(
+              session.transcript.speakerMappingStatus,
+            )
+              ? ((session.transcript.speakerMapping as SpeakerMapping | null) ?? null)
+              : null,
             processingMetadata: session.transcript.processingMetadata ?? null,
             enhancement: {
               status:

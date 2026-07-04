@@ -25,6 +25,9 @@ export function isSpeakerMappingReadyForAnalysis(
   if (transcript.speakerMappingStatus === "CONFIRMED") {
     return true;
   }
+  if (transcript.speakerMappingStatus === "AUTO_SUGGESTED") {
+    return true;
+  }
 
   const uniqueLabels = [
     ...new Set(
@@ -36,7 +39,10 @@ export function isSpeakerMappingReadyForAnalysis(
 
   const mapping = (transcript.speakerMapping as SpeakerMapping | null) ?? {};
 
-  if (uniqueLabels.length > 0) {
+  if (
+    uniqueLabels.length > 0 &&
+    transcript.speakerMappingStatus === "AUTO_SUGGESTED"
+  ) {
     const clusterMappingComplete = uniqueLabels.every((label) =>
       Boolean(mapping[label]),
     );
@@ -50,6 +56,15 @@ export function isSpeakerMappingReadyForAnalysis(
   );
   if (spokenSegments.length === 0) {
     return true;
+  }
+
+  // Manual mapping flow persists CONFIRMED status, so a REQUIRED/REVIEW state must
+  // still block AI even if partial mappedParticipantId values are present.
+  if (
+    transcript.speakerMappingStatus === "REQUIRED" ||
+    transcript.speakerMappingStatus === "NEEDS_REVIEW"
+  ) {
+    return false;
   }
 
   return spokenSegments.every((segment) => Boolean(segment.mappedParticipantId));

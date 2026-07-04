@@ -9,6 +9,7 @@ import {
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
+import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
   resolveRemoteMicStateByPolicy,
@@ -25,9 +26,6 @@ type VoxTileParticipant = {
   endpointUsername?: string | null;
   stream: MediaStream | null;
 };
-
-/** Mic level 0-100 (used to render the bar and speaking highlight). */
-const SPEAKING_THRESHOLD = 8;
 
 function NoVideoPlaceholder({ message }: { message: string }) {
   return (
@@ -105,7 +103,7 @@ export default function VoximplantVideoLayout({
 }) {
   const { t } = useI18n();
   const isSpeaking =
-    !isMicMuted && micLevel !== undefined && micLevel > SPEAKING_THRESHOLD;
+    !isMicMuted && micLevel !== undefined && micLevel > REMOTE_SPEAKING_LEVEL_THRESHOLD;
 
   // Bug 1 fix: derive real speaking state for remote participants from their
   // audio streams. Memoized so meters are not rebuilt on local mic-level ticks.

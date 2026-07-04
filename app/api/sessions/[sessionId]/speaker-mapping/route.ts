@@ -17,6 +17,14 @@ import {
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
 
 export const runtime = "nodejs";
+function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
+  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -59,7 +67,12 @@ export async function GET(request: Request, context: RouteContext) {
     },
   });
 
-  const existingMapping = (transcript.speakerMapping as SpeakerMapping | null) ?? {};
+  const metadata = asRecord(transcript.processingMetadata);
+  const mappingSuggestion = asRecord(metadata.mappingSuggestion);
+  const candidateMapping = asRecord(mappingSuggestion.candidateMapping);
+  const existingMapping = isSpeakerMappingDisplayable(transcript.speakerMappingStatus)
+    ? ((transcript.speakerMapping as SpeakerMapping | null) ?? {})
+    : (candidateMapping as SpeakerMapping);
   const labelOrder = getUniqueSpeakerLabels(
     transcript.segments.map((s) => ({
       speakerLabel: s.speakerLabel,
@@ -180,6 +193,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({
       suggestedMapping: suggestion.mapping,
       confidence: suggestion.confidence,
+      telemetryQuality: suggestion.telemetryQuality,
       available: suggestion.available,
       unavailableReason: suggestion.unavailableReason,
     });

@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import {
+  VOX_END_DEBOUNCE_MS,
+  VOX_SPEAKING_OFF_LEVEL,
+  VOX_SPEAKING_ON_LEVEL,
+} from "@/lib/telemetry/speaking-activity-config";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody } from "@/lib/room-auth";
 
@@ -15,14 +20,8 @@ type VoximplantSpeakingActivityTrackerProps = {
   /** Only track while connected to the conference. */
   enabled: boolean;
   connectionId?: string;
+  audioProcessingEnabled?: boolean;
 };
-
-// Speaking hysteresis (level 0..100). ON must be exceeded to start; the flag is
-// only released below OFF, and only after END_DEBOUNCE_MS of sustained silence
-// so a short pause does not split one utterance into many DB rows.
-const SPEAKING_ON = 10;
-const SPEAKING_OFF = 6;
-const END_DEBOUNCE_MS = 800;
 
 /**
  * Phase 3 — Voximplant speaking telemetry.
@@ -48,6 +47,7 @@ export function VoximplantSpeakingActivityTracker({
   muted,
   enabled,
   connectionId,
+  audioProcessingEnabled,
 }: VoximplantSpeakingActivityTrackerProps) {
   const speakingRef = useRef(false);
   const endTimerRef = useRef<number | null>(null);
@@ -63,12 +63,19 @@ export function VoximplantSpeakingActivityTracker({
           event,
           source: "VOXIMPLANT_MIC_ACTIVITY",
           clientTimestamp: new Date().toISOString(),
+          audioLevel: Math.max(0, Math.min(100, Math.round(micLevel ?? 0))),
+          telemetryCalibration: {
+            speakingOnLevel: VOX_SPEAKING_ON_LEVEL,
+            speakingOffLevel: VOX_SPEAKING_OFF_LEVEL,
+            endDebounceMs: VOX_END_DEBOUNCE_MS,
+            audioProcessingEnabled: audioProcessingEnabled ?? null,
+          },
         }),
       }).catch(() => {
         // Best-effort — never surface telemetry errors to the user.
       });
     },
-    [sessionId, roomAuth, connectionId],
+    [sessionId, roomAuth, connectionId, micLevel, audioProcessingEnabled],
   );
 
   const clearEndTimer = useCallback(() => {
@@ -90,7 +97,7 @@ export function VoximplantSpeakingActivityTracker({
 
     const level = muted ? 0 : micLevel ?? 0;
 
-    if (level > SPEAKING_ON) {
+    if (level > VOX_SPEAKING_ON_LEVEL) {
       clearEndTimer();
       if (!speakingRef.current) {
         speakingRef.current = true;
@@ -99,14 +106,18 @@ export function VoximplantSpeakingActivityTracker({
       return;
     }
 
-    if (level < SPEAKING_OFF && speakingRef.current && endTimerRef.current === null) {
+    if (
+      level < VOX_SPEAKING_OFF_LEVEL &&
+      speakingRef.current &&
+      endTimerRef.current === null
+    ) {
       endTimerRef.current = window.setTimeout(() => {
         endTimerRef.current = null;
         if (speakingRef.current) {
           speakingRef.current = false;
           reportActivity("SPEAKING_END");
         }
-      }, END_DEBOUNCE_MS);
+      }, VOX_END_DEBOUNCE_MS);
     }
   }, [micLevel, muted, enabled, reportActivity, clearEndTimer]);
 

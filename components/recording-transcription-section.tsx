@@ -46,6 +46,7 @@ type TranscriptData = {
   language: string | null;
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
+  speakerMappingStatus?: string | null;
   speakerMapping: Record<string, string | null> | null;
   processingMetadata?: Record<string, unknown> | null;
   enhancement?: {
@@ -130,30 +131,107 @@ function hasUsableTranscript(transcript: TranscriptData | null) {
   return Boolean(transcript?.text?.trim() || transcript?.diarizedText?.trim());
 }
 
-function resolveSegmentSpeakerName(
+function getCandidateMappingFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): Record<string, string | null> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const suggestion = metadata.mappingSuggestion;
+  if (!suggestion || typeof suggestion !== "object") return {};
+  const candidateMapping = (suggestion as Record<string, unknown>).candidateMapping;
+  if (!candidateMapping || typeof candidateMapping !== "object") return {};
+
+  const normalized: Record<string, string | null> = {};
+  for (const [speakerLabel, participantId] of Object.entries(
+    candidateMapping as Record<string, unknown>,
+  )) {
+    normalized[speakerLabel] =
+      typeof participantId === "string" && participantId.trim().length > 0
+        ? participantId
+        : null;
+  }
+  return normalized;
+}
+
+type ResolvedSpeakerDisplay = {
+  speakerName: string;
+  rawSpeakerLabel: string | null;
+  mappingApplied: boolean;
+};
+
+function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
+  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
+}
+
+function resolveSegmentSpeakerDisplay(
   segment: TranscriptSegmentData,
   speakerMapping: Record<string, string | null> | null,
   participantsById: Map<string, ParticipantOption>,
-): string {
-  if (segment.speakerLabel && speakerMapping?.[segment.speakerLabel]) {
+  allowMappedNames: boolean,
+): ResolvedSpeakerDisplay {
+  const rawSpeakerLabel =
+    segment.displaySpeakerLabel ?? segment.speakerLabel ?? null;
+
+  if (allowMappedNames && segment.speakerLabel && speakerMapping?.[segment.speakerLabel]) {
     const participant = participantsById.get(
       speakerMapping[segment.speakerLabel]!,
     );
     if (participant) {
-      if (participant.roleName) {
-        return `${participant.displayName} / ${participant.roleName}`;
-      }
-      return participant.displayName;
+      return {
+        speakerName: participant.roleName
+          ? `${participant.displayName} / ${participant.roleName}`
+          : participant.displayName,
+        rawSpeakerLabel,
+        mappingApplied: true,
+      };
     }
   }
 
-  return segment.displaySpeakerLabel ?? segment.speakerLabel ?? "Speaker";
+  return {
+    speakerName: rawSpeakerLabel ?? "Speaker",
+    rawSpeakerLabel,
+    mappingApplied: false,
+  };
 }
 
 type DiarizedTurn = {
   speakerName: string;
+  rawSpeakerLabel: string | null;
+  mappingApplied: boolean;
+  speakerKey: string;
   text: string;
 };
+
+function groupSegmentsIntoTurns(
+  segments: TranscriptSegmentData[],
+  speakerMapping: Record<string, string | null> | null,
+  participantsById: Map<string, ParticipantOption>,
+  allowMappedNames: boolean,
+): DiarizedTurn[] {
+  const turns: DiarizedTurn[] = [];
+
+  for (const segment of segments) {
+    const resolvedSpeaker = resolveSegmentSpeakerDisplay(
+      segment,
+      speakerMapping,
+      participantsById,
+      allowMappedNames,
+    );
+    const speakerKey = `${resolvedSpeaker.speakerName}::${resolvedSpeaker.rawSpeakerLabel ?? "unknown"}::${resolvedSpeaker.mappingApplied ? "mapped" : "raw"}`;
+    const lastTurn = turns.at(-1);
+
+    if (lastTurn && lastTurn.speakerKey === speakerKey) {
+      lastTurn.text = `${lastTurn.text} ${segment.text}`.trim();
+    } else {
+      turns.push({
+        ...resolvedSpeaker,
+        speakerKey,
+        text: segment.text,
+      });
+    }
+  }
+
+  return turns;
+}
 
 type ManualSpeakerTurn = {
   id: string;
@@ -234,31 +312,6 @@ function buildInitialManualTurnsFromSegments(
     displaySpeakerLabel: item.segment.displaySpeakerLabel ?? item.segment.speakerLabel,
     speakerSlot: item.segment.speakerLabel ?? null,
   }));
-}
-
-function groupSegmentsIntoTurns(
-  segments: TranscriptSegmentData[],
-  speakerMapping: Record<string, string | null> | null,
-  participantsById: Map<string, ParticipantOption>,
-): DiarizedTurn[] {
-  const turns: DiarizedTurn[] = [];
-
-  for (const segment of segments) {
-    const speakerName = resolveSegmentSpeakerName(
-      segment,
-      speakerMapping,
-      participantsById,
-    );
-    const lastTurn = turns.at(-1);
-
-    if (lastTurn && lastTurn.speakerName === speakerName) {
-      lastTurn.text = `${lastTurn.text} ${segment.text}`.trim();
-    } else {
-      turns.push({ speakerName, text: segment.text });
-    }
-  }
-
-  return turns;
 }
 
 function formatTurnTime(startSeconds: number | null, endSeconds: number | null): string {
@@ -367,6 +420,7 @@ export function RecordingTranscriptionSection({
       segments,
       transcript?.speakerMapping ?? null,
       participantsById,
+      isSpeakerMappingDisplayable(transcript?.speakerMappingStatus),
     );
   }, [participantsById, transcript]);
 
@@ -400,7 +454,10 @@ export function RecordingTranscriptionSection({
       setParticipants(payload.participants ?? []);
       setDetectedSpeakers(payload.detectedSpeakers ?? []);
       setTranscriptText(payload.transcript?.text ?? "");
-      setSpeakerMappingDraft(payload.transcript?.speakerMapping ?? {});
+      setSpeakerMappingDraft(
+        payload.transcript?.speakerMapping ??
+          getCandidateMappingFromMetadata(payload.transcript?.processingMetadata ?? null),
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -560,7 +617,10 @@ export function RecordingTranscriptionSection({
   const applyTranscriptPayload = useCallback((payload: TranscriptData) => {
     setTranscript(payload);
     setTranscriptText(payload.text);
-    setSpeakerMappingDraft(payload.speakerMapping ?? {});
+    setSpeakerMappingDraft(
+      payload.speakerMapping ??
+        getCandidateMappingFromMetadata(payload.processingMetadata ?? null),
+    );
     const segments = payload.segments ?? [];
     setDetectedSpeakers(
       segments.reduce<DetectedSpeaker[]>((labels, segment) => {
@@ -1623,12 +1683,19 @@ export function RecordingTranscriptionSection({
                   <div className="space-y-3">
                     {diarizedTurns.map((turn, index) => (
                       <div
-                        key={`${turn.speakerName}-${index}`}
+                        key={`${turn.speakerKey}-${index}`}
                         className="rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/80 to-slate-950/80 px-4 py-3 shadow-inner"
                       >
                         <p className="text-xs font-semibold uppercase tracking-wide text-cyan-300/90">
-                          {turn.speakerName}
+                          {turn.mappingApplied
+                            ? turn.speakerName
+                            : `${turn.speakerName} · ${t("recording.mappingRequiredShort")}`}
                         </p>
+                        {turn.mappingApplied && turn.rawSpeakerLabel ? (
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {`${t("recording.rawSpeakerPrefix")} ${turn.rawSpeakerLabel}`}
+                          </p>
+                        ) : null}
                         <p className="mt-2 text-sm leading-relaxed text-slate-200">
                           {turn.text}
                         </p>

@@ -93,6 +93,7 @@ function serializeTranscript(transcript: {
   language: string | null;
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
+  speakerMappingStatus: string | null;
   speakerMapping: unknown;
   updatedAt: Date;
   segments: Array<{
@@ -105,6 +106,9 @@ function serializeTranscript(transcript: {
     orderIndex: number;
   }>;
 }) {
+  const isDisplayable =
+    transcript.speakerMappingStatus === "CONFIRMED" ||
+    transcript.speakerMappingStatus === "AUTO_SUGGESTED";
   return {
     id: transcript.id,
     source: transcript.source,
@@ -113,7 +117,10 @@ function serializeTranscript(transcript: {
     language: transcript.language,
     transcriptionModel: transcript.transcriptionModel,
     hasSpeakerDiarization: transcript.hasSpeakerDiarization,
-    speakerMapping: (transcript.speakerMapping as SpeakerMapping | null) ?? null,
+    speakerMappingStatus: transcript.speakerMappingStatus ?? "NOT_REQUIRED",
+    speakerMapping: isDisplayable
+      ? ((transcript.speakerMapping as SpeakerMapping | null) ?? null)
+      : null,
     updatedAt: transcript.updatedAt.toISOString(),
     segments: transcript.segments
       .slice()

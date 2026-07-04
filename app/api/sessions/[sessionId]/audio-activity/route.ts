@@ -16,6 +16,16 @@ const schema = z.object({
   // Provider/source of the activity signal. Defaults to LiveKit for backward
   // compatibility. Voximplant clients pass "VOXIMPLANT_MIC_ACTIVITY".
   source: z.string().trim().min(1).max(64).optional(),
+  // Local meter level 0..100. Metadata-only; no audio is sent/stored.
+  audioLevel: z.number().min(0).max(100).optional(),
+  telemetryCalibration: z
+    .object({
+      speakingOnLevel: z.number().optional(),
+      speakingOffLevel: z.number().optional(),
+      endDebounceMs: z.number().optional(),
+      audioProcessingEnabled: z.boolean().nullable().optional(),
+    })
+    .optional(),
 }).refine(
   (data) => Boolean(data.joinToken ?? data.participantId),
   { message: "joinToken or participantId is required" },
@@ -43,7 +53,14 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { event, participantIdentity, clientTimestamp, offsetSeconds } = parsed.data;
+  const {
+    event,
+    participantIdentity,
+    clientTimestamp,
+    offsetSeconds,
+    audioLevel,
+    telemetryCalibration,
+  } = parsed.data;
   const source = parsed.data.source ?? "LIVEKIT_ACTIVE_SPEAKER";
 
   const participant = await resolveRoomParticipantFromBody(
@@ -58,6 +75,13 @@ export async function POST(request: Request, context: RouteContext) {
   const eventTime = clientTimestamp ? new Date(clientTimestamp) : now;
 
   if (event === "SPEAKING_START") {
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(
+        `[audio-activity] start session=${sessionId} participant=${participant.id} source=${source} level=${audioLevel ?? "n/a"} thresholds=${JSON.stringify(
+          telemetryCalibration ?? {},
+        )}`,
+      );
+    }
     await prisma.sessionParticipantAudioActivity.create({
       data: {
         sessionId,
@@ -66,6 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
         startedAt: eventTime,
         startedOffsetSeconds: offsetSeconds ?? null,
         source,
+        confidence: typeof audioLevel === "number" ? audioLevel : null,
       },
     });
 
@@ -91,6 +116,14 @@ export async function POST(request: Request, context: RouteContext) {
           endedOffsetSeconds: offsetSeconds ?? null,
         },
       });
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(
+        `[audio-activity] end session=${sessionId} participant=${participant.id} source=${source} level=${audioLevel ?? "n/a"} thresholds=${JSON.stringify(
+          telemetryCalibration ?? {},
+        )}`,
+      );
     }
 
     return NextResponse.json({ ok: true, event: "SPEAKING_END" });
