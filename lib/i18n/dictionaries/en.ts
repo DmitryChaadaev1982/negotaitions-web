@@ -899,6 +899,8 @@ export const en = {
     stopScreenShare: "Stop screen share",
     leave: "Leave",
     leaveRoom: "Leave room",
+    participantLeftRoomOpen:
+      "You left the negotiation room. The room is still open — you can return.",
     sessionMaterials: "Session materials",
     sessionPanel: "Session panel",
     facilitatorPanel: "Facilitator panel",

@@ -27,6 +27,13 @@ export type SessionCloseState = {
     | null;
 };
 
+/** True only when the organizer/event closed the session — not mere negotiation FINISH. */
+export function isSessionClosedByOrganizer(session: SessionCloseFields): boolean {
+  return (
+    session.closeReason === "EVENT_COMPLETED" || session.closedByEventAt != null
+  );
+}
+
 export function buildSessionCloseState(
   session: SessionCloseFields,
 ): SessionCloseState {

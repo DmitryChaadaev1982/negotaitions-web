@@ -904,6 +904,8 @@ export const ru: Dictionary = {
     stopScreenShare: "Остановить демонстрацию",
     leave: "Выйти",
     leaveRoom: "Покинуть комнату",
+    participantLeftRoomOpen:
+      "Вы покинули переговорную комнату. Комната открыта — можно вернуться.",
     sessionMaterials: "Материалы сессии",
     sessionPanel: "Панель сессии",
     facilitatorPanel: "Панель фасилитатора",

@@ -22,6 +22,10 @@ import { GradientButtonLink } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
+  clearSessionLeftFlag,
+  markSessionLeftFlag,
+} from "@/lib/session-room-leave";
+import {
   clearRecoveryContext,
   saveRecoveryContext,
   touchRecoveryContext,
@@ -64,15 +68,22 @@ type VideoRoomPageProps =
 // ─── LeaveRoomButton ─────────────────────────────────────────────────────────
 // Must stay inside <LiveKitRoom> context (uses useRoomContext).
 
-function LeaveRoomButton({ materialsUrl }: { materialsUrl: string }) {
+function LeaveRoomButton({
+  sessionId,
+  materialsUrl,
+}: {
+  sessionId: string;
+  materialsUrl: string;
+}) {
   const router = useRouter();
   const room = useRoomContext();
   const { t } = useI18n();
 
   const handleLeave = useCallback(() => {
+    markSessionLeftFlag(sessionId);
     router.push(materialsUrl);
     void room.disconnect();
-  }, [materialsUrl, room, router]);
+  }, [materialsUrl, room, router, sessionId]);
 
   return (
     <button
@@ -122,8 +133,9 @@ function ConnectedRoom({
   const router = useRouter();
 
   const handleLeave = useCallback(() => {
+    markSessionLeftFlag(sessionId);
     router.push(materialsUrl);
-  }, [materialsUrl, router]);
+  }, [materialsUrl, router, sessionId]);
 
   const handleManualRejoin = useCallback(() => {
     router.push("/rejoin");
@@ -186,7 +198,7 @@ function ConnectedRoom({
             onLeave={handleLeave}
           />
         }
-        leaveButton={<LeaveRoomButton materialsUrl={materialsUrl} />}
+        leaveButton={<LeaveRoomButton sessionId={sessionId} materialsUrl={materialsUrl} />}
         // LiveKit has no media warnings via this channel (managed by LiveKit components)
         mediaWarnings={[]}
         autoplayUnlockBanner={null}
@@ -235,6 +247,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     closedBeforeNegotiation: false,
   });
   const [staleConnection, setStaleConnection] = useState(false);
+
+  useEffect(() => {
+    clearSessionLeftFlag(sessionId);
+  }, [sessionId]);
 
   useEffect(() => {
     let cancelled = false;

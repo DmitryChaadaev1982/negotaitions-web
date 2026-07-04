@@ -24,6 +24,10 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
+  clearSessionLeftFlag,
+  markSessionLeftFlag,
+} from "@/lib/session-room-leave";
+import {
   clearRecoveryContext,
   saveRecoveryContext,
   touchRecoveryContext,
@@ -600,9 +604,14 @@ export default function VoximplantNegotiationRoomPage(
 
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
+    markSessionLeftFlag(props.sessionId);
     await leave();
     router.push(materialsUrl);
-  }, [leave, materialsUrl, router]);
+  }, [leave, materialsUrl, props.sessionId, router]);
+
+  useEffect(() => {
+    clearSessionLeftFlag(props.sessionId);
+  }, [props.sessionId]);
 
   const handleInvalidToken = useCallback(() => {
     clearRecoveryContext();

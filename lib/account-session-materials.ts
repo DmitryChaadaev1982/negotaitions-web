@@ -6,7 +6,11 @@ import {
 } from "@/lib/access-control";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { prisma } from "@/lib/prisma";
-import { buildSessionCloseState } from "@/lib/session-close-state";
+import {
+  buildSessionCloseState,
+  isSessionClosedByOrganizer,
+} from "@/lib/session-close-state";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
@@ -51,8 +55,12 @@ export type AccountMaterialsData = {
     displayStatus: SessionDisplayStatus;
     negotiationState: string;
     isDeleted: boolean;
+    /** Pre-fix event-session flag: buildSessionCloseState().isClosed */
     closedByEvent: boolean;
+    /** Standalone sessions: true only when organizer/event closed the session */
+    closedByOrganizer: boolean;
     closedBeforeNegotiation: boolean;
+    canReturnToRoom: boolean;
     closedByEventAt: string | null;
     businessContext: string;
     publicInstructions: string;
@@ -235,7 +243,13 @@ export async function getAccountMaterialsData(
       negotiationState: sessionData.negotiationState,
       isDeleted: sessionData.deletedAt != null,
       closedByEvent: closeState.isClosed,
+      closedByOrganizer: isSessionClosedByOrganizer(sessionData),
       closedBeforeNegotiation: closeState.closedBeforeNegotiation,
+      canReturnToRoom: isSessionActiveForRoom({
+        negotiationState: sessionData.negotiationState,
+        closedByEventAt: sessionData.closedByEventAt,
+        deletedAt: sessionData.deletedAt,
+      }),
       closedByEventAt: sessionData.closedByEventAt?.toISOString() ?? null,
       businessContext: sessionData.snapshotBusinessContext,
       publicInstructions: sessionData.snapshotPublicInstructions,

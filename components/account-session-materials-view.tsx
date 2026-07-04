@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useSyncExternalStore } from "react";
 
 import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
@@ -15,6 +15,11 @@ import {
 } from "@/app/actions/sessions";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { AccountMaterialsData, AccountMaterialsRole } from "@/lib/account-session-materials";
+import { resolveMaterialsScreenUiState } from "@/lib/session-materials-ui-state";
+import {
+  getSessionLeftFlagSnapshot,
+  sessionLeftSubscribe,
+} from "@/lib/session-room-leave";
 
 type Props = AccountMaterialsData;
 
@@ -239,9 +244,22 @@ export function AccountSessionMaterialsView({
   notesVariant,
 }: Props) {
   const { t } = useI18n();
+  const participantHasLeftRoom = useSyncExternalStore(
+    sessionLeftSubscribe,
+    () => getSessionLeftFlagSnapshot(sessionId),
+    () => false,
+  );
 
-  const isActive =
-    session.negotiationState !== "FINISHED" && !session.closedByEvent;
+  const isEventSession = event != null;
+  const materialsUi = resolveMaterialsScreenUiState({
+    isEventSession,
+    closedByEventLegacy: session.closedByEvent,
+    closedByOrganizer: session.closedByOrganizer,
+    closedBeforeNegotiation: session.closedBeforeNegotiation,
+    negotiationState: session.negotiationState,
+    canReturnToRoom: session.canReturnToRoom,
+    participantHasLeftRoom,
+  });
 
   // Phase 6.11B: PARTICIPANT without role sees waiting message instead of notes/briefing.
   const isRoleLocked = notesVariant === "locked";
@@ -263,9 +281,11 @@ export function AccountSessionMaterialsView({
         badge={<VisibilityBadge visibility={session.visibility} />}
         action={
           <div className="flex flex-wrap gap-2">
-            {isActive ? (
+            {materialsUi.showOpenRoomButton ? (
               <GradientButtonLink href={roomUrl} data-testid="materials-open-room-button">
-                {t("dashboard.openRoom")}
+                {materialsUi.openRoomUsesRejoinLabel
+                  ? t("rejoin.rejoin")
+                  : t("dashboard.openRoom")}
               </GradientButtonLink>
             ) : null}
             {event ? (
@@ -273,12 +293,28 @@ export function AccountSessionMaterialsView({
                 {t("events.openLobby")}
               </SecondaryButtonLink>
             ) : null}
-            <SecondaryButtonLink href="/sessions">
-              {t("nav.sessions")}
+            <SecondaryButtonLink href="/sessions" data-testid="back-to-sessions-link">
+              {t("events.backToSessionsCompact")}
             </SecondaryButtonLink>
           </div>
         }
       />
+
+      {materialsUi.showParticipantLeftBanner ? (
+        <div
+          className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-4 py-3"
+          data-testid="participant-left-room-banner"
+        >
+          <p className="text-sm text-cyan-100">{t("room.participantLeftRoomOpen")}</p>
+          <GradientButtonLink
+            href={roomUrl}
+            className="mt-3 inline-flex"
+            data-testid="materials-return-to-room-button"
+          >
+            {t("rejoin.rejoin")}
+          </GradientButtonLink>
+        </div>
+      ) : null}
 
       {/* Session status bar */}
       <GlassCard>
@@ -300,13 +336,13 @@ export function AccountSessionMaterialsView({
               <span className="uppercase">{session.caseLanguage}</span>
             ) : null}
           </div>
-          {session.closedByEvent ? (
+          {materialsUi.showOrganizerClosedBadge ? (
             <Badge variant="danger">
-              {session.closedBeforeNegotiation
+              {materialsUi.organizerClosedBeforeNegotiation
                 ? t("events.sessionClosedBeforeNegotiation")
                 : t("events.sessionClosedByEvent")}
             </Badge>
-          ) : session.negotiationState === "FINISHED" ? (
+          ) : materialsUi.showFinishedBadge ? (
             <Badge variant="success">{t("join.sessionFinishedMessage")}</Badge>
           ) : null}
         </GlassCardContent>
