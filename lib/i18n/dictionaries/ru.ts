@@ -406,6 +406,8 @@ export const ru: Dictionary = {
       "Укажите публичный HTTPS базовый URL (например https://abc.trycloudflare.com). Не добавляйте /api/sessions/.... Секрет webhook здесь не отображается.",
     voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
     voximplantWebhookSavedOverride: "Сохранённый override",
+    voximplantWebhookSavedOverrideInactive:
+      "Сохранённый override (неактивен — override отключён)",
     voximplantWebhookEffectiveUrl: "Эффективный URL (scenarioMessage.webhookBaseUrl)",
     voximplantWebhookInputLabel: "Публичный HTTPS базовый URL",
     voximplantWebhookSaveOverride: "Сохранить override",

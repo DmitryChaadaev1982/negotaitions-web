@@ -8,6 +8,7 @@ import { AdminVoximplantWebhookOverridePanel } from "@/components/admin-voximpla
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
+import type { VoximplantRecordingWebhookUrlState } from "@/lib/voximplant/recording-webhook-url";
 
 type HealthData = {
   config: {
@@ -88,14 +89,7 @@ type HealthData = {
       }>;
     }>;
   };
-  voximplantRecordingWebhook?: {
-    nodeEnv: string;
-    overrideEnabledRaw: string | null;
-    overrideEnabled: boolean;
-    envDefault: string | null;
-    override: string | null;
-    effective: string | null;
-  };
+  voximplantRecordingWebhook?: VoximplantRecordingWebhookUrlState;
   hasRecentServiceErrors: boolean;
   recentEvents: Array<{
     id: string;

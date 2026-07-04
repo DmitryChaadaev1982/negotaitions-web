@@ -1,112 +1,60 @@
 import "server-only";
 
-import { getEnvBoolean } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import {
+  getVoximplantRecordingWebhookBaseUrlEnvDefault,
+  getVoximplantRecordingWebhookOverrideEnabledRaw,
+  isVoximplantRecordingWebhookOverrideEnabled,
+  resolveVoximplantRecordingWebhookUrl,
+  validateVoximplantRecordingWebhookBaseUrl,
+  type VoximplantRecordingWebhookEffectiveSource,
+  type VoximplantRecordingWebhookUrlResolution,
+  type WebhookBaseUrlValidationResult,
+} from "@/lib/voximplant/recording-webhook-url-resolve";
+
+export {
+  getVoximplantRecordingWebhookBaseUrlEnvDefault,
+  getVoximplantRecordingWebhookOverrideEnabledRaw,
+  isVoximplantRecordingWebhookOverrideEnabled,
+  resolveVoximplantRecordingWebhookUrl,
+  validateVoximplantRecordingWebhookBaseUrl,
+  type VoximplantRecordingWebhookEffectiveSource,
+  type VoximplantRecordingWebhookUrlResolution,
+  type WebhookBaseUrlValidationResult,
+};
 
 /** DB key for the runtime admin override of the Voximplant recording webhook base URL. */
 export const VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL_OVERRIDE_KEY =
   "voximplant.recording.webhookBaseUrlOverride";
 
-export type WebhookBaseUrlValidationResult =
-  | { ok: true; value: string }
-  | { ok: false; error: string };
-
-/**
- * Validate a public HTTPS webhook base URL (no path to /api/sessions/...).
- * Strips trailing slashes on success.
- */
-export function validateVoximplantRecordingWebhookBaseUrl(
-  raw: string,
-): WebhookBaseUrlValidationResult {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return { ok: false, error: "URL is required." };
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return { ok: false, error: "Invalid URL." };
-  }
-
-  if (parsed.protocol !== "https:") {
-    return { ok: false, error: "URL must start with https://." };
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "[::1]" ||
-    hostname.endsWith(".local")
-  ) {
-    return { ok: false, error: "localhost URLs are not allowed." };
-  }
-
-  const path = parsed.pathname.replace(/\/+$/, "");
-  if (path.includes("/api/sessions")) {
-    return {
-      ok: false,
-      error: "URL must be a base URL without /api/sessions/...",
-    };
-  }
-
-  const value = `${parsed.origin}${path}`.replace(/\/+$/, "");
-  return { ok: true, value };
-}
-
-/** Env default from VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL (validated; null when absent/invalid). */
-export function getVoximplantRecordingWebhookBaseUrlEnvDefault(): string | null {
-  const raw = process.env.VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL?.trim();
-  if (!raw) return null;
-  const validated = validateVoximplantRecordingWebhookBaseUrl(raw);
-  return validated.ok ? validated.value : null;
-}
-
-/** Raw env value for VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED (null when unset/empty). */
-export function getVoximplantRecordingWebhookOverrideEnabledRaw(): string | null {
-  const raw = process.env.VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED?.trim();
-  return raw || null;
-}
-
-function isDefaultOverrideEnabledForNodeEnv(): boolean {
-  const nodeEnv = process.env.NODE_ENV ?? "development";
-  return nodeEnv === "development" || nodeEnv === "test";
-}
-
-/**
- * Whether admin/runtime override of the webhook base URL is permitted.
- * Explicit env true/false wins in any NODE_ENV.
- * When unset: enabled in development/test, disabled in production.
- */
-export function isVoximplantRecordingWebhookOverrideEnabled(): boolean {
-  const raw = getVoximplantRecordingWebhookOverrideEnabledRaw();
-  if (raw) {
-    return getEnvBoolean("VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED", false);
-  }
-  return isDefaultOverrideEnabledForNodeEnv();
-}
-
-/** Read the saved DB override (null when unset or invalid). */
-export async function getVoximplantRecordingWebhookBaseUrlOverride(): Promise<string | null> {
+/** Read the raw saved DB override value (null when unset). */
+export async function getVoximplantRecordingWebhookBaseUrlOverrideRaw(): Promise<string | null> {
   const row = await prisma.appSetting.findUnique({
     where: { key: VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL_OVERRIDE_KEY },
     select: { value: true },
   });
-  if (!row?.value?.trim()) return null;
+  const trimmed = row?.value?.trim();
+  return trimmed || null;
+}
 
-  const validated = validateVoximplantRecordingWebhookBaseUrl(row.value);
+/** Read the saved DB override (null when unset or invalid). */
+export async function getVoximplantRecordingWebhookBaseUrlOverride(): Promise<string | null> {
+  const raw = await getVoximplantRecordingWebhookBaseUrlOverrideRaw();
+  if (!raw) return null;
+
+  const validated = validateVoximplantRecordingWebhookBaseUrl(raw);
   return validated.ok ? validated.value : null;
 }
 
-/**
- * Effective webhook base URL: override if present, else env default, else null.
- */
+export async function resolveVoximplantRecordingWebhookUrlFromDb(): Promise<VoximplantRecordingWebhookUrlResolution> {
+  const savedOverrideRaw = await getVoximplantRecordingWebhookBaseUrlOverrideRaw();
+  return resolveVoximplantRecordingWebhookUrl({ savedOverrideRaw });
+}
+
+/** Effective webhook base URL for scenarioMessage.webhookBaseUrl and webhooks. */
 export async function getVoximplantRecordingWebhookBaseUrl(): Promise<string | null> {
-  const override = await getVoximplantRecordingWebhookBaseUrlOverride();
-  if (override) return override;
-  return getVoximplantRecordingWebhookBaseUrlEnvDefault();
+  const resolution = await resolveVoximplantRecordingWebhookUrlFromDb();
+  return resolution.effectiveWebhookBaseUrl;
 }
 
 export async function setVoximplantRecordingWebhookBaseUrlOverride(
@@ -144,40 +92,45 @@ export type VoximplantRecordingWebhookUrlState = {
   overrideEnabledRaw: string | null;
   overrideEnabled: boolean;
   envDefault: string | null;
+  /** Valid saved override from DB (unchanged when overrideEnabled=false). */
   override: string | null;
+  savedOverridePresent: boolean;
+  savedOverrideActive: boolean;
   effective: string | null;
+  effectiveSource: VoximplantRecordingWebhookEffectiveSource;
+  warning?: string;
 };
 
-function buildVoximplantRecordingWebhookUrlStateBase(): Pick<
-  VoximplantRecordingWebhookUrlState,
-  "nodeEnv" | "overrideEnabledRaw" | "overrideEnabled" | "envDefault"
-> {
+function mapResolutionToUrlState(
+  resolution: VoximplantRecordingWebhookUrlResolution,
+): VoximplantRecordingWebhookUrlState {
+  const savedOverrideActive =
+    resolution.overrideEnabled &&
+    resolution.savedOverrideValid &&
+    Boolean(resolution.savedOverrideWebhookBaseUrl);
+
   return {
-    nodeEnv: process.env.NODE_ENV ?? "development",
-    overrideEnabledRaw: getVoximplantRecordingWebhookOverrideEnabledRaw(),
-    overrideEnabled: isVoximplantRecordingWebhookOverrideEnabled(),
-    envDefault: getVoximplantRecordingWebhookBaseUrlEnvDefault(),
+    nodeEnv: resolution.nodeEnv,
+    overrideEnabledRaw: resolution.overrideEnabledRaw,
+    overrideEnabled: resolution.overrideEnabled,
+    envDefault: resolution.envWebhookBaseUrl,
+    override: resolution.savedOverrideWebhookBaseUrl,
+    savedOverridePresent: resolution.savedOverridePresent,
+    savedOverrideActive,
+    effective: resolution.effectiveWebhookBaseUrl,
+    effectiveSource: resolution.effectiveSource,
+    ...(resolution.warning ? { warning: resolution.warning } : {}),
   };
 }
 
 /** Safe fallback when DB override lookup fails (env-derived fields only). */
 export function buildVoximplantRecordingWebhookUrlStateWithoutDb(): VoximplantRecordingWebhookUrlState {
-  const base = buildVoximplantRecordingWebhookUrlStateBase();
-  return {
-    ...base,
-    override: null,
-    effective: base.envDefault,
-  };
+  return mapResolutionToUrlState(
+    resolveVoximplantRecordingWebhookUrl({ savedOverrideRaw: null }),
+  );
 }
 
 export async function getVoximplantRecordingWebhookUrlState(): Promise<VoximplantRecordingWebhookUrlState> {
-  const base = buildVoximplantRecordingWebhookUrlStateBase();
-  const override = await getVoximplantRecordingWebhookBaseUrlOverride();
-  const effective = override ?? base.envDefault;
-
-  return {
-    ...base,
-    override,
-    effective,
-  };
+  const resolution = await resolveVoximplantRecordingWebhookUrlFromDb();
+  return mapResolutionToUrlState(resolution);
 }

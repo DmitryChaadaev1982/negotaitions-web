@@ -86,8 +86,20 @@ export function AdminVoximplantWebhookOverridePanel({
           label={t("admin.voximplantWebhookEnvDefault")}
           value={state.envDefault}
         />
-        <ValueRow label={t("admin.voximplantWebhookSavedOverride")} value={state.override} />
+        <ValueRow
+          label={
+            state.savedOverridePresent && !state.savedOverrideActive
+              ? t("admin.voximplantWebhookSavedOverrideInactive")
+              : t("admin.voximplantWebhookSavedOverride")
+          }
+          value={state.override}
+        />
         <ValueRow label={t("admin.voximplantWebhookEffectiveUrl")} value={state.effective} />
+        {state.warning ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
+            {state.warning}
+          </div>
+        ) : null}
       </div>
 
       {!state.overrideEnabled ? (

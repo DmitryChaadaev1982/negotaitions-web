@@ -31,7 +31,7 @@ import {
   getVideoProvider,
   getVoximplantRecordingWebhookSecret,
 } from "@/lib/env";
-import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url";
+import { resolveVoximplantRecordingWebhookUrlFromDb } from "@/lib/voximplant/recording-webhook-url";
 
 /** Read the last synced build ID from the local .vox-scenario-build-id file. */
 function getLastSyncedBuildId(): string | null {
@@ -88,7 +88,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const { sessionId } = await context.params;
 
-  const webhookBaseUrl = await getVoximplantRecordingWebhookBaseUrl();
+  const webhookResolution = await resolveVoximplantRecordingWebhookUrlFromDb();
 
   // Fetch DB snapshot (non-sensitive fields only).
   const [session, recording] = await Promise.all([
@@ -120,7 +120,12 @@ export async function GET(_request: Request, context: RouteContext) {
       videoProvider: getVideoProvider(),
       voximplantScenarioName: process.env.VOXIMPLANT_SCENARIO_NAME ?? null,
       voximplantRuleName: process.env.VOXIMPLANT_RULE_NAME ?? null,
-      webhookBaseUrl: webhookBaseUrl ?? null,
+      webhookBaseUrl: webhookResolution.effectiveWebhookBaseUrl ?? null,
+      webhookBaseUrlSource: webhookResolution.effectiveSource,
+      overrideEnabled: webhookResolution.overrideEnabled,
+      savedOverridePresent: webhookResolution.savedOverridePresent,
+      envWebhookBaseUrlPresent: Boolean(webhookResolution.envWebhookBaseUrl),
+      ...(webhookResolution.warning ? { webhookResolutionWarning: webhookResolution.warning } : {}),
       diagnosticsEnabled: true,
       webhookSecretConfigured: Boolean(getVoximplantRecordingWebhookSecret()),
       // Stage 5.4.9: last buildId written by vox:scenario:prepare (from .vox-scenario-build-id).

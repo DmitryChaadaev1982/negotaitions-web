@@ -46,13 +46,11 @@ try {
   Logger.write("[neg-conf-prod] Modules.Recorder require failed: " + safeToString(err));
 }
 
-// ── Scenario version marker (Stage 5.4.12) ───────────────────────────────────
+// ── Scenario version marker (server POC paste-ready) ─────────────────────────
 //
-// __LOCAL_DEV_BUILD__ is replaced by scripts/voximplant-sync-scenario.mjs with:
-//   dev-YYYYMMDD-HHMMSS-g<gitSHA>  (e.g. dev-20260630-131500-gabcdef1)
-//
-// Do NOT replace this value by hand — use: npm run vox:scenario:prepare
-var SCENARIO_BUILD_ID   = "__LOCAL_DEV_BUILD__";
+// Search Voximplant logs for this build id to confirm the correct scenario is running.
+// __LOCAL_DEV_BUILD__ is replaced by scripts/voximplant-sync-scenario.mjs when using CI sync.
+var SCENARIO_BUILD_ID   = "server-poc-webhook-fix-2026-07-04";
 var SCENARIO_SOURCE_NAME = "neg-conf-main-room";
 
 // Audio recording mode:
@@ -71,18 +69,20 @@ var STRICT_RECORDING_CONTROLLER_AUTH = false;
 // - must be removed or disabled for production hardening.
 var DEVELOPMENT_ONLY_ALLOW_UNTRUSTED_CONTROLLER = true;
 
-// ── Webhook configuration (Stage 5.4) ──────────────────────────────────────
+// ── Webhook configuration (server POC paste-ready) ───────────────────────────
 //
-// Set WEBHOOK_BASE_URL to the public Next.js application URL.
-// Set WEBHOOK_SECRET to the value of VOXIMPLANT_RECORDING_WEBHOOK_SECRET env var
-// (also accepted as VOXIMPLANT_RECORDING_WEBHOOK_SECRET in process.env below).
-// Both must be set as VoxEngine application environment variables in the Voximplant console.
+// WEBHOOK_BASE_URL defaults to the production server POC origin.
+// WEBHOOK_SECRET must be replaced manually before pasting into Voximplant Console
+// (see docs/voximplant/server-poc-scenario-paste-checklist.md).
 //
-// If WEBHOOK_BASE_URL or WEBHOOK_SECRET are empty, webhook calls are skipped silently.
+// process.env.WEBHOOK_BASE_URL / WEBHOOK_SECRET may override when valid (see applyWebhookEnvironmentConfig).
+// recording_control.message.webhookBaseUrl may override base URL when ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE=true.
+//
+// If WEBHOOK_BASE_URL or WEBHOOK_SECRET are not configured, webhook calls are skipped with explicit logs.
 // The conference and recording remain stable — only server-side status tracking is lost.
 
-var WEBHOOK_BASE_URL = VoxEngine.customData() ? "" : ""; // set via VoxEngine env: process.env.WEBHOOK_BASE_URL
-var WEBHOOK_SECRET   = "eeb64d7361f94e308168d37a20ee51988a7ac3dfd1db46fdaac5e32b5b90cb97";                               // set via VoxEngine env: process.env.WEBHOOK_SECRET
+var WEBHOOK_BASE_URL = "https://negotaitions.ru";
+var WEBHOOK_SECRET   = "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__";
 
 // Stage 5.4.2: when true, recording_control.message.webhookBaseUrl may override WEBHOOK_BASE_URL.
 // Set false for strict production; keep true for local tunnel testing.
@@ -91,23 +91,8 @@ var ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE = true;
 // Cached webhook base URL from the last trusted recording_control message.
 var cachedWebhookBaseUrlFromMessage = null;
 
-// Attempt to read from VoxEngine environment variables if available.
-// VoxEngine scenario environment variables are exposed via VoxEngine.customData() as JSON
-// or via global `process.env` depending on the Voximplant SDK version and configuration.
-// Replace this block with the appropriate VoxEngine env access for your deployment.
-try {
-  if (typeof process !== "undefined" && process.env) {
-    if (process.env.WEBHOOK_BASE_URL) WEBHOOK_BASE_URL = String(process.env.WEBHOOK_BASE_URL).trim();
-    if (process.env.WEBHOOK_SECRET) WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET).trim();
-    if (process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET) {
-      WEBHOOK_SECRET = String(process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET).trim();
-    }
-  }
-} catch (envReadErr) {
-  Logger.write("[neg-conf-prod] env read failed: " + safeToString(envReadErr));
-}
-
-// Canonical conference name prefix — must match lib/voximplant/conference-name.ts.
+// Canonical conference name prefix — must match lib/voximplant/conference-name.ts (negotiation-{sessionId}).
+// sessionId is resolved first from recording_control.message.sessionId; conferenceName parsing is fallback only.
 var CONFERENCE_NAME_PREFIX = "negotiation-";
 
 // Last sessionId resolved from a trusted recording_control message.
@@ -391,6 +376,64 @@ function normalizeWebhookBaseUrl(value) {
 }
 
 /**
+ * Returns true when WEBHOOK_SECRET looks like a real configured secret (not a placeholder).
+ * Never logs the secret value.
+ */
+function isWebhookSecretConfigured(secret) {
+  if (!secret || typeof secret !== "string") return false;
+  var trimmed = secret.trim();
+  if (!trimmed) return false;
+  if (trimmed === "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__") return false;
+  if (trimmed.indexOf("PASTE") !== -1) return false;
+  if (trimmed.indexOf("REPLACE") !== -1) return false;
+  if (trimmed.length < 16) return false;
+  return true;
+}
+
+/**
+ * Apply VoxEngine environment overrides for webhook config (after normalize helpers exist).
+ * Env values override static defaults only when they pass validation.
+ */
+function applyWebhookEnvironmentConfig() {
+  try {
+    if (typeof process !== "undefined" && process.env) {
+      if (process.env.WEBHOOK_BASE_URL) {
+        var envBase = normalizeWebhookBaseUrl(String(process.env.WEBHOOK_BASE_URL).trim());
+        if (envBase) WEBHOOK_BASE_URL = envBase;
+      }
+      var envSecret = null;
+      if (process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET) {
+        envSecret = String(process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET).trim();
+      } else if (process.env.WEBHOOK_SECRET) {
+        envSecret = String(process.env.WEBHOOK_SECRET).trim();
+      }
+      if (envSecret && isWebhookSecretConfigured(envSecret)) {
+        WEBHOOK_SECRET = envSecret;
+      }
+    }
+  } catch (envReadErr) {
+    Logger.write("[neg-conf-prod] env read failed: " + safeToString(envReadErr));
+  }
+}
+
+/**
+ * Log webhook configuration summary (no secrets). Call once at AppStarted.
+ */
+function logWebhookConfigSummary() {
+  var normalizedStaticBase = normalizeWebhookBaseUrl(WEBHOOK_BASE_URL || null);
+  log("webhook config:" +
+      " scenarioBuildId=" + SCENARIO_BUILD_ID +
+      " source=" + SCENARIO_SOURCE_NAME +
+      " WEBHOOK_BASE_URL_set=" + Boolean(WEBHOOK_BASE_URL) +
+      " normalizedWebhookBaseUrl=" + (normalizedStaticBase || "null") +
+      " WEBHOOK_SECRET_configured=" + isWebhookSecretConfigured(WEBHOOK_SECRET) +
+      " WEBHOOK_SECRET_length=" + (WEBHOOK_SECRET ? String(WEBHOOK_SECRET).length : 0) +
+      " allowMessageWebhookBaseUrl=" + Boolean(ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE) +
+      " conferenceNamePrefix=" + CONFERENCE_NAME_PREFIX +
+      " hmacProvider=" + _hmacProvider);
+}
+
+/**
  * Resolve effective webhook base URL using a 4-level preference chain.
  * a) explicitWebhookBaseUrl  (passed by caller — usually stored context URL)
  * b) currentRecordingContext.webhookBaseUrl  (durable per-recording context)
@@ -426,24 +469,38 @@ function resolveEffectiveWebhookBaseUrl(explicitWebhookBaseUrl) {
  *   does not depend solely on the module-level cachedWebhookBaseUrlFromMessage).
  */
 function sendRecordingWebhook(sessionId, statusPayload, extraFields, explicitWebhookBaseUrl) {
-  // Stage 5.4.11: accept explicit URL so Recorder.Stopped can pass stored context URL.
-  // Preference order: explicit → context → cached → static (see resolveEffectiveWebhookBaseUrl).
   var contextWebhookBaseUrl = (currentRecordingContext && currentRecordingContext.webhookBaseUrl)
     ? currentRecordingContext.webhookBaseUrl : null;
   var effectiveBaseUrl = resolveEffectiveWebhookBaseUrl(explicitWebhookBaseUrl || null);
-  log("webhook resolve:" +
-      " explicitWebhookBaseUrl present=" + Boolean(explicitWebhookBaseUrl) +
-      " contextWebhookBaseUrl present=" + Boolean(contextWebhookBaseUrl) +
-      " cachedWebhookBaseUrlFromMessage present=" + Boolean(cachedWebhookBaseUrlFromMessage) +
+  var webhookStatus = (statusPayload && statusPayload.status) ? String(statusPayload.status) : "unknown";
+  var requestIdPresent = Boolean(statusPayload && statusPayload.requestId);
+  var sessionIdPresent = Boolean(sessionId);
+  var objectKeyPresent = Boolean(statusPayload && statusPayload.objectKey);
+  var recordingUrlPresent = Boolean(statusPayload && statusPayload.recordingUrl);
+  var secretConfigured = isWebhookSecretConfigured(WEBHOOK_SECRET);
+
+  log("webhook decision:" +
+      " status=" + webhookStatus +
+      " requestId present=" + requestIdPresent +
+      " sessionId present=" + sessionIdPresent +
+      " effectiveWebhookBaseUrl present=" + Boolean(effectiveBaseUrl) +
       " WEBHOOK_BASE_URL_set=" + Boolean(WEBHOOK_BASE_URL) +
-      " WEBHOOK_SECRET_set=" + Boolean(WEBHOOK_SECRET) +
-      " effectiveWebhookBaseUrl present=" + Boolean(effectiveBaseUrl));
-  if (!effectiveBaseUrl || !WEBHOOK_SECRET) {
-    log("webhook skipped: effectiveWebhookBaseUrl or WEBHOOK_SECRET not configured");
+      " cachedWebhookBaseUrlFromMessage present=" + Boolean(cachedWebhookBaseUrlFromMessage) +
+      " contextWebhookBaseUrl present=" + Boolean(contextWebhookBaseUrl) +
+      " WEBHOOK_SECRET_configured=" + secretConfigured +
+      " objectKeyPresent=" + objectKeyPresent +
+      " recordingUrlPresent=" + recordingUrlPresent);
+
+  if (!effectiveBaseUrl) {
+    log("webhook skipped: missing effectiveWebhookBaseUrl");
+    return;
+  }
+  if (!secretConfigured) {
+    log("webhook skipped: WEBHOOK_SECRET not configured");
     return;
   }
   if (!sessionId) {
-    log("webhook skipped: sessionId could not be resolved from recording_control message");
+    log("webhook skipped: sessionId unresolved");
     return;
   }
 
@@ -480,7 +537,8 @@ function sendRecordingWebhook(sessionId, statusPayload, extraFields, explicitWeb
 
   // Part C: log that we are about to POST (non-secret — URL contains no credentials).
   log("webhook POST attempted url=" + url + " status=" + webhookPayload.status +
-      " objectKeyPresent=" + Boolean(webhookPayload.objectKey));
+      " objectKeyPresent=" + Boolean(webhookPayload.objectKey) +
+      " recordingUrlPresent=" + Boolean(webhookPayload.recordingUrl));
 
   try {
     Net.httpRequestAsync(url, {
@@ -790,6 +848,7 @@ function parseRecordingControlPayload(rawTextOrObject) {
 
 function attachRecorderEventHandlers(commandRequestId) {
   addSafeEventListener(recorder, "RecorderEvents", "Started", function (e) {
+    log("Recorder.Started handler entered");
     startingWatchdogId = clearWatchdog(startingWatchdogId);
     if (recordingState !== STATE_STARTING) {
       return;
@@ -798,9 +857,16 @@ function attachRecorderEventHandlers(commandRequestId) {
     recordingUrl = (e && e.url) ? String(e.url) : recordingUrl;
     recordingId = (e && e.id) ? String(e.id) : recordingId;
     objectKey = normalizeObjectKeyFromUrl(recordingUrl);
+    log("Recorder.Started:" +
+        " recordingUrl present=" + Boolean(recordingUrl) +
+        " extractedFileKey present=" + Boolean(objectKey) +
+        " recordingId present=" + Boolean(recordingId) +
+        " context present=" + Boolean(currentRecordingContext) +
+        " context sessionId present=" + Boolean(currentRecordingContext && currentRecordingContext.sessionId) +
+        " context webhookBaseUrl present=" + Boolean(currentRecordingContext && currentRecordingContext.webhookBaseUrl));
     var statusPayload = buildStatusPayload(commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
     sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
-    // Stage 5.4: notify server via webhook.
+    log("webhook POST intent status=recording sessionId=" + (resolvedSessionId || "null"));
     sendRecordingWebhook(resolvedSessionId, statusPayload, { startedAt: safeNowIso() });
   }, "RecorderEvents.Started");
 
@@ -831,16 +897,19 @@ function attachRecorderEventHandlers(commandRequestId) {
     var stoppedRecordingUrl = recordingUrl;
     var stoppedObjectKey    = objectKey;
     var fileKeyPresent      = Boolean(stoppedObjectKey);
+    var effectiveStopRequestId = ctxStopReqId || lastRequestId || null;
 
-    // Part C: log recording URL and extracted objectKey (fileKey precursor)
     log("recordingUrl present=" + Boolean(stoppedRecordingUrl) +
         " extractedFileKey present=" + fileKeyPresent +
-        " objectKey=" + (stoppedObjectKey || "null"));
+        " recordingId present=" + Boolean(recordingId) +
+        " context present=" + ctxPresent +
+        " context sessionId present=" + Boolean(ctxSessionId) +
+        " context webhookBaseUrl present=" + Boolean(ctxWebhookUrl) +
+        " stopRequestId present=" + Boolean(effectiveStopRequestId));
 
     // ── Part A.5: use stop requestId; do not fall back to start requestId ───
     // commandRequestId is the START requestId captured in the closure.
     // ctxStopReqId / lastRequestId are both updated to the STOP requestId.
-    var effectiveStopRequestId = ctxStopReqId || lastRequestId || null;
 
     // Build payload and send browser status using the stop requestId.
     var statusPayload = buildStatusPayload(effectiveStopRequestId, STATE_STOPPED, "Recording stopped.", null);
@@ -873,8 +942,9 @@ function attachRecorderEventHandlers(commandRequestId) {
     recorder = null;
 
     // Part C: explicit pre-attempt log so we can see intent even if POST fails
-    log("webhook POST intent sessionId=" + (stoppedSessionId || "null") +
+    log("webhook POST intent status=stopped sessionId=" + (stoppedSessionId || "null") +
         " fileKeyPresent=" + fileKeyPresent +
+        " recordingUrlPresent=" + Boolean(stoppedRecordingUrl) +
         " stopRequestId=" + (effectiveStopRequestId || "null"));
 
     // ── Part B: send signed completion webhook to Next.js ───────────────────
@@ -889,12 +959,15 @@ function attachRecorderEventHandlers(commandRequestId) {
 
   addSafeEventListener(recorder, "RecorderEvents", "Error", function (e) {
     clearAllWatchdogs();
-    setErrorState("RECORDER_EVENT_ERROR", "Recorder error event.");
+    var safeErrorCode = safeToString(e && e.code) || "RECORDER_EVENT_ERROR";
+    var safeErrorMsg = safeToString(e && e.message) || "Recorder error event.";
+    setErrorState(safeErrorCode, safeErrorMsg);
+    log("Recorder.Error handler entered code=" + safeErrorCode + " message=" + safeErrorMsg);
     var statusPayload = buildStatusPayload(commandRequestId || lastRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
-    recorder = null;
-    // Stage 5.4: notify server about recording error.
+    log("webhook POST intent status=error sessionId=" + (resolvedSessionId || "null"));
     sendRecordingWebhook(resolvedSessionId, statusPayload, null);
+    recorder = null;
   }, "RecorderEvents.Error");
 }
 
@@ -935,7 +1008,7 @@ function startRecording(call, requestId) {
   pausedAt = null;
   resumedAt = null;
   sendStatus(call, requestId, STATE_STARTING, "Recording start requested.", null);
-  // Stage 5.4: notify server that recording is starting.
+  log("webhook POST intent status=starting sessionId=" + (resolvedSessionId || "null"));
   sendRecordingWebhook(resolvedSessionId, buildStatusPayload(requestId, STATE_STARTING, "Recording start requested.", null), { startedAt: safeNowIso() });
 
   try {
@@ -1066,7 +1139,7 @@ function stopRecording(call, requestId) {
   startingWatchdogId = clearWatchdog(startingWatchdogId);
   resumingWatchdogId = clearWatchdog(resumingWatchdogId);
   sendStatus(call, requestId, STATE_STOPPING, "Recording stop requested.", null);
-  // Stage 5.4: notify server that recording is stopping.
+  log("webhook POST intent status=stopping sessionId=" + (resolvedSessionId || "null"));
   sendRecordingWebhook(resolvedSessionId, buildStatusPayload(requestId, STATE_STOPPING, "Recording stop requested.", null), null);
 
   try {
@@ -1077,6 +1150,12 @@ function stopRecording(call, requestId) {
     } else {
       setErrorState("RECORDER_STOP_UNAVAILABLE", "Recorder stop method unavailable.");
       sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+      log("webhook POST intent status=error reason=RECORDER_STOP_UNAVAILABLE sessionId=" + (resolvedSessionId || "null"));
+      sendRecordingWebhook(
+        resolvedSessionId,
+        buildStatusPayload(requestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
+        null,
+      );
       return;
     }
 
@@ -1091,6 +1170,12 @@ function stopRecording(call, requestId) {
   } catch (e) {
     setErrorState("STOP_EXCEPTION", safeToString(e));
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    log("webhook POST intent status=error reason=STOP_EXCEPTION sessionId=" + (resolvedSessionId || "null"));
+    sendRecordingWebhook(
+      resolvedSessionId,
+      buildStatusPayload(requestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
+      null,
+    );
     recorder = null;
   }
 }
@@ -1104,13 +1189,14 @@ function sendCurrentStatus(call, requestId) {
 }
 
 function onRecordingControlMessage(call, payload) {
-  // Stage 5.4.11: log safe normalized fields only — no secrets.
-  log("recording_control normalized" +
+  var normalizedFromMessage = normalizeWebhookBaseUrl(payload.webhookBaseUrl || null);
+  log("recording_control received:" +
       " action=" + payload.action +
       " requestId present=" + Boolean(payload.requestId) +
       " sessionId present=" + Boolean(payload.sessionId) +
       " conferenceName present=" + Boolean(payload.conferenceName) +
-      " webhookBaseUrl present=" + Boolean(payload.webhookBaseUrl));
+      " webhookBaseUrl present=" + Boolean(payload.webhookBaseUrl) +
+      " normalizedWebhookBaseUrl present=" + Boolean(normalizedFromMessage));
 
   var sessionId = resolveSessionId(payload);
   if (!sessionId) {
@@ -1132,7 +1218,6 @@ function onRecordingControlMessage(call, payload) {
   }
 
   // Stage 5.4.11: use normalizeWebhookBaseUrl — no new URL() dependency.
-  var normalizedFromMessage = normalizeWebhookBaseUrl(payload.webhookBaseUrl || null);
   if (ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE && normalizedFromMessage) {
     cachedWebhookBaseUrlFromMessage = normalizedFromMessage;
     log("cachedWebhookBaseUrlFromMessage updated present=true");
@@ -1149,7 +1234,7 @@ function onRecordingControlMessage(call, payload) {
     "recording_control action=" + payload.action +
       " requestId=" + payload.requestId +
       " callId=" + getCallId(call) +
-      " auth=" + auth.reason,
+      " controller authorized reason=" + auth.reason,
   );
 
   // ── Maintain durable currentRecordingContext ──────────────────────────────
@@ -1316,14 +1401,10 @@ function handleIncomingCall(event) {
 }
 
 function onAppStarted() {
+  applyWebhookEnvironmentConfig();
   log("scenario build=" + SCENARIO_BUILD_ID + " source=" + SCENARIO_SOURCE_NAME);
-  log("scenario started — sessionId is resolved from recording_control messages, not applicationName");
-  // Stage 5.4.12: webhook config summary (no secrets logged).
-  log("[neg-conf-prod] webhook config:" +
-      " WEBHOOK_BASE_URL_set=" + Boolean(WEBHOOK_BASE_URL) +
-      " WEBHOOK_SECRET_set=" + Boolean(WEBHOOK_SECRET) +
-      " allowMessageWebhookBaseUrl=" + Boolean(ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE));
-  // Stage 5.4.12: verify HMAC provider and correctness before any webhook is sent.
+  log("scenario started — sessionId is resolved from recording_control.message.sessionId first; conferenceName parsing is fallback only");
+  logWebhookConfigSummary();
   runHmacSelfTest();
   try {
     conference = VoxEngine.createConference({ hd_audio: true });

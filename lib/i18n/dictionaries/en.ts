@@ -402,6 +402,7 @@ export const en = {
       "Use a public HTTPS base URL only (for example https://abc.trycloudflare.com). Do not include /api/sessions/.... The webhook secret is never shown here.",
     voximplantWebhookEnvDefault: "Env (VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL)",
     voximplantWebhookSavedOverride: "Saved override",
+    voximplantWebhookSavedOverrideInactive: "Saved override (inactive — override disabled)",
     voximplantWebhookEffectiveUrl: "Effective URL (scenarioMessage.webhookBaseUrl)",
     voximplantWebhookInputLabel: "Public HTTPS base URL",
     voximplantWebhookSaveOverride: "Save override",

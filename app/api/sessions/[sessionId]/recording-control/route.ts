@@ -17,6 +17,7 @@ import {
   upsertVoximplantRecordingOnStart,
   upsertVoximplantRecordingOnStop,
 } from "@/lib/voximplant/recording-dispatch";
+import { resolveVoximplantRecordingWebhookUrlFromDb } from "@/lib/voximplant/recording-webhook-url";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 export const runtime = "nodejs";
@@ -189,10 +190,13 @@ async function handleVoximplantRecording(
   }
 
   try {
-    const dispatch = await buildVoximplantRecordingDispatch(action, {
-      sessionId,
-      participantId,
-    });
+    const [dispatch, webhookResolution] = await Promise.all([
+      buildVoximplantRecordingDispatch(action, {
+        sessionId,
+        participantId,
+      }),
+      resolveVoximplantRecordingWebhookUrlFromDb(),
+    ]);
 
     appendRecordingDebugEvent({
       sessionId,
@@ -205,6 +209,10 @@ async function handleVoximplantRecording(
         sessionId: dispatch.scenarioMessage.sessionId,
         conferenceName: dispatch.scenarioMessage.conferenceName,
         webhookBaseUrl: dispatch.scenarioMessage.webhookBaseUrl ?? null,
+        webhookBaseUrlSource: webhookResolution.effectiveSource,
+        overrideEnabled: webhookResolution.overrideEnabled,
+        savedOverridePresent: webhookResolution.savedOverridePresent,
+        envWebhookBaseUrlPresent: Boolean(webhookResolution.envWebhookBaseUrl),
         requestId: dispatch.scenarioMessage.requestId,
       },
     });
