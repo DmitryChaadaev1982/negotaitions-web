@@ -203,11 +203,12 @@ export function SessionPostProcessingPanel({
   const [transcriptCollapsed, setTranscriptCollapsed] = useState(false);
   const [aiWarningOpen, setAiWarningOpen] = useState(false);
   const [shareWarningOpen, setShareWarningOpen] = useState(false);
-  const [forcePollUntilMs, setForcePollUntilMs] = useState(0);
+  const [forcePollingActive, setForcePollingActive] = useState(false);
 
   const mountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
   const autoCollapsedRef = useRef(false);
+  const forcePollingTimerRef = useRef<number | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -224,7 +225,14 @@ export function SessionPostProcessingPanel({
   }, [roomAuth, sessionId]);
 
   const forceStatusPolling = useCallback((windowMs = 45_000) => {
-    setForcePollUntilMs(Date.now() + windowMs);
+    setForcePollingActive(true);
+    if (forcePollingTimerRef.current !== null) {
+      window.clearTimeout(forcePollingTimerRef.current);
+    }
+    forcePollingTimerRef.current = window.setTimeout(() => {
+      forcePollingTimerRef.current = null;
+      setForcePollingActive(false);
+    }, windowMs);
   }, []);
 
   useEffect(() => {
@@ -235,9 +243,19 @@ export function SessionPostProcessingPanel({
       void fetchStatus();
     });
     return () => {
+      if (forcePollingTimerRef.current !== null) {
+        window.clearTimeout(forcePollingTimerRef.current);
+        forcePollingTimerRef.current = null;
+      }
       mountedRef.current = false;
     };
   }, [fetchStatus, sessionId]);
+
+  useEffect(() => {
+    if (!statusData?.processing.shouldPoll && !forcePollingActive) return;
+    const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fetchStatus, forcePollingActive, statusData?.processing.shouldPoll]);
 
   const autoTranscribeEnabled =
     autoTranscribeProp || (statusData?.processing.autoTranscribeEnabled ?? false);
@@ -246,43 +264,6 @@ export function SessionPostProcessingPanel({
   const transcript = statusData?.transcription;
   const ai = statusData?.aiAnalysis;
   const permissions = statusData?.permissions;
-  const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
-  const aiStage = ai?.processingStage ?? "waiting_for_transcript";
-  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
-  const aiActive = ["queued", "analyzing"].includes(aiStage);
-  const transcriptionDone = transcriptionStage === "ready";
-  const aiDone = aiStage === "ready";
-
-  useEffect(() => {
-    const shouldPollStatus =
-      Boolean(statusData?.processing.shouldPoll) ||
-      transcriptionActive ||
-      aiActive ||
-      transcriptionBusy ||
-      stopTranscriptionBusy ||
-      rerunBusy ||
-      enhancementBusy ||
-      aiBusy ||
-      sharingBusy ||
-      unsharingBusy ||
-      Date.now() < forcePollUntilMs;
-    if (!shouldPollStatus) return;
-    const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [
-    aiActive,
-    aiBusy,
-    enhancementBusy,
-    fetchStatus,
-    forcePollUntilMs,
-    rerunBusy,
-    sharingBusy,
-    statusData?.processing.shouldPoll,
-    stopTranscriptionBusy,
-    transcriptionActive,
-    transcriptionBusy,
-    unsharingBusy,
-  ]);
 
   const canStartTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStart;
@@ -510,6 +491,13 @@ export function SessionPostProcessingPanel({
 
   const showTranscriptionSection = isFacilitator && !readOnly;
   const showAiSection = isFacilitator || canViewAi || (ai?.participantPlaceholder ?? false);
+
+  const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
+  const aiStage = ai?.processingStage ?? "waiting_for_transcript";
+  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
+  const aiActive = ["queued", "analyzing"].includes(aiStage);
+  const transcriptionDone = transcriptionStage === "ready";
+  const aiDone = aiStage === "ready";
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────
 
