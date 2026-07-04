@@ -446,6 +446,8 @@ function extractSegmentsFromRecognition(responses: unknown[]): NormalizedSegment
       const speakerLabel = rawSpeaker
         ? normalizeSpeakerLabel(rawSpeaker, rawLabelOrder)
         : null;
+      const confidence =
+        toNumber(alt.confidence) ?? toNumber(alt.confidence_score) ?? null;
       const nextSegment: NormalizedSegment = {
         speakerLabel,
         displaySpeakerLabel: speakerLabel
@@ -455,6 +457,8 @@ function extractSegmentsFromRecognition(responses: unknown[]): NormalizedSegment
         endSeconds,
         text,
         orderIndex: segments.length,
+        confidence,
+        rawSpeakerLabel: rawSpeaker ?? null,
       };
 
       // SpeechKit may emit multiple hypotheses for the same timed span.
@@ -705,6 +709,9 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
   let getRecognitionAttempts = 0;
   let getRecognitionFetchMs = 0;
   let getRecognitionRetryWaitMs = 0;
+  let lastRawResponseJson: Record<string, unknown> | null = null;
+  let lastRawResponseText = "";
+  let lastRawResultCount = 0;
   const getRecognitionStartedAt = Date.now();
 
   while (getRecognitionAttempts <= GET_RECOGNITION_RETRIES) {
@@ -731,6 +738,9 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
       responses.length > 0
         ? responses
         : parseStreamingResponsesFromRawText(resultFetch.text);
+    lastRawResponseJson = resultFetch.json;
+    lastRawResponseText = resultFetch.text;
+    lastRawResultCount = rawResponses.length;
     segments = extractSegmentsFromRecognition(rawResponses);
     const plainTextFromSegments = segments
       .map((segment) => segment.text)
@@ -849,6 +859,14 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
   const diarization = resolveDiarization(normalizedSegments);
   const totalMs = Date.now() - transcriptionStartedAt;
 
+  // Return the raw provider response as-is; the transcription runner sanitizes
+  // and size-bounds it exactly once before persistence (single sanitization
+  // point, avoids double-wrapping).
+  const rawProviderSnapshot =
+    lastRawResponseJson ??
+    parseStreamingResponsesFromRawText(lastRawResponseText)[0] ??
+    null;
+
   if (normalizedSegments.length === 0 && plainText.trim().length === 0) {
     throw new Error(
       `Yandex SpeechKit returned empty recognition payload after ${getRecognitionAttempts} attempts.`,
@@ -892,5 +910,8 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
       },
     },
     enhancementRecommendation,
+    rawProviderSnapshot,
+    rawResultCount: lastRawResultCount,
+    requestMode: `recognizeFileAsync:${speakerLabelingEnabled ? "diarize" : "plain"}`,
   };
 }

@@ -7,6 +7,12 @@ export type NormalizedSegment = {
   endSeconds: number | null;
   text: string;
   orderIndex: number;
+  // Optional forensic/quality metadata (stage-1 observability). Populated by
+  // providers that expose it (e.g. Yandex SpeechKit). Never required by callers.
+  // Provider-reported confidence for the chosen alternative (0..1) if available.
+  confidence?: number | null;
+  // Raw provider speaker/channel label before normalization to `speaker_N`.
+  rawSpeakerLabel?: string | null;
 };
 
 export type SpeakerMapping = Record<string, string | null>;

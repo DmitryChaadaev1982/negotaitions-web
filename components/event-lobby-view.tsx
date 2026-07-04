@@ -448,15 +448,24 @@ export function EventLobbyView({
     [eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
   );
 
-  const createSession = useCallback(async () => {
+  const createSession = useCallback(async (overrides?: { roomLabel?: string }) => {
     if (staleConnection) return;
     if (!state) return;
+    // Guard against duplicate create from double-click / re-render.
+    if (isCreatingSession) return;
 
     setIsCreatingSession(true);
     setCreateSessionError(null);
 
     try {
       const selectedCase = state.selectedCase;
+      // Bug 3 fix: prefer the room label passed directly from the input (latest
+      // local value) over the possibly-stale persisted draft. Fall back to the
+      // persisted draft, and only to the server default when truly empty.
+      const resolvedRoomLabel =
+        overrides?.roomLabel?.trim() ||
+        state.assignmentDraft.roomLabel?.trim() ||
+        undefined;
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -464,7 +473,7 @@ export function EventLobbyView({
           ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
           connectionId: lobbyConnectionId,
           caseId: selectedCase?.id,
-          roomLabel: state.assignmentDraft.roomLabel || undefined,
+          roomLabel: resolvedRoomLabel,
           preparationDurationSeconds:
             state.assignmentDraft.preparationDurationMinutes * 60,
           negotiationDurationSeconds:
@@ -511,7 +520,7 @@ export function EventLobbyView({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [eventId, hostAccessToken, lobbyConnectionId, staleConnection, state, t]);
+  }, [eventId, hostAccessToken, isCreatingSession, lobbyConnectionId, staleConnection, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
@@ -949,7 +958,7 @@ export function EventLobbyView({
               onShowCompleteDialog={setShowCompleteDialog}
               onCompleteEvent={() => void completeEvent()}
               onUpdateHost={updateHost}
-              onCreateSession={() => void createSession()}
+              onCreateSession={(overrides) => void createSession(overrides)}
               createSessionError={createSessionError}
             />
           ) : null}

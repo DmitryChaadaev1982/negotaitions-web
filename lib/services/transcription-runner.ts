@@ -44,6 +44,15 @@ import {
   uploadBufferToS3,
 } from "@/lib/storage/s3";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
+import { isSpeechKitContainerCompatible } from "@/lib/audio/transcription-file-selection";
+import { probeAudioBuffer } from "@/lib/observability/audio-metadata";
+import {
+  computeTranscriptQualityReport,
+  logTranscriptionRun,
+  sanitizeRawProviderSnapshot,
+  type PreprocessingDecisionLog,
+} from "@/lib/observability/transcription-observability";
+import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { getMockExternalServiceError } from "@/lib/test-mode";
 
@@ -285,6 +294,15 @@ export async function runRealTranscription(
       data: { originalSizeBytes: originalBuffer.length },
     });
 
+    // Phase 7: capture actual source audio metadata (codec/sample-rate/channels)
+    // to document where the "mono 8 kHz" characteristic originates and to feed
+    // real values into the transcript quality warnings. Graceful if ffprobe is
+    // unavailable.
+    const sourceAudioMetadata = await probeAudioBuffer(
+      originalBuffer,
+      recording.fileName ?? "recording",
+    );
+
     await setTranscriptStatus(transcriptId, TranscriptStatus.COMPRESSING_AUDIO);
     const compression = await compressAudioForTranscription(
       originalBuffer,
@@ -384,6 +402,76 @@ export async function runRealTranscription(
       alignmentResult?.segments.map((s) => [s.orderIndex, s]) ?? [],
     );
 
+    // ── Stage-1 observability: preprocessing decision, raw snapshot, quality ──
+    const sourceFileName = recording.fileName ?? "recording.mp4";
+    const compatibleContainer = isSpeechKitContainerCompatible(sourceFileName);
+    const wasSkipped = compression.codecUsed === "passthrough";
+    const preprocessDecision: PreprocessingDecisionLog = {
+      originalSizeBytes: originalBuffer.length,
+      thresholdBytes: getAudioTranscriptionMaxFileBytes(),
+      mimeType: recording.mimeType ?? null,
+      container: sourceFileName.includes(".")
+        ? sourceFileName.slice(sourceFileName.lastIndexOf(".") + 1).toLowerCase()
+        : null,
+      compatibleContainer,
+      skipped: wasSkipped,
+      reason: wasSkipped
+        ? "under_threshold_and_compatible_container"
+        : originalBuffer.length > getAudioTranscriptionMaxFileBytes()
+          ? "over_size_threshold"
+          : !compatibleContainer
+            ? "incompatible_container"
+            : "transcoded",
+      outputCodec: compression.codecUsed,
+      outputFormat: compression.compressedFileName.includes(".")
+        ? compression.compressedFileName
+            .slice(compression.compressedFileName.lastIndexOf(".") + 1)
+            .toLowerCase()
+        : null,
+    };
+
+    const durationSeconds =
+      recording.startedAt && recording.endedAt
+        ? Math.max(
+            0,
+            (recording.endedAt.getTime() - recording.startedAt.getTime()) / 1000,
+          )
+        : (() => {
+            const ends = transcription.segments
+              .map((segment) => segment.endSeconds)
+              .filter((value): value is number => typeof value === "number");
+            return ends.length > 0 ? Math.max(...ends) : null;
+          })();
+
+    const rawProviderSnapshot =
+      transcription.rawProviderSnapshot !== undefined
+        ? sanitizeRawProviderSnapshot(transcription.rawProviderSnapshot)
+        : null;
+
+    const audioActivityCount = await prisma.sessionParticipantAudioActivity.count({
+      where: { sessionId },
+    });
+
+    const qualityReport = computeTranscriptQualityReport({
+      segments: transcription.segments,
+      text: normalizedTranscriptionText,
+      durationSeconds: durationSeconds ?? sourceAudioMetadata.durationSeconds,
+      sourceSampleRate: sourceAudioMetadata.sampleRate,
+      sourceChannels: sourceAudioMetadata.channels,
+      hasRawProviderSnapshot: Boolean(rawProviderSnapshot),
+      hasSpeakerActivity: audioActivityCount > 0,
+    });
+
+    const segmentQuality = transcription.segments.slice(0, 2000).map((segment) => ({
+      orderIndex: segment.orderIndex,
+      speakerLabel: segment.speakerLabel,
+      rawSpeakerLabel: segment.rawSpeakerLabel ?? null,
+      confidence: segment.confidence ?? null,
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      chars: segment.text.trim().length,
+    }));
+
     const processingMetadata = {
       transcriptionProvider,
       recordingBitrateKbps: getAudioRecordingTargetBitrateKbps(),
@@ -428,6 +516,15 @@ export async function runRealTranscription(
       alignmentOverallConfidence: alignmentResult?.overallConfidence ?? null,
       lowConfidenceSegmentCount: alignmentResult?.lowConfidenceSegmentCount ?? 0,
       qualityPromptMetadata: transcription.qualityPromptMetadata ?? null,
+      // Stage-1 observability
+      preprocessDecision,
+      sourceAudioMetadata,
+      qualityReport,
+      segmentQuality,
+      rawProviderSnapshot,
+      rawResultCount: transcription.rawResultCount ?? null,
+      speechkitRequestMode: transcription.requestMode ?? null,
+      audioActivityRowCount: audioActivityCount,
     };
 
     const speakerMappingStatus = transcription.hasSpeakerDiarization
@@ -462,7 +559,7 @@ export async function runRealTranscription(
           diarizationError: null,
           speakerMapping: Prisma.JsonNull,
           speakerMappingStatus,
-          processingMetadata,
+          processingMetadata: processingMetadata as Prisma.InputJsonValue,
           completedAt: new Date(),
           errorMessage: null,
           // Two-pass fields
@@ -500,6 +597,59 @@ export async function runRealTranscription(
       }
 
       return updated;
+    });
+
+    // Phase 4: auto-trigger speaker mapping suggestion after transcription.
+    // Resilient — a failure here must not fail the completed transcription.
+    let mappingStatusForLog = speakerMappingStatus;
+    if (transcription.hasSpeakerDiarization) {
+      try {
+        const mappingDiag = await autoTriggerSpeakerMappingAfterTranscription(sessionId);
+        if (mappingDiag.appliedStatus) {
+          mappingStatusForLog = mappingDiag.appliedStatus;
+        }
+      } catch (mappingError) {
+        console.warn(
+          `[transcription-run] auto speaker mapping trigger failed for session ${sessionId}: ${
+            mappingError instanceof Error ? mappingError.message : "unknown error"
+          }`,
+        );
+      }
+    }
+
+    logTranscriptionRun({
+      event: "transcription_run",
+      sessionId,
+      recordingId: recording.id,
+      transcriptId,
+      provider: transcriptionProvider,
+      sourceFile: {
+        fileName: recording.fileName ?? null,
+        mimeType: recording.mimeType ?? null,
+        originalSizeBytes: originalBuffer.length,
+        compressedSizeBytes: compression.compressedSizeBytes,
+        codecUsed: compression.codecUsed,
+        sourceContainer: sourceAudioMetadata.container,
+        sourceCodec: sourceAudioMetadata.codec,
+        sourceSampleRate: sourceAudioMetadata.sampleRate,
+        sourceChannels: sourceAudioMetadata.channels,
+        sourceProbeAvailable: sourceAudioMetadata.probeAvailable,
+      },
+      preprocessing: preprocessDecision,
+      speechkitRequestMode: transcription.requestMode ?? null,
+      diarizationEnabled: transcription.hasSpeakerDiarization,
+      diarizationStatus: transcription.diarizationStatus,
+      rawResultCount: transcription.rawResultCount ?? null,
+      normalizedSegmentCount: mappedSegments.length,
+      transcriptChars: qualityReport.transcriptChars,
+      speakerLabelCount: qualityReport.speakerCount,
+      mappingStatus: mappingStatusForLog,
+      aiAnalysisReady:
+        !transcription.hasSpeakerDiarization ||
+        mappingStatusForLog === "CONFIRMED" ||
+        mappingStatusForLog === "AUTO_SUGGESTED",
+      rawProviderSnapshotStored: Boolean(rawProviderSnapshot),
+      qualityWarnings: qualityReport.warnings,
     });
 
     if (

@@ -31,7 +31,7 @@ type EventHostControlsPanelProps = {
   onShowCompleteDialog: (open: boolean) => void;
   onCompleteEvent: () => void;
   onUpdateHost: (payload: Record<string, unknown>) => Promise<void>;
-  onCreateSession: () => void;
+  onCreateSession: (overrides?: { roomLabel?: string }) => void;
   createSessionError: string | null;
 };
 
@@ -77,6 +77,28 @@ export function EventHostControlsPanel({
     }
     setIsEditingRoomLabel(false);
   }, [draft.roomLabel, isEditingRoomLabel, roomLabelDraft, saveDraft]);
+
+  // Bug 3 fix: create must use the room name currently visible in the input,
+  // not the last persisted `draft.roomLabel` (which is saved asynchronously on
+  // blur). We resolve the latest local value, commit it to the draft for
+  // consistency, and pass it directly into the create request so there is no
+  // race against the async draft save.
+  const handleCreateSession = useCallback(() => {
+    const latestRoomLabel = (
+      isEditingRoomLabel ? roomLabelDraft : draft.roomLabel
+    ).trim();
+    if (isEditingRoomLabel && roomLabelDraft !== draft.roomLabel) {
+      saveDraft({ roomLabel: roomLabelDraft });
+      setIsEditingRoomLabel(false);
+    }
+    onCreateSession({ roomLabel: latestRoomLabel || undefined });
+  }, [
+    draft.roomLabel,
+    isEditingRoomLabel,
+    onCreateSession,
+    roomLabelDraft,
+    saveDraft,
+  ]);
 
   const handleUseCase = useCallback(
     async (negotiationCase: PublicCaseSummary) => {
@@ -531,7 +553,7 @@ export function EventHostControlsPanel({
               type="button"
               data-testid="create-session-button"
               disabled={isCreatingSession}
-              onClick={onCreateSession}
+              onClick={handleCreateSession}
             >
               {state.sessions.length > 0
                 ? t("events.createAnotherSession")
