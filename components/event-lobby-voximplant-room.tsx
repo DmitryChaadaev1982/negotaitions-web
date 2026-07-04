@@ -118,6 +118,7 @@ type VoxLobbyParticipant = {
   displayName: string;
   stream: MediaStream | null;
   micState: "on" | "off" | "unknown";
+  firstSeenAtMs: number;
   updatedAtMs: number;
 };
 
@@ -174,6 +175,73 @@ type RuntimeState = {
   } | null;
 };
 
+const MIC_UNKNOWN_GRACE_MS = 2500;
+const SPEAKING_THRESHOLD = 8;
+
+function getAudioContextCtor(): typeof AudioContext | null {
+  if (typeof window === "undefined") return null;
+  return (
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext ??
+    null
+  );
+}
+
+function createAudioLevelMeter(
+  mediaStream: MediaStream,
+  onLevel: (level: number) => void,
+): () => void {
+  try {
+    const Ctor = getAudioContextCtor();
+    if (!Ctor) return () => {};
+    const ctx = new Ctor();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    const source = ctx.createMediaStreamSource(mediaStream);
+    source.connect(analyser);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let rafId = 0;
+    let stopped = false;
+    let lastTickMs = 0;
+
+    const tick = () => {
+      if (stopped) return;
+      rafId = requestAnimationFrame(tick);
+      const now = Date.now();
+      if (now - lastTickMs < 66) return;
+      lastTickMs = now;
+      analyser.getByteTimeDomainData(dataArray);
+      let sumSq = 0;
+      for (const value of dataArray) {
+        const normalized = (value - 128) / 128;
+        sumSq += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSq / dataArray.length);
+      onLevel(Math.min(100, Math.round(rms * 300)));
+    };
+
+    rafId = requestAnimationFrame(tick);
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(rafId);
+      try {
+        source.disconnect();
+      } catch {}
+      try {
+        analyser.disconnect();
+      } catch {}
+      void ctx.close().catch(() => {});
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 function normalizeEndpointIdentity(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -228,11 +296,13 @@ function EventLobbyVoxVideoTile({
   muted,
   micStateLabel,
   micStateHint,
+  isSpeaking,
 }: {
   participant: VoxLobbyParticipant;
   muted: boolean;
   micStateLabel: string;
   micStateHint: string;
+  isSpeaking: boolean;
 }) {
   return (
     <VoximplantParticipantTile
@@ -242,6 +312,7 @@ function EventLobbyVoxVideoTile({
       micState={participant.micState === "on" ? "on" : participant.micState === "off" ? "off" : "unknown"}
       micStateLabel={micStateLabel}
       micStateHint={micStateHint}
+      isSpeaking={isSpeaking}
       className="w-full max-w-[420px]"
     />
   );
@@ -268,6 +339,74 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [cameraUnavailable, setCameraUnavailable] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  const speakerLevelByTrackRef = useRef(new Map<string, number>());
+  const speakerMeterCleanupByTrackRef = useRef(new Map<string, () => void>());
+  const micUnknownTimerByParticipantRef = useRef(new Map<string, number>());
+
+  const recomputeActiveSpeaker = useCallback(() => {
+    let nextSpeakerId: string | null = null;
+    let highestLevel = SPEAKING_THRESHOLD;
+    for (const [trackKey, level] of speakerLevelByTrackRef.current) {
+      if (level <= highestLevel) continue;
+      highestLevel = level;
+      nextSpeakerId = trackKey.split(":", 1)[0] ?? null;
+    }
+    setActiveSpeakerId((current) => (current === nextSpeakerId ? current : nextSpeakerId));
+  }, []);
+
+  const clearSpeakerMeter = useCallback(
+    (trackKey: string) => {
+      const cleanup = speakerMeterCleanupByTrackRef.current.get(trackKey);
+      if (cleanup) {
+        cleanup();
+        speakerMeterCleanupByTrackRef.current.delete(trackKey);
+      }
+      if (speakerLevelByTrackRef.current.delete(trackKey)) {
+        recomputeActiveSpeaker();
+      }
+    },
+    [recomputeActiveSpeaker],
+  );
+
+  const upsertSpeakerMeter = useCallback(
+    (trackKey: string, mediaStream: MediaStream | null) => {
+      clearSpeakerMeter(trackKey);
+      if (!mediaStream) return;
+      const cleanup = createAudioLevelMeter(mediaStream, (level) => {
+        speakerLevelByTrackRef.current.set(trackKey, level);
+        recomputeActiveSpeaker();
+      });
+      speakerMeterCleanupByTrackRef.current.set(trackKey, cleanup);
+    },
+    [clearSpeakerMeter, recomputeActiveSpeaker],
+  );
+
+  const clearUnknownMicTimer = useCallback((participantId: string) => {
+    const timerId = micUnknownTimerByParticipantRef.current.get(participantId);
+    if (timerId !== undefined) {
+      window.clearTimeout(timerId);
+      micUnknownTimerByParticipantRef.current.delete(participantId);
+    }
+  }, []);
+
+  const scheduleUnknownMicResolution = useCallback(
+    (participantId: string) => {
+      clearUnknownMicTimer(participantId);
+      const timerId = window.setTimeout(() => {
+        micUnknownTimerByParticipantRef.current.delete(participantId);
+        setRemoteParticipants((current) =>
+          current.map((participant) =>
+            participant.id === participantId && participant.micState === "unknown"
+              ? { ...participant, micState: "off", updatedAtMs: Date.now() }
+              : participant,
+          ),
+        );
+      }, MIC_UNKNOWN_GRACE_MS);
+      micUnknownTimerByParticipantRef.current.set(participantId, timerId);
+    },
+    [clearUnknownMicTimer],
+  );
 
   const detachRemoteAudioStreams = useCallback((endpointId: string) => {
     const runtime = runtimeRef.current;
@@ -278,9 +417,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         audio.pause();
         audio.srcObject = null;
         runtime.remoteAudioElements.delete(key);
+        clearSpeakerMeter(`${endpointId}:${key}`);
       }
     }
-  }, []);
+  }, [clearSpeakerMeter]);
 
   const cleanup = useCallback(async () => {
     const runtime = runtimeRef.current;
@@ -291,6 +431,16 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       audio.srcObject = null;
     }
     runtime.remoteAudioElements.clear();
+    for (const cleanup of speakerMeterCleanupByTrackRef.current.values()) {
+      cleanup();
+    }
+    speakerMeterCleanupByTrackRef.current.clear();
+    speakerLevelByTrackRef.current.clear();
+    setActiveSpeakerId(null);
+    for (const timerId of micUnknownTimerByParticipantRef.current.values()) {
+      window.clearTimeout(timerId);
+    }
+    micUnknownTimerByParticipantRef.current.clear();
 
     for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
       endpoint.removeEventListener("RemoteMediaAdded", onAdded);
@@ -331,8 +481,12 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       setRemoteParticipants((current) => {
         const idx = current.findIndex((item) => item.id === next.id);
         if (idx === -1) return [...current, next];
+        const previous = current[idx];
         const copy = [...current];
-        copy[idx] = next;
+        copy[idx] = {
+          ...next,
+          firstSeenAtMs: previous?.firstSeenAtMs ?? next.firstSeenAtMs,
+        };
         return copy;
       });
     };
@@ -498,12 +652,27 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           audio.srcObject = ms;
           audio.autoplay = true;
           runtimeState.remoteAudioElements.set(key, audio);
+          upsertSpeakerMeter(`${endpointId}:${key}`, ms);
           void audio.play().catch(() => {});
+          clearUnknownMicTimer(endpointId);
+          setRemoteParticipants((current) =>
+            current.map((participant) =>
+              participant.id === endpointId
+                ? { ...participant, micState: "on", updatedAtMs: Date.now() }
+                : participant,
+            ),
+          );
         };
 
         const applyRemoteVideo = (endpoint: VoxEndpoint) => {
           const stream = endpoint.getAnyVideoStreams()[0] ?? null;
           const hasAudio = endpoint.getAnyAudioStreams().length > 0;
+          const now = Date.now();
+          if (!hasAudio) {
+            scheduleUnknownMicResolution(endpoint.id);
+          } else {
+            clearUnknownMicTimer(endpoint.id);
+          }
           const identityKey = normalizeEndpointIdentity(
             endpoint.userName || endpoint.displayName || endpoint.id,
           );
@@ -513,7 +682,8 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             displayName: endpoint.displayName || endpoint.userName || endpoint.id,
             stream: streamToMediaStream(stream),
             micState: hasAudio ? "on" : "unknown",
-            updatedAtMs: Date.now(),
+            firstSeenAtMs: now,
+            updatedAtMs: now,
           });
         };
 
@@ -538,6 +708,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
               runtime.endpointSubscriptions.delete(previousEndpointId);
             }
             detachRemoteAudioStreams(previousEndpointId);
+            clearUnknownMicTimer(previousEndpointId);
             setRemoteParticipants((current) =>
               current.filter((item) => item.id !== previousEndpointId),
             );
@@ -601,6 +772,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           setRemoteParticipants((current) =>
             current.filter((item) => item.id !== endpointId),
           );
+          clearUnknownMicTimer(endpointId);
           detachRemoteAudioStreams(endpointId);
         };
 
@@ -636,8 +808,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           displayName: readyPayload.user.displayName,
           stream: streamToMediaStream(localVideoStream),
           micState: localAudioStream ? "on" : "off",
+          firstSeenAtMs: Date.now(),
           updatedAtMs: Date.now(),
         });
+        upsertSpeakerMeter("local:local", streamToMediaStream(localAudioStream));
 
         for (const endpoint of conference.endpoints.value.values()) {
           subscribeEndpoint(endpoint);
@@ -662,11 +836,14 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   }, [
     cleanup,
     connectionId,
+    clearUnknownMicTimer,
     detachRemoteAudioStreams,
     eventId,
     hostToken,
     onDeviceWarning,
     participantToken,
+    scheduleUnknownMicResolution,
+    upsertSpeakerMeter,
     t,
   ]);
 
@@ -681,6 +858,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           track.enabled = true;
           runtime.conference.unmuteMicrophone();
           setIsMicMuted(false);
+          upsertSpeakerMeter("local:local", streamToMediaStream(runtime.localAudioStream));
           setLocalParticipant((current) =>
             current ? { ...current, micState: "on", updatedAtMs: Date.now() } : current,
           );
@@ -692,6 +870,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         }
         runtime.conference.muteMicrophone();
         setIsMicMuted(true);
+        clearSpeakerMeter("local:local");
         setLocalParticipant((current) =>
           current ? { ...current, micState: "off", updatedAtMs: Date.now() } : current,
         );
@@ -699,7 +878,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     } finally {
       setIsBusy(false);
     }
-  }, [isBusy, isMicMuted]);
+  }, [clearSpeakerMeter, isBusy, isMicMuted, upsertSpeakerMeter]);
 
   const toggleCamera = useCallback(async () => {
     const runtime = runtimeRef.current;
@@ -783,9 +962,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
               const micStateHint =
                 participant.micState === "unknown"
                   ? t("room.unknownMicState")
-                  : isLocal
-                    ? micStateLabel
-                    : t("room.remoteMicDerivedByPolicy");
+                  : micStateLabel;
               return (
                 <EventLobbyVoxVideoTile
                   key={participant.id}
@@ -793,15 +970,13 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
                   muted={isLocal}
                   micStateLabel={micStateLabel}
                   micStateHint={micStateHint}
+                  isSpeaking={activeSpeakerId === participant.id}
                 />
               );
             })}
           </div>
         )}
       </div>
-      <p className="px-3 pb-2 text-[11px] text-slate-500">
-        {t("room.remoteMicDerivedByPolicy")}
-      </p>
       <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-3 py-2">
         <VoximplantMediaControls
           joined={joined}

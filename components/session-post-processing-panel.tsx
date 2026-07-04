@@ -203,6 +203,7 @@ export function SessionPostProcessingPanel({
   const [transcriptCollapsed, setTranscriptCollapsed] = useState(false);
   const [aiWarningOpen, setAiWarningOpen] = useState(false);
   const [shareWarningOpen, setShareWarningOpen] = useState(false);
+  const [forcePollUntilMs, setForcePollUntilMs] = useState(0);
 
   const mountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
@@ -222,6 +223,10 @@ export function SessionPostProcessingPanel({
     }
   }, [roomAuth, sessionId]);
 
+  const forceStatusPolling = useCallback((windowMs = 45_000) => {
+    setForcePollUntilMs(Date.now() + windowMs);
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     autoTranscribeStartedRef.current = false;
@@ -234,12 +239,6 @@ export function SessionPostProcessingPanel({
     };
   }, [fetchStatus, sessionId]);
 
-  useEffect(() => {
-    if (!statusData?.processing.shouldPoll) return;
-    const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [fetchStatus, statusData?.processing.shouldPoll]);
-
   const autoTranscribeEnabled =
     autoTranscribeProp || (statusData?.processing.autoTranscribeEnabled ?? false);
 
@@ -247,6 +246,43 @@ export function SessionPostProcessingPanel({
   const transcript = statusData?.transcription;
   const ai = statusData?.aiAnalysis;
   const permissions = statusData?.permissions;
+  const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
+  const aiStage = ai?.processingStage ?? "waiting_for_transcript";
+  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
+  const aiActive = ["queued", "analyzing"].includes(aiStage);
+  const transcriptionDone = transcriptionStage === "ready";
+  const aiDone = aiStage === "ready";
+
+  useEffect(() => {
+    const shouldPollStatus =
+      Boolean(statusData?.processing.shouldPoll) ||
+      transcriptionActive ||
+      aiActive ||
+      transcriptionBusy ||
+      stopTranscriptionBusy ||
+      rerunBusy ||
+      enhancementBusy ||
+      aiBusy ||
+      sharingBusy ||
+      unsharingBusy ||
+      Date.now() < forcePollUntilMs;
+    if (!shouldPollStatus) return;
+    const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [
+    aiActive,
+    aiBusy,
+    enhancementBusy,
+    fetchStatus,
+    forcePollUntilMs,
+    rerunBusy,
+    sharingBusy,
+    statusData?.processing.shouldPoll,
+    stopTranscriptionBusy,
+    transcriptionActive,
+    transcriptionBusy,
+    unsharingBusy,
+  ]);
 
   const canStartTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStart;
@@ -293,13 +329,14 @@ export function SessionPostProcessingPanel({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Transcription failed.");
       }
+      forceStatusPolling();
       void fetchStatus();
     } catch {
       autoTranscribeStartedRef.current = false;
     } finally {
       setTranscriptionBusy(false);
     }
-  }, [fetchStatus, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   const handleRerunTranscription = useCallback(async () => {
     setRerunConfirmOpen(false);
@@ -315,13 +352,14 @@ export function SessionPostProcessingPanel({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Re-transcription failed.");
       }
+      forceStatusPolling();
       void fetchStatus();
     } catch (err) {
       setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
     } finally {
       setRerunBusy(false);
     }
-  }, [fetchStatus, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   const handleStopTranscription = useCallback(async () => {
     setStopTranscriptionBusy(true);
@@ -339,6 +377,7 @@ export function SessionPostProcessingPanel({
         throw new Error(body.error ?? "Unable to stop transcription.");
       }
       autoTranscribeStartedRef.current = true;
+      forceStatusPolling();
       void fetchStatus();
     } catch (err) {
       setRerunError(
@@ -347,7 +386,7 @@ export function SessionPostProcessingPanel({
     } finally {
       setStopTranscriptionBusy(false);
     }
-  }, [fetchStatus, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   const handleRunTranscriptEnhancement = useCallback(async () => {
     setEnhancementBusy(true);
@@ -365,6 +404,7 @@ export function SessionPostProcessingPanel({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Transcript enhancement failed.");
       }
+      forceStatusPolling();
       void fetchStatus();
     } catch (err) {
       setRerunError(
@@ -373,18 +413,20 @@ export function SessionPostProcessingPanel({
     } finally {
       setEnhancementBusy(false);
     }
-  }, [fetchStatus, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   useEffect(() => {
     if (!autoTranscribeEnabled || !canStartTranscription || transcriptionBusy) return;
     if (canRetryTranscription) return;
     if (autoTranscribeStartedRef.current) return;
     autoTranscribeStartedRef.current = true;
+    forceStatusPolling();
     void handleStartTranscription();
   }, [
     autoTranscribeEnabled,
     canRetryTranscription,
     canStartTranscription,
+    forceStatusPolling,
     handleStartTranscription,
     transcriptionBusy,
   ]);
@@ -417,6 +459,7 @@ export function SessionPostProcessingPanel({
           setAiError(body.error ?? "AI analysis failed.");
         }
       } else {
+        forceStatusPolling();
         void fetchStatus();
       }
     } catch {
@@ -439,6 +482,7 @@ export function SessionPostProcessingPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...roomAuthBody(roomAuth), shareDebriefConfirmed: true }),
       });
+      forceStatusPolling();
       void fetchStatus();
     } finally {
       setSharingBusy(false);
@@ -457,6 +501,7 @@ export function SessionPostProcessingPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(roomAuthBody(roomAuth)),
       });
+      forceStatusPolling();
       void fetchStatus();
     } finally {
       setUnsharingBusy(false);
@@ -465,13 +510,6 @@ export function SessionPostProcessingPanel({
 
   const showTranscriptionSection = isFacilitator && !readOnly;
   const showAiSection = isFacilitator || canViewAi || (ai?.participantPlaceholder ?? false);
-
-  const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
-  const aiStage = ai?.processingStage ?? "waiting_for_transcript";
-  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
-  const aiActive = ["queued", "analyzing"].includes(aiStage);
-  const transcriptionDone = transcriptionStage === "ready";
-  const aiDone = aiStage === "ready";
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────
 
@@ -483,7 +521,7 @@ export function SessionPostProcessingPanel({
         className={`rounded-lg border px-4 py-3 transition-colors
           ${transcriptionActive ? "border-cyan-500/30 bg-cyan-950/10" : transcriptionDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <StepBadge step={1} done={transcriptionDone} active={transcriptionActive} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-200">{t("sessions.recordingAndTranscription")}</p>
@@ -491,7 +529,7 @@ export function SessionPostProcessingPanel({
               {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
             {canRerunTranscription && !rerunConfirmOpen ? (
               <SecondaryButton
                 disabled={rerunBusy || transcriptionBusy}
@@ -568,7 +606,7 @@ export function SessionPostProcessingPanel({
         className={`rounded-lg border px-4 py-3 transition-colors
           ${aiActive ? "border-violet-500/30 bg-violet-950/10" : aiDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <StepBadge step={2} done={aiDone} active={aiActive} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
@@ -576,7 +614,7 @@ export function SessionPostProcessingPanel({
               {t(aiStageKeys[aiStage] ?? "sessionMaterials.waitingForTranscript")}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
             {canStartAi || canRetryAi || canRerunAi ? (
               <SecondaryButton
                 disabled={aiBusy}
@@ -667,7 +705,7 @@ export function SessionPostProcessingPanel({
         className={`rounded-lg border px-3 py-2.5 transition-colors
           ${transcriptionActive ? "border-cyan-500/30 bg-cyan-950/10" : transcriptionDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <StepBadge step={1} done={transcriptionDone} active={transcriptionActive} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-slate-200">{t("sessions.recordingAndTranscription")}</p>
@@ -675,42 +713,44 @@ export function SessionPostProcessingPanel({
               {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
             </p>
           </div>
-          {canRerunTranscription && !rerunConfirmOpen ? (
-            <SecondaryButton
-              disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
-              onClick={() => setRerunConfirmOpen(true)}
-              data-testid="post-processing-rerun-transcription-button"
-              className="shrink-0 text-xs"
-            >
-              {rerunBusy
-                ? t("common.loading")
-                : t("sessionMaterials.rerunTranscription")}
-            </SecondaryButton>
-          ) : null}
-          {canRunTranscriptEnhancement ? (
-            <SecondaryButton
-              disabled={enhancementBusy || transcriptionBusy || rerunBusy}
-              onClick={() => void handleRunTranscriptEnhancement()}
-              data-testid="post-processing-run-transcript-enhancement-button"
-              className="shrink-0 text-xs"
-            >
-              {enhancementBusy
-                ? t("sessionMaterials.transcriptEnhancementInProgress")
-                : t("sessionMaterials.runTranscriptEnhancement")}
-            </SecondaryButton>
-          ) : null}
-          {canStopTranscription ? (
-            <SecondaryButton
-              disabled={stopTranscriptionBusy}
-              onClick={() => void handleStopTranscription()}
-              data-testid="post-processing-stop-transcription-button"
-              className="shrink-0 text-xs"
-            >
-              {stopTranscriptionBusy
-                ? t("common.loading")
-                : t("sessionMaterials.stopTranscription")}
-            </SecondaryButton>
-          ) : null}
+          <div className="flex w-full flex-wrap gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
+            {canRerunTranscription && !rerunConfirmOpen ? (
+              <SecondaryButton
+                disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
+                onClick={() => setRerunConfirmOpen(true)}
+                data-testid="post-processing-rerun-transcription-button"
+                className="shrink-0 text-xs"
+              >
+                {rerunBusy
+                  ? t("common.loading")
+                  : t("sessionMaterials.rerunTranscription")}
+              </SecondaryButton>
+            ) : null}
+            {canRunTranscriptEnhancement ? (
+              <SecondaryButton
+                disabled={enhancementBusy || transcriptionBusy || rerunBusy}
+                onClick={() => void handleRunTranscriptEnhancement()}
+                data-testid="post-processing-run-transcript-enhancement-button"
+                className="shrink-0 text-xs"
+              >
+                {enhancementBusy
+                  ? t("sessionMaterials.transcriptEnhancementInProgress")
+                  : t("sessionMaterials.runTranscriptEnhancement")}
+              </SecondaryButton>
+            ) : null}
+            {canStopTranscription ? (
+              <SecondaryButton
+                disabled={stopTranscriptionBusy}
+                onClick={() => void handleStopTranscription()}
+                data-testid="post-processing-stop-transcription-button"
+                className="shrink-0 text-xs"
+              >
+                {stopTranscriptionBusy
+                  ? t("common.loading")
+                  : t("sessionMaterials.stopTranscription")}
+              </SecondaryButton>
+            ) : null}
+          </div>
         </div>
         {rerunConfirmOpen ? (
           <div className="mt-2 space-y-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-2">
@@ -742,7 +782,7 @@ export function SessionPostProcessingPanel({
         className={`rounded-lg border px-3 py-2.5 transition-colors
           ${aiActive ? "border-violet-500/30 bg-violet-950/10" : aiDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <StepBadge step={2} done={aiDone} active={aiActive} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
@@ -750,22 +790,24 @@ export function SessionPostProcessingPanel({
               {t(aiStageKeys[aiStage] ?? "sessionMaterials.waitingForTranscript")}
             </p>
           </div>
-          {canStartAi || canRetryAi || canRerunAi ? (
-            <SecondaryButton
-              disabled={aiBusy}
-              onClick={() => void handleRunAiAnalysis()}
-              data-testid="post-processing-run-ai-analysis-button"
-              className="shrink-0 text-xs"
-            >
-              {aiBusy
-                ? t("common.loading")
-                : canRerunAi
-                  ? t("sessionMaterials.rerunAiAnalysis")
-                  : canRetryAi
-                    ? t("sessionMaterials.retryAiAnalysis")
-                    : t("room.runAiAnalysis")}
-            </SecondaryButton>
-          ) : null}
+          <div className="flex w-full flex-wrap gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
+            {canStartAi || canRetryAi || canRerunAi ? (
+              <SecondaryButton
+                disabled={aiBusy}
+                onClick={() => void handleRunAiAnalysis()}
+                data-testid="post-processing-run-ai-analysis-button"
+                className="shrink-0 text-xs"
+              >
+                {aiBusy
+                  ? t("common.loading")
+                  : canRerunAi
+                    ? t("sessionMaterials.rerunAiAnalysis")
+                    : canRetryAi
+                      ? t("sessionMaterials.retryAiAnalysis")
+                      : t("room.runAiAnalysis")}
+              </SecondaryButton>
+            ) : null}
+          </div>
         </div>
         {speakerMappingBlockingAi || transcript?.speakerMappingRequired ? (
           <p className="mt-1 text-xs text-amber-300">{t("room.confirmSpeakerMappingBeforeAi")}</p>

@@ -53,6 +53,8 @@ export function EventHostControlsPanel({
   const [libraryMode, setLibraryMode] = useState(!selectedCase);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [roomLabelDraft, setRoomLabelDraft] = useState("");
+  const [isEditingRoomLabel, setIsEditingRoomLabel] = useState(false);
   const showLibrary = !selectedCase || libraryMode;
 
   const saveDraft = useCallback(
@@ -65,6 +67,16 @@ export function EventHostControlsPanel({
     },
     [draft, onUpdateHost],
   );
+
+  const commitRoomLabelDraft = useCallback(() => {
+    if (!isEditingRoomLabel) {
+      return;
+    }
+    if (roomLabelDraft !== draft.roomLabel) {
+      saveDraft({ roomLabel: roomLabelDraft });
+    }
+    setIsEditingRoomLabel(false);
+  }, [draft.roomLabel, isEditingRoomLabel, roomLabelDraft, saveDraft]);
 
   const handleUseCase = useCallback(
     async (negotiationCase: PublicCaseSummary) => {
@@ -354,8 +366,31 @@ export function EventHostControlsPanel({
                 type="text"
                 className={inputClassName(false)}
                 placeholder={t("events.roomNamePlaceholder")}
-                value={draft.roomLabel}
-                onChange={(event) => saveDraft({ roomLabel: event.target.value })}
+                value={isEditingRoomLabel ? roomLabelDraft : draft.roomLabel}
+                onFocus={() => {
+                  setRoomLabelDraft(draft.roomLabel);
+                  setIsEditingRoomLabel(true);
+                }}
+                onBlur={commitRoomLabelDraft}
+                onChange={(event) => {
+                  if (!isEditingRoomLabel) {
+                    setIsEditingRoomLabel(true);
+                  }
+                  setRoomLabelDraft(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setRoomLabelDraft(draft.roomLabel);
+                    setIsEditingRoomLabel(false);
+                    event.currentTarget.blur();
+                  }
+                }}
               />
             </div>
 

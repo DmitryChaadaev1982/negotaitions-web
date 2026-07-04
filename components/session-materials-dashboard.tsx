@@ -954,11 +954,24 @@ export function SessionMaterialsDashboard({
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
   const [sharingBusy, setSharingBusy] = useState(false);
   const [unsharingBusy, setUnsharingBusy] = useState(false);
+  const [forcePollingActive, setForcePollingActive] = useState(false);
 
   const isMountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
+  const forcePollingTimerRef = useRef<number | null>(null);
 
   const canPoll = Boolean(sessionId && joinToken);
+
+  const forceStatusPolling = useCallback((windowMs = 45_000) => {
+    setForcePollingActive(true);
+    if (forcePollingTimerRef.current !== null) {
+      window.clearTimeout(forcePollingTimerRef.current);
+    }
+    forcePollingTimerRef.current = window.setTimeout(() => {
+      forcePollingTimerRef.current = null;
+      setForcePollingActive(false);
+    }, windowMs);
+  }, []);
 
   const liveSnapshot = liveData
     ? buildLiveSnapshot(liveData)
@@ -980,9 +993,17 @@ export function SessionMaterialsDashboard({
       ? mapApiAiAnalysisStage(liveData.aiAnalysis.processingStage)
       : liveSnapshot.aiAnalysis;
 
-  const shouldCurrentlyPoll = liveData
-    ? liveData.processing.shouldPoll
-    : shouldPollFromSnapshot(liveSnapshot);
+  const shouldCurrentlyPoll =
+    (liveData
+      ? liveData.processing.shouldPoll
+      : shouldPollFromSnapshot(liveSnapshot)) ||
+    transcriptionBusy ||
+    rerunBusy ||
+    enhancementBusy ||
+    aiAnalysisBusy ||
+    sharingBusy ||
+    unsharingBusy ||
+    forcePollingActive;
 
   const isPolling = canPoll && shouldCurrentlyPoll;
 
@@ -1052,6 +1073,10 @@ export function SessionMaterialsDashboard({
     isMountedRef.current = true;
     autoTranscribeStartedRef.current = false;
     return () => {
+      if (forcePollingTimerRef.current !== null) {
+        window.clearTimeout(forcePollingTimerRef.current);
+        forcePollingTimerRef.current = null;
+      }
       isMountedRef.current = false;
     };
   }, [sessionId]);
@@ -1100,6 +1125,7 @@ export function SessionMaterialsDashboard({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Transcription failed.");
       }
+      forceStatusPolling();
       await fetchStatus();
     } catch (err) {
       autoTranscribeStartedRef.current = false;
@@ -1113,7 +1139,7 @@ export function SessionMaterialsDashboard({
         setTranscriptionBusy(false);
       }
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   const handleRerunTranscription = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1131,6 +1157,7 @@ export function SessionMaterialsDashboard({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Re-transcription failed.");
       }
+      forceStatusPolling();
       await fetchStatus();
     } catch (err) {
       if (isMountedRef.current) {
@@ -1141,7 +1168,7 @@ export function SessionMaterialsDashboard({
         setRerunBusy(false);
       }
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   useEffect(() => {
     if (!autoTranscribeEnabled) {
@@ -1159,11 +1186,13 @@ export function SessionMaterialsDashboard({
     }
 
     autoTranscribeStartedRef.current = true;
+    forceStatusPolling();
     void handleStartTranscription();
   }, [
     autoTranscribeEnabled,
     canRetryTranscription,
     canStartTranscription,
+    forceStatusPolling,
     handleStartTranscription,
     transcriptionBusy,
   ]);
@@ -1182,6 +1211,7 @@ export function SessionMaterialsDashboard({
       );
       if (!isMountedRef.current) return;
       if (res.ok) {
+        forceStatusPolling();
         await fetchStatus();
       }
     } catch {
@@ -1191,7 +1221,7 @@ export function SessionMaterialsDashboard({
         setRefreshBusy(false);
       }
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   const handleRunAiAnalysis = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1208,6 +1238,7 @@ export function SessionMaterialsDashboard({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "AI analysis failed.");
       }
+      forceStatusPolling();
       await fetchStatus();
     } catch (err) {
       if (isMountedRef.current) {
@@ -1220,7 +1251,7 @@ export function SessionMaterialsDashboard({
         setAiAnalysisBusy(false);
       }
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   const handleRunTranscriptEnhancement = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1240,6 +1271,7 @@ export function SessionMaterialsDashboard({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Transcript enhancement failed.");
       }
+      forceStatusPolling();
       await fetchStatus();
     } catch (err) {
       if (isMountedRef.current) {
@@ -1250,7 +1282,7 @@ export function SessionMaterialsDashboard({
     } finally {
       if (isMountedRef.current) setEnhancementBusy(false);
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   const handleShareAiAnalysis = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1261,11 +1293,12 @@ export function SessionMaterialsDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ joinToken }),
       });
+      forceStatusPolling();
       if (isMountedRef.current) await fetchStatus();
     } finally {
       if (isMountedRef.current) setSharingBusy(false);
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   const handleUnshareAiAnalysis = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1276,11 +1309,12 @@ export function SessionMaterialsDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ joinToken }),
       });
+      forceStatusPolling();
       if (isMountedRef.current) await fetchStatus();
     } finally {
       if (isMountedRef.current) setUnsharingBusy(false);
     }
-  }, [sessionId, joinToken, fetchStatus]);
+  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   return (
     <div className="space-y-6">
