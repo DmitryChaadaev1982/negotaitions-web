@@ -498,6 +498,11 @@ export function SessionPostProcessingPanel({
   const aiActive = ["queued", "analyzing"].includes(aiStage);
   const transcriptionDone = transcriptionStage === "ready";
   const aiDone = aiStage === "ready";
+  const transcriptionSectionRefreshKey = [
+    transcript?.processingStage ?? "unknown",
+    transcript?.diarizationStatus ?? "none",
+    transcript?.speakerMappingRequired ? "mapping-required" : "mapping-optional",
+  ].join(":");
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────
 
@@ -1005,6 +1010,7 @@ export function SessionPostProcessingPanel({
               {!transcriptCollapsed ? (
                 <div className="px-3 pb-3">
                   <RecordingTranscriptionSection
+                    key={transcriptionSectionRefreshKey}
                     sessionId={sessionId}
                     roomAuth={roomAuth}
                     // Auto-start is orchestrated by this panel via /materials/transcribe.
@@ -1100,6 +1106,7 @@ export function SessionPostProcessingPanel({
             {!transcriptCollapsed ? (
               <CardContent>
                 <RecordingTranscriptionSection
+                  key={transcriptionSectionRefreshKey}
                   sessionId={sessionId}
                   roomAuth={roomAuth}
                   // Auto-start is orchestrated by this panel via /materials/transcribe.
