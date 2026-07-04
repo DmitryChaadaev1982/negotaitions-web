@@ -118,6 +118,13 @@ export type TranscriptionResult = {
     asrArtifactsDetected: boolean;
     normalizationEnabled: boolean;
   };
+  // Stage-1 observability: sanitized, bounded raw provider response snapshot
+  // for forensic debugging. Never contains secrets or raw audio.
+  rawProviderSnapshot?: unknown;
+  // Number of raw result entries returned by the provider before normalization.
+  rawResultCount?: number;
+  // The provider request mode (e.g. SpeechKit "recognizeFileAsync:diarize").
+  requestMode?: string;
 };
 
 export type QualityPromptMetadata = {

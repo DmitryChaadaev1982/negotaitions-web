@@ -13,6 +13,9 @@ const schema = z.object({
   participantIdentity: z.string().trim().min(1).optional(),
   clientTimestamp: z.string().optional(),
   offsetSeconds: z.number().optional(),
+  // Provider/source of the activity signal. Defaults to LiveKit for backward
+  // compatibility. Voximplant clients pass "VOXIMPLANT_MIC_ACTIVITY".
+  source: z.string().trim().min(1).max(64).optional(),
 }).refine(
   (data) => Boolean(data.joinToken ?? data.participantId),
   { message: "joinToken or participantId is required" },
@@ -41,6 +44,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { event, participantIdentity, clientTimestamp, offsetSeconds } = parsed.data;
+  const source = parsed.data.source ?? "LIVEKIT_ACTIVE_SPEAKER";
 
   const participant = await resolveRoomParticipantFromBody(
     parsed.data as Record<string, unknown>,
@@ -61,7 +65,7 @@ export async function POST(request: Request, context: RouteContext) {
         participantIdentity: participantIdentity ?? null,
         startedAt: eventTime,
         startedOffsetSeconds: offsetSeconds ?? null,
-        source: "LIVEKIT_ACTIVE_SPEAKER",
+        source,
       },
     });
 

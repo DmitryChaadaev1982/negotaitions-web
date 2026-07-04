@@ -18,6 +18,7 @@
 import { GradientButtonLink } from "@/components/ui/buttons";
 import { SharedRoomShell } from "@/components/shared-room-shell";
 import { VoximplantMediaControls } from "@/components/voximplant-media-controls";
+import { VoximplantSpeakingActivityTracker } from "@/components/voximplant-speaking-activity-tracker";
 import VoximplantVideoLayout from "@/components/voximplant-video-layout";
 import { buildSessionMaterialsPath } from "@/lib/config";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -742,7 +743,16 @@ export default function VoximplantNegotiationRoomPage(
         // ── Voximplant-specific slots ────────────────────────────────────────
         audioRenderer={null}
         micEnforcement={null}
-        speakingTracker={null}
+        speakingTracker={
+          <VoximplantSpeakingActivityTracker
+            sessionId={props.sessionId}
+            roomAuth={roomAuth}
+            micLevel={micLevel}
+            muted={isMicMuted || !controlState.micAllowed}
+            enabled={joined && !staleConnection}
+            connectionId={roomConnectionId ?? undefined}
+          />
+        }
         providerBanner={null}
         recordingControls={
           recordingRelayError && effectiveParticipantType === "FACILITATOR" ? (

@@ -9,6 +9,7 @@ import {
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
+import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
   resolveRemoteMicStateByPolicy,
   resolveConnectionState,
@@ -106,16 +107,47 @@ export default function VoximplantVideoLayout({
   const isSpeaking =
     !isMicMuted && micLevel !== undefined && micLevel > SPEAKING_THRESHOLD;
 
+  // Bug 1 fix: derive real speaking state for remote participants from their
+  // audio streams. Memoized so meters are not rebuilt on local mic-level ticks.
+  const remoteSpeakingInput = useMemo(
+    () =>
+      remoteParticipants.map((participant) => ({
+        id: participant.id,
+        stream: participant.stream,
+      })),
+    [remoteParticipants],
+  );
+  const remoteSpeakingById = useRemoteSpeaking(remoteSpeakingInput);
+
   const remoteByVoxUsername = useMemo(() => {
     const map = new Map<string, VoxTileParticipant>();
+    let collapsedDuplicates = 0;
     for (const participant of remoteParticipants) {
       const normalized = normalizeEndpointUsername(participant.endpointUsername);
       if (!normalized) {
         continue;
       }
-      // Last write wins. This helps suppress duplicate same-login endpoints
-      // during takeover windows by preferring the latest endpoint entry.
-      map.set(normalized, participant);
+      // Bug 2 mitigation: quick leave/re-enter can briefly surface two remote
+      // endpoints for the same login. Render only one tile per stable identity
+      // (normalized Vox username), preferring a connected (streamed) endpoint
+      // and otherwise the most recent entry. This hides the stale endpoint
+      // instead of rendering a duplicate tile.
+      const existing = map.get(normalized);
+      if (!existing) {
+        map.set(normalized, participant);
+        continue;
+      }
+      collapsedDuplicates += 1;
+      const existingHasStream = Boolean(existing.stream);
+      const candidateHasStream = Boolean(participant.stream);
+      if (candidateHasStream || !existingHasStream) {
+        map.set(normalized, participant);
+      }
+    }
+    if (collapsedDuplicates > 0 && process.env.NODE_ENV !== "production") {
+      console.debug(
+        `[vox-layout] collapsed ${collapsedDuplicates} duplicate remote endpoint(s) by stable identity`,
+      );
     }
     return map;
   }, [remoteParticipants]);
@@ -233,7 +265,13 @@ export default function VoximplantVideoLayout({
           micStateLabel={tileMicStateLabel}
           micStateHint={tileMicStateHint}
           micLevel={tile.isLocal ? micLevel : undefined}
-          isSpeaking={tile.isLocal ? isSpeaking : false}
+          isSpeaking={
+            tile.isLocal
+              ? isSpeaking
+              : // Remote tile: highlight when the matched remote endpoint is
+                // producing audio. Muted/disconnected remotes report ~0 level.
+                (remoteSpeakingById[tile.participant.id] ?? false)
+          }
         />
       </div>
     );
