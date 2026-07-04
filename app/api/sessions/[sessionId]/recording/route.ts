@@ -6,8 +6,8 @@ import { resolveRoomParticipantFromQuery } from "@/lib/room-participant-resolver
 import {
   getDisplaySpeakerLabel,
   getUniqueSpeakerLabels,
-  type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 
 export const runtime = "nodejs";
 
@@ -17,10 +17,6 @@ type RouteContext = {
 
 function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
-  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -117,11 +113,11 @@ export async function GET(_request: Request, context: RouteContext) {
             transcriptionModel: session.transcript.transcriptionModel,
             hasSpeakerDiarization: session.transcript.hasSpeakerDiarization,
             speakerMappingStatus: session.transcript.speakerMappingStatus ?? "NOT_REQUIRED",
-            speakerMapping: isSpeakerMappingDisplayable(
-              session.transcript.speakerMappingStatus,
-            )
-              ? ((session.transcript.speakerMapping as SpeakerMapping | null) ?? null)
-              : null,
+            speakerMapping: resolveSpeakerMappingForUi({
+              speakerMapping: session.transcript.speakerMapping,
+              speakerMappingStatus: session.transcript.speakerMappingStatus,
+              processingMetadata: session.transcript.processingMetadata,
+            }),
             processingMetadata: session.transcript.processingMetadata ?? null,
             enhancement: {
               status:

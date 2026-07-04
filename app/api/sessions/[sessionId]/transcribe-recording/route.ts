@@ -51,8 +51,8 @@ import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-res
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import {
   applySpeakerMapping,
-  type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import {
   getMockExternalServiceError,
   isTranscriptionMockMode,
@@ -106,9 +106,6 @@ function serializeTranscript(transcript: {
     orderIndex: number;
   }>;
 }) {
-  const isDisplayable =
-    transcript.speakerMappingStatus === "CONFIRMED" ||
-    transcript.speakerMappingStatus === "AUTO_SUGGESTED";
   return {
     id: transcript.id,
     source: transcript.source,
@@ -118,9 +115,11 @@ function serializeTranscript(transcript: {
     transcriptionModel: transcript.transcriptionModel,
     hasSpeakerDiarization: transcript.hasSpeakerDiarization,
     speakerMappingStatus: transcript.speakerMappingStatus ?? "NOT_REQUIRED",
-    speakerMapping: isDisplayable
-      ? ((transcript.speakerMapping as SpeakerMapping | null) ?? null)
-      : null,
+    speakerMapping: resolveSpeakerMappingForUi({
+      speakerMapping: transcript.speakerMapping,
+      speakerMappingStatus: transcript.speakerMappingStatus,
+      processingMetadata: null,
+    }),
     updatedAt: transcript.updatedAt.toISOString(),
     segments: transcript.segments
       .slice()

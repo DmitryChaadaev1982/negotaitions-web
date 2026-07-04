@@ -10,6 +10,7 @@ import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels";
+import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 
 type RecordingData = {
   id: string;
@@ -129,27 +130,6 @@ function isRecordingReadyForTranscription(recording: RecordingData) {
 
 function hasUsableTranscript(transcript: TranscriptData | null) {
   return Boolean(transcript?.text?.trim() || transcript?.diarizedText?.trim());
-}
-
-function getCandidateMappingFromMetadata(
-  metadata: Record<string, unknown> | null | undefined,
-): Record<string, string | null> {
-  if (!metadata || typeof metadata !== "object") return {};
-  const suggestion = metadata.mappingSuggestion;
-  if (!suggestion || typeof suggestion !== "object") return {};
-  const candidateMapping = (suggestion as Record<string, unknown>).candidateMapping;
-  if (!candidateMapping || typeof candidateMapping !== "object") return {};
-
-  const normalized: Record<string, string | null> = {};
-  for (const [speakerLabel, participantId] of Object.entries(
-    candidateMapping as Record<string, unknown>,
-  )) {
-    normalized[speakerLabel] =
-      typeof participantId === "string" && participantId.trim().length > 0
-        ? participantId
-        : null;
-  }
-  return normalized;
 }
 
 type ResolvedSpeakerDisplay = {
@@ -455,8 +435,11 @@ export function RecordingTranscriptionSection({
       setDetectedSpeakers(payload.detectedSpeakers ?? []);
       setTranscriptText(payload.transcript?.text ?? "");
       setSpeakerMappingDraft(
-        payload.transcript?.speakerMapping ??
-          getCandidateMappingFromMetadata(payload.transcript?.processingMetadata ?? null),
+        resolveSpeakerMappingForUi({
+          speakerMapping: payload.transcript?.speakerMapping ?? null,
+          speakerMappingStatus: payload.transcript?.speakerMappingStatus,
+          processingMetadata: payload.transcript?.processingMetadata ?? null,
+        }),
       );
     } catch (loadError) {
       setError(
@@ -618,8 +601,11 @@ export function RecordingTranscriptionSection({
     setTranscript(payload);
     setTranscriptText(payload.text);
     setSpeakerMappingDraft(
-      payload.speakerMapping ??
-        getCandidateMappingFromMetadata(payload.processingMetadata ?? null),
+      resolveSpeakerMappingForUi({
+        speakerMapping: payload.speakerMapping ?? null,
+        speakerMappingStatus: payload.speakerMappingStatus,
+        processingMetadata: payload.processingMetadata ?? null,
+      }),
     );
     const segments = payload.segments ?? [];
     setDetectedSpeakers(

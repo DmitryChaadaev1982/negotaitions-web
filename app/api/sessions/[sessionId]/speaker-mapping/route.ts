@@ -14,18 +14,10 @@ import {
   getDisplaySpeakerLabel,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import { deriveSpeakerMappingStatus, resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
 
 export const runtime = "nodejs";
-function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
-  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
@@ -67,12 +59,11 @@ export async function GET(request: Request, context: RouteContext) {
     },
   });
 
-  const metadata = asRecord(transcript.processingMetadata);
-  const mappingSuggestion = asRecord(metadata.mappingSuggestion);
-  const candidateMapping = asRecord(mappingSuggestion.candidateMapping);
-  const existingMapping = isSpeakerMappingDisplayable(transcript.speakerMappingStatus)
-    ? ((transcript.speakerMapping as SpeakerMapping | null) ?? {})
-    : (candidateMapping as SpeakerMapping);
+  const existingMapping = resolveSpeakerMappingForUi({
+    speakerMapping: transcript.speakerMapping,
+    speakerMappingStatus: transcript.speakerMappingStatus,
+    processingMetadata: transcript.processingMetadata,
+  });
   const labelOrder = getUniqueSpeakerLabels(
     transcript.segments.map((s) => ({
       speakerLabel: s.speakerLabel,
@@ -199,18 +190,6 @@ export async function POST(request: Request, context: RouteContext) {
     });
   }
 
-  // ── Build sanitized mapping ───────────────────────────────────────────────
-  const participantIds = new Set(sessionParticipants.map((p) => p.id));
-  const sanitizedMapping: SpeakerMapping = {};
-
-  for (const [speakerLabel, participantId] of Object.entries(mapping)) {
-    if (participantId == null || participantId === "") {
-      sanitizedMapping[speakerLabel] = null;
-    } else if (participantIds.has(participantId)) {
-      sanitizedMapping[speakerLabel] = participantId;
-    }
-  }
-
   const labelOrder = getUniqueSpeakerLabels(
     transcript.segments.map((segment) => ({
       speakerLabel: segment.speakerLabel,
@@ -224,6 +203,19 @@ export async function POST(request: Request, context: RouteContext) {
         : null,
     })),
   ).map((label) => label.speakerLabel);
+
+  // ── Build sanitized mapping ───────────────────────────────────────────────
+  const participantIds = new Set(sessionParticipants.map((p) => p.id));
+  const sanitizedMapping: SpeakerMapping = {};
+  for (const speakerLabel of labelOrder) {
+    const participantId = mapping[speakerLabel];
+    sanitizedMapping[speakerLabel] =
+      typeof participantId === "string" &&
+      participantId.trim().length > 0 &&
+      participantIds.has(participantId)
+        ? participantId
+        : null;
+  }
 
   const normalizedSegments = transcript.segments.map((segment) => ({
     speakerLabel: segment.speakerLabel,
@@ -260,21 +252,26 @@ export async function POST(request: Request, context: RouteContext) {
     participantDisplayInfo,
   );
 
-  // Determine new mapping status
-  let newMappingStatus: string = transcript.speakerMappingStatus;
-  let confirmedAt: Date | null = transcript.speakerMappingConfirmedAt;
-  let confirmedBy: string | null = transcript.speakerMappingConfirmedBy;
+  const statusDecision = deriveSpeakerMappingStatus({
+    hasSpeakerDiarization: transcript.hasSpeakerDiarization,
+    speakerLabels: labelOrder,
+    mapping: sanitizedMapping,
+    confirm,
+    previousStatus: transcript.speakerMappingStatus,
+  });
 
-  if (!applyOnly) {
-    if (confirm) {
-      newMappingStatus = "CONFIRMED";
-      confirmedAt = new Date();
-      confirmedBy = participant.id;
-    } else if (newMappingStatus !== "CONFIRMED") {
-      // Saved but not yet confirmed
-      newMappingStatus = "AUTO_SUGGESTED";
-    }
+  if (!applyOnly && confirm && !statusDecision.canConfirm) {
+    return NextResponse.json(
+      { error: "Assign all detected speakers before confirming mapping." },
+      { status: 400 },
+    );
   }
+
+  const newMappingStatus = statusDecision.status;
+  const confirmedAt =
+    !applyOnly && newMappingStatus === "CONFIRMED" ? new Date() : null;
+  const confirmedBy =
+    !applyOnly && newMappingStatus === "CONFIRMED" ? participant.id : null;
 
   const updated = await prisma.$transaction(async (tx) => {
     if (!applyOnly) {
