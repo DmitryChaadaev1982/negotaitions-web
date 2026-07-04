@@ -10,6 +10,7 @@ import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels";
+import { shouldSyncSpeakerMappingDraft } from "@/lib/transcription/speaker-mapping-draft-sync";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 
 type RecordingData = {
@@ -322,6 +323,13 @@ const STATUS_POLL_INTERVAL_MS = 1_000;
 const RECORDING_STATUS_STALL_MS = 45_000;
 const ENHANCEMENT_STATUS_POLL_INTERVAL_MS = 3_500;
 
+function debugSpeakerMappingClient(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+  console.debug("[speaker-mapping][client]", { event, ...payload });
+}
+
 export function RecordingTranscriptionSection({
   sessionId,
   roomAuth,
@@ -343,6 +351,7 @@ export function RecordingTranscriptionSection({
   const [speakerMappingDraft, setSpeakerMappingDraft] = useState<
     Record<string, string | null>
   >({});
+  const speakerMappingDraftDirtyRef = useRef(false);
   const [transcriptText, setTranscriptText] = useState("");
   const [languageHint, setLanguageHint] = useState<"auto" | "ru" | "en">("auto");
   const [loading, setLoading] = useState(true);
@@ -365,6 +374,7 @@ export function RecordingTranscriptionSection({
   const [transcriptionFailSessionId, setTranscriptionFailSessionId] =
     useState(sessionId);
   const autoTranscribeStartedForSessionRef = useRef<string | null>(null);
+  const speakerMappingDraftTranscriptIdRef = useRef<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
 
   const notifyProcessingChange = useCallback(() => {
@@ -388,6 +398,52 @@ export function RecordingTranscriptionSection({
       FACILITATOR: t("participantType.FACILITATOR"),
     }),
     [t],
+  );
+
+  const resolveDraftFromTranscript = useCallback((value: TranscriptData | null) => {
+    if (!value) {
+      return {};
+    }
+    return resolveSpeakerMappingForUi({
+      speakerMapping: value.speakerMapping ?? null,
+      speakerMappingStatus: value.speakerMappingStatus,
+      processingMetadata: value.processingMetadata ?? null,
+    });
+  }, []);
+
+  const syncSpeakerMappingDraftFromTranscript = useCallback(
+    (
+      nextTranscript: TranscriptData | null,
+      options?: { force?: boolean; reason?: string },
+    ) => {
+      const nextTranscriptId = nextTranscript?.id ?? null;
+      const currentTranscriptId = speakerMappingDraftTranscriptIdRef.current;
+      const shouldSync = shouldSyncSpeakerMappingDraft({
+        currentTranscriptId,
+        nextTranscriptId,
+        isDirty: speakerMappingDraftDirtyRef.current,
+        force: options?.force,
+      });
+
+      if (shouldSync) {
+        const resolvedDraft = resolveDraftFromTranscript(nextTranscript);
+        setSpeakerMappingDraft(resolvedDraft);
+        speakerMappingDraftDirtyRef.current = false;
+        debugSpeakerMappingClient("draftSyncedFromServer", {
+          reason: options?.reason ?? "unspecified",
+          transcriptId: nextTranscriptId,
+          mappingKeys: Object.keys(resolvedDraft),
+        });
+      } else {
+        debugSpeakerMappingClient("draftPreservedLocalDirty", {
+          reason: options?.reason ?? "unspecified",
+          transcriptId: nextTranscriptId,
+        });
+      }
+
+      speakerMappingDraftTranscriptIdRef.current = nextTranscriptId;
+    },
+    [resolveDraftFromTranscript],
   );
 
   const diarizedTurns = useMemo(() => {
@@ -434,13 +490,9 @@ export function RecordingTranscriptionSection({
       setParticipants(payload.participants ?? []);
       setDetectedSpeakers(payload.detectedSpeakers ?? []);
       setTranscriptText(payload.transcript?.text ?? "");
-      setSpeakerMappingDraft(
-        resolveSpeakerMappingForUi({
-          speakerMapping: payload.transcript?.speakerMapping ?? null,
-          speakerMappingStatus: payload.transcript?.speakerMappingStatus,
-          processingMetadata: payload.transcript?.processingMetadata ?? null,
-        }),
-      );
+      syncSpeakerMappingDraftFromTranscript(payload.transcript ?? null, {
+        reason: "loadData",
+      });
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -450,7 +502,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setLoading(false);
     }
-  }, [roomAuth, sessionId]);
+  }, [roomAuth, sessionId, syncSpeakerMappingDraftFromTranscript]);
 
   const pollRecordingStatus = useCallback(async () => {
     try {
@@ -597,16 +649,16 @@ export function RecordingTranscriptionSection({
     return () => window.clearInterval(intervalId);
   }, [loadData, readOnly, transcript?.enhancement?.status]);
 
-  const applyTranscriptPayload = useCallback((payload: TranscriptData) => {
+  const applyTranscriptPayload = useCallback((
+    payload: TranscriptData,
+    options?: { forceSpeakerMappingDraftSync?: boolean; reason?: string },
+  ) => {
     setTranscript(payload);
     setTranscriptText(payload.text);
-    setSpeakerMappingDraft(
-      resolveSpeakerMappingForUi({
-        speakerMapping: payload.speakerMapping ?? null,
-        speakerMappingStatus: payload.speakerMappingStatus,
-        processingMetadata: payload.processingMetadata ?? null,
-      }),
-    );
+    syncSpeakerMappingDraftFromTranscript(payload, {
+      force: options?.forceSpeakerMappingDraftSync ?? false,
+      reason: options?.reason ?? "applyTranscriptPayload",
+    });
     const segments = payload.segments ?? [];
     setDetectedSpeakers(
       segments.reduce<DetectedSpeaker[]>((labels, segment) => {
@@ -625,7 +677,7 @@ export function RecordingTranscriptionSection({
         return labels;
       }, []),
     );
-  }, []);
+  }, [syncSpeakerMappingDraftFromTranscript]);
 
   const transcribe = useCallback(async () => {
     if (!recording?.id) return;
@@ -852,6 +904,13 @@ export function RecordingTranscriptionSection({
     setBusyAction(applyOnly ? "apply-mapping" : confirm ? "confirm-mapping" : "save-mapping");
     setError(null);
     setMessage(null);
+    debugSpeakerMappingClient("saveRequested", {
+      sessionId,
+      transcriptId: transcript?.id ?? null,
+      applyOnly,
+      confirm,
+      draftKeys: Object.keys(speakerMappingDraft),
+    });
 
     try {
       const response = await fetch(
@@ -867,6 +926,11 @@ export function RecordingTranscriptionSection({
           }),
         },
       );
+      debugSpeakerMappingClient("saveResponseStatus", {
+        sessionId,
+        transcriptId: transcript?.id ?? null,
+        status: response.status,
+      });
 
       const payload = (await response.json()) as {
         error?: string;
@@ -878,8 +942,16 @@ export function RecordingTranscriptionSection({
       }
 
       if (payload.transcript) {
-        applyTranscriptPayload(payload.transcript);
+        applyTranscriptPayload(payload.transcript, {
+          forceSpeakerMappingDraftSync: true,
+          reason: "saveSpeakerMappingSuccess",
+        });
       }
+      debugSpeakerMappingClient("saveApplied", {
+        sessionId,
+        transcriptId: payload.transcript?.id ?? transcript?.id ?? null,
+        mappingKeys: Object.keys(payload.transcript?.speakerMapping ?? {}),
+      });
 
       setMessage(
         confirm
@@ -888,6 +960,11 @@ export function RecordingTranscriptionSection({
       );
       notifyProcessingChange();
     } catch (mappingError) {
+      debugSpeakerMappingClient("saveFailed", {
+        sessionId,
+        transcriptId: transcript?.id ?? null,
+        error: mappingError instanceof Error ? mappingError.message : "Save failed.",
+      });
       setError(
         mappingError instanceof Error ? mappingError.message : "Save failed.",
       );
@@ -1599,10 +1676,17 @@ export function RecordingTranscriptionSection({
                         value={speakerMappingDraft[speaker.speakerLabel] ?? ""}
                         onChange={(event) => {
                           const value = event.target.value;
+                          debugSpeakerMappingClient("selectChanged", {
+                            sessionId,
+                            transcriptId: transcript?.id ?? null,
+                            speakerLabel: speaker.speakerLabel,
+                            selectedParticipantId: value || null,
+                          });
                           setSpeakerMappingDraft((current) => ({
                             ...current,
                             [speaker.speakerLabel]: value || null,
                           }));
+                          speakerMappingDraftDirtyRef.current = true;
                         }}
                         className="rounded-lg border border-slate-600/40 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
                       >
