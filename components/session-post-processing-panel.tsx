@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from "@/components/card";
 import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
+import { getTranscriptionSectionRefreshKey } from "@/lib/transcription/transcription-section-key";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
@@ -498,11 +499,9 @@ export function SessionPostProcessingPanel({
   const aiActive = ["queued", "analyzing"].includes(aiStage);
   const transcriptionDone = transcriptionStage === "ready";
   const aiDone = aiStage === "ready";
-  const transcriptionSectionRefreshKey = [
-    transcript?.processingStage ?? "unknown",
-    transcript?.diarizationStatus ?? "none",
-    transcript?.speakerMappingRequired ? "mapping-required" : "mapping-optional",
-  ].join(":");
+  const transcriptionSectionRefreshKey = getTranscriptionSectionRefreshKey({
+    sessionId,
+  });
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────
 

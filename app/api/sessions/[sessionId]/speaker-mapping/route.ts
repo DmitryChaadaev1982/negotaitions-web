@@ -22,6 +22,19 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
+function summarizeMappingValues(mapping: Record<string, string | null>) {
+  return Object.entries(mapping).reduce<Record<string, string | null>>(
+    (summary, [speakerLabel, participantId]) => {
+      summary[speakerLabel] =
+        typeof participantId === "string" && participantId.length > 8
+          ? participantId.slice(0, 8)
+          : participantId;
+      return summary;
+    },
+    {},
+  );
+}
+
 // ── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(request: Request, context: RouteContext) {
@@ -137,6 +150,12 @@ export async function POST(request: Request, context: RouteContext) {
 
   const parsed = speakerMappingSchema.safeParse(body);
   if (!parsed.success) {
+    console.warn("[speaker-mapping][api] validation_failed", {
+      sessionId,
+      validationResult: "invalid_request",
+      issueCount: parsed.error.issues.length,
+      firstIssue: parsed.error.issues[0]?.message ?? "Invalid request.",
+    });
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid request." },
       { status: 400 },
@@ -216,6 +235,18 @@ export async function POST(request: Request, context: RouteContext) {
         ? participantId
         : null;
   }
+  console.info("[speaker-mapping][api] request_received", {
+    sessionId,
+    transcriptId: transcript.id,
+    speakerLabelsReceived: labelOrder,
+    mappingKeys: Object.keys(mapping),
+    mappingValuePreview: summarizeMappingValues(mapping),
+    confirm,
+    validationResult: "ok",
+    applyOnly,
+    applyToTranscript,
+    forceOverrideLocked,
+  });
 
   const normalizedSegments = transcript.segments.map((segment) => ({
     speakerLabel: segment.speakerLabel,
@@ -261,6 +292,15 @@ export async function POST(request: Request, context: RouteContext) {
   });
 
   if (!applyOnly && confirm && !statusDecision.canConfirm) {
+    console.warn("[speaker-mapping][api] confirmation_blocked", {
+      sessionId,
+      transcriptId: transcript.id,
+      speakerLabelsReceived: labelOrder,
+      mappingKeys: Object.keys(sanitizedMapping),
+      mappingValuePreview: summarizeMappingValues(sanitizedMapping),
+      confirm,
+      validationResult: "incomplete_mapping_for_confirm",
+    });
     return NextResponse.json(
       { error: "Assign all detected speakers before confirming mapping." },
       { status: 400 },
@@ -317,6 +357,16 @@ export async function POST(request: Request, context: RouteContext) {
         segments: { orderBy: { orderIndex: "asc" } },
       },
     });
+  });
+
+  console.info("[speaker-mapping][api] save_completed", {
+    sessionId,
+    transcriptId: updated.id,
+    savedMappingKeys: Object.keys(
+      ((updated.speakerMapping as SpeakerMapping | null) ?? {}) as Record<string, string | null>,
+    ),
+    resultingSpeakerMappingStatus: updated.speakerMappingStatus,
+    confirm,
   });
 
   return NextResponse.json({
