@@ -1287,9 +1287,12 @@ export function RecordingTranscriptionSection({
                 </div>
 
                 {recording?.fileKey ? (
-                  <p className="text-xs text-slate-500">
-                    {t("recording.fileKey")}: {recording.fileKey}
-                  </p>
+                  <div className="max-w-full overflow-hidden text-xs text-slate-500">
+                    <p>{t("recording.fileKey")}:</p>
+                    <code className="block max-w-full whitespace-pre-wrap break-all rounded bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300">
+                      {recording.fileKey}
+                    </code>
+                  </div>
                 ) : null}
 
                 {recording?.compressionStatus ? (

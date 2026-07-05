@@ -6,7 +6,7 @@ import { z } from "zod";
 import { RecordingStatus } from "@/app/generated/prisma/client";
 import { getVoximplantRecordingWebhookSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
-import { getS3Config } from "@/lib/storage/s3";
+import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 /**
@@ -123,24 +123,6 @@ function isValidStatusTransition(
 
 // ─── objectKey → fileKey normalization ───────────────────────────────────────
 
-/**
- * Strips the S3 bucket name prefix from an objectKey that includes it.
- *
- * Voximplant scenario extracts objectKey from the Yandex Object Storage URL:
- *   URL:       https://storage.yandexcloud.net/{bucket}/{objectPath}
- *   objectKey: {bucket}/{objectPath}
- *   fileKey:   {objectPath}
- *
- * If the objectKey does not start with {bucket}/, it is returned as-is.
- */
-function normalizeFileKey(objectKey: string): string {
-  const s3Config = getS3Config();
-  if (s3Config?.bucket && objectKey.startsWith(`${s3Config.bucket}/`)) {
-    return objectKey.slice(s3Config.bucket.length + 1);
-  }
-  return objectKey;
-}
-
 // ─── Signature validation ─────────────────────────────────────────────────────
 
 function validateWebhookSignature(
@@ -255,7 +237,15 @@ export async function POST(request: Request, context: RouteContext) {
 
   // ── Resolve fileKey ───────────────────────────────────────────────────────
   const rawObjectKey = payload.objectKey?.trim() || null;
-  const fileKey = rawObjectKey ? normalizeFileKey(rawObjectKey) : null;
+  const normalizedKey = rawObjectKey
+    ? normalizeRecordingFileKey(rawObjectKey)
+    : null;
+  const fileKey =
+    normalizedKey &&
+    !normalizedKey.containsRawUrl &&
+    !normalizedKey.containsEncodedUrl
+      ? normalizedKey.normalizedKey
+      : null;
   const hasFileKey = Boolean(fileKey);
 
   console.log(
@@ -272,6 +262,10 @@ export async function POST(request: Request, context: RouteContext) {
       status: payload.status,
       fileKeyPresent: hasFileKey,
       normalizedFileKeyPresent: hasFileKey,
+      droppedUnsafeFileKey: Boolean(normalizedKey) && !hasFileKey,
+      duplicatePrefixCollapsed: normalizedKey?.hadDuplicatePrefix ?? false,
+      encodedProviderUrlDetected: normalizedKey?.containsEncodedUrl ?? false,
+      encodedProviderUrlHost: normalizedKey?.decodedUrlHost ?? null,
       requestId: payload.requestId ?? null,
       recordingId: payload.recordingId ?? null,
     },

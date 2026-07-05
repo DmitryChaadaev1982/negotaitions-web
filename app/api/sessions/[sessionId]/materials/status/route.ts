@@ -21,6 +21,8 @@ import {
   isSpeakerMappingReadyForAnalysis,
 } from "@/lib/transcription/speaker-mapping-readiness";
 import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
+import { headObject } from "@/lib/storage/s3";
+import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -321,10 +323,34 @@ export async function GET(request: Request, context: RouteContext) {
 
   const recordingStatus = recording?.status ?? null;
   const recordingHasFileKey = Boolean(recording?.fileKey);
-  const recordingReadyForTranscription = isRecordingReadyForTranscription(
+  const fileKeyNormalization = recording?.fileKey
+    ? normalizeRecordingFileKey(recording.fileKey)
+    : null;
+  let storageObjectExists: boolean | null = null;
+  if (
+    recording?.fileKey &&
+    isRecordingReadyForTranscription(recordingStatus, true) &&
+    fileKeyNormalization &&
+    !fileKeyNormalization.containsRawUrl &&
+    !fileKeyNormalization.containsEncodedUrl
+  ) {
+    try {
+      const head = await headObject(fileKeyNormalization.normalizedKey);
+      storageObjectExists = head.exists;
+    } catch {
+      storageObjectExists = null;
+    }
+  }
+
+  const recordingReadyByState = isRecordingReadyForTranscription(
     recordingStatus,
     recordingHasFileKey,
   );
+  const recordingReadyForTranscription =
+    recordingReadyByState &&
+    storageObjectExists !== false &&
+    !fileKeyNormalization?.containsRawUrl &&
+    !fileKeyNormalization?.containsEncodedUrl;
   const transcriptStatus = transcript?.status ?? null;
   const aiStatus = aiAnalysis?.status ?? null;
 
@@ -427,7 +453,11 @@ export async function GET(request: Request, context: RouteContext) {
   const recordingStage = recordingStatus
     ? recordingReadyForTranscription
       ? "ready"
-      : resolveRecordingProcessingStage(recordingStatus)
+      : (storageObjectExists === false ||
+            fileKeyNormalization?.containsRawUrl ||
+            fileKeyNormalization?.containsEncodedUrl)
+        ? "failed"
+        : resolveRecordingProcessingStage(recordingStatus)
     : "not_available";
 
   const transcriptStage = resolveTranscriptProcessingStage(
@@ -588,7 +618,14 @@ export async function GET(request: Request, context: RouteContext) {
           fileSizeBytes: recording.originalSizeBytes,
           startedAt: recording.startedAt?.toISOString() ?? null,
           endedAt: recording.endedAt?.toISOString() ?? null,
-          errorMessage: isFacilitator ? recording.errorMessage : null,
+          errorMessage: isFacilitator
+            ? (fileKeyNormalization?.containsRawUrl ||
+                fileKeyNormalization?.containsEncodedUrl)
+              ? "Запись сохранена у провайдера, но файл ещё не загружен в хранилище"
+              : storageObjectExists === false
+                ? "Файл записи не найден в хранилище"
+                : recording.errorMessage
+            : null,
           downloadUrl,
           streamUrl: downloadUrl,
           canRefreshStatus: isFacilitator,

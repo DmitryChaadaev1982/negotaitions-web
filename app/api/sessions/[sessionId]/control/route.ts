@@ -25,7 +25,7 @@ import {
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
-import { getVideoProvider } from "@/lib/env";
+import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -100,7 +100,15 @@ async function applyAutoTransitions(sessionId: string, now: Date) {
     await closeLatestPauseInterval(sessionId, now);
     // LiveKit egress stop on auto-finish — skip for Voximplant provider
     // (Voximplant recording stop is relayed by the browser via scenarioMessage).
-    if (getVideoProvider() === "livekit") {
+    const provider = resolveEffectiveRecordingProvider(
+      (
+        await prisma.recording.findUnique({
+          where: { sessionId },
+          select: { provider: true },
+        })
+      )?.provider,
+    );
+    if (provider === "livekit") {
       await handleNegotiationFinishRecording(sessionId);
     }
   }
@@ -197,7 +205,14 @@ export async function POST(request: Request, context: RouteContext) {
     // For Voximplant, recording is orchestrated by the browser adapter:
     // after this /control response, the client calls /recording-control and
     // relays the typed scenarioMessage to the VoxEngine conference.
-    const isLiveKit = getVideoProvider() === "livekit";
+    const recordingProvider = (
+      await prisma.recording.findUnique({
+        where: { sessionId },
+        select: { provider: true },
+      })
+    )?.provider;
+    const isLiveKit =
+      resolveEffectiveRecordingProvider(recordingProvider) === "livekit";
 
     if (action === "START" && isLiveKit) {
       const recordingResult = await handleNegotiationStartRecording(sessionId);
