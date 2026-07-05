@@ -21,6 +21,8 @@ type VoximplantSpeakingActivityTrackerProps = {
   enabled: boolean;
   connectionId?: string;
   audioProcessingEnabled?: boolean;
+  recordingStatus?: string | null;
+  recordingStartedAt?: string | null;
 };
 
 /**
@@ -48,12 +50,38 @@ export function VoximplantSpeakingActivityTracker({
   enabled,
   connectionId,
   audioProcessingEnabled,
+  recordingStatus,
+  recordingStartedAt,
 }: VoximplantSpeakingActivityTrackerProps) {
   const speakingRef = useRef(false);
+  const startTimerRef = useRef<number | null>(null);
   const endTimerRef = useRef<number | null>(null);
+  const recordingStartMsRef = useRef<number | null>(null);
+
+  const recordingActive =
+    recordingStatus === "STARTING" ||
+    recordingStatus === "RECORDING" ||
+    recordingStatus === "PAUSED";
+
+  useEffect(() => {
+    if (!recordingStartedAt) {
+      recordingStartMsRef.current = null;
+      return;
+    }
+    const ts = Date.parse(recordingStartedAt);
+    recordingStartMsRef.current = Number.isNaN(ts) ? null : ts;
+  }, [recordingStartedAt]);
 
   const reportActivity = useCallback(
-    (event: "SPEAKING_START" | "SPEAKING_END") => {
+    (event: "SPEAKING_START" | "SPEAKING_END", eventTimeMs: number) => {
+      const recordingStartMs = recordingStartMsRef.current;
+      const offsetSeconds =
+        recordingStartMs == null
+          ? undefined
+          : Math.max(
+              0,
+              Math.round(((eventTimeMs - recordingStartMs) / 1000) * 1000) / 1000,
+            );
       void fetch(`/api/sessions/${sessionId}/audio-activity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -62,12 +90,14 @@ export function VoximplantSpeakingActivityTracker({
           ...roomAuthBody(roomAuth, { connectionId }),
           event,
           source: "VOXIMPLANT_MIC_ACTIVITY",
-          clientTimestamp: new Date().toISOString(),
+          clientTimestamp: new Date(eventTimeMs).toISOString(),
+          offsetSeconds,
           audioLevel: Math.max(0, Math.min(100, Math.round(micLevel ?? 0))),
           telemetryCalibration: {
             speakingOnLevel: VOX_SPEAKING_ON_LEVEL,
             speakingOffLevel: VOX_SPEAKING_OFF_LEVEL,
             endDebounceMs: VOX_END_DEBOUNCE_MS,
+            recordingActive,
             audioProcessingEnabled: audioProcessingEnabled ?? null,
           },
         }),
@@ -75,8 +105,15 @@ export function VoximplantSpeakingActivityTracker({
         // Best-effort — never surface telemetry errors to the user.
       });
     },
-    [sessionId, roomAuth, connectionId, micLevel, audioProcessingEnabled],
+    [sessionId, roomAuth, connectionId, micLevel, audioProcessingEnabled, recordingActive],
   );
+
+  const clearStartTimer = useCallback(() => {
+    if (startTimerRef.current !== null) {
+      window.clearTimeout(startTimerRef.current);
+      startTimerRef.current = null;
+    }
+  }, []);
 
   const clearEndTimer = useCallback(() => {
     if (endTimerRef.current !== null) {
@@ -86,11 +123,12 @@ export function VoximplantSpeakingActivityTracker({
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !recordingActive) {
+      clearStartTimer();
       clearEndTimer();
       if (speakingRef.current) {
         speakingRef.current = false;
-        reportActivity("SPEAKING_END");
+        reportActivity("SPEAKING_END", Date.now());
       }
       return;
     }
@@ -100,11 +138,20 @@ export function VoximplantSpeakingActivityTracker({
     if (level > VOX_SPEAKING_ON_LEVEL) {
       clearEndTimer();
       if (!speakingRef.current) {
-        speakingRef.current = true;
-        reportActivity("SPEAKING_START");
+        if (startTimerRef.current === null) {
+          startTimerRef.current = window.setTimeout(() => {
+            startTimerRef.current = null;
+            if (!speakingRef.current) {
+              speakingRef.current = true;
+              reportActivity("SPEAKING_START", Date.now());
+            }
+          }, 180);
+        }
       }
       return;
     }
+
+    clearStartTimer();
 
     if (
       level < VOX_SPEAKING_OFF_LEVEL &&
@@ -115,22 +162,23 @@ export function VoximplantSpeakingActivityTracker({
         endTimerRef.current = null;
         if (speakingRef.current) {
           speakingRef.current = false;
-          reportActivity("SPEAKING_END");
+          reportActivity("SPEAKING_END", Date.now());
         }
       }, VOX_END_DEBOUNCE_MS);
     }
-  }, [micLevel, muted, enabled, reportActivity, clearEndTimer]);
+  }, [micLevel, muted, enabled, recordingActive, reportActivity, clearStartTimer, clearEndTimer]);
 
   // Flush an open SPEAKING_END on unmount so intervals are always closed.
   useEffect(() => {
     return () => {
+      clearStartTimer();
       clearEndTimer();
       if (speakingRef.current) {
         speakingRef.current = false;
-        reportActivity("SPEAKING_END");
+        reportActivity("SPEAKING_END", Date.now());
       }
     };
-  }, [clearEndTimer, reportActivity]);
+  }, [clearStartTimer, clearEndTimer, reportActivity]);
 
   return null;
 }

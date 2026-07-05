@@ -25,7 +25,10 @@ export type TelemetryQuality = {
   imbalanceByRows: number | null;
   imbalanceByDuration: number | null;
   hasOffsets: boolean;
+  hasDerivedOffsets: boolean;
   alignmentMode: "offsets" | "absolute_time_to_recording_start" | "none";
+  activeParticipantsDuringRecording: number;
+  outsideRecordingWindowRows: number;
   warnings: string[];
 };
 
@@ -92,6 +95,8 @@ export function evaluateTelemetryQuality(params: {
   participantCount: number;
   hasOffsets: boolean;
   hasAbsoluteTimestamps: boolean;
+  hasDerivedOffsets?: boolean;
+  outsideRecordingWindowRows?: number;
 }): TelemetryQuality {
   const {
     rowsByParticipant,
@@ -103,6 +108,8 @@ export function evaluateTelemetryQuality(params: {
     participantCount,
     hasOffsets,
     hasAbsoluteTimestamps,
+    hasDerivedOffsets = false,
+    outsideRecordingWindowRows = 0,
   } = params;
   const rowCounts = Object.values(rowsByParticipant);
   const totalRows = rowCounts.reduce((sum, rows) => sum + rows, 0);
@@ -129,9 +136,11 @@ export function evaluateTelemetryQuality(params: {
   const warnings: string[] = [];
   if (participantCount >= 2 && participantCoverage < participantCount) {
     warnings.push("missing_participant_coverage");
+    warnings.push("no_activity_for_participant");
   }
   if (participantCount >= 2 && rowCounts.some((rows) => rows < 2)) {
     warnings.push("participant_low_activity");
+    warnings.push("low_activity_for_participant");
   }
   const rowImbalanced =
     participantCount >= 2 &&
@@ -145,9 +154,11 @@ export function evaluateTelemetryQuality(params: {
     minDurationMs <= 2000;
   if (rowImbalanced) {
     warnings.push("row_imbalance_high");
+    warnings.push("row_imbalance");
   }
   if (durationImbalanced) {
     warnings.push("duration_imbalance_high");
+    warnings.push("duration_imbalance");
   }
   if (
     participantCount >= 2 &&
@@ -164,9 +175,17 @@ export function evaluateTelemetryQuality(params: {
   }
   if (!hasOffsets && hasAbsoluteTimestamps) {
     warnings.push("offsets_missing_fallback_absolute_time");
+    warnings.push("missing_offsets");
+  }
+  if (hasDerivedOffsets) {
+    warnings.push("derived_offsets");
   }
   if (!hasOffsets && !hasAbsoluteTimestamps) {
     warnings.push("alignment_unreliable");
+    warnings.push("missing_offsets");
+  }
+  if (outsideRecordingWindowRows > 0) {
+    warnings.push("activity_outside_recording_window");
   }
 
   return {
@@ -182,7 +201,10 @@ export function evaluateTelemetryQuality(params: {
     imbalanceByRows,
     imbalanceByDuration,
     hasOffsets,
+    hasDerivedOffsets,
     alignmentMode,
+    activeParticipantsDuringRecording: participantCoverage,
+    outsideRecordingWindowRows,
     warnings,
   };
 }

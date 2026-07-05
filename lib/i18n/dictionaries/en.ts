@@ -500,6 +500,8 @@ export const en = {
     autoMappingRequiresTimestamps: "Automatic mapping requires transcript timestamps.",
     autoMappingFutureSessionsOnly:
       "Automatic mapping will be available for future sessions after microphone activity data is collected.",
+    telemetryMappingReviewRequired:
+      "Automatic mapping was skipped because microphone activity telemetry is incomplete for one of the participants. Please assign speakers manually.",
     confidence: "Confidence",
     weakSuggestion: "Weak suggestion",
     strongSuggestion: "Strong suggestion",

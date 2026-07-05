@@ -7,7 +7,10 @@ import {
   type MappingSafetyResult,
   type TelemetryQuality,
 } from "@/lib/transcription/mapping-safety";
-import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
+import {
+  suggestSpeakerMapping,
+  type TelemetryHealthReport,
+} from "@/lib/transcription/auto-speaker-mapping";
 import {
   applySpeakerMapping,
   buildDiarizedText,
@@ -51,6 +54,7 @@ export type AutoMappingTriggerDiagnostics = {
   safetyReason: string | null;
   mappingSafety: MappingSafetyResult;
   telemetryQuality: TelemetryQuality;
+  telemetryHealth: TelemetryHealthReport;
 };
 
 function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
@@ -99,7 +103,14 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
       imbalanceByRows: null,
       imbalanceByDuration: null,
       hasOffsets: false,
+      hasDerivedOffsets: false,
       alignmentMode: "none",
+      activeParticipantsDuringRecording: 0,
+      outsideRecordingWindowRows: 0,
+      warnings: [],
+    },
+    telemetryHealth: {
+      participants: {},
       warnings: [],
     },
   };
@@ -205,6 +216,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       safetyReason: null,
       mappingSafety: safeByDefault,
       telemetryQuality: suggestion.telemetryQuality,
+      telemetryHealth: suggestion.telemetryHealth,
     };
     await persistDiagnostics(diag);
     return diag;
@@ -251,6 +263,12 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     weakMargin,
     mappingSafetySafe: mappingSafety.safe,
     mappingSafetyReason: mappingSafety.reason,
+    rawSpeakerCount: labelOrder.length,
+    expectedParticipantCount: participantPool.length,
+    activeParticipantsDuringRecording:
+      suggestion.telemetryQuality.activeParticipantsDuringRecording,
+    hasOffsets: suggestion.telemetryQuality.hasOffsets,
+    hasDerivedOffsets: suggestion.telemetryQuality.hasDerivedOffsets,
     telemetryWarnings: suggestion.telemetryQuality.warnings,
   });
   const shouldApply = decision.shouldApply;
@@ -258,6 +276,13 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
   const reason = decision.reason;
 
   if (!shouldApply) {
+    const requiresManualReview =
+      reason === "telemetry_quality_review_required" ||
+      reason === "telemetry_coverage_review_required" ||
+      reason === "telemetry_offsets_review_required" ||
+      reason === "many_to_one_mapping_in_multi_participant_session" ||
+      reason === "many_to_one_requires_manual_review_single_device";
+    const nonAppliedStatus = requiresManualReview ? "NEEDS_REVIEW" : "REQUIRED";
     // Store only candidate diagnostics for UI prefill/review. Do not apply a
     // low-confidence or unsafe mapping as active transcript mapping.
     const diag: AutoMappingTriggerDiagnostics = {
@@ -268,7 +293,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       uniqueSpeakerCount: labelOrder.length,
       suggestedSpeakerCount: suggestedLabels.length,
       minConfidence,
-      appliedStatus: "REQUIRED",
+      appliedStatus: nonAppliedStatus,
       reason,
       computedAt: new Date().toISOString(),
       scoreMatrix: suggestion.scoreMatrix,
@@ -288,12 +313,13 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       safetyReason: rejectedBySafety ? mappingSafety.reason ?? null : null,
       mappingSafety,
       telemetryQuality: suggestion.telemetryQuality,
+      telemetryHealth: suggestion.telemetryHealth,
     };
     await prisma.transcript.update({
       where: { id: transcript.id },
       data: {
         speakerMapping: Prisma.JsonNull,
-        speakerMappingStatus: "REQUIRED",
+        speakerMappingStatus: nonAppliedStatus,
         processingMetadata: {
           ...existingMetadata,
           mappingSuggestion: diag,
@@ -354,6 +380,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     safetyReason: null,
     mappingSafety,
     telemetryQuality: suggestion.telemetryQuality,
+    telemetryHealth: suggestion.telemetryHealth,
   };
 
   await prisma.$transaction(async (tx) => {
