@@ -1,6 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
+const envBaseUrl =
+  process.env.PLAYWRIGHT_BASE_URL?.trim() ||
+  process.env.BASE_URL?.trim() ||
+  process.env.APP_URL?.trim() ||
+  "";
+const fallbackBaseUrl = `http://127.0.0.1:${port}`;
+const resolvedBaseUrl = envBaseUrl || fallbackBaseUrl;
+const useExternalBaseUrl = Boolean(envBaseUrl);
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -12,7 +20,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: `http://127.0.0.1:${port}`,
+    baseURL: resolvedBaseUrl,
     trace: "on-first-retry",
     video: "retain-on-failure",
   },
@@ -30,23 +38,29 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: `npx next dev -p ${port}`,
-    url: `http://127.0.0.1:${port}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    env: {
-      APP_URL: `http://127.0.0.1:${port}`,
-      EXTERNAL_SERVICES_MODE: "mock",
-      RECORDING_MODE: "mock",
-      TRANSCRIPTION_MODE: "mock",
-      LIVEKIT_URL: "wss://mock-livekit.invalid",
-      LIVEKIT_API_KEY: "mock-livekit-key",
-      LIVEKIT_API_SECRET: "mock-livekit-secret",
-      // Disabled by default in tests to prevent unintended OpenAI charges
-      // and to keep tests deterministic. Enable per-test-run when needed.
-      AUTO_TRANSCRIBE_AFTER_RECORDING: "false",
-    },
+  webServer: useExternalBaseUrl
+    ? undefined
+    : {
+        command: `npx next dev -p ${port}`,
+        url: fallbackBaseUrl,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+        env: {
+          APP_URL: fallbackBaseUrl,
+          EXTERNAL_SERVICES_MODE: "mock",
+          RECORDING_MODE: "mock",
+          TRANSCRIPTION_MODE: "mock",
+          LIVEKIT_URL: "wss://mock-livekit.invalid",
+          LIVEKIT_API_KEY: "mock-livekit-key",
+          LIVEKIT_API_SECRET: "mock-livekit-secret",
+          // Disabled by default in tests to prevent unintended OpenAI charges
+          // and to keep tests deterministic. Enable per-test-run when needed.
+          AUTO_TRANSCRIBE_AFTER_RECORDING: "false",
+        },
+      },
+  metadata: {
+    baseURLSource: useExternalBaseUrl ? "env" : "playwright-webserver",
+    baseURL: resolvedBaseUrl,
   },
 });
 
