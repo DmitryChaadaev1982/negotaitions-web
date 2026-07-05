@@ -49,6 +49,11 @@ type TranscriptData = {
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
   speakerMappingStatus?: string | null;
+  mappingFailureReason?: string | null;
+  mappingFailureI18nKey?: string | null;
+  mappingFailureCompactI18nKey?: string | null;
+  mappingFailureDetails?: Record<string, unknown> | null;
+  mappingSuggestionDiagnostics?: Record<string, unknown> | null;
   speakerMapping: Record<string, string | null> | null;
   processingMetadata?: Record<string, unknown> | null;
   enhancement?: {
@@ -417,6 +422,7 @@ export function RecordingTranscriptionSection({
   const autoTranscribeStartedForSessionRef = useRef<string | null>(null);
   const speakerMappingDraftTranscriptIdRef = useRef<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
+  const [mappingFailureDetailsOpen, setMappingFailureDetailsOpen] = useState(false);
 
   const notifyProcessingChange = useCallback(() => {
     onProcessingChange?.();
@@ -1196,6 +1202,25 @@ export function RecordingTranscriptionSection({
     (transcript?.speakerMappingStatus === "REQUIRED" ||
       transcript?.speakerMappingStatus === "NEEDS_REVIEW") &&
     isTelemetryMappingReviewRequired(transcript?.processingMetadata ?? null);
+  const mappingFailureReasonKey = transcript?.mappingFailureI18nKey;
+  const mappingFailureCompactKey = transcript?.mappingFailureCompactI18nKey;
+  const showMappingFailureBanner =
+    (transcript?.speakerMappingStatus === "REQUIRED" ||
+      transcript?.speakerMappingStatus === "NEEDS_REVIEW") &&
+    Boolean(mappingFailureReasonKey || mappingFailureCompactKey);
+  const processingMetadata =
+    transcript?.processingMetadata && typeof transcript.processingMetadata === "object"
+      ? (transcript.processingMetadata as Record<string, unknown>)
+      : null;
+  const preprocessingSkipped = processingMetadata?.preprocessingSkipped === true;
+  const preprocessingReason =
+    typeof processingMetadata?.preprocessingTriggerReason === "string"
+      ? processingMetadata.preprocessingTriggerReason
+      : null;
+  const transcriptionInputSizeBytes =
+    typeof processingMetadata?.transcriptionInputSizeBytes === "number"
+      ? processingMetadata.transcriptionInputSizeBytes
+      : recording?.compressedSizeBytes ?? null;
 
   const speakersForMapping =
     detectedSpeakers.length > 0
@@ -1324,9 +1349,25 @@ export function RecordingTranscriptionSection({
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
-                    <p className="text-xs text-slate-500">{t("recording.transcriptionFileSize")}</p>
+                    <p className="text-xs text-slate-500">{t("recording.transcriptionInputFile")}</p>
                     <p className="text-sm text-slate-200">
-                      {formatBytes(recording?.compressedSizeBytes ?? null)}
+                      {formatBytes(transcriptionInputSizeBytes)}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+                    <p className="text-xs text-slate-500">{t("recording.recordingPreprocessingStatus")}</p>
+                    <p className="text-sm text-slate-200">
+                      {preprocessingSkipped
+                        ? t("recording.preprocessingSkipped")
+                        : t("recording.preprocessingCompleted")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+                    <p className="text-xs text-slate-500">{t("recording.preprocessingReason")}</p>
+                    <p className="text-sm text-slate-200 break-words">
+                      {preprocessingReason ?? "—"}
                     </p>
                   </div>
                 </div>
@@ -1660,6 +1701,45 @@ export function RecordingTranscriptionSection({
             {showTelemetryMappingReviewHint ? (
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                 {t("recording.telemetryMappingReviewRequired")}
+              </div>
+            ) : null}
+            {showMappingFailureBanner ? (
+              <div
+                className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+                data-testid={compact ? "mapping-failure-banner-compact" : "mapping-failure-banner-full"}
+              >
+                <p className="font-semibold text-amber-100">
+                  {compact
+                    ? t("recording.mappingFailureCompactTitle")
+                    : t("recording.mappingFailureTitle")}
+                </p>
+                <p className="mt-1 text-amber-200/90">
+                  {compact && mappingFailureCompactKey
+                    ? t(mappingFailureCompactKey as never)
+                    : mappingFailureReasonKey
+                      ? t(mappingFailureReasonKey as never)
+                      : t("recording.mappingFailureReason.unknownMappingFailure")}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                  <button
+                    type="button"
+                    className="text-amber-200 underline underline-offset-2 hover:text-amber-100"
+                    onClick={() => setMappingFailureDetailsOpen((current) => !current)}
+                    data-testid="mapping-failure-toggle-details"
+                  >
+                    {mappingFailureDetailsOpen
+                      ? t("recording.mappingFailureDetailsHide")
+                      : t("recording.mappingFailureDetailsShow")}
+                  </button>
+                </div>
+                {mappingFailureDetailsOpen ? (
+                  <div className="mt-2 rounded border border-amber-500/30 bg-slate-950/40 p-2 text-[11px] text-amber-100/90">
+                    <p className="font-semibold">{t("recording.mappingDiagnosticsTitle")}</p>
+                    <code className="mt-1 block whitespace-pre-wrap break-all">
+                      {JSON.stringify(transcript?.mappingFailureDetails ?? transcript?.mappingSuggestionDiagnostics ?? {}, null, 2)}
+                    </code>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

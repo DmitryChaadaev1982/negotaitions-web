@@ -35,6 +35,28 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
+function logAudioActivity(
+  level: "accepted" | "rejected",
+  payload: {
+    sessionId: string;
+    sessionParticipantId?: string | null;
+    source?: string | null;
+    hasOffsets?: boolean;
+    reason?: string;
+    intervalDurationMs?: number | null;
+  },
+) {
+  const fields = {
+    sessionId: payload.sessionId,
+    sessionParticipantId: payload.sessionParticipantId ?? null,
+    source: payload.source ?? null,
+    hasOffsets: payload.hasOffsets ?? false,
+    reason: payload.reason ?? null,
+    intervalDurationMs: payload.intervalDurationMs ?? null,
+  };
+  console.info(`[audio-activity] ${level}`, fields);
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
 
@@ -42,11 +64,16 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     body = await request.json();
   } catch {
+    logAudioActivity("rejected", { sessionId, reason: "invalid_json_body" });
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
+    logAudioActivity("rejected", {
+      sessionId,
+      reason: parsed.error.issues[0]?.message ?? "invalid_request",
+    });
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid request." },
       { status: 400 },
@@ -59,7 +86,6 @@ export async function POST(request: Request, context: RouteContext) {
     clientTimestamp,
     offsetSeconds,
     audioLevel,
-    telemetryCalibration,
   } = parsed.data;
   const source = parsed.data.source ?? "LIVEKIT_ACTIVE_SPEAKER";
 
@@ -68,6 +94,11 @@ export async function POST(request: Request, context: RouteContext) {
     sessionId,
   );
   if (!participant) {
+    logAudioActivity("rejected", {
+      sessionId,
+      source,
+      reason: "participant_forbidden_or_not_found",
+    });
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
@@ -76,7 +107,7 @@ export async function POST(request: Request, context: RouteContext) {
   const eventTime = Number.isNaN(eventTimeCandidate.getTime()) ? now : eventTimeCandidate;
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
-    select: { startedAt: true },
+    select: { startedAt: true, endedAt: true },
   });
   const recordingStartMs = recording?.startedAt?.getTime() ?? null;
   const derivedOffsetSeconds =
@@ -87,25 +118,39 @@ export async function POST(request: Request, context: RouteContext) {
           Math.round(((eventTime.getTime() - recordingStartMs) / 1000) * 1000) / 1000,
         );
   const resolvedOffsetSeconds = offsetSeconds ?? derivedOffsetSeconds;
+  const recordingDurationSeconds =
+    recording?.startedAt && recording?.endedAt
+      ? Math.max(0, (recording.endedAt.getTime() - recording.startedAt.getTime()) / 1000)
+      : null;
+  const normalizedOffsetSeconds =
+    typeof resolvedOffsetSeconds === "number"
+      ? Math.max(
+          0,
+          recordingDurationSeconds == null
+            ? resolvedOffsetSeconds
+            : Math.min(resolvedOffsetSeconds, recordingDurationSeconds),
+        )
+      : null;
 
   if (event === "SPEAKING_START") {
-    if (process.env.NODE_ENV !== "production") {
-      console.debug(
-        `[audio-activity] start session=${sessionId} participant=${participant.id} source=${source} level=${audioLevel ?? "n/a"} thresholds=${JSON.stringify(
-          telemetryCalibration ?? {},
-        )}`,
-      );
-    }
     await prisma.sessionParticipantAudioActivity.create({
       data: {
         sessionId,
         sessionParticipantId: participant.id,
         participantIdentity: participantIdentity ?? null,
         startedAt: eventTime,
-        startedOffsetSeconds: resolvedOffsetSeconds,
+        startedOffsetSeconds: normalizedOffsetSeconds,
         source,
         confidence: typeof audioLevel === "number" ? audioLevel : null,
       },
+    });
+    logAudioActivity("accepted", {
+      sessionId,
+      sessionParticipantId: participant.id,
+      source,
+      hasOffsets: normalizedOffsetSeconds != null,
+      reason: "start_recorded",
+      intervalDurationMs: null,
     });
 
     return NextResponse.json({ ok: true, event: "SPEAKING_START" });
@@ -123,11 +168,21 @@ export async function POST(request: Request, context: RouteContext) {
     });
 
     if (openActivity) {
+      const endedOffsetSeconds =
+        normalizedOffsetSeconds == null
+          ? null
+          : openActivity.startedOffsetSeconds != null
+            ? Math.max(normalizedOffsetSeconds, openActivity.startedOffsetSeconds)
+            : normalizedOffsetSeconds;
+      const intervalDurationMs = Math.max(
+        0,
+        eventTime.getTime() - openActivity.startedAt.getTime(),
+      );
       await prisma.sessionParticipantAudioActivity.update({
         where: { id: openActivity.id },
         data: {
           endedAt: eventTime,
-          endedOffsetSeconds: resolvedOffsetSeconds,
+          endedOffsetSeconds,
           startedOffsetSeconds:
             openActivity.startedOffsetSeconds ??
             (recordingStartMs == null
@@ -140,18 +195,32 @@ export async function POST(request: Request, context: RouteContext) {
                 )),
         },
       });
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      console.debug(
-        `[audio-activity] end session=${sessionId} participant=${participant.id} source=${source} level=${audioLevel ?? "n/a"} thresholds=${JSON.stringify(
-          telemetryCalibration ?? {},
-        )}`,
-      );
+      logAudioActivity("accepted", {
+        sessionId,
+        sessionParticipantId: participant.id,
+        source,
+        hasOffsets: endedOffsetSeconds != null,
+        reason: "end_recorded",
+        intervalDurationMs,
+      });
+    } else {
+      logAudioActivity("rejected", {
+        sessionId,
+        sessionParticipantId: participant.id,
+        source,
+        hasOffsets: normalizedOffsetSeconds != null,
+        reason: "no_open_interval_for_end",
+      });
     }
 
     return NextResponse.json({ ok: true, event: "SPEAKING_END" });
   }
 
+  logAudioActivity("rejected", {
+    sessionId,
+    sessionParticipantId: participant.id,
+    source,
+    reason: "unknown_event",
+  });
   return NextResponse.json({ error: "Unknown event." }, { status: 400 });
 }

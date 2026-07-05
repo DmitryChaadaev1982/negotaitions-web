@@ -8,6 +8,7 @@ import {
   getUniqueSpeakerLabels,
 } from "@/lib/transcription/speaker-labels";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
+import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 
 export const runtime = "nodejs";
 
@@ -80,6 +81,12 @@ export async function GET(_request: Request, context: RouteContext) {
           })),
         )
       : [];
+    const mappingFailure = session.transcript
+      ? resolveMappingFailure({
+          speakerMappingStatus: session.transcript.speakerMappingStatus ?? null,
+          processingMetadata: session.transcript.processingMetadata,
+        })
+      : null;
 
     return NextResponse.json({
       recording: session.recording
@@ -118,6 +125,13 @@ export async function GET(_request: Request, context: RouteContext) {
               speakerMappingStatus: session.transcript.speakerMappingStatus,
               processingMetadata: session.transcript.processingMetadata,
             }),
+            mappingFailureReason: mappingFailure?.mappingFailureReason ?? null,
+            mappingFailureI18nKey: mappingFailure?.mappingFailureI18nKey ?? null,
+            mappingFailureCompactI18nKey:
+              mappingFailure?.mappingFailureCompactI18nKey ?? null,
+            mappingFailureDetails: mappingFailure?.mappingFailureDetails ?? null,
+            mappingSuggestionDiagnostics:
+              mappingFailure?.mappingSuggestionDiagnostics ?? null,
             processingMetadata: session.transcript.processingMetadata ?? null,
             enhancement: {
               status:

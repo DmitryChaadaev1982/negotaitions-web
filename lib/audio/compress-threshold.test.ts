@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldReuseOriginalAudioForTranscription } from "@/lib/audio/transcription-file-selection";
+import {
+  evaluateSpeechKitCompatibility,
+  shouldReuseOriginalAudioForTranscription,
+} from "@/lib/audio/transcription-file-selection";
 import {
   getAudioTranscriptionChannels,
   getAudioTranscriptionMaxFileBytes,
@@ -72,6 +75,37 @@ test("incompatible source format is not reused even when small", () => {
     assert.equal(result.isUnderCompressionThreshold, true);
     assert.equal(result.isContainerCompatible, false);
     assert.equal(result.shouldReuseOriginal, false);
+  });
+});
+
+test("null mime but ffprobe-compatible container/codec stays compatible", () => {
+  const compatibility = evaluateSpeechKitCompatibility({
+    inputFileName: "recording.unknown",
+    probe: {
+      probeAvailable: true,
+      container: "ogg",
+      codec: "opus",
+      sampleRate: 48000,
+      channels: 1,
+    },
+  });
+  assert.equal(compatibility.isCompatible, true);
+});
+
+test("below threshold compatible probe reuses original", () => {
+  withEnv({ AUDIO_TRANSCRIPTION_MAX_FILE_MB: "24" }, () => {
+    const result = shouldReuseOriginalAudioForTranscription(
+      1_150_000,
+      "recording.flac",
+      getAudioTranscriptionMaxFileBytes(),
+      {
+        probeAvailable: true,
+        container: "ogg",
+        codec: "opus",
+      },
+    );
+    assert.equal(result.shouldReuseOriginal, true);
+    assert.equal(result.probeAvailable, true);
   });
 });
 

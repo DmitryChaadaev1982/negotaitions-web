@@ -46,7 +46,7 @@ import {
   uploadBufferToS3,
 } from "@/lib/storage/s3";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
-import { isSpeechKitContainerCompatible } from "@/lib/audio/transcription-file-selection";
+import { evaluateSpeechKitCompatibility } from "@/lib/audio/transcription-file-selection";
 import { probeAudioBuffer } from "@/lib/observability/audio-metadata";
 import {
   computeTranscriptQualityReport,
@@ -341,45 +341,100 @@ export async function runRealTranscription(
       recording.fileName ?? "recording",
     );
 
-    await setTranscriptStatus(transcriptId, TranscriptStatus.COMPRESSING_AUDIO);
-    const compression = await compressAudioForTranscription(
-      originalBuffer,
-      recording.fileName ?? "recording.mp4",
-      { recordingId: recording.id, sessionId },
-    );
-    await throwIfTranscriptionStoppedManually(transcriptId);
-
-    const timestamp = Date.now();
-    const extension = resolveCompressedExtension(compression.compressedFileName);
-    const compressedFileKey = buildCompressedFileKey(sessionId, timestamp, extension);
-
-    await uploadBufferToS3(
-      compressedFileKey,
-      compression.compressedBuffer,
-      compression.compressedMimeType,
-      { sessionId, recordingId: recording.id },
-    );
-
-    await prisma.recording.update({
-      where: { id: recording.id },
-      data: {
-        compressedFileKey,
-        compressedFileName: compression.compressedFileName,
-        compressedMimeType: compression.compressedMimeType,
-        compressedSizeBytes: compression.compressedSizeBytes,
-        compressionStatus:
-          compression.codecUsed === "passthrough"
-            ? CompressionStatus.SKIPPED
-            : CompressionStatus.COMPLETED,
-        compressionError: null,
-      },
-    });
-
     const maxBytes = getAudioTranscriptionMaxFileBytes();
-    if (compression.compressedSizeBytes > maxBytes) {
+    const maxFileMb = maxBytes / (1024 * 1024);
+    const compatibility = evaluateSpeechKitCompatibility({
+      inputFileName: recording.fileName ?? null,
+      probe: sourceAudioMetadata,
+    });
+    const shouldTranscode =
+      originalBuffer.length > maxBytes || !compatibility.isCompatible;
+    const preprocessingTriggerReason = shouldTranscode
+      ? originalBuffer.length > maxBytes
+        ? "size_exceeds_threshold"
+        : compatibility.reason
+      : "not_required";
+    let selectedBuffer = originalBuffer;
+    let selectedFileName = recording.fileName ?? "recording";
+    let selectedMimeType = recording.mimeType ?? "application/octet-stream";
+    let fallbackToOriginal = false;
+    let ffmpegOutputSizeBytes: number | null = null;
+    let ffmpegSizeDeltaBytes: number | null = null;
+    let ffmpegSizeDeltaPercent: number | null = null;
+    let compression:
+      | Awaited<ReturnType<typeof compressAudioForTranscription>>
+      | null = null;
+
+    if (shouldTranscode) {
+      await setTranscriptStatus(transcriptId, TranscriptStatus.COMPRESSING_AUDIO);
+      compression = await compressAudioForTranscription(
+        originalBuffer,
+        recording.fileName ?? "recording",
+        {
+          recordingId: recording.id,
+          sessionId,
+          forceTranscode: true,
+          probe: sourceAudioMetadata,
+        },
+      );
+      await throwIfTranscriptionStoppedManually(transcriptId);
+
+      ffmpegOutputSizeBytes = compression.compressedSizeBytes;
+      ffmpegSizeDeltaBytes = compression.compressedSizeBytes - originalBuffer.length;
+      ffmpegSizeDeltaPercent =
+        originalBuffer.length > 0
+          ? Math.round((ffmpegSizeDeltaBytes / originalBuffer.length) * 10000) / 100
+          : null;
+
+      if (
+        compression.compressedSizeBytes > originalBuffer.length &&
+        compatibility.isCompatible
+      ) {
+        fallbackToOriginal = true;
+      } else {
+        selectedBuffer = compression.compressedBuffer;
+        selectedFileName = compression.compressedFileName;
+        selectedMimeType = compression.compressedMimeType;
+      }
+
+      const timestamp = Date.now();
+      const extension = resolveCompressedExtension(compression.compressedFileName);
+      const compressedFileKey = buildCompressedFileKey(sessionId, timestamp, extension);
+      await uploadBufferToS3(
+        compressedFileKey,
+        compression.compressedBuffer,
+        compression.compressedMimeType,
+        { sessionId, recordingId: recording.id },
+      );
+      await prisma.recording.update({
+        where: { id: recording.id },
+        data: {
+          compressedFileKey,
+          compressedFileName: compression.compressedFileName,
+          compressedMimeType: compression.compressedMimeType,
+          compressedSizeBytes: compression.compressedSizeBytes,
+          compressionStatus: CompressionStatus.COMPLETED,
+          compressionError: null,
+        },
+      });
+    } else {
+      await prisma.recording.update({
+        where: { id: recording.id },
+        data: {
+          compressedFileKey: null,
+          compressedFileName: null,
+          compressedMimeType: null,
+          compressedSizeBytes: originalBuffer.length,
+          compressionStatus: CompressionStatus.SKIPPED,
+          compressionError: null,
+        },
+      });
+    }
+
+    if (selectedBuffer.length > maxBytes) {
       const classified = classifyExternalServiceError(
         ExternalService.OPENAI,
-        new AudioFileTooLargeError(compression.compressedSizeBytes, maxBytes),
+        new AudioFileTooLargeError(selectedBuffer.length, maxBytes),
         "file_too_large",
       );
 
@@ -407,9 +462,9 @@ export async function runRealTranscription(
 
     await setTranscriptStatus(transcriptId, TranscriptStatus.TRANSCRIBING);
     const transcription = await transcribeAudioBuffer(
-      compression.compressedBuffer,
-      compression.compressedFileName,
-      compression.compressedMimeType,
+      selectedBuffer,
+      selectedFileName,
+      selectedMimeType,
       language as TranscriptionLanguageHint,
       { sessionId, recordingId: recording.id, prompt: transcriptionPrompt },
     );
@@ -441,27 +496,36 @@ export async function runRealTranscription(
     );
 
     // ── Stage-1 observability: preprocessing decision, raw snapshot, quality ──
-    const sourceFileName = recording.fileName ?? "recording.mp4";
-    const compatibleContainer = isSpeechKitContainerCompatible(sourceFileName);
-    const wasSkipped = compression.codecUsed === "passthrough";
+    const sourceFileName = recording.fileName ?? "recording";
+    const compatibleContainer = compatibility.isCompatible;
+    const wasSkipped = !shouldTranscode || fallbackToOriginal;
     const preprocessDecision: PreprocessingDecisionLog = {
+      audioTranscriptionMaxFileMb: maxFileMb,
       originalSizeBytes: originalBuffer.length,
-      thresholdBytes: getAudioTranscriptionMaxFileBytes(),
+      thresholdBytes: maxBytes,
       mimeType: recording.mimeType ?? null,
+      transcriptionInputSizeBytes: selectedBuffer.length,
+      preprocessingSkipped: wasSkipped,
+      preprocessingTriggered: shouldTranscode,
+      preprocessingTriggerReason: preprocessingTriggerReason,
+      selectedInputForSpeechKit: fallbackToOriginal ? "original" : shouldTranscode ? "preprocessed" : "original",
+      originalCompatibleWithSpeechKit: compatibility.isCompatible,
+      ffmpegOutputSizeBytes,
+      ffmpegSizeDeltaBytes,
+      ffmpegSizeDeltaPercent,
+      fallbackToOriginal,
+      sourceContainer: sourceAudioMetadata.container,
+      sourceCodec: sourceAudioMetadata.codec,
+      sourceSampleRate: sourceAudioMetadata.sampleRate,
+      sourceChannels: sourceAudioMetadata.channels,
       container: sourceFileName.includes(".")
         ? sourceFileName.slice(sourceFileName.lastIndexOf(".") + 1).toLowerCase()
         : null,
       compatibleContainer,
       skipped: wasSkipped,
-      reason: wasSkipped
-        ? "under_threshold_and_compatible_container"
-        : originalBuffer.length > getAudioTranscriptionMaxFileBytes()
-          ? "over_size_threshold"
-          : !compatibleContainer
-            ? "incompatible_container"
-            : "transcoded",
-      outputCodec: compression.codecUsed,
-      outputFormat: compression.compressedFileName.includes(".")
+      reason: preprocessingTriggerReason,
+      outputCodec: compression?.codecUsed ?? null,
+      outputFormat: compression?.compressedFileName.includes(".")
         ? compression.compressedFileName
             .slice(compression.compressedFileName.lastIndexOf(".") + 1)
             .toLowerCase()
@@ -523,8 +587,29 @@ export async function runRealTranscription(
       timestampsEnabled: transcriptionProvider === "openai" ? txConfig.useTimestamps : null,
       promptEnabled: transcriptionProvider === "openai" ? txConfig.promptEnabled : false,
       promptLength: transcriptionPrompt?.length ?? 0,
-      codecUsed: compression.codecUsed,
-      compressedSizeBytes: compression.compressedSizeBytes,
+      codecUsed: compression?.codecUsed ?? "passthrough",
+      compressedSizeBytes: selectedBuffer.length,
+      audioTranscriptionMaxFileMb: maxFileMb,
+      thresholdBytes: maxBytes,
+      originalSizeBytes: originalBuffer.length,
+      transcriptionInputSizeBytes: selectedBuffer.length,
+      preprocessingSkipped: wasSkipped,
+      preprocessingTriggered: shouldTranscode,
+      preprocessingTriggerReason,
+      selectedInputForSpeechKit: fallbackToOriginal
+        ? "original"
+        : shouldTranscode
+          ? "preprocessed"
+          : "original",
+      originalCompatibleWithSpeechKit: compatibility.isCompatible,
+      ffmpegOutputSizeBytes,
+      ffmpegSizeDeltaBytes,
+      ffmpegSizeDeltaPercent,
+      fallbackToOriginal,
+      sourceContainer: sourceAudioMetadata.container,
+      sourceCodec: sourceAudioMetadata.codec,
+      sourceSampleRate: sourceAudioMetadata.sampleRate,
+      sourceChannels: sourceAudioMetadata.channels,
       yandexSpeechKitModel:
         transcriptionProvider === "yandex_speechkit" ? getYandexSpeechKitModel() : null,
       yandexTextNormalizationEnabled:
@@ -588,8 +673,8 @@ export async function runRealTranscription(
           text: normalizedTranscriptionText,
           diarizedText: normalizedDiarizedText,
           language: transcription.language,
-          originalFileName: compression.compressedFileName,
-          originalMimeType: compression.compressedMimeType,
+          originalFileName: selectedFileName,
+          originalMimeType: selectedMimeType,
           transcriptionModel: transcription.model,
           hasSpeakerDiarization: transcription.hasSpeakerDiarization,
           diarizationStatus: transcription.diarizationStatus,
@@ -665,8 +750,8 @@ export async function runRealTranscription(
         fileName: recording.fileName ?? null,
         mimeType: recording.mimeType ?? null,
         originalSizeBytes: originalBuffer.length,
-        compressedSizeBytes: compression.compressedSizeBytes,
-        codecUsed: compression.codecUsed,
+        compressedSizeBytes: selectedBuffer.length,
+        codecUsed: compression?.codecUsed ?? "passthrough",
         sourceContainer: sourceAudioMetadata.container,
         sourceCodec: sourceAudioMetadata.codec,
         sourceSampleRate: sourceAudioMetadata.sampleRate,
@@ -701,7 +786,7 @@ export async function runRealTranscription(
     }
 
     if (transcriptionProvider === "openai") {
-      await trackOpenAiTranscriptionBytes(compression.compressedSizeBytes, sessionId);
+      await trackOpenAiTranscriptionBytes(selectedBuffer.length, sessionId);
     }
 
     return NextResponse.json({
