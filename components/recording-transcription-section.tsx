@@ -61,6 +61,47 @@ type TranscriptData = {
   segments?: TranscriptSegmentData[];
 };
 
+function isTelemetryMappingReviewRequired(
+  processingMetadata: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!processingMetadata || typeof processingMetadata !== "object") {
+    return false;
+  }
+  const suggestion =
+    (processingMetadata as { mappingSuggestion?: Record<string, unknown> })
+      .mappingSuggestion ?? null;
+  if (!suggestion || typeof suggestion !== "object") {
+    return false;
+  }
+
+  const reason = typeof suggestion.reason === "string" ? suggestion.reason : null;
+  if (
+    reason === "telemetry_quality_review_required" ||
+    reason === "telemetry_coverage_review_required" ||
+    reason === "telemetry_offsets_review_required"
+  ) {
+    return true;
+  }
+
+  const telemetryQuality =
+    (suggestion as { telemetryQuality?: Record<string, unknown> }).telemetryQuality ??
+    null;
+  if (!telemetryQuality || typeof telemetryQuality !== "object") {
+    return false;
+  }
+  const warnings = Array.isArray(telemetryQuality.warnings)
+    ? telemetryQuality.warnings
+    : [];
+  return warnings.some(
+    (warning) =>
+      warning === "no_activity_for_participant" ||
+      warning === "low_activity_for_participant" ||
+      warning === "row_imbalance" ||
+      warning === "duration_imbalance" ||
+      warning === "missing_offsets",
+  );
+}
+
 type ParticipantOption = {
   id: string;
   displayName: string;
@@ -1151,6 +1192,10 @@ export function RecordingTranscriptionSection({
     enhancementAvailable &&
     !enhancementInProgress;
   const showEnhancementStatus = enhancementInProgress || busyAction === "enhance";
+  const showTelemetryMappingReviewHint =
+    (transcript?.speakerMappingStatus === "REQUIRED" ||
+      transcript?.speakerMappingStatus === "NEEDS_REVIEW") &&
+    isTelemetryMappingReviewRequired(transcript?.processingMetadata ?? null);
 
   const speakersForMapping =
     detectedSpeakers.length > 0
@@ -1609,6 +1654,12 @@ export function RecordingTranscriptionSection({
                     </div>
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {showTelemetryMappingReviewHint ? (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                {t("recording.telemetryMappingReviewRequired")}
               </div>
             ) : null}
 

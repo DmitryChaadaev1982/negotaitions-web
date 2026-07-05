@@ -18,6 +18,25 @@ export type SpeakerScoreMatrix = Record<
   Record<string, SpeakerParticipantScore>
 >;
 
+export type TelemetryParticipantHealth = {
+  participantId: string;
+  rows: number;
+  totalDurationMs: number;
+  firstActivityOffsetSeconds: number | null;
+  lastActivityOffsetSeconds: number | null;
+  recordingCoverageRatio: number;
+  hasDirectOffsets: boolean;
+  usedDerivedOffsets: boolean;
+  avgIntervalMs: number | null;
+  medianIntervalMs: number | null;
+  shortIntervalCount: number;
+};
+
+export type TelemetryHealthReport = {
+  participants: Record<string, TelemetryParticipantHealth>;
+  warnings: string[];
+};
+
 export type AutoMappingSuggestion = {
   strategy: "diarization_segment_overlap";
   available: boolean;
@@ -29,6 +48,7 @@ export type AutoMappingSuggestion = {
   mapping: SpeakerMapping;
   confidence: Record<string, number>;
   telemetryQuality: TelemetryQuality;
+  telemetryHealth: TelemetryHealthReport;
 };
 
 type TranscriptWithSegments = {
@@ -172,7 +192,14 @@ export async function suggestSpeakerMapping(
     imbalanceByRows: null,
     imbalanceByDuration: null,
     hasOffsets: false,
+    hasDerivedOffsets: false,
     alignmentMode: "none",
+    activeParticipantsDuringRecording: 0,
+    outsideRecordingWindowRows: 0,
+    warnings: [],
+  };
+  const emptyTelemetryHealth: TelemetryHealthReport = {
+    participants: {},
     warnings: [],
   };
 
@@ -193,6 +220,7 @@ export async function suggestSpeakerMapping(
       mapping: {},
       confidence: {},
       telemetryQuality: emptyTelemetryQuality,
+      telemetryHealth: emptyTelemetryHealth,
     };
   }
 
@@ -214,6 +242,7 @@ export async function suggestSpeakerMapping(
       mapping: {},
       confidence: {},
       telemetryQuality: emptyTelemetryQuality,
+      telemetryHealth: emptyTelemetryHealth,
     };
   }
 
@@ -235,20 +264,30 @@ export async function suggestSpeakerMapping(
   // that were stored with absolute timestamps only (no startedOffsetSeconds)
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
-    select: { startedAt: true },
+    select: { startedAt: true, endedAt: true, status: true },
   });
   const recordingStartMs = recording?.startedAt?.getTime() ?? null;
+  const recordingEndMs = recording?.endedAt?.getTime() ?? null;
   let hasOffsets = false;
+  let derivedOffsetCount = 0;
+  let outsideRecordingWindowRows = 0;
 
   // Group raw activity intervals by participant
   const activityByParticipant = new Map<
     string,
-    Array<{ start: number; end: number; level: number | null }>
+    Array<{
+      start: number;
+      end: number;
+      level: number | null;
+      hasDirectOffsets: boolean;
+      usedDerivedOffset: boolean;
+    }>
   >();
 
   for (const activity of activities) {
     let start = activity.startedOffsetSeconds;
     let end = activity.endedOffsetSeconds;
+    let rowUsedDerivedOffset = false;
     if (activity.startedOffsetSeconds != null || activity.endedOffsetSeconds != null) {
       hasOffsets = true;
     }
@@ -256,19 +295,50 @@ export async function suggestSpeakerMapping(
     // Fall back to computing offsets from recording start using absolute timestamps
     if (start == null && recordingStartMs != null) {
       start = (activity.startedAt.getTime() - recordingStartMs) / 1000;
+      derivedOffsetCount += 1;
+      rowUsedDerivedOffset = true;
     }
     if (end == null && recordingStartMs != null && activity.endedAt != null) {
       end = (activity.endedAt.getTime() - recordingStartMs) / 1000;
+      derivedOffsetCount += 1;
+      rowUsedDerivedOffset = true;
     }
 
     if (start == null) continue;
     const safeEnd = end ?? start + 1;
+    const clampedStartAtMs = activity.startedAt.getTime();
+    const clampedEndAtMs = activity.endedAt?.getTime() ?? clampedStartAtMs + 1000;
+    if (
+      recordingStartMs != null &&
+      (clampedEndAtMs <= recordingStartMs ||
+        (recordingEndMs != null && clampedStartAtMs >= recordingEndMs))
+    ) {
+      outsideRecordingWindowRows += 1;
+      continue;
+    }
 
     const existing = activityByParticipant.get(activity.sessionParticipantId) ?? [];
     existing.push({
-      start,
-      end: safeEnd,
+      start:
+        recordingStartMs == null
+          ? start
+          : Math.max(0, Math.max(start, (clampedStartAtMs - recordingStartMs) / 1000)),
+      end:
+        recordingStartMs == null
+          ? safeEnd
+          : Math.max(
+              0,
+              Math.min(
+                safeEnd,
+                recordingEndMs == null
+                  ? Number.POSITIVE_INFINITY
+                  : (recordingEndMs - recordingStartMs) / 1000,
+              ),
+            ),
       level: typeof activity.confidence === "number" ? activity.confidence : null,
+      hasDirectOffsets:
+        activity.startedOffsetSeconds != null || activity.endedOffsetSeconds != null,
+      usedDerivedOffset: rowUsedDerivedOffset,
     });
     activityByParticipant.set(activity.sessionParticipantId, existing);
   }
@@ -294,7 +364,10 @@ export async function suggestSpeakerMapping(
         participantCount: participantPool.length,
         hasOffsets,
         hasAbsoluteTimestamps: recordingStartMs != null,
+        hasDerivedOffsets: derivedOffsetCount > 0,
+        outsideRecordingWindowRows,
       }),
+      telemetryHealth: emptyTelemetryHealth,
     };
   }
 
@@ -304,6 +377,7 @@ export async function suggestSpeakerMapping(
   }));
 
   const normalizedByParticipant = new Map<string, Array<{ start: number; end: number }>>();
+  const telemetryParticipants: Record<string, TelemetryParticipantHealth> = {};
 
   const rowsByParticipant: Record<string, number> = {};
   const durationByParticipantMs: Record<string, number> = {};
@@ -320,11 +394,13 @@ export async function suggestSpeakerMapping(
       .sort((a, b) => a.start - b.start);
 
     const keptIntervals: Array<{ start: number; end: number }> = [];
+    let shortCountForParticipant = 0;
     for (const interval of filteredRaw) {
       const durationMs = (interval.end - interval.start) * 1000;
       const overlapsDiarized = hasOverlapWithAny(interval, diarizedIntervals);
       if (durationMs < TELEMETRY_MIN_INTERVAL_MS && !overlapsDiarized) {
         shortIntervalCount += 1;
+        shortCountForParticipant += 1;
         continue;
       }
       keptIntervals.push({ start: interval.start, end: interval.end });
@@ -363,6 +439,44 @@ export async function suggestSpeakerMapping(
     const medianValue = median(durationsMs);
     medianIntervalMs[participant.id] =
       medianValue == null ? null : Math.round(medianValue);
+    const recordingDurationSeconds =
+      recordingStartMs != null
+        ? Math.max(
+            0,
+            ((recordingEndMs ?? recordingStartMs) - recordingStartMs) / 1000,
+          )
+        : null;
+    const firstActivityOffsetSeconds = merged.length > 0 ? merged[0]!.start : null;
+    const lastActivityOffsetSeconds =
+      merged.length > 0 ? merged[merged.length - 1]!.end : null;
+    const hasDirectOffsetsForParticipant = rawIntervals.some(
+      (interval) => interval.hasDirectOffsets,
+    );
+    const usedDerivedOffsetsForParticipant = rawIntervals.some(
+      (interval) => interval.usedDerivedOffset,
+    );
+    telemetryParticipants[participant.id] = {
+      participantId: participant.id,
+      rows: rawIntervals.length,
+      totalDurationMs: durationByParticipantMs[participant.id] ?? 0,
+      firstActivityOffsetSeconds,
+      lastActivityOffsetSeconds,
+      recordingCoverageRatio:
+        recordingDurationSeconds && recordingDurationSeconds > 0
+          ? Math.min(
+              1,
+              Math.round(
+                (((durationByParticipantMs[participant.id] ?? 0) / 1000 / recordingDurationSeconds) *
+                  1000),
+              ) / 1000,
+            )
+          : 0,
+      hasDirectOffsets: hasDirectOffsetsForParticipant,
+      usedDerivedOffsets: usedDerivedOffsetsForParticipant,
+      avgIntervalMs: avgIntervalMs[participant.id] ?? null,
+      medianIntervalMs: medianIntervalMs[participant.id] ?? null,
+      shortIntervalCount: shortCountForParticipant,
+    };
 
     const levelValues = filteredRaw
       .map((interval) => interval.level)
@@ -392,7 +506,14 @@ export async function suggestSpeakerMapping(
     participantCount: participantPool.length,
     hasOffsets,
     hasAbsoluteTimestamps: recordingStartMs != null,
+    hasDerivedOffsets: derivedOffsetCount > 0,
+    outsideRecordingWindowRows,
   });
+  const telemetryHealthWarnings = [...telemetryQuality.warnings];
+  const telemetryHealth: TelemetryHealthReport = {
+    participants: telemetryParticipants,
+    warnings: telemetryHealthWarnings,
+  };
 
   // Get unique speaker labels from transcript
   const speakerLabels = [
@@ -475,5 +596,6 @@ export async function suggestSpeakerMapping(
     mapping: selection.mapping,
     confidence: selection.confidence,
     telemetryQuality,
+    telemetryHealth,
   };
 }

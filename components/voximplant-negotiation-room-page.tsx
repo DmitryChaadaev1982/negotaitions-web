@@ -730,6 +730,8 @@ export default function VoximplantNegotiationRoomPage(
             enabled={joined && !staleConnection}
             connectionId={roomConnectionId ?? undefined}
             audioProcessingEnabled={audioProcessingEnabled}
+            recordingStatus={recordingState?.status ?? null}
+            recordingStartedAt={recordingState?.startedAt ?? null}
           />
         }
         providerBanner={null}

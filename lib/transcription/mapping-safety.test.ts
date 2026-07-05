@@ -68,8 +68,11 @@ test("telemetry one-sided emits coverage and low-activity warnings", () => {
   });
 
   assert.ok(quality.warnings.includes("missing_participant_coverage"));
+  assert.ok(quality.warnings.includes("no_activity_for_participant"));
   assert.ok(quality.warnings.includes("participant_low_activity"));
+  assert.ok(quality.warnings.includes("low_activity_for_participant"));
   assert.ok(quality.warnings.includes("offsets_missing_fallback_absolute_time"));
+  assert.equal(quality.activeParticipantsDuringRecording, 1);
 });
 
 test("telemetry imbalanced emits telemetry_imbalanced warning", () => {
@@ -106,4 +109,24 @@ test("row imbalance alone does not mark telemetry one-sided", () => {
   assert.ok(quality.warnings.includes("row_imbalance_high"));
   assert.ok(!quality.warnings.includes("duration_imbalance_high"));
   assert.ok(!quality.warnings.includes("telemetry_imbalanced"));
+});
+
+test("derived offsets and outside-window rows are surfaced in warnings", () => {
+  const quality = evaluateTelemetryQuality({
+    rowsByParticipant: { A: 4, B: 3 },
+    durationByParticipantMs: { A: 10000, B: 8000 },
+    avgIntervalMs: { A: 2500, B: 2600 },
+    medianIntervalMs: { A: 2400, B: 2500 },
+    shortIntervalCount: 0,
+    mergedIntervalCount: 1,
+    participantCount: 2,
+    hasOffsets: false,
+    hasAbsoluteTimestamps: true,
+    hasDerivedOffsets: true,
+    outsideRecordingWindowRows: 5,
+  });
+
+  assert.ok(quality.warnings.includes("derived_offsets"));
+  assert.ok(quality.warnings.includes("activity_outside_recording_window"));
+  assert.equal(quality.outsideRecordingWindowRows, 5);
 });

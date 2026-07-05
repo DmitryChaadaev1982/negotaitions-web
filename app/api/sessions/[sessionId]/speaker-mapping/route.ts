@@ -204,6 +204,7 @@ export async function POST(request: Request, context: RouteContext) {
       suggestedMapping: suggestion.mapping,
       confidence: suggestion.confidence,
       telemetryQuality: suggestion.telemetryQuality,
+      telemetryHealth: suggestion.telemetryHealth,
       available: suggestion.available,
       unavailableReason: suggestion.unavailableReason,
     });

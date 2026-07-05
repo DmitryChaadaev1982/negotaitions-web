@@ -72,7 +72,21 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const now = new Date();
-  const eventTime = clientTimestamp ? new Date(clientTimestamp) : now;
+  const eventTimeCandidate = clientTimestamp ? new Date(clientTimestamp) : now;
+  const eventTime = Number.isNaN(eventTimeCandidate.getTime()) ? now : eventTimeCandidate;
+  const recording = await prisma.recording.findUnique({
+    where: { sessionId },
+    select: { startedAt: true },
+  });
+  const recordingStartMs = recording?.startedAt?.getTime() ?? null;
+  const derivedOffsetSeconds =
+    recordingStartMs == null
+      ? null
+      : Math.max(
+          0,
+          Math.round(((eventTime.getTime() - recordingStartMs) / 1000) * 1000) / 1000,
+        );
+  const resolvedOffsetSeconds = offsetSeconds ?? derivedOffsetSeconds;
 
   if (event === "SPEAKING_START") {
     if (process.env.NODE_ENV !== "production") {
@@ -88,7 +102,7 @@ export async function POST(request: Request, context: RouteContext) {
         sessionParticipantId: participant.id,
         participantIdentity: participantIdentity ?? null,
         startedAt: eventTime,
-        startedOffsetSeconds: offsetSeconds ?? null,
+        startedOffsetSeconds: resolvedOffsetSeconds,
         source,
         confidence: typeof audioLevel === "number" ? audioLevel : null,
       },
@@ -113,7 +127,17 @@ export async function POST(request: Request, context: RouteContext) {
         where: { id: openActivity.id },
         data: {
           endedAt: eventTime,
-          endedOffsetSeconds: offsetSeconds ?? null,
+          endedOffsetSeconds: resolvedOffsetSeconds,
+          startedOffsetSeconds:
+            openActivity.startedOffsetSeconds ??
+            (recordingStartMs == null
+              ? null
+              : Math.max(
+                  0,
+                  Math.round(
+                    ((openActivity.startedAt.getTime() - recordingStartMs) / 1000) * 1000,
+                  ) / 1000,
+                )),
         },
       });
     }

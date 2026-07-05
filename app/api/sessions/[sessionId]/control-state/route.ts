@@ -134,6 +134,8 @@ export async function GET(request: Request, context: RouteContext) {
     select: {
       status: true,
       errorMessage: true,
+      startedAt: true,
+      endedAt: true,
     },
   });
 
@@ -148,6 +150,8 @@ export async function GET(request: Request, context: RouteContext) {
         ? {
             status: recording.status,
             errorMessage: isFacilitator ? recording.errorMessage : null,
+            startedAt: recording.startedAt?.toISOString() ?? null,
+            endedAt: recording.endedAt?.toISOString() ?? null,
           }
         : null,
     },
