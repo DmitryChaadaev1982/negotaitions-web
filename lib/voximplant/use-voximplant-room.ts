@@ -10,6 +10,7 @@ import {
   waitForVoxClientIdle,
 } from "@/lib/voximplant/browser-client-lifecycle";
 import { AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER } from "@/lib/telemetry/speaking-activity-config";
+import { clearRemoteAudioElements, stopVoxLikeStreamTracks } from "@/lib/voximplant/media-cleanup";
 import {
   installVoxCameraErrorSuppressor,
   installVoxRuntimeErrorSuppressor,
@@ -321,17 +322,6 @@ function isNonFatalMediaError(error: unknown): boolean {
  */
 function isAlreadyExistsError(error: unknown): boolean {
   return isAlreadyExistsStreamError(error);
-}
-
-/** Stop all underlying browser MediaStreamTracks to release the hardware device. */
-function stopVoxStreamTracks(stream: VoxStream | null): void {
-  if (!stream) return;
-  try { stream.track?.stop(); } catch { /* ignore */ }
-  if (stream.sourceStream) {
-    try {
-      for (const track of stream.sourceStream.getTracks()) track.stop();
-    } catch { /* ignore */ }
-  }
 }
 
 /**
@@ -772,11 +762,7 @@ export function useVoximplantRoom({
     }
 
     // Release remote audio elements.
-    for (const audio of runtime.remoteAudioElements.values()) {
-      audio.pause();
-      audio.srcObject = null;
-    }
-    runtime.remoteAudioElements.clear();
+    clearRemoteAudioElements(runtime.remoteAudioElements);
 
     // Unsubscribe endpoint listeners.
     for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
@@ -799,8 +785,8 @@ export function useVoximplantRoom({
     }
 
     // Stop browser tracks to release hardware. Silent stream close() also closes AudioContext.
-    stopVoxStreamTracks(runtime.localAudioStream);
-    stopVoxStreamTracks(runtime.localVideoStream);
+    stopVoxLikeStreamTracks(runtime.localAudioStream);
+    stopVoxLikeStreamTracks(runtime.localVideoStream);
     runtime.localAudioStream?.close?.();
     runtime.localVideoStream?.close?.();
 
@@ -893,7 +879,7 @@ export function useVoximplantRoom({
           // ── Unmute path ──
           // If we were using a silent placeholder, release it so we can create a real stream.
           if (runtime.isSilentAudio) {
-            stopVoxStreamTracks(runtime.localAudioStream);
+            stopVoxLikeStreamTracks(runtime.localAudioStream);
             runtime.localAudioStream?.close?.();
             runtime.localAudioStream = null;
             runtime.isSilentAudio = false;
@@ -1037,7 +1023,7 @@ export function useVoximplantRoom({
                   addMediaWarning(
                     `Не удалось добавить видеопоток в конференцию: ${message}`,
                   );
-                  stopVoxStreamTracks(videoStream);
+                  stopVoxLikeStreamTracks(videoStream);
                   runtime.localVideoStream = null;
                   return;
                 }
@@ -1049,7 +1035,7 @@ export function useVoximplantRoom({
                 addMediaWarning(
                   `Не удалось добавить видеопоток в конференцию: ${toErrorMessage(addErr)}`,
                 );
-                stopVoxStreamTracks(videoStream);
+                stopVoxLikeStreamTracks(videoStream);
                 runtime.localVideoStream = null;
                 return;
               }
