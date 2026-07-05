@@ -10,7 +10,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
-import { getVideoProvider } from "@/lib/env";
+import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import {
   buildVoximplantRecordingDispatch,
   getVoximplantRecordingStateFromDb,
@@ -83,7 +83,12 @@ export async function POST(request: Request, context: RouteContext) {
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { id: true, livekitRoomName: true, deletedAt: true },
+    select: {
+      id: true,
+      livekitRoomName: true,
+      deletedAt: true,
+      recording: { select: { provider: true } },
+    },
   });
 
   if (!session || session.deletedAt) {
@@ -100,7 +105,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   // ── Provider dispatch ────────────────────────────────────────────────────
-  const provider = getVideoProvider();
+  const provider = resolveEffectiveRecordingProvider(
+    session.recording?.provider,
+  );
 
   if (provider === "voximplant") {
     return handleVoximplantRecording(

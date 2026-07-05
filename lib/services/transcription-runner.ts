@@ -5,6 +5,7 @@ import {
   ExternalService,
   ExternalServiceEventSeverity,
   Prisma,
+  RecordingStatus,
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
@@ -41,6 +42,7 @@ import {
 import {
   buildCompressedFileKey,
   downloadObjectToBuffer,
+  headObject,
   uploadBufferToS3,
 } from "@/lib/storage/s3";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
@@ -55,6 +57,7 @@ import {
 import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { getMockExternalServiceError } from "@/lib/test-mode";
+import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 
 function resolveCompressedExtension(
   fileName: string,
@@ -281,9 +284,44 @@ export async function runRealTranscription(
 ): Promise<NextResponse> {
   const transcriptionProvider = getSelectedTranscriptionProvider();
   try {
+    const keyNormalization = normalizeRecordingFileKey(recording.fileKey);
+    if (keyNormalization.containsRawUrl || keyNormalization.containsEncodedUrl) {
+      const missingMessage =
+        "Запись сохранена у провайдера, но файл ещё не загружен в хранилище";
+      await prisma.recording.update({
+        where: { id: recording.id },
+        data: {
+          status: RecordingStatus.FAILED,
+          errorMessage: missingMessage,
+        },
+      });
+      throw new Error(missingMessage);
+    }
+
+    const effectiveFileKey = keyNormalization.normalizedKey;
+    if (effectiveFileKey !== recording.fileKey) {
+      await prisma.recording.update({
+        where: { id: recording.id },
+        data: { fileKey: effectiveFileKey },
+      });
+    }
+
+    const objectHead = await headObject(effectiveFileKey);
+    if (!objectHead.exists) {
+      const missingMessage = "Файл записи не найден в хранилище";
+      await prisma.recording.update({
+        where: { id: recording.id },
+        data: {
+          status: RecordingStatus.FAILED,
+          errorMessage: missingMessage,
+        },
+      });
+      throw new Error(missingMessage);
+    }
+
     await throwIfTranscriptionStoppedManually(transcriptId);
     await setTranscriptStatus(transcriptId, TranscriptStatus.DOWNLOADING_RECORDING);
-    const originalBuffer = await downloadObjectToBuffer(recording.fileKey, {
+    const originalBuffer = await downloadObjectToBuffer(effectiveFileKey, {
       sessionId,
       recordingId: recording.id,
     });

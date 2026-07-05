@@ -412,16 +412,6 @@ export default function VoximplantNegotiationRoomPage(
     [showRecordingDebug, props.sessionId],
   );
 
-  /**
-   * True once the facilitator has initiated a recording start in this browser
-   * session. Used by the stop guard instead of recordingState, because:
-   *   - buildVoximplantRecordingDispatch does NOT write a DB recording row.
-   *   - The 1-second polling loop reads the DB and overwrites recordingState
-   *     with null/NOT_STARTED until VoxEngine's webhook fires.
-   *   - Relying on recordingState for the stop guard would suppress the only
-   *     stop call in the window between start relay and webhook arrival.
-   */
-  const recordingStartRequestedRef = useRef(false);
   /** Prevents duplicate stop calls from double-clicks or re-renders. */
   const stopInFlightRef = useRef(false);
 
@@ -447,16 +437,6 @@ export default function VoximplantNegotiationRoomPage(
       }
 
       if (action === "stop") {
-        // Guard: skip stop when no start was ever attempted in this browser session.
-        // Do NOT use recordingState here — the DB recording row may not exist yet
-        // (VoxEngine webhook fires seconds after the start relay), so the polling
-        // loop would have overwritten recordingState with null/NOT_STARTED, causing
-        // a stale guard to suppress the only stop call.
-        if (!recordingStartRequestedRef.current) {
-          console.log("[VoxRecording] stop skipped — no start was attempted this session");
-          postRecordingDebug("relayVoximplantRecording:stop:skipped", "stop skipped — no start attempted this session", {}, "warn");
-          return;
-        }
         // Guard: prevent duplicate stop calls.
         if (stopInFlightRef.current) {
           console.log("[VoxRecording] stop skipped — stop already in flight");
@@ -467,10 +447,7 @@ export default function VoximplantNegotiationRoomPage(
 
       setRecordingRelayError(null);
 
-      // Mark start as requested before the async call so the stop guard passes
-      // even if FINISH arrives before the start API response.
       if (action === "start") {
-        recordingStartRequestedRef.current = true;
         console.log("[VoxRecording] relayVoximplantRecording — start called");
         postRecordingDebug("relayVoximplantRecording:start:called", "relayVoximplantRecording start called");
       } else {

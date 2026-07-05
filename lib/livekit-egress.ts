@@ -31,6 +31,7 @@ import {
   getS3Config,
   headObject,
 } from "@/lib/storage/s3";
+import { isLiveKitRecordingProvider } from "@/lib/recording/provider";
 
 export function createEgressClient() {
   const config = getLiveKitConfig();
@@ -225,7 +226,23 @@ export async function startAudioOnlyRoomRecording(
   }
 }
 
-export async function stopRecording(recording: Pick<Recording, "id" | "sessionId" | "egressId" | "startedAt">) {
+export async function stopRecording(
+  recording: Pick<
+    Recording,
+    "id" | "sessionId" | "egressId" | "startedAt" | "provider" | "status"
+  >,
+) {
+  if (!isLiveKitRecordingProvider(recording.provider)) {
+    const current = await prisma.recording.findUniqueOrThrow({
+      where: { id: recording.id },
+    });
+    return {
+      ok: true as const,
+      recording: current,
+      warning: "Skipped LiveKit stop for non-LiveKit recording provider.",
+    };
+  }
+
   if (isRecordingMockMode()) {
     const simulatedError = getMockExternalServiceError();
 
@@ -317,8 +334,13 @@ export async function refreshRecordingStatus(
     | "status"
     | "startedAt"
     | "endedAt"
+    | "provider"
   >,
 ) {
+  if (!isLiveKitRecordingProvider(recording.provider)) {
+    return prisma.recording.findUniqueOrThrow({ where: { id: recording.id } });
+  }
+
   let nextStatus = recording.status;
   let errorMessage: string | null = null;
   let originalSizeBytes: number | undefined;

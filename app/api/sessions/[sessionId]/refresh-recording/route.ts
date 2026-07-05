@@ -5,7 +5,7 @@ import { ParticipantType } from "@/app/generated/prisma/client";
 import { refreshRecordingStatus } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
-import { getVideoProvider } from "@/lib/env";
+import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 
 export const runtime = "nodejs";
@@ -45,10 +45,10 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const provider = getVideoProvider();
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
   });
+  const provider = resolveEffectiveRecordingProvider(recording?.provider);
 
   appendRecordingDebugEvent({
     sessionId,
