@@ -23,6 +23,7 @@ import {
 import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
+import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -370,6 +371,10 @@ export async function GET(request: Request, context: RouteContext) {
   const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
     transcript?.processingMetadata,
   );
+  const mappingFailure = resolveMappingFailure({
+    speakerMappingStatus: transcript?.speakerMappingStatus ?? null,
+    processingMetadata: transcript?.processingMetadata ?? null,
+  });
 
   const transcriptHasText = Boolean(
     transcript?.text?.trim() || transcript?.diarizedText?.trim(),
@@ -656,6 +661,15 @@ export async function GET(request: Request, context: RouteContext) {
           retranscribeCount: isFacilitator ? (transcript.retranscribeCount ?? 0) : null,
           speakerMappingStatus: isFacilitator
             ? (transcript.speakerMappingStatus ?? "NOT_REQUIRED")
+            : null,
+          mappingFailureReason: isFacilitator ? mappingFailure.mappingFailureReason : null,
+          mappingFailureI18nKey: isFacilitator ? mappingFailure.mappingFailureI18nKey : null,
+          mappingFailureCompactI18nKey: isFacilitator
+            ? mappingFailure.mappingFailureCompactI18nKey
+            : null,
+          mappingFailureDetails: isFacilitator ? mappingFailure.mappingFailureDetails : null,
+          mappingSuggestionDiagnostics: isFacilitator
+            ? mappingFailure.mappingSuggestionDiagnostics
             : null,
           speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
           speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,

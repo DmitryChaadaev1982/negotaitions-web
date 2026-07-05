@@ -502,6 +502,40 @@ export const en = {
       "Automatic mapping will be available for future sessions after microphone activity data is collected.",
     telemetryMappingReviewRequired:
       "Automatic mapping was skipped because microphone activity telemetry is incomplete for one of the participants. Please assign speakers manually.",
+    mappingFailureTitle: "Why automatic matching was not completed",
+    mappingFailureCompactTitle: "Manual matching required",
+    mappingFailureDetailsShow: "Details",
+    mappingFailureDetailsHide: "Hide",
+    mappingDiagnosticsTitle: "Matching diagnostics",
+    microphoneTelemetryStatus: "Microphone telemetry",
+    recordingPreprocessingStatus: "Recording preprocessing",
+    transcriptionInputFile: "File sent to transcription",
+    preprocessingSkipped: "Preprocessing skipped",
+    preprocessingCompleted: "Preprocessing completed",
+    preprocessingReason: "Preprocessing reason",
+    mappingFailureCompact: {
+      noAudioActivity: "Manual matching required: no microphone telemetry.",
+      generic: "Manual matching required. Open details for the exact reason.",
+    },
+    mappingFailureReason: {
+      unavailableNoAudioActivity:
+        "Automatic speaker matching was not completed: microphone activity telemetry was not received. Assign speakers manually.",
+      manyToOne:
+        "Automatic speaker matching was not completed: multiple speakers matched the same participant. Manual review is required.",
+      lowCoverage:
+        "Automatic speaker matching was not completed: there was not enough overlap between speech and microphone activity.",
+      lowMargin:
+        "Automatic speaker matching was not completed: matching confidence is too low.",
+      missingOffsets:
+        "Automatic speaker matching was not completed: microphone activity timing data is missing.",
+      telemetryImbalanced:
+        "Automatic speaker matching was not completed: participant activity telemetry is imbalanced.",
+      noSafeOneToOne:
+        "Automatic speaker matching was not completed: no safe Speaker-to-participant match was found.",
+      manualReviewRequired: "Manual speaker assignment is required.",
+      unknownMappingFailure:
+        "Automatic speaker matching was not completed. Assign speakers manually.",
+    },
     confidence: "Confidence",
     weakSuggestion: "Weak suggestion",
     strongSuggestion: "Strong suggestion",

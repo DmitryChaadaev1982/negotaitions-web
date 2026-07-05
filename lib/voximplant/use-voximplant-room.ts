@@ -174,6 +174,15 @@ type VoxRoomParticipant = {
   displayName: string;
   endpointUsername?: string | null;
   stream: MediaStream | null;
+  audioStream?: MediaStream | null;
+};
+
+type UpsertRemoteParticipantInput = {
+  id: string;
+  displayName: string;
+  endpointUsername?: string | null;
+  stream?: MediaStream | null;
+  audioStream?: MediaStream | null;
 };
 
 // ─── Hook options & result ────────────────────────────────────────────────────
@@ -581,6 +590,37 @@ export function useVoximplantRoom({
     [stopMicLevelMeter],
   );
 
+  const upsertRemote = useCallback((next: UpsertRemoteParticipantInput) => {
+    setRemoteParticipants((current) => {
+      const index = current.findIndex((item) => item.id === next.id);
+      if (index === -1) {
+        return [
+          ...current,
+          {
+            id: next.id,
+            displayName: next.displayName,
+            endpointUsername: next.endpointUsername ?? null,
+            stream: next.stream ?? null,
+            audioStream: next.audioStream ?? null,
+          },
+        ];
+      }
+      const copy = [...current];
+      copy[index] = {
+        ...copy[index],
+        displayName: next.displayName,
+        endpointUsername:
+          next.endpointUsername === undefined
+            ? copy[index].endpointUsername ?? null
+            : next.endpointUsername,
+        stream: next.stream === undefined ? copy[index].stream : next.stream,
+        audioStream:
+          next.audioStream === undefined ? copy[index].audioStream ?? null : next.audioStream,
+      };
+      return copy;
+    });
+  }, []);
+
   // ── Remote audio attachment ───────────────────────────────────────────────
 
   /**
@@ -602,6 +642,11 @@ export function useVoximplantRoom({
       const audio = new Audio();
       audio.srcObject = ms;
       audio.autoplay = true;
+      upsertRemote({
+        id: endpointId,
+        displayName: endpointId,
+        audioStream: ms,
+      });
       rt.remoteAudioElements.set(key, audio);
       setRemoteAudioElementCount(rt.remoteAudioElements.size);
 
@@ -623,7 +668,7 @@ export function useVoximplantRoom({
         }
       });
     },
-    [],
+    [upsertRemote],
   );
 
   /** Pause and remove all audio elements associated with an endpoint. */
@@ -641,7 +686,14 @@ export function useVoximplantRoom({
     }
     for (const key of toDelete) rt.remoteAudioElements.delete(key);
     if (toDelete.length > 0) setRemoteAudioElementCount(rt.remoteAudioElements.size);
-  }, []);
+    if (toDelete.length > 0) {
+      upsertRemote({
+        id: endpointId,
+        displayName: endpointId,
+        audioStream: null,
+      });
+    }
+  }, [upsertRemote]);
 
   /** Attempt to play all paused remote audio elements (call after user gesture). */
   const unlockAudioPlayback = useCallback(() => {
@@ -676,16 +728,6 @@ export function useVoximplantRoom({
   }, []);
 
   // ── Remote participants ───────────────────────────────────────────────────
-
-  const upsertRemote = useCallback((next: VoxRoomParticipant) => {
-    setRemoteParticipants((current) => {
-      const index = current.findIndex((item) => item.id === next.id);
-      if (index === -1) return [...current, next];
-      const copy = [...current];
-      copy[index] = next;
-      return copy;
-    });
-  }, []);
 
   const removeRemoteById = useCallback(
     (endpointId: string) => {

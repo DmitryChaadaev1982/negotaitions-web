@@ -820,6 +820,44 @@ test("Test 14 — String 'false' is parsed as false: getEnvBoolean safety check 
   expect(body.processing.autoTranscribeEnabled).toBe(false);
 });
 
+test("Test 15 — Transcription metadata includes preprocessing decision fields", async ({
+  request,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START");
+  await control(request, session.id, facilitator.joinToken, "FINISH");
+
+  const transcribeResponse = await request.post(
+    `/api/sessions/${session.id}/materials/transcribe`,
+    {
+      data: {
+        joinToken: facilitator.joinToken,
+        language: "auto",
+      },
+    },
+  );
+  expect(transcribeResponse.ok()).toBeTruthy();
+
+  const statusResponse = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  );
+  expect(statusResponse.ok()).toBeTruthy();
+  const statusBody = (await statusResponse.json()) as {
+    transcription: {
+      processingMetadata: Record<string, unknown> | null;
+    };
+  };
+
+  const metadata = statusBody.transcription.processingMetadata ?? {};
+  expect(typeof metadata.audioTranscriptionMaxFileMb).toBe("number");
+  expect(typeof metadata.thresholdBytes).toBe("number");
+  expect(typeof metadata.originalSizeBytes).toBe("number");
+  expect(typeof metadata.transcriptionInputSizeBytes).toBe("number");
+  expect(typeof metadata.preprocessingSkipped).toBe("boolean");
+  expect(typeof metadata.selectedInputForSpeechKit).toBe("string");
+});
+
 // ── Speaker Mapping Tests ─────────────────────────────────────────────────
 
 test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping required", async ({
@@ -932,6 +970,25 @@ test("Speaker Mapping Test 3 — Automatic mapping unavailable without audio act
   };
   expect(suggestBody.available).toBe(false);
   expect(suggestBody.unavailableReason).toBe("no_audio_activity");
+
+  const statusRes = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  );
+  expect(statusRes.ok()).toBeTruthy();
+  const statusBody = (await statusRes.json()) as {
+    transcription: {
+      mappingFailureReason: string | null;
+      mappingFailureI18nKey: string | null;
+      mappingFailureCompactI18nKey: string | null;
+    };
+  };
+  expect(statusBody.transcription.mappingFailureReason).toBe("unavailable:no_audio_activity");
+  expect(statusBody.transcription.mappingFailureI18nKey).toBe(
+    "recording.mappingFailureReason.unavailableNoAudioActivity",
+  );
+  expect(statusBody.transcription.mappingFailureCompactI18nKey).toBe(
+    "recording.mappingFailureCompact.noAudioActivity",
+  );
 
   await clearTranscript(session.id);
 });

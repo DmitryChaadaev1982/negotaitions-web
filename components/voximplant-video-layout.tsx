@@ -25,6 +25,7 @@ type VoxTileParticipant = {
   displayName: string;
   endpointUsername?: string | null;
   stream: MediaStream | null;
+  audioStream?: MediaStream | null;
 };
 
 function NoVideoPlaceholder({ message }: { message: string }) {
@@ -70,6 +71,13 @@ function RoleSection({
   );
 }
 
+export function buildRemoteSpeakingInput(remoteParticipants: VoxTileParticipant[]) {
+  return remoteParticipants.map((participant) => ({
+    id: participant.id,
+    stream: participant.audioStream ?? participant.stream,
+  }));
+}
+
 export default function VoximplantVideoLayout({
   localParticipant,
   remoteParticipants,
@@ -108,11 +116,7 @@ export default function VoximplantVideoLayout({
   // Bug 1 fix: derive real speaking state for remote participants from their
   // audio streams. Memoized so meters are not rebuilt on local mic-level ticks.
   const remoteSpeakingInput = useMemo(
-    () =>
-      remoteParticipants.map((participant) => ({
-        id: participant.id,
-        stream: participant.stream,
-      })),
+    () => buildRemoteSpeakingInput(remoteParticipants),
     [remoteParticipants],
   );
   const remoteSpeakingById = useRemoteSpeaking(remoteSpeakingInput);
@@ -166,12 +170,14 @@ export default function VoximplantVideoLayout({
             displayName: entry.displayName,
             endpointUsername: localParticipant?.endpointUsername ?? null,
             stream: localParticipant?.stream ?? null,
+            audioStream: localParticipant?.audioStream ?? null,
           }
         : {
             id: matchedRemote?.id ?? entry.id,
             displayName: matchedRemote?.displayName ?? entry.displayName,
             endpointUsername: matchedRemote?.endpointUsername ?? entry.voximplantProviderUsername,
             stream: matchedRemote?.stream ?? null,
+            audioStream: matchedRemote?.audioStream ?? null,
           };
 
       const visual = visualRolesByRosterId.get(entry.id) ?? {

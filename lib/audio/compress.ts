@@ -211,7 +211,18 @@ function inferMimeTypeFromFileName(fileName: string) {
 export async function compressAudioForTranscription(
   inputBuffer: Buffer,
   inputFileName: string,
-  options?: { recordingId?: string; sessionId?: string },
+  options?: {
+    recordingId?: string;
+    sessionId?: string;
+    forceTranscode?: boolean;
+    probe?: {
+      container?: string | null;
+      codec?: string | null;
+      sampleRate?: number | null;
+      channels?: number | null;
+      probeAvailable?: boolean;
+    } | null;
+  },
 ) {
   const qualityProfile = getAudioTranscriptionQualityProfile();
   const sampleRate = getAudioTranscriptionSampleRate();
@@ -235,8 +246,9 @@ export async function compressAudioForTranscription(
       inputBuffer.length,
       inputFileName,
       getAudioTranscriptionMaxFileBytes(),
+      options?.probe,
     );
-    if (reuseOriginalDecision.shouldReuseOriginal) {
+    if (!options?.forceTranscode && reuseOriginalDecision.shouldReuseOriginal) {
       if (options?.recordingId) {
         await prisma.recording.update({
           where: { id: options.recordingId },

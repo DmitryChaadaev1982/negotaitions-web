@@ -245,9 +245,24 @@ export function computeTranscriptQualityReport(
 }
 
 export type PreprocessingDecisionLog = {
+  audioTranscriptionMaxFileMb?: number;
   originalSizeBytes: number;
   thresholdBytes: number;
   mimeType: string | null;
+  transcriptionInputSizeBytes?: number;
+  preprocessingSkipped?: boolean;
+  preprocessingTriggered?: boolean;
+  preprocessingTriggerReason?: string;
+  selectedInputForSpeechKit?: "original" | "preprocessed";
+  originalCompatibleWithSpeechKit?: boolean;
+  ffmpegOutputSizeBytes?: number | null;
+  ffmpegSizeDeltaBytes?: number | null;
+  ffmpegSizeDeltaPercent?: number | null;
+  fallbackToOriginal?: boolean;
+  sourceContainer?: string | null;
+  sourceCodec?: string | null;
+  sourceSampleRate?: number | null;
+  sourceChannels?: number | null;
   container: string | null;
   compatibleContainer: boolean;
   skipped: boolean;
