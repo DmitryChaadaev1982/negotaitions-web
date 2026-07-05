@@ -195,6 +195,7 @@ export default function VoximplantNegotiationRoomPage(
     leave,
     // Audio diagnostics
     micCaptureStatus,
+    localAudioStreamCreated,
     micLevel,
     audioProcessingEnabled,
     remotePlaybackBlocked,
@@ -725,13 +726,20 @@ export default function VoximplantNegotiationRoomPage(
           <VoximplantSpeakingActivityTracker
             sessionId={props.sessionId}
             roomAuth={roomAuth}
+            sessionParticipantId={sidebar.currentParticipantId}
+            participantIdentity={sidebar.displayName ?? localDisplayName ?? null}
+            localAudioStreamPresent={localAudioStreamCreated}
             micLevel={micLevel}
             muted={isMicMuted || !controlState.micAllowed}
             enabled={joined && !staleConnection}
             connectionId={roomConnectionId ?? undefined}
             audioProcessingEnabled={audioProcessingEnabled}
             recordingStatus={recordingState?.status ?? null}
-            recordingStartedAt={recordingState?.startedAt ?? null}
+            debug={
+              (props.debugAudio === true ||
+                process.env.NEXT_PUBLIC_VOX_SPEAKING_TRACKER_DEBUG === "true") &&
+              (effectiveParticipantType === "FACILITATOR" || effectiveParticipantType === "OBSERVER")
+            }
           />
         }
         providerBanner={null}
