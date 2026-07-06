@@ -3,9 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+const isDevelopment = process.env.NODE_ENV !== "production";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1"],
+  // Local reverse-tunnel domain for development-only Next dev access.
+  allowedDevOrigins: isDevelopment
+    ? ["127.0.0.1", "local.negotaitions.ru"]
+    : ["127.0.0.1"],
   serverExternalPackages: ["ffmpeg-static", "fluent-ffmpeg"],
   turbopack: {
     root: projectRoot,
