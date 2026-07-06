@@ -397,6 +397,9 @@ export default function VoximplantNegotiationRoomPage(
   const showRecordingDebug =
     props.debugRecording === true ||
     process.env.NEXT_PUBLIC_RECORDING_DEBUG_PANEL === "true";
+  const remoteTelemetryDebugEnabled =
+    props.debugRecording === true ||
+    process.env.NEXT_PUBLIC_VOX_REMOTE_STREAM_TELEMETRY_DEBUG === "1";
 
   const postRecordingDebug = useCallback(
     (
@@ -774,6 +777,15 @@ export default function VoximplantNegotiationRoomPage(
             localMicSystemMuted={!controlState.micAllowed}
             micLevel={micLevel}
             localRoleLabel={participantTypeLabel}
+            sessionId={props.sessionId}
+            roomAuth={roomAuth}
+            connectionId={roomConnectionId ?? undefined}
+            remoteTelemetryDebugEnabled={remoteTelemetryDebugEnabled}
+            canReportRemoteTelemetry={effectiveParticipantType === "FACILITATOR"}
+            joined={joined}
+            staleConnection={staleConnection}
+            recordingStatus={recordingState?.status ?? null}
+            audioProcessingEnabled={audioProcessingEnabled}
           />
         }
         controlBar={

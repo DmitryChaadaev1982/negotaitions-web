@@ -1,6 +1,7 @@
 "use client";
 
 import { ParticipantType } from "@/app/generated/prisma/enums";
+import { VoximplantRemoteSpeakingActivityTracker } from "@/components/voximplant-remote-speaking-activity-tracker";
 import { RoomTimerPanel } from "@/components/room-timer-panel";
 import {
   VoximplantParticipantTile,
@@ -17,6 +18,7 @@ import {
   resolveRosterVisualRoles,
   type RosterConnectionState,
 } from "@/lib/voximplant/room-layout-model";
+import type { RoomAuthToken } from "@/lib/room-auth";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 
@@ -91,6 +93,15 @@ export default function VoximplantVideoLayout({
   localMicSystemMuted,
   micLevel,
   localRoleLabel,
+  sessionId,
+  roomAuth,
+  connectionId,
+  remoteTelemetryDebugEnabled,
+  canReportRemoteTelemetry,
+  joined,
+  staleConnection,
+  recordingStatus,
+  audioProcessingEnabled,
 }: {
   localParticipant: VoxTileParticipant | null;
   remoteParticipants: VoxTileParticipant[];
@@ -108,6 +119,15 @@ export default function VoximplantVideoLayout({
    * Resolved server-side via the sidebar API — same source as the LiveKit room.
    */
   localRoleLabel?: string;
+  sessionId: string;
+  roomAuth: RoomAuthToken;
+  connectionId?: string;
+  remoteTelemetryDebugEnabled: boolean;
+  canReportRemoteTelemetry: boolean;
+  joined: boolean;
+  staleConnection: boolean;
+  recordingStatus?: string | null;
+  audioProcessingEnabled?: boolean;
 }) {
   const { t } = useI18n();
   const isSpeaking =
@@ -204,6 +224,19 @@ export default function VoximplantVideoLayout({
   const observerTiles = resolvedRosterTiles.filter((tile) => tile.zone === "observer");
   const participantATiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_b");
+  const remoteTelemetryTargets = useMemo(
+    () =>
+      resolvedRosterTiles
+        .filter((tile) => !tile.isLocal)
+        .filter((tile) => tile.rosterEntry.participantType === ParticipantType.PARTICIPANT)
+        .filter((tile) => Boolean(tile.matchedRemoteId))
+        .map((tile) => ({
+          sessionParticipantId: tile.rosterEntry.id,
+          participantIdentity: tile.rosterEntry.displayName ?? null,
+          isSpeaking: remoteSpeakingById[tile.participant.id] ?? false,
+        })),
+    [remoteSpeakingById, resolvedRosterTiles],
+  );
 
   const localSubtitle = `${localRoleLabel ?? t(`participantType.${localParticipantType}` as `participantType.${typeof localParticipantType}`)}${
     localCaseRoleName ? ` · ${localCaseRoleName}` : ""
@@ -283,6 +316,17 @@ export default function VoximplantVideoLayout({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden p-2" data-testid="vox-layout-root">
+      <VoximplantRemoteSpeakingActivityTracker
+        sessionId={sessionId}
+        roomAuth={roomAuth}
+        connectionId={connectionId}
+        enabled={joined && !staleConnection}
+        debugEnabled={remoteTelemetryDebugEnabled}
+        canReportRemoteTelemetry={canReportRemoteTelemetry}
+        recordingStatus={recordingStatus}
+        audioProcessingEnabled={audioProcessingEnabled}
+        targets={remoteTelemetryTargets}
+      />
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         <RoleSection title={t("room.observersSection")} testId="vox-zone-observers">
           {observerTiles.length > 0 ? (

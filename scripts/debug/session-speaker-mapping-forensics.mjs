@@ -2,6 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import pg from "pg";
+import {
+  REQUIRED_SOURCE_SCENARIOS,
+  evaluateRemoteSourceRecommendation,
+} from "./session-speaker-mapping-forensics-source-utils.mjs";
 
 const { Client } = pg;
 
@@ -31,6 +35,8 @@ const DECISION_BLOCKING_WARNINGS = new Set([
   "row_imbalance",
   "duration_imbalance",
 ]);
+const VOXIMPLANT_MIC_ACTIVITY_SOURCE = "VOXIMPLANT_MIC_ACTIVITY";
+const VOX_REMOTE_STREAM_ACTIVITY_SOURCE = "VOX_REMOTE_STREAM_ACTIVITY";
 
 function round(value, digits = 3) {
   const factor = 10 ** digits;
@@ -451,6 +457,9 @@ function normalizeTelemetryRows({
   const rowsDerivedByParticipant = {};
   const rawIntervalRowsByParticipant = {};
   const normalizedByParticipant = new Map();
+  const rowsBySource = {};
+  const rowsByParticipantBySource = {};
+  const durationByParticipantBySource = {};
   const normalizedTotalsByParticipant = {};
   const avgIntervalMs = {};
   const medianIntervalMs = {};
@@ -469,6 +478,8 @@ function normalizeTelemetryRows({
     rowsDerivedByParticipant[participantId] = 0;
     rawIntervalRowsByParticipant[participantId] = [];
     normalizedByParticipant.set(participantId, []);
+    rowsByParticipantBySource[participantId] = {};
+    durationByParticipantBySource[participantId] = {};
     normalizedTotalsByParticipant[participantId] = 0;
     avgIntervalMs[participantId] = null;
     medianIntervalMs[participantId] = null;
@@ -479,6 +490,12 @@ function normalizeTelemetryRows({
 
   for (const activity of activities) {
     const participantId = activity.sessionParticipantId;
+    const source = activity.source ?? "unknown";
+    rowsBySource[source] = (rowsBySource[source] ?? 0) + 1;
+    rowsByParticipantBySource[participantId] ??= {};
+    durationByParticipantBySource[participantId] ??= {};
+    rowsByParticipantBySource[participantId][source] =
+      (rowsByParticipantBySource[participantId][source] ?? 0) + 1;
     if (!rowsByParticipant[participantId] && rowsByParticipant[participantId] !== 0) continue;
     rowsByParticipant[participantId] += 1;
 
@@ -511,6 +528,7 @@ function normalizeTelemetryRows({
     if (usedDerivedOffset && !includeDerived) {
       rawIntervalRowsByParticipant[participantId].push({
         ...activity,
+        source,
         startMs: null,
         endMs: null,
         usedDerivedOffset,
@@ -522,6 +540,7 @@ function normalizeTelemetryRows({
     if (startSec == null) {
       rawIntervalRowsByParticipant[participantId].push({
         ...activity,
+        source,
         startMs: null,
         endMs: null,
         usedDerivedOffset,
@@ -565,6 +584,7 @@ function normalizeTelemetryRows({
       if (!includeOutsideWindow) {
         rawIntervalRowsByParticipant[participantId].push({
           ...activity,
+          source,
           startMs,
           endMs,
           usedDerivedOffset,
@@ -578,6 +598,7 @@ function normalizeTelemetryRows({
 
     const rawRow = {
       ...activity,
+      source,
       startMs,
       endMs,
       usedDerivedOffset,
@@ -593,7 +614,11 @@ function normalizeTelemetryRows({
       usedDerivedOffset,
       hadOutsideWindow: outsideWindow,
       sourceCount: 1,
+      sources: [source],
     });
+    const durationMs = Math.max(0, endMs - startMs);
+    durationByParticipantBySource[participantId][source] =
+      (durationByParticipantBySource[participantId][source] ?? 0) + durationMs;
   }
 
   for (const participantId of participantIds) {
@@ -624,10 +649,14 @@ function normalizeTelemetryRows({
         prev.usedDerivedOffset = prev.usedDerivedOffset || interval.usedDerivedOffset;
         prev.hadOutsideWindow = prev.hadOutsideWindow || interval.hadOutsideWindow;
         prev.sourceCount += interval.sourceCount;
+        prev.sources = [...new Set([...prev.sources, ...interval.sources])];
         mergedIntervalCount += 1;
         mergedCountByParticipant[participantId] += 1;
       } else {
-        merged.push({ ...interval });
+        merged.push({
+          ...interval,
+          sources: [...new Set(interval.sources)],
+        });
       }
     }
     normalizedByParticipant.set(participantId, merged);
@@ -641,6 +670,9 @@ function normalizeTelemetryRows({
 
   return {
     rowsByParticipant,
+    rowsBySource,
+    rowsByParticipantBySource,
+    durationByParticipantBySource,
     rowsWithOffsetsByParticipant,
     rowsDerivedByParticipant,
     rawIntervalRowsByParticipant,
@@ -980,6 +1012,56 @@ function summarizeScenarioDelta(current, other) {
     }
   }
   return changes;
+}
+
+function intervalOverlapRatio(a, b) {
+  const overlap = overlapMs(a.startMs, a.endMs, b.startMs, b.endMs);
+  const aDur = Math.max(1, a.endMs - a.startMs);
+  const bDur = Math.max(1, b.endMs - b.startMs);
+  return overlap / Math.min(aDur, bDur);
+}
+
+function deduplicateCombinedActivities(activities) {
+  const sorted = [...activities].sort(
+    (a, b) => a.startedAtMs - b.startedAtMs || (a.endedAtMs ?? 0) - (b.endedAtMs ?? 0),
+  );
+  const groupedByParticipant = new Map();
+  for (const row of sorted) {
+    const list = groupedByParticipant.get(row.sessionParticipantId) ?? [];
+    const startMs = row.startedAtMs;
+    const endMs = row.endedAtMs ?? row.startedAtMs + 1000;
+    let merged = false;
+    for (const existing of list) {
+      if (existing.source === row.source) continue;
+      const ratio = intervalOverlapRatio(
+        { startMs: existing.startedAtMs, endMs: existing.endedAtMs ?? existing.startedAtMs + 1000 },
+        { startMs, endMs },
+      );
+      if (ratio < 0.7) continue;
+      existing.startedAtMs = Math.min(existing.startedAtMs, startMs);
+      existing.endedAtMs = Math.max(existing.endedAtMs ?? existing.startedAtMs + 1000, endMs);
+      existing.startedAt = new Date(existing.startedAtMs);
+      existing.endedAt = new Date(existing.endedAtMs);
+      existing.startedOffsetSeconds = Math.min(
+        existing.startedOffsetSeconds ?? Number.POSITIVE_INFINITY,
+        row.startedOffsetSeconds ?? Number.POSITIVE_INFINITY,
+      );
+      if (!Number.isFinite(existing.startedOffsetSeconds)) existing.startedOffsetSeconds = null;
+      existing.endedOffsetSeconds = Math.max(
+        existing.endedOffsetSeconds ?? Number.NEGATIVE_INFINITY,
+        row.endedOffsetSeconds ?? Number.NEGATIVE_INFINITY,
+      );
+      if (!Number.isFinite(existing.endedOffsetSeconds)) existing.endedOffsetSeconds = null;
+      existing.source = "COMBINED_DEDUPED";
+      merged = true;
+      break;
+    }
+    if (!merged) {
+      list.push({ ...row });
+      groupedByParticipant.set(row.sessionParticipantId, list);
+    }
+  }
+  return [...groupedByParticipant.values()].flat();
 }
 
 function classifyRootCauses({
@@ -1432,8 +1514,13 @@ async function run() {
     });
 
     const runScenario = (name, options) => {
+      const scenarioActivities = options.activitiesOverride
+        ? options.activitiesOverride
+        : options.activityFilter
+          ? activities.filter(options.activityFilter)
+          : activities;
       const normalized = normalizeTelemetryRows({
-        activities,
+        activities: scenarioActivities,
         recordingStartMs,
         recordingEndMs,
         participantIds: participantPool.map((p) => p.id),
@@ -1472,6 +1559,7 @@ async function run() {
       return {
         name,
         options,
+        activityRows: scenarioActivities.length,
         scoreMatrix: score.scoreMatrix,
         selectedMapping: replay.mapping,
         globalMargin: replay.globalMargin,
@@ -1497,6 +1585,24 @@ async function run() {
       telemetryQuality: telemetryQualityCurrent,
       deltaVsCurrent: [],
     };
+    scoringScenarios.local_mic_only = runScenario("local_mic_only", {
+      activityFilter: (row) => row.source === VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+    });
+    scoringScenarios.remote_stream_only = runScenario("remote_stream_only", {
+      activityFilter: (row) => row.source === VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+    });
+    const combinedSources = new Set([
+      VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+      VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+    ]);
+    scoringScenarios.combined_naive = runScenario("combined_naive", {
+      activityFilter: (row) => combinedSources.has(row.source),
+    });
+    scoringScenarios.combined_deduplicated = runScenario("combined_deduplicated", {
+      activitiesOverride: deduplicateCombinedActivities(
+        activities.filter((row) => combinedSources.has(row.source)),
+      ),
+    });
 
     scoringScenarios.exclude_derived_offsets = runScenario("exclude_derived_offsets", {
       includeDerived: false,
@@ -1748,6 +1854,7 @@ async function run() {
         usedDerivedOffset: interval.usedDerivedOffset,
         hadOutsideWindow: interval.hadOutsideWindow,
         sourceCount: interval.sourceCount,
+        source: interval.sources.join("|"),
       }));
     });
 
@@ -1889,6 +1996,26 @@ async function run() {
       normalizedByParticipant: normalizedCurrent.normalizedByParticipant,
     });
 
+    const localMicScenario = scoringScenarios.local_mic_only;
+    const remoteStreamScenario = scoringScenarios.remote_stream_only;
+    const sourceRecommendations = evaluateRemoteSourceRecommendation({
+      currentRuntime: {
+        shouldApply: currentRuntime.decision.shouldApply,
+      },
+      localMicOnly: {
+        shouldApply: localMicScenario.shouldApplyLike,
+        globalMargin: localMicScenario.globalMargin,
+        selectedCoverageBySpeaker: localMicScenario.selectedCoverageBySpeaker,
+      },
+      remoteStreamOnly: {
+        mapping: remoteStreamScenario.selectedMapping,
+        activityRows: remoteStreamScenario.activityRows ?? 0,
+        globalMargin: remoteStreamScenario.globalMargin,
+        selectedCoverageBySpeaker: remoteStreamScenario.selectedCoverageBySpeaker,
+      },
+      speakerLabels,
+    });
+
     const recommendations = [
       `Current runtime auto-apply decision: ${currentRuntime.decision.shouldApply} (${currentRuntime.decision.reason})`,
       currentRuntime.decision.shouldApply
@@ -1903,6 +2030,7 @@ async function run() {
       scoringScenarios.telemetry_shift_sweep.bestShift
         ? `Best telemetry shift: ${scoringScenarios.telemetry_shift_sweep.bestShift.shiftMs}ms (margin ${scoringScenarios.telemetry_shift_sweep.bestShift.globalMargin})`
         : "No telemetry shift conclusion (insufficient overlap data).",
+      `Source recommendation: ${sourceRecommendations.join(", ") || "none"}`,
       "Calibration block heuristic may help only if first long turns produce clear disjoint overlap windows.",
       "This tool replays stored SessionParticipantAudioActivity and TranscriptSegment only; it cannot reconstruct missing browser mic snapshots.",
     ];
@@ -1962,6 +2090,11 @@ async function run() {
       },
       transcriptAnalysis: transcriptSpeakerDiagnostics,
       audioActivityAnalysis: audioParticipantStats,
+      audioActivityBySource: {
+        rowsBySource: normalizedCurrent.rowsBySource,
+        rowsByParticipantBySource: normalizedCurrent.rowsByParticipantBySource,
+        durationByParticipantBySource: normalizedCurrent.durationByParticipantBySource,
+      },
       currentScorerReplay: {
         scoreMatrix: scoreCurrent.scoreMatrix,
         selectedMapping: currentRuntime.mapping,
@@ -1983,6 +2116,8 @@ async function run() {
       segmentLevelOverlapDetail: segmentOverlapDetail,
       participantLevelReverseOverlap: participantOverlapDetail,
       scoringScenarios,
+      requiredSourceScenarios: REQUIRED_SOURCE_SCENARIOS,
+      sourceRecommendations,
       rootCauseClassification,
       recommendations,
       dataReads: [
@@ -2033,8 +2168,13 @@ async function run() {
       `- blockingWarnings: ${
         currentRuntime.blockingWarnings.length ? currentRuntime.blockingWarnings.join(", ") : "none"
       }`,
+      `- rowsBySource: ${JSON.stringify(normalizedCurrent.rowsBySource)}`,
       "",
       "## Scenario Highlights",
+      `- local_mic_only: ${scoringScenarios.local_mic_only.reason}, shouldApplyLike=${scoringScenarios.local_mic_only.shouldApplyLike}, margin=${scoringScenarios.local_mic_only.globalMargin ?? "n/a"}`,
+      `- remote_stream_only: ${scoringScenarios.remote_stream_only.reason}, shouldApplyLike=${scoringScenarios.remote_stream_only.shouldApplyLike}, margin=${scoringScenarios.remote_stream_only.globalMargin ?? "n/a"}`,
+      `- combined_naive: ${scoringScenarios.combined_naive.reason}, shouldApplyLike=${scoringScenarios.combined_naive.shouldApplyLike}, margin=${scoringScenarios.combined_naive.globalMargin ?? "n/a"}`,
+      `- combined_deduplicated: ${scoringScenarios.combined_deduplicated.reason}, shouldApplyLike=${scoringScenarios.combined_deduplicated.shouldApplyLike}, margin=${scoringScenarios.combined_deduplicated.globalMargin ?? "n/a"}`,
       `- exclude_derived_offsets: ${scoringScenarios.exclude_derived_offsets.reason}, shouldApplyLike=${scoringScenarios.exclude_derived_offsets.shouldApplyLike}`,
       `- exclude_outside_window: ${scoringScenarios.exclude_outside_window.reason}, shouldApplyLike=${scoringScenarios.exclude_outside_window.shouldApplyLike}`,
       `- telemetry_shift_sweep best: shiftMs=${
@@ -2050,6 +2190,7 @@ async function run() {
       ),
       "",
       "## Recommendations",
+      `- Source recommendations: ${sourceRecommendations.join(", ") || "none"}`,
       ...recommendations.map((line) => `- ${line}`),
       "",
     ];
@@ -2095,6 +2236,7 @@ async function run() {
         "usedDerivedOffset",
         "hadOutsideWindow",
         "sourceCount",
+        "source",
       ]),
     );
     await fs.writeFile(

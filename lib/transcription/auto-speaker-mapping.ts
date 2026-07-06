@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import {
+  VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+  VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+} from "@/lib/telemetry/audio-activity-sources";
+import {
   TELEMETRY_MIN_INTERVAL_MS,
   TELEMETRY_NORMALIZE_MERGE_GAP_MS,
   TELEMETRY_CALIBRATION,
@@ -134,10 +138,24 @@ export async function suggestSpeakerMapping(
     };
   }
 
-  // Load audio activity for this session
-  const activities = await prisma.sessionParticipantAudioActivity.findMany({
+  const preferRemoteStreamTelemetry =
+    process.env.SPEAKER_MAPPING_PREFER_REMOTE_STREAM_TELEMETRY === "true";
+
+  // Load audio activity for this session.
+  // Default behavior stays "safe path first": remote stream telemetry is
+  // diagnostic-only unless an explicit server-side preference flag is enabled.
+  const allActivities = await prisma.sessionParticipantAudioActivity.findMany({
     where: { sessionId },
     orderBy: { startedAt: "asc" },
+  });
+  const activities = allActivities.filter((activity) => {
+    if (preferRemoteStreamTelemetry) {
+      return (
+        activity.source === VOX_REMOTE_STREAM_ACTIVITY_SOURCE ||
+        activity.source === VOXIMPLANT_MIC_ACTIVITY_SOURCE
+      );
+    }
+    return activity.source !== VOX_REMOTE_STREAM_ACTIVITY_SOURCE;
   });
 
   if (activities.length === 0) {
