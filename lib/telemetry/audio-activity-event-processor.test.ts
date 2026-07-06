@@ -5,6 +5,7 @@ import {
   processAudioActivityEvent,
   type AudioActivityRepository,
 } from "@/lib/telemetry/audio-activity-event-processor";
+import { VOXIMPLANT_MIC_ACTIVITY_SOURCE } from "@/lib/telemetry/audio-activity-sources";
 
 function createRepo() {
   const creates: Array<Record<string, unknown>> = [];
@@ -32,7 +33,7 @@ test("accepts valid speaking_interval payload and persists row", async () => {
     event: "speaking_interval",
     resolvedSessionParticipantId: "sp_1",
     sessionParticipantId: "sp_1",
-    source: "VOXIMPLANT_MIC_ACTIVITY",
+    source: VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: "2026-07-05T20:56:20.000Z",
     endedAt: "2026-07-05T20:56:23.200Z",
   });
@@ -41,6 +42,7 @@ test("accepts valid speaking_interval payload and persists row", async () => {
   assert.equal(result.reason, "interval_recorded");
   assert.equal(creates.length, 1);
   assert.equal(creates[0].sessionParticipantId, "sp_1");
+  assert.equal(creates[0].source, VOXIMPLANT_MIC_ACTIVITY_SOURCE);
   assert.equal(creates[0].startedOffsetSeconds, 8);
   assert.equal(creates[0].endedOffsetSeconds, 11.2);
 });
@@ -52,7 +54,7 @@ test("clamps partially outside intervals to recording window", async () => {
     event: "speaking_interval",
     resolvedSessionParticipantId: "sp_1",
     sessionParticipantId: "sp_1",
-    source: "VOXIMPLANT_MIC_ACTIVITY",
+    source: VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: "2026-07-05T20:56:00.000Z",
     endedAt: "2026-07-05T20:56:14.500Z",
   });
@@ -73,7 +75,7 @@ test("rejects speaking_interval fully outside recording window", async () => {
     event: "speaking_interval",
     resolvedSessionParticipantId: "sp_1",
     sessionParticipantId: "sp_1",
-    source: "VOXIMPLANT_MIC_ACTIVITY",
+    source: VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: "2026-07-05T21:00:00.000Z",
     endedAt: "2026-07-05T21:00:04.000Z",
   });
@@ -90,7 +92,7 @@ test("rejects invalid sessionParticipantId mismatch", async () => {
     event: "speaking_interval",
     resolvedSessionParticipantId: "sp_2",
     sessionParticipantId: "sp_1",
-    source: "VOXIMPLANT_MIC_ACTIVITY",
+    source: VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: "2026-07-05T20:56:20.000Z",
     endedAt: "2026-07-05T20:56:21.000Z",
   });
@@ -107,7 +109,7 @@ test("accepts speaking_interval without body participant id when resolved by aut
     sessionId: "cmr-session",
     event: "speaking_interval",
     resolvedSessionParticipantId: "sp_from_auth",
-    source: "VOXIMPLANT_MIC_ACTIVITY",
+    source: VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: "2026-07-05T20:56:20.000Z",
     endedAt: "2026-07-05T20:56:21.000Z",
   });

@@ -7,6 +7,7 @@ import {
   postSpeakingInterval,
   simulateSpeakingIntervalLifecycle,
 } from "@/lib/telemetry/voximplant-speaking-tracker";
+import { VOXIMPLANT_MIC_ACTIVITY_SOURCE } from "@/lib/telemetry/audio-activity-sources";
 
 test("tracker can post while recordingActiveClientSide is false", async () => {
   let requestUrl = "";
@@ -36,6 +37,7 @@ test("tracker can post while recordingActiveClientSide is false", async () => {
   assert.equal(result.ok, true);
   assert.equal(requestUrl, "/api/sessions/cmr-session/audio-activity");
   assert.equal(payload.event, "speaking_interval");
+  assert.equal(payload.source, VOXIMPLANT_MIC_ACTIVITY_SOURCE);
   assert.equal(payload.telemetryCalibration.recordingActiveClientSide, false);
   assert.equal(requestInit?.method, "POST");
   assert.equal(requestInit?.credentials, "same-origin");

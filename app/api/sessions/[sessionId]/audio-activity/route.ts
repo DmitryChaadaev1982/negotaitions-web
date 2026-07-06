@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { authorizeAudioActivitySubmission } from "@/lib/telemetry/audio-activity-authorization";
+import { DEFAULT_AUDIO_ACTIVITY_SOURCE } from "@/lib/telemetry/audio-activity-sources";
 import { processAudioActivityEvent } from "@/lib/telemetry/audio-activity-event-processor";
 
 export const runtime = "nodejs";
@@ -86,7 +88,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { event, participantIdentity, clientTimestamp, offsetSeconds, audioLevel } = parsed.data;
-  const source = parsed.data.source ?? "LIVEKIT_ACTIVE_SPEAKER";
+  const source = parsed.data.source ?? DEFAULT_AUDIO_ACTIVITY_SOURCE;
 
   const participant = await resolveRoomParticipantFromBody(
     parsed.data as Record<string, unknown>,
@@ -99,6 +101,32 @@ export async function POST(request: Request, context: RouteContext) {
       reason: "participant_forbidden_or_not_found",
     });
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  const authorization = await authorizeAudioActivitySubmission({
+    source,
+    callerSessionParticipantId: participant.id,
+    callerParticipantType: participant.type,
+    sessionId,
+    requestedSessionParticipantId: parsed.data.sessionParticipantId ?? undefined,
+    findSessionParticipantById: async (participantId) => {
+      return prisma.sessionParticipant.findUnique({
+        where: { id: participantId },
+        select: { id: true, sessionId: true, type: true },
+      });
+    },
+  });
+  if (!authorization.accepted) {
+    logAudioActivity("rejected", {
+      sessionId,
+      sessionParticipantId: participant.id,
+      source,
+      reason: authorization.reason,
+    });
+    return NextResponse.json(
+      { ok: false, error: "Forbidden.", reason: authorization.reason },
+      { status: authorization.httpStatus },
+    );
   }
 
   const result = await processAudioActivityEvent(
@@ -131,8 +159,9 @@ export async function POST(request: Request, context: RouteContext) {
     {
       sessionId,
       event,
-      resolvedSessionParticipantId: participant.id,
-      sessionParticipantId: parsed.data.sessionParticipantId,
+      resolvedSessionParticipantId: authorization.targetSessionParticipantId,
+      sessionParticipantId:
+        parsed.data.sessionParticipantId ?? authorization.targetSessionParticipantId,
       source,
       participantIdentity,
       clientTimestamp,

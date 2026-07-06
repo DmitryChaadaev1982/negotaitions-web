@@ -1,5 +1,6 @@
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody } from "@/lib/room-auth";
+import { VOXIMPLANT_MIC_ACTIVITY_SOURCE } from "@/lib/telemetry/audio-activity-sources";
 import {
   VOX_END_DEBOUNCE_MS,
   VOX_MIN_INTERVAL_MS,
@@ -46,6 +47,7 @@ export type BuildSpeakingIntervalPayloadInput = {
   participantIdentity?: string | null;
   startedAt: Date;
   endedAt: Date;
+  source?: string;
   recordingActiveClientSide: boolean;
   audioProcessingEnabled?: boolean;
 };
@@ -164,7 +166,7 @@ export function buildSpeakingIntervalPayload(input: BuildSpeakingIntervalPayload
     event: "speaking_interval" as const,
     sessionParticipantId: input.sessionParticipantId,
     participantIdentity: input.participantIdentity ?? undefined,
-    source: "VOXIMPLANT_MIC_ACTIVITY" as const,
+    source: input.source ?? VOXIMPLANT_MIC_ACTIVITY_SOURCE,
     startedAt: input.startedAt.toISOString(),
     endedAt: input.endedAt.toISOString(),
     telemetryCalibration: {
