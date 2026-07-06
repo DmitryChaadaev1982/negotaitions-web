@@ -27,14 +27,16 @@ import type { TranslationKey } from "@/lib/i18n/translate";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type MaterialsStatusResponse = {
-  recording: { processingStage: string } | null;
+  recording: { id?: string; processingStage: string } | null;
   transcription: {
+    id?: string | null;
     processingStage: string;
     canStart: boolean;
     canRetry: boolean;
     canStop?: boolean;
     canRerun?: boolean;
     speakerMappingRequired?: boolean;
+    speakerMappingStatus?: string | null;
     diarizationStatus?: string | null;
     enhancement?: {
       status: string;
@@ -253,10 +255,23 @@ export function SessionPostProcessingPanel({
   }, [fetchStatus, sessionId]);
 
   useEffect(() => {
-    if (!statusData?.processing.shouldPoll && !forcePollingActive) return;
+    const shouldPollStatus =
+      statusData?.processing.shouldPoll ||
+      forcePollingActive ||
+      (isFacilitator &&
+        !readOnly &&
+        (statusData?.transcription?.speakerMappingRequired ?? false));
+    if (!shouldPollStatus) return;
     const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [fetchStatus, forcePollingActive, statusData?.processing.shouldPoll]);
+  }, [
+    fetchStatus,
+    forcePollingActive,
+    isFacilitator,
+    readOnly,
+    statusData?.processing.shouldPoll,
+    statusData?.transcription?.speakerMappingRequired,
+  ]);
 
   const autoTranscribeEnabled =
     autoTranscribeProp || (statusData?.processing.autoTranscribeEnabled ?? false);
@@ -501,6 +516,11 @@ export function SessionPostProcessingPanel({
   const aiDone = aiStage === "ready";
   const transcriptionSectionRefreshKey = getTranscriptionSectionRefreshKey({
     sessionId,
+    transcriptId: transcript?.id ?? null,
+    recordingId: recording?.id ?? null,
+    processingStage: transcript?.processingStage ?? null,
+    diarizationStatus: transcript?.diarizationStatus ?? null,
+    speakerMappingRequired: transcript?.speakerMappingRequired ?? false,
   });
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────

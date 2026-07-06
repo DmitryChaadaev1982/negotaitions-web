@@ -195,6 +195,7 @@ export default function VoximplantNegotiationRoomPage(
     leave,
     // Audio diagnostics
     micCaptureStatus,
+    localAudioStreamCreated,
     micLevel,
     audioProcessingEnabled,
     remotePlaybackBlocked,
@@ -377,6 +378,10 @@ export default function VoximplantNegotiationRoomPage(
     : t("participantType.OBSERVER");
 
   const effectiveDisplayName = sidebar?.displayName || localDisplayName || "Участник";
+  const trackerSessionParticipantId =
+    roomAuth.type === "account"
+      ? roomAuth.participantId
+      : (sidebar?.currentParticipantId ?? null);
 
   // ── Automatic Voximplant recording relay ──────────────────────────────────
   // Recording is tied to negotiation lifecycle: start → start recording,
@@ -725,13 +730,20 @@ export default function VoximplantNegotiationRoomPage(
           <VoximplantSpeakingActivityTracker
             sessionId={props.sessionId}
             roomAuth={roomAuth}
+            sessionParticipantId={trackerSessionParticipantId}
+            participantIdentity={sidebar.displayName ?? localDisplayName ?? null}
+            localAudioStreamPresent={localAudioStreamCreated}
             micLevel={micLevel}
             muted={isMicMuted || !controlState.micAllowed}
             enabled={joined && !staleConnection}
             connectionId={roomConnectionId ?? undefined}
             audioProcessingEnabled={audioProcessingEnabled}
             recordingStatus={recordingState?.status ?? null}
-            recordingStartedAt={recordingState?.startedAt ?? null}
+            debug={
+              (props.debugAudio === true ||
+                process.env.NEXT_PUBLIC_VOX_SPEAKING_TRACKER_DEBUG === "true") &&
+              (effectiveParticipantType === "FACILITATOR" || effectiveParticipantType === "OBSERVER")
+            }
           />
         }
         providerBanner={null}

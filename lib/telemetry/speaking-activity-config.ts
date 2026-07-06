@@ -1,6 +1,7 @@
 export const VOX_SPEAKING_ON_LEVEL = 10;
 export const VOX_SPEAKING_OFF_LEVEL = 6;
 export const VOX_END_DEBOUNCE_MS = 800;
+export const VOX_MIN_INTERVAL_MS = 50;
 
 export const TELEMETRY_NORMALIZE_MERGE_GAP_MS = 1200;
 export const TELEMETRY_MIN_INTERVAL_MS = 300;
@@ -14,6 +15,7 @@ export const TELEMETRY_CALIBRATION = {
   voxSpeakingOnLevel: VOX_SPEAKING_ON_LEVEL,
   voxSpeakingOffLevel: VOX_SPEAKING_OFF_LEVEL,
   voxEndDebounceMs: VOX_END_DEBOUNCE_MS,
+  voxMinIntervalMs: VOX_MIN_INTERVAL_MS,
   mergeGapMs: TELEMETRY_NORMALIZE_MERGE_GAP_MS,
   minIntervalMs: TELEMETRY_MIN_INTERVAL_MS,
   remoteSpeakingThreshold: REMOTE_SPEAKING_LEVEL_THRESHOLD,

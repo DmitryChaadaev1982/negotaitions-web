@@ -3,15 +3,19 @@ import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { processAudioActivityEvent } from "@/lib/telemetry/audio-activity-event-processor";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
-  event: z.enum(["SPEAKING_START", "SPEAKING_END"]),
+  event: z.enum(["SPEAKING_START", "SPEAKING_END", "speaking_interval"]),
+  sessionParticipantId: z.string().trim().min(1).optional(),
   participantIdentity: z.string().trim().min(1).optional(),
   clientTimestamp: z.string().optional(),
+  startedAt: z.string().optional(),
+  endedAt: z.string().optional(),
   offsetSeconds: z.number().optional(),
   // Provider/source of the activity signal. Defaults to LiveKit for backward
   // compatibility. Voximplant clients pass "VOXIMPLANT_MIC_ACTIVITY".
@@ -23,6 +27,7 @@ const schema = z.object({
       speakingOnLevel: z.number().optional(),
       speakingOffLevel: z.number().optional(),
       endDebounceMs: z.number().optional(),
+      recordingActiveClientSide: z.boolean().optional(),
       audioProcessingEnabled: z.boolean().nullable().optional(),
     })
     .optional(),
@@ -80,13 +85,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const {
-    event,
-    participantIdentity,
-    clientTimestamp,
-    offsetSeconds,
-    audioLevel,
-  } = parsed.data;
+  const { event, participantIdentity, clientTimestamp, offsetSeconds, audioLevel } = parsed.data;
   const source = parsed.data.source ?? "LIVEKIT_ACTIVE_SPEAKER";
 
   const participant = await resolveRoomParticipantFromBody(
@@ -102,125 +101,59 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const now = new Date();
-  const eventTimeCandidate = clientTimestamp ? new Date(clientTimestamp) : now;
-  const eventTime = Number.isNaN(eventTimeCandidate.getTime()) ? now : eventTimeCandidate;
-  const recording = await prisma.recording.findUnique({
-    where: { sessionId },
-    select: { startedAt: true, endedAt: true },
-  });
-  const recordingStartMs = recording?.startedAt?.getTime() ?? null;
-  const derivedOffsetSeconds =
-    recordingStartMs == null
-      ? null
-      : Math.max(
-          0,
-          Math.round(((eventTime.getTime() - recordingStartMs) / 1000) * 1000) / 1000,
-        );
-  const resolvedOffsetSeconds = offsetSeconds ?? derivedOffsetSeconds;
-  const recordingDurationSeconds =
-    recording?.startedAt && recording?.endedAt
-      ? Math.max(0, (recording.endedAt.getTime() - recording.startedAt.getTime()) / 1000)
-      : null;
-  const normalizedOffsetSeconds =
-    typeof resolvedOffsetSeconds === "number"
-      ? Math.max(
-          0,
-          recordingDurationSeconds == null
-            ? resolvedOffsetSeconds
-            : Math.min(resolvedOffsetSeconds, recordingDurationSeconds),
-        )
-      : null;
-
-  if (event === "SPEAKING_START") {
-    await prisma.sessionParticipantAudioActivity.create({
-      data: {
-        sessionId,
-        sessionParticipantId: participant.id,
-        participantIdentity: participantIdentity ?? null,
-        startedAt: eventTime,
-        startedOffsetSeconds: normalizedOffsetSeconds,
-        source,
-        confidence: typeof audioLevel === "number" ? audioLevel : null,
+  const result = await processAudioActivityEvent(
+    {
+      findRecordingWindow: async (targetSessionId) =>
+        prisma.recording.findUnique({
+          where: { sessionId: targetSessionId },
+          select: { startedAt: true, endedAt: true },
+        }),
+      createActivity: async (data) => {
+        await prisma.sessionParticipantAudioActivity.create({ data });
       },
-    });
-    logAudioActivity("accepted", {
+      findLatestOpenActivity: async (targetSessionId, sessionParticipantId) =>
+        prisma.sessionParticipantAudioActivity.findFirst({
+          where: {
+            sessionId: targetSessionId,
+            sessionParticipantId,
+            endedAt: null,
+          },
+          orderBy: { startedAt: "desc" },
+          select: { id: true, startedAt: true, startedOffsetSeconds: true },
+        }),
+      updateActivity: async (id, data) => {
+        await prisma.sessionParticipantAudioActivity.update({
+          where: { id },
+          data,
+        });
+      },
+    },
+    {
       sessionId,
-      sessionParticipantId: participant.id,
+      event,
+      resolvedSessionParticipantId: participant.id,
+      sessionParticipantId: parsed.data.sessionParticipantId,
       source,
-      hasOffsets: normalizedOffsetSeconds != null,
-      reason: "start_recorded",
-      intervalDurationMs: null,
-    });
+      participantIdentity,
+      clientTimestamp,
+      offsetSeconds,
+      audioLevel,
+      startedAt: parsed.data.startedAt,
+      endedAt: parsed.data.endedAt,
+    },
+  );
 
-    return NextResponse.json({ ok: true, event: "SPEAKING_START" });
-  }
-
-  if (event === "SPEAKING_END") {
-    // Find the most recent open activity for this participant
-    const openActivity = await prisma.sessionParticipantAudioActivity.findFirst({
-      where: {
-        sessionId,
-        sessionParticipantId: participant.id,
-        endedAt: null,
-      },
-      orderBy: { startedAt: "desc" },
-    });
-
-    if (openActivity) {
-      const endedOffsetSeconds =
-        normalizedOffsetSeconds == null
-          ? null
-          : openActivity.startedOffsetSeconds != null
-            ? Math.max(normalizedOffsetSeconds, openActivity.startedOffsetSeconds)
-            : normalizedOffsetSeconds;
-      const intervalDurationMs = Math.max(
-        0,
-        eventTime.getTime() - openActivity.startedAt.getTime(),
-      );
-      await prisma.sessionParticipantAudioActivity.update({
-        where: { id: openActivity.id },
-        data: {
-          endedAt: eventTime,
-          endedOffsetSeconds,
-          startedOffsetSeconds:
-            openActivity.startedOffsetSeconds ??
-            (recordingStartMs == null
-              ? null
-              : Math.max(
-                  0,
-                  Math.round(
-                    ((openActivity.startedAt.getTime() - recordingStartMs) / 1000) * 1000,
-                  ) / 1000,
-                )),
-        },
-      });
-      logAudioActivity("accepted", {
-        sessionId,
-        sessionParticipantId: participant.id,
-        source,
-        hasOffsets: endedOffsetSeconds != null,
-        reason: "end_recorded",
-        intervalDurationMs,
-      });
-    } else {
-      logAudioActivity("rejected", {
-        sessionId,
-        sessionParticipantId: participant.id,
-        source,
-        hasOffsets: normalizedOffsetSeconds != null,
-        reason: "no_open_interval_for_end",
-      });
-    }
-
-    return NextResponse.json({ ok: true, event: "SPEAKING_END" });
-  }
-
-  logAudioActivity("rejected", {
+  logAudioActivity(result.accepted ? "accepted" : "rejected", {
     sessionId,
     sessionParticipantId: participant.id,
     source,
-    reason: "unknown_event",
+    hasOffsets: result.hasOffsets,
+    reason: result.reason,
+    intervalDurationMs: result.intervalDurationMs,
   });
-  return NextResponse.json({ error: "Unknown event." }, { status: 400 });
+
+  return NextResponse.json(
+    { ok: result.accepted, event, reason: result.reason },
+    { status: result.httpStatus },
+  );
 }

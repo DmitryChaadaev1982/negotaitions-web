@@ -2,6 +2,14 @@ import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { decideAutoMappingApplication } from "@/lib/transcription/mapping-decision";
 import {
+  AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+  AUTO_MAPPING_HIGH_CONFIDENCE,
+  AUTO_MAPPING_MIN_MARGIN,
+  AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+  computeGlobalAssignmentMargin,
+  shouldAllowGlobalMarginOverride,
+} from "@/lib/transcription/auto-trigger-mapping-core";
+import {
   detectMappingMode,
   evaluateMappingSafety,
   type MappingSafetyResult,
@@ -19,14 +27,15 @@ import {
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
 
-/**
- * Minimum per-speaker overlap confidence required to prefill a suggested
- * mapping as AUTO_SUGGESTED (and apply it to segments). Below this, the
- * suggestion is still stored (so the UI can prefill dropdowns) but the status
- * stays REQUIRED so the facilitator must review/complete it.
- */
-export const AUTO_MAPPING_HIGH_CONFIDENCE = 0.6;
-export const AUTO_MAPPING_MIN_MARGIN = 0.12;
+export {
+  AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+  AUTO_MAPPING_HIGH_CONFIDENCE,
+  AUTO_MAPPING_MIN_MARGIN,
+  AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+  computeGlobalAssignmentCandidates,
+  computeGlobalAssignmentMargin,
+  shouldAllowGlobalMarginOverride,
+} from "@/lib/transcription/auto-trigger-mapping-core";
 
 export type AutoMappingTriggerDiagnostics = {
   strategy: "diarization_segment_overlap";
@@ -55,6 +64,15 @@ export type AutoMappingTriggerDiagnostics = {
   mappingSafety: MappingSafetyResult;
   telemetryQuality: TelemetryQuality;
   telemetryHealth: TelemetryHealthReport;
+  weakMarginDetected: boolean;
+  weakMarginOverriddenByGlobalEvidence: boolean;
+  selectedCoverageBySpeaker: Record<string, number | null>;
+  globalAssignmentMargin: number | null;
+  globalAssignmentBestScore: number | null;
+  globalAssignmentSecondBestScore: number | null;
+  globalMarginOverrideThreshold: number;
+  minSelectedCoverageForOverride: number;
+  effectiveHighConfidence: boolean;
 };
 
 function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
@@ -113,6 +131,16 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
       participants: {},
       warnings: [],
     },
+    weakMarginDetected: false,
+    weakMarginOverriddenByGlobalEvidence: false,
+    selectedCoverageBySpeaker: {},
+    globalAssignmentMargin: null,
+    globalAssignmentBestScore: null,
+    globalAssignmentSecondBestScore: null,
+    globalMarginOverrideThreshold: AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+    minSelectedCoverageForOverride:
+      AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+    effectiveHighConfidence: false,
   };
 }
 
@@ -217,6 +245,16 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       mappingSafety: safeByDefault,
       telemetryQuality: suggestion.telemetryQuality,
       telemetryHealth: suggestion.telemetryHealth,
+      weakMarginDetected: false,
+      weakMarginOverriddenByGlobalEvidence: false,
+      selectedCoverageBySpeaker: {},
+      globalAssignmentMargin: null,
+      globalAssignmentBestScore: null,
+      globalAssignmentSecondBestScore: null,
+      globalMarginOverrideThreshold: AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+      minSelectedCoverageForOverride:
+        AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+      effectiveHighConfidence: false,
     };
     await persistDiagnostics(diag);
     return diag;
@@ -238,6 +276,14 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
   const weakMargin = Object.values(suggestion.selectedMargins).some(
     (margin) => margin != null && margin < AUTO_MAPPING_MIN_MARGIN,
   );
+  const selectedCoverageBySpeaker = labelOrder.reduce<Record<string, number | null>>(
+    (acc, label) => {
+      const value = suggestion.confidence[label];
+      acc[label] = typeof value === "number" ? value : null;
+      return acc;
+    },
+    {},
+  );
 
   // Sanitized mapping (only real participant ids).
   const sanitizedMapping: SpeakerMapping = {};
@@ -257,10 +303,28 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     participantIds: participantPool.map((participant) => participant.id),
     mode: detectMappingMode(existingMetadata),
   });
+  const globalAssignment = computeGlobalAssignmentMargin({
+    speakerLabels: labelOrder,
+    participantIds: participantPool.map((participant) => participant.id),
+    scoreMatrix: suggestion.scoreMatrix,
+  });
+  const weakMarginOverriddenByGlobalEvidence = shouldAllowGlobalMarginOverride({
+    weakMargin,
+    speakerLabelCount: labelOrder.length,
+    participantCandidateCount: participantPool.length,
+    allSpeakersCovered,
+    mappingSafetySafe: mappingSafety.safe,
+    globalAssignmentMargin: globalAssignment.margin,
+    selectedCoverageBySpeaker,
+    telemetryQuality: suggestion.telemetryQuality,
+  });
+  const effectiveWeakMargin = weakMargin && !weakMarginOverriddenByGlobalEvidence;
+  const effectiveHighConfidence =
+    highConfidence || weakMarginOverriddenByGlobalEvidence;
   const decision = decideAutoMappingApplication({
     allSpeakersCovered,
-    highConfidence,
-    weakMargin,
+    highConfidence: effectiveHighConfidence,
+    weakMargin: effectiveWeakMargin,
     mappingSafetySafe: mappingSafety.safe,
     mappingSafetyReason: mappingSafety.reason,
     rawSpeakerCount: labelOrder.length,
@@ -314,6 +378,17 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       mappingSafety,
       telemetryQuality: suggestion.telemetryQuality,
       telemetryHealth: suggestion.telemetryHealth,
+      weakMarginDetected: weakMargin,
+      weakMarginOverriddenByGlobalEvidence,
+      selectedCoverageBySpeaker,
+      globalAssignmentMargin: globalAssignment.margin,
+      globalAssignmentBestScore: globalAssignment.best?.totalScore ?? null,
+      globalAssignmentSecondBestScore:
+        globalAssignment.secondBest?.totalScore ?? null,
+      globalMarginOverrideThreshold: AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+      minSelectedCoverageForOverride:
+        AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+      effectiveHighConfidence,
     };
     await prisma.transcript.update({
       where: { id: transcript.id },
@@ -381,6 +456,15 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     mappingSafety,
     telemetryQuality: suggestion.telemetryQuality,
     telemetryHealth: suggestion.telemetryHealth,
+    weakMarginDetected: weakMargin,
+    weakMarginOverriddenByGlobalEvidence,
+    selectedCoverageBySpeaker,
+    globalAssignmentMargin: globalAssignment.margin,
+    globalAssignmentBestScore: globalAssignment.best?.totalScore ?? null,
+    globalAssignmentSecondBestScore: globalAssignment.secondBest?.totalScore ?? null,
+    globalMarginOverrideThreshold: AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
+    minSelectedCoverageForOverride: AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
+    effectiveHighConfidence,
   };
 
   await prisma.$transaction(async (tx) => {
