@@ -4,10 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   VOX_END_DEBOUNCE_MS,
+  VOX_MIN_INTERVAL_MS,
   VOX_SPEAKING_OFF_LEVEL,
   VOX_SPEAKING_ON_LEVEL,
 } from "@/lib/telemetry/speaking-activity-config";
-import type { TrackerDebugState } from "@/lib/telemetry/voximplant-speaking-tracker";
+import type {
+  LifecycleCloseReason,
+  TrackerDebugState,
+} from "@/lib/telemetry/voximplant-speaking-tracker";
 import {
   buildSpeakingIntervalPayload,
   getTrackerBlockReason,
@@ -53,16 +57,42 @@ export function VoximplantSpeakingActivityTracker({
   recordingStatus,
   debug = false,
 }: VoximplantSpeakingActivityTrackerProps) {
-  const speakingRef = useRef(false);
-  const openIntervalStartedAtRef = useRef<Date | null>(null);
-  const startTimerRef = useRef<number | null>(null);
-  const endTimerRef = useRef<number | null>(null);
+  const intervalOpenRef = useRef(false);
+  const intervalStartedAtRef = useRef<Date | null>(null);
+  const postCountRef = useRef(0);
+  const silenceTimerRef = useRef<number | null>(null);
+  const skippedShortIntervalCountRef = useRef(0);
+  const lastBlockReasonRef = useRef<ReturnType<typeof getTrackerBlockReason>>(null);
+  const mountedRef = useRef(true);
+  const latestRuntimeRef = useRef({
+    sessionId,
+    roomAuth,
+    sessionParticipantId,
+    participantIdentity,
+    recordingActiveClientSide: false,
+    audioProcessingEnabled,
+    connectionId,
+  });
   const [debugState, setDebugState] = useState<TrackerDebugState>({
     mounted: true,
+    enabled: false,
     localAudioStreamPresent: false,
     sessionParticipantIdPresent: false,
+    sessionParticipantId: null,
     participantIdentity: null,
+    micLevel: null,
+    muted: false,
+    speaking: false,
+    intervalOpen: false,
     recordingActiveClientSide: false,
+    postCount: 0,
+    lastPostStatus: null,
+    lastPostResponse: null,
+    lastOpenReason: null,
+    lastCloseReason: null,
+    openSince: null,
+    skippedShortIntervalCount: 0,
+    pendingSilenceClose: false,
     lastIntervalStartedAt: null,
     lastIntervalEndedAt: null,
     lastPostAttemptAt: null,
@@ -70,6 +100,7 @@ export function VoximplantSpeakingActivityTracker({
     lastError: null,
     blockReason: null,
   });
+  const debugStateRef = useRef<TrackerDebugState>(debugState);
 
   const recordingActiveClientSide =
     recordingStatus === "STARTING" ||
@@ -87,15 +118,22 @@ export function VoximplantSpeakingActivityTracker({
   const baseDebugState = useMemo(
     () => ({
       mounted: true,
+      enabled,
       localAudioStreamPresent,
       sessionParticipantIdPresent: Boolean(sessionParticipantId),
+      sessionParticipantId: sessionParticipantId ?? null,
       participantIdentity: participantIdentity ?? null,
+      micLevel: typeof micLevel === "number" ? micLevel : null,
+      muted,
       recordingActiveClientSide,
       blockReason,
     }),
     [
+      enabled,
       blockReason,
       localAudioStreamPresent,
+      micLevel,
+      muted,
       participantIdentity,
       recordingActiveClientSide,
       sessionParticipantId,
@@ -104,44 +142,54 @@ export function VoximplantSpeakingActivityTracker({
 
   const publishDebugState = useCallback(
     (patch: Partial<TrackerDebugState>) => {
-      setDebugState((prev) => {
-        const next = { ...baseDebugState, ...prev, ...patch };
-        window.__voxSpeakingTrackerDebug = next;
-        return next;
-      });
+      const prev = debugStateRef.current;
+      const next = { ...prev, ...baseDebugState, ...patch };
+      debugStateRef.current = next;
+      window.__voxSpeakingTrackerDebug = next;
+      if (mountedRef.current) {
+        setDebugState(next);
+      }
     },
     [baseDebugState],
   );
 
-  const clearStartTimer = useCallback(() => {
-    if (startTimerRef.current !== null) {
-      window.clearTimeout(startTimerRef.current);
-      startTimerRef.current = null;
-    }
-  }, []);
-
-  const clearEndTimer = useCallback(() => {
-    if (endTimerRef.current !== null) {
-      window.clearTimeout(endTimerRef.current);
-      endTimerRef.current = null;
+  const clearSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current !== null) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
   }, []);
 
   const flushSpeakingInterval = useCallback(
-    (endedAt: Date) => {
-      const startedAt = openIntervalStartedAtRef.current;
+    (endedAt: Date, reason: LifecycleCloseReason) => {
+      const startedAt = intervalStartedAtRef.current;
       if (!startedAt) return;
-      openIntervalStartedAtRef.current = null;
-      speakingRef.current = false;
+      intervalStartedAtRef.current = null;
+      intervalOpenRef.current = false;
+      clearSilenceTimer();
+      const durationMs = endedAt.getTime() - startedAt.getTime();
       publishDebugState({
+        speaking: false,
+        intervalOpen: false,
+        pendingSilenceClose: false,
+        openSince: null,
+        lastCloseReason: reason,
         lastIntervalStartedAt: startedAt.toISOString(),
         lastIntervalEndedAt: endedAt.toISOString(),
         lastPostAttemptAt: new Date().toISOString(),
         lastPostResult: "idle",
         lastError: null,
       });
+      if (durationMs < VOX_MIN_INTERVAL_MS) {
+        skippedShortIntervalCountRef.current += 1;
+        publishDebugState({
+          skippedShortIntervalCount: skippedShortIntervalCountRef.current,
+        });
+        return;
+      }
 
-      if (!sessionParticipantId) {
+      const runtime = latestRuntimeRef.current;
+      if (!runtime.sessionParticipantId) {
         publishDebugState({
           lastPostResult: "failed",
           lastError: "participant-id-missing",
@@ -150,101 +198,181 @@ export function VoximplantSpeakingActivityTracker({
       }
 
       const payload = buildSpeakingIntervalPayload({
-        sessionParticipantId,
-        participantIdentity,
+        sessionParticipantId: runtime.sessionParticipantId,
+        participantIdentity: runtime.participantIdentity,
         startedAt,
         endedAt,
-        recordingActiveClientSide,
-        audioProcessingEnabled,
+        recordingActiveClientSide: runtime.recordingActiveClientSide,
+        audioProcessingEnabled: runtime.audioProcessingEnabled,
       });
 
       void postSpeakingInterval({
-        fetchImpl: fetch,
-        sessionId,
-        roomAuth,
-        connectionId,
+        fetchImpl: window.fetch.bind(window),
+        sessionId: runtime.sessionId,
+        roomAuth: runtime.roomAuth,
+        connectionId: runtime.connectionId,
         payload,
       })
         .then((result) => {
+          postCountRef.current += 1;
           publishDebugState({
+            postCount: postCountRef.current,
+            lastPostStatus: result.status,
+            lastPostResponse: result.ok ? "ok" : `status_${result.status}`,
             lastPostResult: result.ok ? "success" : "failed",
             lastError: result.ok ? null : `status_${result.status}`,
           });
         })
         .catch((error) => {
+          postCountRef.current += 1;
           publishDebugState({
+            postCount: postCountRef.current,
+            lastPostStatus: null,
+            lastPostResponse: null,
             lastPostResult: "failed",
             lastError: error instanceof Error ? error.message : "post-failed",
           });
         });
     },
     [
-      audioProcessingEnabled,
-      connectionId,
-      participantIdentity,
+      clearSilenceTimer,
       publishDebugState,
-      recordingActiveClientSide,
-      roomAuth,
-      sessionId,
-      sessionParticipantId,
     ],
+  );
+  const flushSpeakingIntervalRef = useRef(flushSpeakingInterval);
+
+  const openSpeakingInterval = useCallback(
+    (openedAt: Date, reason: string) => {
+      if (intervalOpenRef.current) return;
+      intervalOpenRef.current = true;
+      intervalStartedAtRef.current = openedAt;
+      clearSilenceTimer();
+      publishDebugState({
+        speaking: true,
+        intervalOpen: true,
+        pendingSilenceClose: false,
+        openSince: openedAt.toISOString(),
+        lastOpenReason: reason,
+      });
+    },
+    [clearSilenceTimer, publishDebugState],
+  );
+
+  useEffect(() => {
+    flushSpeakingIntervalRef.current = flushSpeakingInterval;
+  }, [flushSpeakingInterval]);
+
+  const scheduleSilenceClose = useCallback(
+    (reason: LifecycleCloseReason) => {
+      if (!intervalOpenRef.current || silenceTimerRef.current !== null) return;
+      silenceTimerRef.current = window.setTimeout(() => {
+        silenceTimerRef.current = null;
+        if (intervalOpenRef.current) {
+          flushSpeakingInterval(new Date(), reason);
+        }
+      }, VOX_END_DEBOUNCE_MS);
+      publishDebugState({
+        pendingSilenceClose: true,
+        lastCloseReason: reason,
+      });
+    },
+    [flushSpeakingInterval, publishDebugState],
   );
 
   useEffect(() => {
     window.__voxSpeakingTrackerDebug = { ...baseDebugState, ...debugState };
+    debugStateRef.current = { ...baseDebugState, ...debugState };
   }, [baseDebugState, debugState]);
 
   useEffect(() => {
+    latestRuntimeRef.current = {
+      sessionId,
+      roomAuth,
+      sessionParticipantId,
+      participantIdentity,
+      recordingActiveClientSide,
+      audioProcessingEnabled,
+      connectionId,
+    };
+  }, [
+    audioProcessingEnabled,
+    connectionId,
+    participantIdentity,
+    recordingActiveClientSide,
+    roomAuth,
+    sessionId,
+    sessionParticipantId,
+  ]);
+
+  useEffect(() => {
+    const previous = lastBlockReasonRef.current;
+    const becameBlocked = previous === null && blockReason !== null;
+    lastBlockReasonRef.current = blockReason;
+    if (becameBlocked) {
+      clearSilenceTimer();
+      flushSpeakingInterval(new Date(), "block_transition");
+    }
+  }, [blockReason, clearSilenceTimer, flushSpeakingInterval]);
+
+  useEffect(() => {
+    const level = muted ? 0 : micLevel ?? 0;
     if (blockReason) {
-      clearStartTimer();
-      clearEndTimer();
-      flushSpeakingInterval(new Date());
+      clearSilenceTimer();
+      publishDebugState({
+        micLevel: typeof micLevel === "number" ? micLevel : null,
+        muted,
+        speaking: intervalOpenRef.current,
+        intervalOpen: intervalOpenRef.current,
+        pendingSilenceClose: silenceTimerRef.current !== null,
+      });
       return;
     }
-
-    const level = muted ? 0 : micLevel ?? 0;
 
     if (level > VOX_SPEAKING_ON_LEVEL) {
-      clearEndTimer();
-      if (!speakingRef.current) {
-        if (startTimerRef.current === null) {
-          startTimerRef.current = window.setTimeout(() => {
-            startTimerRef.current = null;
-            if (!speakingRef.current) {
-              speakingRef.current = true;
-              openIntervalStartedAtRef.current = new Date();
-            }
-          }, 180);
-        }
-      }
+      openSpeakingInterval(new Date(), "level_above_on_threshold");
       return;
     }
 
-    clearStartTimer();
-
-    if (
-      level < VOX_SPEAKING_OFF_LEVEL &&
-      speakingRef.current &&
-      endTimerRef.current === null
-    ) {
-      endTimerRef.current = window.setTimeout(() => {
-        endTimerRef.current = null;
-        if (speakingRef.current) {
-          flushSpeakingInterval(new Date());
-        }
-      }, VOX_END_DEBOUNCE_MS);
+    if (level < VOX_SPEAKING_OFF_LEVEL && intervalOpenRef.current) {
+      scheduleSilenceClose(muted ? "muted" : "silence_debounce");
     }
-  }, [blockReason, clearEndTimer, clearStartTimer, flushSpeakingInterval, micLevel, muted]);
+  }, [
+    blockReason,
+    clearSilenceTimer,
+    micLevel,
+    muted,
+    openSpeakingInterval,
+    publishDebugState,
+    scheduleSilenceClose,
+  ]);
 
   useEffect(() => {
     return () => {
-      clearStartTimer();
-      clearEndTimer();
-      flushSpeakingInterval(new Date());
-      const finalState = { ...debugState, mounted: false };
+      mountedRef.current = false;
+      if (silenceTimerRef.current !== null) {
+        window.clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      flushSpeakingIntervalRef.current(new Date(), "unmount");
+      const finalState = {
+        ...debugStateRef.current,
+        mounted: false,
+      };
+      debugStateRef.current = finalState;
       window.__voxSpeakingTrackerDebug = finalState;
     };
-  }, [clearEndTimer, clearStartTimer, debugState, flushSpeakingInterval]);
+  }, []);
+
+  useEffect(() => {
+    publishDebugState({
+      speaking: intervalOpenRef.current,
+      intervalOpen: intervalOpenRef.current,
+      pendingSilenceClose: silenceTimerRef.current !== null,
+      skippedShortIntervalCount: skippedShortIntervalCountRef.current,
+      micLevel: typeof micLevel === "number" ? micLevel : null,
+      muted,
+    });
+  }, [micLevel, muted, publishDebugState]);
 
   if (!debug) {
     return null;

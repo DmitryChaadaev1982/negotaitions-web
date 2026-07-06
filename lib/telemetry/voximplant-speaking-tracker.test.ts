@@ -5,6 +5,7 @@ import {
   buildSpeakingIntervalPayload,
   getTrackerBlockReason,
   postSpeakingInterval,
+  simulateSpeakingIntervalLifecycle,
 } from "@/lib/telemetry/voximplant-speaking-tracker";
 
 test("tracker can post while recordingActiveClientSide is false", async () => {
@@ -56,4 +57,110 @@ test("missing participant id blocks posting with diagnostic reason", () => {
     sessionParticipantId: null,
   });
   assert.equal(reason, "participant-id-missing");
+});
+
+test("sustained 5s speaking produces one realistic interval", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 5000, micLevel: 20 },
+    { atMs: 5001, micLevel: 0 },
+    { atMs: 5801, micLevel: 0 },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].durationMs, 5801);
+});
+
+test("brief dip below off threshold does not split interval", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 2000, micLevel: 20 },
+    { atMs: 2100, micLevel: 3 },
+    { atMs: 2200, micLevel: 20 },
+    { atMs: 5000, micLevel: 20 },
+    { atMs: 5001, micLevel: 0 },
+    { atMs: 5801, micLevel: 0 },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].durationMs, 5801);
+});
+
+test("silence longer than debounce closes exactly once", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 4000, micLevel: 20 },
+    { atMs: 4001, micLevel: 0 },
+    { atMs: 4300, micLevel: 0 },
+    { atMs: 4801, micLevel: 0 },
+    { atMs: 6000, micLevel: 0, rerender: true },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].endedAtMs, 4801);
+  assert.equal(result.intervals[0].closeReason, "silence_debounce");
+});
+
+test("muted schedules debounced close without fragment churn", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 3000, micLevel: 20 },
+    { atMs: 3001, micLevel: 20, muted: true },
+    { atMs: 3500, micLevel: 20, muted: true },
+    { atMs: 3801, micLevel: 20, muted: true },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].closeReason, "muted");
+  assert.equal(result.intervals[0].endedAtMs, 3801);
+});
+
+test("ordinary rerender ticks do not flush open interval", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 1000, micLevel: 20, rerender: true },
+    { atMs: 2000, micLevel: 20, rerender: true },
+    { atMs: 3000, micLevel: 20, rerender: true },
+    { atMs: 3500, micLevel: 0 },
+    { atMs: 4300, micLevel: 0 },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].durationMs, 4300);
+});
+
+test("true unmount flushes open interval once", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 1500, micLevel: 20 },
+    { atMs: 2500, micLevel: 20, unmount: true },
+    { atMs: 2600, micLevel: 20, unmount: true },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].closeReason, "unmount");
+  assert.equal(result.intervals[0].endedAtMs, 2500);
+});
+
+test("block transition flushes open interval once", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 1200, micLevel: 20 },
+    { atMs: 1800, micLevel: 20, blocked: true },
+    { atMs: 2200, micLevel: 20, blocked: true },
+  ]);
+
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].closeReason, "block_transition");
+  assert.equal(result.intervals[0].endedAtMs, 1800);
+});
+
+test("sub-50ms intervals are skipped and never persisted", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20 },
+    { atMs: 10, micLevel: 0, blocked: true },
+  ]);
+
+  assert.equal(result.intervals.length, 0);
+  assert.equal(result.skippedShortIntervalCount, 1);
 });

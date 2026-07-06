@@ -378,6 +378,10 @@ export default function VoximplantNegotiationRoomPage(
     : t("participantType.OBSERVER");
 
   const effectiveDisplayName = sidebar?.displayName || localDisplayName || "Участник";
+  const trackerSessionParticipantId =
+    roomAuth.type === "account"
+      ? roomAuth.participantId
+      : (sidebar?.currentParticipantId ?? null);
 
   // ── Automatic Voximplant recording relay ──────────────────────────────────
   // Recording is tied to negotiation lifecycle: start → start recording,
@@ -726,7 +730,7 @@ export default function VoximplantNegotiationRoomPage(
           <VoximplantSpeakingActivityTracker
             sessionId={props.sessionId}
             roomAuth={roomAuth}
-            sessionParticipantId={sidebar.currentParticipantId}
+            sessionParticipantId={trackerSessionParticipantId}
             participantIdentity={sidebar.displayName ?? localDisplayName ?? null}
             localAudioStreamPresent={localAudioStreamCreated}
             micLevel={micLevel}
