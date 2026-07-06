@@ -35,7 +35,7 @@ test("successful save can force speaker-mapping draft sync", () => {
   assert.equal(shouldSync, true);
 });
 
-test("transcription section key ignores volatile mapping flags", () => {
+test("transcription section key includes mapping-status refresh flags", () => {
   const base = getTranscriptionSectionRefreshKey({
     sessionId: "sess_1",
     transcriptId: null,
@@ -54,6 +54,6 @@ test("transcription section key ignores volatile mapping flags", () => {
     speakerMappingRequired: true,
   });
 
-  assert.equal(base, "sess_1");
-  assert.equal(afterStatusRefresh, "sess_1");
+  assert.equal(base, "sess_1:transcribing|PENDING|0");
+  assert.equal(afterStatusRefresh, "sess_1:ready|COMPLETED|1");
 });

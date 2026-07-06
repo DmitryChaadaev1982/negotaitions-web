@@ -187,6 +187,7 @@ function computeShouldPoll(
   autoTranscribeEnabled = false,
   sessionIsFinished = false,
   isSharedWithSession = false,
+  speakerMappingRequired = false,
 ): boolean {
   if (
     recordingStatus &&
@@ -213,6 +214,9 @@ function computeShouldPoll(
     return true;
   }
   if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
+    return true;
+  }
+  if (!isParticipantOrObserver && speakerMappingRequired) {
     return true;
   }
   // Participants/observers on a finished session need to poll to detect:
@@ -493,6 +497,7 @@ export async function GET(request: Request, context: RouteContext) {
     autoTranscribeAfterRecording,
     sessionIsFinished,
     isSharedWithSession,
+    speakerMappingRequired,
   );
 
   const canStartTranscription =

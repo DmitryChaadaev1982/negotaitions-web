@@ -11,13 +11,19 @@ type TranscriptionSectionRefreshKeyParams = {
 export function getTranscriptionSectionRefreshKey(
   params: TranscriptionSectionRefreshKeyParams,
 ): string {
+  const volatileSuffix = [
+    params.processingStage ?? "",
+    params.diarizationStatus ?? "",
+    params.speakerMappingRequired ? "1" : "0",
+  ].join("|");
+
   if (params.transcriptId && params.recordingId) {
-    return `${params.recordingId}:${params.transcriptId}`;
+    return `${params.recordingId}:${params.transcriptId}:${volatileSuffix}`;
   }
 
   if (params.transcriptId) {
-    return params.transcriptId;
+    return `${params.transcriptId}:${volatileSuffix}`;
   }
 
-  return params.sessionId;
+  return `${params.sessionId}:${volatileSuffix}`;
 }
