@@ -74,6 +74,14 @@ export type AutoMappingTriggerDiagnostics = {
     | "remote_selected"
     | "local_fallback_selected"
     | "manual_review";
+  selectedWindowStrategy: "provider_raw_windows" | "order_normalized_windows";
+  windowNormalizationReason: string | null;
+  providerWindowPathology: {
+    hasPathologicalOverlap: boolean;
+    overlapRatio: number;
+    conflictingSegments: number[];
+    reasons: string[];
+  } | null;
   remoteStreamTelemetryAvailable: boolean;
   localMicTelemetryAvailable: boolean;
   remoteRejectedReason: string | null;
@@ -151,6 +159,9 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
     fallbackReason: null,
     sourceDecisionSummary: reason,
     targetRuntimeDecision: "manual_review",
+    selectedWindowStrategy: "provider_raw_windows",
+    windowNormalizationReason: null,
+    providerWindowPathology: null,
     remoteStreamTelemetryAvailable: false,
     localMicTelemetryAvailable: false,
     remoteRejectedReason: null,
@@ -198,9 +209,11 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
   const suggestion = await suggestSpeakerMapping(sessionId, {
     id: transcript.id,
     segments: transcript.segments.map((segment) => ({
+      orderIndex: segment.orderIndex,
       speakerLabel: segment.speakerLabel,
       startSeconds: segment.startSeconds,
       endSeconds: segment.endSeconds,
+      text: segment.text,
     })),
   });
 
@@ -275,6 +288,9 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       fallbackReason: suggestion.fallbackReason,
       sourceDecisionSummary: suggestion.sourceDecisionSummary,
       targetRuntimeDecision: suggestion.targetRuntimeDecision,
+      selectedWindowStrategy: suggestion.selectedWindowStrategy,
+      windowNormalizationReason: suggestion.windowNormalizationReason,
+      providerWindowPathology: suggestion.providerWindowPathology,
       remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
       localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
       remoteRejectedReason: suggestion.remoteRejectedReason,
@@ -418,6 +434,9 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       fallbackReason: suggestion.fallbackReason,
       sourceDecisionSummary: suggestion.sourceDecisionSummary,
       targetRuntimeDecision: suggestion.targetRuntimeDecision,
+      selectedWindowStrategy: suggestion.selectedWindowStrategy,
+      windowNormalizationReason: suggestion.windowNormalizationReason,
+      providerWindowPathology: suggestion.providerWindowPathology,
       remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
       localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
       remoteRejectedReason: suggestion.remoteRejectedReason,
@@ -506,6 +525,9 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     fallbackReason: suggestion.fallbackReason,
     sourceDecisionSummary: suggestion.sourceDecisionSummary,
     targetRuntimeDecision: suggestion.targetRuntimeDecision,
+    selectedWindowStrategy: suggestion.selectedWindowStrategy,
+    windowNormalizationReason: suggestion.windowNormalizationReason,
+    providerWindowPathology: suggestion.providerWindowPathology,
     remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
     localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
     remoteRejectedReason: suggestion.remoteRejectedReason,
