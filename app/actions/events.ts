@@ -1,5 +1,10 @@
 "use server";
 
+/**
+ * Architecture: docs/architecture/04-session-event-flow.md
+ * Architecture: docs/architecture/09-security-and-access-control.md
+ */
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 

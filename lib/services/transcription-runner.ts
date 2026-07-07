@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+/**
+ * Architecture: docs/architecture/06-recording-transcription-pipeline.md
+ */
+
 import {
   CompressionStatus,
   ExternalService,
