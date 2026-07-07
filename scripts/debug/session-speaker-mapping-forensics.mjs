@@ -2194,36 +2194,51 @@ async function run() {
         globalMargin: remoteStreamScenario.globalMargin,
         shouldApplyLike: remoteStreamScenario.shouldApplyLike,
         reason: remoteStreamScenario.reason,
+        activityRows: remoteStreamScenario.activityRows ?? 0,
       },
       speakerLabels,
-    });
-    const targetOrderNormalizedRuntime = evaluateTargetRuntimeTelemetrySelection({
-      localMicOnly: {
-        selectedMapping: localMicOrderNormalizedScenario.selectedMapping,
-        selectedCoverageBySpeaker:
-          localMicOrderNormalizedScenario.selectedCoverageBySpeaker,
-        globalMargin: localMicOrderNormalizedScenario.globalMargin,
-        shouldApplyLike: localMicOrderNormalizedScenario.shouldApplyLike,
-        reason: localMicOrderNormalizedScenario.reason,
+      providerWindowPathology,
+      ordered: {
+        sourceSelection: {
+          selectedTelemetrySource: remoteOrderNormalizedScenario.shouldApplyLike
+            ? "VOX_REMOTE_STREAM_ACTIVITY"
+            : localMicOrderNormalizedScenario.shouldApplyLike
+              ? "VOXIMPLANT_MIC_ACTIVITY"
+              : "NONE",
+          fallbackReason:
+            remoteOrderNormalizedScenario.shouldApplyLike ||
+            localMicOrderNormalizedScenario.shouldApplyLike
+              ? null
+              : "no_reliable_telemetry_source",
+          sourceDecisionSummary: "Order-normalized scenario replay.",
+          targetRuntimeDecision: remoteOrderNormalizedScenario.shouldApplyLike
+            ? "remote_selected"
+            : localMicOrderNormalizedScenario.shouldApplyLike
+              ? "local_fallback_selected"
+              : "manual_review",
+        },
+        remoteCandidate: {
+          available: remoteOrderNormalizedScenario.shouldApplyLike,
+          reason: remoteOrderNormalizedScenario.reason,
+          globalAssignmentMargin:
+            remoteOrderNormalizedScenario.globalMargin ?? null,
+          selectedCoverageBySpeaker:
+            remoteOrderNormalizedScenario.selectedCoverageBySpeaker ?? {},
+        },
+        localCandidate: {
+          available: localMicOrderNormalizedScenario.shouldApplyLike,
+          reason: localMicOrderNormalizedScenario.reason,
+          globalAssignmentMargin:
+            localMicOrderNormalizedScenario.globalMargin ?? null,
+          selectedCoverageBySpeaker:
+            localMicOrderNormalizedScenario.selectedCoverageBySpeaker ?? {},
+        },
+        remoteMapping: remoteOrderNormalizedScenario.selectedMapping ?? {},
       },
-      remoteStreamOnly: {
-        selectedMapping: remoteOrderNormalizedScenario.selectedMapping,
-        selectedCoverageBySpeaker:
-          remoteOrderNormalizedScenario.selectedCoverageBySpeaker,
-        globalMargin: remoteOrderNormalizedScenario.globalMargin,
-        shouldApplyLike: remoteOrderNormalizedScenario.shouldApplyLike,
-        reason: remoteOrderNormalizedScenario.reason,
-      },
-      speakerLabels,
     });
     scoringScenarios.target_order_normalized_runtime = {
-      ...targetOrderNormalizedRuntime,
+      ...targetRuntimeSourceSelection,
       providerWindowPathology,
-      selectedWindowStrategy:
-        targetOrderNormalizedRuntime.selectedTelemetrySource ===
-        VOX_REMOTE_STREAM_ACTIVITY_SOURCE
-          ? "order_normalized_windows"
-          : "provider_raw_windows",
       orderedWindowScoreMatrix:
         scoringScenarios.remote_stream_order_normalized_windows.scoreMatrix ?? {},
       orderedWindowSelectedMapping:
@@ -2445,10 +2460,11 @@ async function run() {
       `- ordered-window result: mapping=${JSON.stringify(scoringScenarios.remote_stream_order_normalized_windows.selectedMapping)}, margin=${scoringScenarios.remote_stream_order_normalized_windows.globalMargin ?? "n/a"}, shouldApplyLike=${scoringScenarios.remote_stream_order_normalized_windows.shouldApplyLike}`,
       `- ordered windows would auto-apply: ${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
       `- Source recommendations: ${sourceRecommendations.join(", ") || "none"}`,
-      `- targetRuntimeDecision: ${targetRuntimeSourceSelection.targetRuntimeDecision}`,
-      `- selectedTelemetrySource: ${targetRuntimeSourceSelection.selectedTelemetrySource}`,
-      `- fallbackReason: ${targetRuntimeSourceSelection.fallbackReason ?? "none"}`,
-      `- wouldAutoApplyWithTargetLogic: ${targetRuntimeSourceSelection.wouldAutoApplyWithTargetLogic}`,
+      `- targetRuntimeDecision: ${scoringScenarios.target_order_normalized_runtime.targetRuntimeDecision}`,
+      `- selectedTelemetrySource: ${scoringScenarios.target_order_normalized_runtime.selectedTelemetrySource}`,
+      `- selectedWindowStrategy: ${scoringScenarios.target_order_normalized_runtime.selectedWindowStrategy}`,
+      `- fallbackReason: ${scoringScenarios.target_order_normalized_runtime.fallbackReason ?? "none"}`,
+      `- wouldAutoApplyWithTargetLogic: ${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
       ...recommendations.map((line) => `- ${line}`),
       "",
     ];

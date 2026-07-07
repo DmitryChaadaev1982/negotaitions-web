@@ -1,162 +1,260 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldApplyOrderNormalizedWindowStrategy } from "@/lib/transcription/order-normalized-window-selection";
-import {
-  selectTelemetrySourceForSpeakerMapping,
-  type TelemetrySourceCandidate,
-} from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
+import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection.js";
+import { selectTelemetrySourceForSpeakerMapping } from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
 
-function candidate(
-  input: Partial<TelemetrySourceCandidate> & Pick<TelemetrySourceCandidate, "source">,
-): TelemetrySourceCandidate {
+function candidate(input: {
+  available: boolean;
+  reason: string | null;
+  margin: number | null;
+  coverage: Record<string, number | null>;
+}) {
   return {
-    source: input.source,
-    available: input.available ?? true,
-    reason: input.reason ?? null,
-    mapping: input.mapping ?? { speaker_1: "A", speaker_2: "B" },
-    selectedCoverageBySpeaker:
-      input.selectedCoverageBySpeaker ?? { speaker_1: 0.6, speaker_2: 0.6 },
-    selectedMargins: input.selectedMargins ?? { speaker_1: 0.2, speaker_2: 0.2 },
-    globalAssignmentMargin: input.globalAssignmentMargin ?? 0.2,
-    blockingWarnings: input.blockingWarnings ?? [],
-    hasBlockingWarnings: input.hasBlockingWarnings ?? false,
+    available: input.available,
+    reason: input.reason,
+    globalAssignmentMargin: input.margin,
+    selectedCoverageBySpeaker: input.coverage,
   };
 }
 
-test("order-normalized fallback applies for pathological low-margin remote raw windows", () => {
+test("cmrampp-like fixture selects ordered remote runtime path", () => {
   const speakerLabels = ["speaker_1", "speaker_2"];
-  const rawRemote = candidate({
-    source: "VOX_REMOTE_STREAM_ACTIVITY",
-    available: false,
-    reason: "ambiguous_margin",
-    mapping: { speaker_1: "cmramq02300455wm10mf8bvh0", speaker_2: "cmrampzio00445wm1bsxc75jf" },
-    selectedCoverageBySpeaker: { speaker_1: 0.41, speaker_2: 0.39 },
-    selectedMargins: { speaker_1: 0.01, speaker_2: 0.02 },
-    globalAssignmentMargin: 0.03,
-  });
-  const rawLocal = candidate({
-    source: "VOXIMPLANT_MIC_ACTIVITY",
-    available: false,
-    reason: "ambiguous_margin",
-    mapping: { speaker_1: "cmrampzio00445wm1bsxc75jf", speaker_2: "cmramq02300455wm10mf8bvh0" },
-    selectedCoverageBySpeaker: { speaker_1: 0.4, speaker_2: 0.38 },
-    selectedMargins: { speaker_1: 0.01, speaker_2: 0.01 },
-    globalAssignmentMargin: 0.02,
-  });
-  const orderedRemote = candidate({
-    source: "VOX_REMOTE_STREAM_ACTIVITY",
-    available: true,
-    mapping: { speaker_1: "cmrampzio00445wm1bsxc75jf", speaker_2: "cmramq02300455wm10mf8bvh0" },
-    selectedCoverageBySpeaker: { speaker_1: 0.64, speaker_2: 0.73 },
-    selectedMargins: { speaker_1: 0.42, speaker_2: 0.46 },
-    globalAssignmentMargin: 0.55,
-  });
-  const orderedLocal = candidate({
-    source: "VOXIMPLANT_MIC_ACTIVITY",
-    available: false,
-    reason: "low_selected_coverage",
-  });
-
   const rawSelection = selectTelemetrySourceForSpeakerMapping({
     speakerLabels,
     preferRemoteStreamTelemetry: true,
-    remote: rawRemote,
-    local: rawLocal,
+    remote: {
+      source: "VOX_REMOTE_STREAM_ACTIVITY",
+      available: false,
+      reason: "ambiguous_margin",
+      mapping: {
+        speaker_1: "cmramq02300455wm10mf8bvh0",
+        speaker_2: "cmrampzio00445wm1bsxc75jf",
+      },
+      selectedCoverageBySpeaker: { speaker_1: 0.41, speaker_2: 0.39 },
+      selectedMargins: { speaker_1: 0.01, speaker_2: 0.02 },
+      globalAssignmentMargin: 0.025,
+      blockingWarnings: [],
+      hasBlockingWarnings: false,
+    },
+    local: {
+      source: "VOXIMPLANT_MIC_ACTIVITY",
+      available: false,
+      reason: "ambiguous_margin",
+      mapping: {
+        speaker_1: "cmrampzio00445wm1bsxc75jf",
+        speaker_2: "cmramq02300455wm10mf8bvh0",
+      },
+      selectedCoverageBySpeaker: { speaker_1: 0.4, speaker_2: 0.38 },
+      selectedMargins: { speaker_1: 0.01, speaker_2: 0.01 },
+      globalAssignmentMargin: 0.02,
+      blockingWarnings: [],
+      hasBlockingWarnings: false,
+    },
   });
   const orderedSelection = selectTelemetrySourceForSpeakerMapping({
     speakerLabels,
     preferRemoteStreamTelemetry: true,
-    remote: orderedRemote,
-    local: orderedLocal,
+    remote: {
+      source: "VOX_REMOTE_STREAM_ACTIVITY",
+      available: true,
+      reason: null,
+      mapping: {
+        speaker_1: "cmrampzio00445wm1bsxc75jf",
+        speaker_2: "cmramq02300455wm10mf8bvh0",
+      },
+      selectedCoverageBySpeaker: { speaker_1: 0.644, speaker_2: 0.727 },
+      selectedMargins: { speaker_1: 0.428, speaker_2: 0.459 },
+      globalAssignmentMargin: 0.893,
+      blockingWarnings: [],
+      hasBlockingWarnings: false,
+    },
+    local: {
+      source: "VOXIMPLANT_MIC_ACTIVITY",
+      available: false,
+      reason: "low_selected_coverage",
+      mapping: { speaker_1: null, speaker_2: null },
+      selectedCoverageBySpeaker: { speaker_1: null, speaker_2: null },
+      selectedMargins: { speaker_1: null, speaker_2: null },
+      globalAssignmentMargin: null,
+      blockingWarnings: [],
+      hasBlockingWarnings: false,
+    },
   });
 
-  const shouldApply = shouldApplyOrderNormalizedWindowStrategy({
-    rawSourceSelection: rawSelection,
-    orderedSourceSelection: orderedSelection,
-    rawRemoteCandidate: rawRemote,
-    orderedRemoteCandidate: orderedRemote,
-    rawRemoteMapping: rawRemote.mapping,
-    orderedRemoteMapping: orderedRemote.mapping,
+  const decision = decideWindowedTelemetrySelection({
     speakerLabels,
     preferRemoteStreamTelemetry: true,
     remoteActivityRowCount: 12,
     hasPathologicalOverlap: true,
+    providerWindowPathology: {
+      hasPathologicalOverlap: true,
+      overlapRatio: 0.47,
+      conflictingSegments: [3, 6],
+      reasons: ["provider_segments_overlap", "order_time_conflict"],
+    },
+    raw: {
+      sourceSelection: rawSelection,
+      remoteCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.025,
+        coverage: { speaker_1: 0.41, speaker_2: 0.39 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.02,
+        coverage: { speaker_1: 0.4, speaker_2: 0.38 },
+      }),
+      remoteMapping: {
+        speaker_1: "cmramq02300455wm10mf8bvh0",
+        speaker_2: "cmrampzio00445wm1bsxc75jf",
+      },
+    },
+    ordered: {
+      sourceSelection: orderedSelection,
+      remoteCandidate: candidate({
+        available: true,
+        reason: null,
+        margin: 0.893,
+        coverage: { speaker_1: 0.644, speaker_2: 0.727 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "low_selected_coverage",
+        margin: null,
+        coverage: { speaker_1: null, speaker_2: null },
+      }),
+      remoteMapping: {
+        speaker_1: "cmrampzio00445wm1bsxc75jf",
+        speaker_2: "cmramq02300455wm10mf8bvh0",
+      },
+    },
   });
 
-  assert.equal(shouldApply, true);
+  assert.equal(decision.selectedTelemetrySource, "VOX_REMOTE_STREAM_ACTIVITY");
+  assert.equal(decision.selectedWindowStrategy, "order_normalized_windows");
+  assert.equal(decision.shouldApplyLike, true);
+  assert.equal(decision.targetRuntimeDecision, "remote_selected");
 });
 
-test("does not apply order-normalized fallback when ordered result is unsafe", () => {
-  const speakerLabels = ["speaker_1", "speaker_2"];
-  const rawSelection = {
-    selectedTelemetrySource: "NONE",
-    fallbackReason: "no_reliable_telemetry_source",
-    sourceDecisionSummary: "manual",
-    targetRuntimeDecision: "manual_review",
-  } as const;
-  const orderedSelection = {
-    selectedTelemetrySource: "NONE",
-    fallbackReason: "no_reliable_telemetry_source",
-    sourceDecisionSummary: "manual",
-    targetRuntimeDecision: "manual_review",
-  } as const;
-  const shouldApply = shouldApplyOrderNormalizedWindowStrategy({
-    rawSourceSelection: rawSelection,
-    orderedSourceSelection: orderedSelection,
-    rawRemoteCandidate: candidate({
-      source: "VOX_REMOTE_STREAM_ACTIVITY",
-      available: false,
-      reason: "ambiguous_margin",
-    }),
-    orderedRemoteCandidate: candidate({
-      source: "VOX_REMOTE_STREAM_ACTIVITY",
-      available: false,
-      reason: "many_to_one_mapping",
-      mapping: { speaker_1: "A", speaker_2: "A" },
-    }),
-    rawRemoteMapping: { speaker_1: "A", speaker_2: "B" },
-    orderedRemoteMapping: { speaker_1: "A", speaker_2: "A" },
-    speakerLabels,
+test("pathology false keeps raw behavior unchanged", () => {
+  const decision = decideWindowedTelemetrySelection({
+    speakerLabels: ["speaker_1", "speaker_2"],
     preferRemoteStreamTelemetry: true,
     remoteActivityRowCount: 10,
-    hasPathologicalOverlap: true,
+    hasPathologicalOverlap: false,
+    providerWindowPathology: {
+      hasPathologicalOverlap: false,
+      overlapRatio: 0,
+      conflictingSegments: [],
+      reasons: [],
+    },
+    raw: {
+      sourceSelection: {
+        selectedTelemetrySource: "NONE",
+        fallbackReason: "no_reliable_telemetry_source",
+        sourceDecisionSummary: "raw manual",
+        targetRuntimeDecision: "manual_review",
+      },
+      remoteCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.03,
+        coverage: { speaker_1: 0.4, speaker_2: 0.39 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.02,
+        coverage: { speaker_1: 0.39, speaker_2: 0.38 },
+      }),
+      remoteMapping: { speaker_1: "A", speaker_2: "B" },
+    },
+    ordered: {
+      sourceSelection: {
+        selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
+        fallbackReason: null,
+        sourceDecisionSummary: "ordered strong",
+        targetRuntimeDecision: "remote_selected",
+      },
+      remoteCandidate: candidate({
+        available: true,
+        reason: null,
+        margin: 0.8,
+        coverage: { speaker_1: 0.7, speaker_2: 0.7 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "low_selected_coverage",
+        margin: null,
+        coverage: { speaker_1: null, speaker_2: null },
+      }),
+      remoteMapping: { speaker_1: "B", speaker_2: "A" },
+    },
   });
 
-  assert.equal(shouldApply, false);
+  assert.equal(decision.selectedWindowStrategy, "provider_raw_windows");
+  assert.equal(decision.selectedTelemetrySource, "NONE");
 });
 
-test("raw success keeps provider window strategy preferred", () => {
-  const shouldApply = shouldApplyOrderNormalizedWindowStrategy({
-    rawSourceSelection: {
-      selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
-      fallbackReason: null,
-      sourceDecisionSummary: "remote selected",
-      targetRuntimeDecision: "remote_selected",
-    },
-    orderedSourceSelection: {
-      selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
-      fallbackReason: null,
-      sourceDecisionSummary: "remote selected",
-      targetRuntimeDecision: "remote_selected",
-    },
-    rawRemoteCandidate: candidate({
-      source: "VOX_REMOTE_STREAM_ACTIVITY",
-      available: true,
-      reason: null,
-    }),
-    orderedRemoteCandidate: candidate({
-      source: "VOX_REMOTE_STREAM_ACTIVITY",
-      available: true,
-      reason: null,
-    }),
-    rawRemoteMapping: { speaker_1: "A", speaker_2: "B" },
-    orderedRemoteMapping: { speaker_1: "A", speaker_2: "B" },
+test("ordered conflict without material strength keeps manual review", () => {
+  const decision = decideWindowedTelemetrySelection({
     speakerLabels: ["speaker_1", "speaker_2"],
     preferRemoteStreamTelemetry: true,
     remoteActivityRowCount: 10,
     hasPathologicalOverlap: true,
+    providerWindowPathology: {
+      hasPathologicalOverlap: true,
+      overlapRatio: 0.41,
+      conflictingSegments: [1, 2],
+      reasons: ["provider_segments_overlap"],
+    },
+    raw: {
+      sourceSelection: {
+        selectedTelemetrySource: "NONE",
+        fallbackReason: "no_reliable_telemetry_source",
+        sourceDecisionSummary: "raw manual",
+        targetRuntimeDecision: "manual_review",
+      },
+      remoteCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.15,
+        coverage: { speaker_1: 0.55, speaker_2: 0.56 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "ambiguous_margin",
+        margin: 0.1,
+        coverage: { speaker_1: 0.53, speaker_2: 0.54 },
+      }),
+      remoteMapping: { speaker_1: "A", speaker_2: "B" },
+    },
+    ordered: {
+      sourceSelection: {
+        selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
+        fallbackReason: null,
+        sourceDecisionSummary: "ordered candidate",
+        targetRuntimeDecision: "remote_selected",
+      },
+      remoteCandidate: candidate({
+        available: true,
+        reason: null,
+        margin: 0.18,
+        coverage: { speaker_1: 0.58, speaker_2: 0.57 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "incomplete_mapping",
+        margin: null,
+        coverage: { speaker_1: null, speaker_2: null },
+      }),
+      remoteMapping: { speaker_1: "B", speaker_2: "A" },
+    },
   });
 
-  assert.equal(shouldApply, false);
+  assert.equal(decision.selectedWindowStrategy, "provider_raw_windows");
+  assert.equal(decision.selectedTelemetrySource, "NONE");
 });

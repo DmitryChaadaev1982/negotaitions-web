@@ -1,3 +1,5 @@
+import { decideWindowedTelemetrySelection } from "../../lib/transcription/windowed-source-selection.js";
+
 export const REQUIRED_SOURCE_SCENARIOS = [
   "current_runtime",
   "local_mic_only",
@@ -42,79 +44,74 @@ export function evaluateRemoteSourceRecommendation(params) {
   return recommendations;
 }
 
-function meanCoverage(selectedCoverageBySpeaker) {
-  const values = Object.values(selectedCoverageBySpeaker ?? {}).filter(
-    (value) => typeof value === "number",
-  );
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 export function evaluateTargetRuntimeTelemetrySelection(params) {
   const { localMicOnly, remoteStreamOnly, speakerLabels } = params;
-  const remoteComplete = mappingCompleteOneToOne(remoteStreamOnly.selectedMapping, speakerLabels);
-  const localComplete = mappingCompleteOneToOne(localMicOnly.selectedMapping, speakerLabels);
-  const remoteValid = remoteStreamOnly.shouldApplyLike && remoteComplete;
-  const localValid = localMicOnly.shouldApplyLike && localComplete;
-
-  if (remoteValid && !localValid) {
-    return {
-      selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
-      fallbackReason: null,
-      targetRuntimeDecision: "remote_selected",
-      wouldAutoApplyWithTargetLogic: true,
-    };
-  }
-  if (!remoteValid && localValid) {
-    return {
-      selectedTelemetrySource: "VOXIMPLANT_MIC_ACTIVITY",
-      fallbackReason: remoteStreamOnly.reason ?? "remote_unusable",
-      targetRuntimeDecision: "local_fallback_selected",
-      wouldAutoApplyWithTargetLogic: true,
-    };
-  }
-  if (!remoteValid && !localValid) {
-    return {
-      selectedTelemetrySource: "NONE",
-      fallbackReason: "no_reliable_telemetry_source",
-      targetRuntimeDecision: "manual_review",
-      wouldAutoApplyWithTargetLogic: false,
-    };
-  }
-
-  const sameMapping = speakerLabels.every(
-    (label) =>
-      (remoteStreamOnly.selectedMapping?.[label] ?? null) ===
-      (localMicOnly.selectedMapping?.[label] ?? null),
-  );
-  if (sameMapping) {
-    return {
-      selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
-      fallbackReason: null,
-      targetRuntimeDecision: "remote_selected",
-      wouldAutoApplyWithTargetLogic: true,
-    };
-  }
-
-  const remoteCoverage = meanCoverage(remoteStreamOnly.selectedCoverageBySpeaker);
-  const localCoverage = meanCoverage(localMicOnly.selectedCoverageBySpeaker);
-  const remoteMargin = remoteStreamOnly.globalMargin ?? Number.NEGATIVE_INFINITY;
-  const localMargin = localMicOnly.globalMargin ?? Number.NEGATIVE_INFINITY;
-  const remoteClearlyBetter =
-    remoteCoverage >= localCoverage + 0.05 && remoteMargin >= localMargin + 0.05;
-  if (remoteClearlyBetter) {
-    return {
-      selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
-      fallbackReason: null,
-      targetRuntimeDecision: "remote_selected",
-      wouldAutoApplyWithTargetLogic: true,
-    };
-  }
-
+  const remoteUsable = remoteStreamOnly.shouldApplyLike && mappingCompleteOneToOne(remoteStreamOnly.selectedMapping, speakerLabels);
+  const localUsable = localMicOnly.shouldApplyLike && mappingCompleteOneToOne(localMicOnly.selectedMapping, speakerLabels);
+  const rawLikeSelection = {
+    selectedTelemetrySource: remoteUsable
+      ? "VOX_REMOTE_STREAM_ACTIVITY"
+      : localUsable
+        ? "VOXIMPLANT_MIC_ACTIVITY"
+        : "NONE",
+    fallbackReason:
+      remoteUsable || localUsable
+        ? remoteUsable
+          ? null
+          : remoteStreamOnly.reason ?? "remote_unusable"
+        : "no_reliable_telemetry_source",
+    sourceDecisionSummary: remoteUsable
+      ? "Remote telemetry produced a complete safe mapping."
+      : localUsable
+        ? "Remote telemetry was unavailable/unhealthy; local telemetry fallback selected."
+        : "Neither remote nor local telemetry produced a safe unambiguous mapping.",
+    targetRuntimeDecision: remoteUsable
+      ? "remote_selected"
+      : localUsable
+        ? "local_fallback_selected"
+        : "manual_review",
+  };
+  const rawCandidate = {
+    available: remoteUsable,
+    reason: remoteStreamOnly.reason ?? (remoteUsable ? null : "no_reliable_telemetry_source"),
+    globalAssignmentMargin: remoteStreamOnly.globalMargin ?? null,
+    selectedCoverageBySpeaker: remoteStreamOnly.selectedCoverageBySpeaker ?? {},
+  };
+  const localCandidate = {
+    available: localUsable,
+    reason: localMicOnly.reason ?? (localUsable ? null : "no_reliable_telemetry_source"),
+    globalAssignmentMargin: localMicOnly.globalMargin ?? null,
+    selectedCoverageBySpeaker: localMicOnly.selectedCoverageBySpeaker ?? {},
+  };
+  const decision = decideWindowedTelemetrySelection({
+    speakerLabels,
+    preferRemoteStreamTelemetry: true,
+    remoteActivityRowCount: remoteStreamOnly.activityRows ?? 1,
+    hasPathologicalOverlap: params.providerWindowPathology?.hasPathologicalOverlap ?? false,
+    providerWindowPathology: params.providerWindowPathology ?? null,
+    raw: {
+      sourceSelection: rawLikeSelection,
+      remoteCandidate: rawCandidate,
+      localCandidate,
+      remoteMapping: remoteStreamOnly.selectedMapping ?? {},
+    },
+    ordered: params.ordered
+      ? {
+          sourceSelection: params.ordered.sourceSelection,
+          remoteCandidate: params.ordered.remoteCandidate,
+          localCandidate: params.ordered.localCandidate,
+          remoteMapping: params.ordered.remoteMapping,
+        }
+      : null,
+  });
   return {
-    selectedTelemetrySource: "NONE",
-    fallbackReason: "sources_disagree_without_clear_winner",
-    targetRuntimeDecision: "manual_review",
-    wouldAutoApplyWithTargetLogic: false,
+    selectedTelemetrySource: decision.selectedTelemetrySource,
+    fallbackReason: decision.fallbackReason,
+    targetRuntimeDecision: decision.targetRuntimeDecision,
+    wouldAutoApplyWithTargetLogic: decision.shouldApplyLike,
+    selectedWindowStrategy: decision.selectedWindowStrategy,
+    sourceDecisionSummary: decision.sourceDecisionSummary,
+    rawDecision: decision.rawDecision,
+    orderedDecision: decision.orderedDecision,
   };
 }

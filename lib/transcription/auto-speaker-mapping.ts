@@ -18,7 +18,6 @@ import {
   buildOrderNormalizedTranscriptWindows,
   type TranscriptScoringSegment,
 } from "@/lib/transcription/order-normalized-transcript-windows";
-import { shouldApplyOrderNormalizedWindowStrategy } from "@/lib/transcription/order-normalized-window-selection";
 import {
   selectTelemetrySourceForSpeakerMapping,
   sourceBlockingWarnings,
@@ -26,6 +25,7 @@ import {
   type TelemetrySourceCandidate,
 } from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
+import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection.js";
 import {
   detectTranscriptWindowPathology,
   type ProviderWindowPathology,
@@ -768,85 +768,80 @@ export async function suggestSpeakerMapping(
       endSeconds: window.scoringEndMs / 1000,
     }),
   );
-  const shouldTryOrderNormalizedFallback =
-    sourceSelection.selectedTelemetrySource === "NONE" &&
-    providerWindowPathology.hasPathologicalOverlap &&
-    preferRemoteStreamTelemetry &&
-    remoteActivities.length > 0 &&
-    remote.candidate.reason === "ambiguous_margin";
-  const orderedRemote = shouldTryOrderNormalizedFallback
-    ? evaluateSource(
-        remoteActivities,
-        VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
-        orderedScoringWindowsSeconds,
-      )
-    : null;
-  const orderedLocal = shouldTryOrderNormalizedFallback
-    ? evaluateSource(
-        localActivities,
-        VOXIMPLANT_MIC_ACTIVITY_SOURCE,
-        orderedScoringWindowsSeconds,
-      )
-    : null;
+  const orderedRemote = evaluateSource(
+    remoteActivities,
+    VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+    orderedScoringWindowsSeconds,
+  );
+  const orderedLocal = evaluateSource(
+    localActivities,
+    VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+    orderedScoringWindowsSeconds,
+  );
+  const orderedSourceSelection = selectTelemetrySourceForSpeakerMapping({
+    speakerLabels,
+    preferRemoteStreamTelemetry,
+    remote: orderedRemote.candidate,
+    local: orderedLocal.candidate,
+  });
+  const unifiedDecision = decideWindowedTelemetrySelection({
+    speakerLabels,
+    preferRemoteStreamTelemetry,
+    remoteActivityRowCount: remoteActivities.length,
+    hasPathologicalOverlap: providerWindowPathology.hasPathologicalOverlap,
+    providerWindowPathology,
+    raw: {
+      sourceSelection,
+      remoteCandidate: remote.candidate,
+      localCandidate: local.candidate,
+      remoteMapping: remote.suggestion.selectedMapping,
+    },
+    ordered: {
+      sourceSelection: orderedSourceSelection,
+      remoteCandidate: orderedRemote.candidate,
+      localCandidate: orderedLocal.candidate,
+      remoteMapping: orderedRemote.suggestion.selectedMapping,
+    },
+  });
 
-  if (orderedRemote && orderedLocal) {
-    const orderedSourceSelection = selectTelemetrySourceForSpeakerMapping({
-      speakerLabels,
-      preferRemoteStreamTelemetry,
-      remote: orderedRemote.candidate,
-      local: orderedLocal.candidate,
-    });
-    const shouldUseOrderedWindows = shouldApplyOrderNormalizedWindowStrategy({
-      rawSourceSelection: sourceSelection,
-      orderedSourceSelection,
-      rawRemoteCandidate: remote.candidate,
-      orderedRemoteCandidate: orderedRemote.candidate,
-      rawRemoteMapping: remote.suggestion.selectedMapping,
-      orderedRemoteMapping: orderedRemote.suggestion.selectedMapping,
-      speakerLabels,
-      preferRemoteStreamTelemetry,
-      remoteActivityRowCount: remoteActivities.length,
-      hasPathologicalOverlap: providerWindowPathology.hasPathologicalOverlap,
-    });
-
-    if (shouldUseOrderedWindows) {
-      const orderedScoreMatrixBySource = {
-        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.suggestion.scoreMatrix,
-        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.suggestion.scoreMatrix,
-      };
-      const orderedSourceWarningsBySource = {
-        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]:
-          orderedRemote.suggestion.telemetryQuality.warnings,
-        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]:
-          orderedLocal.suggestion.telemetryQuality.warnings,
-      };
-      const orderedSourceReasonBySource = {
-        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.candidate.reason,
-        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.candidate.reason,
-      };
-      return {
-        ...orderedRemote.suggestion,
-        selectedWindowStrategy: "order_normalized_windows",
-        windowNormalizationReason:
-          "provider_overlap_pathology_with_low_margin_remote_raw_windows",
-        providerWindowPathology,
-        selectedTelemetrySource: orderedSourceSelection.selectedTelemetrySource,
-        fallbackReason: orderedSourceSelection.fallbackReason,
-        sourceDecisionSummary: orderedSourceSelection.sourceDecisionSummary,
-        targetRuntimeDecision: orderedSourceSelection.targetRuntimeDecision,
-        scoreMatrixBySource: orderedScoreMatrixBySource,
-        sourceWarningsBySource: orderedSourceWarningsBySource,
-        sourceReasonBySource: orderedSourceReasonBySource,
-        remoteStreamTelemetryAvailable,
-        localMicTelemetryAvailable,
-        remoteRejectedReason: null,
-      };
-    }
+  if (unifiedDecision.selectedWindowStrategy === "order_normalized_windows") {
+    const orderedScoreMatrixBySource = {
+      [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.suggestion.scoreMatrix,
+      [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.suggestion.scoreMatrix,
+    };
+    const orderedSourceWarningsBySource = {
+      [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]:
+        orderedRemote.suggestion.telemetryQuality.warnings,
+      [VOXIMPLANT_MIC_ACTIVITY_SOURCE]:
+        orderedLocal.suggestion.telemetryQuality.warnings,
+    };
+    const orderedSourceReasonBySource = {
+      [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.candidate.reason,
+      [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.candidate.reason,
+    };
+    return {
+      ...orderedRemote.suggestion,
+      selectedWindowStrategy: "order_normalized_windows",
+      windowNormalizationReason:
+        "provider_overlap_pathology_with_low_margin_remote_raw_windows",
+      providerWindowPathology,
+      selectedTelemetrySource: unifiedDecision.selectedTelemetrySource,
+      fallbackReason: unifiedDecision.fallbackReason,
+      sourceDecisionSummary: unifiedDecision.sourceDecisionSummary,
+      targetRuntimeDecision: unifiedDecision.targetRuntimeDecision,
+      scoreMatrixBySource: orderedScoreMatrixBySource,
+      sourceWarningsBySource: orderedSourceWarningsBySource,
+      sourceReasonBySource: orderedSourceReasonBySource,
+      remoteStreamTelemetryAvailable,
+      localMicTelemetryAvailable,
+      remoteRejectedReason: null,
+    };
   }
 
   if (sourceSelection.selectedTelemetrySource === "NONE") {
     return buildUnavailableSuggestion({
-      reason: sourceSelection.fallbackReason ?? "no_reliable_telemetry_source",
+      reason:
+        unifiedDecision.fallbackReason ?? "no_reliable_telemetry_source",
       telemetryQuality: remote.suggestion.telemetryQuality,
       telemetryHealth: remote.suggestion.telemetryHealth,
       selectedWindowStrategy: "provider_raw_windows",
@@ -858,9 +853,9 @@ export async function suggestSpeakerMapping(
       localMicTelemetryAvailable,
       remoteRejectedReason: remote.candidate.reason,
       selectedTelemetrySource: "NONE",
-      fallbackReason: sourceSelection.fallbackReason,
-      sourceDecisionSummary: sourceSelection.sourceDecisionSummary,
-      targetRuntimeDecision: sourceSelection.targetRuntimeDecision,
+      fallbackReason: unifiedDecision.fallbackReason,
+      sourceDecisionSummary: unifiedDecision.sourceDecisionSummary,
+      targetRuntimeDecision: unifiedDecision.targetRuntimeDecision,
     });
   }
 

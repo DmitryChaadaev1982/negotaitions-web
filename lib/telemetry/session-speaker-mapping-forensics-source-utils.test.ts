@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   REQUIRED_SOURCE_SCENARIOS,
   evaluateRemoteSourceRecommendation,
+  evaluateTargetRuntimeTelemetrySelection,
 } from "../../scripts/debug/session-speaker-mapping-forensics-source-utils.mjs";
 
 test("required source-aware scenarios are declared", () => {
@@ -59,4 +60,61 @@ test("local fallback is kept when remote source is incomplete", () => {
 
   assert.ok(recommendations.includes("KEEP_LOCAL_FALLBACK"));
   assert.ok(!recommendations.includes("REMOTE_STREAM_SOURCE_WOULD_HELP"));
+});
+
+test("target runtime summary uses unified ordered-window decision", () => {
+  const result = evaluateTargetRuntimeTelemetrySelection({
+    localMicOnly: {
+      selectedMapping: { speaker_1: "sp_a", speaker_2: "sp_b" },
+      selectedCoverageBySpeaker: { speaker_1: 0.35, speaker_2: 0.34 },
+      globalMargin: 0.05,
+      shouldApplyLike: false,
+      reason: "low_margin_review_required",
+    },
+    remoteStreamOnly: {
+      selectedMapping: { speaker_1: "sp_b", speaker_2: "sp_a" },
+      selectedCoverageBySpeaker: { speaker_1: 0.39, speaker_2: 0.38 },
+      globalMargin: 0.03,
+      shouldApplyLike: false,
+      reason: "ambiguous_margin",
+      activityRows: 12,
+    },
+    speakerLabels: ["speaker_1", "speaker_2"],
+    providerWindowPathology: {
+      hasPathologicalOverlap: true,
+      overlapRatio: 0.44,
+      conflictingSegments: [3, 6],
+      reasons: ["provider_segments_overlap", "order_time_conflict"],
+    },
+    ordered: {
+      sourceSelection: {
+        selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
+        fallbackReason: null,
+        sourceDecisionSummary: "Order-normalized scenario replay.",
+        targetRuntimeDecision: "remote_selected",
+      },
+      remoteCandidate: {
+        available: true,
+        reason: null,
+        globalAssignmentMargin: 0.89,
+        selectedCoverageBySpeaker: { speaker_1: 0.64, speaker_2: 0.73 },
+      },
+      localCandidate: {
+        available: false,
+        reason: "low_selected_coverage",
+        globalAssignmentMargin: null,
+        selectedCoverageBySpeaker: { speaker_1: null, speaker_2: null },
+      },
+      remoteMapping: {
+        speaker_1: "sp_a",
+        speaker_2: "sp_b",
+      },
+    },
+  });
+
+  assert.equal(result.selectedTelemetrySource, "VOX_REMOTE_STREAM_ACTIVITY");
+  assert.equal(result.selectedWindowStrategy, "order_normalized_windows");
+  assert.equal(result.targetRuntimeDecision, "remote_selected");
+  assert.equal(result.wouldAutoApplyWithTargetLogic, true);
+  assert.notEqual(result.fallbackReason, "no_reliable_telemetry_source");
 });
