@@ -5,6 +5,7 @@ import pg from "pg";
 import {
   REQUIRED_SOURCE_SCENARIOS,
   evaluateRemoteSourceRecommendation,
+  evaluateTargetRuntimeTelemetrySelection,
 } from "./session-speaker-mapping-forensics-source-utils.mjs";
 
 const { Client } = pg;
@@ -466,11 +467,16 @@ function normalizeTelemetryRows({
   const mergedCountByParticipant = {};
   const shortCountByParticipant = {};
   const outsideCountByParticipant = {};
+  const excludedRowsByReason = {};
   let hasOffsets = false;
   let hasDerivedOffsets = false;
   let outsideRecordingWindowRows = 0;
   let shortIntervalCount = 0;
   let mergedIntervalCount = 0;
+
+  const markExcluded = (reason) => {
+    excludedRowsByReason[reason] = (excludedRowsByReason[reason] ?? 0) + 1;
+  };
 
   for (const participantId of participantIds) {
     rowsByParticipant[participantId] = 0;
@@ -496,7 +502,10 @@ function normalizeTelemetryRows({
     durationByParticipantBySource[participantId] ??= {};
     rowsByParticipantBySource[participantId][source] =
       (rowsByParticipantBySource[participantId][source] ?? 0) + 1;
-    if (!rowsByParticipant[participantId] && rowsByParticipant[participantId] !== 0) continue;
+    if (!rowsByParticipant[participantId] && rowsByParticipant[participantId] !== 0) {
+      markExcluded("excluded_non_participant_role");
+      continue;
+    }
     rowsByParticipant[participantId] += 1;
 
     const hadDirectOffsets =
@@ -526,6 +535,7 @@ function normalizeTelemetryRows({
       rowsDerivedByParticipant[participantId] += 1;
     }
     if (usedDerivedOffset && !includeDerived) {
+      markExcluded("excluded_derived_offsets");
       rawIntervalRowsByParticipant[participantId].push({
         ...activity,
         source,
@@ -538,6 +548,7 @@ function normalizeTelemetryRows({
       continue;
     }
     if (startSec == null) {
+      markExcluded("missing_start_offset");
       rawIntervalRowsByParticipant[participantId].push({
         ...activity,
         source,
@@ -582,6 +593,7 @@ function normalizeTelemetryRows({
       outsideRecordingWindowRows += 1;
       outsideCountByParticipant[participantId] += 1;
       if (!includeOutsideWindow) {
+        markExcluded("outside_recording_window");
         rawIntervalRowsByParticipant[participantId].push({
           ...activity,
           source,
@@ -634,6 +646,7 @@ function normalizeTelemetryRows({
         (seg) => overlapMs(interval.startMs, interval.endMs, seg.startMs, seg.endMs) > 0,
       );
       if (durationMs < TELEMETRY_MIN_INTERVAL_MS && !overlapsDiarized) {
+        markExcluded("short_interval_no_diarized_overlap");
         shortIntervalCount += 1;
         shortCountByParticipant[participantId] += 1;
         continue;
@@ -688,6 +701,7 @@ function normalizeTelemetryRows({
     hasOffsets,
     hasDerivedOffsets,
     outsideRecordingWindowRows,
+    excludedRowsByReason,
   };
 }
 
@@ -1568,6 +1582,7 @@ async function run() {
         shouldApplyLike: replay.decision.shouldApply,
         reason: replay.decision.reason,
         telemetryQuality,
+        excludedRowsByReason: normalized.excludedRowsByReason,
         deltaVsCurrent: summarizeScenarioDelta(currentRuntime, replay),
         replay,
       };
@@ -1583,6 +1598,7 @@ async function run() {
       shouldApplyLike: currentRuntime.decision.shouldApply,
       reason: currentRuntime.decision.reason,
       telemetryQuality: telemetryQualityCurrent,
+      excludedRowsByReason: normalizedCurrent.excludedRowsByReason,
       deltaVsCurrent: [],
     };
     scoringScenarios.local_mic_only = runScenario("local_mic_only", {
@@ -2015,6 +2031,23 @@ async function run() {
       },
       speakerLabels,
     });
+    const targetRuntimeSourceSelection = evaluateTargetRuntimeTelemetrySelection({
+      localMicOnly: {
+        selectedMapping: localMicScenario.selectedMapping,
+        selectedCoverageBySpeaker: localMicScenario.selectedCoverageBySpeaker,
+        globalMargin: localMicScenario.globalMargin,
+        shouldApplyLike: localMicScenario.shouldApplyLike,
+        reason: localMicScenario.reason,
+      },
+      remoteStreamOnly: {
+        selectedMapping: remoteStreamScenario.selectedMapping,
+        selectedCoverageBySpeaker: remoteStreamScenario.selectedCoverageBySpeaker,
+        globalMargin: remoteStreamScenario.globalMargin,
+        shouldApplyLike: remoteStreamScenario.shouldApplyLike,
+        reason: remoteStreamScenario.reason,
+      },
+      speakerLabels,
+    });
 
     const recommendations = [
       `Current runtime auto-apply decision: ${currentRuntime.decision.shouldApply} (${currentRuntime.decision.reason})`,
@@ -2094,6 +2127,7 @@ async function run() {
         rowsBySource: normalizedCurrent.rowsBySource,
         rowsByParticipantBySource: normalizedCurrent.rowsByParticipantBySource,
         durationByParticipantBySource: normalizedCurrent.durationByParticipantBySource,
+        excludedRowsByReason: normalizedCurrent.excludedRowsByReason,
       },
       currentScorerReplay: {
         scoreMatrix: scoreCurrent.scoreMatrix,
@@ -2118,6 +2152,7 @@ async function run() {
       scoringScenarios,
       requiredSourceScenarios: REQUIRED_SOURCE_SCENARIOS,
       sourceRecommendations,
+      targetRuntimeSourceSelection,
       rootCauseClassification,
       recommendations,
       dataReads: [
@@ -2169,6 +2204,7 @@ async function run() {
         currentRuntime.blockingWarnings.length ? currentRuntime.blockingWarnings.join(", ") : "none"
       }`,
       `- rowsBySource: ${JSON.stringify(normalizedCurrent.rowsBySource)}`,
+      `- excludedRowsByReason: ${JSON.stringify(normalizedCurrent.excludedRowsByReason)}`,
       "",
       "## Scenario Highlights",
       `- local_mic_only: ${scoringScenarios.local_mic_only.reason}, shouldApplyLike=${scoringScenarios.local_mic_only.shouldApplyLike}, margin=${scoringScenarios.local_mic_only.globalMargin ?? "n/a"}`,
@@ -2191,6 +2227,10 @@ async function run() {
       "",
       "## Recommendations",
       `- Source recommendations: ${sourceRecommendations.join(", ") || "none"}`,
+      `- targetRuntimeDecision: ${targetRuntimeSourceSelection.targetRuntimeDecision}`,
+      `- selectedTelemetrySource: ${targetRuntimeSourceSelection.selectedTelemetrySource}`,
+      `- fallbackReason: ${targetRuntimeSourceSelection.fallbackReason ?? "none"}`,
+      `- wouldAutoApplyWithTargetLogic: ${targetRuntimeSourceSelection.wouldAutoApplyWithTargetLogic}`,
       ...recommendations.map((line) => `- ${line}`),
       "",
     ];

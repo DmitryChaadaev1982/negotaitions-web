@@ -27,7 +27,10 @@ type VoximplantSpeakingActivityTrackerProps = {
   localAudioStreamPresent: boolean;
   /** Live local microphone level 0–100 (from the Voximplant AnalyserNode). */
   micLevel: number | undefined;
-  /** True when the local mic is muted (by user or by policy). No events emitted. */
+  /**
+   * True when the app microphone is muted (user toggle or policy lock).
+   * Browser tab/output mute is not equivalent and cannot be used for capture gating.
+   */
   muted: boolean;
   /** Only track while connected to the conference. */
   enabled: boolean;

@@ -34,6 +34,16 @@ export async function authorizeAudioActivitySubmission(input: {
   if (!isRemoteStreamActivitySource(input.source)) {
     if (
       input.source === VOXIMPLANT_MIC_ACTIVITY_SOURCE &&
+      input.callerParticipantType !== "PARTICIPANT"
+    ) {
+      return {
+        accepted: false,
+        httpStatus: 403,
+        reason: "local_source_target_must_be_participant",
+      };
+    }
+    if (
+      input.source === VOXIMPLANT_MIC_ACTIVITY_SOURCE &&
       input.requestedSessionParticipantId &&
       input.requestedSessionParticipantId !== input.callerSessionParticipantId
     ) {
@@ -77,6 +87,13 @@ export async function authorizeAudioActivitySubmission(input: {
       accepted: false,
       httpStatus: 403,
       reason: "remote_source_target_must_be_participant",
+    };
+  }
+  if (target.id === input.callerSessionParticipantId) {
+    return {
+      accepted: false,
+      httpStatus: 403,
+      reason: "remote_source_target_must_not_be_reporter",
     };
   }
 

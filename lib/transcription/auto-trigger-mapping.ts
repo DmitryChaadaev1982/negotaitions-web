@@ -64,6 +64,22 @@ export type AutoMappingTriggerDiagnostics = {
   mappingSafety: MappingSafetyResult;
   telemetryQuality: TelemetryQuality;
   telemetryHealth: TelemetryHealthReport;
+  selectedTelemetrySource:
+    | "VOX_REMOTE_STREAM_ACTIVITY"
+    | "VOXIMPLANT_MIC_ACTIVITY"
+    | "NONE";
+  fallbackReason: string | null;
+  sourceDecisionSummary: string;
+  targetRuntimeDecision:
+    | "remote_selected"
+    | "local_fallback_selected"
+    | "manual_review";
+  remoteStreamTelemetryAvailable: boolean;
+  localMicTelemetryAvailable: boolean;
+  remoteRejectedReason: string | null;
+  scoreMatrixBySource: Record<string, Record<string, Record<string, unknown>>>;
+  sourceWarningsBySource: Record<string, string[]>;
+  sourceReasonBySource: Record<string, string | null>;
   weakMarginDetected: boolean;
   weakMarginOverriddenByGlobalEvidence: boolean;
   selectedCoverageBySpeaker: Record<string, number | null>;
@@ -131,6 +147,16 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
       participants: {},
       warnings: [],
     },
+    selectedTelemetrySource: "NONE",
+    fallbackReason: null,
+    sourceDecisionSummary: reason,
+    targetRuntimeDecision: "manual_review",
+    remoteStreamTelemetryAvailable: false,
+    localMicTelemetryAvailable: false,
+    remoteRejectedReason: null,
+    scoreMatrixBySource: {},
+    sourceWarningsBySource: {},
+    sourceReasonBySource: {},
     weakMarginDetected: false,
     weakMarginOverriddenByGlobalEvidence: false,
     selectedCoverageBySpeaker: {},
@@ -245,6 +271,16 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       mappingSafety: safeByDefault,
       telemetryQuality: suggestion.telemetryQuality,
       telemetryHealth: suggestion.telemetryHealth,
+      selectedTelemetrySource: suggestion.selectedTelemetrySource,
+      fallbackReason: suggestion.fallbackReason,
+      sourceDecisionSummary: suggestion.sourceDecisionSummary,
+      targetRuntimeDecision: suggestion.targetRuntimeDecision,
+      remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
+      localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
+      remoteRejectedReason: suggestion.remoteRejectedReason,
+      scoreMatrixBySource: suggestion.scoreMatrixBySource,
+      sourceWarningsBySource: suggestion.sourceWarningsBySource,
+      sourceReasonBySource: suggestion.sourceReasonBySource,
       weakMarginDetected: false,
       weakMarginOverriddenByGlobalEvidence: false,
       selectedCoverageBySpeaker: {},
@@ -378,6 +414,16 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       mappingSafety,
       telemetryQuality: suggestion.telemetryQuality,
       telemetryHealth: suggestion.telemetryHealth,
+      selectedTelemetrySource: suggestion.selectedTelemetrySource,
+      fallbackReason: suggestion.fallbackReason,
+      sourceDecisionSummary: suggestion.sourceDecisionSummary,
+      targetRuntimeDecision: suggestion.targetRuntimeDecision,
+      remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
+      localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
+      remoteRejectedReason: suggestion.remoteRejectedReason,
+      scoreMatrixBySource: suggestion.scoreMatrixBySource,
+      sourceWarningsBySource: suggestion.sourceWarningsBySource,
+      sourceReasonBySource: suggestion.sourceReasonBySource,
       weakMarginDetected: weakMargin,
       weakMarginOverriddenByGlobalEvidence,
       selectedCoverageBySpeaker,
@@ -456,6 +502,16 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     mappingSafety,
     telemetryQuality: suggestion.telemetryQuality,
     telemetryHealth: suggestion.telemetryHealth,
+    selectedTelemetrySource: suggestion.selectedTelemetrySource,
+    fallbackReason: suggestion.fallbackReason,
+    sourceDecisionSummary: suggestion.sourceDecisionSummary,
+    targetRuntimeDecision: suggestion.targetRuntimeDecision,
+    remoteStreamTelemetryAvailable: suggestion.remoteStreamTelemetryAvailable,
+    localMicTelemetryAvailable: suggestion.localMicTelemetryAvailable,
+    remoteRejectedReason: suggestion.remoteRejectedReason,
+    scoreMatrixBySource: suggestion.scoreMatrixBySource,
+    sourceWarningsBySource: suggestion.sourceWarningsBySource,
+    sourceReasonBySource: suggestion.sourceReasonBySource,
     weakMarginDetected: weakMargin,
     weakMarginOverriddenByGlobalEvidence,
     selectedCoverageBySpeaker,
