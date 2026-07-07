@@ -25,7 +25,7 @@ import {
   type TelemetrySourceCandidate,
 } from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
-import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection.js";
+import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection";
 import {
   detectTranscriptWindowPathology,
   type ProviderWindowPathology,

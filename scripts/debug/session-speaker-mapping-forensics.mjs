@@ -2439,6 +2439,7 @@ async function run() {
       `- local_mic_order_normalized_windows: ${scoringScenarios.local_mic_order_normalized_windows.reason}, shouldApplyLike=${scoringScenarios.local_mic_order_normalized_windows.shouldApplyLike}, margin=${scoringScenarios.local_mic_order_normalized_windows.globalMargin ?? "n/a"}`,
       `- remote_stream_order_normalized_windows: ${scoringScenarios.remote_stream_order_normalized_windows.reason}, shouldApplyLike=${scoringScenarios.remote_stream_order_normalized_windows.shouldApplyLike}, margin=${scoringScenarios.remote_stream_order_normalized_windows.globalMargin ?? "n/a"}`,
       `- target_order_normalized_runtime: selectedTelemetrySource=${scoringScenarios.target_order_normalized_runtime.selectedTelemetrySource}, targetRuntimeDecision=${scoringScenarios.target_order_normalized_runtime.targetRuntimeDecision}, wouldAutoApplyWithTargetLogic=${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
+      `- target_order_normalized_runtime_rejection: ${scoringScenarios.target_order_normalized_runtime.orderedWindowRejectionReason ?? "none"}`,
       `- combined_naive: ${scoringScenarios.combined_naive.reason}, shouldApplyLike=${scoringScenarios.combined_naive.shouldApplyLike}, margin=${scoringScenarios.combined_naive.globalMargin ?? "n/a"}`,
       `- combined_deduplicated: ${scoringScenarios.combined_deduplicated.reason}, shouldApplyLike=${scoringScenarios.combined_deduplicated.shouldApplyLike}, margin=${scoringScenarios.combined_deduplicated.globalMargin ?? "n/a"}`,
       `- exclude_derived_offsets: ${scoringScenarios.exclude_derived_offsets.reason}, shouldApplyLike=${scoringScenarios.exclude_derived_offsets.shouldApplyLike}`,
@@ -2465,6 +2466,7 @@ async function run() {
       `- selectedWindowStrategy: ${scoringScenarios.target_order_normalized_runtime.selectedWindowStrategy}`,
       `- fallbackReason: ${scoringScenarios.target_order_normalized_runtime.fallbackReason ?? "none"}`,
       `- wouldAutoApplyWithTargetLogic: ${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
+      `- orderedWindowRejectionReason: ${scoringScenarios.target_order_normalized_runtime.orderedWindowRejectionReason ?? "none"}`,
       ...recommendations.map((line) => `- ${line}`),
       "",
     ];

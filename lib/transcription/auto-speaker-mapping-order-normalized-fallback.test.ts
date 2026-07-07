@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection.js";
+import { decideWindowedTelemetrySelection } from "@/lib/transcription/windowed-source-selection";
 import { selectTelemetrySourceForSpeakerMapping } from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
 
 function candidate(input: {
@@ -257,4 +257,76 @@ test("ordered conflict without material strength keeps manual review", () => {
 
   assert.equal(decision.selectedWindowStrategy, "provider_raw_windows");
   assert.equal(decision.selectedTelemetrySource, "NONE");
+});
+
+test("raw low_margin reason still promotes to ordered when ordered is strong", () => {
+  const decision = decideWindowedTelemetrySelection({
+    speakerLabels: ["speaker_1", "speaker_2"],
+    preferRemoteStreamTelemetry: true,
+    remoteActivityRowCount: 12,
+    hasPathologicalOverlap: true,
+    providerWindowPathology: {
+      hasPathologicalOverlap: true,
+      overlapRatio: 0.463,
+      conflictingSegments: [3, 6],
+      reasons: [
+        "provider_segments_overlap",
+        "order_time_conflict",
+        "long_segment_crosses_turn_boundary",
+      ],
+    },
+    raw: {
+      sourceSelection: {
+        selectedTelemetrySource: "NONE",
+        fallbackReason: "no_reliable_telemetry_source",
+        sourceDecisionSummary: "Neither remote nor local telemetry produced a safe unambiguous mapping.",
+        targetRuntimeDecision: "manual_review",
+      },
+      remoteCandidate: candidate({
+        available: false,
+        reason: "low_margin_review_required",
+        margin: 0.059,
+        coverage: { speaker_1: 0.42, speaker_2: 0.4 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "low_margin_review_required",
+        margin: 0.03,
+        coverage: { speaker_1: 0.35, speaker_2: 0.33 },
+      }),
+      remoteMapping: {
+        speaker_1: "cmramq02300455wm10mf8bvh0",
+        speaker_2: "cmrampzio00445wm1bsxc75jf",
+      },
+    },
+    ordered: {
+      sourceSelection: {
+        selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
+        fallbackReason: null,
+        sourceDecisionSummary: "Remote telemetry produced a complete safe mapping.",
+        targetRuntimeDecision: "remote_selected",
+      },
+      remoteCandidate: candidate({
+        available: true,
+        reason: "high_confidence_prefilled",
+        margin: 0.893,
+        coverage: { speaker_1: 0.644, speaker_2: 0.727 },
+      }),
+      localCandidate: candidate({
+        available: false,
+        reason: "low_selected_coverage",
+        margin: null,
+        coverage: { speaker_1: null, speaker_2: null },
+      }),
+      remoteMapping: {
+        speaker_1: "cmrampzio00445wm1bsxc75jf",
+        speaker_2: "cmramq02300455wm10mf8bvh0",
+      },
+    },
+  });
+
+  assert.equal(decision.selectedTelemetrySource, "VOX_REMOTE_STREAM_ACTIVITY");
+  assert.equal(decision.selectedWindowStrategy, "order_normalized_windows");
+  assert.equal(decision.shouldApplyLike, true);
+  assert.equal(decision.targetRuntimeDecision, "remote_selected");
 });

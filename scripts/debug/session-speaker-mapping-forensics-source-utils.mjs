@@ -1,4 +1,4 @@
-import { decideWindowedTelemetrySelection } from "../../lib/transcription/windowed-source-selection.js";
+import { decideWindowedTelemetrySelection } from "../../lib/transcription/windowed-source-selection.mjs";
 
 export const REQUIRED_SOURCE_SCENARIOS = [
   "current_runtime",
@@ -111,6 +111,7 @@ export function evaluateTargetRuntimeTelemetrySelection(params) {
     wouldAutoApplyWithTargetLogic: decision.shouldApplyLike,
     selectedWindowStrategy: decision.selectedWindowStrategy,
     sourceDecisionSummary: decision.sourceDecisionSummary,
+    orderedWindowRejectionReason: decision.orderedWindowRejectionReason,
     rawDecision: decision.rawDecision,
     orderedDecision: decision.orderedDecision,
   };

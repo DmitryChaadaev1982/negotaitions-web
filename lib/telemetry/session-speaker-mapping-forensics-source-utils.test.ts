@@ -76,7 +76,7 @@ test("target runtime summary uses unified ordered-window decision", () => {
       selectedCoverageBySpeaker: { speaker_1: 0.39, speaker_2: 0.38 },
       globalMargin: 0.03,
       shouldApplyLike: false,
-      reason: "ambiguous_margin",
+      reason: "low_margin_review_required",
       activityRows: 12,
     },
     speakerLabels: ["speaker_1", "speaker_2"],
@@ -117,4 +117,62 @@ test("target runtime summary uses unified ordered-window decision", () => {
   assert.equal(result.targetRuntimeDecision, "remote_selected");
   assert.equal(result.wouldAutoApplyWithTargetLogic, true);
   assert.notEqual(result.fallbackReason, "no_reliable_telemetry_source");
+  assert.equal(result.orderedWindowRejectionReason, null);
+});
+
+test("target runtime returns explicit ordered rejection reason", () => {
+  const result = evaluateTargetRuntimeTelemetrySelection({
+    localMicOnly: {
+      selectedMapping: { speaker_1: null, speaker_2: null },
+      selectedCoverageBySpeaker: { speaker_1: null, speaker_2: null },
+      globalMargin: null,
+      shouldApplyLike: false,
+      reason: "low_margin_review_required",
+    },
+    remoteStreamOnly: {
+      selectedMapping: { speaker_1: "sp_a", speaker_2: "sp_b" },
+      selectedCoverageBySpeaker: { speaker_1: 0.3, speaker_2: 0.31 },
+      globalMargin: 0.02,
+      shouldApplyLike: false,
+      reason: "low_margin_review_required",
+      activityRows: 8,
+    },
+    speakerLabels: ["speaker_1", "speaker_2"],
+    providerWindowPathology: {
+      hasPathologicalOverlap: true,
+      overlapRatio: 0.5,
+      conflictingSegments: [1, 2],
+      reasons: ["provider_segments_overlap"],
+    },
+    ordered: {
+      sourceSelection: {
+        selectedTelemetrySource: "VOX_REMOTE_STREAM_ACTIVITY",
+        fallbackReason: null,
+        sourceDecisionSummary: "Order-normalized scenario replay.",
+        targetRuntimeDecision: "remote_selected",
+      },
+      remoteCandidate: {
+        available: true,
+        reason: null,
+        globalAssignmentMargin: 0.03,
+        selectedCoverageBySpeaker: { speaker_1: 0.31, speaker_2: 0.32 },
+      },
+      localCandidate: {
+        available: false,
+        reason: "low_selected_coverage",
+        globalAssignmentMargin: null,
+        selectedCoverageBySpeaker: { speaker_1: null, speaker_2: null },
+      },
+      remoteMapping: {
+        speaker_1: "sp_b",
+        speaker_2: "sp_a",
+      },
+    },
+  });
+
+  assert.equal(result.selectedTelemetrySource, "NONE");
+  assert.equal(
+    result.orderedWindowRejectionReason,
+    "ordered_not_materially_stronger",
+  );
 });
