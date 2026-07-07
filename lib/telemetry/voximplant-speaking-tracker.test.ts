@@ -117,6 +117,27 @@ test("muted schedules debounced close without fragment churn", () => {
   assert.equal(result.intervals[0].endedAtMs, 3801);
 });
 
+test("muted state does not open new speaking intervals", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 40, muted: true },
+    { atMs: 1000, micLevel: 35, muted: true },
+    { atMs: 2000, micLevel: 50, muted: true },
+  ]);
+  assert.equal(result.intervals.length, 0);
+});
+
+test("muting while open interval closes once and does not reopen", () => {
+  const result = simulateSpeakingIntervalLifecycle([
+    { atMs: 0, micLevel: 20, muted: false },
+    { atMs: 1500, micLevel: 20, muted: false },
+    { atMs: 1501, micLevel: 30, muted: true },
+    { atMs: 2302, micLevel: 40, muted: true },
+    { atMs: 2600, micLevel: 45, muted: true },
+  ]);
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].closeReason, "muted");
+});
+
 test("ordinary rerender ticks do not flush open interval", () => {
   const result = simulateSpeakingIntervalLifecycle([
     { atMs: 0, micLevel: 20 },

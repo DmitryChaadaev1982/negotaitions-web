@@ -38,6 +38,8 @@ import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
+import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
+import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -382,6 +384,9 @@ export default function VoximplantNegotiationRoomPage(
     roomAuth.type === "account"
       ? roomAuth.participantId
       : (sidebar?.currentParticipantId ?? null);
+  const localMicTelemetryEnabled = shouldEnableLocalMicTelemetryForRole(
+    effectiveParticipantType,
+  );
 
   // ── Automatic Voximplant recording relay ──────────────────────────────────
   // Recording is tied to negotiation lifecycle: start → start recording,
@@ -400,6 +405,9 @@ export default function VoximplantNegotiationRoomPage(
   const remoteTelemetryDebugEnabled =
     props.debugRecording === true ||
     process.env.NEXT_PUBLIC_VOX_REMOTE_STREAM_TELEMETRY_DEBUG === "1";
+  const remoteTelemetryCaptureEnabled = isRemoteStreamTelemetryEnabled(
+    process.env.NEXT_PUBLIC_VOX_REMOTE_STREAM_TELEMETRY_ENABLED,
+  );
 
   const postRecordingDebug = useCallback(
     (
@@ -730,24 +738,26 @@ export default function VoximplantNegotiationRoomPage(
         audioRenderer={null}
         micEnforcement={null}
         speakingTracker={
-          <VoximplantSpeakingActivityTracker
-            sessionId={props.sessionId}
-            roomAuth={roomAuth}
-            sessionParticipantId={trackerSessionParticipantId}
-            participantIdentity={sidebar.displayName ?? localDisplayName ?? null}
-            localAudioStreamPresent={localAudioStreamCreated}
-            micLevel={micLevel}
-            muted={isMicMuted || !controlState.micAllowed}
-            enabled={joined && !staleConnection}
-            connectionId={roomConnectionId ?? undefined}
-            audioProcessingEnabled={audioProcessingEnabled}
-            recordingStatus={recordingState?.status ?? null}
-            debug={
-              (props.debugAudio === true ||
-                process.env.NEXT_PUBLIC_VOX_SPEAKING_TRACKER_DEBUG === "true") &&
-              (effectiveParticipantType === "FACILITATOR" || effectiveParticipantType === "OBSERVER")
-            }
-          />
+          localMicTelemetryEnabled ? (
+            <VoximplantSpeakingActivityTracker
+              sessionId={props.sessionId}
+              roomAuth={roomAuth}
+              sessionParticipantId={trackerSessionParticipantId}
+              participantIdentity={sidebar.displayName ?? localDisplayName ?? null}
+              localAudioStreamPresent={localAudioStreamCreated}
+              micLevel={micLevel}
+              muted={isMicMuted || !controlState.micAllowed}
+              enabled={joined && !staleConnection}
+              connectionId={roomConnectionId ?? undefined}
+              audioProcessingEnabled={audioProcessingEnabled}
+              recordingStatus={recordingState?.status ?? null}
+              debug={
+                (props.debugAudio === true ||
+                  process.env.NEXT_PUBLIC_VOX_SPEAKING_TRACKER_DEBUG === "true") &&
+                (effectiveParticipantType === "FACILITATOR" || effectiveParticipantType === "OBSERVER")
+              }
+            />
+          ) : null
         }
         providerBanner={null}
         recordingControls={
@@ -781,6 +791,7 @@ export default function VoximplantNegotiationRoomPage(
             roomAuth={roomAuth}
             connectionId={roomConnectionId ?? undefined}
             remoteTelemetryDebugEnabled={remoteTelemetryDebugEnabled}
+            remoteTelemetryCaptureEnabled={remoteTelemetryCaptureEnabled}
             canReportRemoteTelemetry={effectiveParticipantType === "FACILITATOR"}
             joined={joined}
             staleConnection={staleConnection}

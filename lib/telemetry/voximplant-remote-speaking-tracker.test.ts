@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   getRemoteTrackerBlockReason,
+  isRemoteStreamTelemetryEnabled,
   simulateRemoteSpeakingIntervalLifecycle,
 } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
 import { VOX_REMOTE_STREAM_ACTIVITY_SOURCE } from "@/lib/telemetry/audio-activity-sources";
@@ -31,22 +32,40 @@ test("brief remote speaking dip does not fragment interval", () => {
   assert.equal(result.intervals[0].durationMs, 4800);
 });
 
-test("disabled-mode remote tracker is blocked", () => {
+test("remote tracker is allowed when enabled and facilitator can report", () => {
   const reason = getRemoteTrackerBlockReason({
     enabled: true,
-    debugEnabled: false,
     canReportRemoteTelemetry: true,
   });
-  assert.equal(reason, "debug-flag-off");
+  assert.equal(reason, null);
+});
+
+test("disabled-mode remote tracker is blocked", () => {
+  const reason = getRemoteTrackerBlockReason({
+    enabled: false,
+    canReportRemoteTelemetry: true,
+  });
+  assert.equal(reason, "disabled");
 });
 
 test("remote tracker requires facilitator-capable reporter", () => {
   const reason = getRemoteTrackerBlockReason({
     enabled: true,
-    debugEnabled: true,
     canReportRemoteTelemetry: false,
   });
   assert.equal(reason, "facilitator-required");
+});
+
+test("remote telemetry capture is enabled by default", () => {
+  assert.equal(isRemoteStreamTelemetryEnabled(undefined), true);
+});
+
+test("remote telemetry capture kill switch disables capture", () => {
+  assert.equal(isRemoteStreamTelemetryEnabled("false"), false);
+});
+
+test("debug flag does not affect remote telemetry enablement", () => {
+  assert.equal(isRemoteStreamTelemetryEnabled("1"), true);
 });
 
 test("unmount flushes open remote interval", () => {

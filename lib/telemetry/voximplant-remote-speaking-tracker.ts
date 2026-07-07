@@ -5,7 +5,6 @@ import {
 
 export type RemoteTrackerBlockReason =
   | "disabled"
-  | "debug-flag-off"
   | "facilitator-required"
   | null;
 
@@ -30,13 +29,17 @@ export type SimulatedRemoteLifecycleInterval = {
 
 export function getRemoteTrackerBlockReason(input: {
   enabled: boolean;
-  debugEnabled: boolean;
   canReportRemoteTelemetry: boolean;
 }): RemoteTrackerBlockReason {
   if (!input.enabled) return "disabled";
-  if (!input.debugEnabled) return "debug-flag-off";
   if (!input.canReportRemoteTelemetry) return "facilitator-required";
   return null;
+}
+
+export function isRemoteStreamTelemetryEnabled(
+  envValue: string | undefined,
+): boolean {
+  return envValue !== "false";
 }
 
 export function simulateRemoteSpeakingIntervalLifecycle(

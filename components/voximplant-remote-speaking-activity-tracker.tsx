@@ -53,10 +53,9 @@ export function VoximplantRemoteSpeakingActivityTracker({
     () =>
       getRemoteTrackerBlockReason({
         enabled,
-        debugEnabled,
         canReportRemoteTelemetry,
       }),
-    [enabled, debugEnabled, canReportRemoteTelemetry],
+    [enabled, canReportRemoteTelemetry],
   );
 
   const openIntervalsRef = useRef(new Map<string, OpenIntervalState>());

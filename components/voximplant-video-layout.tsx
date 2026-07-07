@@ -97,6 +97,7 @@ export default function VoximplantVideoLayout({
   roomAuth,
   connectionId,
   remoteTelemetryDebugEnabled,
+  remoteTelemetryCaptureEnabled,
   canReportRemoteTelemetry,
   joined,
   staleConnection,
@@ -123,6 +124,7 @@ export default function VoximplantVideoLayout({
   roomAuth: RoomAuthToken;
   connectionId?: string;
   remoteTelemetryDebugEnabled: boolean;
+  remoteTelemetryCaptureEnabled: boolean;
   canReportRemoteTelemetry: boolean;
   joined: boolean;
   staleConnection: boolean;
@@ -320,7 +322,7 @@ export default function VoximplantVideoLayout({
         sessionId={sessionId}
         roomAuth={roomAuth}
         connectionId={connectionId}
-        enabled={joined && !staleConnection}
+        enabled={joined && !staleConnection && remoteTelemetryCaptureEnabled}
         debugEnabled={remoteTelemetryDebugEnabled}
         canReportRemoteTelemetry={canReportRemoteTelemetry}
         recordingStatus={recordingStatus}
