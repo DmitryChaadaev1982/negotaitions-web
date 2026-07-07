@@ -11,6 +11,9 @@ test("required source-aware scenarios are declared", () => {
     "current_runtime",
     "local_mic_only",
     "remote_stream_only",
+    "local_mic_order_normalized_windows",
+    "remote_stream_order_normalized_windows",
+    "target_order_normalized_runtime",
     "combined_naive",
     "combined_deduplicated",
   ]);

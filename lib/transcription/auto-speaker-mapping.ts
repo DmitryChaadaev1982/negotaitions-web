@@ -15,12 +15,21 @@ import {
 import { computeGlobalAssignmentMargin } from "@/lib/transcription/auto-trigger-mapping-core";
 import { evaluateTelemetryQuality, type TelemetryQuality } from "@/lib/transcription/mapping-safety";
 import {
+  buildOrderNormalizedTranscriptWindows,
+  type TranscriptScoringSegment,
+} from "@/lib/transcription/order-normalized-transcript-windows";
+import { shouldApplyOrderNormalizedWindowStrategy } from "@/lib/transcription/order-normalized-window-selection";
+import {
   selectTelemetrySourceForSpeakerMapping,
   sourceBlockingWarnings,
   type SpeakerMappingTelemetrySource,
   type TelemetrySourceCandidate,
 } from "@/lib/transcription/speaker-mapping-telemetry-source-selection";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
+import {
+  detectTranscriptWindowPathology,
+  type ProviderWindowPathology,
+} from "@/lib/transcription/transcript-window-pathology";
 
 export type TelemetryParticipantHealth = {
   participantId: string;
@@ -45,6 +54,9 @@ export type AutoMappingSuggestion = {
   strategy: "diarization_segment_overlap";
   available: boolean;
   unavailableReason: string | null;
+  selectedWindowStrategy: "provider_raw_windows" | "order_normalized_windows";
+  windowNormalizationReason: string | null;
+  providerWindowPathology: ProviderWindowPathology | null;
   selectedTelemetrySource: SpeakerMappingTelemetrySource;
   fallbackReason: string | null;
   sourceDecisionSummary: string;
@@ -68,9 +80,11 @@ export type AutoMappingSuggestion = {
 type TranscriptWithSegments = {
   id: string;
   segments: Array<{
+    orderIndex?: number | null;
     speakerLabel: string | null;
     startSeconds: number | null;
     endSeconds: number | null;
+    text?: string | null;
   }>;
 };
 
@@ -99,10 +113,73 @@ function median(values: number[]): number | null {
   return sorted[mid]!;
 }
 
+type ScoringWindow = {
+  speakerLabel: string;
+  startSeconds: number;
+  endSeconds: number;
+};
+
+function buildScoreMatrixFromScoringWindows(params: {
+  speakerLabels: string[];
+  participantIds: string[];
+  scoringWindows: ScoringWindow[];
+  normalizedByParticipant: Map<string, Array<{ start: number; end: number }>>;
+}): {
+  scoreMatrix: SpeakerScoreMatrix;
+  rejectedCandidateMapping: SpeakerMapping;
+} {
+  const { speakerLabels, participantIds, scoringWindows, normalizedByParticipant } =
+    params;
+  const scoreMatrix: SpeakerScoreMatrix = {};
+  const rejectedCandidateMapping: SpeakerMapping = {};
+  for (const speakerLabel of speakerLabels) {
+    const speakerSegments = scoringWindows.filter(
+      (segment) => segment.speakerLabel === speakerLabel,
+    );
+    const totalSpeakerDuration = speakerSegments.reduce(
+      (sum, s) => sum + Math.max(0, s.endSeconds - s.startSeconds),
+      0,
+    );
+    if (totalSpeakerDuration === 0) continue;
+    let bestParticipantId: string | null = null;
+    let bestOverlap = 0;
+    scoreMatrix[speakerLabel] = {};
+    for (const participantId of participantIds) {
+      let overlap = 0;
+      for (const segment of speakerSegments) {
+        const normalizedIntervals = normalizedByParticipant.get(participantId) ?? [];
+        for (const interval of normalizedIntervals) {
+          const overlapStart = Math.max(segment.startSeconds, interval.start);
+          const overlapEnd = Math.min(segment.endSeconds, interval.end);
+          if (overlapEnd > overlapStart) overlap += overlapEnd - overlapStart;
+        }
+      }
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        bestParticipantId = participantId;
+      }
+      const coverage = totalSpeakerDuration > 0 ? overlap / totalSpeakerDuration : 0;
+      scoreMatrix[speakerLabel][participantId] = {
+        overlapMs: Math.round(overlap * 1000),
+        speakerDurationMs: Math.round(totalSpeakerDuration * 1000),
+        coverage: Math.round(coverage * 1000) / 1000,
+      };
+    }
+    if (bestParticipantId) {
+      rejectedCandidateMapping[speakerLabel] = bestParticipantId;
+    }
+  }
+  return { scoreMatrix, rejectedCandidateMapping };
+}
+
+
 function buildUnavailableSuggestion(params: {
   reason: string;
   telemetryQuality: TelemetryQuality;
   telemetryHealth: TelemetryHealthReport;
+  selectedWindowStrategy?: "provider_raw_windows" | "order_normalized_windows";
+  windowNormalizationReason?: string | null;
+  providerWindowPathology?: ProviderWindowPathology | null;
   scoreMatrixBySource?: Record<string, SpeakerScoreMatrix>;
   sourceWarningsBySource?: Record<string, string[]>;
   sourceReasonBySource?: Record<string, string | null>;
@@ -118,6 +195,9 @@ function buildUnavailableSuggestion(params: {
     strategy: "diarization_segment_overlap",
     available: false,
     unavailableReason: params.reason,
+    selectedWindowStrategy: params.selectedWindowStrategy ?? "provider_raw_windows",
+    windowNormalizationReason: params.windowNormalizationReason ?? null,
+    providerWindowPathology: params.providerWindowPathology ?? null,
     selectedTelemetrySource: params.selectedTelemetrySource ?? "NONE",
     fallbackReason: params.fallbackReason ?? null,
     sourceDecisionSummary:
@@ -201,7 +281,6 @@ export async function suggestSpeakerMapping(
     select: { id: true, displayName: true, type: true },
   });
 
-  const participantById = new Map(participants.map((p) => [p.id, p]));
   const candidateParticipants = participants.filter((participant) => participant.type !== "OBSERVER");
   const negotiationParticipantPool =
     candidateParticipants.filter((participant) => participant.type === "PARTICIPANT");
@@ -228,14 +307,37 @@ export async function suggestSpeakerMapping(
     start: segment.startSeconds ?? 0,
     end: segment.endSeconds ?? 0,
   }));
+  const transcriptScoringSegments: TranscriptScoringSegment[] =
+    segmentsWithTimestamps.map((segment, index) => ({
+      orderIndex:
+        typeof segment.orderIndex === "number" ? segment.orderIndex : index,
+      speakerLabel: segment.speakerLabel as string,
+      startMs: Math.round((segment.startSeconds ?? 0) * 1000),
+      endMs: Math.round((segment.endSeconds ?? 0) * 1000),
+      text: segment.text ?? null,
+    }));
+  const orderedScoringWindows = buildOrderNormalizedTranscriptWindows(
+    transcriptScoringSegments,
+  );
+  const providerWindowPathology = detectTranscriptWindowPathology(
+    transcriptScoringSegments,
+  );
 
   const evaluateSource = (
     activities: typeof allActivities,
     source: Exclude<SpeakerMappingTelemetrySource, "NONE">,
+    scoringWindowsOverride?: ScoringWindow[],
   ): {
     suggestion: AutoMappingSuggestion;
     candidate: TelemetrySourceCandidate;
   } => {
+    const scoringWindows: ScoringWindow[] =
+      scoringWindowsOverride ??
+      segmentsWithTimestamps.map((segment) => ({
+        speakerLabel: segment.speakerLabel as string,
+        startSeconds: segment.startSeconds ?? 0,
+        endSeconds: segment.endSeconds ?? 0,
+      }));
     const eligibleActivities = activities.filter((activity) =>
       participantPoolIds.has(activity.sessionParticipantId),
     );
@@ -521,48 +623,13 @@ export async function suggestSpeakerMapping(
       warnings: [...telemetryQuality.warnings],
     };
 
-    const scoreMatrix: SpeakerScoreMatrix = {};
-    const rejectedCandidateMapping: SpeakerMapping = {};
-    for (const speakerLabel of speakerLabels) {
-      const speakerSegments = segmentsWithTimestamps.filter(
-        (s) => s.speakerLabel === speakerLabel,
-      );
-      const totalSpeakerDuration = speakerSegments.reduce(
-        (sum, s) => sum + ((s.endSeconds ?? 0) - (s.startSeconds ?? 0)),
-        0,
-      );
-      if (totalSpeakerDuration === 0) continue;
-      let bestParticipantId: string | null = null;
-      let bestOverlap = 0;
-      scoreMatrix[speakerLabel] = {};
-      for (const [participantId] of activityByParticipant) {
-        if (!participantPoolIds.has(participantId)) continue;
-        let overlap = 0;
-        for (const segment of speakerSegments) {
-          const segStart = segment.startSeconds ?? 0;
-          const segEnd = segment.endSeconds ?? 0;
-          const normalizedIntervals = normalizedByParticipant.get(participantId) ?? [];
-          for (const interval of normalizedIntervals) {
-            const overlapStart = Math.max(segStart, interval.start);
-            const overlapEnd = Math.min(segEnd, interval.end);
-            if (overlapEnd > overlapStart) overlap += overlapEnd - overlapStart;
-          }
-        }
-        if (overlap > bestOverlap) {
-          bestOverlap = overlap;
-          bestParticipantId = participantId;
-        }
-        const coverage = totalSpeakerDuration > 0 ? overlap / totalSpeakerDuration : 0;
-        scoreMatrix[speakerLabel][participantId] = {
-          overlapMs: Math.round(overlap * 1000),
-          speakerDurationMs: Math.round(totalSpeakerDuration * 1000),
-          coverage: Math.round(coverage * 1000) / 1000,
-        };
-      }
-      if (bestParticipantId && participantById.has(bestParticipantId)) {
-        rejectedCandidateMapping[speakerLabel] = bestParticipantId;
-      }
-    }
+    const { scoreMatrix, rejectedCandidateMapping } =
+      buildScoreMatrixFromScoringWindows({
+        speakerLabels,
+        participantIds: participantPool.map((participant) => participant.id),
+        scoringWindows,
+        normalizedByParticipant,
+      });
 
     const selection = selectOneToOneMappingFromScoreMatrix(
       speakerLabels,
@@ -625,6 +692,9 @@ export async function suggestSpeakerMapping(
       strategy: "diarization_segment_overlap",
       available: true,
       unavailableReason: null,
+      selectedWindowStrategy: "provider_raw_windows",
+      windowNormalizationReason: null,
+      providerWindowPathology,
       selectedTelemetrySource: source,
       fallbackReason: null,
       sourceDecisionSummary: "Source evaluated.",
@@ -691,11 +761,96 @@ export async function suggestSpeakerMapping(
   const remoteStreamTelemetryAvailable = remoteActivities.length > 0;
   const localMicTelemetryAvailable = localActivities.length > 0;
 
+  const orderedScoringWindowsSeconds: ScoringWindow[] = orderedScoringWindows.map(
+    (window) => ({
+      speakerLabel: window.speakerLabel,
+      startSeconds: window.scoringStartMs / 1000,
+      endSeconds: window.scoringEndMs / 1000,
+    }),
+  );
+  const shouldTryOrderNormalizedFallback =
+    sourceSelection.selectedTelemetrySource === "NONE" &&
+    providerWindowPathology.hasPathologicalOverlap &&
+    preferRemoteStreamTelemetry &&
+    remoteActivities.length > 0 &&
+    remote.candidate.reason === "ambiguous_margin";
+  const orderedRemote = shouldTryOrderNormalizedFallback
+    ? evaluateSource(
+        remoteActivities,
+        VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+        orderedScoringWindowsSeconds,
+      )
+    : null;
+  const orderedLocal = shouldTryOrderNormalizedFallback
+    ? evaluateSource(
+        localActivities,
+        VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+        orderedScoringWindowsSeconds,
+      )
+    : null;
+
+  if (orderedRemote && orderedLocal) {
+    const orderedSourceSelection = selectTelemetrySourceForSpeakerMapping({
+      speakerLabels,
+      preferRemoteStreamTelemetry,
+      remote: orderedRemote.candidate,
+      local: orderedLocal.candidate,
+    });
+    const shouldUseOrderedWindows = shouldApplyOrderNormalizedWindowStrategy({
+      rawSourceSelection: sourceSelection,
+      orderedSourceSelection,
+      rawRemoteCandidate: remote.candidate,
+      orderedRemoteCandidate: orderedRemote.candidate,
+      rawRemoteMapping: remote.suggestion.selectedMapping,
+      orderedRemoteMapping: orderedRemote.suggestion.selectedMapping,
+      speakerLabels,
+      preferRemoteStreamTelemetry,
+      remoteActivityRowCount: remoteActivities.length,
+      hasPathologicalOverlap: providerWindowPathology.hasPathologicalOverlap,
+    });
+
+    if (shouldUseOrderedWindows) {
+      const orderedScoreMatrixBySource = {
+        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.suggestion.scoreMatrix,
+        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.suggestion.scoreMatrix,
+      };
+      const orderedSourceWarningsBySource = {
+        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]:
+          orderedRemote.suggestion.telemetryQuality.warnings,
+        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]:
+          orderedLocal.suggestion.telemetryQuality.warnings,
+      };
+      const orderedSourceReasonBySource = {
+        [VOX_REMOTE_STREAM_ACTIVITY_SOURCE]: orderedRemote.candidate.reason,
+        [VOXIMPLANT_MIC_ACTIVITY_SOURCE]: orderedLocal.candidate.reason,
+      };
+      return {
+        ...orderedRemote.suggestion,
+        selectedWindowStrategy: "order_normalized_windows",
+        windowNormalizationReason:
+          "provider_overlap_pathology_with_low_margin_remote_raw_windows",
+        providerWindowPathology,
+        selectedTelemetrySource: orderedSourceSelection.selectedTelemetrySource,
+        fallbackReason: orderedSourceSelection.fallbackReason,
+        sourceDecisionSummary: orderedSourceSelection.sourceDecisionSummary,
+        targetRuntimeDecision: orderedSourceSelection.targetRuntimeDecision,
+        scoreMatrixBySource: orderedScoreMatrixBySource,
+        sourceWarningsBySource: orderedSourceWarningsBySource,
+        sourceReasonBySource: orderedSourceReasonBySource,
+        remoteStreamTelemetryAvailable,
+        localMicTelemetryAvailable,
+        remoteRejectedReason: null,
+      };
+    }
+  }
+
   if (sourceSelection.selectedTelemetrySource === "NONE") {
     return buildUnavailableSuggestion({
       reason: sourceSelection.fallbackReason ?? "no_reliable_telemetry_source",
       telemetryQuality: remote.suggestion.telemetryQuality,
       telemetryHealth: remote.suggestion.telemetryHealth,
+      selectedWindowStrategy: "provider_raw_windows",
+      providerWindowPathology,
       scoreMatrixBySource,
       sourceWarningsBySource,
       sourceReasonBySource,
@@ -716,6 +871,9 @@ export async function suggestSpeakerMapping(
 
   return {
     ...selected,
+    selectedWindowStrategy: "provider_raw_windows",
+    windowNormalizationReason: null,
+    providerWindowPathology,
     selectedTelemetrySource: sourceSelection.selectedTelemetrySource,
     fallbackReason: sourceSelection.fallbackReason,
     sourceDecisionSummary: sourceSelection.sourceDecisionSummary,

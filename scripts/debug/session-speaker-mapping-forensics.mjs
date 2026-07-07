@@ -65,6 +65,109 @@ function median(values) {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+function buildOrderNormalizedTranscriptWindows(segments) {
+  const sorted = [...segments].sort((a, b) => a.orderIndex - b.orderIndex);
+  const result = [];
+  let previousScoringEndMs = Number.NEGATIVE_INFINITY;
+  for (const segment of sorted) {
+    const scoringStartMs = Math.max(segment.startMs, previousScoringEndMs);
+    const scoringEndMs = Math.max(segment.endMs, scoringStartMs);
+    previousScoringEndMs = scoringEndMs;
+    const durationMs = Math.max(0, scoringEndMs - scoringStartMs);
+    const reasons = [];
+    if (scoringStartMs > segment.startMs) reasons.push("shifted_for_order_overlap");
+    if (scoringEndMs === scoringStartMs && segment.endMs <= scoringStartMs) {
+      reasons.push("zero_duration_clamped");
+    }
+    if (durationMs > 0 && durationMs <= 250) reasons.push("short_adjusted_window");
+    result.push({
+      orderIndex: segment.orderIndex,
+      speakerLabel: segment.speakerLabel,
+      originalStartMs: segment.startMs,
+      originalEndMs: segment.endMs,
+      scoringStartMs,
+      scoringEndMs,
+      durationMs,
+      adjustmentReason: reasons.length ? reasons.join("|") : "none",
+      text: segment.text,
+    });
+  }
+  return result;
+}
+
+function detectProviderWindowPathology(segments) {
+  const sorted = [...segments].sort((a, b) => a.orderIndex - b.orderIndex);
+  const normalized = buildOrderNormalizedTranscriptWindows(sorted);
+  const reasons = new Set();
+  const conflictingSegments = new Set();
+  let crossSpeakerOverlapMs = 0;
+  const totalDurationMs = sorted.reduce(
+    (sum, seg) => sum + Math.max(0, seg.endMs - seg.startMs),
+    0,
+  );
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    const current = sorted[i];
+    for (let j = i + 1; j < sorted.length; j += 1) {
+      const other = sorted[j];
+      if (current.speakerLabel === other.speakerLabel) continue;
+      const overlap = overlapMs(
+        current.startMs,
+        current.endMs,
+        other.startMs,
+        other.endMs,
+      );
+      if (overlap <= 0) continue;
+      crossSpeakerOverlapMs += overlap;
+      conflictingSegments.add(current.orderIndex);
+      conflictingSegments.add(other.orderIndex);
+      reasons.add("provider_segments_overlap");
+    }
+  }
+
+  for (let i = 1; i < sorted.length; i += 1) {
+    const current = sorted[i];
+    const prevNormalized = normalized[i - 1];
+    if (current.startMs < prevNormalized.scoringEndMs - 1000) {
+      conflictingSegments.add(current.orderIndex);
+      conflictingSegments.add(prevNormalized.orderIndex);
+      reasons.add("order_time_conflict");
+    }
+  }
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    const current = sorted[i];
+    const durationMs = Math.max(0, current.endMs - current.startMs);
+    if (durationMs < 15000) continue;
+    let crossTurnOverlaps = 0;
+    for (let j = 0; j < sorted.length; j += 1) {
+      if (i === j) continue;
+      const other = sorted[j];
+      if (other.speakerLabel === current.speakerLabel) continue;
+      if (
+        overlapMs(current.startMs, current.endMs, other.startMs, other.endMs) > 0
+      ) {
+        crossTurnOverlaps += 1;
+      }
+    }
+    if (crossTurnOverlaps >= 2) {
+      reasons.add("long_segment_crosses_turn_boundary");
+      conflictingSegments.add(current.orderIndex);
+    }
+  }
+
+  const overlapRatio =
+    totalDurationMs > 0 ? round(crossSpeakerOverlapMs / totalDurationMs, 3) : 0;
+  if (overlapRatio >= 0.2) reasons.add("provider_segments_overlap");
+
+  return {
+    hasPathologicalOverlap: reasons.size > 0,
+    overlapRatio,
+    conflictingSegments: [...conflictingSegments].sort((a, b) => a - b),
+    reasons: [...reasons],
+  };
+}
+
 function parseArgs(argv) {
   if (argv.length < 3) {
     throw new Error(
@@ -1452,6 +1555,26 @@ async function run() {
         segments.filter((segment) => segment.speakerLabel === label),
       );
     }
+    const orderNormalizedWindows = buildOrderNormalizedTranscriptWindows(segments);
+    const providerWindowPathology = detectProviderWindowPathology(segments);
+    const orderNormalizedSegmentsBySpeaker = new Map();
+    for (const label of speakerLabels) {
+      orderNormalizedSegmentsBySpeaker.set(
+        label,
+        orderNormalizedWindows
+          .filter((segment) => segment.speakerLabel === label)
+          .map((segment) => ({
+            id: `order-normalized-${segment.orderIndex}`,
+            orderIndex: segment.orderIndex,
+            speakerLabel: segment.speakerLabel,
+            startMs: segment.scoringStartMs,
+            endMs: segment.scoringEndMs,
+            durationMs: segment.durationMs,
+            text: segment.text ?? "",
+            adjustmentReason: segment.adjustmentReason,
+          })),
+      );
+    }
 
     const recordingStartMs = recording?.startedAt ? new Date(recording.startedAt).getTime() : null;
     const recordingEndMs = recording?.endedAt ? new Date(recording.endedAt).getTime() : null;
@@ -1607,6 +1730,28 @@ async function run() {
     scoringScenarios.remote_stream_only = runScenario("remote_stream_only", {
       activityFilter: (row) => row.source === VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
     });
+    scoringScenarios.local_mic_order_normalized_windows = runScenario(
+      "local_mic_order_normalized_windows",
+      {
+        activityFilter: (row) => row.source === VOXIMPLANT_MIC_ACTIVITY_SOURCE,
+        segmentsBySpeakerOverride: orderNormalizedSegmentsBySpeaker,
+        diarizedIntervalsOverride: orderNormalizedWindows.map((segment) => ({
+          startMs: segment.scoringStartMs,
+          endMs: segment.scoringEndMs,
+        })),
+      },
+    );
+    scoringScenarios.remote_stream_order_normalized_windows = runScenario(
+      "remote_stream_order_normalized_windows",
+      {
+        activityFilter: (row) => row.source === VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
+        segmentsBySpeakerOverride: orderNormalizedSegmentsBySpeaker,
+        diarizedIntervalsOverride: orderNormalizedWindows.map((segment) => ({
+          startMs: segment.scoringStartMs,
+          endMs: segment.scoringEndMs,
+        })),
+      },
+    );
     const combinedSources = new Set([
       VOXIMPLANT_MIC_ACTIVITY_SOURCE,
       VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
@@ -2014,6 +2159,10 @@ async function run() {
 
     const localMicScenario = scoringScenarios.local_mic_only;
     const remoteStreamScenario = scoringScenarios.remote_stream_only;
+    const localMicOrderNormalizedScenario =
+      scoringScenarios.local_mic_order_normalized_windows;
+    const remoteOrderNormalizedScenario =
+      scoringScenarios.remote_stream_order_normalized_windows;
     const sourceRecommendations = evaluateRemoteSourceRecommendation({
       currentRuntime: {
         shouldApply: currentRuntime.decision.shouldApply,
@@ -2048,6 +2197,47 @@ async function run() {
       },
       speakerLabels,
     });
+    const targetOrderNormalizedRuntime = evaluateTargetRuntimeTelemetrySelection({
+      localMicOnly: {
+        selectedMapping: localMicOrderNormalizedScenario.selectedMapping,
+        selectedCoverageBySpeaker:
+          localMicOrderNormalizedScenario.selectedCoverageBySpeaker,
+        globalMargin: localMicOrderNormalizedScenario.globalMargin,
+        shouldApplyLike: localMicOrderNormalizedScenario.shouldApplyLike,
+        reason: localMicOrderNormalizedScenario.reason,
+      },
+      remoteStreamOnly: {
+        selectedMapping: remoteOrderNormalizedScenario.selectedMapping,
+        selectedCoverageBySpeaker:
+          remoteOrderNormalizedScenario.selectedCoverageBySpeaker,
+        globalMargin: remoteOrderNormalizedScenario.globalMargin,
+        shouldApplyLike: remoteOrderNormalizedScenario.shouldApplyLike,
+        reason: remoteOrderNormalizedScenario.reason,
+      },
+      speakerLabels,
+    });
+    scoringScenarios.target_order_normalized_runtime = {
+      ...targetOrderNormalizedRuntime,
+      providerWindowPathology,
+      selectedWindowStrategy:
+        targetOrderNormalizedRuntime.selectedTelemetrySource ===
+        VOX_REMOTE_STREAM_ACTIVITY_SOURCE
+          ? "order_normalized_windows"
+          : "provider_raw_windows",
+      orderedWindowScoreMatrix:
+        scoringScenarios.remote_stream_order_normalized_windows.scoreMatrix ?? {},
+      orderedWindowSelectedMapping:
+        scoringScenarios.remote_stream_order_normalized_windows.selectedMapping ??
+        {},
+      orderedWindowGlobalMargin:
+        scoringScenarios.remote_stream_order_normalized_windows.globalMargin ?? null,
+      orderedWindowPerSpeakerMargins:
+        scoringScenarios.remote_stream_order_normalized_windows.perSpeakerMargins ??
+        {},
+      orderedWindowSelectedCoverageBySpeaker:
+        scoringScenarios.remote_stream_order_normalized_windows
+          .selectedCoverageBySpeaker ?? {},
+    };
 
     const recommendations = [
       `Current runtime auto-apply decision: ${currentRuntime.decision.shouldApply} (${currentRuntime.decision.reason})`,
@@ -2130,6 +2320,8 @@ async function run() {
         excludedRowsByReason: normalizedCurrent.excludedRowsByReason,
       },
       currentScorerReplay: {
+        providerWindowPathology,
+        selectedWindowStrategy: "provider_raw_windows",
         scoreMatrix: scoreCurrent.scoreMatrix,
         selectedMapping: currentRuntime.mapping,
         selectedMargins: currentRuntime.selection.margins,
@@ -2146,6 +2338,24 @@ async function run() {
           blockingWarnings: currentRuntime.blockingWarnings,
           nonBlockingWarnings: currentRuntime.nonBlockingWarnings,
         },
+      },
+      orderNormalizedReplay: {
+        selectedWindowStrategy: "order_normalized_windows",
+        providerWindowPathology,
+        orderedWindowScoreMatrix:
+          scoringScenarios.remote_stream_order_normalized_windows.scoreMatrix ?? {},
+        orderedWindowSelectedMapping:
+          scoringScenarios.remote_stream_order_normalized_windows.selectedMapping ??
+          {},
+        orderedWindowGlobalMargin:
+          scoringScenarios.remote_stream_order_normalized_windows.globalMargin ??
+          null,
+        orderedWindowPerSpeakerMargins:
+          scoringScenarios.remote_stream_order_normalized_windows
+            .perSpeakerMargins ?? {},
+        orderedWindowSelectedCoverageBySpeaker:
+          scoringScenarios.remote_stream_order_normalized_windows
+            .selectedCoverageBySpeaker ?? {},
       },
       segmentLevelOverlapDetail: segmentOverlapDetail,
       participantLevelReverseOverlap: participantOverlapDetail,
@@ -2195,6 +2405,8 @@ async function run() {
       "## Current Runtime Replay",
       `- shouldApply: ${currentRuntime.decision.shouldApply}`,
       `- reason: ${currentRuntime.decision.reason}`,
+      `- selectedWindowStrategy: provider_raw_windows`,
+      `- providerWindowPathology: ${JSON.stringify(providerWindowPathology)}`,
       `- globalMargin: ${currentRuntime.globalMargin ?? "n/a"}`,
       `- selectedCoverageBySpeaker: ${JSON.stringify(currentRuntime.selectedCoverageBySpeaker)}`,
       `- selectedMapping: ${JSON.stringify(currentRuntime.mapping)}`,
@@ -2209,6 +2421,9 @@ async function run() {
       "## Scenario Highlights",
       `- local_mic_only: ${scoringScenarios.local_mic_only.reason}, shouldApplyLike=${scoringScenarios.local_mic_only.shouldApplyLike}, margin=${scoringScenarios.local_mic_only.globalMargin ?? "n/a"}`,
       `- remote_stream_only: ${scoringScenarios.remote_stream_only.reason}, shouldApplyLike=${scoringScenarios.remote_stream_only.shouldApplyLike}, margin=${scoringScenarios.remote_stream_only.globalMargin ?? "n/a"}`,
+      `- local_mic_order_normalized_windows: ${scoringScenarios.local_mic_order_normalized_windows.reason}, shouldApplyLike=${scoringScenarios.local_mic_order_normalized_windows.shouldApplyLike}, margin=${scoringScenarios.local_mic_order_normalized_windows.globalMargin ?? "n/a"}`,
+      `- remote_stream_order_normalized_windows: ${scoringScenarios.remote_stream_order_normalized_windows.reason}, shouldApplyLike=${scoringScenarios.remote_stream_order_normalized_windows.shouldApplyLike}, margin=${scoringScenarios.remote_stream_order_normalized_windows.globalMargin ?? "n/a"}`,
+      `- target_order_normalized_runtime: selectedTelemetrySource=${scoringScenarios.target_order_normalized_runtime.selectedTelemetrySource}, targetRuntimeDecision=${scoringScenarios.target_order_normalized_runtime.targetRuntimeDecision}, wouldAutoApplyWithTargetLogic=${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
       `- combined_naive: ${scoringScenarios.combined_naive.reason}, shouldApplyLike=${scoringScenarios.combined_naive.shouldApplyLike}, margin=${scoringScenarios.combined_naive.globalMargin ?? "n/a"}`,
       `- combined_deduplicated: ${scoringScenarios.combined_deduplicated.reason}, shouldApplyLike=${scoringScenarios.combined_deduplicated.shouldApplyLike}, margin=${scoringScenarios.combined_deduplicated.globalMargin ?? "n/a"}`,
       `- exclude_derived_offsets: ${scoringScenarios.exclude_derived_offsets.reason}, shouldApplyLike=${scoringScenarios.exclude_derived_offsets.shouldApplyLike}`,
@@ -2226,6 +2441,9 @@ async function run() {
       ),
       "",
       "## Recommendations",
+      `- raw-window result: mapping=${JSON.stringify(scoringScenarios.remote_stream_only.selectedMapping)}, margin=${scoringScenarios.remote_stream_only.globalMargin ?? "n/a"}, shouldApplyLike=${scoringScenarios.remote_stream_only.shouldApplyLike}`,
+      `- ordered-window result: mapping=${JSON.stringify(scoringScenarios.remote_stream_order_normalized_windows.selectedMapping)}, margin=${scoringScenarios.remote_stream_order_normalized_windows.globalMargin ?? "n/a"}, shouldApplyLike=${scoringScenarios.remote_stream_order_normalized_windows.shouldApplyLike}`,
+      `- ordered windows would auto-apply: ${scoringScenarios.target_order_normalized_runtime.wouldAutoApplyWithTargetLogic}`,
       `- Source recommendations: ${sourceRecommendations.join(", ") || "none"}`,
       `- targetRuntimeDecision: ${targetRuntimeSourceSelection.targetRuntimeDecision}`,
       `- selectedTelemetrySource: ${targetRuntimeSourceSelection.selectedTelemetrySource}`,
