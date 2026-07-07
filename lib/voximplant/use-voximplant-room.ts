@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Architecture: docs/architecture/05-voximplant-integration.md
+ */
+
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import {
   buildCameraEnablePlan,

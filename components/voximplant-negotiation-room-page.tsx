@@ -1,6 +1,11 @@
 "use client";
 
 /**
+ * Architecture: docs/architecture/05-voximplant-integration.md
+ * Architecture: docs/architecture/04-session-event-flow.md
+ */
+
+/**
  * Stage 5.3/5.4 — Voximplant negotiation room page.
  *
  * Uses the shared room shell for all business/session orchestration.

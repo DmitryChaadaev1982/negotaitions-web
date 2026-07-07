@@ -1,6 +1,11 @@
 import "server-only";
 
 /**
+ * Architecture: docs/architecture/05-voximplant-integration.md
+ * Architecture: docs/architecture/06-recording-transcription-pipeline.md
+ */
+
+/**
  * Stage 5.4.6 — Voximplant recording persistence helpers added.
  *
  * Stage 5.3 — Voximplant recording provider dispatch bridge.

@@ -1,0 +1,40 @@
+# 07 Speaker Mapping And Telemetry
+
+## Goal
+
+Map diarized transcript speakers (for example `speaker_1`) to actual session participants with confidence-aware, reviewable logic.
+
+## Inputs
+
+- Transcript segments with timing and speaker labels.
+- Session participant audio activity windows.
+- Telemetry source candidates (remote stream activity and local mic activity).
+
+## Mapping Strategy
+
+- Build overlap score matrix between transcript windows and telemetry windows.
+- Select one-to-one mapping candidate with margin/confidence constraints.
+- Expose suggested mapping for facilitator confirmation.
+- Persist mapping and mapping status transitions in transcript record.
+
+## Key Modules
+
+- Mapping orchestration: `lib/transcription/auto-speaker-mapping.ts`.
+- Core matrix logic: `lib/transcription/auto-speaker-mapping-core.ts`.
+- Safety/readiness: `lib/transcription/mapping-safety.ts`, `lib/transcription/speaker-mapping-readiness.ts`.
+- Telemetry processors:
+  - `lib/telemetry/audio-activity-event-processor.ts`
+  - `lib/telemetry/voximplant-speaking-tracker.ts`
+  - `lib/telemetry/voximplant-remote-speaking-tracker.ts`
+
+## API Surface
+
+- `app/api/sessions/[sessionId]/speaker-mapping/route.ts`.
+- `app/api/sessions/[sessionId]/manual-speaker-attribution/route.ts`.
+
+## Source Notes
+
+- `lib/transcription/auto-speaker-mapping.ts`
+- `app/api/sessions/[sessionId]/speaker-mapping/route.ts`
+- `lib/telemetry/**/*.ts`
+- `tests/e2e/diarization-speaker-mapping.spec.ts`

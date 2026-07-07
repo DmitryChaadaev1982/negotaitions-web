@@ -1,4 +1,9 @@
 import { prisma } from "@/lib/prisma";
+
+/**
+ * Architecture: docs/architecture/07-speaker-mapping-and-telemetry.md
+ */
+
 import {
   VOXIMPLANT_MIC_ACTIVITY_SOURCE,
   VOX_REMOTE_STREAM_ACTIVITY_SOURCE,
