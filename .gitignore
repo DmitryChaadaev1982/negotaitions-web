@@ -34,6 +34,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -47,6 +48,18 @@ next-env.d.ts
 .env.local
 
 tmp/
+.debug/
+playwright-report/
+test-results/
+coverage/
+
+# Archive/output artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+*.old
 
 # VoxEngine CI — generated upload staging folder (set via VOX_CI_ROOT_PATH)
 voxengine-ci/
