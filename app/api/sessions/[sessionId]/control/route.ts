@@ -20,12 +20,14 @@ import {
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
 import {
+  closeAllOpenPauseIntervals,
   closeLatestPauseInterval,
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
+import { shouldRunLivekitRecordingLifecycle } from "@/lib/session-control-recording-policy";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -60,7 +62,25 @@ async function syncPauseIntervals(
     return;
   }
 
-  await closeLatestPauseInterval(sessionId, now);
+  if (action === "RESUME") {
+    await closeLatestPauseInterval(sessionId, now);
+    return;
+  }
+
+  await closeAllOpenPauseIntervals(sessionId, now);
+}
+
+function isIdempotentNoopAction(params: {
+  action: z.infer<typeof controlActionSchema>["action"];
+  negotiationState: string;
+}) {
+  if (params.action === "PAUSE" && params.negotiationState === "PAUSED") {
+    return true;
+  }
+  if (params.action === "RESUME" && params.negotiationState === "RUNNING") {
+    return true;
+  }
+  return false;
 }
 
 async function applyAutoTransitions(sessionId: string, now: Date) {
@@ -97,7 +117,7 @@ async function applyAutoTransitions(sessionId: string, now: Date) {
       },
     });
 
-    await closeLatestPauseInterval(sessionId, now);
+    await closeAllOpenPauseIntervals(sessionId, now);
     // LiveKit egress stop on auto-finish — skip for Voximplant provider
     // (Voximplant recording stop is relayed by the browser via scenarioMessage).
     const provider = resolveEffectiveRecordingProvider(
@@ -188,6 +208,32 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    if (
+      isIdempotentNoopAction({
+        action,
+        negotiationState: session.negotiationState,
+      })
+    ) {
+      if (action === "PAUSE") {
+        await createPauseInterval(sessionId, now);
+      } else if (action === "RESUME") {
+        await closeLatestPauseInterval(sessionId, now);
+      }
+      const recording = await prisma.recording.findUnique({
+        where: { sessionId },
+        select: { status: true, errorMessage: true },
+      });
+      return NextResponse.json({
+        ...buildControlState(session, participant.type, now),
+        recording: recording
+          ? {
+              status: recording.status,
+              errorMessage: recording.errorMessage,
+            }
+          : null,
+      });
+    }
+
     const updateData = getControlUpdateData(session, action, now);
 
     session = await prisma.session.update({
@@ -214,7 +260,7 @@ export async function POST(request: Request, context: RouteContext) {
     const isLiveKit =
       resolveEffectiveRecordingProvider(recordingProvider) === "livekit";
 
-    if (action === "START" && isLiveKit) {
+    if (isLiveKit && shouldRunLivekitRecordingLifecycle(action) && action === "START") {
       const recordingResult = await handleNegotiationStartRecording(sessionId);
       if (recordingResult && !recordingResult.ok) {
         recordingWarning = recordingResult.warning;
@@ -225,9 +271,23 @@ export async function POST(request: Request, context: RouteContext) {
       await syncPauseIntervals(sessionId, action, now);
     }
 
-    if (action === "FINISH" && isLiveKit) {
+    if (action === "PAUSE") {
+      console.info(
+        `[session-control] PAUSE applied without recording stop: sessionId=${sessionId} provider=${isLiveKit ? "livekit" : "voximplant"}`,
+      );
+    }
+
+    if (isLiveKit && shouldRunLivekitRecordingLifecycle(action) && action === "FINISH") {
+      console.info(
+        `[session-control] FINISH triggers recording stop: sessionId=${sessionId} provider=livekit`,
+      );
       const stopResult = await handleNegotiationFinishRecording(sessionId);
       recordingWarning = stopResult.warning;
+    }
+    if (action === "FINISH" && !isLiveKit) {
+      console.info(
+        `[session-control] FINISH reached; recording stop delegated to provider bridge: sessionId=${sessionId} provider=voximplant`,
+      );
     }
 
     session = await applyAutoTransitions(sessionId, now);

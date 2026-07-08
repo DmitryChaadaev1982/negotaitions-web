@@ -80,10 +80,11 @@ export function isMicAllowed(
     case NegotiationState.FINISHED:
       return true;
     case NegotiationState.RUNNING:
-    case NegotiationState.PAUSED:
-      // Stage 3.4: pause affects recording/analysis inclusion only and must not
-      // force additional system mute compared to active negotiation policy.
       return participantType === ParticipantType.PARTICIPANT;
+    case NegotiationState.PAUSED:
+      // Stage 3.4.1 hotfix: paused state is a timing/analysis boundary only.
+      // All in-room roles may keep microphones enabled while paused.
+      return true;
     default:
       return true;
   }

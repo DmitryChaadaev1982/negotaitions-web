@@ -342,9 +342,29 @@ test.describe("Vox room parity (API state)", () => {
     expect(pausedFac.cameraAllowed).toBe(true);
     expect(pausedParticipant.cameraAllowed).toBe(true);
     expect(pausedObserver.cameraAllowed).toBe(true);
-    expect(pausedFac.micAllowed).toBe(false);
+    expect(pausedFac.micAllowed).toBe(true);
     expect(pausedParticipant.micAllowed).toBe(true);
-    expect(pausedObserver.micAllowed).toBe(false);
+    expect(pausedObserver.micAllowed).toBe(true);
+
+    const repeatedPause = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "PAUSE",
+      },
+    });
+    expect(repeatedPause.ok()).toBeTruthy();
+    const afterRepeatedPause = (await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE "endedAt" IS NULL)::int AS "openCount",
+         COUNT(*)::int AS "totalCount"
+       FROM "SessionPauseInterval"
+       WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    )) as Array<{ openCount: number; totalCount: number }>;
+    expect(afterRepeatedPause[0]?.openCount).toBe(1);
+    expect(afterRepeatedPause[0]?.totalCount).toBe(1);
 
     const resume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers: facHeaders,
@@ -366,6 +386,26 @@ test.describe("Vox room parity (API state)", () => {
     expect(resumedParticipant.micAllowed).toBe(true);
     expect(resumedObserver.micAllowed).toBe(false);
 
+    const repeatedResume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "RESUME",
+      },
+    });
+    expect(repeatedResume.ok()).toBeTruthy();
+    const afterRepeatedResume = (await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE "endedAt" IS NULL)::int AS "openCount",
+         COUNT(*) FILTER (WHERE "endedAt" IS NOT NULL)::int AS "closedCount"
+       FROM "SessionPauseInterval"
+       WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    )) as Array<{ openCount: number; closedCount: number }>;
+    expect(afterRepeatedResume[0]?.openCount).toBe(0);
+    expect(afterRepeatedResume[0]?.closedCount).toBe(1);
+
     const pause = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers: facHeaders,
       data: {
@@ -382,9 +422,29 @@ test.describe("Vox room parity (API state)", () => {
     expect(repausedFac.negotiationState).toBe("PAUSED");
     expect(repausedParticipant.negotiationState).toBe("PAUSED");
     expect(repausedObserver.negotiationState).toBe("PAUSED");
-    expect(repausedFac.micAllowed).toBe(false);
+    expect(repausedFac.micAllowed).toBe(true);
     expect(repausedParticipant.micAllowed).toBe(true);
-    expect(repausedObserver.micAllowed).toBe(false);
+    expect(repausedObserver.micAllowed).toBe(true);
+
+    const repeatedPauseAgain = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: facHeaders,
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: facConnectionId,
+        action: "PAUSE",
+      },
+    });
+    expect(repeatedPauseAgain.ok()).toBeTruthy();
+    const afterSecondRepeatedPause = (await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE "endedAt" IS NULL)::int AS "openCount",
+         COUNT(*)::int AS "totalCount"
+       FROM "SessionPauseInterval"
+       WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    )) as Array<{ openCount: number; totalCount: number }>;
+    expect(afterSecondRepeatedPause[0]?.openCount).toBe(1);
+    expect(afterSecondRepeatedPause[0]?.totalCount).toBe(2);
 
     const finish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers: facHeaders,
@@ -405,5 +465,16 @@ test.describe("Vox room parity (API state)", () => {
     expect(finishedFac.micAllowed).toBe(true);
     expect(finishedParticipant.micAllowed).toBe(true);
     expect(finishedObserver.micAllowed).toBe(true);
+
+    const intervalsAfterFinish = (await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE "endedAt" IS NULL)::int AS "openCount",
+         COUNT(*) FILTER (WHERE "endedAt" IS NOT NULL)::int AS "closedCount"
+       FROM "SessionPauseInterval"
+       WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    )) as Array<{ openCount: number; closedCount: number }>;
+    expect(intervalsAfterFinish[0]?.openCount).toBe(0);
+    expect(intervalsAfterFinish[0]?.closedCount).toBe(2);
   });
 });

@@ -12,6 +12,13 @@ Produce structured post-session coaching output from transcript/materials and ex
 4. Structured output is validated against schema.
 5. Analysis is persisted and optionally shared to session participants/observers.
 
+## Pause Filtering Guarantees
+
+- Analysis context applies all persisted pause intervals for a session (including multiple pause/resume cycles).
+- Segments overlapping paused windows are excluded.
+- Segments after each properly closed pause interval remain included.
+- If a pause interval remains open at `FINISH`, server-side close-on-finish behavior guarantees safe filtering boundaries.
+
 ## Key Components
 
 - Analysis model/schema and provider execution: `lib/ai/negotiation-analysis.ts`.

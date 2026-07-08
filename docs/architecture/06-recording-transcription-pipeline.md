@@ -8,6 +8,19 @@
 4. Selected transcription provider runs diarization/transcription.
 5. Transcript and segments are stored with processing metadata.
 
+## Pause/Resume Recording Continuity (Stage 3.4.1)
+
+- Current pipeline remains single-recording-per-session (`Recording.sessionId` unique, `Transcript.sessionId` unique).
+- Recording lifecycle remains single-file:
+  - start recording on negotiation `START`;
+  - do not physically stop recording on `PAUSE`;
+  - close recording on `FINISH`.
+- `SessionPauseInterval` is the exclusion source for pause windows:
+  - `PAUSE` opens interval when none is open;
+  - `RESUME` closes latest open interval;
+  - `FINISH` closes all still-open intervals.
+- Transcription filtering excludes segments overlapping any pause interval while retaining post-resume speech.
+
 ## Key Implementations
 
 - Transcription orchestrator: `lib/services/transcription-runner.ts`.

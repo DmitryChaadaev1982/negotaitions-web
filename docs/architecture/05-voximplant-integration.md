@@ -52,6 +52,8 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Session `PAUSED` does not disconnect participants from Vox rooms and does not forcibly toggle local microphone state.
 - Vox room tile mic icons continue to use explicit backend media-status sync (`micEnabled`/`cameraEnabled`) during pause, instead of coercing remote mic state to off.
 - Pause remains visible through negotiation/timer state UI, while media toggles continue to reflect user-selected device state.
+- In `PAUSED`, speaking-policy (`micAllowed`) is true for `PARTICIPANT`, `FACILITATOR`, and `OBSERVER`.
+- Recording continuity hotfix: Vox recording remains physically continuous from negotiation `START` until `FINISH`; pause/resume is represented by `SessionPauseInterval` rows only (no per-pause recording stop/start chunking).
 
 ## Single-Active Connection Lease (Stage 3.3 Hotfix)
 

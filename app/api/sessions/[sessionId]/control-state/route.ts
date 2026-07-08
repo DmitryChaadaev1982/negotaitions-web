@@ -19,7 +19,7 @@ import {
   buildSessionCloseState,
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
-import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
+import { closeAllOpenPauseIntervals } from "@/lib/session-pause-intervals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -124,7 +124,7 @@ export async function GET(request: Request, context: RouteContext) {
         },
       });
 
-      await closeLatestPauseInterval(sessionId, now);
+      await closeAllOpenPauseIntervals(sessionId, now);
       await handleNegotiationFinishRecording(sessionId);
     }
   }

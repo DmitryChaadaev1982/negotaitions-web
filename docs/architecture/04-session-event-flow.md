@@ -24,7 +24,11 @@
 - Room views poll control and sidebar/materials APIs.
 - Event assignment and participant linkage are persisted server-side.
 - Negotiation `PAUSED` state controls timer/recording-analysis boundaries, not room-media connectivity.
-- `micAllowed` is a speaking-policy signal and is no longer implicitly set to false for all users when negotiation is paused.
+- `micAllowed` is a speaking-policy signal. In `PAUSED`, microphones remain allowed for all in-room roles (`PARTICIPANT`, `FACILITATOR`, `OBSERVER`).
+- Pause interval orchestration is idempotent:
+  - repeated `PAUSE` while already paused does not create duplicate open intervals;
+  - repeated `RESUME` while already running is treated as no-op;
+  - `FINISH` closes all remaining open pause intervals.
 
 ## Key Control Endpoints
 

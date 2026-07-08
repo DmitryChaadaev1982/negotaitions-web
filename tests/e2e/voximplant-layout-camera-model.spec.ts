@@ -231,7 +231,7 @@ test.describe("Vox roster-first layout model", () => {
         negotiationState: "PAUSED",
         participantType: "OBSERVER",
       }),
-    ).toBe("system_muted");
+    ).toBe("on");
     expect(
       resolveRemoteMicStateByPolicy({
         negotiationState: "PAUSED",

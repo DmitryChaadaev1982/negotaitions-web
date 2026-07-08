@@ -12,7 +12,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 - Session/event lifecycle and control
   - Code: `app/api/sessions/[sessionId]/control/route.ts`, `app/api/sessions/[sessionId]/control-state/route.ts`, `app/api/sessions/[sessionId]/media-status/route.ts`, `app/api/events/[id]/host/route.ts`, `app/api/events/[id]/state/route.ts`, `app/api/events/[id]/media-status/route.ts`
   - Docs: `04-session-event-flow.md`
-  - Tests: `tests/e2e/session-lifecycle.spec.ts`, `tests/e2e/event-multi-session.spec.ts`, `tests/e2e/voximplant-room-parity.spec.ts`, `tests/e2e/voximplant-event-lobby.spec.ts`
+  - Tests: `tests/e2e/session-lifecycle.spec.ts`, `tests/e2e/event-multi-session.spec.ts`, `tests/e2e/voximplant-room-parity.spec.ts`, `tests/e2e/voximplant-event-lobby.spec.ts`, `lib/negotiation-control.test.ts`, `app/api/sessions/[sessionId]/control/route.test.ts`
 
 - Voximplant media integration
   - Code: `components/voximplant-negotiation-room-page.tsx`, `components/event-lobby-view.tsx`, `components/event-lobby-voximplant-room.tsx`, `lib/client/connection-id.ts`, `lib/client/stale-connection.ts`, `lib/voximplant/use-voximplant-room.ts`, `lib/voximplant/media-status-store.ts`, `lib/voximplant/recording-dispatch.ts`, `app/api/sessions/[sessionId]/voximplant/access/route.ts`, `app/api/events/[id]/voximplant-access/route.ts`
@@ -22,7 +22,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 - Recording and transcription pipeline
   - Code: `app/api/sessions/[sessionId]/materials/status/route.ts`, `lib/services/transcription-runner.ts`, `lib/services/transcription-provider.ts`, `lib/services/yandex-speechkit-transcription.ts`, `lib/recording/provider.ts`
   - Docs: `06-recording-transcription-pipeline.md`
-  - Tests: `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/two-pass-transcription.spec.ts`
+  - Tests: `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/two-pass-transcription.spec.ts`, `lib/transcription/pause-interval-filter.test.ts`
 
 - Speaker mapping and telemetry
   - Code: `app/api/sessions/[sessionId]/speaker-mapping/route.ts`, `lib/transcription/auto-speaker-mapping.ts`, `lib/transcription/auto-trigger-mapping.ts`, `lib/telemetry/**/*.ts`
