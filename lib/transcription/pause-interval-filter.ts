@@ -17,6 +17,7 @@ export type PauseOverlapClassification =
   | "no_overlap"
   | "fully_inside_pause"
   | "overlap_dominantly_paused"
+  | "significant_pause_overlap"
   | "boundary_overlap_mostly_unpaused"
   | "invalid_segment_timestamps";
 
@@ -30,8 +31,13 @@ export type PauseOverlapDecision = {
 };
 
 export type PauseFilteringOptions = {
+  /**
+   * @deprecated Use dropOverlapRatio.
+   */
   dominantOverlapRatioThreshold?: number;
+  dropOverlapRatio?: number;
   boundaryToleranceSeconds?: number;
+  significantPauseOverlapSeconds?: number;
 };
 
 export type PauseFilteringDiagnostics = {
@@ -40,10 +46,14 @@ export type PauseFilteringDiagnostics = {
   fullyPausedDroppedCount: number;
   boundaryOverlapKeptCount: number;
   boundaryOverlapDroppedCount: number;
+  significantOverlapDroppedCount: number;
+  maxKeptPauseOverlapSeconds: number;
+  maxDroppedPauseOverlapSeconds: number;
 };
 
 const DEFAULT_DOMINANT_OVERLAP_RATIO_THRESHOLD = 0.6;
 const DEFAULT_BOUNDARY_TOLERANCE_SECONDS = 0.35;
+const DEFAULT_SIGNIFICANT_PAUSE_OVERLAP_SECONDS = 1.25;
 
 function mergeOffsetIntervals(intervals: OffsetInterval[]): OffsetInterval[] {
   if (intervals.length <= 1) {
@@ -67,12 +77,18 @@ function mergeOffsetIntervals(intervals: OffsetInterval[]): OffsetInterval[] {
 function resolvePauseFilteringOptions(
   options?: PauseFilteringOptions,
 ): Required<PauseFilteringOptions> {
+  const dropOverlapRatio =
+    options?.dropOverlapRatio ??
+    options?.dominantOverlapRatioThreshold ??
+    DEFAULT_DOMINANT_OVERLAP_RATIO_THRESHOLD;
   return {
-    dominantOverlapRatioThreshold:
-      options?.dominantOverlapRatioThreshold ??
-      DEFAULT_DOMINANT_OVERLAP_RATIO_THRESHOLD,
+    dominantOverlapRatioThreshold: dropOverlapRatio,
+    dropOverlapRatio,
     boundaryToleranceSeconds:
       options?.boundaryToleranceSeconds ?? DEFAULT_BOUNDARY_TOLERANCE_SECONDS,
+    significantPauseOverlapSeconds:
+      options?.significantPauseOverlapSeconds ??
+      DEFAULT_SIGNIFICANT_PAUSE_OVERLAP_SECONDS,
   };
 }
 
@@ -205,15 +221,35 @@ export function classifySegmentAgainstPauseIntervals(
 
   const overlapRatio =
     segmentDurationSeconds > 0 ? overlapDurationSeconds / segmentDurationSeconds : 0;
-  const shouldDropByDominance =
-    overlapRatio >= resolvedOptions.dominantOverlapRatioThreshold &&
-    overlapDurationSeconds > resolvedOptions.boundaryToleranceSeconds;
+  if (overlapDurationSeconds <= resolvedOptions.boundaryToleranceSeconds) {
+    return {
+      classification: "boundary_overlap_mostly_unpaused",
+      shouldDrop: false,
+      segmentDurationSeconds,
+      overlapDurationSeconds,
+      overlapRatio,
+      matchedIntervals,
+    };
+  }
+
+  if (overlapRatio >= resolvedOptions.dropOverlapRatio) {
+    return {
+      classification: "overlap_dominantly_paused",
+      shouldDrop: true,
+      segmentDurationSeconds,
+      overlapDurationSeconds,
+      overlapRatio,
+      matchedIntervals,
+    };
+  }
 
   return {
-    classification: shouldDropByDominance
-      ? "overlap_dominantly_paused"
-      : "boundary_overlap_mostly_unpaused",
-    shouldDrop: shouldDropByDominance,
+    classification:
+      overlapDurationSeconds >= resolvedOptions.significantPauseOverlapSeconds
+        ? "significant_pause_overlap"
+        : "boundary_overlap_mostly_unpaused",
+    shouldDrop:
+      overlapDurationSeconds >= resolvedOptions.significantPauseOverlapSeconds,
     segmentDurationSeconds,
     overlapDurationSeconds,
     overlapRatio,
@@ -236,6 +272,9 @@ export function filterSegmentsByPauseIntervals<T>(
   let fullyPausedDroppedCount = 0;
   let boundaryOverlapKeptCount = 0;
   let boundaryOverlapDroppedCount = 0;
+  let significantOverlapDroppedCount = 0;
+  let maxKeptPauseOverlapSeconds = 0;
+  let maxDroppedPauseOverlapSeconds = 0;
 
   for (const segment of segments) {
     const decision = classifySegmentAgainstPauseIntervals(
@@ -245,15 +284,29 @@ export function filterSegmentsByPauseIntervals<T>(
     );
     if (decision.shouldDrop) {
       droppedSegments.push(segment);
+      maxDroppedPauseOverlapSeconds = Math.max(
+        maxDroppedPauseOverlapSeconds,
+        decision.overlapDurationSeconds,
+      );
       if (decision.classification === "fully_inside_pause") {
         fullyPausedDroppedCount += 1;
-      } else if (decision.classification === "overlap_dominantly_paused") {
+      } else if (
+        decision.classification === "overlap_dominantly_paused" ||
+        decision.classification === "significant_pause_overlap"
+      ) {
         boundaryOverlapDroppedCount += 1;
+        if (decision.classification === "significant_pause_overlap") {
+          significantOverlapDroppedCount += 1;
+        }
       }
       continue;
     }
 
     keptSegments.push(segment);
+    maxKeptPauseOverlapSeconds = Math.max(
+      maxKeptPauseOverlapSeconds,
+      decision.overlapDurationSeconds,
+    );
     if (decision.classification === "boundary_overlap_mostly_unpaused") {
       boundaryOverlapKeptCount += 1;
     }
@@ -268,6 +321,9 @@ export function filterSegmentsByPauseIntervals<T>(
       fullyPausedDroppedCount,
       boundaryOverlapKeptCount,
       boundaryOverlapDroppedCount,
+      significantOverlapDroppedCount,
+      maxKeptPauseOverlapSeconds,
+      maxDroppedPauseOverlapSeconds,
     },
   };
 }
