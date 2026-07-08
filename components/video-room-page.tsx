@@ -31,8 +31,10 @@ import {
   touchRecoveryContext,
 } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { useClientConnectionId } from "@/lib/client/connection-id";
+import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -228,11 +230,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
         : `/sessions/${sessionId}/materials`,
     [roomAuth, sessionId],
   );
-  const roomConnectionSeed = useId();
-  const roomConnectionId = useMemo(
-    () => `room-${sessionId}-${roomConnectionSeed.replace(/:/g, "")}`,
-    [roomConnectionSeed, sessionId],
-  );
+  const roomConnectionId = useClientConnectionId(`room-${sessionId}`);
 
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
@@ -247,12 +245,19 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     closedBeforeNegotiation: false,
   });
   const [staleConnection, setStaleConnection] = useState(false);
+  const activateStaleConnection = useCallback(() => {
+    setStaleConnection(true);
+  }, []);
 
   useEffect(() => {
     clearSessionLeftFlag(sessionId);
   }, [sessionId]);
 
   useEffect(() => {
+    if (!roomConnectionId) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadRoom() {
@@ -265,18 +270,21 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(
-              roomAuthBody(roomAuth, { connectionId: roomConnectionId, claimLease: true }),
+              roomAuthBody(roomAuth, {
+                connectionId: roomConnectionId ?? undefined,
+                claimLease: true,
+              }),
             ),
           }),
           fetch(
             `/api/livekit/sidebar?${roomAuthQuery(roomAuth, {
-              connectionId: roomConnectionId,
+              connectionId: roomConnectionId ?? undefined,
               claimLease: true,
             })}`,
           ),
           fetch(
             `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, {
-              connectionId: roomConnectionId,
+              connectionId: roomConnectionId ?? undefined,
               claimLease: true,
             })}`,
             { cache: "no-store" },
@@ -303,7 +311,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
 
         if (!sidebarResult.ok) {
           if (sidebarResult.status === 409) {
-            setStaleConnection(true);
+            activateStaleConnection();
             return;
           }
           throw new Error(
@@ -315,7 +323,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
 
         if (!controlResult.ok) {
           if (controlResult.status === 409) {
-            setStaleConnection(true);
+            activateStaleConnection();
             return;
           }
           throw new Error(
@@ -370,10 +378,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [roomAuth, sessionId, roomConnectionId, t]);
+  }, [activateStaleConnection, roomAuth, sessionId, roomConnectionId, t]);
 
   useEffect(() => {
-    if (isLoading || error) {
+    if (!roomConnectionId || staleConnection || isLoading || error) {
       return;
     }
 
@@ -383,10 +391,10 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       try {
         const [controlResponse, sidebarResponse] = await Promise.all([
           fetch(
-            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId })}`,
+            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
             { cache: "no-store" },
           ),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId })}`, {
+          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`, {
             cache: "no-store",
           }),
         ]);
@@ -400,15 +408,15 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
             closeMessageKey: nextState.closeMessageKey ?? null,
             closedBeforeNegotiation: nextState.closedBeforeNegotiation,
           });
-        } else if (controlResponse.status === 409) {
-          setStaleConnection(true);
+        } else if (await isStaleConnectionResponse(controlResponse)) {
+          activateStaleConnection();
         }
 
         if (sidebarResponse.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
-        } else if (sidebarResponse.status === 409) {
-          setStaleConnection(true);
+        } else if (await isStaleConnectionResponse(sidebarResponse)) {
+          activateStaleConnection();
         }
       } catch {
         // Ignore transient polling errors.
@@ -416,17 +424,17 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [error, isLoading, roomAuth, sessionId, roomConnectionId]);
+  }, [activateStaleConnection, error, isLoading, roomAuth, sessionId, roomConnectionId, staleConnection]);
 
   const handleInvalidToken = useCallback(() => {
     clearRecoveryContext();
     setError(t("rejoin.sessionNoLongerAvailable"));
   }, [t]);
   const handleStaleConnection = useCallback(() => {
-    setStaleConnection(true);
-  }, []);
+    activateStaleConnection();
+  }, [activateStaleConnection]);
 
-  if (isLoading) {
+  if (isLoading || !roomConnectionId) {
     return (
       <div className="flex h-dvh items-center justify-center bg-slate-950 text-white">
         <p className="text-sm text-slate-300">{t("room.connectingToVideoRoom")}</p>

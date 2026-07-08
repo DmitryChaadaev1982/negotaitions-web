@@ -18,6 +18,12 @@
 - Session join token remains in guest-compatible materials/join flows.
 - Account mode paths avoid exposing join token where account identity is authoritative.
 
+## Same-Login Lease Enforcement
+
+- Session room and event lobby enforce a single active connection per `(session|event, user)` lease key when `connectionId` is provided.
+- Lease claim/check is applied on control-state/sidebar/state polling and write paths (control/host/participant/heartbeat/media-status).
+- Session Vox access also validates lease on `connectionId` and returns `409 STALE_CONNECTION` for superseded clients, preventing stale tabs from obtaining fresh Vox credentials.
+
 ## Security-Sensitive Areas
 
 - Recording webhook signature validation.

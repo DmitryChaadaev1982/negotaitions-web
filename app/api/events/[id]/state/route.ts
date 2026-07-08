@@ -64,6 +64,13 @@ export async function GET(request: Request, context: RouteContext) {
           userId: user.id,
           connectionId,
         });
+    if (!claimLease && lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId,
+      });
+    }
     if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {

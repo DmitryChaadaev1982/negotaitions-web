@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { createSessionFromEvent } from "@/lib/create-event-session";
-import { validateEventLobbyConnectionLease } from "@/lib/event-lobby-connection-lease";
+import {
+  claimEventLobbyConnectionLease,
+  validateEventLobbyConnectionLease,
+} from "@/lib/event-lobby-connection-lease";
 import { parseAssignmentDraft } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventDeletedOrCancelled } from "@/lib/event-auth";
 import { buildEventState } from "@/lib/event-state";
@@ -50,7 +53,13 @@ export async function PATCH(request: Request, context: RouteContext) {
       userId: user.id,
       connectionId: parsed.data.connectionId,
     });
-    if (!lease.isCurrentConnectionActive) {
+    if (lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId: parsed.data.connectionId,
+      });
+    } else if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {
           error: "staleConnection",
@@ -157,7 +166,13 @@ export async function POST(request: Request, context: RouteContext) {
       userId: user.id,
       connectionId: parsed.data.connectionId,
     });
-    if (!lease.isCurrentConnectionActive) {
+    if (lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId: parsed.data.connectionId,
+      });
+    } else if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {
           error: "staleConnection",

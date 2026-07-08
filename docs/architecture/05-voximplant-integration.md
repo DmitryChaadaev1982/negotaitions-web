@@ -47,6 +47,15 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Facilitator tiles show title-only identity (no duplicated facilitator role text in subtitle).
 - Textual video connection labels are removed from room tile subtitles; mic/camera status remains icon-based with unchanged color semantics.
 
+## Single-Active Connection Lease (Stage 3.3 Hotfix)
+
+- Room and lobby client `connectionId` values are generated client-side with runtime entropy (UUID/random), not React `useId`.
+- IDs are unique per mounted page instance (different across tabs/devices/reloads) and are not persisted to storage.
+- Session room and event lobby bootstrap calls claim the same-login lease with this connection ID; newest connection replaces the previous active connection.
+- Stale clients receive `409 STALE_CONNECTION` from polling and media-status APIs, stop publishing, and transition to stale UI state.
+- Vox room stale state triggers best-effort media disconnect (`leave`) so stale clients do not remain active video participants after takeover.
+- Session Vox access now validates/claims lease when `connectionId` is provided and rejects stale tabs before issuing fresh credentials.
+
 ## Remote Toggle Propagation Fallback
 
 - Vox SDK endpoint events are still primary (`EndpointAdded/Removed`, `RemoteMediaAdded/Removed`).
@@ -71,6 +80,10 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 ## Source Notes
 
 - `components/voximplant-negotiation-room-page.tsx`
+- `components/event-lobby-view.tsx`
+- `components/event-lobby-voximplant-room.tsx`
+- `lib/client/connection-id.ts`
+- `lib/client/stale-connection.ts`
 - `lib/voximplant/use-voximplant-room.ts`
 - `lib/voximplant/recording-dispatch.ts`
 - `docs/voximplant/*.md`

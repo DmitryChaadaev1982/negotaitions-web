@@ -22,6 +22,7 @@ import {
   isRecoverableVoxMediaError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
+import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -194,6 +195,8 @@ type UpsertRemoteParticipantInput = {
 
 type UseVoximplantRoomOptions = {
   sessionId: string;
+  connectionId?: string;
+  onStaleConnection?: () => void;
   /**
    * Explicit URL debug override only (?camera=off or ?media=off).
    * All roles attempt camera by default when this is false/absent.
@@ -453,6 +456,8 @@ function installCameraErrorSuppressor(): () => void {
 
 export function useVoximplantRoom({
   sessionId,
+  connectionId,
+  onStaleConnection,
   disableInitialCamera = false,
   disableInitialMic = false,
 }: UseVoximplantRoomOptions): UseVoximplantRoomResult {
@@ -1076,6 +1081,10 @@ export function useVoximplantRoom({
   // ── Join effect ───────────────────────────────────────────────────────────
 
   useEffect(() => {
+    if (!connectionId) {
+      return;
+    }
+
     mountedRef.current = true;
     const restoreRuntimeSuppressor = installVoxRuntimeErrorSuppressor();
 
@@ -1094,9 +1103,16 @@ export function useVoximplantRoom({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
+            body: JSON.stringify({
+              ...(connectionId ? { connectionId, claimLease: true } : {}),
+            }),
           },
         );
+
+        if (await isStaleConnectionResponse(initialResponse)) {
+          onStaleConnection?.();
+          return;
+        }
 
         const initialPayload = (await initialResponse.json().catch(() => ({}))) as AccessReadyPayload;
         if (!initialResponse.ok) {
@@ -1168,9 +1184,17 @@ export function useVoximplantRoom({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ oneTimeKey }),
+            body: JSON.stringify({
+              oneTimeKey,
+              ...(connectionId ? { connectionId, claimLease: true } : {}),
+            }),
           },
         );
+        if (await isStaleConnectionResponse(readyResponse)) {
+          await registerVoxClientDisconnect(core.client.disconnect());
+          onStaleConnection?.();
+          return;
+        }
         const readyPayload = (await readyResponse.json().catch(() => ({}))) as AccessReadyPayload;
         if (!readyResponse.ok) {
           throw new Error(
@@ -1404,7 +1428,9 @@ export function useVoximplantRoom({
     cleanup,
     disableInitialCamera,
     disableInitialMic,
+    connectionId,
     removeRemoteById,
+    onStaleConnection,
     sessionId,
     startMicLevelMeter,
     subscribeEndpoint,

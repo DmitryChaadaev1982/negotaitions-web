@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { validateEventLobbyConnectionLease } from "@/lib/event-lobby-connection-lease";
+import {
+  claimEventLobbyConnectionLease,
+  validateEventLobbyConnectionLease,
+} from "@/lib/event-lobby-connection-lease";
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { upsertEventParticipantMediaStatus } from "@/lib/voximplant/media-status-store";
@@ -60,7 +63,13 @@ export async function POST(request: Request, context: RouteContext) {
       userId: user.id,
       connectionId,
     });
-    if (!lease.isCurrentConnectionActive) {
+    if (lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId,
+      });
+    } else if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {
           error: "staleConnection",
