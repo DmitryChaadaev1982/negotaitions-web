@@ -822,13 +822,10 @@ export default function VoximplantNegotiationRoomPage(
               ...controlState,
               participantType: effectiveParticipantType ?? "OBSERVER",
             }}
-            localParticipantType={effectiveParticipantType ?? "OBSERVER"}
-            localCaseRoleName={sidebar.caseRole?.name ?? null}
             isCameraOn={isCameraOn}
             isMicMuted={isMicMuted}
             localMicSystemMuted={!controlState.micAllowed}
             micLevel={micLevel}
-            localRoleLabel={participantTypeLabel}
             sessionId={props.sessionId}
             roomAuth={roomAuth}
             connectionId={roomConnectionId ?? undefined}

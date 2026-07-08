@@ -100,6 +100,16 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).toContain("connectedSignal: isLocal ? joined : Boolean(matchedRemote)");
   });
 
+  test("room tiles keep name and case role without duplicated role/status subtitle text", () => {
+    const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+    expect(source).toContain("tile.rosterEntry.caseRoleName ?? undefined");
+    expect(source).toContain(
+      "title={tile.isLocal ? `${tile.rosterEntry.displayName} (${t(\"common.you\")})` : tile.rosterEntry.displayName}",
+    );
+    expect(source).not.toContain("connectionLabel");
+    expect(source).not.toContain("t(\"room.videoOn\")");
+  });
+
   test("diagnostics section is hidden when no unknown endpoints and debug is off", () => {
     expect(
       shouldShowDiagnosticsSection({

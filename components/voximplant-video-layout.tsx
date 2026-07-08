@@ -84,13 +84,10 @@ export default function VoximplantVideoLayout({
   roster,
   currentParticipantId,
   controlState,
-  localParticipantType,
-  localCaseRoleName,
   isCameraOn,
   isMicMuted,
   localMicSystemMuted,
   micLevel,
-  localRoleLabel,
   sessionId,
   roomAuth,
   connectionId,
@@ -107,17 +104,10 @@ export default function VoximplantVideoLayout({
   roster: SessionRosterEntry[];
   currentParticipantId: string;
   controlState: ControlState;
-  localParticipantType: ParticipantType;
-  localCaseRoleName: string | null;
   isCameraOn?: boolean;
   isMicMuted?: boolean;
   localMicSystemMuted?: boolean;
   micLevel?: number;
-  /**
-   * Translated participant type label for the local user (e.g. "Участник", "Фасилитатор").
-   * Resolved server-side via the sidebar API — same source as the LiveKit room.
-   */
-  localRoleLabel?: string;
   sessionId: string;
   roomAuth: RoomAuthToken;
   connectionId?: string;
@@ -288,24 +278,16 @@ export default function VoximplantVideoLayout({
     [remoteSpeakingById, resolvedRosterTiles],
   );
 
-  const localSubtitle = `${localRoleLabel ?? t(`participantType.${localParticipantType}` as `participantType.${typeof localParticipantType}`)}${
-    localCaseRoleName ? ` · ${localCaseRoleName}` : ""
-  }`;
-
   const renderRosterTile = (
     tile: ResolvedRosterTile,
     options?: { observerCompact?: boolean },
   ) => {
-    const localizedRoleLabel = tile.mediaModel.displayRole ?? t("room.unknownRole");
-    const connectionLabel =
-      tile.mediaModel.connectionStatus === "connected"
-        ? t("room.videoOn")
-        : tile.mediaModel.connectionStatus === "disconnected"
-          ? t("room.notConnected")
-          : t("room.connectingVideo");
-    const subtitle = tile.isLocal
-      ? `${localSubtitle} · ${connectionLabel}`
-      : `${localizedRoleLabel}${tile.rosterEntry.caseRoleName ? ` · ${tile.rosterEntry.caseRoleName}` : ""} · ${connectionLabel}`;
+    const subtitle =
+      tile.zone === "participant_a" || tile.zone === "participant_b"
+        ? (tile.rosterEntry.caseRoleName ?? undefined)
+        : tile.zone === "observer"
+          ? (tile.rosterEntry.caseRoleName ?? undefined)
+          : undefined;
     const micLabel =
       tile.mediaModel.connectionStatus !== "connected"
         ? t("room.notConnected")
