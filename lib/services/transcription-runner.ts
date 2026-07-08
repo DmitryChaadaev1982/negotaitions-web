@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { extname, join } from "node:path";
 
 /**
  * Architecture: docs/architecture/06-recording-transcription-pipeline.md
@@ -26,6 +29,12 @@ import { getTranscriptionStrategy } from "@/lib/audio/two-pass-transcription-con
 import { AudioFileTooLargeError } from "@/lib/audio/validate";
 import { buildTranscriptionPrompt } from "@/lib/ai/transcription-prompt";
 import {
+  getPauseFilterCalibrationActiveMarkersRaw,
+  getPauseFilterCalibrationDir,
+  getPauseFilterCalibrationPausedMarkersRaw,
+  isPauseFilterCalibrationAutoRunEnabled,
+  isPauseFilterCalibrationEnabled,
+  getPauseProcessingMode,
   getYandexSpeechKitModel,
   isYandexSpeechKitLiteratureTextEnabled,
   isYandexSpeechKitSpeakerLabelingEnabled,
@@ -65,8 +74,20 @@ import {
   buildPauseOffsetIntervals,
   filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
+import {
+  buildRawCalibrationInputArtifact,
+  parseCalibrationMarkerList,
+  runPauseFilterCalibration,
+  writeCalibrationRunArtifacts,
+  writeRawCalibrationInputArtifact,
+} from "@/lib/transcription/pause-filter-calibration";
 import { getMockExternalServiceError } from "@/lib/test-mode";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
+import {
+  buildActiveAudioTimeline,
+  type ActiveTimelineInterval,
+} from "@/lib/transcription/active-audio-timeline";
+import { buildActiveAudioFromRecording } from "@/lib/transcription/active-audio-builder";
 
 function resolveCompressedExtension(
   fileName: string,
@@ -78,6 +99,28 @@ function resolveCompressedExtension(
   if (normalized.endsWith(".opus")) return "opus";
   if (normalized.endsWith(".webm")) return "webm";
   return "webm";
+}
+
+function mapPauseOffsetsToMs(
+  pauseIntervals: Array<{ startSeconds: number; endSeconds: number }>,
+): Array<{ startMs: number; endMs: number }> {
+  return pauseIntervals.map((interval) => ({
+    startMs: Math.max(0, Math.round(interval.startSeconds * 1000)),
+    endMs: Math.max(0, Math.round(interval.endSeconds * 1000)),
+  }));
+}
+
+function buildNoopPauseFilteringDiagnostics(totalPausedIntervals: number) {
+  return {
+    totalPausedIntervals,
+    filteredSegmentCount: 0,
+    fullyPausedDroppedCount: 0,
+    boundaryOverlapKeptCount: 0,
+    boundaryOverlapDroppedCount: 0,
+    significantOverlapDroppedCount: 0,
+    maxKeptPauseOverlapSeconds: 0,
+    maxDroppedPauseOverlapSeconds: 0,
+  };
 }
 
 export const MANUAL_TRANSCRIPTION_STOP_SENTINEL = "__MANUAL_TRANSCRIPTION_STOP__";
@@ -350,22 +393,95 @@ export async function runRealTranscription(
       recording.fileName ?? "recording",
     );
 
+    const pauseProcessingMode = getPauseProcessingMode();
+    const pauseIntervals = await listPauseIntervals(sessionId);
+    const pauseOffsetIntervals = buildPauseOffsetIntervals({
+      recordingStartedAt: recording.startedAt,
+      recordingEndedAt: recording.endedAt,
+      pauseIntervals,
+    });
+
+    const recordingDurationMsFromDb =
+      recording.startedAt && recording.endedAt
+        ? Math.max(0, recording.endedAt.getTime() - recording.startedAt.getTime())
+        : null;
+    const sourceRecordingDurationMs =
+      recordingDurationMsFromDb ??
+      (sourceAudioMetadata.durationSeconds != null
+        ? Math.round(sourceAudioMetadata.durationSeconds * 1000)
+        : null);
+
+    let activeTimeline: ActiveTimelineInterval[] | null = null;
+    let sourceAudioArtifactPath: string | null = null;
+    let ffmpegDiagnostics: Record<string, unknown> | null = null;
+    let activeAudioDurationMs: number | null = null;
+    let removedPauseDurationMs = 0;
+
+    let transcriptionSourceBuffer = originalBuffer;
+    let transcriptionSourceFileName = recording.fileName ?? "recording";
+    let transcriptionSourceMimeType = recording.mimeType ?? "application/octet-stream";
+    let transcriptionSourceMetadata = sourceAudioMetadata;
+
+    if (pauseProcessingMode === "source_audio_cut" && sourceRecordingDurationMs == null) {
+      throw new Error(
+        "Cannot determine recording duration for source_audio_cut pause processing.",
+      );
+    }
+
+    if (pauseProcessingMode === "source_audio_cut" && sourceRecordingDurationMs != null) {
+      const timelineResult = buildActiveAudioTimeline({
+        recordingDurationMs: sourceRecordingDurationMs,
+        pauseIntervals: mapPauseOffsetsToMs(pauseOffsetIntervals),
+      });
+      activeTimeline = timelineResult.activeIntervals;
+      activeAudioDurationMs = timelineResult.diagnostics.activeDurationMs;
+      removedPauseDurationMs = timelineResult.diagnostics.removedPauseDurationMs;
+
+      if (pauseOffsetIntervals.length > 0) {
+        const debugOutputDir = join(".debug", "pause-source-audio", sessionId);
+        const tempSourceDir = await mkdtemp(join(tmpdir(), "pause-source-audio-"));
+        try {
+          const sourceExtension = extname(recording.fileName ?? "").trim() || ".input";
+          const sourcePath = join(tempSourceDir, `source-recording${sourceExtension}`);
+          await writeFile(sourcePath, originalBuffer);
+          const built = await buildActiveAudioFromRecording({
+            sourceFilePath: sourcePath,
+            activeIntervals: timelineResult.activeIntervals,
+            outputDir: debugOutputDir,
+            sessionId,
+            recordingId: recording.id,
+          });
+          sourceAudioArtifactPath = built.activeAudioPath;
+          ffmpegDiagnostics = built.diagnostics as Record<string, unknown>;
+          transcriptionSourceBuffer = await readFile(built.activeAudioPath);
+          transcriptionSourceFileName = "active-audio.wav";
+          transcriptionSourceMimeType = "audio/wav";
+          transcriptionSourceMetadata = await probeAudioBuffer(
+            transcriptionSourceBuffer,
+            transcriptionSourceFileName,
+          );
+        } finally {
+          await rm(tempSourceDir, { recursive: true, force: true });
+        }
+      }
+    }
+
     const maxBytes = getAudioTranscriptionMaxFileBytes();
     const maxFileMb = maxBytes / (1024 * 1024);
     const compatibility = evaluateSpeechKitCompatibility({
-      inputFileName: recording.fileName ?? null,
-      probe: sourceAudioMetadata,
+      inputFileName: transcriptionSourceFileName ?? null,
+      probe: transcriptionSourceMetadata,
     });
     const shouldTranscode =
-      originalBuffer.length > maxBytes || !compatibility.isCompatible;
+      transcriptionSourceBuffer.length > maxBytes || !compatibility.isCompatible;
     const preprocessingTriggerReason = shouldTranscode
-      ? originalBuffer.length > maxBytes
+      ? transcriptionSourceBuffer.length > maxBytes
         ? "size_exceeds_threshold"
         : compatibility.reason
       : "not_required";
-    let selectedBuffer = originalBuffer;
-    let selectedFileName = recording.fileName ?? "recording";
-    let selectedMimeType = recording.mimeType ?? "application/octet-stream";
+    let selectedBuffer = transcriptionSourceBuffer;
+    let selectedFileName = transcriptionSourceFileName;
+    let selectedMimeType = transcriptionSourceMimeType;
     let fallbackToOriginal = false;
     let ffmpegOutputSizeBytes: number | null = null;
     let ffmpegSizeDeltaBytes: number | null = null;
@@ -377,26 +493,29 @@ export async function runRealTranscription(
     if (shouldTranscode) {
       await setTranscriptStatus(transcriptId, TranscriptStatus.COMPRESSING_AUDIO);
       compression = await compressAudioForTranscription(
-        originalBuffer,
-        recording.fileName ?? "recording",
+        transcriptionSourceBuffer,
+        transcriptionSourceFileName ?? "recording",
         {
           recordingId: recording.id,
           sessionId,
           forceTranscode: true,
-          probe: sourceAudioMetadata,
+          probe: transcriptionSourceMetadata,
         },
       );
       await throwIfTranscriptionStoppedManually(transcriptId);
 
       ffmpegOutputSizeBytes = compression.compressedSizeBytes;
-      ffmpegSizeDeltaBytes = compression.compressedSizeBytes - originalBuffer.length;
+      ffmpegSizeDeltaBytes =
+        compression.compressedSizeBytes - transcriptionSourceBuffer.length;
       ffmpegSizeDeltaPercent =
-        originalBuffer.length > 0
-          ? Math.round((ffmpegSizeDeltaBytes / originalBuffer.length) * 10000) / 100
+        transcriptionSourceBuffer.length > 0
+          ? Math.round(
+              (ffmpegSizeDeltaBytes / transcriptionSourceBuffer.length) * 10000,
+            ) / 100
           : null;
 
       if (
-        compression.compressedSizeBytes > originalBuffer.length &&
+        compression.compressedSizeBytes > transcriptionSourceBuffer.length &&
         compatibility.isCompatible
       ) {
         fallbackToOriginal = true;
@@ -433,7 +552,7 @@ export async function runRealTranscription(
           compressedFileKey: null,
           compressedFileName: null,
           compressedMimeType: null,
-          compressedSizeBytes: originalBuffer.length,
+          compressedSizeBytes: transcriptionSourceBuffer.length,
           compressionStatus: CompressionStatus.SKIPPED,
           compressionError: null,
         },
@@ -480,20 +599,92 @@ export async function runRealTranscription(
     await throwIfTranscriptionStoppedManually(transcriptId);
 
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
-    const pauseIntervals = await listPauseIntervals(sessionId);
-    const pauseOffsetIntervals = buildPauseOffsetIntervals({
-      recordingStartedAt: recording.startedAt,
-      recordingEndedAt: recording.endedAt,
-      pauseIntervals,
-    });
-    const pauseFilteringResult = filterSegmentsByPauseIntervals(
-      mappedSegments,
-      pauseOffsetIntervals,
-      (segment) => ({
-        startSeconds: segment.startSeconds,
-        endSeconds: segment.endSeconds,
-      }),
-    );
+    const pauseFilterCalibrationEnabled = isPauseFilterCalibrationEnabled();
+    const calibrationActiveMarkers = pauseFilterCalibrationEnabled
+      ? parseCalibrationMarkerList(getPauseFilterCalibrationActiveMarkersRaw())
+      : [];
+    const calibrationPausedMarkers = pauseFilterCalibrationEnabled
+      ? parseCalibrationMarkerList(getPauseFilterCalibrationPausedMarkersRaw())
+      : [];
+
+    if (
+      pauseFilterCalibrationEnabled &&
+      pauseProcessingMode === "transcript_interval_filter"
+    ) {
+      try {
+        const recordingDurationSeconds =
+          recording.startedAt && recording.endedAt
+            ? Math.max(
+                0,
+                (recording.endedAt.getTime() - recording.startedAt.getTime()) / 1000,
+              )
+            : null;
+        const rawCalibrationInput = buildRawCalibrationInputArtifact({
+          sessionId,
+          recordingId: recording.id,
+          transcriptId,
+          recordingStartedAt: recording.startedAt,
+          recordingEndedAt: recording.endedAt,
+          recordingDurationSeconds,
+          transcriptTextBeforeFiltering: transcription.text,
+          diarizedTextBeforeFiltering: transcription.diarizedText,
+          providerNormalizedSegments: transcription.segments,
+          mappedSegmentsBeforeFiltering: mappedSegments,
+          pauseIntervalsAbsolute: pauseIntervals,
+          pauseIntervalsOffsets: pauseOffsetIntervals,
+          activeMarkers: calibrationActiveMarkers,
+          pausedMarkers: calibrationPausedMarkers,
+        });
+        const calibrationDir = getPauseFilterCalibrationDir();
+        await writeRawCalibrationInputArtifact({
+          calibrationDir,
+          sessionId,
+          artifact: rawCalibrationInput,
+        });
+
+        if (
+          isPauseFilterCalibrationAutoRunEnabled() &&
+          calibrationActiveMarkers.length > 0 &&
+          calibrationPausedMarkers.length > 0
+        ) {
+          const calibrationRun = runPauseFilterCalibration({
+            input: rawCalibrationInput,
+            activeMarkers: calibrationActiveMarkers,
+            pausedMarkers: calibrationPausedMarkers,
+          });
+          await writeCalibrationRunArtifacts({
+            calibrationDir,
+            sessionId,
+            input: rawCalibrationInput,
+            runResult: calibrationRun,
+          });
+        }
+      } catch (calibrationError) {
+        console.warn(
+          `[pause-filter-calibration] failed for session ${sessionId}: ${
+            calibrationError instanceof Error
+              ? calibrationError.message
+              : "unknown error"
+          }`,
+        );
+      }
+    }
+
+    const pauseFilteringResult =
+      pauseProcessingMode === "source_audio_cut"
+        ? {
+            keptSegments: mappedSegments,
+            droppedSegments: [] as typeof mappedSegments,
+            diagnostics: buildNoopPauseFilteringDiagnostics(pauseOffsetIntervals.length),
+          }
+        : filterSegmentsByPauseIntervals(
+            mappedSegments,
+            pauseOffsetIntervals,
+            (segment) => ({
+              startSeconds: segment.startSeconds,
+              endSeconds: segment.endSeconds,
+            }),
+          );
     const filteredSegments = pauseFilteringResult.keptSegments;
     const pauseFilteringApplied =
       pauseFilteringResult.diagnostics.filteredSegmentCount > 0;
@@ -526,14 +717,14 @@ export async function runRealTranscription(
     );
 
     // ── Stage-1 observability: preprocessing decision, raw snapshot, quality ──
-    const sourceFileName = recording.fileName ?? "recording";
+    const sourceFileName = transcriptionSourceFileName ?? "recording";
     const compatibleContainer = compatibility.isCompatible;
     const wasSkipped = !shouldTranscode || fallbackToOriginal;
     const preprocessDecision: PreprocessingDecisionLog = {
       audioTranscriptionMaxFileMb: maxFileMb,
       originalSizeBytes: originalBuffer.length,
       thresholdBytes: maxBytes,
-      mimeType: recording.mimeType ?? null,
+      mimeType: transcriptionSourceMimeType ?? null,
       transcriptionInputSizeBytes: selectedBuffer.length,
       preprocessingSkipped: wasSkipped,
       preprocessingTriggered: shouldTranscode,
@@ -544,10 +735,10 @@ export async function runRealTranscription(
       ffmpegSizeDeltaBytes,
       ffmpegSizeDeltaPercent,
       fallbackToOriginal,
-      sourceContainer: sourceAudioMetadata.container,
-      sourceCodec: sourceAudioMetadata.codec,
-      sourceSampleRate: sourceAudioMetadata.sampleRate,
-      sourceChannels: sourceAudioMetadata.channels,
+      sourceContainer: transcriptionSourceMetadata.container,
+      sourceCodec: transcriptionSourceMetadata.codec,
+      sourceSampleRate: transcriptionSourceMetadata.sampleRate,
+      sourceChannels: transcriptionSourceMetadata.channels,
       container: sourceFileName.includes(".")
         ? sourceFileName.slice(sourceFileName.lastIndexOf(".") + 1).toLowerCase()
         : null,
@@ -587,9 +778,12 @@ export async function runRealTranscription(
     const qualityReport = computeTranscriptQualityReport({
       segments: filteredSegments,
       text: normalizedTranscriptionText,
-      durationSeconds: durationSeconds ?? sourceAudioMetadata.durationSeconds,
-      sourceSampleRate: sourceAudioMetadata.sampleRate,
-      sourceChannels: sourceAudioMetadata.channels,
+      durationSeconds:
+        (pauseProcessingMode === "source_audio_cut" && activeAudioDurationMs != null
+          ? activeAudioDurationMs / 1000
+          : durationSeconds) ?? transcriptionSourceMetadata.durationSeconds,
+      sourceSampleRate: transcriptionSourceMetadata.sampleRate,
+      sourceChannels: transcriptionSourceMetadata.channels,
       hasRawProviderSnapshot: Boolean(rawProviderSnapshot),
       hasSpeakerActivity: audioActivityCount > 0,
     });
@@ -636,10 +830,10 @@ export async function runRealTranscription(
       ffmpegSizeDeltaBytes,
       ffmpegSizeDeltaPercent,
       fallbackToOriginal,
-      sourceContainer: sourceAudioMetadata.container,
-      sourceCodec: sourceAudioMetadata.codec,
-      sourceSampleRate: sourceAudioMetadata.sampleRate,
-      sourceChannels: sourceAudioMetadata.channels,
+      sourceContainer: transcriptionSourceMetadata.container,
+      sourceCodec: transcriptionSourceMetadata.codec,
+      sourceSampleRate: transcriptionSourceMetadata.sampleRate,
+      sourceChannels: transcriptionSourceMetadata.channels,
       yandexSpeechKitModel:
         transcriptionProvider === "yandex_speechkit" ? getYandexSpeechKitModel() : null,
       yandexTextNormalizationEnabled:
@@ -678,6 +872,29 @@ export async function runRealTranscription(
         maxDroppedPauseOverlapSeconds:
           pauseFilteringResult.diagnostics.maxDroppedPauseOverlapSeconds,
       },
+      pauseProcessing: {
+        mode: pauseProcessingMode,
+        sourceRecordingDurationMs,
+        activeAudioDurationMs:
+          pauseProcessingMode === "source_audio_cut"
+            ? activeAudioDurationMs ??
+              sourceRecordingDurationMs ??
+              (transcriptionSourceMetadata.durationSeconds != null
+                ? Math.round(transcriptionSourceMetadata.durationSeconds * 1000)
+                : null)
+            : null,
+        pauseIntervalCount: pauseIntervals.length,
+        activeIntervalCount: activeTimeline?.length ?? null,
+        removedPauseDurationMs:
+          pauseProcessingMode === "source_audio_cut" ? removedPauseDurationMs : null,
+        activeTimelineMap: activeTimeline
+          ? {
+              activeIntervals: activeTimeline,
+            }
+          : null,
+        sourceAudioArtifactPath,
+        ffmpegDiagnostics,
+      },
       // Two-pass metadata
       strategy: transcription.strategy ?? "diarize_only",
       qualityModel: transcription.qualityModel ?? null,
@@ -688,7 +905,7 @@ export async function runRealTranscription(
       qualityPromptMetadata: transcription.qualityPromptMetadata ?? null,
       // Stage-1 observability
       preprocessDecision,
-      sourceAudioMetadata,
+      sourceAudioMetadata: transcriptionSourceMetadata,
       qualityReport,
       segmentQuality,
       rawProviderSnapshot,
@@ -794,16 +1011,16 @@ export async function runRealTranscription(
       transcriptId,
       provider: transcriptionProvider,
       sourceFile: {
-        fileName: recording.fileName ?? null,
-        mimeType: recording.mimeType ?? null,
+        fileName: transcriptionSourceFileName ?? null,
+        mimeType: transcriptionSourceMimeType ?? null,
         originalSizeBytes: originalBuffer.length,
         compressedSizeBytes: selectedBuffer.length,
         codecUsed: compression?.codecUsed ?? "passthrough",
-        sourceContainer: sourceAudioMetadata.container,
-        sourceCodec: sourceAudioMetadata.codec,
-        sourceSampleRate: sourceAudioMetadata.sampleRate,
-        sourceChannels: sourceAudioMetadata.channels,
-        sourceProbeAvailable: sourceAudioMetadata.probeAvailable,
+        sourceContainer: transcriptionSourceMetadata.container,
+        sourceCodec: transcriptionSourceMetadata.codec,
+        sourceSampleRate: transcriptionSourceMetadata.sampleRate,
+        sourceChannels: transcriptionSourceMetadata.channels,
+        sourceProbeAvailable: transcriptionSourceMetadata.probeAvailable,
       },
       preprocessing: preprocessDecision,
       speechkitRequestMode: transcription.requestMode ?? null,

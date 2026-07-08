@@ -208,6 +208,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
 
   const suggestion = await suggestSpeakerMapping(sessionId, {
     id: transcript.id,
+    processingMetadata: transcript.processingMetadata,
     segments: transcript.segments.map((segment) => ({
       orderIndex: segment.orderIndex,
       speakerLabel: segment.speakerLabel,

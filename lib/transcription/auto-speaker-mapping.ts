@@ -40,6 +40,11 @@ import {
   buildPauseOffsetIntervals,
   filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
+import {
+  getActiveTimelineFromMetadata,
+  getPauseProcessingModeFromMetadata,
+} from "@/lib/transcription/pause-processing-mode";
+import { normalizeAudioActivityToActiveTimeline } from "@/lib/telemetry/active-timeline-normalization";
 
 export type TelemetryParticipantHealth = {
   participantId: string;
@@ -89,6 +94,7 @@ export type AutoMappingSuggestion = {
 
 type TranscriptWithSegments = {
   id: string;
+  processingMetadata?: unknown;
   segments: Array<{
     orderIndex?: number | null;
     speakerLabel: string | null;
@@ -312,14 +318,24 @@ export async function suggestSpeakerMapping(
     recordingEndedAt: recording?.endedAt,
     pauseIntervals,
   });
-  const segmentsWithTimestamps = filterSegmentsByPauseIntervals(
-    rawSegmentsWithTimestamps,
-    pauseOffsetIntervals,
-    (segment) => ({
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-    }),
-  ).keptSegments;
+  const pauseProcessingMode = getPauseProcessingModeFromMetadata(
+    transcript.processingMetadata,
+  );
+  const activeTimeline =
+    pauseProcessingMode === "source_audio_cut"
+      ? getActiveTimelineFromMetadata(transcript.processingMetadata)
+      : null;
+  const segmentsWithTimestamps =
+    pauseProcessingMode === "source_audio_cut"
+      ? rawSegmentsWithTimestamps
+      : filterSegmentsByPauseIntervals(
+          rawSegmentsWithTimestamps,
+          pauseOffsetIntervals,
+          (segment) => ({
+            startSeconds: segment.startSeconds,
+            endSeconds: segment.endSeconds,
+          }),
+        ).keptSegments;
   if (segmentsWithTimestamps.length === 0) {
     return buildUnavailableSuggestion({
       reason: "all_segments_in_paused_intervals",
@@ -542,7 +558,32 @@ export async function suggestSpeakerMapping(
     for (const participant of participantPool) {
       const rawIntervals = activityByParticipant.get(participant.id) ?? [];
       rowsByParticipant[participant.id] = rawIntervals.length;
-      const filteredRaw = rawIntervals
+      const rawIntervalsForNormalization = rawIntervals
+        .filter((interval) => interval.end > interval.start)
+        .sort((a, b) => a.start - b.start);
+      const normalizedIntervalsForSource =
+        pauseProcessingMode === "source_audio_cut" && activeTimeline
+          ? normalizeAudioActivityToActiveTimeline(
+              rawIntervalsForNormalization.map((interval) => ({
+                sessionParticipantId: participant.id,
+                source,
+                startSeconds: interval.start,
+                endSeconds: interval.end,
+                confidence: interval.level,
+              })),
+              activeTimeline,
+            ).normalizedRows.map((row) => {
+              const origin = rawIntervalsForNormalization[row.sourceRowIndex]!;
+              return {
+                start: row.startSeconds,
+                end: row.endSeconds,
+                level: row.confidence,
+                hasDirectOffsets: origin.hasDirectOffsets,
+                usedDerivedOffset: origin.usedDerivedOffset,
+              };
+            })
+          : rawIntervalsForNormalization;
+      const filteredRaw = normalizedIntervalsForSource
         .filter((interval) => interval.end > interval.start)
         .sort((a, b) => a.start - b.start);
       const keptIntervals: Array<{ start: number; end: number }> = [];

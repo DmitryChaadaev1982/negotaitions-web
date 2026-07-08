@@ -4,6 +4,7 @@ import {
   buildPauseOffsetIntervals,
   filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
+import { getPauseProcessingModeFromMetadata } from "@/lib/transcription/pause-processing-mode";
 
 export type SessionAnalysisParticipant = {
   id: string;
@@ -147,20 +148,24 @@ export async function buildSessionAnalysisContext(
   let transcript: SessionAnalysisTranscript | null = null;
   if (session.transcript) {
     const t = session.transcript;
-    const pauseIntervals = await listPauseIntervals(sessionId);
-    const pauseOffsetIntervals = buildPauseOffsetIntervals({
-      recordingStartedAt: session.recording?.startedAt,
-      recordingEndedAt: session.recording?.endedAt,
-      pauseIntervals,
-    });
-    const filteredSegments = filterSegmentsByPauseIntervals(
-      t.segments,
-      pauseOffsetIntervals,
-      (segment) => ({
-        startSeconds: segment.startSeconds,
-        endSeconds: segment.endSeconds,
-      }),
-    ).keptSegments;
+    const pauseProcessingMode = getPauseProcessingModeFromMetadata(
+      t.processingMetadata,
+    );
+    const filteredSegments =
+      pauseProcessingMode === "source_audio_cut"
+        ? t.segments
+        : filterSegmentsByPauseIntervals(
+            t.segments,
+            buildPauseOffsetIntervals({
+              recordingStartedAt: session.recording?.startedAt,
+              recordingEndedAt: session.recording?.endedAt,
+              pauseIntervals: await listPauseIntervals(sessionId),
+            }),
+            (segment) => ({
+              startSeconds: segment.startSeconds,
+              endSeconds: segment.endSeconds,
+            }),
+          ).keptSegments;
     const pauseFilteringApplied = filteredSegments.length !== t.segments.length;
     transcript = {
       id: t.id,
