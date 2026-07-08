@@ -304,6 +304,8 @@ type RuntimeState = {
   // ── Remote audio elements ──
   /** Keyed by `${endpointId}-${streamId}`. */
   remoteAudioElements: Map<string, HTMLAudioElement>;
+  /** Poll fallback for endpoint media status sync. */
+  endpointSyncIntervalId: number | null;
 };
 
 // ─── Pure utility functions ───────────────────────────────────────────────────
@@ -734,12 +736,14 @@ export function useVoximplantRoom({
   /** Refresh the remote video stream for an endpoint. */
   const applyRemoteVideoStream = useCallback(
     (endpoint: VoxEndpoint) => {
-      const stream = endpoint.getAnyVideoStreams()[0] ?? null;
+      const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
+      const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
       upsertRemote({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
         endpointUsername: endpoint.userName ?? null,
-        stream: streamToMediaStream(stream),
+        stream: streamToMediaStream(videoStream),
+        audioStream: streamToMediaStream(audioStream),
       });
     },
     [upsertRemote],
@@ -767,6 +771,10 @@ export function useVoximplantRoom({
 
     // Release remote audio elements.
     clearRemoteAudioElements(runtime.remoteAudioElements);
+    if (runtime.endpointSyncIntervalId !== null) {
+      window.clearInterval(runtime.endpointSyncIntervalId);
+      runtime.endpointSyncIntervalId = null;
+    }
 
     // Unsubscribe endpoint listeners.
     for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
@@ -1271,6 +1279,7 @@ export function useVoximplantRoom({
           animFrameId: null,
           lastMicLevelTs: 0,
           remoteAudioElements: new Map(),
+          endpointSyncIntervalId: null,
         };
         runtimeRef.current = runtimeState;
 
@@ -1362,6 +1371,16 @@ export function useVoximplantRoom({
         for (const endpoint of conference.endpoints.value.values()) {
           subscribeEndpoint(endpoint);
         }
+        runtimeState.endpointSyncIntervalId = window.setInterval(() => {
+          for (const endpoint of conference.endpoints.value.values()) {
+            subscribeEndpoint(endpoint);
+            applyRemoteVideoStream(endpoint);
+          }
+          const endpointIds = new Set(Array.from(conference.endpoints.value.keys()));
+          setRemoteParticipants((current) =>
+            current.filter((participant) => endpointIds.has(participant.id)),
+          );
+        }, 1000);
       } catch (joinError) {
         const message = toErrorMessage(joinError);
         setError(message);
@@ -1381,6 +1400,7 @@ export function useVoximplantRoom({
       void cleanup();
     };
   }, [
+    applyRemoteVideoStream,
     cleanup,
     disableInitialCamera,
     disableInitialMic,

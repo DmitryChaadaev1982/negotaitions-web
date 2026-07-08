@@ -3,21 +3,19 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { VoximplantRemoteSpeakingActivityTracker } from "@/components/voximplant-remote-speaking-activity-tracker";
 import { RoomTimerPanel } from "@/components/room-timer-panel";
-import {
-  VoximplantParticipantTile,
-  type VoxTileMicState,
-} from "@/components/voximplant-participant-tile";
+import { VoximplantParticipantTile } from "@/components/voximplant-participant-tile";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
-  resolveRemoteMicStateByPolicy,
-  resolveConnectionState,
   resolveRosterVisualRoles,
-  type RosterConnectionState,
 } from "@/lib/voximplant/room-layout-model";
+import {
+  normalizeParticipantPresenceMedia,
+  type ParticipantPresenceMediaModel,
+} from "@/lib/voximplant/participant-presence-media-model";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
@@ -43,7 +41,7 @@ type ResolvedRosterTile = {
   participant: VoxTileParticipant;
   matchedRemoteId: string | null;
   zone: "facilitator" | "participant_a" | "participant_b" | "observer" | "unknown";
-  connectionState: RosterConnectionState;
+  mediaModel: ParticipantPresenceMediaModel;
   isLocal: boolean;
 };
 
@@ -205,27 +203,67 @@ export default function VoximplantVideoLayout({
       const visual = visualRolesByRosterId.get(entry.id) ?? {
         zone: "unknown" as const,
       };
-      const connectionState = resolveConnectionState({
-        hasVideoStream: Boolean(participant.stream),
-        isLocal,
-        isCameraOn: Boolean(isCameraOn),
+      const roleLabel =
+        visual.zone === "facilitator"
+          ? t("room.facilitator")
+          : visual.zone === "participant_a"
+            ? t("room.participantA")
+            : visual.zone === "participant_b"
+              ? t("room.participantB")
+              : visual.zone === "observer"
+                ? t("room.observer")
+                : t("room.unknownRole");
+      const policyMuted =
+        controlState.negotiationState === "PAUSED" ||
+        (controlState.negotiationState === "RUNNING" &&
+          entry.participantType !== ParticipantType.PARTICIPANT);
+      const mediaModel = normalizeParticipantPresenceMedia({
+        displayName: entry.displayName,
+        displayRole: roleLabel,
+        connectedSignal: isLocal ? joined : Boolean(matchedRemote),
+        allowConnectedWithoutMediaTile: true,
         lastSeenAt: entry.lastSeenAt ?? null,
+        videoStream: participant.stream,
+        audioStream: isLocal ? participant.audioStream : (participant.audioStream ?? participant.stream),
+        micSignal: isLocal
+          ? localMicSystemMuted
+            ? "off"
+            : isMicMuted
+              ? "off"
+              : "on"
+          : policyMuted
+            ? "off"
+            : undefined,
+        cameraSignal: isLocal ? (isCameraOn ? "on" : "off") : undefined,
       });
       return {
         rosterEntry: entry,
         participant,
         matchedRemoteId: matchedRemote?.id ?? null,
         zone: visual.zone,
-        connectionState,
+        mediaModel,
         isLocal,
       };
     });
-  }, [currentParticipantId, isCameraOn, localParticipant, remoteByVoxUsername, roster, visualRolesByRosterId]);
+  }, [
+    controlState.negotiationState,
+    currentParticipantId,
+    isCameraOn,
+    isMicMuted,
+    joined,
+    localMicSystemMuted,
+    localParticipant,
+    remoteByVoxUsername,
+    roster,
+    t,
+    visualRolesByRosterId,
+  ]);
 
-  const facilitatorTiles = resolvedRosterTiles.filter((tile) => tile.zone === "facilitator");
-  const observerTiles = resolvedRosterTiles.filter((tile) => tile.zone === "observer");
-  const participantATiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_a");
-  const participantBTiles = resolvedRosterTiles.filter((tile) => tile.zone === "participant_b");
+  const activeTiles = resolvedRosterTiles.filter((tile) => tile.mediaModel.shouldRenderActiveTile);
+  const facilitatorTiles = activeTiles.filter((tile) => tile.zone === "facilitator");
+  const observerTiles = activeTiles.filter((tile) => tile.zone === "observer");
+  const participantATiles = activeTiles.filter((tile) => tile.zone === "participant_a");
+  const participantBTiles = activeTiles.filter((tile) => tile.zone === "participant_b");
   const remoteTelemetryTargets = useMemo(
     () =>
       resolvedRosterTiles
@@ -242,67 +280,46 @@ export default function VoximplantVideoLayout({
 
   const localSubtitle = `${localRoleLabel ?? t(`participantType.${localParticipantType}` as `participantType.${typeof localParticipantType}`)}${
     localCaseRoleName ? ` · ${localCaseRoleName}` : ""
-  }${isMicMuted ? ` · ${t("room.mediaMicOff")}` : ""}${!isCameraOn ? ` · ${t("room.mediaCameraOff")}` : ""}`;
-
-  const toStateLabel = (state: RosterConnectionState): string => {
-    if (state === "video_on") return t("room.videoOn");
-    if (state === "camera_off") return t("room.mediaCameraOff");
-    if (state === "connecting") return t("room.connectingVideo");
-    return t("room.notConnected");
-  };
+  }`;
 
   const renderRosterTile = (
     tile: ResolvedRosterTile,
     options?: { observerCompact?: boolean },
   ) => {
-    const localizedRoleLabel =
-      tile.zone === "facilitator"
-        ? t("room.facilitator")
-        : tile.zone === "participant_a"
-          ? t("room.participantA")
-          : tile.zone === "participant_b"
-            ? t("room.participantB")
-            : tile.zone === "observer"
-              ? t("room.observer")
-              : t("room.unknownRole");
-    const tileMicState: VoxTileMicState = tile.isLocal
-      ? localMicSystemMuted
-        ? "system_muted"
-        : isMicMuted
-          ? "off"
-          : "on"
-      : resolveRemoteMicStateByPolicy({
-          negotiationState: controlState.negotiationState,
-          participantType: tile.rosterEntry.participantType,
-        });
-    const tileMicStateHint = tile.isLocal
-      ? tileMicState === "system_muted"
-        ? t("room.mediaMicLocked")
-        : tileMicState === "on"
-          ? t("room.mediaMicOn")
-          : t("room.mediaMicOff")
-      : tileMicState === "system_muted"
-        ? t("room.mediaMicLocked")
-        : t("room.remoteMicDerivedByPolicy");
-    const tileMicStateLabel =
-      tileMicState === "system_muted"
-        ? t("room.mediaMicLocked")
-        : tileMicState === "on"
+    const localizedRoleLabel = tile.mediaModel.displayRole ?? t("room.unknownRole");
+    const connectionLabel =
+      tile.mediaModel.connectionStatus === "connected"
+        ? t("room.videoOn")
+        : tile.mediaModel.connectionStatus === "disconnected"
+          ? t("room.notConnected")
+          : t("room.connectingVideo");
+    const subtitle = tile.isLocal
+      ? `${localSubtitle} · ${connectionLabel}`
+      : `${localizedRoleLabel}${tile.rosterEntry.caseRoleName ? ` · ${tile.rosterEntry.caseRoleName}` : ""} · ${connectionLabel}`;
+    const micLabel =
+      tile.mediaModel.connectionStatus !== "connected"
+        ? t("room.notConnected")
+        : tile.mediaModel.micStatus === "on"
           ? t("room.mediaMicOn")
           : t("room.mediaMicOff");
-    const subtitle = tile.isLocal
-      ? `${localSubtitle} · ${toStateLabel(tile.connectionState)}`
-      : `${localizedRoleLabel}${tile.rosterEntry.caseRoleName ? ` · ${tile.rosterEntry.caseRoleName}` : ""} · ${toStateLabel(tile.connectionState)}`;
+    const cameraLabel =
+      tile.mediaModel.connectionStatus !== "connected"
+        ? t("room.notConnected")
+        : tile.mediaModel.cameraStatus === "on"
+          ? t("room.mediaCameraOn")
+          : t("room.mediaCameraOff");
     return (
-      <div key={tile.rosterEntry.id} className={options?.observerCompact ? "w-[220px] max-w-full shrink-0" : ""}>
+      <div key={tile.rosterEntry.id} className={options?.observerCompact ? "w-[220px] min-w-0 max-w-full shrink-0" : "min-w-0"}>
         <VoximplantParticipantTile
           stream={tile.participant.stream}
           muted={tile.isLocal}
           title={tile.isLocal ? `${tile.rosterEntry.displayName} (${t("common.you")})` : tile.rosterEntry.displayName}
           subtitle={subtitle}
-          micState={tileMicState}
-          micStateLabel={tileMicStateLabel}
-          micStateHint={tileMicStateHint}
+          connectionStatus={tile.mediaModel.connectionStatus}
+          micStatus={tile.mediaModel.micStatus}
+          cameraStatus={tile.mediaModel.cameraStatus}
+          micLabel={micLabel}
+          cameraLabel={cameraLabel}
           micLevel={tile.isLocal ? micLevel : undefined}
           isSpeaking={
             tile.isLocal
@@ -346,25 +363,25 @@ export default function VoximplantVideoLayout({
         </RoleSection>
 
         <div
-          className="hidden min-h-0 flex-1 gap-2 lg:grid lg:grid-cols-[38%_24%_38%]"
+          className="hidden min-h-0 flex-1 gap-2 lg:grid lg:grid-cols-[minmax(0,38fr)_minmax(0,24fr)_minmax(0,38fr)]"
           data-testid="vox-zone-main-desktop"
         >
-          <RoleSection title={t("room.participantA")} testId="vox-zone-participant-a" className="min-h-0">
+          <RoleSection title={t("room.participantA")} testId="vox-zone-participant-a" className="min-h-0 min-w-0">
             {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
           </RoleSection>
 
-          <div className="flex min-h-0 flex-col gap-2" data-testid="vox-zone-center">
+          <div className="flex min-h-0 min-w-0 flex-col gap-2" data-testid="vox-zone-center">
             <RoleSection title={t("room.timer")} testId="vox-zone-timer" className="shrink-0">
               <RoomTimerPanel controlState={controlState} />
             </RoleSection>
-            <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 flex-1">
+            <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 min-w-0 flex-1">
               {facilitatorTiles.length > 0
                 ? facilitatorTiles.map((tile) => renderRosterTile(tile))
                 : <NoVideoPlaceholder message={t("room.slotFacilitatorEmpty")} />}
             </RoleSection>
           </div>
 
-          <RoleSection title={t("room.participantB")} testId="vox-zone-participant-b" className="min-h-0">
+          <RoleSection title={t("room.participantB")} testId="vox-zone-participant-b" className="min-h-0 min-w-0">
             {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
           </RoleSection>
         </div>

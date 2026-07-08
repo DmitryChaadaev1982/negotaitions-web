@@ -23,6 +23,30 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Browser relays payload with `conference.sendMessage(...)`.
 - Vox scenario executes recording operation and posts status webhook back to app.
 
+## Presence And Media Status Model (Stage 3.1)
+
+- Session room and event lobby both normalize participant media state via `lib/voximplant/participant-presence-media-model.ts`.
+- Normalized model fields:
+  - `connectionStatus`: `connected | disconnected | unknown`
+  - `micStatus`: `on | off | unknown`
+  - `cameraStatus`: `on | off | unknown`
+  - `shouldRenderActiveTile`: gate for active video-tile rendering.
+- Active tiles in `components/voximplant-video-layout.tsx` are rendered only for participants with real connected endpoint/media state (`shouldRenderActiveTile=true`), not just DB assignment.
+- Assigned but not connected users remain visible in roster/sidebar data, but no longer appear as active room tiles.
+- Mic/camera indicators in room/lobby tiles are icon-based and use a shared semantic mapping:
+  - Connected + ON = green
+  - Connected + OFF = red
+  - Disconnected/unknown = gray
+
+## Remote Toggle Propagation Fallback
+
+- Vox SDK endpoint events are still primary (`EndpointAdded/Removed`, `RemoteMediaAdded/Removed`).
+- App-side polling fallback runs in both room and lobby clients (`1s` interval):
+  - Re-reads endpoint streams/tracks from `conference.endpoints`.
+  - Re-applies remote stream snapshots to React state.
+  - Removes stale endpoint entries not present in current endpoint map.
+- This keeps remote camera/mic state and participant presence synchronized between peers without requiring page refresh.
+
 ## Operational Constraints
 
 - Current design relies on active browser relay for some recording transitions.

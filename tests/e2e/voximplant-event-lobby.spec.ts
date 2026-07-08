@@ -269,11 +269,13 @@ test("lobby camera busy path reports localized warning key and keeps controls sh
   const lobbySource = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
   const viewSource = readFileSync("components/event-lobby-view.tsx", "utf-8");
   const roomLayoutSource = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+  const tileSource = readFileSync("components/voximplant-participant-tile.tsx", "utf-8");
   expect(lobbySource).toContain("onDeviceWarning?.(\"cameraBusyOrUnavailable\")");
   expect(lobbySource).toContain("VoximplantMediaControls");
   expect(lobbySource).toContain("VoximplantParticipantTile");
   expect(roomLayoutSource).toContain("VoximplantParticipantTile");
   expect(lobbySource).toContain("micState");
-  expect(lobbySource).toContain("room.unknownMicState");
+  expect(tileSource).toContain("participant-tile-mic-status-icon");
+  expect(tileSource).toContain("participant-tile-camera-status-icon");
   expect(viewSource).toContain("events.cameraBusyOrUnavailable");
 });

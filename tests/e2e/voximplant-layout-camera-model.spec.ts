@@ -94,6 +94,12 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).toContain("justify-center");
   });
 
+  test("assigned but disconnected users are excluded from active video tiles", () => {
+    const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+    expect(source).toContain("mediaModel.shouldRenderActiveTile");
+    expect(source).toContain("connectedSignal: isLocal ? joined : Boolean(matchedRemote)");
+  });
+
   test("diagnostics section is hidden when no unknown endpoints and debug is off", () => {
     expect(
       shouldShowDiagnosticsSection({
@@ -278,7 +284,15 @@ test.describe("Vox camera toggle idempotency helpers", () => {
       "components/voximplant-video-layout.tsx",
       "utf-8",
     );
-    expect(source).toContain("isSpeaking={tile.isLocal ? isSpeaking : false}");
+    expect(source).toContain("remoteSpeakingById[tile.participant.id] ?? false");
+  });
+
+  test("participant tiles render icon-based mic/camera status", () => {
+    const source = readFileSync("components/voximplant-participant-tile.tsx", "utf-8");
+    expect(source).toContain("participant-tile-mic-status-icon");
+    expect(source).toContain("participant-tile-camera-status-icon");
+    expect(source).toContain("MicStatusIcon");
+    expect(source).toContain("CameraStatusIcon");
   });
 
   test("lobby layout keeps side panel and video pane independent", () => {
