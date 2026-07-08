@@ -163,6 +163,43 @@ test.describe("Vox room parity (API state)", () => {
     expect(body.roster.filter((item) => item.participantType === "OBSERVER")).toHaveLength(2);
   });
 
+  test("session media-status publish is visible in sidebar roster", async ({ request }) => {
+    const publisherConnectionId = "parity-media-publisher";
+    const consumerConnectionId = "parity-media-consumer";
+    const publish = await request.post(
+      `/api/sessions/${fixture.sessionId}/media-status`,
+      {
+        headers: cookieHeader(fixture.participantCookie),
+        data: {
+          participantId: fixture.participant1Id,
+          connectionId: publisherConnectionId,
+          micEnabled: false,
+          cameraEnabled: false,
+        },
+      },
+    );
+    expect(publish.ok()).toBeTruthy();
+
+    const consumerSidebar = await request.get(
+      `/api/livekit/sidebar?participantId=${fixture.participant2Id}&connectionId=${consumerConnectionId}&claimLease=1`,
+      { headers: cookieHeader(fixture.participant2Cookie) },
+    );
+    expect(consumerSidebar.ok()).toBeTruthy();
+    const body = (await consumerSidebar.json()) as {
+      roster: Array<{
+        id: string;
+        micEnabled?: boolean | null;
+        cameraEnabled?: boolean | null;
+        mediaStatusUpdatedAt?: string | null;
+      }>;
+    };
+    const target = body.roster.find((entry) => entry.id === fixture.participant1Id);
+    expect(target).toBeTruthy();
+    expect(target?.micEnabled).toBe(false);
+    expect(target?.cameraEnabled).toBe(false);
+    expect(target?.mediaStatusUpdatedAt).toBeTruthy();
+  });
+
   test("timer/control-state is server-backed and survives transitions", async ({ request }) => {
     const authHeaders = cookieHeader(fixture.facilitatorCookie);
     const connectionId = "parity-timer-fac-1";

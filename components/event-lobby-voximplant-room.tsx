@@ -16,6 +16,7 @@ import {
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
+import type { EventStateParticipant } from "@/lib/event-state";
 
 type VoxWatchable<T> = {
   value: T;
@@ -116,6 +117,7 @@ type VoxCore = {
 type VoxLobbyParticipant = {
   id: string;
   identityKey: string;
+  endpointUsername?: string | null;
   displayName: string;
   stream: MediaStream | null;
   micState: "on" | "off" | "unknown";
@@ -148,6 +150,7 @@ type EventLobbyVoximplantRoomProps = {
   hostToken?: string;
   participantToken?: string;
   connectionId: string;
+  participants: EventStateParticipant[];
   onDeviceWarning?: (message: string | null) => void;
 };
 
@@ -249,6 +252,13 @@ function normalizeEndpointIdentity(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizeProviderUsername(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = normalizeEndpointIdentity(value);
+  if (!normalized) return null;
+  return normalized.includes("@") ? (normalized.split("@")[0] ?? null) : normalized;
+}
+
 function toErrorMessage(error: unknown): string {
   return toVoxErrorMessage(error);
 }
@@ -299,19 +309,33 @@ function EventLobbyVoxVideoTile({
   muted,
   subtitle,
   isSpeaking,
+  explicitMicEnabled,
+  explicitCameraEnabled,
 }: {
   participant: VoxLobbyParticipant;
   muted: boolean;
   subtitle: string;
   isSpeaking: boolean;
+  explicitMicEnabled: boolean | null;
+  explicitCameraEnabled: boolean | null;
 }) {
   const { t } = useI18n();
   const model = normalizeParticipantPresenceMedia({
     displayName: participant.displayName,
     connectedSignal: true,
     videoStream: participant.stream,
-    micSignal: participant.micState,
-    cameraSignal: participant.cameraState,
+    micSignal:
+      explicitMicEnabled === null
+        ? participant.micState
+        : explicitMicEnabled
+          ? "on"
+          : "off",
+    cameraSignal:
+      explicitCameraEnabled === null
+        ? participant.cameraState
+        : explicitCameraEnabled
+          ? "on"
+          : "off",
   });
   return (
     <VoximplantParticipantTile
@@ -351,6 +375,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   hostToken,
   participantToken,
   connectionId,
+  participants,
   onDeviceWarning,
 }: EventLobbyVoximplantRoomProps) {
   const { t } = useI18n();
@@ -371,6 +396,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   const speakerLevelByTrackRef = useRef(new Map<string, number>());
   const speakerMeterCleanupByTrackRef = useRef(new Map<string, () => void>());
   const micUnknownTimerByParticipantRef = useRef(new Map<string, number>());
+  const lastPublishedMediaStatusRef = useRef<string | null>(null);
 
   const recomputeActiveSpeaker = useCallback(() => {
     let nextSpeakerId: string | null = null;
@@ -727,6 +753,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           upsertRemote({
             id: endpoint.id,
             identityKey,
+            endpointUsername: endpoint.userName ?? null,
             displayName: endpoint.displayName || endpoint.userName || endpoint.id,
             stream: streamToMediaStream(videoStream),
             micState: hasAudio ? (audioEnabled === false ? "off" : "on") : "unknown",
@@ -865,6 +892,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           identityKey: normalizeEndpointIdentity(
             readyPayload.user.sdkUsername || readyPayload.user.displayName || "local",
           ),
+          endpointUsername: readyPayload.user.sdkUsername ?? null,
           displayName: readyPayload.user.displayName,
           stream: streamToMediaStream(localVideoStream),
           micState: localAudioStream ? "on" : "off",
@@ -999,6 +1027,57 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     );
   }, [localParticipant, visibleRemoteParticipants]);
 
+  const remoteExplicitStatusByIdentity = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        micEnabled: boolean | null;
+        cameraEnabled: boolean | null;
+      }
+    >();
+    for (const participant of participants) {
+      const identity = normalizeProviderUsername(participant.voximplantProviderUsername);
+      if (!identity) continue;
+      map.set(identity, {
+        micEnabled: participant.micEnabled ?? null,
+        cameraEnabled: participant.cameraEnabled ?? null,
+      });
+    }
+    return map;
+  }, [participants]);
+
+  useEffect(() => {
+    if (!joined) return;
+    const payloadKey = JSON.stringify({
+      micEnabled: !isMicMuted,
+      cameraEnabled: isCameraOn,
+      connectionId,
+    });
+    if (payloadKey === lastPublishedMediaStatusRef.current) {
+      return;
+    }
+    lastPublishedMediaStatusRef.current = payloadKey;
+    void fetch(`/api/events/${encodeURIComponent(eventId)}/media-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(hostToken ? { hostToken } : {}),
+        ...(participantToken ? { participantToken } : {}),
+        connectionId,
+        micEnabled: !isMicMuted,
+        cameraEnabled: isCameraOn,
+      }),
+    }).catch(() => {});
+  }, [
+    connectionId,
+    eventId,
+    hostToken,
+    isCameraOn,
+    isMicMuted,
+    joined,
+    participantToken,
+  ]);
+
   if (error) {
     return (
       <div
@@ -1023,6 +1102,13 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           <div className="grid h-full min-h-0 grid-cols-1 content-start justify-items-center gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
             {sortedParticipants.map((participant) => {
               const isLocal = participant.id === "local";
+              const explicit = isLocal
+                ? { micEnabled: !isMicMuted, cameraEnabled: isCameraOn }
+                : remoteExplicitStatusByIdentity.get(
+                    normalizeProviderUsername(participant.endpointUsername) ??
+                      normalizeProviderUsername(participant.identityKey) ??
+                      participant.identityKey,
+                  ) ?? { micEnabled: null, cameraEnabled: null };
               return (
                 <EventLobbyVoxVideoTile
                   key={participant.id}
@@ -1030,6 +1116,8 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
                   muted={isLocal}
                   subtitle={isLocal ? t("common.you") : t("events.participantsInLobby")}
                   isSpeaking={activeSpeakerId === participant.id}
+                  explicitMicEnabled={explicit.micEnabled}
+                  explicitCameraEnabled={explicit.cameraEnabled}
                 />
               );
             })}

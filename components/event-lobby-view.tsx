@@ -797,6 +797,7 @@ export function EventLobbyView({
                 hostToken={hostAccessToken}
                 participantToken={participantAccessToken}
                 connectionId={lobbyConnectionId}
+                participants={state.participants}
                 onDeviceWarning={setDeviceWarning}
               />
             ) : (

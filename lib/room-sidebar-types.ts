@@ -17,6 +17,9 @@ export type SessionRosterEntry = {
   voximplantProviderUsername: string | null;
   joinedAt: string | null;
   lastSeenAt: string | null;
+  micEnabled?: boolean | null;
+  cameraEnabled?: boolean | null;
+  mediaStatusUpdatedAt?: string | null;
   /** Phase 6.11B: DB sessionRoleId — null = unassigned. Only set for PARTICIPANT type. */
   sessionRoleId?: string | null;
 };

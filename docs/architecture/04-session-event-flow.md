@@ -28,8 +28,10 @@
 
 - Session control: `app/api/sessions/[sessionId]/control/route.ts`.
 - Session control state: `app/api/sessions/[sessionId]/control-state/route.ts`.
+- Session media status publish: `app/api/sessions/[sessionId]/media-status/route.ts`.
 - Event host control: `app/api/events/[id]/host/route.ts`.
 - Event state: `app/api/events/[id]/state/route.ts`.
+- Event lobby media status publish: `app/api/events/[id]/media-status/route.ts`.
 
 ## Source Notes
 
