@@ -5,6 +5,7 @@ import { isAssignableCaseRole } from "@/lib/case-roles";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
+import { getSessionMediaStatusMap } from "@/lib/voximplant/media-status-store";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
 export type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -131,6 +132,7 @@ async function buildRoomSidebarData(
 
   const currentParticipantEffectiveType =
     normalizedTypeByParticipantId.get(participant.id) ?? participant.type;
+  const mediaStatusByParticipantId = await getSessionMediaStatusMap(participant.sessionId);
 
   const facilitatorBriefings =
     currentParticipantEffectiveType === ParticipantType.FACILITATOR
@@ -147,6 +149,14 @@ async function buildRoomSidebarData(
       : [];
 
   const roster = participant.session.participants.map((sessionParticipant) => ({
+    ...(mediaStatusByParticipantId[sessionParticipant.id]
+      ? {
+          micEnabled: mediaStatusByParticipantId[sessionParticipant.id]?.micEnabled ?? null,
+          cameraEnabled: mediaStatusByParticipantId[sessionParticipant.id]?.cameraEnabled ?? null,
+          mediaStatusUpdatedAt:
+            mediaStatusByParticipantId[sessionParticipant.id]?.updatedAt ?? null,
+        }
+      : {}),
     id: sessionParticipant.id,
     displayName: sessionParticipant.displayName,
     participantType:

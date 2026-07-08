@@ -41,11 +41,17 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 ## Remote Toggle Propagation Fallback
 
 - Vox SDK endpoint events are still primary (`EndpointAdded/Removed`, `RemoteMediaAdded/Removed`).
-- App-side polling fallback runs in both room and lobby clients (`1s` interval):
-  - Re-reads endpoint streams/tracks from `conference.endpoints`.
-  - Re-applies remote stream snapshots to React state.
-  - Removes stale endpoint entries not present in current endpoint map.
-- This keeps remote camera/mic state and participant presence synchronized between peers without requiring page refresh.
+- Remote mic/camera state now uses an explicit app-level contract:
+  - Local client publishes status to backend:
+    - `POST /api/sessions/[sessionId]/media-status`
+    - `POST /api/events/[id]/media-status`
+  - Payload includes `connectionId`, `micEnabled`, `cameraEnabled` plus room identity (`participantId` or token/cookie access).
+  - Server validates access and same-login lease before persisting.
+- State distribution reuses existing polling surfaces:
+  - Session room clients consume status through `GET /api/livekit/sidebar` roster fields.
+  - Event lobby clients consume status through `GET /api/events/[id]/state` participant fields.
+- Storage uses `AppSetting` JSON records keyed per session/event, avoiding Prisma schema changes while keeping shared durable status across tabs/participants.
+- SDK stream polling fallback still runs for endpoint/media attachment, but icon/border media state for remote participants is rendered from explicit backend status instead of inferred remote `MediaStreamTrack.enabled`.
 
 ## Operational Constraints
 

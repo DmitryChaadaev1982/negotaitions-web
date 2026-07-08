@@ -23,6 +23,7 @@ import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { resolveConnectionStatusForLobby } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
+import { getEventMediaStatusMap } from "@/lib/voximplant/media-status-store";
 
 export type EventStateParticipant = {
   id: string;
@@ -40,6 +41,10 @@ export type EventStateParticipant = {
   assignedSessionParticipantId: string | null;
   assignedType: string | null;
   assignedRoleName: string | null;
+  voximplantProviderUsername: string | null;
+  micEnabled: boolean | null;
+  cameraEnabled: boolean | null;
+  mediaStatusUpdatedAt: string | null;
   joinToken?: string | null;
   roomUrl: string | null;
   materialsUrl: string | null;
@@ -294,6 +299,35 @@ export async function buildEventState(
         orderBy: { createdAt: "desc" },
       }),
     ]);
+  const userIds = Array.from(
+    new Set(
+      participants
+        .map((participant) => participant.userId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const [identityRows, mediaStatusByParticipantId] = await Promise.all([
+    userIds.length > 0
+      ? prisma.videoProviderIdentity.findMany({
+          where: {
+            provider: "voximplant",
+            status: "active",
+            userId: { in: userIds },
+          },
+          select: {
+            userId: true,
+            providerUsername: true,
+          },
+        })
+      : Promise.resolve([]),
+    getEventMediaStatusMap(input.event.id),
+  ]);
+  const voximplantUsernameByUserId = new Map<string, string>();
+  for (const row of identityRows) {
+    if (!voximplantUsernameByUserId.has(row.userId)) {
+      voximplantUsernameByUserId.set(row.userId, row.providerUsername);
+    }
+  }
 
   const assignmentDraft = parseAssignmentDraft(
     input.event.assignmentDraft,
@@ -355,6 +389,10 @@ export async function buildEventState(
       isHost: input.isHost,
       currentParticipantId,
       accountMode: Boolean(input.accountMode),
+      voximplantProviderUsername: participant.userId
+        ? (voximplantUsernameByUserId.get(participant.userId) ?? null)
+        : null,
+      mediaStatus: mediaStatusByParticipantId[participant.id] ?? null,
     }),
   );
   const sessions = linkedSessions.map((session) =>
@@ -437,6 +475,8 @@ function mapEventParticipant({
   isHost,
   currentParticipantId,
   accountMode,
+  voximplantProviderUsername,
+  mediaStatus,
 }: {
   participant: EventParticipant;
   activeAssignment:
@@ -453,6 +493,12 @@ function mapEventParticipant({
   isHost: boolean;
   currentParticipantId: string | null;
   accountMode: boolean;
+  voximplantProviderUsername: string | null;
+  mediaStatus: {
+    micEnabled: boolean;
+    cameraEnabled: boolean;
+    updatedAt: string;
+  } | null;
 }): EventStateParticipant {
   const canSeeJoinToken = !accountMode && (isHost || participant.id === currentParticipantId);
   const assignmentLabel = activeAssignment?.session.roomLabel
@@ -475,6 +521,10 @@ function mapEventParticipant({
     assignedSessionParticipantId: activeAssignment?.id ?? null,
     assignedType: activeAssignment?.type ?? null,
     assignedRoleName: activeAssignment?.sessionRole?.name ?? null,
+    voximplantProviderUsername,
+    micEnabled: mediaStatus?.micEnabled ?? null,
+    cameraEnabled: mediaStatus?.cameraEnabled ?? null,
+    mediaStatusUpdatedAt: mediaStatus?.updatedAt ?? null,
     ...(canSeeJoinToken
       ? { joinToken: activeAssignment?.joinToken ?? null }
       : {}),

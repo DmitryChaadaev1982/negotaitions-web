@@ -230,6 +230,7 @@ export default function VoximplantNegotiationRoomPage(
     closedBeforeNegotiation: false,
   });
   const [staleConnection, setStaleConnection] = useState(false);
+  const lastPublishedMediaStatusRef = useRef<string | null>(null);
 
   // Initial load of sidebar + control state
   useEffect(() => {
@@ -652,6 +653,42 @@ export default function VoximplantNegotiationRoomPage(
     joined,
     staleConnection,
     toggleMic,
+  ]);
+
+  useEffect(() => {
+    if (!joined || staleConnection) {
+      return;
+    }
+    const payloadKey = JSON.stringify({
+      micEnabled: !isMicMuted,
+      cameraEnabled: isCameraOn,
+      connectionId: roomConnectionId,
+    });
+    if (payloadKey === lastPublishedMediaStatusRef.current) {
+      return;
+    }
+    lastPublishedMediaStatusRef.current = payloadKey;
+    void fetch(`/api/sessions/${encodeURIComponent(props.sessionId)}/media-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        {
+          ...roomAuthBody(roomAuth, {
+            connectionId: roomConnectionId ?? undefined,
+          }),
+          micEnabled: !isMicMuted,
+          cameraEnabled: isCameraOn,
+        },
+      ),
+    }).catch(() => {});
+  }, [
+    isCameraOn,
+    isMicMuted,
+    joined,
+    props.sessionId,
+    roomAuth,
+    roomConnectionId,
+    staleConnection,
   ]);
 
   // ── Loading / error states ─────────────────────────────────────────────────

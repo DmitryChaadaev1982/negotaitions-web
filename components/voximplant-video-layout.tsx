@@ -233,8 +233,18 @@ export default function VoximplantVideoLayout({
               : "on"
           : policyMuted
             ? "off"
-            : undefined,
-        cameraSignal: isLocal ? (isCameraOn ? "on" : "off") : undefined,
+            : entry.micEnabled === null || entry.micEnabled === undefined
+              ? undefined
+              : entry.micEnabled
+                ? "on"
+                : "off",
+        cameraSignal: isLocal
+          ? (isCameraOn ? "on" : "off")
+          : entry.cameraEnabled === null || entry.cameraEnabled === undefined
+            ? undefined
+            : entry.cameraEnabled
+              ? "on"
+              : "off",
       });
       return {
         rosterEntry: entry,

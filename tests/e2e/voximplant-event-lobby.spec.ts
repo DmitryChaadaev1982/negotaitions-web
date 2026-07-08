@@ -186,6 +186,61 @@ test("event lobby participant list payload is deduped by user identity", async (
   expect(payload.participants[0]?.id).toBe(payload.currentParticipant?.id);
 });
 
+test("event media-status publish is visible in state payload", async ({ request }) => {
+  const event = await createE2eEvent({ title: "E2E Vox Lobby Media Status" });
+  await query(`UPDATE "TrainingEvent" SET "visibility"='PUBLIC' WHERE "id"=$1`, [event.id]);
+
+  const userA = await createActiveUser();
+  const userB = await createActiveUser();
+  const cookieA = await createUserSessionCookie(userA.id);
+  const cookieB = await createUserSessionCookie(userB.id);
+
+  await query(
+    `INSERT INTO "EventInvite" ("id","eventId","userId","invitedByUserId","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,$2,NOW()), (gen_random_uuid(),$1,$3,$3,NOW())`,
+    [event.id, userA.id, userB.id],
+  );
+
+  const claimA = await request.get(
+    `/api/events/${event.id}/state?connectionId=media-a&claimLease=1`,
+    { headers: { Cookie: cookieA } },
+  );
+  expect(claimA.ok()).toBeTruthy();
+  const stateA = (await claimA.json()) as {
+    currentParticipant: { id: string } | null;
+  };
+  expect(stateA.currentParticipant?.id).toBeTruthy();
+
+  const publish = await request.post(`/api/events/${event.id}/media-status`, {
+    headers: { Cookie: cookieA },
+    data: {
+      connectionId: "media-a",
+      micEnabled: false,
+      cameraEnabled: false,
+    },
+  });
+  expect(publish.ok()).toBeTruthy();
+
+  const stateB = await request.get(
+    `/api/events/${event.id}/state?connectionId=media-b&claimLease=1`,
+    { headers: { Cookie: cookieB } },
+  );
+  expect(stateB.ok()).toBeTruthy();
+  const payloadB = (await stateB.json()) as {
+    participants: Array<{
+      id: string;
+      micEnabled: boolean | null;
+      cameraEnabled: boolean | null;
+      mediaStatusUpdatedAt: string | null;
+    }>;
+  };
+  const participantA = payloadB.participants.find((participant) => participant.id === stateA.currentParticipant?.id);
+  expect(participantA).toBeTruthy();
+  expect(participantA?.micEnabled).toBe(false);
+  expect(participantA?.cameraEnabled).toBe(false);
+  expect(participantA?.mediaStatusUpdatedAt).toBeTruthy();
+});
+
 test("voximplant provider path is present and livekit path is isolated", async ({
   request,
 }) => {

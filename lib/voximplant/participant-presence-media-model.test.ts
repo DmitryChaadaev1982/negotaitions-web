@@ -59,3 +59,31 @@ test("connected participant with enabled tracks resolves ON statuses", () => {
   assert.equal(model.cameraStatus, "on");
   assert.equal(model.shouldRenderActiveTile, true);
 });
+
+test("explicit remote media signals override inferred track state", () => {
+  const model = normalizeParticipantPresenceMedia({
+    displayName: "Participant C",
+    connectedSignal: true,
+    videoStream: mediaStreamWithTrack("video", true),
+    audioStream: mediaStreamWithTrack("audio", true),
+    micSignal: "off",
+    cameraSignal: "off",
+  });
+  assert.equal(model.connectionStatus, "connected");
+  assert.equal(model.micStatus, "off");
+  assert.equal(model.cameraStatus, "off");
+});
+
+test("disconnected participant forces unknown media state despite stale signals", () => {
+  const model = normalizeParticipantPresenceMedia({
+    displayName: "Participant D",
+    connectedSignal: false,
+    lastSeenAt: null,
+    micSignal: "on",
+    cameraSignal: "on",
+  });
+  assert.equal(model.connectionStatus, "unknown");
+  assert.equal(model.micStatus, "unknown");
+  assert.equal(model.cameraStatus, "unknown");
+  assert.equal(model.shouldRenderActiveTile, false);
+});
