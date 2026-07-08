@@ -47,6 +47,12 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Facilitator tiles show title-only identity (no duplicated facilitator role text in subtitle).
 - Textual video connection labels are removed from room tile subtitles; mic/camera status remains icon-based with unchanged color semantics.
 
+## Pause Semantics (Stage 3.4)
+
+- Session `PAUSED` does not disconnect participants from Vox rooms and does not forcibly toggle local microphone state.
+- Vox room tile mic icons continue to use explicit backend media-status sync (`micEnabled`/`cameraEnabled`) during pause, instead of coercing remote mic state to off.
+- Pause remains visible through negotiation/timer state UI, while media toggles continue to reflect user-selected device state.
+
 ## Single-Active Connection Lease (Stage 3.3 Hotfix)
 
 - Room and lobby client `connectionId` values are generated client-side with runtime entropy (UUID/random), not React `useId`.

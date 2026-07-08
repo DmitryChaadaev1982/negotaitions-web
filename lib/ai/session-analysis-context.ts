@@ -1,4 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { listPauseIntervals } from "@/lib/session-pause-intervals";
+import {
+  buildPauseOffsetIntervals,
+  segmentOverlapsPausedInterval,
+} from "@/lib/transcription/pause-interval-filter";
 
 export type SessionAnalysisParticipant = {
   id: string;
@@ -94,6 +99,12 @@ export async function buildSessionAnalysisContext(
           },
         },
       },
+      recording: {
+        select: {
+          startedAt: true,
+          endedAt: true,
+        },
+      },
       transcript: {
         include: {
           segments: {
@@ -136,14 +147,40 @@ export async function buildSessionAnalysisContext(
   let transcript: SessionAnalysisTranscript | null = null;
   if (session.transcript) {
     const t = session.transcript;
+    const pauseIntervals = await listPauseIntervals(sessionId);
+    const pauseOffsetIntervals = buildPauseOffsetIntervals({
+      recordingStartedAt: session.recording?.startedAt,
+      recordingEndedAt: session.recording?.endedAt,
+      pauseIntervals,
+    });
+    const filteredSegments =
+      pauseOffsetIntervals.length > 0
+        ? t.segments.filter(
+            (segment) =>
+              !segmentOverlapsPausedInterval(
+                {
+                  startSeconds: segment.startSeconds,
+                  endSeconds: segment.endSeconds,
+                },
+                pauseOffsetIntervals,
+              ),
+          )
+        : t.segments;
+    const pauseFilteringApplied = filteredSegments.length !== t.segments.length;
     transcript = {
       id: t.id,
-      text: t.text,
-      diarizedText: t.diarizedText,
+      text: pauseFilteringApplied
+        ? filteredSegments.map((seg) => seg.text.trim()).filter(Boolean).join(" ")
+        : t.text,
+      diarizedText: pauseFilteringApplied
+        ? filteredSegments.length > 0
+          ? filteredSegments.map((seg) => seg.text.trim()).filter(Boolean).join("\n\n")
+          : null
+        : t.diarizedText,
       language: t.language,
       transcriptionModel: t.transcriptionModel,
       hasSpeakerDiarization: t.hasSpeakerDiarization,
-      segments: t.segments.map((seg) => ({
+      segments: filteredSegments.map((seg) => ({
         speakerLabel: seg.speakerLabel,
         mappedParticipantName: seg.mappedParticipant?.displayName ?? null,
         startSeconds: seg.startSeconds,

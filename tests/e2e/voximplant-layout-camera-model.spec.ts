@@ -232,6 +232,18 @@ test.describe("Vox roster-first layout model", () => {
         participantType: "OBSERVER",
       }),
     ).toBe("system_muted");
+    expect(
+      resolveRemoteMicStateByPolicy({
+        negotiationState: "PAUSED",
+        participantType: "PARTICIPANT",
+      }),
+    ).toBe("on");
+  });
+
+  test("room tile media state does not hard-mute all remotes on PAUSED", () => {
+    const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+    expect(source).not.toContain('controlState.negotiationState === "PAUSED"');
+    expect(source).toContain("entry.micEnabled === null || entry.micEnabled === undefined");
   });
 
   test("PREPARATION policy fallback does not keep system mute", () => {

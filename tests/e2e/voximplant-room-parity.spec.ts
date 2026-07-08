@@ -343,7 +343,7 @@ test.describe("Vox room parity (API state)", () => {
     expect(pausedParticipant.cameraAllowed).toBe(true);
     expect(pausedObserver.cameraAllowed).toBe(true);
     expect(pausedFac.micAllowed).toBe(false);
-    expect(pausedParticipant.micAllowed).toBe(false);
+    expect(pausedParticipant.micAllowed).toBe(true);
     expect(pausedObserver.micAllowed).toBe(false);
 
     const resume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
@@ -383,7 +383,7 @@ test.describe("Vox room parity (API state)", () => {
     expect(repausedParticipant.negotiationState).toBe("PAUSED");
     expect(repausedObserver.negotiationState).toBe("PAUSED");
     expect(repausedFac.micAllowed).toBe(false);
-    expect(repausedParticipant.micAllowed).toBe(false);
+    expect(repausedParticipant.micAllowed).toBe(true);
     expect(repausedObserver.micAllowed).toBe(false);
 
     const finish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {

@@ -13,6 +13,7 @@ Map diarized transcript speakers (for example `speaker_1`) to actual session par
 ## Mapping Strategy
 
 - Build overlap score matrix between transcript windows and telemetry windows.
+- Exclude transcript windows that overlap persisted session pause intervals.
 - Select one-to-one mapping candidate with margin/confidence constraints.
 - Expose suggested mapping for facilitator confirmation.
 - Persist mapping and mapping status transitions in transcript record.

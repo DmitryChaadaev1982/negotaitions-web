@@ -60,6 +60,11 @@ import {
 } from "@/lib/observability/transcription-observability";
 import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
+import { listPauseIntervals } from "@/lib/session-pause-intervals";
+import {
+  buildPauseOffsetIntervals,
+  segmentOverlapsPausedInterval,
+} from "@/lib/transcription/pause-interval-filter";
 import { getMockExternalServiceError } from "@/lib/test-mode";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 
@@ -475,12 +480,36 @@ export async function runRealTranscription(
     await throwIfTranscriptionStoppedManually(transcriptId);
 
     const mappedSegments = applySpeakerMapping(transcription.segments, {});
-    const normalizedTranscriptionText =
-      transcription.text.trim().length > 0
+    const pauseIntervals = await listPauseIntervals(sessionId);
+    const pauseOffsetIntervals = buildPauseOffsetIntervals({
+      recordingStartedAt: recording.startedAt,
+      recordingEndedAt: recording.endedAt,
+      pauseIntervals,
+    });
+    const filteredSegments =
+      pauseOffsetIntervals.length > 0
+        ? mappedSegments.filter(
+            (segment) =>
+              !segmentOverlapsPausedInterval(
+                {
+                  startSeconds: segment.startSeconds,
+                  endSeconds: segment.endSeconds,
+                },
+                pauseOffsetIntervals,
+              ),
+          )
+        : mappedSegments;
+    const pauseFilteringApplied = filteredSegments.length !== mappedSegments.length;
+    const normalizedTranscriptionText = pauseFilteringApplied
+      ? filteredSegments.map((segment) => segment.text.trim()).filter(Boolean).join(" ")
+      : transcription.text.trim().length > 0
         ? transcription.text
         : mappedSegments.map((segment) => segment.text.trim()).filter(Boolean).join(" ");
-    const normalizedDiarizedText =
-      transcription.diarizedText?.trim().length
+    const normalizedDiarizedText = pauseFilteringApplied
+      ? filteredSegments.length > 0
+        ? filteredSegments.map((segment) => segment.text.trim()).filter(Boolean).join("\n\n")
+        : null
+      : transcription.diarizedText?.trim().length
         ? transcription.diarizedText
         : mappedSegments.length > 0
           ? mappedSegments.map((segment) => segment.text.trim()).filter(Boolean).join("\n\n")
@@ -559,7 +588,7 @@ export async function runRealTranscription(
     });
 
     const qualityReport = computeTranscriptQualityReport({
-      segments: transcription.segments,
+      segments: filteredSegments,
       text: normalizedTranscriptionText,
       durationSeconds: durationSeconds ?? sourceAudioMetadata.durationSeconds,
       sourceSampleRate: sourceAudioMetadata.sampleRate,
@@ -568,7 +597,7 @@ export async function runRealTranscription(
       hasSpeakerActivity: audioActivityCount > 0,
     });
 
-    const segmentQuality = transcription.segments.slice(0, 2000).map((segment) => ({
+    const segmentQuality = filteredSegments.slice(0, 2000).map((segment) => ({
       orderIndex: segment.orderIndex,
       speakerLabel: segment.speakerLabel,
       rawSpeakerLabel: segment.rawSpeakerLabel ?? null,
@@ -635,6 +664,11 @@ export async function runRealTranscription(
       transcriptionProcessingTimings: transcription.processingTimings ?? null,
       transcriptEnhancementRecommendation:
         transcription.enhancementRecommendation ?? null,
+      pauseFiltering: {
+        totalIntervals: pauseIntervals.length,
+        appliedIntervals: pauseOffsetIntervals.length,
+        filteredSegmentCount: mappedSegments.length - filteredSegments.length,
+      },
       // Two-pass metadata
       strategy: transcription.strategy ?? "diarize_only",
       qualityModel: transcription.qualityModel ?? null,
@@ -701,9 +735,9 @@ export async function runRealTranscription(
 
       await tx.transcriptSegment.deleteMany({ where: { transcriptId } });
 
-      if (mappedSegments.length > 0) {
+      if (filteredSegments.length > 0) {
         await tx.transcriptSegment.createMany({
-          data: mappedSegments.map((segment) => {
+          data: filteredSegments.map((segment) => {
             const aligned = segmentAlignmentMap.get(segment.orderIndex);
             return {
               transcriptId,
@@ -767,7 +801,7 @@ export async function runRealTranscription(
       diarizationEnabled: transcription.hasSpeakerDiarization,
       diarizationStatus: transcription.diarizationStatus,
       rawResultCount: transcription.rawResultCount ?? null,
-      normalizedSegmentCount: mappedSegments.length,
+      normalizedSegmentCount: filteredSegments.length,
       transcriptChars: qualityReport.transcriptChars,
       speakerLabelCount: qualityReport.speakerCount,
       mappingStatus: mappingStatusForLog,

@@ -80,9 +80,10 @@ export function isMicAllowed(
     case NegotiationState.FINISHED:
       return true;
     case NegotiationState.RUNNING:
-      return participantType === ParticipantType.PARTICIPANT;
     case NegotiationState.PAUSED:
-      return false;
+      // Stage 3.4: pause affects recording/analysis inclusion only and must not
+      // force additional system mute compared to active negotiation policy.
+      return participantType === ParticipantType.PARTICIPANT;
     default:
       return true;
   }

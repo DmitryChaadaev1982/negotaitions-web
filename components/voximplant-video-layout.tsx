@@ -203,10 +203,6 @@ export default function VoximplantVideoLayout({
               : visual.zone === "observer"
                 ? t("room.observer")
                 : t("room.unknownRole");
-      const policyMuted =
-        controlState.negotiationState === "PAUSED" ||
-        (controlState.negotiationState === "RUNNING" &&
-          entry.participantType !== ParticipantType.PARTICIPANT);
       const mediaModel = normalizeParticipantPresenceMedia({
         displayName: entry.displayName,
         displayRole: roleLabel,
@@ -221,13 +217,11 @@ export default function VoximplantVideoLayout({
             : isMicMuted
               ? "off"
               : "on"
-          : policyMuted
-            ? "off"
-            : entry.micEnabled === null || entry.micEnabled === undefined
-              ? undefined
-              : entry.micEnabled
-                ? "on"
-                : "off",
+          : entry.micEnabled === null || entry.micEnabled === undefined
+            ? undefined
+            : entry.micEnabled
+              ? "on"
+              : "off",
         cameraSignal: isLocal
           ? (isCameraOn ? "on" : "off")
           : entry.cameraEnabled === null || entry.cameraEnabled === undefined
@@ -246,7 +240,6 @@ export default function VoximplantVideoLayout({
       };
     });
   }, [
-    controlState.negotiationState,
     currentParticipantId,
     isCameraOn,
     isMicMuted,

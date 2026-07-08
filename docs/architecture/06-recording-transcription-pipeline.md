@@ -21,11 +21,13 @@
 - Transcription starts only when recording is in ready terminal state and storage object is usable.
 - Status progression is surfaced through `materials/status`.
 - Manual stop/cancel state is represented with explicit transcript failure sentinel.
+- Session pause windows (`SessionPauseInterval`) are converted to recording-relative offsets and overlapping transcript segments are filtered before transcript persistence.
 
 ## Observability
 
 - Processing metadata stores preprocessing decisions, provider timings, and quality indicators.
 - External failures are classified and written to `ExternalServiceEvent`.
+- Transcript processing metadata includes pause-filtering diagnostics (`totalIntervals`, `appliedIntervals`, `filteredSegmentCount`).
 
 ## Source Notes
 
