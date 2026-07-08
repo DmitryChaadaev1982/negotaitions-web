@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
 import {
   buildPauseOffsetIntervals,
-  segmentOverlapsPausedInterval,
+  filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
 
 export type SessionAnalysisParticipant = {
@@ -153,19 +153,14 @@ export async function buildSessionAnalysisContext(
       recordingEndedAt: session.recording?.endedAt,
       pauseIntervals,
     });
-    const filteredSegments =
-      pauseOffsetIntervals.length > 0
-        ? t.segments.filter(
-            (segment) =>
-              !segmentOverlapsPausedInterval(
-                {
-                  startSeconds: segment.startSeconds,
-                  endSeconds: segment.endSeconds,
-                },
-                pauseOffsetIntervals,
-              ),
-          )
-        : t.segments;
+    const filteredSegments = filterSegmentsByPauseIntervals(
+      t.segments,
+      pauseOffsetIntervals,
+      (segment) => ({
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+      }),
+    ).keptSegments;
     const pauseFilteringApplied = filteredSegments.length !== t.segments.length;
     transcript = {
       id: t.id,
