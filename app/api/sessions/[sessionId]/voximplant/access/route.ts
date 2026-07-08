@@ -8,6 +8,10 @@ import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import {
+  claimSessionRoomConnectionLease,
+  validateSessionRoomConnectionLease,
+} from "@/lib/session-room-connection-lease";
+import {
   buildVoximplantSdkUsername,
   getOrCreateVoximplantIdentityForUser,
   issueVoximplantBrowserCredentialsForUser,
@@ -31,6 +35,8 @@ type RouteContext = {
 
 const requestSchema = z.object({
   oneTimeKey: z.string().trim().min(1).max(512).optional(),
+  connectionId: z.string().trim().min(1).max(128).optional(),
+  claimLease: z.boolean().optional(),
 });
 
 function resolveParticipantRole(
@@ -141,6 +147,38 @@ export async function POST(_request: Request, context: RouteContext) {
       },
       { status: 403 },
     );
+  }
+
+  if (participant.userId && parsedBody.connectionId) {
+    if (parsedBody.claimLease) {
+      claimSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId: parsedBody.connectionId,
+      });
+    } else {
+      const leaseState = validateSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId: parsedBody.connectionId,
+      });
+      if (leaseState.version === 0) {
+        claimSessionRoomConnectionLease({
+          sessionId,
+          userId: participant.userId,
+          connectionId: parsedBody.connectionId,
+        });
+      } else if (!leaseState.isCurrentConnectionActive) {
+        return NextResponse.json(
+          {
+            error: "staleConnection",
+            code: "STALE_CONNECTION",
+            activeConnectionVersion: leaseState.version,
+          },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   const participantWithRole = await prisma.sessionParticipant.findUnique({

@@ -46,8 +46,10 @@ import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages
 import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
 import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
+import { useClientConnectionId } from "@/lib/client/connection-id";
+import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Page props ───────────────────────────────────────────────────────────────
 
@@ -178,11 +180,11 @@ export default function VoximplantNegotiationRoomPage(
     [props.sessionId, roomAuth],
   );
 
-  const roomConnectionSeed = useId();
-  const roomConnectionId = useMemo(
-    () => `room-${props.sessionId}-${roomConnectionSeed.replace(/:/g, "")}`,
-    [props.sessionId, roomConnectionSeed],
-  );
+  const roomConnectionId = useClientConnectionId(`room-${props.sessionId}`);
+  const [staleConnection, setStaleConnection] = useState(false);
+  const activateStaleConnection = useCallback(() => {
+    setStaleConnection(true);
+  }, []);
 
   // ── Media hook (Voximplant) ────────────────────────────────────────────────
   const {
@@ -212,6 +214,8 @@ export default function VoximplantNegotiationRoomPage(
     sendMessageAvailable,
   } = useVoximplantRoom({
     sessionId: props.sessionId,
+    connectionId: roomConnectionId ?? undefined,
+    onStaleConnection: activateStaleConnection,
     disableInitialCamera: props.disableInitialCamera,
     disableInitialMic: props.disableInitialMic,
   });
@@ -229,11 +233,14 @@ export default function VoximplantNegotiationRoomPage(
     closeMessageKey: null,
     closedBeforeNegotiation: false,
   });
-  const [staleConnection, setStaleConnection] = useState(false);
   const lastPublishedMediaStatusRef = useRef<string | null>(null);
 
   // Initial load of sidebar + control state
   useEffect(() => {
+    if (!roomConnectionId) {
+      return;
+    }
+
     let cancelled = false;
 
     const loadBusiness = async () => {
@@ -269,7 +276,7 @@ export default function VoximplantNegotiationRoomPage(
 
         if (!sidebarResult.ok) {
           if (sidebarResult.status === 409) {
-            setStaleConnection(true);
+            activateStaleConnection();
             return;
           }
           throw new Error(
@@ -280,7 +287,7 @@ export default function VoximplantNegotiationRoomPage(
         }
         if (!controlResult.ok) {
           if (controlResult.status === 409) {
-            setStaleConnection(true);
+            activateStaleConnection();
             return;
           }
           throw new Error(
@@ -320,11 +327,11 @@ export default function VoximplantNegotiationRoomPage(
     return () => {
       cancelled = true;
     };
-  }, [roomAuth, props.sessionId, roomConnectionId, t]);
+  }, [activateStaleConnection, roomAuth, props.sessionId, roomConnectionId, t]);
 
   // Polling (mirrors VideoRoomPage — 1-second interval)
   useEffect(() => {
-    if (businessLoading || businessError) return;
+    if (!roomConnectionId || staleConnection || businessLoading || businessError) return;
 
     const intervalId = window.setInterval(async () => {
       touchRecoveryContext();
@@ -355,14 +362,14 @@ export default function VoximplantNegotiationRoomPage(
             closedBeforeNegotiation: nextState.closedBeforeNegotiation,
           });
         } else if (controlResponse.status === 409) {
-          setStaleConnection(true);
+          activateStaleConnection();
         }
 
         if (sidebarResponse.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
         } else if (sidebarResponse.status === 409) {
-          setStaleConnection(true);
+          activateStaleConnection();
         }
       } catch {
         // Ignore transient polling errors.
@@ -370,7 +377,15 @@ export default function VoximplantNegotiationRoomPage(
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [businessLoading, businessError, roomAuth, props.sessionId, roomConnectionId]);
+  }, [
+    activateStaleConnection,
+    businessLoading,
+    businessError,
+    roomAuth,
+    props.sessionId,
+    roomConnectionId,
+    staleConnection,
+  ]);
 
   // ── Identity resolution ────────────────────────────────────────────────────
   // Sidebar is always authoritative. Hook value is the transport-level fallback.
@@ -618,8 +633,8 @@ export default function VoximplantNegotiationRoomPage(
     clearRecoveryContext();
   }, []);
   const handleStaleConnection = useCallback(() => {
-    setStaleConnection(true);
-  }, []);
+    activateStaleConnection();
+  }, [activateStaleConnection]);
   const policyMutedBySystemRef = useRef(false);
 
   useEffect(() => {
@@ -668,20 +683,31 @@ export default function VoximplantNegotiationRoomPage(
       return;
     }
     lastPublishedMediaStatusRef.current = payloadKey;
-    void fetch(`/api/sessions/${encodeURIComponent(props.sessionId)}/media-status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        {
-          ...roomAuthBody(roomAuth, {
-            connectionId: roomConnectionId ?? undefined,
-          }),
-          micEnabled: !isMicMuted,
-          cameraEnabled: isCameraOn,
-        },
-      ),
-    }).catch(() => {});
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(props.sessionId)}/media-status`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...roomAuthBody(roomAuth, {
+                connectionId: roomConnectionId ?? undefined,
+              }),
+              micEnabled: !isMicMuted,
+              cameraEnabled: isCameraOn,
+            }),
+          },
+        );
+        if (await isStaleConnectionResponse(response)) {
+          activateStaleConnection();
+        }
+      } catch {
+        // Ignore transient network errors.
+      }
+    })();
   }, [
+    activateStaleConnection,
     isCameraOn,
     isMicMuted,
     joined,

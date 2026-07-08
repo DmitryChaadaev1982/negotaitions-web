@@ -174,4 +174,41 @@ test.describe("Vox room presence lease policy", () => {
     );
     expect(activeHeartbeat.ok()).toBeTruthy();
   });
+
+  test("stale connection cannot publish media status after takeover", async ({ request }) => {
+    const headers = {
+      ...cookieHeader(fixture.facilitatorCookie),
+      "Content-Type": "application/json",
+    };
+
+    const stalePublish = await request.post(
+      `/api/sessions/${fixture.sessionId}/media-status`,
+      {
+        headers,
+        data: {
+          participantId: fixture.facilitatorParticipantId,
+          connectionId: "lease-A",
+          micEnabled: false,
+          cameraEnabled: false,
+        },
+      },
+    );
+    expect(stalePublish.status()).toBe(409);
+    const staleBody = (await stalePublish.json()) as { code?: string };
+    expect(staleBody.code).toBe("STALE_CONNECTION");
+
+    const activePublish = await request.post(
+      `/api/sessions/${fixture.sessionId}/media-status`,
+      {
+        headers,
+        data: {
+          participantId: fixture.facilitatorParticipantId,
+          connectionId: "lease-B",
+          micEnabled: true,
+          cameraEnabled: true,
+        },
+      },
+    );
+    expect(activePublish.ok()).toBeTruthy();
+  });
 });

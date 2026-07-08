@@ -147,6 +147,21 @@ test("event lobby stale lease blocks participant/host/voximplant actions", async
   });
   expect(staleVox.status()).toBe(409);
   expect(((await staleVox.json()) as { code?: string }).code).toBe("STALE_CONNECTION");
+
+  const staleMediaStatus = await request.post(`/api/events/${event.id}/media-status`, {
+    headers: { Cookie: authCookie },
+    data: { connectionId: "stale-a", micEnabled: false, cameraEnabled: false },
+  });
+  expect(staleMediaStatus.status()).toBe(409);
+  expect(((await staleMediaStatus.json()) as { code?: string }).code).toBe(
+    "STALE_CONNECTION",
+  );
+
+  const activeMediaStatus = await request.post(`/api/events/${event.id}/media-status`, {
+    headers: { Cookie: authCookie },
+    data: { connectionId: "stale-b", micEnabled: true, cameraEnabled: true },
+  });
+  expect(activeMediaStatus.ok()).toBeTruthy();
 });
 
 test("event lobby participant list payload is deduped by user identity", async ({

@@ -17,6 +17,7 @@ import {
 } from "@/lib/voximplant/media-error-utils";
 import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
 import type { EventStateParticipant } from "@/lib/event-state";
+import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 
 type VoxWatchable<T> = {
   value: T;
@@ -151,6 +152,7 @@ type EventLobbyVoximplantRoomProps = {
   participantToken?: string;
   connectionId: string;
   participants: EventStateParticipant[];
+  onStaleConnection?: () => void;
   onDeviceWarning?: (message: string | null) => void;
 };
 
@@ -376,6 +378,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   participantToken,
   connectionId,
   participants,
+  onStaleConnection,
   onDeviceWarning,
 }: EventLobbyVoximplantRoomProps) {
   const { t } = useI18n();
@@ -578,6 +581,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           code?: string;
         };
         if (!initialResponse.ok) {
+          if (initialResponse.status === 409 && initialPayload.code === "STALE_CONNECTION") {
+            onStaleConnection?.();
+            return;
+          }
           throw new Error(initialPayload.error ?? `Vox access failed (${initialResponse.status}).`);
         }
         if (
@@ -631,6 +638,13 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         if (cancelled || !mountedRef.current) return;
         const readyPayload = (await readyResponse.json().catch(() => ({}))) as AccessPayload;
         if (!readyResponse.ok) {
+          if (
+            readyResponse.status === 409 &&
+            (readyPayload as AccessPayload & { code?: string }).code === "STALE_CONNECTION"
+          ) {
+            onStaleConnection?.();
+            return;
+          }
           throw new Error(readyPayload.error ?? `Vox access failed (${readyResponse.status}).`);
         }
         if (
@@ -930,6 +944,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     eventId,
     hostToken,
     onDeviceWarning,
+    onStaleConnection,
     participantToken,
     scheduleUnknownMicResolution,
     upsertSpeakerMeter,
@@ -1057,17 +1072,26 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       return;
     }
     lastPublishedMediaStatusRef.current = payloadKey;
-    void fetch(`/api/events/${encodeURIComponent(eventId)}/media-status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(hostToken ? { hostToken } : {}),
-        ...(participantToken ? { participantToken } : {}),
-        connectionId,
-        micEnabled: !isMicMuted,
-        cameraEnabled: isCameraOn,
-      }),
-    }).catch(() => {});
+    void (async () => {
+      try {
+        const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/media-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(hostToken ? { hostToken } : {}),
+            ...(participantToken ? { participantToken } : {}),
+            connectionId,
+            micEnabled: !isMicMuted,
+            cameraEnabled: isCameraOn,
+          }),
+        });
+        if (await isStaleConnectionResponse(response)) {
+          onStaleConnection?.();
+        }
+      } catch {
+        // Ignore transient network errors.
+      }
+    })();
   }, [
     connectionId,
     eventId,
@@ -1075,6 +1099,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     isCameraOn,
     isMicMuted,
     joined,
+    onStaleConnection,
     participantToken,
   ]);
 

@@ -87,6 +87,13 @@ export async function POST(request: Request, context: RouteContext) {
           userId: user.id,
           connectionId: parsed.data.connectionId,
         });
+    if (!parsed.data.claimLease && lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId: parsed.data.connectionId,
+      });
+    }
     if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {

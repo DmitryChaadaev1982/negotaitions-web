@@ -3,7 +3,7 @@
 import "@livekit/components-styles";
 import "@/styles/livekit-overrides.css";
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -29,6 +29,7 @@ import type { EventStateResponse } from "@/lib/event-state";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { useClientConnectionId } from "@/lib/client/connection-id";
 
 const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 
@@ -89,11 +90,10 @@ export function EventLobbyView({
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
   const [staleConnection, setStaleConnection] = useState(false);
-  const lobbyConnectionSeed = useId();
-  const lobbyConnectionId = useMemo(
-    () => `event-lobby-${eventId}-${lobbyConnectionSeed.replace(/:/g, "")}`,
-    [eventId, lobbyConnectionSeed],
-  );
+  const lobbyConnectionId = useClientConnectionId(`event-lobby-${eventId}`);
+  const activateStaleConnection = useCallback(() => {
+    setStaleConnection(true);
+  }, []);
 
   const accessQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -103,6 +103,10 @@ export function EventLobbyView({
   }, [hostAccessToken, participantAccessToken]);
 
   const fetchLiveKitToken = useCallback(async () => {
+    if (!lobbyConnectionId) {
+      return "retryableError" as const;
+    }
+
     const tokenResponse = await fetch(`/api/events/${eventId}/livekit-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -130,16 +134,20 @@ export function EventLobbyView({
         code?: string;
       };
       if (payload.code === "STALE_CONNECTION") {
-        setStaleConnection(true);
+        activateStaleConnection();
         return "staleConnection" as const;
       }
     }
 
     setLiveKit(null);
     return "retryableError" as const;
-  }, [eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
+  }, [activateStaleConnection, eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
 
   const fetchVoxAccess = useCallback(async () => {
+    if (!lobbyConnectionId) {
+      return "retryableError" as const;
+    }
+
     const response = await fetch(`/api/events/${eventId}/voximplant-access`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -163,15 +171,19 @@ export function EventLobbyView({
     if (response.status === 409) {
       const payload = (await response.json().catch(() => ({}))) as { code?: string };
       if (payload.code === "STALE_CONNECTION") {
-        setStaleConnection(true);
+        activateStaleConnection();
         return "staleConnection" as const;
       }
     }
     setVoxReady(false);
     return "retryableError" as const;
-  }, [eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
+  }, [activateStaleConnection, eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
 
   const fetchState = useCallback(async (claimLease = false) => {
+    if (!lobbyConnectionId) {
+      return null;
+    }
+
     const params = new URLSearchParams(accessQuery);
     params.set("connectionId", lobbyConnectionId);
     if (claimLease) {
@@ -189,7 +201,7 @@ export function EventLobbyView({
     if (response.status === 409) {
       const payload = (await response.json().catch(() => ({}))) as { code?: string };
       if (payload.code === "STALE_CONNECTION") {
-        setStaleConnection(true);
+        activateStaleConnection();
         return null;
       }
     }
@@ -203,9 +215,14 @@ export function EventLobbyView({
     setState(data);
     setError(null);
     return data;
-  }, [accessQuery, eventId, lobbyConnectionId]);
+  }, [accessQuery, activateStaleConnection, eventId, lobbyConnectionId]);
 
   useEffect(() => {
+    if (!lobbyConnectionId) {
+      return;
+    }
+    const activeConnectionId = lobbyConnectionId;
+
     let active = true;
 
     async function bootstrap() {
@@ -213,7 +230,7 @@ export function EventLobbyView({
         let stateData: EventStateResponse | null = null;
         for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
           const params = new URLSearchParams(accessQuery);
-          params.set("connectionId", lobbyConnectionId);
+          params.set("connectionId", activeConnectionId);
           params.set("claimLease", "1");
           const stateResponse = await fetch(
             `/api/events/${eventId}/state?${params.toString()}`,
@@ -233,7 +250,7 @@ export function EventLobbyView({
               code?: string;
             };
             if (payload.code === "STALE_CONNECTION") {
-              setStaleConnection(true);
+              activateStaleConnection();
               return;
             }
           }
@@ -297,6 +314,7 @@ export function EventLobbyView({
     };
   }, [
     accessQuery,
+    activateStaleConnection,
     eventId,
     fetchLiveKitToken,
     fetchVoxAccess,
@@ -369,7 +387,7 @@ export function EventLobbyView({
 
   const updateHost = useCallback(
     async (payload: Record<string, unknown>) => {
-      if (staleConnection) {
+      if (staleConnection || !lobbyConnectionId) {
         return;
       }
       const response = await fetch(`/api/events/${eventId}/host`, {
@@ -390,16 +408,16 @@ export function EventLobbyView({
           code?: string;
         };
         if (stalePayload.code === "STALE_CONNECTION") {
-          setStaleConnection(true);
+          activateStaleConnection();
         }
       }
     },
-    [eventId, hostAccessToken, lobbyConnectionId, staleConnection],
+    [activateStaleConnection, eventId, hostAccessToken, lobbyConnectionId, staleConnection],
   );
 
   const updatePreference = useCallback(
     async (preference: string) => {
-      if (staleConnection) {
+      if (staleConnection || !lobbyConnectionId) {
         return;
       }
       setState((current) =>
@@ -439,17 +457,17 @@ export function EventLobbyView({
           code?: string;
         };
         if (stalePayload.code === "STALE_CONNECTION") {
-          setStaleConnection(true);
+          activateStaleConnection();
         }
       } else {
         await fetchState();
       }
     },
-    [eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
+    [activateStaleConnection, eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
   );
 
   const createSession = useCallback(async (overrides?: { roomLabel?: string }) => {
-    if (staleConnection) return;
+    if (staleConnection || !lobbyConnectionId) return;
     if (!state) return;
     // Guard against duplicate create from double-click / re-render.
     if (isCreatingSession) return;
@@ -499,7 +517,7 @@ export function EventLobbyView({
           code?: string;
         };
         if (stalePayload.code === "STALE_CONNECTION") {
-          setStaleConnection(true);
+          activateStaleConnection();
           return;
         }
       } else {
@@ -520,7 +538,7 @@ export function EventLobbyView({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [eventId, hostAccessToken, isCreatingSession, lobbyConnectionId, staleConnection, state, t]);
+  }, [activateStaleConnection, eventId, hostAccessToken, isCreatingSession, lobbyConnectionId, staleConnection, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
@@ -791,13 +809,14 @@ export function EventLobbyView({
                 serverUrl={liveKit.serverUrl}
                 onDeviceWarning={setDeviceWarning}
               />
-            ) : videoProvider === "voximplant" && voxReady ? (
+            ) : videoProvider === "voximplant" && voxReady && lobbyConnectionId ? (
               <EventLobbyVoximplantRoom
                 eventId={eventId}
                 hostToken={hostAccessToken}
                 participantToken={participantAccessToken}
                 connectionId={lobbyConnectionId}
                 participants={state.participants}
+                onStaleConnection={activateStaleConnection}
                 onDeviceWarning={setDeviceWarning}
               />
             ) : (

@@ -965,7 +965,7 @@ export const en = {
     recordingFailedWarning:
       "Negotiation started, but recording failed. Check LiveKit Egress quota, billing, or storage configuration.",
     thisTabIsStale:
-      "This tab is stale because a newer tab became active for this account.",
+      "This session was opened in another tab or device. This tab is now disconnected.",
     mediaMicOn: "Mic on",
     mediaMicOff: "Mic off",
     mediaMicLocked: "Mic is locked by session rules",
@@ -1156,7 +1156,7 @@ export const en = {
     voxLobbyDisconnected: "Disconnected: {reason}",
     voxLobbyUnableToConnect: "Unable to connect to Vox lobby.",
     lobbyTakeoverDisconnected:
-      "You joined this lobby in another tab. This tab has been disconnected.",
+      "You joined this lobby in another tab or device. This tab has been disconnected.",
     reconnectLobby: "Reconnect lobby",
     lobbyActionsDisabledInStaleTab:
       "Actions are disabled in this tab until you reconnect.",

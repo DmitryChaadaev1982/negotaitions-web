@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
-import { validateEventLobbyConnectionLease } from "@/lib/event-lobby-connection-lease";
+import {
+  claimEventLobbyConnectionLease,
+  validateEventLobbyConnectionLease,
+} from "@/lib/event-lobby-connection-lease";
 import { flagsFromPreference } from "@/lib/event-assignment";
 import { resolveEventAccess, isEventUnavailable } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
@@ -54,7 +57,13 @@ export async function PATCH(request: Request, context: RouteContext) {
       userId: user.id,
       connectionId: parsed.data.connectionId,
     });
-    if (!lease.isCurrentConnectionActive) {
+    if (lease.version === 0) {
+      claimEventLobbyConnectionLease({
+        eventId,
+        userId: user.id,
+        connectionId: parsed.data.connectionId,
+      });
+    } else if (!lease.isCurrentConnectionActive) {
       return NextResponse.json(
         {
           error: "staleConnection",
