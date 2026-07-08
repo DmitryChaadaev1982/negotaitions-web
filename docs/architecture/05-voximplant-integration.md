@@ -38,6 +38,15 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
   - Connected + OFF = red
   - Disconnected/unknown = gray
 
+## Room Tile Metadata Contract (Stage 3.2)
+
+- Session room tile body text avoids duplicating section headings (`Participant A/B`, `Facilitator`) inside each tile.
+- Participant A/B tiles show:
+  - title: participant display name (`(you)` marker for local participant)
+  - subtitle: case role name only when present
+- Facilitator tiles show title-only identity (no duplicated facilitator role text in subtitle).
+- Textual video connection labels are removed from room tile subtitles; mic/camera status remains icon-based with unchanged color semantics.
+
 ## Remote Toggle Propagation Fallback
 
 - Vox SDK endpoint events are still primary (`EndpointAdded/Removed`, `RemoteMediaAdded/Removed`).
