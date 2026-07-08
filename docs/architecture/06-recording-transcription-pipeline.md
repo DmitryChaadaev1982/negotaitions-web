@@ -8,7 +8,7 @@
 4. Selected transcription provider runs diarization/transcription.
 5. Transcript and segments are stored with processing metadata.
 
-## Pause/Resume Recording Continuity (Stages 3.4.1-3.4.2)
+## Pause/Resume Recording Continuity (Stages 3.4.1-3.4.3)
 
 - Current pipeline remains single-recording-per-session (`Recording.sessionId` unique, `Transcript.sessionId` unique).
 - Recording lifecycle remains single-file:
@@ -21,8 +21,10 @@
   - `FINISH` closes all still-open intervals.
 - Transcription filtering uses segment classification against all pause intervals:
   - drop segments fully inside a paused interval;
+  - keep tiny boundary jitter overlap (`overlapDurationSeconds <= 0.35`);
   - drop segments with dominant paused overlap (`overlapRatio >= 0.6`);
-  - keep boundary-overlap segments when overlap is mostly unpaused, with jitter tolerance.
+  - drop segments with significant absolute paused overlap (`overlapDurationSeconds >= 1.25`), even if overlap ratio is below 0.6;
+  - keep boundary-overlap segments otherwise.
 - Known limitation: filtering is segment-level (no word-level split), so mixed boundary segments are kept/dropped by dominance.
 
 ## Key Implementations
@@ -51,6 +53,9 @@
   - `fullyPausedDroppedCount`
   - `boundaryOverlapKeptCount`
   - `boundaryOverlapDroppedCount`
+  - `significantOverlapDroppedCount`
+  - `maxKeptPauseOverlapSeconds`
+  - `maxDroppedPauseOverlapSeconds`
 
 ## Source Notes
 

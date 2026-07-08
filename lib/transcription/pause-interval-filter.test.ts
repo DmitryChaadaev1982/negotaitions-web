@@ -31,8 +31,9 @@ test("buildPauseOffsetIntervals clamps intervals to recording window", () => {
 });
 
 const DEFAULT_OPTIONS = {
-  dominantOverlapRatioThreshold: 0.6,
+  dropOverlapRatio: 0.6,
   boundaryToleranceSeconds: 0.35,
+  significantPauseOverlapSeconds: 1.25,
 };
 
 test("segment before pause is kept", () => {
@@ -46,62 +47,79 @@ test("segment before pause is kept", () => {
   assert.equal(decision.shouldDrop, false);
 });
 
-test("segment fully inside pause is dropped", () => {
+test("tiny boundary overlap after resume is kept", () => {
   const paused = [{ startSeconds: 10, endSeconds: 20 }];
   const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 12, endSeconds: 15 },
+    { startSeconds: 19.8, endSeconds: 21.2 },
     paused,
     DEFAULT_OPTIONS,
   );
-  assert.equal(decision.classification, "fully_inside_pause");
+  assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
+  assert.equal(decision.shouldDrop, false);
+  assert.equal(Math.round(decision.overlapDurationSeconds * 10) / 10, 0.2);
+});
+
+test("tiny boundary overlap before pause is kept", () => {
+  const paused = [{ startSeconds: 10, endSeconds: 20 }];
+  const decision = classifySegmentAgainstPauseIntervals(
+    { startSeconds: 8.8, endSeconds: 10.2 },
+    paused,
+    DEFAULT_OPTIONS,
+  );
+  assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
+  assert.equal(decision.shouldDrop, false);
+  assert.equal(Math.round(decision.overlapDurationSeconds * 10) / 10, 0.2);
+});
+
+test("significant absolute overlap is dropped even when ratio is below threshold", () => {
+  const decision = classifySegmentAgainstPauseIntervals(
+    { startSeconds: 0, endSeconds: 10 },
+    [{ startSeconds: 2, endSeconds: 4 }],
+    DEFAULT_OPTIONS,
+  );
+  assert.equal(decision.classification, "significant_pause_overlap");
   assert.equal(decision.shouldDrop, true);
+  assert.equal(Math.round(decision.overlapRatio * 100) / 100, 0.2);
+  assert.equal(decision.overlapDurationSeconds, 2);
 });
 
-test("segment after resume is kept", () => {
-  const paused = [{ startSeconds: 10, endSeconds: 20 }];
+test("forensic-like segment is dropped by significant overlap calibration", () => {
   const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 20.2, endSeconds: 24 },
-    paused,
+    { startSeconds: 0, endSeconds: 7 },
+    [{ startSeconds: 2, endSeconds: 4.5 }],
     DEFAULT_OPTIONS,
   );
-  assert.equal(decision.classification, "no_overlap");
-  assert.equal(decision.shouldDrop, false);
+  assert.equal(decision.classification, "significant_pause_overlap");
+  assert.equal(decision.shouldDrop, true);
+  assert.equal(Math.round(decision.overlapRatio * 100) / 100, 0.36);
+  assert.equal(decision.overlapDurationSeconds, 2.5);
 });
 
-test("segment with tiny boundary overlap after resume is kept", () => {
+test("post-resume segment with 0.3s overlap is kept", () => {
   const paused = [{ startSeconds: 10, endSeconds: 20 }];
   const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 19.85, endSeconds: 20.2 },
-    paused,
-    DEFAULT_OPTIONS,
-  );
-  assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
-  assert.equal(decision.shouldDrop, false);
-});
-
-test("segment with tiny boundary overlap before pause is kept", () => {
-  const paused = [{ startSeconds: 10, endSeconds: 20 }];
-  const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 9.8, endSeconds: 10.15 },
+    { startSeconds: 19.7, endSeconds: 23 },
     paused,
     DEFAULT_OPTIONS,
   );
   assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
   assert.equal(decision.shouldDrop, false);
+  assert.equal(Math.round(decision.overlapDurationSeconds * 10) / 10, 0.3);
 });
 
-test("long segment with small pause overlap is kept", () => {
-  const paused = [{ startSeconds: 10, endSeconds: 20 }];
+test("long segment with 0.5s overlap is kept below significant threshold", () => {
+  const paused = [{ startSeconds: 15, endSeconds: 15.5 }];
   const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 18, endSeconds: 30 },
+    { startSeconds: 0, endSeconds: 20 },
     paused,
     DEFAULT_OPTIONS,
   );
   assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
   assert.equal(decision.shouldDrop, false);
+  assert.equal(decision.overlapDurationSeconds, 0.5);
 });
 
-test("segment mostly inside pause is dropped", () => {
+test("segment mostly inside pause is dropped by ratio", () => {
   const paused = [{ startSeconds: 10, endSeconds: 20 }];
   const decision = classifySegmentAgainstPauseIntervals(
     { startSeconds: 8, endSeconds: 16 },
@@ -112,10 +130,10 @@ test("segment mostly inside pause is dropped", () => {
   assert.equal(decision.shouldDrop, true);
 });
 
-test("segment crossing two pause intervals with low total overlap is kept", () => {
+test("multiple pause intervals low total overlap is kept", () => {
   const paused = [
-    { startSeconds: 10, endSeconds: 11 },
-    { startSeconds: 14, endSeconds: 15 },
+    { startSeconds: 10, endSeconds: 10.4 },
+    { startSeconds: 14, endSeconds: 14.5 },
   ];
   const decision = classifySegmentAgainstPauseIntervals(
     { startSeconds: 9, endSeconds: 17 },
@@ -124,21 +142,22 @@ test("segment crossing two pause intervals with low total overlap is kept", () =
   );
   assert.equal(decision.classification, "boundary_overlap_mostly_unpaused");
   assert.equal(decision.shouldDrop, false);
-  assert.equal(Math.round(decision.overlapRatio * 100) / 100, 0.25);
+  assert.equal(Math.round(decision.overlapDurationSeconds * 10) / 10, 0.9);
 });
 
-test("segment crossing two pause intervals with high total overlap is dropped", () => {
+test("multiple pause intervals significant total overlap is dropped", () => {
   const paused = [
-    { startSeconds: 10, endSeconds: 13 },
-    { startSeconds: 13.5, endSeconds: 16.5 },
+    { startSeconds: 10, endSeconds: 10.8 },
+    { startSeconds: 12, endSeconds: 13.1 },
   ];
   const decision = classifySegmentAgainstPauseIntervals(
-    { startSeconds: 9.5, endSeconds: 17 },
+    { startSeconds: 9, endSeconds: 15 },
     paused,
     DEFAULT_OPTIONS,
   );
-  assert.equal(decision.classification, "overlap_dominantly_paused");
+  assert.equal(decision.classification, "significant_pause_overlap");
   assert.equal(decision.shouldDrop, true);
+  assert.equal(Math.round(decision.overlapDurationSeconds * 10) / 10, 1.9);
 });
 
 test("multiple pause/resume cycles preserve active speech and drop paused windows", () => {
@@ -170,6 +189,12 @@ test("multiple pause/resume cycles preserve active speech and drop paused window
     result.droppedSegments.map((segment) => segment.id),
     ["first-pause", "second-pause"],
   );
+  assert.equal(result.diagnostics.fullyPausedDroppedCount, 2);
+  assert.equal(result.diagnostics.boundaryOverlapKeptCount, 0);
+  assert.equal(result.diagnostics.boundaryOverlapDroppedCount, 0);
+  assert.equal(result.diagnostics.significantOverlapDroppedCount, 0);
+  assert.equal(result.diagnostics.maxKeptPauseOverlapSeconds, 0);
+  assert.equal(result.diagnostics.maxDroppedPauseOverlapSeconds, 6);
 });
 
 test("open pause interval clamped to recording end still works", () => {
@@ -193,5 +218,57 @@ test("open pause interval clamped to recording end still works", () => {
   );
   assert.equal(decision.classification, "fully_inside_pause");
   assert.equal(decision.shouldDrop, true);
+});
+
+test("segment fully inside pause is dropped", () => {
+  const paused = [{ startSeconds: 10, endSeconds: 20 }];
+  const decision = classifySegmentAgainstPauseIntervals(
+    { startSeconds: 12, endSeconds: 15 },
+    paused,
+    DEFAULT_OPTIONS,
+  );
+  assert.equal(decision.classification, "fully_inside_pause");
+  assert.equal(decision.shouldDrop, true);
+});
+
+test("filter diagnostics track significant and boundary overlap outcomes", () => {
+  const segments = [
+    { id: "tiny-kept", startSeconds: 19.8, endSeconds: 21.2 },
+    { id: "significant-dropped", startSeconds: 0, endSeconds: 7 },
+    { id: "ratio-dropped", startSeconds: 8, endSeconds: 16 },
+  ];
+  const pauseIntervals = [
+    { startSeconds: 10, endSeconds: 20 },
+    { startSeconds: 2, endSeconds: 4.5 },
+  ];
+
+  const result = filterSegmentsByPauseIntervals(
+    segments,
+    pauseIntervals,
+    (segment) => ({
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+    }),
+    DEFAULT_OPTIONS,
+  );
+
+  assert.deepEqual(
+    result.keptSegments.map((segment) => segment.id),
+    ["tiny-kept"],
+  );
+  assert.deepEqual(
+    result.droppedSegments.map((segment) => segment.id),
+    ["significant-dropped", "ratio-dropped"],
+  );
+  assert.equal(result.diagnostics.filteredSegmentCount, 2);
+  assert.equal(result.diagnostics.fullyPausedDroppedCount, 0);
+  assert.equal(result.diagnostics.boundaryOverlapKeptCount, 1);
+  assert.equal(result.diagnostics.boundaryOverlapDroppedCount, 2);
+  assert.equal(result.diagnostics.significantOverlapDroppedCount, 1);
+  assert.equal(
+    Math.round(result.diagnostics.maxKeptPauseOverlapSeconds * 10) / 10,
+    0.2,
+  );
+  assert.equal(result.diagnostics.maxDroppedPauseOverlapSeconds, 6);
 });
 

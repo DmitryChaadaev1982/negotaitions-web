@@ -17,8 +17,9 @@ Produce structured post-session coaching output from transcript/materials and ex
 - Analysis context applies all persisted pause intervals for a session (including multiple pause/resume cycles).
 - Segment filtering uses the same shared pause classifier as transcription and speaker-mapping consumers.
 - Segments fully inside pause windows are excluded.
-- Boundary-overlap segments are kept when mostly unpaused (with tolerance for timestamp jitter near pause/resume edges).
-- Segments with dominant paused overlap are excluded.
+- Boundary-overlap segments are kept when mostly unpaused, including tolerance for timestamp jitter near pause/resume edges.
+- Segments with dominant paused overlap are excluded (`overlapRatio >= 0.6`).
+- Segments with significant absolute paused overlap are excluded (`overlapDurationSeconds >= 1.25`), even when ratio is below dominance threshold.
 - If a pause interval remains open at `FINISH`, server-side close-on-finish behavior guarantees safe filtering boundaries.
 
 ## Key Components

@@ -671,6 +671,12 @@ export async function runRealTranscription(
           pauseFilteringResult.diagnostics.boundaryOverlapKeptCount,
         boundaryOverlapDroppedCount:
           pauseFilteringResult.diagnostics.boundaryOverlapDroppedCount,
+        significantOverlapDroppedCount:
+          pauseFilteringResult.diagnostics.significantOverlapDroppedCount,
+        maxKeptPauseOverlapSeconds:
+          pauseFilteringResult.diagnostics.maxKeptPauseOverlapSeconds,
+        maxDroppedPauseOverlapSeconds:
+          pauseFilteringResult.diagnostics.maxDroppedPauseOverlapSeconds,
       },
       // Two-pass metadata
       strategy: transcription.strategy ?? "diarize_only",
