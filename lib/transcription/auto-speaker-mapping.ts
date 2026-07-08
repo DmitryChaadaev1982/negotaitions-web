@@ -38,7 +38,7 @@ import {
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
 import {
   buildPauseOffsetIntervals,
-  segmentOverlapsPausedInterval,
+  filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
 
 export type TelemetryParticipantHealth = {
@@ -312,19 +312,14 @@ export async function suggestSpeakerMapping(
     recordingEndedAt: recording?.endedAt,
     pauseIntervals,
   });
-  const segmentsWithTimestamps =
-    pauseOffsetIntervals.length > 0
-      ? rawSegmentsWithTimestamps.filter(
-          (segment) =>
-            !segmentOverlapsPausedInterval(
-              {
-                startSeconds: segment.startSeconds,
-                endSeconds: segment.endSeconds,
-              },
-              pauseOffsetIntervals,
-            ),
-        )
-      : rawSegmentsWithTimestamps;
+  const segmentsWithTimestamps = filterSegmentsByPauseIntervals(
+    rawSegmentsWithTimestamps,
+    pauseOffsetIntervals,
+    (segment) => ({
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+    }),
+  ).keptSegments;
   if (segmentsWithTimestamps.length === 0) {
     return buildUnavailableSuggestion({
       reason: "all_segments_in_paused_intervals",

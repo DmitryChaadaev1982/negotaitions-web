@@ -63,7 +63,7 @@ import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
 import {
   buildPauseOffsetIntervals,
-  segmentOverlapsPausedInterval,
+  filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
 import { getMockExternalServiceError } from "@/lib/test-mode";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
@@ -486,20 +486,17 @@ export async function runRealTranscription(
       recordingEndedAt: recording.endedAt,
       pauseIntervals,
     });
-    const filteredSegments =
-      pauseOffsetIntervals.length > 0
-        ? mappedSegments.filter(
-            (segment) =>
-              !segmentOverlapsPausedInterval(
-                {
-                  startSeconds: segment.startSeconds,
-                  endSeconds: segment.endSeconds,
-                },
-                pauseOffsetIntervals,
-              ),
-          )
-        : mappedSegments;
-    const pauseFilteringApplied = filteredSegments.length !== mappedSegments.length;
+    const pauseFilteringResult = filterSegmentsByPauseIntervals(
+      mappedSegments,
+      pauseOffsetIntervals,
+      (segment) => ({
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+      }),
+    );
+    const filteredSegments = pauseFilteringResult.keptSegments;
+    const pauseFilteringApplied =
+      pauseFilteringResult.diagnostics.filteredSegmentCount > 0;
     const normalizedTranscriptionText = pauseFilteringApplied
       ? filteredSegments.map((segment) => segment.text.trim()).filter(Boolean).join(" ")
       : transcription.text.trim().length > 0
@@ -665,9 +662,15 @@ export async function runRealTranscription(
       transcriptEnhancementRecommendation:
         transcription.enhancementRecommendation ?? null,
       pauseFiltering: {
-        totalIntervals: pauseIntervals.length,
+        totalPausedIntervals: pauseIntervals.length,
         appliedIntervals: pauseOffsetIntervals.length,
-        filteredSegmentCount: mappedSegments.length - filteredSegments.length,
+        filteredSegmentCount: pauseFilteringResult.diagnostics.filteredSegmentCount,
+        fullyPausedDroppedCount:
+          pauseFilteringResult.diagnostics.fullyPausedDroppedCount,
+        boundaryOverlapKeptCount:
+          pauseFilteringResult.diagnostics.boundaryOverlapKeptCount,
+        boundaryOverlapDroppedCount:
+          pauseFilteringResult.diagnostics.boundaryOverlapDroppedCount,
       },
       // Two-pass metadata
       strategy: transcription.strategy ?? "diarize_only",
