@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 
 /**
  * Architecture: docs/architecture/06-recording-transcription-pipeline.md
@@ -88,6 +88,7 @@ import {
   type ActiveTimelineInterval,
 } from "@/lib/transcription/active-audio-timeline";
 import { buildActiveAudioFromRecording } from "@/lib/transcription/active-audio-builder";
+import { resolveSourceRecordingExtension } from "@/lib/transcription/source-recording-extension";
 
 function resolveCompressedExtension(
   fileName: string,
@@ -441,7 +442,7 @@ export async function runRealTranscription(
         const debugOutputDir = join(".debug", "pause-source-audio", sessionId);
         const tempSourceDir = await mkdtemp(join(tmpdir(), "pause-source-audio-"));
         try {
-          const sourceExtension = extname(recording.fileName ?? "").trim() || ".input";
+          const sourceExtension = resolveSourceRecordingExtension(recording);
           const sourcePath = join(tempSourceDir, `source-recording${sourceExtension}`);
           await writeFile(sourcePath, originalBuffer);
           const built = await buildActiveAudioFromRecording({
