@@ -7,9 +7,10 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Flow
 
 1. Facilitator starts analysis when transcript is ready and mapping prerequisites are met.
-2. Provider-specific analysis execution runs (`openai` or `yandex`).
-3. Structured output is validated against schema.
-4. Analysis is persisted and optionally shared to session participants/observers.
+2. Analysis context is built from transcript segments filtered by recorded pause intervals.
+3. Provider-specific analysis execution runs (`openai` or `yandex`).
+4. Structured output is validated against schema.
+5. Analysis is persisted and optionally shared to session participants/observers.
 
 ## Key Components
 

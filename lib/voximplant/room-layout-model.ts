@@ -62,11 +62,9 @@ export function resolveRemoteMicStateByPolicy(params: {
   negotiationState: NegotiationState;
   participantType: ParticipantType;
 }): TileMicState {
-  if (params.negotiationState === NegotiationState.PAUSED) {
-    return "system_muted";
-  }
   if (
-    params.negotiationState === NegotiationState.RUNNING &&
+    (params.negotiationState === NegotiationState.RUNNING ||
+      params.negotiationState === NegotiationState.PAUSED) &&
     params.participantType !== ParticipantType.PARTICIPANT
   ) {
     return "system_muted";

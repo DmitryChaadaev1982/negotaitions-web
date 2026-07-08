@@ -23,6 +23,8 @@
 - Session/event source of truth: database state.
 - Room views poll control and sidebar/materials APIs.
 - Event assignment and participant linkage are persisted server-side.
+- Negotiation `PAUSED` state controls timer/recording-analysis boundaries, not room-media connectivity.
+- `micAllowed` is a speaking-policy signal and is no longer implicitly set to false for all users when negotiation is paused.
 
 ## Key Control Endpoints
 

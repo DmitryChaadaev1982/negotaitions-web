@@ -35,6 +35,11 @@ import {
   detectTranscriptWindowPathology,
   type ProviderWindowPathology,
 } from "@/lib/transcription/transcript-window-pathology";
+import { listPauseIntervals } from "@/lib/session-pause-intervals";
+import {
+  buildPauseOffsetIntervals,
+  segmentOverlapsPausedInterval,
+} from "@/lib/transcription/pause-interval-filter";
 
 export type TelemetryParticipantHealth = {
   participantId: string;
@@ -261,11 +266,11 @@ export async function suggestSpeakerMapping(
   };
 
   // Check if timestamps are available in segments
-  const segmentsWithTimestamps = transcript.segments.filter(
+  const rawSegmentsWithTimestamps = transcript.segments.filter(
     (s) => s.speakerLabel && s.startSeconds != null && s.endSeconds != null,
   );
 
-  if (segmentsWithTimestamps.length === 0) {
+  if (rawSegmentsWithTimestamps.length === 0) {
     return buildUnavailableSuggestion({
       reason: "no_timestamps",
       telemetryQuality: emptyTelemetryQuality,
@@ -301,6 +306,33 @@ export async function suggestSpeakerMapping(
   });
   const recordingStartMs = recording?.startedAt?.getTime() ?? null;
   const recordingEndMs = recording?.endedAt?.getTime() ?? null;
+  const pauseIntervals = await listPauseIntervals(sessionId);
+  const pauseOffsetIntervals = buildPauseOffsetIntervals({
+    recordingStartedAt: recording?.startedAt,
+    recordingEndedAt: recording?.endedAt,
+    pauseIntervals,
+  });
+  const segmentsWithTimestamps =
+    pauseOffsetIntervals.length > 0
+      ? rawSegmentsWithTimestamps.filter(
+          (segment) =>
+            !segmentOverlapsPausedInterval(
+              {
+                startSeconds: segment.startSeconds,
+                endSeconds: segment.endSeconds,
+              },
+              pauseOffsetIntervals,
+            ),
+        )
+      : rawSegmentsWithTimestamps;
+  if (segmentsWithTimestamps.length === 0) {
+    return buildUnavailableSuggestion({
+      reason: "all_segments_in_paused_intervals",
+      telemetryQuality: emptyTelemetryQuality,
+      telemetryHealth: emptyTelemetryHealth,
+      sourceDecisionSummary: "All diarized transcript windows overlap paused intervals.",
+    });
+  }
   const speakerLabels = [
     ...new Set(
       segmentsWithTimestamps
