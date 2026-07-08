@@ -15,6 +15,7 @@ import {
   isRecoverableVoxMediaError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
+import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
 
 type VoxWatchable<T> = {
   value: T;
@@ -118,6 +119,7 @@ type VoxLobbyParticipant = {
   displayName: string;
   stream: MediaStream | null;
   micState: "on" | "off" | "unknown";
+  cameraState: "on" | "off" | "unknown";
   firstSeenAtMs: number;
   updatedAtMs: number;
 };
@@ -166,6 +168,7 @@ type RuntimeState = {
   >;
   endpointIdentityIndex: Map<string, string>;
   remoteAudioElements: Map<string, HTMLAudioElement>;
+  endpointSyncIntervalId: number | null;
   conferenceListeners: {
     onConnected: (event: VoxConferenceEvent) => void;
     onFailed: (event: VoxConferenceEvent) => void;
@@ -294,24 +297,49 @@ function stopVoxStreamTracks(stream: VoxStream | null): void {
 function EventLobbyVoxVideoTile({
   participant,
   muted,
-  micStateLabel,
-  micStateHint,
+  subtitle,
   isSpeaking,
 }: {
   participant: VoxLobbyParticipant;
   muted: boolean;
-  micStateLabel: string;
-  micStateHint: string;
+  subtitle: string;
   isSpeaking: boolean;
 }) {
+  const { t } = useI18n();
+  const model = normalizeParticipantPresenceMedia({
+    displayName: participant.displayName,
+    connectedSignal: true,
+    videoStream: participant.stream,
+    micSignal: participant.micState,
+    cameraSignal: participant.cameraState,
+  });
   return (
     <VoximplantParticipantTile
       stream={participant.stream}
       muted={muted}
       title={participant.displayName}
-      micState={participant.micState === "on" ? "on" : participant.micState === "off" ? "off" : "unknown"}
-      micStateLabel={micStateLabel}
-      micStateHint={micStateHint}
+      subtitle={subtitle}
+      connectionStatus={model.connectionStatus}
+      micStatus={model.micStatus}
+      cameraStatus={model.cameraStatus}
+      micLabel={
+        model.connectionStatus !== "connected"
+          ? t("room.notConnected")
+          : model.micStatus === "on"
+            ? t("room.mediaMicOn")
+            : model.micStatus === "off"
+              ? t("room.mediaMicOff")
+              : t("room.unknownMicState")
+      }
+      cameraLabel={
+        model.connectionStatus !== "connected"
+          ? t("room.notConnected")
+          : model.cameraStatus === "on"
+            ? t("room.mediaCameraOn")
+            : model.cameraStatus === "off"
+              ? t("room.mediaCameraOff")
+              : t("room.mediaCameraOff")
+      }
       isSpeaking={isSpeaking}
       className="w-full max-w-[420px]"
     />
@@ -431,6 +459,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       audio.srcObject = null;
     }
     runtime.remoteAudioElements.clear();
+    if (runtime.endpointSyncIntervalId !== null) {
+      window.clearInterval(runtime.endpointSyncIntervalId);
+      runtime.endpointSyncIntervalId = null;
+    }
     for (const cleanup of speakerMeterCleanupByTrackRef.current.values()) {
       cleanup();
     }
@@ -637,9 +669,22 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           endpointSubscriptions: new Map(),
           endpointIdentityIndex: new Map(),
           remoteAudioElements: new Map(),
+          endpointSyncIntervalId: null,
           conferenceListeners: null,
         };
         runtimeRef.current = runtime;
+
+        const getTrackEnabled = (
+          stream: VoxStream | null,
+          kind: "audio" | "video",
+        ): boolean | null => {
+          const mediaStream = streamToMediaStream(stream);
+          if (!mediaStream) return null;
+          const tracks =
+            kind === "audio" ? mediaStream.getAudioTracks() : mediaStream.getVideoTracks();
+          if (tracks.length === 0) return null;
+          return tracks.some((track) => track.enabled);
+        };
 
         const attachRemoteAudio = (endpointId: string, stream: VoxStream) => {
           const runtimeState = runtimeRef.current;
@@ -665,8 +710,11 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         };
 
         const applyRemoteVideo = (endpoint: VoxEndpoint) => {
-          const stream = endpoint.getAnyVideoStreams()[0] ?? null;
-          const hasAudio = endpoint.getAnyAudioStreams().length > 0;
+          const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
+          const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
+          const hasAudio = audioStream !== null;
+          const audioEnabled = getTrackEnabled(audioStream, "audio");
+          const videoEnabled = getTrackEnabled(videoStream, "video");
           const now = Date.now();
           if (!hasAudio) {
             scheduleUnknownMicResolution(endpoint.id);
@@ -680,8 +728,9 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             id: endpoint.id,
             identityKey,
             displayName: endpoint.displayName || endpoint.userName || endpoint.id,
-            stream: streamToMediaStream(stream),
-            micState: hasAudio ? "on" : "unknown",
+            stream: streamToMediaStream(videoStream),
+            micState: hasAudio ? (audioEnabled === false ? "off" : "on") : "unknown",
+            cameraState: videoStream ? (videoEnabled === false ? "off" : "on") : "off",
             firstSeenAtMs: now,
             updatedAtMs: now,
           });
@@ -789,6 +838,17 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           onEndpointRemoved,
         };
 
+        runtime.endpointSyncIntervalId = window.setInterval(() => {
+          for (const endpoint of conference.endpoints.value.values()) {
+            subscribeEndpoint(endpoint);
+            applyRemoteVideo(endpoint);
+          }
+          const liveEndpointIds = new Set(Array.from(conference.endpoints.value.keys()));
+          setRemoteParticipants((current) =>
+            current.filter((participant) => liveEndpointIds.has(participant.id)),
+          );
+        }, 1000);
+
         if (localAudioStream) {
           runtime.audioAdded = await safeAddStream(conference, localAudioStream);
         }
@@ -808,6 +868,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           displayName: readyPayload.user.displayName,
           stream: streamToMediaStream(localVideoStream),
           micState: localAudioStream ? "on" : "off",
+          cameraState: localVideoStream ? "on" : "off",
           firstSeenAtMs: Date.now(),
           updatedAtMs: Date.now(),
         });
@@ -872,7 +933,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         setIsMicMuted(true);
         clearSpeakerMeter("local:local");
         setLocalParticipant((current) =>
-          current ? { ...current, micState: "off", updatedAtMs: Date.now() } : current,
+            current ? { ...current, micState: "off", updatedAtMs: Date.now() } : current,
         );
       }
     } finally {
@@ -890,6 +951,15 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         const nextOn = !isCameraOn;
         track.enabled = nextOn;
         setIsCameraOn(nextOn);
+        setLocalParticipant((current) =>
+          current
+            ? {
+                ...current,
+                cameraState: nextOn ? "on" : "off",
+                updatedAtMs: Date.now(),
+              }
+            : current,
+        );
         if (nextOn) {
           setCameraUnavailable(false);
           onDeviceWarning?.(null);
@@ -953,23 +1023,12 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           <div className="grid h-full min-h-0 grid-cols-1 content-start justify-items-center gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
             {sortedParticipants.map((participant) => {
               const isLocal = participant.id === "local";
-              const micStateLabel =
-                participant.micState === "on"
-                  ? t("room.mediaMicOn")
-                  : participant.micState === "off"
-                    ? t("room.mediaMicOff")
-                    : t("room.unknownMicState");
-              const micStateHint =
-                participant.micState === "unknown"
-                  ? t("room.unknownMicState")
-                  : micStateLabel;
               return (
                 <EventLobbyVoxVideoTile
                   key={participant.id}
                   participant={participant}
                   muted={isLocal}
-                  micStateLabel={micStateLabel}
-                  micStateHint={micStateHint}
+                  subtitle={isLocal ? t("common.you") : t("events.participantsInLobby")}
                   isSpeaking={activeSpeakerId === participant.id}
                 />
               );

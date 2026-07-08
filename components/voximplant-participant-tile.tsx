@@ -2,7 +2,10 @@
 
 import { useEffect, useRef } from "react";
 
-export type VoxTileMicState = "on" | "off" | "system_muted" | "unknown";
+import type {
+  ParticipantConnectionStatus,
+  ParticipantMediaStatus,
+} from "@/lib/voximplant/participant-presence-media-model";
 
 function MicLevelBar({ level, muted }: { level: number; muted: boolean }) {
   const filled = muted ? 0 : Math.min(100, level);
@@ -25,9 +28,11 @@ export function VoximplantParticipantTile({
   muted,
   title,
   subtitle,
-  micState,
-  micStateLabel,
-  micStateHint,
+  connectionStatus,
+  micStatus,
+  cameraStatus,
+  micLabel,
+  cameraLabel,
   micLevel,
   isSpeaking,
   className,
@@ -36,9 +41,11 @@ export function VoximplantParticipantTile({
   muted: boolean;
   title: string;
   subtitle?: string;
-  micState: VoxTileMicState;
-  micStateLabel: string;
-  micStateHint?: string;
+  connectionStatus: ParticipantConnectionStatus;
+  micStatus: ParticipantMediaStatus;
+  cameraStatus: ParticipantMediaStatus;
+  micLabel: string;
+  cameraLabel: string;
   micLevel?: number;
   isSpeaking?: boolean;
   className?: string;
@@ -50,16 +57,28 @@ export function VoximplantParticipantTile({
     videoRef.current.srcObject = stream;
   }, [stream]);
 
+  const iconTone = (
+    status: ParticipantMediaStatus,
+    connection: ParticipantConnectionStatus,
+  ): string => {
+    if (connection !== "connected" || status === "unknown") {
+      return "text-slate-300 bg-slate-700/70 border-slate-500/60";
+    }
+    return status === "on"
+      ? "text-emerald-200 bg-emerald-700/55 border-emerald-400/70"
+      : "text-rose-200 bg-rose-700/55 border-rose-400/70";
+  };
+
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border bg-slate-900 transition-all duration-150 ${
+      className={`relative box-border min-w-0 overflow-hidden rounded-xl border bg-slate-900 transition-all duration-150 ${
         isSpeaking
           ? "border-green-400 shadow-[0_0_0_2px_rgba(74,222,128,0.4)]"
-          : micState === "system_muted"
-            ? "border-slate-600"
-            : micState === "on"
+          : connectionStatus !== "connected"
+            ? "border-slate-600/70"
+            : micStatus === "on"
               ? "border-emerald-600/80"
-              : micState === "off"
+              : micStatus === "off"
                 ? "border-rose-700/70"
                 : "border-slate-600/70"
       } ${className ?? ""}`}
@@ -77,26 +96,84 @@ export function VoximplantParticipantTile({
           {subtitle ? (
             <span className="block truncate text-xs text-slate-300">{subtitle}</span>
           ) : null}
-          <span
-            className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium ${
-              micState === "on"
-                ? "bg-emerald-500/20 text-emerald-200"
-                : micState === "system_muted"
-                  ? "bg-slate-500/20 text-slate-200"
-                  : micState === "off"
-                    ? "bg-rose-500/20 text-rose-200"
-                    : "bg-slate-500/20 text-slate-200"
-            }`}
-            title={micStateHint}
-            aria-label={micStateHint}
-          >
-            {micStateLabel}
-          </span>
+          <div className="mt-1 flex items-center gap-1.5">
+            <span
+              className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(micStatus, connectionStatus)}`}
+              title={micLabel}
+              aria-label={micLabel}
+              role="img"
+              data-testid="participant-tile-mic-status-icon"
+              data-status={connectionStatus === "connected" ? micStatus : "unknown"}
+            >
+              <MicStatusIcon status={micStatus} />
+            </span>
+            <span
+              className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(cameraStatus, connectionStatus)}`}
+              title={cameraLabel}
+              aria-label={cameraLabel}
+              role="img"
+              data-testid="participant-tile-camera-status-icon"
+              data-status={connectionStatus === "connected" ? cameraStatus : "unknown"}
+            >
+              <CameraStatusIcon status={cameraStatus} />
+            </span>
+          </div>
         </div>
         {micLevel !== undefined && (
           <MicLevelBar level={micLevel} muted={muted} />
         )}
       </div>
     </div>
+  );
+}
+
+function MicStatusIcon({ status }: { status: ParticipantMediaStatus }) {
+  const showOffSlash = status === "off";
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="10" rx="3" ry="3" fill="currentColor" />
+      <path
+        d="M7 10v1a5 5 0 0 0 10 0v-1M12 16v4M9 20h6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {showOffSlash ? (
+        <path
+          d="M4 4l16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      ) : null}
+    </svg>
+  );
+}
+
+function CameraStatusIcon({ status }: { status: ParticipantMediaStatus }) {
+  const showOffSlash = status === "off";
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+      <rect x="3" y="7" width="13" height="10" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M16 10l5-2v8l-5-2z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      {showOffSlash ? (
+        <path
+          d="M4 4l16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      ) : null}
+    </svg>
   );
 }
