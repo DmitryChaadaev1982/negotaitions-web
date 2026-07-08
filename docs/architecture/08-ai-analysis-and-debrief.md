@@ -7,7 +7,9 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Flow
 
 1. Facilitator starts analysis when transcript is ready and mapping prerequisites are met.
-2. Analysis context is built from transcript segments filtered by recorded pause intervals.
+2. Analysis context is built from transcript segments with pause processing mode awareness:
+   - `transcript_interval_filter`: apply shared interval filter to transcript segments;
+   - `source_audio_cut`: use transcript as-is (already generated from active-only audio).
 3. Provider-specific analysis execution runs (`openai` or `yandex`).
 4. Structured output is validated against schema.
 5. Analysis is persisted and optionally shared to session participants/observers.
@@ -16,6 +18,7 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 - Analysis context applies all persisted pause intervals for a session (including multiple pause/resume cycles).
 - Segment filtering uses the same shared pause classifier as transcription and speaker-mapping consumers.
+- Exception: when transcript `processingMetadata.pauseProcessing.mode=source_audio_cut`, analysis context does not re-apply interval filtering.
 - Segments fully inside pause windows are excluded.
 - Boundary-overlap segments are kept when mostly unpaused, including tolerance for timestamp jitter near pause/resume edges.
 - Segments with dominant paused overlap are excluded (`overlapRatio >= 0.6`).

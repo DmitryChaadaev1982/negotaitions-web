@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { getFfmpegStatus } from "@/lib/audio/compress";
+import { getFfmpegStatus } from "@/lib/audio/ffmpeg";
 
 /**
  * Phase 7 — audio capture quality investigation hook (observability only).

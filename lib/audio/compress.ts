@@ -1,7 +1,4 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,9 +19,17 @@ import {
   getAudioTranscriptionSampleRate,
   getAudioTranscriptionTargetBitrateKbps,
 } from "@/lib/audio/config";
+import {
+  getFfmpegStatus,
+  type FfmpegSource,
+  type FfmpegStatus,
+} from "@/lib/audio/ffmpeg";
 import { shouldReuseOriginalAudioForTranscription } from "@/lib/audio/transcription-file-selection";
 import { handleExternalServiceFailure } from "@/lib/services/external-service-events";
 import { prisma } from "@/lib/prisma";
+
+export { getFfmpegStatus };
+export type { FfmpegSource, FfmpegStatus };
 
 export type CompressionResult = {
   compressedBuffer: Buffer;
@@ -34,84 +39,6 @@ export type CompressionResult = {
   codecUsed: "libopus" | "libmp3lame" | "pcm_s16le" | "passthrough";
   bitrateUsed: number;
 };
-
-export type FfmpegSource = "env" | "system" | "static";
-
-export type FfmpegStatus = {
-  available: boolean;
-  path: string | null;
-  source: FfmpegSource | null;
-};
-
-const require = createRequire(import.meta.url);
-
-function verifyFfmpegExecutable(candidate: string) {
-  const result = spawnSync(candidate, ["-version"], { encoding: "utf8" });
-  return !result.error && result.status === 0;
-}
-
-function resolveSystemFfmpegPath() {
-  try {
-    const lookupCommand = process.platform === "win32" ? "where.exe" : "which";
-    const lookup = spawnSync(lookupCommand, ["ffmpeg"], { encoding: "utf8" });
-
-    if (lookup.error || lookup.status !== 0) {
-      return undefined;
-    }
-
-    const candidate = lookup.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean);
-
-    if (!candidate || !verifyFfmpegExecutable(candidate)) {
-      return undefined;
-    }
-
-    return candidate;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveStaticFfmpegPath() {
-  try {
-    const staticPath = require("ffmpeg-static") as string | null;
-    if (staticPath && existsSync(staticPath) && verifyFfmpegExecutable(staticPath)) {
-      return staticPath;
-    }
-  } catch {
-    // ffmpeg-static may be missing in some deployments.
-  }
-
-  const executableName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-  const fallback = join(process.cwd(), "node_modules", "ffmpeg-static", executableName);
-
-  if (existsSync(fallback) && verifyFfmpegExecutable(fallback)) {
-    return fallback;
-  }
-
-  return undefined;
-}
-
-export function getFfmpegStatus(): FfmpegStatus {
-  const customPath = process.env.FFMPEG_BIN?.trim();
-  if (customPath && verifyFfmpegExecutable(customPath)) {
-    return { available: true, path: customPath, source: "env" };
-  }
-
-  const systemPath = resolveSystemFfmpegPath();
-  if (systemPath) {
-    return { available: true, path: systemPath, source: "system" };
-  }
-
-  const staticPath = resolveStaticFfmpegPath();
-  if (staticPath) {
-    return { available: true, path: staticPath, source: "static" };
-  }
-
-  return { available: false, path: null, source: null };
-}
 
 function getFfmpegPath() {
   return getFfmpegStatus().path ?? undefined;

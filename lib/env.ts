@@ -35,6 +35,9 @@ export type AiAnalysisProvider = "openai" | "yandex";
 export type TranscriptionProvider = "openai" | "yandex_speechkit";
 export type YandexSpeechKitContainerType = "MP3" | "WAV" | "OGG_OPUS";
 export type VoximplantAudioProcessingProfile = "speech" | "raw_diagnostic";
+export type PauseProcessingMode =
+  | "transcript_interval_filter"
+  | "source_audio_cut";
 
 export function getVideoProvider(): VideoProvider {
   const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
@@ -105,6 +108,40 @@ export function isYandexSpeechKitSpeakerLabelingEnabled(): boolean {
 
 export function isYandexTranscriptEnhancementEnabled(): boolean {
   return getEnvBoolean("YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED", false);
+}
+
+export function isPauseFilterCalibrationEnabled(): boolean {
+  return getEnvBoolean("PAUSE_FILTER_CALIBRATION_ENABLED", false);
+}
+
+export function getPauseFilterCalibrationDir(): string {
+  return (
+    process.env.PAUSE_FILTER_CALIBRATION_DIR?.trim() ||
+    ".debug/pause-filter-calibration"
+  );
+}
+
+export function getPauseFilterCalibrationActiveMarkersRaw(): string | null {
+  return process.env.PAUSE_FILTER_CALIBRATION_ACTIVE_MARKERS?.trim() || null;
+}
+
+export function getPauseFilterCalibrationPausedMarkersRaw(): string | null {
+  return process.env.PAUSE_FILTER_CALIBRATION_PAUSED_MARKERS?.trim() || null;
+}
+
+export function isPauseFilterCalibrationAutoRunEnabled(): boolean {
+  return getEnvBoolean("PAUSE_FILTER_CALIBRATION_AUTO_RUN", false);
+}
+
+export function getPauseFilterRuleOverridePath(): string | null {
+  return process.env.PAUSE_FILTER_RULE_OVERRIDE_PATH?.trim() || null;
+}
+
+export function getPauseProcessingMode(): PauseProcessingMode {
+  const raw = process.env.PAUSE_PROCESSING_MODE?.trim().toLowerCase();
+  return raw === "source_audio_cut"
+    ? "source_audio_cut"
+    : "transcript_interval_filter";
 }
 
 export function getYandexTranscriptEnhancementModel(): string {
