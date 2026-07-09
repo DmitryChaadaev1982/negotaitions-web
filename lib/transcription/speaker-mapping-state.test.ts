@@ -36,7 +36,7 @@ test("unsafe suggestion is not used as selected mapping", () => {
   assert.deepEqual(resolved, {});
 });
 
-test("safe suggestion is used only when status allows", () => {
+test("safe suggestion is used for auto and review-required statuses", () => {
   const autoSuggested = resolveSpeakerMappingForUi({
     speakerMapping: null,
     speakerMappingStatus: "AUTO_SUGGESTED",
@@ -58,7 +58,33 @@ test("safe suggestion is used only when status allows", () => {
   });
 
   assert.deepEqual(autoSuggested, { speaker_1: "A", speaker_2: "B" });
-  assert.deepEqual(requiredStatus, {});
+  assert.deepEqual(requiredStatus, { speaker_1: "A", speaker_2: "B" });
+});
+
+test("review-required statuses prefill diagnostics suggestion for manual confirmation", () => {
+  const requiredStatus = resolveSpeakerMappingForUi({
+    speakerMapping: null,
+    speakerMappingStatus: "REQUIRED",
+    processingMetadata: {
+      mappingSuggestion: {
+        candidateMapping: { speaker_1: "A", speaker_2: "B" },
+        rejectedBySafety: true,
+      },
+    },
+  });
+  const needsReviewStatus = resolveSpeakerMappingForUi({
+    speakerMapping: null,
+    speakerMappingStatus: "NEEDS_REVIEW",
+    processingMetadata: {
+      mappingSuggestion: {
+        candidateMapping: { speaker_1: "A", speaker_2: "B" },
+        rejectedBySafety: true,
+      },
+    },
+  });
+
+  assert.deepEqual(requiredStatus, { speaker_1: "A", speaker_2: "B" });
+  assert.deepEqual(needsReviewStatus, { speaker_1: "A", speaker_2: "B" });
 });
 
 test("partial manual mapping remains PARTIALLY_MAPPED", () => {

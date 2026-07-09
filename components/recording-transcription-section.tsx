@@ -12,6 +12,11 @@ import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels";
 import { shouldSyncSpeakerMappingDraft } from "@/lib/transcription/speaker-mapping-draft-sync";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
+import {
+  resolveAssistedMappingSuggestion,
+  resolveSpeakerReviewMode,
+  type MappingConfidenceLevel,
+} from "@/lib/transcription/assisted-speaker-mapping";
 
 type RecordingData = {
   id: string;
@@ -65,47 +70,6 @@ type TranscriptData = {
   updatedAt: string;
   segments?: TranscriptSegmentData[];
 };
-
-function isTelemetryMappingReviewRequired(
-  processingMetadata: Record<string, unknown> | null | undefined,
-): boolean {
-  if (!processingMetadata || typeof processingMetadata !== "object") {
-    return false;
-  }
-  const suggestion =
-    (processingMetadata as { mappingSuggestion?: Record<string, unknown> })
-      .mappingSuggestion ?? null;
-  if (!suggestion || typeof suggestion !== "object") {
-    return false;
-  }
-
-  const reason = typeof suggestion.reason === "string" ? suggestion.reason : null;
-  if (
-    reason === "telemetry_quality_review_required" ||
-    reason === "telemetry_coverage_review_required" ||
-    reason === "telemetry_offsets_review_required"
-  ) {
-    return true;
-  }
-
-  const telemetryQuality =
-    (suggestion as { telemetryQuality?: Record<string, unknown> }).telemetryQuality ??
-    null;
-  if (!telemetryQuality || typeof telemetryQuality !== "object") {
-    return false;
-  }
-  const warnings = Array.isArray(telemetryQuality.warnings)
-    ? telemetryQuality.warnings
-    : [];
-  return warnings.some(
-    (warning) =>
-      warning === "no_activity_for_participant" ||
-      warning === "low_activity_for_participant" ||
-      warning === "row_imbalance" ||
-      warning === "duration_imbalance" ||
-      warning === "missing_offsets",
-  );
-}
 
 type ParticipantOption = {
   id: string;
@@ -187,6 +151,16 @@ type ResolvedSpeakerDisplay = {
 
 function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
   return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
+}
+
+function confidenceLevelLabel(
+  level: MappingConfidenceLevel | null,
+  t: ReturnType<typeof useI18n>["t"],
+): string | null {
+  if (level === "HIGH") return t("recording.confidenceHigh");
+  if (level === "MEDIUM") return t("recording.confidenceMedium");
+  if (level === "LOW") return t("recording.confidenceLow");
+  return null;
 }
 
 function resolveSegmentSpeakerDisplay(
@@ -422,7 +396,7 @@ export function RecordingTranscriptionSection({
   const autoTranscribeStartedForSessionRef = useRef<string | null>(null);
   const speakerMappingDraftTranscriptIdRef = useRef<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
-  const [mappingFailureDetailsOpen, setMappingFailureDetailsOpen] = useState(false);
+  const [mappingReviewSkipped, setMappingReviewSkipped] = useState(false);
 
   const notifyProcessingChange = useCallback(() => {
     onProcessingChange?.();
@@ -537,6 +511,7 @@ export function RecordingTranscriptionSection({
       setParticipants(payload.participants ?? []);
       setDetectedSpeakers(payload.detectedSpeakers ?? []);
       setTranscriptText(payload.transcript?.text ?? "");
+      setMappingReviewSkipped(false);
       syncSpeakerMappingDraftFromTranscript(payload.transcript ?? null, {
         reason: "loadData",
       });
@@ -702,6 +677,7 @@ export function RecordingTranscriptionSection({
   ) => {
     setTranscript(payload);
     setTranscriptText(payload.text);
+    setMappingReviewSkipped(false);
     syncSpeakerMappingDraftFromTranscript(payload, {
       force: options?.forceSpeakerMappingDraftSync ?? false,
       reason: options?.reason ?? "applyTranscriptPayload",
@@ -826,39 +802,6 @@ export function RecordingTranscriptionSection({
     }
   }, [roomAuth, languageHint, loadData, notifyProcessingChange, sessionId, t]);
 
-  const runTranscriptEnhancement = useCallback(async () => {
-    setBusyAction("enhance");
-    setError(null);
-    setMessage(null);
-
-    try {
-      const response = await fetch(
-        `/api/sessions/${sessionId}/materials/enhance-transcript`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(roomAuthBody(roomAuth)),
-        },
-      );
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Transcript enhancement failed.");
-      }
-
-      await loadData();
-      setMessage(t("recording.transcriptEnhancementInProgress"));
-      notifyProcessingChange();
-    } catch (enhanceError) {
-      setError(
-        enhanceError instanceof Error
-          ? enhanceError.message
-          : "Transcript enhancement failed.",
-      );
-    } finally {
-      setBusyAction((current) => (current === "enhance" ? null : current));
-    }
-  }, [loadData, notifyProcessingChange, roomAuth, sessionId, t]);
-
   const isWaitingForRecordingReady =
     sessionStatus === "FINISHED" &&
     Boolean(recording) &&
@@ -945,9 +888,11 @@ export function RecordingTranscriptionSection({
   const saveSpeakerMapping = async (options?: {
     applyOnly?: boolean;
     confirm?: boolean;
+    mappingOverride?: Record<string, string | null>;
   }) => {
     const applyOnly = options?.applyOnly ?? false;
     const confirm = options?.confirm ?? false;
+    const mappingToSave = options?.mappingOverride ?? speakerMappingDraft;
     setBusyAction(applyOnly ? "apply-mapping" : confirm ? "confirm-mapping" : "save-mapping");
     setError(null);
     setMessage(null);
@@ -956,7 +901,7 @@ export function RecordingTranscriptionSection({
       transcriptId: transcript?.id ?? null,
       applyOnly,
       confirm,
-      draftKeys: Object.keys(speakerMappingDraft),
+      draftKeys: Object.keys(mappingToSave),
     });
 
     try {
@@ -967,7 +912,7 @@ export function RecordingTranscriptionSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...roomAuthBody(roomAuth),
-            mapping: speakerMappingDraft,
+            mapping: mappingToSave,
             applyOnly,
             confirm,
           }),
@@ -1000,11 +945,7 @@ export function RecordingTranscriptionSection({
         mappingKeys: Object.keys(payload.transcript?.speakerMapping ?? {}),
       });
 
-      setMessage(
-        confirm
-          ? t("recording.speakerMappingConfirmed")
-          : t("recording.transcriptSaved"),
-      );
+      setMessage(t("recording.speakerMappingSaved"));
       notifyProcessingChange();
     } catch (mappingError) {
       debugSpeakerMappingClient("saveFailed", {
@@ -1177,37 +1118,7 @@ export function RecordingTranscriptionSection({
     transcript?.source === "GENERATED" &&
     !transcript.hasSpeakerDiarization &&
     hasUsableTranscript(transcript);
-  const transcriptEnhancement = transcript?.enhancement ?? null;
-  const enhancementAvailable =
-    Boolean(
-      transcript?.processingMetadata &&
-        typeof transcript.processingMetadata === "object" &&
-        (transcript.processingMetadata as Record<string, unknown>).transcriptionProvider ===
-          "yandex_speechkit",
-    ) &&
-    hasUsableTranscript(transcript);
-  const enhancementSuggested =
-    !readOnly &&
-    !isLocked &&
-    Boolean(transcriptEnhancement?.suggested) &&
-    enhancementAvailable;
-  const enhancementInProgress = transcriptEnhancement?.status === "IN_PROGRESS";
-  const showEnhancementAction =
-    !readOnly &&
-    !isLocked &&
-    enhancementAvailable &&
-    !enhancementInProgress;
-  const showEnhancementStatus = enhancementInProgress || busyAction === "enhance";
-  const showTelemetryMappingReviewHint =
-    (transcript?.speakerMappingStatus === "REQUIRED" ||
-      transcript?.speakerMappingStatus === "NEEDS_REVIEW") &&
-    isTelemetryMappingReviewRequired(transcript?.processingMetadata ?? null);
   const mappingFailureReasonKey = transcript?.mappingFailureI18nKey;
-  const mappingFailureCompactKey = transcript?.mappingFailureCompactI18nKey;
-  const showMappingFailureBanner =
-    (transcript?.speakerMappingStatus === "REQUIRED" ||
-      transcript?.speakerMappingStatus === "NEEDS_REVIEW") &&
-    Boolean(mappingFailureReasonKey || mappingFailureCompactKey);
   const processingMetadata =
     transcript?.processingMetadata && typeof transcript.processingMetadata === "object"
       ? (transcript.processingMetadata as Record<string, unknown>)
@@ -1266,6 +1177,34 @@ export function RecordingTranscriptionSection({
       Boolean(speakerMappingDraft[speaker.speakerLabel]),
     );
   }, [speakerMappingDraft, speakersForMapping]);
+
+  const speakerSuggestion = useMemo(
+    () =>
+      resolveAssistedMappingSuggestion({
+        mappingSuggestionDiagnostics: transcript?.mappingSuggestionDiagnostics ?? null,
+      }),
+    [transcript?.mappingSuggestionDiagnostics],
+  );
+
+  const speakerLabels = useMemo(
+    () => speakersForMapping.map((speaker) => speaker.speakerLabel),
+    [speakersForMapping],
+  );
+
+  const hasFullSuggestedMapping = speakerSuggestion.hasFullSuggestionForSpeakers(
+    speakerLabels,
+  );
+
+  const reviewMode = resolveSpeakerReviewMode({
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    speakersCount: speakersForMapping.length,
+    isEditable: !readOnly && !isLocked,
+    manualSpeakerModeEnabled,
+    transcriptSource: transcript?.source,
+    mappingReviewSkipped,
+  });
+  const showAssistedReviewCard = reviewMode === "REVIEW_CARD";
+  const showAutoAppliedNote = reviewMode === "AUTO_APPLIED_NOTE";
 
   const content = (
     <>
@@ -1698,95 +1637,152 @@ export function RecordingTranscriptionSection({
               </div>
             ) : null}
 
-            {showTelemetryMappingReviewHint ? (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                {t("recording.telemetryMappingReviewRequired")}
-              </div>
-            ) : null}
-            {showMappingFailureBanner ? (
-              <div
-                className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
-                data-testid={compact ? "mapping-failure-banner-compact" : "mapping-failure-banner-full"}
-              >
-                <p className="font-semibold text-amber-100">
-                  {compact
-                    ? t("recording.mappingFailureCompactTitle")
-                    : t("recording.mappingFailureTitle")}
+            {showAutoAppliedNote ? (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+                <p className="font-semibold">{t("recording.speakerMappingAutoAppliedCompact")}</p>
+                <p className="mt-1 text-emerald-200/90">
+                  {t("recording.speakerMappingCanChangeLater")}
                 </p>
-                <p className="mt-1 text-amber-200/90">
-                  {compact && mappingFailureCompactKey
-                    ? t(mappingFailureCompactKey as never)
-                    : mappingFailureReasonKey
-                      ? t(mappingFailureReasonKey as never)
-                      : t("recording.mappingFailureReason.unknownMappingFailure")}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                  <button
-                    type="button"
-                    className="text-amber-200 underline underline-offset-2 hover:text-amber-100"
-                    onClick={() => setMappingFailureDetailsOpen((current) => !current)}
-                    data-testid="mapping-failure-toggle-details"
-                  >
-                    {mappingFailureDetailsOpen
-                      ? t("recording.mappingFailureDetailsHide")
-                      : t("recording.mappingFailureDetailsShow")}
-                  </button>
-                </div>
-                {mappingFailureDetailsOpen ? (
-                  <div className="mt-2 rounded border border-amber-500/30 bg-slate-950/40 p-2 text-[11px] text-amber-100/90">
-                    <p className="font-semibold">{t("recording.mappingDiagnosticsTitle")}</p>
-                    <code className="mt-1 block whitespace-pre-wrap break-all">
-                      {JSON.stringify(transcript?.mappingFailureDetails ?? transcript?.mappingSuggestionDiagnostics ?? {}, null, 2)}
-                    </code>
-                  </div>
-                ) : null}
               </div>
             ) : null}
 
-            {showEnhancementAction || showEnhancementStatus ? (
-              <div className="space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
-                {enhancementSuggested ? (
-                  <p className="text-sm font-medium text-violet-100">
-                    {t("recording.transcriptEnhancementSuggested")}
+            {showAssistedReviewCard ? (
+              <div
+                className="space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+                data-testid="assisted-speaker-mapping-card"
+              >
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-amber-100">
+                    {t("recording.confirmSpeakersTitle")}
+                  </h3>
+                  <p className="text-xs text-amber-200/90">
+                    {t("recording.confirmSpeakersDescription")}
                   </p>
-                ) : (
-                  <p className="text-sm font-medium text-violet-100">
-                    {t("recording.runTranscriptEnhancement")}
-                  </p>
-                )}
-                <p className="text-xs text-violet-200/90">
-                  {t("recording.transcriptEnhancementMayTakeTime")}
-                </p>
-                {transcriptEnhancement?.reasons?.length ? (
-                  <p className="text-xs text-violet-200/80">
-                    {t("recording.transcriptEnhancementReasons")}:{" "}
-                    {transcriptEnhancement.reasons.join(", ")}
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap items-center gap-2">
-                  {enhancementInProgress ? (
-                    <span className="text-xs text-violet-200">
-                      {t("recording.transcriptEnhancementInProgress")}
-                    </span>
-                  ) : (
+                  {mappingFailureReasonKey ? (
+                    <p className="text-xs text-amber-200/80">
+                      {t(mappingFailureReasonKey as never)}
+                    </p>
+                  ) : null}
+                  {speakerSuggestion.globalConfidenceLevel ? (
+                    <p className="text-xs text-amber-200/80">
+                      {t("recording.confidence")}:{" "}
+                      {confidenceLevelLabel(speakerSuggestion.globalConfidenceLevel, t)}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-3">
+                  {speakersForMapping.map((speaker) => {
+                    const suggestedParticipantId =
+                      speakerSuggestion.suggestedMapping[speaker.speakerLabel] ?? null;
+                    const confidenceLevel =
+                      speakerSuggestion.perSpeakerConfidence[speaker.speakerLabel] ?? null;
+                    return (
+                      <div
+                        key={speaker.speakerLabel}
+                        className="space-y-2 rounded-lg border border-amber-500/20 bg-slate-900/30 p-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-100">
+                            {speaker.displaySpeakerLabel}
+                          </span>
+                          {confidenceLevel ? (
+                            <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs text-amber-200">
+                              {t("recording.confidence")}: {confidenceLevelLabel(confidenceLevel, t)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {suggestedParticipantId ? (
+                          <p className="text-xs text-amber-200/90">
+                            {t("recording.suggested")}:{" "}
+                            {buildParticipantOptionLabel(
+                              participants.find(
+                                (participant) => participant.id === suggestedParticipantId,
+                              ) ?? {
+                                id: suggestedParticipantId,
+                                displayName: suggestedParticipantId,
+                                type: "PARTICIPANT",
+                                roleName: null,
+                              },
+                              participantTypeLabels,
+                            )}
+                          </p>
+                        ) : null}
+                        <select
+                          value={speakerMappingDraft[speaker.speakerLabel] ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setSpeakerMappingDraft((current) => ({
+                              ...current,
+                              [speaker.speakerLabel]: value || null,
+                            }));
+                            speakerMappingDraftDirtyRef.current = true;
+                          }}
+                          className="w-full rounded-lg border border-slate-600/40 bg-slate-900/60 px-3 py-2 text-sm text-slate-100"
+                        >
+                          <option value="">{t("recording.unassigned")}</option>
+                          {participants.map((participant) => (
+                            <option key={participant.id} value={participant.id}>
+                              {buildParticipantOptionLabel(
+                                participant,
+                                participantTypeLabels,
+                              )}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {hasFullSuggestedMapping ? (
                     <SecondaryButton
                       disabled={busyAction != null}
-                      onClick={() => void runTranscriptEnhancement()}
-                      data-testid="run-transcript-enhancement-button"
+                      onClick={() => {
+                        setSpeakerMappingDraft(speakerSuggestion.suggestedMapping);
+                        speakerMappingDraftDirtyRef.current = true;
+                        void saveSpeakerMapping({
+                          confirm: true,
+                          mappingOverride: speakerSuggestion.suggestedMapping,
+                        });
+                      }}
+                      data-testid="apply-speaker-suggestion-button"
                     >
-                      {busyAction === "enhance"
-                        ? t("recording.transcriptEnhancementInProgress")
-                        : t("recording.runTranscriptEnhancement")}
+                      {busyAction === "confirm-mapping"
+                        ? t("common.saving")
+                        : t("recording.applySuggestion")}
                     </SecondaryButton>
-                  )}
+                  ) : null}
+                  <SecondaryButton
+                    disabled={busyAction != null}
+                    onClick={() =>
+                      void saveSpeakerMapping({
+                        confirm: allSpeakersMappedInDraft,
+                      })
+                    }
+                    data-testid="save-speaker-mapping-button"
+                  >
+                    {busyAction === "save-mapping" || busyAction === "confirm-mapping"
+                      ? t("common.saving")
+                      : t("recording.saveMappingAction")}
+                  </SecondaryButton>
+                  <SecondaryButton
+                    disabled={busyAction != null}
+                    onClick={() => {
+                      setMappingReviewSkipped(true);
+                      setError(null);
+                      setMessage(t("recording.speakerMappingCanChangeLater"));
+                    }}
+                    data-testid="skip-speaker-mapping-button"
+                  >
+                    {t("recording.skipSpeakerMappingForNow")}
+                  </SecondaryButton>
                 </div>
-                {transcriptEnhancement?.error ? (
-                  <p className="text-xs text-amber-300">{transcriptEnhancement.error}</p>
-                ) : null}
               </div>
             ) : null}
 
-            {shouldShowSpeakerMappingPanel ? (
+            {shouldShowSpeakerMappingPanel && !showAssistedReviewCard ? (
               <div className="space-y-4 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">

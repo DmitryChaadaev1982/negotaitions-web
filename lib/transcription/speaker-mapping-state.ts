@@ -64,13 +64,18 @@ export function resolveSpeakerMappingForUi(params: {
     return persistedMapping;
   }
 
-  if (params.speakerMappingStatus !== "AUTO_SUGGESTED") {
+  const status = params.speakerMappingStatus ?? null;
+  const allowSuggestedPrefill =
+    status === "AUTO_SUGGESTED" || status === "NEEDS_REVIEW" || status === "REQUIRED";
+  if (!allowSuggestedPrefill) {
     return {};
   }
 
   const metadata = asRecord(params.processingMetadata);
   const suggestion = asRecord(metadata.mappingSuggestion) as MappingSuggestion;
-  if (!isSuggestionSafeForDisplay(suggestion)) {
+  // AUTO_SUGGESTED means mapping is already considered safe for immediate use.
+  // REVIEW statuses should still prefill candidate mapping for quick manual confirmation.
+  if (status === "AUTO_SUGGESTED" && !isSuggestionSafeForDisplay(suggestion)) {
     return {};
   }
 

@@ -725,13 +725,13 @@ export function SessionPostProcessingPanel({
               {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
             </p>
           </div>
-          <div className="flex w-full flex-wrap gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
+          <div className="flex w-full flex-col gap-2 pt-2 sm:ml-auto sm:w-56 sm:pt-0">
             {canRerunTranscription && !rerunConfirmOpen ? (
               <SecondaryButton
                 disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
                 onClick={() => setRerunConfirmOpen(true)}
                 data-testid="post-processing-rerun-transcription-button"
-                className="shrink-0 text-xs"
+                className="w-full text-xs"
               >
                 {rerunBusy
                   ? t("common.loading")
@@ -743,7 +743,7 @@ export function SessionPostProcessingPanel({
                 disabled={enhancementBusy || transcriptionBusy || rerunBusy}
                 onClick={() => void handleRunTranscriptEnhancement()}
                 data-testid="post-processing-run-transcript-enhancement-button"
-                className="shrink-0 text-xs"
+                className="w-full text-xs"
               >
                 {enhancementBusy
                   ? t("sessionMaterials.transcriptEnhancementInProgress")
@@ -755,7 +755,7 @@ export function SessionPostProcessingPanel({
                 disabled={stopTranscriptionBusy}
                 onClick={() => void handleStopTranscription()}
                 data-testid="post-processing-stop-transcription-button"
-                className="shrink-0 text-xs"
+                className="w-full text-xs"
               >
                 {stopTranscriptionBusy
                   ? t("common.loading")

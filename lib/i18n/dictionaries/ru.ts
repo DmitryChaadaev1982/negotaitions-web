@@ -520,7 +520,7 @@ export const ru: Dictionary = {
     transcriptEnhancementSuggested:
       "Рекомендуется дополнительное улучшение качества транскрипта.",
     transcriptEnhancementReasons: "Причины",
-    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    runTranscriptEnhancement: "Улучшить транскрипт",
     transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта...",
     transcriptEnhancementCompleted: "Улучшение качества транскрипта завершено.",
     transcriptEnhancementMayTakeTime:
@@ -577,6 +577,19 @@ export const ru: Dictionary = {
       unknownMappingFailure:
         "Автосопоставление не выполнено. Назначьте говорящих вручную.",
     },
+    confirmSpeakersTitle: "Подтвердите говорящих",
+    confirmSpeakersDescription:
+      "Система не уверена в автосопоставлении. Проверьте предложенное соответствие.",
+    suggested: "Предложено",
+    confidenceHigh: "Высокая",
+    confidenceMedium: "Средняя",
+    confidenceLow: "Низкая",
+    applySuggestion: "Применить предложение",
+    saveMappingAction: "Сохранить сопоставление",
+    skipSpeakerMappingForNow: "Пропустить пока",
+    speakerMappingSaved: "Сопоставление сохранено",
+    speakerMappingCanChangeLater: "Сопоставление можно изменить позже",
+    speakerMappingAutoAppliedCompact: "Сопоставление применено автоматически.",
     confidence: "Уверенность",
     weakSuggestion: "Слабое предположение",
     strongSuggestion: "Надёжное предположение",
@@ -727,7 +740,7 @@ export const ru: Dictionary = {
     transcriptionCompressing: "Подготавливаем аудио для транскрибации.",
     transcriptionInProgress: "Идёт транскрибация.",
     transcriptEnhancementInProgress: "Идёт улучшение качества транскрипта.",
-    runTranscriptEnhancement: "Улучшить качество транскрипта",
+    runTranscriptEnhancement: "Улучшить транскрипт",
     transcriptEnhancementRecommended:
       "Система рекомендует выполнить дополнительное улучшение качества транскрипта.",
     transcriptEnhancementMayTakeTime:
