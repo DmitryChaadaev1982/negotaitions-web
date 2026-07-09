@@ -135,6 +135,109 @@ test("event session keeps event, preparation, and negotiation durations separate
   expect(stateText).not.toContain("E2E_PRIVATE_ALEX_ONLY");
 });
 
+test("event lobby session setup uses role-slot rules and observer flow", async ({
+  page,
+  request,
+}) => {
+  const negotiationCase = await createE2eCase();
+  const event = await createE2eEvent({
+    withParticipants: true,
+    title: "E2E Event Lobby Role Slot UI",
+  });
+  const participants = await getEventParticipants(event.id);
+  const dmitry = participantByName(participants, "Dmitry");
+  const igor = participantByName(participants, "Igor");
+  const alex = participantByName(participants, "Alex");
+  const serg = participantByName(participants, "Serg");
+  const [buyerRole, sellerRole] = negotiationCase.roles;
+
+  for (let i = 0; i < 10; i += 1) {
+    await query(
+      `INSERT INTO "EventParticipant"
+        ("id", "eventId", "displayName", "participantToken", "preference",
+         "isHost", "wantsToPlay", "wantsToObserve", "wantsToFacilitate",
+         "joinedAt", "lastSeenAt", "updatedAt")
+       VALUES (gen_random_uuid(), $1, $2, $3, 'UNDECIDED',
+        false, false, false, false, NOW(), NOW(), NOW())`,
+      [event.id, `Extra ${i + 1}`, `extra-${Date.now()}-${i}`],
+    );
+  }
+
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    data: {
+      hostToken: event.hostToken,
+      selectedCaseId: negotiationCase.id,
+      assignmentDraft: {
+        facilitatorEventParticipantId: null,
+        roleAssignments: {},
+        observerEventParticipantIds: [],
+        preparationDurationMinutes: 5,
+        negotiationDurationMinutes: 15,
+      },
+    },
+  });
+  expect(patchResponse.ok()).toBeTruthy();
+
+  await page.goto(`/events/${event.id}/lobby?hostToken=${event.hostToken}`);
+  await page.getByTestId("configure-session-button").click();
+  await expect(page.getByTestId("session-setup-section")).toBeVisible();
+
+  await page.getByTestId("assign-facilitator-control").selectOption(dmitry.id);
+
+  const roleSelects = page.locator('[data-testid="assign-role-control"]');
+  await expect(roleSelects).toHaveCount(2);
+  await roleSelects.nth(0).selectOption(igor.id);
+
+  const secondSelectIgorOption = roleSelects
+    .nth(1)
+    .locator(`option[value="${igor.id}"]`);
+  await expect(secondSelectIgorOption).toHaveJSProperty("disabled", true);
+  await roleSelects.nth(1).selectOption(alex.id);
+
+  const observerControl = page.getByTestId("assign-observer-control");
+  await expect(observerControl).toContainText("Extra 10");
+  await observerControl.getByLabel("Serg").check();
+
+  await page.getByTestId("create-session-button").click();
+  await expect(page.getByTestId("event-session-card")).toHaveCount(1);
+
+  const stateResponse = await request.get(
+    `/api/events/${event.id}/state?hostToken=${event.hostToken}`,
+  );
+  expect(stateResponse.ok()).toBeTruthy();
+  const state = (await stateResponse.json()) as {
+    sessions: Array<{
+      participants: Array<{
+        displayName: string;
+        participantType: string;
+        roleName: string | null;
+      }>;
+    }>;
+  };
+
+  expect(state.sessions).toHaveLength(1);
+  const createdParticipants = state.sessions[0]?.participants ?? [];
+  const dmitryRow = createdParticipants.find(
+    (participant) => participant.displayName === dmitry.displayName,
+  );
+  const igorRow = createdParticipants.find(
+    (participant) => participant.displayName === igor.displayName,
+  );
+  const alexRow = createdParticipants.find(
+    (participant) => participant.displayName === alex.displayName,
+  );
+  const sergRow = createdParticipants.find(
+    (participant) => participant.displayName === serg.displayName,
+  );
+
+  expect(dmitryRow?.participantType).toBe("FACILITATOR");
+  expect(igorRow?.participantType).toBe("PARTICIPANT");
+  expect(alexRow?.participantType).toBe("PARTICIPANT");
+  expect(igorRow?.roleName).toBe(buyerRole.name);
+  expect(alexRow?.roleName).toBe(sellerRole.name);
+  expect(sergRow?.participantType).toBe("OBSERVER");
+});
+
 test("event-created session keeps explicitly assigned admin participant role", async ({
   request,
 }) => {

@@ -30,6 +30,7 @@ import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
+import type { EventAssignmentDraft } from "@/lib/event-assignment";
 
 const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 
@@ -466,7 +467,10 @@ export function EventLobbyView({
     [activateStaleConnection, eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
   );
 
-  const createSession = useCallback(async (overrides?: { roomLabel?: string }) => {
+  const createSession = useCallback(async (overrides?: {
+    roomLabel?: string;
+    assignmentDraft?: EventAssignmentDraft;
+  }) => {
     if (staleConnection || !lobbyConnectionId) return;
     if (!state) return;
     // Guard against duplicate create from double-click / re-render.
@@ -477,12 +481,13 @@ export function EventLobbyView({
 
     try {
       const selectedCase = state.selectedCase;
+      const assignmentDraft = overrides?.assignmentDraft ?? state.assignmentDraft;
       // Bug 3 fix: prefer the room label passed directly from the input (latest
       // local value) over the possibly-stale persisted draft. Fall back to the
       // persisted draft, and only to the server default when truly empty.
       const resolvedRoomLabel =
         overrides?.roomLabel?.trim() ||
-        state.assignmentDraft.roomLabel?.trim() ||
+        assignmentDraft.roomLabel?.trim() ||
         undefined;
       const response = await fetch(`/api/events/${eventId}/host`, {
         method: "POST",
@@ -493,19 +498,19 @@ export function EventLobbyView({
           caseId: selectedCase?.id,
           roomLabel: resolvedRoomLabel,
           preparationDurationSeconds:
-            state.assignmentDraft.preparationDurationMinutes * 60,
+            assignmentDraft.preparationDurationMinutes * 60,
           negotiationDurationSeconds:
-            state.assignmentDraft.negotiationDurationMinutes * 60,
+            assignmentDraft.negotiationDurationMinutes * 60,
           facilitatorEventParticipantId:
-            state.assignmentDraft.facilitatorEventParticipantId ?? undefined,
+            assignmentDraft.facilitatorEventParticipantId ?? undefined,
           roleAssignments: Object.entries(
-            state.assignmentDraft.roleAssignments,
+            assignmentDraft.roleAssignments,
           ).map(([caseRoleId, eventParticipantId]) => ({
             caseRoleId,
             eventParticipantId,
           })),
           observerEventParticipantIds:
-            state.assignmentDraft.observerEventParticipantIds,
+            assignmentDraft.observerEventParticipantIds,
         }),
       });
 
