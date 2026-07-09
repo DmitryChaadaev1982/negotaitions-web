@@ -25,6 +25,12 @@ test.afterAll(async () => {
   await cleanupE2eData();
 });
 
+const browserBaseUrl =
+  process.env.PLAYWRIGHT_BASE_URL?.trim() ||
+  process.env.BASE_URL?.trim() ||
+  process.env.APP_URL?.trim() ||
+  "http://127.0.0.1:3100";
+
 async function createUserSessionCookie(userId: string) {
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
@@ -35,6 +41,22 @@ async function createUserSessionCookie(userId: string) {
     [userId, tokenHash],
   );
   return `auth_session=${rawToken}`;
+}
+
+async function loginToPageWithSessionCookie(
+  page: import("@playwright/test").Page,
+  cookieHeader: string,
+) {
+  const rawToken = cookieHeader.replace(/^auth_session=/, "");
+  await page.context().addCookies([
+    {
+      name: "auth_session",
+      value: rawToken,
+      url: browserBaseUrl,
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
 }
 
 test("account-first join redirects unauth users and prevents duplicate event participants", async ({
@@ -236,6 +258,153 @@ test("event lobby session setup uses role-slot rules and observer flow", async (
   expect(igorRow?.roleName).toBe(buyerRole.name);
   expect(alexRow?.roleName).toBe(sellerRole.name);
   expect(sergRow?.participantType).toBe("OBSERVER");
+});
+
+test("event lobby host can finish active session from sessions board", async ({
+  page,
+  request,
+}) => {
+  const host = await createActiveUser();
+  const player1 = await createActiveUser();
+  const player2 = await createActiveUser();
+  const hostCookie = await createUserSessionCookie(host.id);
+  const negotiationCase = await createE2eCase();
+  const event = await createE2eEvent({
+    title: "E2E Lobby Finish Active Session",
+  });
+  const [buyerRole, sellerRole] = negotiationCase.roles;
+  expect(buyerRole && sellerRole).toBeTruthy();
+
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "visibility"='PUBLIC',"hostUserId"=$2,"facilitatorUserId"=$2
+     WHERE "id"=$1`,
+    [event.id, host.id],
+  );
+  await query(`DELETE FROM "EventParticipant" WHERE "eventId"=$1`, [event.id]);
+
+  const hostParticipant = (
+    await query<{ id: string }>(
+      `INSERT INTO "EventParticipant"
+        ("id","eventId","userId","displayName","participantToken","isHost","preference","joinedAt","lastSeenAt","createdAt","updatedAt")
+       VALUES (gen_random_uuid(),$1,$2,'Host',gen_random_uuid()::text,true,'FACILITATE',NOW(),NOW(),NOW(),NOW())
+       RETURNING "id"`,
+      [event.id, host.id],
+    )
+  )[0]!;
+  const player1Participant = (
+    await query<{ id: string }>(
+      `INSERT INTO "EventParticipant"
+        ("id","eventId","userId","displayName","participantToken","isHost","preference","joinedAt","lastSeenAt","createdAt","updatedAt")
+       VALUES (gen_random_uuid(),$1,$2,'Player One',gen_random_uuid()::text,false,'PLAY',NOW(),NOW(),NOW(),NOW())
+       RETURNING "id"`,
+      [event.id, player1.id],
+    )
+  )[0]!;
+  const player2Participant = (
+    await query<{ id: string }>(
+      `INSERT INTO "EventParticipant"
+        ("id","eventId","userId","displayName","participantToken","isHost","preference","joinedAt","lastSeenAt","createdAt","updatedAt")
+       VALUES (gen_random_uuid(),$1,$2,'Player Two',gen_random_uuid()::text,false,'PLAY',NOW(),NOW(),NOW(),NOW())
+       RETURNING "id"`,
+      [event.id, player2.id],
+    )
+  )[0]!;
+
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostCookie },
+    data: {
+      selectedCaseId: negotiationCase.id,
+      assignmentDraft: {
+        facilitatorEventParticipantId: hostParticipant.id,
+        roleAssignments: {
+          [buyerRole!.id]: player1Participant.id,
+          [sellerRole!.id]: player2Participant.id,
+        },
+        observerEventParticipantIds: [],
+        roomLabel: "Room Finish",
+        preparationDurationMinutes: 1,
+        negotiationDurationMinutes: 2,
+      },
+    },
+  });
+  expect(patchResponse.ok()).toBeTruthy();
+
+  const createResponse = await request.post(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostCookie },
+    data: {},
+  });
+  expect(createResponse.ok()).toBeTruthy();
+  const createPayload = (await createResponse.json()) as {
+    session: { id: string };
+  };
+
+  await loginToPageWithSessionCookie(page, hostCookie);
+  await page.goto(`/events/${event.id}/lobby`);
+  await expect(page.getByTestId("host-controls-panel")).toBeVisible();
+  await expect(page.getByTestId("finish-session-button")).toHaveCount(1);
+  await page.getByTestId("finish-session-button").click();
+
+  await expect
+    .poll(async () => {
+      const rows = await query<{ negotiationState: string }>(
+        `SELECT "negotiationState" FROM "Session" WHERE "id"=$1`,
+        [createPayload.session.id],
+      );
+      return rows[0]?.negotiationState ?? null;
+    })
+    .toBe("FINISHED");
+
+  await expect(page.getByTestId("finish-session-button")).toHaveCount(0);
+});
+
+test("event lobby session setup can be cancelled", async ({ page, request }) => {
+  const host = await createActiveUser();
+  const hostCookie = await createUserSessionCookie(host.id);
+  const negotiationCase = await createE2eCase();
+  const event = await createE2eEvent({
+    title: "E2E Lobby Cancel Session Setup",
+  });
+
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "visibility"='PUBLIC',"hostUserId"=$2,"facilitatorUserId"=$2
+     WHERE "id"=$1`,
+    [event.id, host.id],
+  );
+  await query(`DELETE FROM "EventParticipant" WHERE "eventId"=$1`, [event.id]);
+  await query(
+    `INSERT INTO "EventParticipant"
+      ("id","eventId","userId","displayName","participantToken","isHost","preference","joinedAt","lastSeenAt","createdAt","updatedAt")
+     VALUES (gen_random_uuid(),$1,$2,'Host',gen_random_uuid()::text,true,'FACILITATE',NOW(),NOW(),NOW(),NOW())`,
+    [event.id, host.id],
+  );
+
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostCookie },
+    data: {
+      selectedCaseId: negotiationCase.id,
+      assignmentDraft: {
+        facilitatorEventParticipantId: null,
+        roleAssignments: {},
+        observerEventParticipantIds: [],
+        roomLabel: "",
+        preparationDurationMinutes: 1,
+        negotiationDurationMinutes: 2,
+      },
+    },
+  });
+  expect(patchResponse.ok()).toBeTruthy();
+
+  await loginToPageWithSessionCookie(page, hostCookie);
+  await page.goto(`/events/${event.id}/lobby`);
+  await expect(page.getByTestId("host-controls-panel")).toBeVisible();
+
+  await page.getByTestId("configure-session-button").click();
+  await expect(page.getByTestId("session-setup-section")).toBeVisible();
+  await page.getByTestId("room-label-input").fill("Will cancel");
+  await page.getByTestId("cancel-session-setup-button").click();
+  await expect(page.getByTestId("session-setup-section")).toHaveCount(0);
 });
 
 test("event-created session keeps explicitly assigned admin participant role", async ({
