@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import {
   assignParticipantRole,
@@ -159,20 +159,6 @@ export function SessionRoleManagementPanel({
   const hasIncomingServerChanges = propsChangedSinceBase && hasUnsavedLocalChanges;
   const effectiveDraft =
     propsChangedSinceBase && !hasUnsavedLocalChanges ? propsDraft : draft;
-  useEffect(() => {
-    if (!propsChangedSinceBase || hasUnsavedLocalChanges) {
-      return;
-    }
-
-    setDraft(propsDraft);
-    setBaseDraft(propsDraft);
-    setBaseSignature(propsSignature);
-  }, [
-    hasUnsavedLocalChanges,
-    propsChangedSinceBase,
-    propsDraft,
-    propsSignature,
-  ]);
   const slotSummary = useMemo(
     () =>
       deriveRoleSlotSummary({
@@ -395,6 +381,7 @@ export function SessionRoleManagementPanel({
                     propsChangedSinceBase && !hasUnsavedLocalChanges;
 
                   if (shouldAdoptLatestPropsBeforeEditing) {
+                    setBaseDraft(propsDraft);
                     setBaseSignature(propsSignature);
                   }
 

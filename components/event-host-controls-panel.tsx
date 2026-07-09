@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -18,6 +18,14 @@ import {
   createFreshAssignmentDraft,
   type EventAssignmentDraft,
 } from "@/lib/event-assignment";
+import {
+  deriveEventFacilitatorOptionAvailability,
+  deriveEventObserverOptionAvailability,
+  deriveEventRoleOptionAvailability,
+  deriveEventRoleSlotSummary,
+  deriveUnassignedRoleEligibleParticipantIds,
+  normalizeEventAssignmentDraft,
+} from "@/lib/event-role-ui-state";
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -31,7 +39,10 @@ type EventHostControlsPanelProps = {
   onShowCompleteDialog: (open: boolean) => void;
   onCompleteEvent: () => void;
   onUpdateHost: (payload: Record<string, unknown>) => Promise<void>;
-  onCreateSession: (overrides?: { roomLabel?: string }) => void;
+  onCreateSession: (overrides?: {
+    roomLabel?: string;
+    assignmentDraft?: EventAssignmentDraft;
+  }) => void;
   createSessionError: string | null;
 };
 
@@ -56,27 +67,124 @@ export function EventHostControlsPanel({
   const [roomLabelDraft, setRoomLabelDraft] = useState("");
   const [isEditingRoomLabel, setIsEditingRoomLabel] = useState(false);
   const showLibrary = !selectedCase || libraryMode;
+  const assignmentParticipants = state.participants;
+  const normalizedDraft = useMemo(
+    () =>
+      normalizeEventAssignmentDraft({
+        draft,
+        roles: selectedCase?.roles ?? [],
+        participants: assignmentParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          activeAssignmentLabel: participant.activeAssignmentLabel,
+        })),
+      }),
+    [assignmentParticipants, draft, selectedCase?.roles],
+  );
+
+  const roleSlotSummary = useMemo(
+    () =>
+      deriveEventRoleSlotSummary({
+        roles: selectedCase?.roles ?? [],
+        participants: assignmentParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          activeAssignmentLabel: participant.activeAssignmentLabel,
+        })),
+        roleAssignments: normalizedDraft.roleAssignments,
+      }),
+    [assignmentParticipants, normalizedDraft.roleAssignments, selectedCase?.roles],
+  );
+  const facilitatorOptions = useMemo(
+    () =>
+      deriveEventFacilitatorOptionAvailability({
+        participants: assignmentParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          activeAssignmentLabel: participant.activeAssignmentLabel,
+        })),
+        roleAssignments: normalizedDraft.roleAssignments,
+      }),
+    [assignmentParticipants, normalizedDraft.roleAssignments],
+  );
+  const observerOptions = useMemo(
+    () =>
+      deriveEventObserverOptionAvailability({
+        participants: assignmentParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          activeAssignmentLabel: participant.activeAssignmentLabel,
+        })),
+        facilitatorEventParticipantId: normalizedDraft.facilitatorEventParticipantId,
+        roleAssignments: normalizedDraft.roleAssignments,
+      }),
+    [
+      assignmentParticipants,
+      normalizedDraft.facilitatorEventParticipantId,
+      normalizedDraft.roleAssignments,
+    ],
+  );
+  const remainingObserverEligibleIds = useMemo(
+    () =>
+      deriveUnassignedRoleEligibleParticipantIds({
+        participants: assignmentParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          activeAssignmentLabel: participant.activeAssignmentLabel,
+        })),
+        facilitatorEventParticipantId: normalizedDraft.facilitatorEventParticipantId,
+        roleAssignments: normalizedDraft.roleAssignments,
+      }),
+    [
+      assignmentParticipants,
+      normalizedDraft.facilitatorEventParticipantId,
+      normalizedDraft.roleAssignments,
+    ],
+  );
+  const observerSelectionSet = useMemo(
+    () => new Set(normalizedDraft.observerEventParticipantIds),
+    [normalizedDraft.observerEventParticipantIds],
+  );
+
+  const resolveOptionReason = useCallback(
+    (reason: string | null) => {
+      if (!reason) {
+        return null;
+      }
+      if (reason === "assignedToAnotherRole" || reason === "selectedAsRolePlayer") {
+        return t("sessions.roleAssignedToAnotherParticipant");
+      }
+      if (reason === "selectedAsFacilitator") {
+        return t("validation.facilitatorPlayerConflict");
+      }
+      if (reason === "alreadyInActiveSession") {
+        return t("events.activeSession");
+      }
+      return t("common.notYet");
+    },
+    [t],
+  );
 
   const saveDraft = useCallback(
     (next: Partial<EventAssignmentDraft>) => {
       const merged: EventAssignmentDraft = {
-        ...draft,
+        ...normalizedDraft,
         ...next,
       };
       void onUpdateHost({ assignmentDraft: merged });
     },
-    [draft, onUpdateHost],
+    [normalizedDraft, onUpdateHost],
   );
 
   const commitRoomLabelDraft = useCallback(() => {
     if (!isEditingRoomLabel) {
       return;
     }
-    if (roomLabelDraft !== draft.roomLabel) {
+    if (roomLabelDraft !== normalizedDraft.roomLabel) {
       saveDraft({ roomLabel: roomLabelDraft });
     }
     setIsEditingRoomLabel(false);
-  }, [draft.roomLabel, isEditingRoomLabel, roomLabelDraft, saveDraft]);
+  }, [isEditingRoomLabel, normalizedDraft.roomLabel, roomLabelDraft, saveDraft]);
 
   // Bug 3 fix: create must use the room name currently visible in the input,
   // not the last persisted `draft.roomLabel` (which is saved asynchronously on
@@ -85,16 +193,22 @@ export function EventHostControlsPanel({
   // race against the async draft save.
   const handleCreateSession = useCallback(() => {
     const latestRoomLabel = (
-      isEditingRoomLabel ? roomLabelDraft : draft.roomLabel
+      isEditingRoomLabel ? roomLabelDraft : normalizedDraft.roomLabel
     ).trim();
-    if (isEditingRoomLabel && roomLabelDraft !== draft.roomLabel) {
+    if (isEditingRoomLabel && roomLabelDraft !== normalizedDraft.roomLabel) {
       saveDraft({ roomLabel: roomLabelDraft });
       setIsEditingRoomLabel(false);
     }
-    onCreateSession({ roomLabel: latestRoomLabel || undefined });
+    onCreateSession({
+      roomLabel: latestRoomLabel || undefined,
+      assignmentDraft: {
+        ...normalizedDraft,
+        roomLabel: latestRoomLabel,
+      },
+    });
   }, [
-    draft.roomLabel,
     isEditingRoomLabel,
+    normalizedDraft,
     onCreateSession,
     roomLabelDraft,
     saveDraft,
@@ -388,9 +502,9 @@ export function EventHostControlsPanel({
                 type="text"
                 className={inputClassName(false)}
                 placeholder={t("events.roomNamePlaceholder")}
-                value={isEditingRoomLabel ? roomLabelDraft : draft.roomLabel}
+                value={isEditingRoomLabel ? roomLabelDraft : normalizedDraft.roomLabel}
                 onFocus={() => {
-                  setRoomLabelDraft(draft.roomLabel);
+                  setRoomLabelDraft(normalizedDraft.roomLabel);
                   setIsEditingRoomLabel(true);
                 }}
                 onBlur={commitRoomLabelDraft}
@@ -408,7 +522,7 @@ export function EventHostControlsPanel({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    setRoomLabelDraft(draft.roomLabel);
+                    setRoomLabelDraft(normalizedDraft.roomLabel);
                     setIsEditingRoomLabel(false);
                     event.currentTarget.blur();
                   }
@@ -424,7 +538,7 @@ export function EventHostControlsPanel({
                 min={0}
                 max={60}
                 className={inputClassName(false)}
-                value={draft.preparationDurationMinutes}
+                value={normalizedDraft.preparationDurationMinutes}
                 onChange={(event) => {
                   const minutes = Number(event.target.value);
                   if (!Number.isFinite(minutes)) return;
@@ -441,7 +555,7 @@ export function EventHostControlsPanel({
                 min={1}
                 max={180}
                 className={inputClassName(false)}
-                value={draft.negotiationDurationMinutes}
+                value={normalizedDraft.negotiationDurationMinutes}
                 onChange={(event) => {
                   const minutes = Number(event.target.value);
                   if (!Number.isFinite(minutes)) return;
@@ -455,19 +569,31 @@ export function EventHostControlsPanel({
               <select
                 data-testid="assign-facilitator-control"
                 className={inputClassName(false)}
-                value={draft.facilitatorEventParticipantId ?? ""}
+                value={normalizedDraft.facilitatorEventParticipantId ?? ""}
                 onChange={(event) => {
+                  const facilitatorEventParticipantId = event.target.value || null;
                   saveDraft({
-                    facilitatorEventParticipantId: event.target.value || null,
+                    facilitatorEventParticipantId,
+                    observerEventParticipantIds:
+                      normalizedDraft.observerEventParticipantIds.filter(
+                        (participantId) => participantId !== facilitatorEventParticipantId,
+                      ),
                   });
                 }}
               >
                 <option value="">{t("common.selectRole")}</option>
-                {state.participants.map((participant) => (
-                  <option key={participant.id} value={participant.id}>
+                {facilitatorOptions.map((participant) => (
+                  <option
+                    key={participant.id}
+                    value={participant.id}
+                    disabled={participant.disabled}
+                  >
                     {participant.displayName}
                     {participant.activeAssignmentLabel
                       ? ` · ${participant.activeAssignmentLabel}`
+                      : ""}
+                    {participant.disabledReason
+                      ? ` (${resolveOptionReason(participant.disabledReason)})`
                       : ""}
                   </option>
                 ))}
@@ -476,77 +602,153 @@ export function EventHostControlsPanel({
 
             <div className="space-y-2">
               <p className={labelClassName}>{t("events.assignRoles")}</p>
+              {selectedCase.roles.length > 0 ? (
+                <div
+                  className="space-y-2 rounded-lg border border-slate-700/40 bg-slate-900/30 px-3 py-2"
+                  data-testid="event-role-slot-summary"
+                >
+                  {roleSlotSummary.slots.map((slot) => (
+                    <p key={slot.roleId} className="text-xs text-slate-300">
+                      <span className="font-medium text-slate-200">{slot.roleName}</span>
+                      {" — "}
+                      {slot.assignedParticipantName ?? t("sessions.roleUnassigned")}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
               {selectedCase.roles.map((role) => (
                 <div key={role.id}>
                   <label className="mb-1 block text-xs text-slate-400">{role.name}</label>
                   <select
                     data-testid="assign-role-control"
                     className={inputClassName(false)}
-                    value={draft.roleAssignments[role.id] ?? ""}
+                    value={normalizedDraft.roleAssignments[role.id] ?? ""}
                     onChange={(event) => {
+                      const roleAssignments = {
+                        ...normalizedDraft.roleAssignments,
+                      };
+                      if (event.target.value) {
+                        roleAssignments[role.id] = event.target.value;
+                      } else {
+                        delete roleAssignments[role.id];
+                      }
+                      const assignedRolePlayerIds = new Set(
+                        Object.values(roleAssignments),
+                      );
                       saveDraft({
-                        roleAssignments: {
-                          ...draft.roleAssignments,
-                          [role.id]: event.target.value,
-                        },
+                        roleAssignments,
+                        observerEventParticipantIds:
+                          normalizedDraft.observerEventParticipantIds.filter(
+                            (participantId) => !assignedRolePlayerIds.has(participantId),
+                          ),
                       });
                     }}
                   >
                     <option value="">{t("common.selectRole")}</option>
-                    {state.participants.map((participant) => (
-                      <option key={participant.id} value={participant.id}>
+                    {deriveEventRoleOptionAvailability({
+                      roleId: role.id,
+                      participants: assignmentParticipants.map((participant) => ({
+                        id: participant.id,
+                        displayName: participant.displayName,
+                        activeAssignmentLabel: participant.activeAssignmentLabel,
+                      })),
+                      facilitatorEventParticipantId:
+                        normalizedDraft.facilitatorEventParticipantId,
+                      roleAssignments: normalizedDraft.roleAssignments,
+                    }).map((participant) => (
+                      <option
+                        key={participant.id}
+                        value={participant.id}
+                        disabled={participant.disabled}
+                      >
                         {participant.displayName}
                         {participant.activeAssignmentLabel
                           ? ` · ${participant.activeAssignmentLabel}`
+                          : ""}
+                        {participant.disabledReason
+                          ? ` (${resolveOptionReason(participant.disabledReason)})`
                           : ""}
                       </option>
                     ))}
                   </select>
                 </div>
               ))}
+              {roleSlotSummary.allRolesAssigned ? (
+                <div className="space-y-1" data-testid="event-all-roles-assigned-hint">
+                  <p className="text-xs font-medium text-amber-300">
+                    {t("sessions.allRolesAssigned")}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {t("sessions.newParticipantsObserverOrUnassigned")}
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             <div>
               <label className={labelClassName}>{t("events.assignObservers")}</label>
               <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-slate-600/30 p-2" data-testid="assign-observer-control">
-                {state.participants.map((participant) => {
-                  const isRolePlayer = Object.values(draft.roleAssignments).includes(
-                    participant.id,
-                  );
-                  const isFacilitator =
-                    draft.facilitatorEventParticipantId === participant.id;
-                  const checked = draft.observerEventParticipantIds.includes(participant.id);
+                {observerOptions.map((participant) => {
+                  const checked = observerSelectionSet.has(participant.id);
 
                   return (
                     <label
                       key={participant.id}
                       className={`flex items-center gap-2 text-sm ${
-                        isRolePlayer || isFacilitator
+                        participant.disabled
                           ? "text-slate-500"
                           : "text-slate-200"
                       }`}
                     >
                       <input
                         type="checkbox"
-                        disabled={isRolePlayer || isFacilitator}
+                        disabled={participant.disabled}
                         checked={checked}
                         onChange={(event) => {
                           const ids = event.target.checked
-                            ? [...draft.observerEventParticipantIds, participant.id]
-                            : draft.observerEventParticipantIds.filter(
+                            ? [
+                                ...normalizedDraft.observerEventParticipantIds,
+                                participant.id,
+                              ]
+                            : normalizedDraft.observerEventParticipantIds.filter(
                                 (id) => id !== participant.id,
                               );
-                          saveDraft({ observerEventParticipantIds: ids });
+                          saveDraft({
+                            observerEventParticipantIds: Array.from(new Set(ids)),
+                          });
                         }}
                       />
                       {participant.displayName}
                       {participant.activeAssignmentLabel
                         ? ` · ${participant.activeAssignmentLabel}`
                         : ""}
+                      {participant.disabledReason
+                        ? ` (${resolveOptionReason(participant.disabledReason)})`
+                        : ""}
                     </label>
                   );
                 })}
               </div>
+              {roleSlotSummary.allRolesAssigned &&
+              remainingObserverEligibleIds.length > 0 ? (
+                <SecondaryButton
+                  type="button"
+                  className="mt-2 w-full px-2 py-1 text-xs"
+                  data-testid="assign-remaining-observers-button"
+                  onClick={() =>
+                    saveDraft({
+                      observerEventParticipantIds: Array.from(
+                        new Set([
+                          ...normalizedDraft.observerEventParticipantIds,
+                          ...remainingObserverEligibleIds,
+                        ]),
+                      ),
+                    })
+                  }
+                >
+                  {t("events.assignObservers")}
+                </SecondaryButton>
+              ) : null}
             </div>
 
             <GradientButton
