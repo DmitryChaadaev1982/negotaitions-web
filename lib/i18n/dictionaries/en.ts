@@ -316,6 +316,10 @@ export const en = {
     roleAssignmentConflict: "A participant already has this role.",
     roleAssignmentFacilitatorConflict: "Facilitator cannot be assigned a player role.",
     roleReassignmentBlocked: "Roles cannot be reassigned after preparation has started.",
+    roleAlreadyAssigned: "Already assigned",
+    roleAssignedToAnotherParticipant: "Role is assigned to another participant",
+    roleDraftUnsaved: "You have unsaved role changes.",
+    roleAssignmentsUpdatedElsewhere: "Role assignments were updated. Save or re-apply your changes.",
     notJoinedYet: "Not joined",
     inactive: "Inactive",
     disconnected: "Disconnected",
@@ -326,6 +330,8 @@ export const en = {
     // Add participant: unassigned option
     assignRoleLater: "Assign later",
     assignRoleLaterHint: "You can assign a role from the role management panel after the participant joins.",
+    allParticipantRolesAssignedHelper:
+      "All participant roles are assigned. New users will be observers or unassigned.",
   },
   admin: {
     title: "Admin diagnostics",

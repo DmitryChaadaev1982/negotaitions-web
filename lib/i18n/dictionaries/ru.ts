@@ -320,6 +320,10 @@ export const ru: Dictionary = {
     roleAssignmentConflict: "Участник уже назначен на эту роль.",
     roleAssignmentFacilitatorConflict: "Фасилитатор не может быть назначен как игрок.",
     roleReassignmentBlocked: "Нельзя переназначать роли после начала подготовки.",
+    roleAlreadyAssigned: "Уже назначена",
+    roleAssignedToAnotherParticipant: "Роль назначена другому участнику",
+    roleDraftUnsaved: "Есть несохранённые изменения ролей.",
+    roleAssignmentsUpdatedElsewhere: "Назначения ролей обновились. Сохраните изменения или примените повторно.",
     notJoinedYet: "Не присоединился",
     inactive: "Неактивен",
     disconnected: "Отключился",
@@ -330,6 +334,8 @@ export const ru: Dictionary = {
     // Add participant: unassigned option
     assignRoleLater: "Назначить позже",
     assignRoleLaterHint: "Роль можно назначить из панели управления ролями после того, как участник присоединится.",
+    allParticipantRolesAssignedHelper:
+      "Все роли участников назначены. Новые участники будут наблюдателями или без роли.",
   },
   admin: {
     title: "Административная диагностика",
