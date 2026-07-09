@@ -160,3 +160,50 @@ export function deriveAddParticipantRoleOptionAvailability(params: {
     allRolesAssigned: params.roles.length > 0 && availableRoleCount === 0,
   };
 }
+
+export type RoleSlotSummaryEntry = {
+  roleId: string;
+  roleName: string;
+  assignedParticipantId: string | null;
+  assignedParticipantName: string | null;
+  isAssigned: boolean;
+};
+
+export function deriveRoleSlotSummary(params: {
+  roles: SessionRoleOption[];
+  participants: Array<SessionRoleParticipantState & { displayName: string }>;
+  draft: Record<string, DraftAssignmentValue>;
+}): { slots: RoleSlotSummaryEntry[]; allRolesAssigned: boolean } {
+  const assignedByRoleId = new Map<string, { id: string; displayName: string }>();
+
+  for (const participant of params.participants) {
+    const draftValue = params.draft[participant.id] ?? null;
+    const isParticipantRoleAssignment =
+      participant.type === "PARTICIPANT" &&
+      draftValue !== OBSERVER_DRAFT_VALUE &&
+      typeof draftValue === "string";
+
+    if (isParticipantRoleAssignment && !assignedByRoleId.has(draftValue)) {
+      assignedByRoleId.set(draftValue, {
+        id: participant.id,
+        displayName: participant.displayName,
+      });
+    }
+  }
+
+  const slots = params.roles.map((role) => {
+    const assignedParticipant = assignedByRoleId.get(role.id) ?? null;
+    return {
+      roleId: role.id,
+      roleName: role.name,
+      assignedParticipantId: assignedParticipant?.id ?? null,
+      assignedParticipantName: assignedParticipant?.displayName ?? null,
+      isAssigned: assignedParticipant !== null,
+    };
+  });
+
+  return {
+    slots,
+    allRolesAssigned: slots.length > 0 && slots.every((slot) => slot.isAssigned),
+  };
+}

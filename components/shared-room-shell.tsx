@@ -214,13 +214,13 @@ function RoomSidebar({
             <GlassCard elevated>
               <GlassCardContent>
                 <h3 className="mb-3 text-sm font-semibold text-slate-50">
-                  {t("sessions.roleManagementTitle")}
+                  {t("sessions.participantRoles")}
                 </h3>
                 <SessionRoleManagementPanel
                   sessionId={sidebar.sessionId}
                   participants={roleManagementParticipants}
                   availableRoles={sidebar.sessionRolesForFacilitator}
-                  compact
+                  variant="compact"
                 />
               </GlassCardContent>
             </GlassCard>
