@@ -27,23 +27,25 @@
   - keep boundary-overlap segments otherwise.
 - Known limitation: filtering is segment-level (no word-level split), so mixed boundary segments are kept/dropped by dominance.
 
-## Experimental Source-Audio Pause Cut (Stage 3.4.4)
+## Source-Audio Pause Processing (Production Default)
 
 - Feature-flagged by `PAUSE_PROCESSING_MODE`.
-  - `transcript_interval_filter` (default): existing segment-level pause filtering.
-  - `source_audio_cut`: builds an active-only audio file before SpeechKit.
+  - `source_audio_cut` (**default when env is unset**): builds an active-only audio file before SpeechKit.
+  - `transcript_interval_filter` (**legacy/deprecated fallback**): approximate segment-level pause filtering.
 - In `source_audio_cut` mode:
   - continuous source recording is still downloaded as one file;
   - `SessionPauseInterval` rows are converted to recording-relative offsets;
   - active timeline intervals are built (real timeline -> active timeline map);
   - ffmpeg cuts pause windows and concatenates active parts into `active-audio.wav`;
   - SpeechKit receives active-only audio.
+- In `source_audio_cut`, transcript interval filtering is bypassed by design (no double filtering).
 - Transcript metadata stores `pauseProcessing` diagnostics:
   - mode, source/active durations, pause/active interval counts,
   - removed pause duration,
   - active timeline map,
   - ffmpeg diagnostics and local artifact path when available.
-- If ffmpeg is unavailable in `source_audio_cut` mode, transcription fails with an explicit recoverable error (no silent fallback to segment-level filtering in that run).
+- If ffmpeg is unavailable or fails in `source_audio_cut` mode, transcription fails explicitly (no silent fallback to full recording or segment-level filtering in that run).
+- Source-audio debug artifacts are written under `PAUSE_SOURCE_AUDIO_DEBUG_DIR` when configured; default path is `.debug/pause-source-audio`.
 
 ## Key Implementations
 
@@ -80,6 +82,9 @@
   - `pauseProcessing.mode`
   - `pauseProcessing.sourceRecordingDurationMs`
   - `pauseProcessing.activeAudioDurationMs`
+  - `pauseProcessing.removedPauseDurationMs`
+  - `pauseProcessing.pauseIntervalCount`
+  - `pauseProcessing.activeIntervalCount`
   - `pauseProcessing.activeTimelineMap`
   - `pauseProcessing.sourceAudioArtifactPath`
   - `pauseProcessing.ffmpegDiagnostics`

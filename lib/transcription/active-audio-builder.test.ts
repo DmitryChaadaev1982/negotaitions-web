@@ -47,7 +47,7 @@ test("resolveActiveAudioOutputPaths resolves relative debug dir to absolute path
   assert.equal(paths.ffmpegCommandPath.endsWith("ffmpeg-command.txt"), true);
 });
 
-test("buildActiveAudioFromRecording writes diagnostics with output path and stderr on ffmpeg failure", async (t) => {
+test("source_audio_cut ffmpeg failure is explicit and writes diagnostics", async (t) => {
   const ffmpegStatus = getFfmpegStatus();
   if (!ffmpegStatus.available) {
     t.skip("ffmpeg is unavailable in this environment");

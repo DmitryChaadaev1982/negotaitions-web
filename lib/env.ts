@@ -36,7 +36,14 @@ export type TranscriptionProvider = "openai" | "yandex_speechkit";
 export type YandexSpeechKitContainerType = "MP3" | "WAV" | "OGG_OPUS";
 export type VoximplantAudioProcessingProfile = "speech" | "raw_diagnostic";
 export type PauseProcessingMode =
+  /**
+   * Legacy fallback mode: approximate transcript-level pause filtering.
+   * @deprecated Prefer source_audio_cut for deterministic pre-transcription trimming.
+   */
   | "transcript_interval_filter"
+  /**
+   * Default production mode: deterministic ffmpeg cut/concat before transcription.
+   */
   | "source_audio_cut";
 
 export function getVideoProvider(): VideoProvider {
@@ -139,9 +146,21 @@ export function getPauseFilterRuleOverridePath(): string | null {
 
 export function getPauseProcessingMode(): PauseProcessingMode {
   const raw = process.env.PAUSE_PROCESSING_MODE?.trim().toLowerCase();
-  return raw === "source_audio_cut"
-    ? "source_audio_cut"
-    : "transcript_interval_filter";
+  if (!raw || raw === "source_audio_cut") {
+    return "source_audio_cut";
+  }
+  if (raw === "transcript_interval_filter") {
+    return "transcript_interval_filter";
+  }
+  console.warn(
+    `[env] Invalid PAUSE_PROCESSING_MODE="${raw}". Falling back to default mode "source_audio_cut". ` +
+      `Use "transcript_interval_filter" only as a legacy fallback.`,
+  );
+  return "source_audio_cut";
+}
+
+export function getPauseSourceAudioDebugDir(): string {
+  return process.env.PAUSE_SOURCE_AUDIO_DEBUG_DIR?.trim() || ".debug/pause-source-audio";
 }
 
 export function getYandexTranscriptEnhancementModel(): string {

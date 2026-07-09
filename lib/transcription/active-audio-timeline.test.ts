@@ -6,7 +6,7 @@ import {
   buildActiveAudioTimeline,
 } from "@/lib/transcription/active-audio-timeline";
 
-test("no pause produces single active interval", () => {
+test("source_audio_cut remains compatible when session has no pauses", () => {
   const result = buildActiveAudioTimeline({
     recordingDurationMs: 100_000,
     pauseIntervals: [],
@@ -60,7 +60,7 @@ test("two pauses produce three active intervals", () => {
   assert.equal(result.diagnostics.activeDurationMs, 80_000);
 });
 
-test("pause then end keeps only pre-pause active interval", () => {
+test("source_audio_cut remains compatible for Pause -> Finish flow", () => {
   const result = buildActiveAudioTimeline({
     recordingDurationMs: 100_000,
     pauseIntervals: [{ startMs: 40_000, endMs: 100_000 }],
