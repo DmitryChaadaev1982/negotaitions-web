@@ -1146,7 +1146,6 @@ export const en = {
     createFirstSession: "Create first session",
     existingSessions: "Existing sessions",
     createSession: "Create session",
-    createAnotherSession: "Create another session",
     noCasesFound: "No cases found",
     noCasesFoundHint: "Try changing your filters or create a new case.",
     sessionAlreadyCreated: "A session has already been created for this event.",

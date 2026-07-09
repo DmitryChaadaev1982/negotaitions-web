@@ -1,9 +1,12 @@
 /**
  * Materials screen UI state for account-authorized /sessions/[id]/materials.
  *
- * Event-linked sessions (Session.eventId → TrainingEvent) keep the pre-fix
- * status semantics from closedByEvent = buildSessionCloseState().isClosed.
- * Standalone sessions use explicit organizer-close detection and a local-leave banner.
+ * Event-linked and standalone sessions share terminal badge semantics:
+ * - organizer/event-closed badge only for true organizer/event closure
+ * - finished badge for ordinary FINISHED sessions
+ *
+ * Event sessions still keep the pre-existing UX choice of hiding the
+ * participant-left-room banner.
  */
 
 export type MaterialsScreenUiInput = {
@@ -31,18 +34,18 @@ export type MaterialsScreenUiState = {
 export function resolveMaterialsScreenUiState(
   input: MaterialsScreenUiInput,
 ): MaterialsScreenUiState {
-  if (input.isEventSession) {
-    // Event sessions: preserve pre-fix materials status (closedByEvent = isClosed).
-    const isActive =
-      input.negotiationState !== "FINISHED" && !input.closedByEventLegacy;
+  const organizerClosed = input.closedByOrganizer;
+  const negotiationFinished =
+    input.negotiationState === "FINISHED" && !organizerClosed;
 
+  if (input.isEventSession) {
+    const isActive = input.canReturnToRoom;
     return {
       showParticipantLeftBanner: false,
       showOpenRoomButton: isActive,
       openRoomUsesRejoinLabel: false,
-      showOrganizerClosedBadge: input.closedByEventLegacy,
-      // Pre-fix UI never reached the FINISHED success branch when isClosed was true.
-      showFinishedBadge: false,
+      showOrganizerClosedBadge: organizerClosed,
+      showFinishedBadge: negotiationFinished,
       organizerClosedBeforeNegotiation: input.closedBeforeNegotiation,
     };
   }
@@ -50,15 +53,13 @@ export function resolveMaterialsScreenUiState(
   const showParticipantLeftBanner =
     input.participantHasLeftRoom &&
     input.canReturnToRoom &&
-    !input.closedByOrganizer;
-  const negotiationFinished =
-    input.negotiationState === "FINISHED" && !input.closedByOrganizer;
+    !organizerClosed;
 
   return {
     showParticipantLeftBanner,
     showOpenRoomButton: input.canReturnToRoom,
     openRoomUsesRejoinLabel: showParticipantLeftBanner,
-    showOrganizerClosedBadge: input.closedByOrganizer,
+    showOrganizerClosedBadge: organizerClosed,
     showFinishedBadge: negotiationFinished,
     organizerClosedBeforeNegotiation: input.closedBeforeNegotiation,
   };

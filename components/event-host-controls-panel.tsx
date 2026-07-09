@@ -374,9 +374,7 @@ export function EventHostControlsPanel({
                 className="px-2 py-1 text-xs"
                 onClick={openSessionSetup}
               >
-                {state.sessions.length > 0
-                  ? t("events.createAnotherSession")
-                  : t("events.createFirstSession")}
+                {t("events.createSession")}
               </SecondaryButton>
             ) : null}
           </div>
@@ -766,9 +764,7 @@ export function EventHostControlsPanel({
                 disabled={isCreatingSession}
                 onClick={handleCreateSession}
               >
-                {state.sessions.length > 0
-                  ? t("events.createAnotherSession")
-                  : t("events.createSession")}
+                {t("events.createSession")}
               </GradientButton>
               <SecondaryButton
                 type="button"
