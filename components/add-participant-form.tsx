@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   addAccountParticipant,
@@ -17,6 +18,7 @@ import {
   labelClassName,
 } from "@/components/ui/form-styles";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { deriveAddParticipantRoleOptionAvailability } from "@/lib/session-role-ui-state";
 
 const initialState: AddAccountParticipantState = {};
 
@@ -42,16 +44,37 @@ export function AddParticipantForm({
   existingParticipantUserIds = [],
 }: AddParticipantFormProps) {
   const { t, tv } = useI18n();
+  const router = useRouter();
+  const [participantType, setParticipantType] = useState<ParticipantTypeOption>("PARTICIPANT");
+  const [selectedRoleId, setSelectedRoleId] = useState("");
+  const [peoplePickerResetKey, setPeoplePickerResetKey] = useState(0);
   const [state, formAction, isPending] = useActionState(
-    addAccountParticipant,
+    async (
+      prevState: AddAccountParticipantState,
+      formData: FormData,
+    ): Promise<AddAccountParticipantState> => {
+      const result = await addAccountParticipant(prevState, formData);
+
+      if (result.success) {
+        setParticipantType("PARTICIPANT");
+        setSelectedRoleId("");
+        setPeoplePickerResetKey((value) => value + 1);
+        router.refresh();
+      }
+
+      return result;
+    },
     initialState,
   );
-  const [participantType, setParticipantType] =
-    useState<ParticipantTypeOption>("PARTICIPANT");
 
   const isParticipant = participantType === "PARTICIPANT";
-  const availableRoles = sessionRoles.filter(
-    (role) => !assignedRoleIds.includes(role.id),
+  const addRoleAvailability = useMemo(
+    () =>
+      deriveAddParticipantRoleOptionAvailability({
+        roles: sessionRoles,
+        assignedRoleIds,
+      }),
+    [sessionRoles, assignedRoleIds],
   );
 
   return (
@@ -79,6 +102,7 @@ export function AddParticipantForm({
         <div>
           <p className={labelClassName}>{t("sessions.selectParticipant")}</p>
           <PeoplePicker
+            key={peoplePickerResetKey}
             excludeUserIds={existingParticipantUserIds}
             userFieldName="invitedUserId"
             emailFieldName="invitedEmail"
@@ -94,9 +118,13 @@ export function AddParticipantForm({
             <select
               id="participantType"
               value={participantType}
-              onChange={(event) =>
-                setParticipantType(event.target.value as ParticipantTypeOption)
-              }
+              onChange={(event) => {
+                const nextType = event.target.value as ParticipantTypeOption;
+                setParticipantType(nextType);
+                if (nextType !== "PARTICIPANT") {
+                  setSelectedRoleId("");
+                }
+              }}
               className={inputClassName(false)}
             >
               <option value="PARTICIPANT">{t("common.participant")}</option>
@@ -118,14 +146,21 @@ export function AddParticipantForm({
               <select
                 id="sessionRoleId"
                 name="sessionRoleId"
-                defaultValue=""
+                value={selectedRoleId}
+                onChange={(event) => setSelectedRoleId(event.target.value)}
                 className={inputClassName(!!state.errors?.sessionRoleId)}
               >
                 {/* Phase 6.11B: allow adding participant without role — role assigned later via management panel */}
                 <option value="">{t("sessions.assignRoleLater")}</option>
-                {availableRoles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.name}
+                {addRoleAvailability.options.map((roleOption) => (
+                  <option
+                    key={roleOption.id}
+                    value={roleOption.id}
+                    disabled={roleOption.disabled}
+                  >
+                    {roleOption.disabled && roleOption.disabledReason
+                      ? `${roleOption.name} (${t("sessions.roleAlreadyAssigned")})`
+                      : roleOption.name}
                   </option>
                 ))}
               </select>
@@ -139,6 +174,11 @@ export function AddParticipantForm({
                 <option value="">{t("common.notApplicable")}</option>
               </select>
             )}
+            {isParticipant && addRoleAvailability.allRolesAssigned ? (
+              <p className={hintClassName}>
+                {t("sessions.allParticipantRolesAssignedHelper")}
+              </p>
+            ) : null}
           </Field>
 
           <div className="flex items-end">

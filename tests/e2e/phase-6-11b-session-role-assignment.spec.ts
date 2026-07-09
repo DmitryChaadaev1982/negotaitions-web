@@ -162,6 +162,51 @@ test.describe("Standalone Session role lifecycle", () => {
   test("T22 — Participant cannot call role assignment API", async ({ request, baseURL }) => {
     test.skip(true, "Requires dev server + participant-authenticated session. assignParticipantRole action is gated by canManageSession; returns error for non-facilitators.");
   });
+
+  test("T22A — Add participant with role updates table and role panel", async ({ page }) => {
+    test.skip(true, "Requires dev server + authenticated facilitator fixture on /sessions/[id]. Add participant with role and verify assigned role in participants table and role management row.");
+    await page.goto("/sessions/[id]");
+    await page.locator('[data-testid="session-role-management-panel"]').waitFor();
+    await page.locator('select[name="sessionRoleId"]').selectOption({ index: 1 });
+    await page.locator('button[type="submit"]').filter({ hasText: /add participant|добавить участника/i }).click();
+    await expect(page.locator('[data-testid="session-role-management-panel"]')).toBeVisible();
+  });
+
+  test("T22B — Same role cannot be selected for another participant", async ({ page }) => {
+    test.skip(true, "Requires dev server + session fixture with two participants. Role selected by participant A must be disabled for participant B selector.");
+    await page.goto("/sessions/[id]");
+    const firstSelect = page.locator('[data-testid^="role-select-"]').first();
+    await firstSelect.selectOption({ index: 1 });
+    const secondSelect = page.locator('[data-testid^="role-select-"]').nth(1);
+    const disabledOptionsCount = await secondSelect.locator("option:disabled").count();
+    expect(disabledOptionsCount).toBeGreaterThan(0);
+  });
+
+  test("T22C — Add participant without role still works", async ({ page }) => {
+    test.skip(true, "Requires dev server + facilitator fixture. Add participant with 'Assign later' and verify unassigned state in role panel.");
+    await page.goto("/sessions/[id]");
+    await page.locator('select[name="sessionRoleId"]').selectOption("");
+    await page.locator('button[type="submit"]').filter({ hasText: /add participant|добавить участника/i }).click();
+    await expect(page.locator('[data-testid="unassigned-badge"]').first()).toBeVisible();
+  });
+
+  test("T22D — All roles assigned helper text is shown in add form", async ({ page }) => {
+    test.skip(true, "Requires dev server + fixture where all session roles are occupied by participants.");
+    await page.goto("/sessions/[id]");
+    await expect(
+      page.locator(
+        "text=Все роли участников назначены. Новые участники будут наблюдателями или без роли.",
+      ),
+    ).toBeVisible();
+  });
+
+  test("T22E — Applying roles still works with disabled duplicate options", async ({ page }) => {
+    test.skip(true, "Requires dev server + facilitator fixture. Change one participant role, apply, and verify success toast.");
+    await page.goto("/sessions/[id]");
+    await page.locator('[data-testid^="role-select-"]').first().selectOption("");
+    await page.locator('[data-testid="apply-roles-button"]').click();
+    await expect(page.locator("text=Role assignment updated.")).toBeVisible();
+  });
 });
 
 // ─── SECTION 3: UI cleanup ───────────────────────────────────────────────────
@@ -332,6 +377,11 @@ test.describe("Structural assertions", () => {
       "roleAssignmentUpdated",
       "roleAssignmentFailed",
       "noRoleAssignedBadge",
+      "roleAlreadyAssigned",
+      "roleAssignedToAnotherParticipant",
+      "allParticipantRolesAssignedHelper",
+      "roleDraftUnsaved",
+      "roleAssignmentsUpdatedElsewhere",
     ] as const;
 
     for (const key of requiredKeys) {

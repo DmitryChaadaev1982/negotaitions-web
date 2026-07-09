@@ -14,13 +14,20 @@ import {
 import { GradientButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { resolveConnectionStatus } from "@/lib/presence";
+import {
+  derivePanelRoleOptionAvailability,
+  deriveRoleAssignmentDraft,
+  deriveRoleAssignmentSignature,
+  hasRoleAssignmentDraftChanges,
+  OBSERVER_DRAFT_VALUE,
+  type DraftAssignmentValue,
+  type SessionRoleParticipantState,
+} from "@/lib/session-role-ui-state";
 
 type SessionRoleOption = {
   id: string;
   name: string;
 };
-const OBSERVER_DRAFT_VALUE = "__observer__";
-type DraftAssignmentValue = string | typeof OBSERVER_DRAFT_VALUE | null;
 
 type ParticipantRoleEntry = {
   id: string;
@@ -65,20 +72,6 @@ export function SessionRoleManagementPanel({
   compact = false,
 }: SessionRoleManagementPanelProps) {
   const { t, tv } = useI18n();
-  const [state, formAction, isPending] = useActionState(
-    assignParticipantRole,
-    initialState,
-  );
-
-  // Local draft — each participant's selected role before Apply.
-  const [draft, setDraft] = useState<Record<string, DraftAssignmentValue>>(() => {
-    const initial: Record<string, DraftAssignmentValue> = {};
-    for (const p of participants) {
-      initial[p.id] =
-        p.type === "OBSERVER" ? OBSERVER_DRAFT_VALUE : p.currentRoleId;
-    }
-    return initial;
-  });
 
   // Facilitator is excluded from reassignment in this panel.
   const manageableParticipants = participants.filter(
@@ -88,16 +81,95 @@ export function SessionRoleManagementPanel({
     (p) => p.type === "FACILITATOR",
   );
 
+  const participantDraftSource = useMemo<SessionRoleParticipantState[]>(
+    () =>
+      manageableParticipants.map((participant) => ({
+        id: participant.id,
+        type: participant.type,
+        currentRoleId: participant.currentRoleId,
+      })),
+    [manageableParticipants],
+  );
+
+  const propsDraft = useMemo(
+    () => deriveRoleAssignmentDraft(participantDraftSource),
+    [participantDraftSource],
+  );
+  const propsSignature = useMemo(
+    () => deriveRoleAssignmentSignature(participantDraftSource),
+    [participantDraftSource],
+  );
+
+  // Local draft — each participant's selected role before Apply.
+  const [draft, setDraft] = useState<Record<string, DraftAssignmentValue>>(
+    propsDraft,
+  );
+  const [baseSignature, setBaseSignature] =
+    useState<string>(propsSignature);
+  const [state, formAction, isPending] = useActionState(
+    async (
+      prevState: AssignParticipantRoleState,
+      formData: FormData,
+    ): Promise<AssignParticipantRoleState> => {
+      const result = await assignParticipantRole(prevState, formData);
+
+      if (result.success) {
+        setDraft((currentDraft) => {
+          if (
+            baseSignature !== propsSignature &&
+            !hasRoleAssignmentDraftChanges({
+              participants: participantDraftSource,
+              draft: currentDraft,
+            })
+          ) {
+            return propsDraft;
+          }
+
+          return currentDraft;
+        });
+        setBaseSignature(propsSignature);
+      }
+
+      return result;
+    },
+    initialState,
+  );
+
+  const hasUnsavedLocalChanges = useMemo(
+    () =>
+      hasRoleAssignmentDraftChanges({
+        participants: participantDraftSource,
+        draft,
+      }),
+    [participantDraftSource, draft],
+  );
+  const propsChangedSinceBase = propsSignature !== baseSignature;
+  const hasIncomingServerChanges = propsChangedSinceBase && hasUnsavedLocalChanges;
+  const effectiveDraft =
+    propsChangedSinceBase && !hasUnsavedLocalChanges ? propsDraft : draft;
+  const hasUnsavedChanges = useMemo(
+    () =>
+      hasRoleAssignmentDraftChanges({
+        participants: participantDraftSource,
+        draft: effectiveDraft,
+      }),
+    [effectiveDraft, participantDraftSource],
+  );
+
   // Build hidden form fields for all assignments in the draft.
   const formFields = useMemo(() => {
     return manageableParticipants.map((p) => ({
       participantId: p.id,
       roleId:
-        draft[p.id] === OBSERVER_DRAFT_VALUE ? null : (draft[p.id] ?? null),
+        effectiveDraft[p.id] === OBSERVER_DRAFT_VALUE
+          ? null
+          : (effectiveDraft[p.id] ?? null),
       participantType:
-        draft[p.id] === OBSERVER_DRAFT_VALUE ? "OBSERVER" : "PARTICIPANT",
+        effectiveDraft[p.id] === OBSERVER_DRAFT_VALUE
+          ? "OBSERVER"
+          : "PARTICIPANT",
     }));
-  }, [manageableParticipants, draft]);
+  }, [manageableParticipants, effectiveDraft]);
 
   if (participants.length === 0) {
     return null;
@@ -146,6 +218,16 @@ export function SessionRoleManagementPanel({
           {t("sessions.roleAssignmentUpdated")}
         </div>
       ) : null}
+      {hasUnsavedChanges ? (
+        <p className="text-xs text-amber-300">
+          {t("sessions.roleDraftUnsaved")}
+        </p>
+      ) : null}
+      {hasIncomingServerChanges ? (
+        <p className="text-xs text-cyan-300">
+          {t("sessions.roleAssignmentsUpdatedElsewhere")}
+        </p>
+      ) : null}
 
       <form action={formAction} className="space-y-3">
         <input type="hidden" name="sessionId" value={sessionId} />
@@ -173,6 +255,12 @@ export function SessionRoleManagementPanel({
 
         {/* Participant and observer rows */}
         {manageableParticipants.map((p) => {
+          const roleOptions = derivePanelRoleOptionAvailability({
+            participantId: p.id,
+            participants: participantDraftSource,
+            draft: effectiveDraft,
+            roles: availableRoles,
+          });
           const joinStatus = resolveJoinStatus(p);
           const joinStatusClass =
             joinStatus === "JOINED"
@@ -203,7 +291,7 @@ export function SessionRoleManagementPanel({
                 </p>
                 <p className={`text-xs ${joinStatusClass}`}>
                   {joinStatusLabel}
-                  {draft[p.id] === null ? (
+                  {effectiveDraft[p.id] === null ? (
                       <span
                         className="ml-2 text-xs text-amber-400"
                         data-testid="unassigned-badge"
@@ -214,21 +302,39 @@ export function SessionRoleManagementPanel({
                 </p>
               </div>
               <select
-                value={draft[p.id] ?? ""}
-                onChange={(e) =>
+                value={effectiveDraft[p.id] ?? ""}
+                onChange={(e) => {
+                  const nextValue = e.target.value || null;
+                  const shouldAdoptLatestPropsBeforeEditing =
+                    propsChangedSinceBase && !hasUnsavedLocalChanges;
+
+                  if (shouldAdoptLatestPropsBeforeEditing) {
+                    setBaseSignature(propsSignature);
+                  }
+
                   setDraft((prev) => ({
-                    ...prev,
-                    [p.id]: e.target.value || null,
-                  }))
-                }
+                    ...(shouldAdoptLatestPropsBeforeEditing ? propsDraft : prev),
+                    [p.id]: nextValue,
+                  }));
+                }}
                 className={`w-40 shrink-0 ${inputClassName(false)} text-sm`}
                 aria-label={`${t("common.assignedRole")}: ${p.displayName}`}
                 data-testid={`role-select-${p.id}`}
               >
                 <option value="">{t("sessions.roleUnassigned")}</option>
-                {availableRoles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.name}
+                {roleOptions.map((roleOption) => (
+                  <option
+                    key={roleOption.id}
+                    value={roleOption.id}
+                    disabled={roleOption.disabled}
+                  >
+                    {roleOption.disabled && roleOption.disabledReason
+                      ? `${roleOption.name} (${t(
+                          roleOption.disabledReason === "assignedToAnotherParticipant"
+                            ? "sessions.roleAssignedToAnotherParticipant"
+                            : "sessions.roleAlreadyAssigned",
+                        )})`
+                      : roleOption.name}
                   </option>
                 ))}
                 <option value={OBSERVER_DRAFT_VALUE}>
