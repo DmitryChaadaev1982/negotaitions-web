@@ -54,7 +54,7 @@ test("standalone: negotiation finished without organizer close shows finished ba
   assert.equal(ui.showFinishedBadge, true);
 });
 
-test("event session: participant leave keeps pre-fix behavior without standalone banner", () => {
+test("event session: participant leave keeps hidden banner behavior", () => {
   const ui = resolveMaterialsScreenUiState({
     ...base,
     isEventSession: true,
@@ -69,7 +69,7 @@ test("event session: participant leave keeps pre-fix behavior without standalone
   assert.equal(ui.showOrganizerClosedBadge, false);
 });
 
-test("event session: FINISHED keeps pre-fix closed badge (isClosed legacy)", () => {
+test("event session: FINISHED without organizer close shows finished badge", () => {
   const ui = resolveMaterialsScreenUiState({
     ...base,
     isEventSession: true,
@@ -79,8 +79,8 @@ test("event session: FINISHED keeps pre-fix closed badge (isClosed legacy)", () 
     canReturnToRoom: false,
   });
 
-  assert.equal(ui.showOrganizerClosedBadge, true);
-  assert.equal(ui.showFinishedBadge, false);
+  assert.equal(ui.showOrganizerClosedBadge, false);
+  assert.equal(ui.showFinishedBadge, true);
   assert.equal(ui.showOpenRoomButton, false);
 });
 

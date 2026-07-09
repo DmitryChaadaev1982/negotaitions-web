@@ -1062,7 +1062,7 @@ export function EventLobbyView({
                               : t("events.finishedSession")}
                           </p>
                         </div>
-                        {participantLink?.roomUrl ? (
+                        {session.isActive && participantLink?.roomUrl ? (
                           <SecondaryButtonLink
                             href={participantLink.roomUrl}
                             data-testid="go-to-session-room-button"

@@ -1151,7 +1151,6 @@ export const ru: Dictionary = {
     createFirstSession: "Создать первую сессию",
     existingSessions: "Созданные сессии",
     createSession: "Создать сессию",
-    createAnotherSession: "Создать ещё одну сессию",
     noCasesFound: "Кейсы не найдены",
     noCasesFoundHint: "Измените фильтры или создайте новый кейс.",
     sessionAlreadyCreated: "Для этой встречи уже создана сессия.",
