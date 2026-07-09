@@ -536,6 +536,19 @@ export const en = {
       unknownMappingFailure:
         "Automatic speaker matching was not completed. Assign speakers manually.",
     },
+    confirmSpeakersTitle: "Confirm speakers",
+    confirmSpeakersDescription:
+      "The system is not confident enough to apply speaker mapping automatically. Review the suggested assignment.",
+    suggested: "Suggested",
+    confidenceHigh: "High",
+    confidenceMedium: "Medium",
+    confidenceLow: "Low",
+    applySuggestion: "Apply suggestion",
+    saveMappingAction: "Save mapping",
+    skipSpeakerMappingForNow: "Skip for now",
+    speakerMappingSaved: "Speaker mapping saved",
+    speakerMappingCanChangeLater: "You can change speaker mapping later",
+    speakerMappingAutoAppliedCompact: "Speaker mapping was applied automatically.",
     confidence: "Confidence",
     weakSuggestion: "Weak suggestion",
     strongSuggestion: "Strong suggestion",
@@ -572,7 +585,7 @@ export const en = {
     transcriptEnhancementSuggested:
       "Additional transcript quality enhancement is recommended.",
     transcriptEnhancementReasons: "Reasons",
-    runTranscriptEnhancement: "Enhance transcript quality",
+    runTranscriptEnhancement: "Improve transcript",
     transcriptEnhancementInProgress: "Transcript quality enhancement in progress...",
     transcriptEnhancementCompleted: "Transcript quality enhancement completed.",
     transcriptEnhancementMayTakeTime:
@@ -722,7 +735,7 @@ export const en = {
     transcriptionCompressing: "Preparing audio for transcription.",
     transcriptionInProgress: "Transcription is in progress.",
     transcriptEnhancementInProgress: "Transcript quality enhancement is in progress.",
-    runTranscriptEnhancement: "Enhance transcript quality",
+    runTranscriptEnhancement: "Improve transcript",
     transcriptEnhancementRecommended:
       "System recommends running additional transcript quality enhancement.",
     transcriptEnhancementMayTakeTime:
