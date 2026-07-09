@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   deriveAddParticipantRoleOptionAvailability,
   derivePanelRoleOptionAvailability,
+  deriveRoleSlotSummary,
   deriveRoleAssignmentSignature,
   OBSERVER_DRAFT_VALUE,
   type DraftAssignmentValue,
@@ -133,4 +134,99 @@ test("all roles assigned is detected for add participant helper text", () => {
   });
 
   assert.equal(availability.allRolesAssigned, true);
+});
+
+test("role slot summary derives assigned participant labels", () => {
+  const participants: Array<SessionRoleParticipantState & { displayName: string }> = [
+    { id: "p1", displayName: "Dima", type: "PARTICIPANT", currentRoleId: "role-a" },
+    { id: "p2", displayName: "Anna", type: "PARTICIPANT", currentRoleId: null },
+  ];
+  const draft: Record<string, DraftAssignmentValue> = {
+    p1: "role-a",
+    p2: "role-b",
+  };
+
+  const summary = deriveRoleSlotSummary({
+    roles,
+    participants,
+    draft,
+  });
+
+  assert.deepEqual(summary.slots, [
+    {
+      roleId: "role-a",
+      roleName: "Role A",
+      assignedParticipantId: "p1",
+      assignedParticipantName: "Dima",
+      isAssigned: true,
+    },
+    {
+      roleId: "role-b",
+      roleName: "Role B",
+      assignedParticipantId: "p2",
+      assignedParticipantName: "Anna",
+      isAssigned: true,
+    },
+    {
+      roleId: "role-c",
+      roleName: "Role C",
+      assignedParticipantId: null,
+      assignedParticipantName: null,
+      isAssigned: false,
+    },
+  ]);
+  assert.equal(summary.allRolesAssigned, false);
+});
+
+test("role slot summary ignores facilitator and observer slot occupation", () => {
+  const participants: Array<SessionRoleParticipantState & { displayName: string }> = [
+    { id: "fac", displayName: "Fac", type: "FACILITATOR", currentRoleId: "role-a" },
+    { id: "obs", displayName: "Obs", type: "OBSERVER", currentRoleId: "role-b" },
+    { id: "p1", displayName: "P1", type: "PARTICIPANT", currentRoleId: "role-c" },
+  ];
+  const draft: Record<string, DraftAssignmentValue> = {
+    fac: "role-a",
+    obs: OBSERVER_DRAFT_VALUE,
+    p1: "role-c",
+  };
+
+  const summary = deriveRoleSlotSummary({
+    roles,
+    participants,
+    draft,
+  });
+
+  assert.equal(
+    summary.slots.find((slot) => slot.roleId === "role-a")?.assignedParticipantId,
+    null,
+  );
+  assert.equal(
+    summary.slots.find((slot) => slot.roleId === "role-b")?.assignedParticipantId,
+    null,
+  );
+  assert.equal(
+    summary.slots.find((slot) => slot.roleId === "role-c")?.assignedParticipantId,
+    "p1",
+  );
+});
+
+test("role slot summary marks all roles assigned", () => {
+  const participants: Array<SessionRoleParticipantState & { displayName: string }> = [
+    { id: "p1", displayName: "P1", type: "PARTICIPANT", currentRoleId: "role-a" },
+    { id: "p2", displayName: "P2", type: "PARTICIPANT", currentRoleId: "role-b" },
+    { id: "p3", displayName: "P3", type: "PARTICIPANT", currentRoleId: "role-c" },
+  ];
+  const draft: Record<string, DraftAssignmentValue> = {
+    p1: "role-a",
+    p2: "role-b",
+    p3: "role-c",
+  };
+
+  const summary = deriveRoleSlotSummary({
+    roles,
+    participants,
+    draft,
+  });
+
+  assert.equal(summary.allRolesAssigned, true);
 });

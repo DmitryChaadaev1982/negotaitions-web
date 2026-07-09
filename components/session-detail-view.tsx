@@ -421,7 +421,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
         <Card>
           <CardHeader>
             <h2 className="text-base font-semibold text-slate-50">
-              {t("sessions.roleManagementTitle")}
+              {t("sessions.participantRoles")}
             </h2>
           </CardHeader>
           <CardContent>
@@ -429,6 +429,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
               sessionId={session.id}
               participants={roleManagementParticipants}
               availableRoles={session.assignableRoles}
+              variant="full"
             />
           </CardContent>
         </Card>

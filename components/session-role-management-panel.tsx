@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import {
   assignParticipantRole,
@@ -16,6 +16,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import { resolveConnectionStatus } from "@/lib/presence";
 import {
   derivePanelRoleOptionAvailability,
+  deriveRoleSlotSummary,
   deriveRoleAssignmentDraft,
   deriveRoleAssignmentSignature,
   hasRoleAssignmentDraftChanges,
@@ -44,8 +45,14 @@ type SessionRoleManagementPanelProps = {
   participants: ParticipantRoleEntry[];
   availableRoles: SessionRoleOption[];
   /**
-   * If true, only renders a compact version suited for the video room sidebar.
-   * Default: false (full page panel).
+   * If set, defines visual density while preserving identical assignment semantics.
+   * - full: standalone /sessions/[id] management
+   * - compact: room sidebar facilitator panel
+   */
+  variant?: "full" | "compact";
+  /**
+   * Backward-compatible alias for compact mode.
+   * Prefer `variant` for new call sites.
    */
   compact?: boolean;
 };
@@ -69,11 +76,14 @@ export function SessionRoleManagementPanel({
   sessionId,
   participants,
   availableRoles,
+  variant,
   compact = false,
 }: SessionRoleManagementPanelProps) {
   const { t, tv } = useI18n();
+  const resolvedVariant = variant ?? (compact ? "compact" : "full");
+  const isCompact = resolvedVariant === "compact";
 
-  // Facilitator is excluded from reassignment in this panel.
+  // Facilitator rows are displayed separately and excluded from reassignment.
   const manageableParticipants = participants.filter(
     (p) => p.type !== "FACILITATOR",
   );
@@ -104,6 +114,8 @@ export function SessionRoleManagementPanel({
   const [draft, setDraft] = useState<Record<string, DraftAssignmentValue>>(
     propsDraft,
   );
+  const [baseDraft, setBaseDraft] =
+    useState<Record<string, DraftAssignmentValue>>(propsDraft);
   const [baseSignature, setBaseSignature] =
     useState<string>(propsSignature);
   const [state, formAction, isPending] = useActionState(
@@ -114,19 +126,8 @@ export function SessionRoleManagementPanel({
       const result = await assignParticipantRole(prevState, formData);
 
       if (result.success) {
-        setDraft((currentDraft) => {
-          if (
-            baseSignature !== propsSignature &&
-            !hasRoleAssignmentDraftChanges({
-              participants: participantDraftSource,
-              draft: currentDraft,
-            })
-          ) {
-            return propsDraft;
-          }
-
-          return currentDraft;
-        });
+        setDraft(propsDraft);
+        setBaseDraft(propsDraft);
         setBaseSignature(propsSignature);
       }
 
@@ -135,18 +136,57 @@ export function SessionRoleManagementPanel({
     initialState,
   );
 
-  const hasUnsavedLocalChanges = useMemo(
-    () =>
-      hasRoleAssignmentDraftChanges({
-        participants: participantDraftSource,
-        draft,
-      }),
-    [participantDraftSource, draft],
-  );
+  const hasUnsavedLocalChanges = useMemo(() => {
+    const participantIds = new Set<string>([
+      ...Object.keys(baseDraft),
+      ...Object.keys(draft),
+    ]);
+
+    for (const participantId of participantIds) {
+      const baseValue =
+        baseDraft[participantId] === undefined ? null : baseDraft[participantId];
+      const currentValue =
+        draft[participantId] === undefined ? null : draft[participantId];
+
+      if (baseValue !== currentValue) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [baseDraft, draft]);
   const propsChangedSinceBase = propsSignature !== baseSignature;
   const hasIncomingServerChanges = propsChangedSinceBase && hasUnsavedLocalChanges;
   const effectiveDraft =
     propsChangedSinceBase && !hasUnsavedLocalChanges ? propsDraft : draft;
+  useEffect(() => {
+    if (!propsChangedSinceBase || hasUnsavedLocalChanges) {
+      return;
+    }
+
+    setDraft(propsDraft);
+    setBaseDraft(propsDraft);
+    setBaseSignature(propsSignature);
+  }, [
+    hasUnsavedLocalChanges,
+    propsChangedSinceBase,
+    propsDraft,
+    propsSignature,
+  ]);
+  const slotSummary = useMemo(
+    () =>
+      deriveRoleSlotSummary({
+        roles: availableRoles,
+        participants: manageableParticipants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          type: participant.type,
+          currentRoleId: participant.currentRoleId,
+        })),
+        draft: effectiveDraft,
+      }),
+    [availableRoles, effectiveDraft, manageableParticipants],
+  );
   const hasUnsavedChanges = useMemo(
     () =>
       hasRoleAssignmentDraftChanges({
@@ -197,16 +237,23 @@ export function SessionRoleManagementPanel({
 
   return (
     <div
-      className={compact ? "space-y-3" : "space-y-4"}
+      className={isCompact ? "space-y-3" : "space-y-4"}
       data-testid="session-role-management-panel"
     >
-      {!compact ? (
+      {!isCompact ? (
         <div>
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            {t("sessions.participantRoles")}
+          </p>
           <p className="text-sm text-slate-400">
             {t("sessions.roleManagementDescription")}
           </p>
         </div>
-      ) : null}
+      ) : (
+        <p className="text-xs text-slate-400">
+          {t("sessions.compactRoleManagement")}
+        </p>
+      )}
 
       {state.errors?.form ? (
         <div className={alertErrorClassName}>
@@ -229,7 +276,39 @@ export function SessionRoleManagementPanel({
         </p>
       ) : null}
 
-      <form action={formAction} className="space-y-3">
+      {availableRoles.length > 0 ? (
+        <div
+          className={
+            isCompact
+              ? "space-y-1 rounded-lg border border-slate-700/40 bg-slate-900/30 px-3 py-2"
+              : "space-y-2 rounded-lg border border-slate-700/40 bg-slate-900/30 px-4 py-3"
+          }
+          data-testid="role-slot-summary"
+        >
+          {slotSummary.slots.map((slot) => (
+            <p
+              key={slot.roleId}
+              className={isCompact ? "text-xs text-slate-300" : "text-sm text-slate-300"}
+            >
+              <span className="font-medium text-slate-200">{slot.roleName}</span>
+              {" — "}
+              {slot.assignedParticipantName ?? t("sessions.roleUnassigned")}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {slotSummary.allRolesAssigned ? (
+        <div className={isCompact ? "space-y-0.5" : "space-y-1"}>
+          <p className="text-xs font-medium text-amber-300">
+            {t("sessions.allRolesAssigned")}
+          </p>
+          <p className="text-xs text-slate-400">
+            {t("sessions.newParticipantsObserverOrUnassigned")}
+          </p>
+        </div>
+      ) : null}
+
+      <form action={formAction} className={isCompact ? "space-y-2.5" : "space-y-3"}>
         <input type="hidden" name="sessionId" value={sessionId} />
 
         {/* Hidden fields for all assignments */}
@@ -282,7 +361,9 @@ export function SessionRoleManagementPanel({
           return (
             <div
               key={p.id}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3"
+              className={`flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/40 bg-slate-900/40 ${
+                isCompact ? "px-3 py-2.5" : "px-4 py-3"
+              }`}
               data-testid={`role-row-${p.id}`}
             >
               <div className="min-w-0 flex-1">
@@ -291,14 +372,19 @@ export function SessionRoleManagementPanel({
                 </p>
                 <p className={`text-xs ${joinStatusClass}`}>
                   {joinStatusLabel}
+                  {effectiveDraft[p.id] === OBSERVER_DRAFT_VALUE ? (
+                    <span className="ml-2 text-xs text-cyan-300">
+                      {t("sessions.observer")}
+                    </span>
+                  ) : null}
                   {effectiveDraft[p.id] === null ? (
-                      <span
-                        className="ml-2 text-xs text-amber-400"
-                        data-testid="unassigned-badge"
-                      >
-                        {t("sessions.roleUnassigned")}
-                      </span>
-                    ) : null}
+                    <span
+                      className="ml-2 text-xs text-amber-400"
+                      data-testid="unassigned-badge"
+                    >
+                      {t("sessions.roleUnassigned")}
+                    </span>
+                  ) : null}
                 </p>
               </div>
               <select
@@ -317,7 +403,9 @@ export function SessionRoleManagementPanel({
                     [p.id]: nextValue,
                   }));
                 }}
-                className={`w-40 shrink-0 ${inputClassName(false)} text-sm`}
+                className={`${
+                  isCompact ? "w-full sm:w-44" : "w-44"
+                } shrink-0 ${inputClassName(false)} text-sm`}
                 aria-label={`${t("common.assignedRole")}: ${p.displayName}`}
                 data-testid={`role-select-${p.id}`}
               >
@@ -346,17 +434,21 @@ export function SessionRoleManagementPanel({
         })}
 
         {/* Non-participant rows (facilitator, observer) — show status only */}
-        {!compact && staticParticipants.length > 0 ? (
+        {staticParticipants.length > 0 ? (
           <div className="space-y-2">
             {staticParticipants.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-700/20 bg-slate-900/20 px-4 py-2.5"
+                className={`flex items-center gap-3 rounded-lg border border-slate-700/20 bg-slate-900/20 ${
+                  isCompact ? "px-3 py-2" : "px-4 py-2.5"
+                }`}
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-slate-300">{p.displayName}</p>
+                  <p className={isCompact ? "text-xs text-slate-300" : "text-sm text-slate-300"}>
+                    {p.displayName}
+                  </p>
                   <p className="text-xs text-slate-500">
-                    {t(`participantType.${p.type}` as `participantType.PARTICIPANT`)}
+                    {t("sessions.facilitator")}
                   </p>
                 </div>
               </div>
@@ -368,7 +460,7 @@ export function SessionRoleManagementPanel({
           <GradientButton
             type="submit"
             disabled={isPending}
-            className={compact ? "w-full" : undefined}
+            className={isCompact ? "w-full" : undefined}
             data-testid="apply-roles-button"
           >
             {isPending ? t("common.saving") : t("sessions.applyRoles")}
