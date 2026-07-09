@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import {
+  alertErrorClassName,
   inputClassName,
   labelClassName,
 } from "@/components/ui/form-styles";
@@ -64,6 +65,8 @@ export function EventHostControlsPanel({
   const [libraryMode, setLibraryMode] = useState(!selectedCase);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [finishingSessionId, setFinishingSessionId] = useState<string | null>(null);
   const [roomLabelDraft, setRoomLabelDraft] = useState("");
   const [isEditingRoomLabel, setIsEditingRoomLabel] = useState(false);
   const showLibrary = !selectedCase || libraryMode;
@@ -144,25 +147,6 @@ export function EventHostControlsPanel({
   const observerSelectionSet = useMemo(
     () => new Set(normalizedDraft.observerEventParticipantIds),
     [normalizedDraft.observerEventParticipantIds],
-  );
-
-  const resolveOptionReason = useCallback(
-    (reason: string | null) => {
-      if (!reason) {
-        return null;
-      }
-      if (reason === "assignedToAnotherRole" || reason === "selectedAsRolePlayer") {
-        return t("sessions.roleAssignedToAnotherParticipant");
-      }
-      if (reason === "selectedAsFacilitator") {
-        return t("validation.facilitatorPlayerConflict");
-      }
-      if (reason === "alreadyInActiveSession") {
-        return t("events.activeSession");
-      }
-      return t("common.notYet");
-    },
-    [t],
   );
 
   const saveDraft = useCallback(
@@ -261,22 +245,49 @@ export function EventHostControlsPanel({
 
   const finishSession = useCallback(
     async (sessionId: string) => {
+      setSessionActionError(null);
       const session = state.sessions.find((item) => item.id === sessionId);
       const roomUrl = session?.roomUrl;
-      if (!roomUrl) return;
+      if (!roomUrl) {
+        setSessionActionError(`${t("common.error")}: ${t("events.openRoom")}`);
+        return;
+      }
 
       const params = new URLSearchParams(roomUrl.split("?")[1] ?? "");
       const joinToken = params.get("joinToken");
-      if (!joinToken) return;
+      const facilitatorParticipantId =
+        session?.participants.find(
+          (participant) => participant.participantType === "FACILITATOR",
+        )?.id ?? null;
+      if (!joinToken && !facilitatorParticipantId) {
+        setSessionActionError(`${t("common.error")}: ${t("room.finishEarly")}`);
+        return;
+      }
 
-      await fetch(`/api/sessions/${sessionId}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, action: "FINISH" }),
-      });
-      await onUpdateHost({});
+      setFinishingSessionId(sessionId);
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "FINISH",
+            ...(facilitatorParticipantId
+              ? { participantId: facilitatorParticipantId }
+              : { joinToken }),
+          }),
+        });
+        if (!response.ok) {
+          setSessionActionError(`${t("common.error")}: ${t("room.finishEarly")}`);
+          return;
+        }
+        await onUpdateHost({});
+      } finally {
+        setFinishingSessionId((current) =>
+          current === sessionId ? null : current,
+        );
+      }
     },
-    [onUpdateHost, state.sessions],
+    [onUpdateHost, state.sessions, t],
   );
 
   return (
@@ -371,6 +382,9 @@ export function EventHostControlsPanel({
           </div>
           {copyMessage ? (
             <p className="text-xs text-emerald-400">{copyMessage}</p>
+          ) : null}
+          {sessionActionError ? (
+            <div className={alertErrorClassName}>{sessionActionError}</div>
           ) : null}
           {state.sessions.length === 0 ? (
             <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
@@ -468,9 +482,12 @@ export function EventHostControlsPanel({
                         type="button"
                         data-testid="finish-session-button"
                         className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20"
+                        disabled={finishingSessionId === session.id}
                         onClick={() => void finishSession(session.id)}
                       >
-                        {t("room.finishEarly")}
+                        {finishingSessionId === session.id
+                          ? t("common.loading")
+                          : t("room.finishEarly")}
                       </button>
                     ) : null}
                   </div>
@@ -592,9 +609,6 @@ export function EventHostControlsPanel({
                     {participant.activeAssignmentLabel
                       ? ` · ${participant.activeAssignmentLabel}`
                       : ""}
-                    {participant.disabledReason
-                      ? ` (${resolveOptionReason(participant.disabledReason)})`
-                      : ""}
                   </option>
                 ))}
               </select>
@@ -665,9 +679,6 @@ export function EventHostControlsPanel({
                         {participant.activeAssignmentLabel
                           ? ` · ${participant.activeAssignmentLabel}`
                           : ""}
-                        {participant.disabledReason
-                          ? ` (${resolveOptionReason(participant.disabledReason)})`
-                          : ""}
                       </option>
                     ))}
                   </select>
@@ -722,9 +733,6 @@ export function EventHostControlsPanel({
                       {participant.activeAssignmentLabel
                         ? ` · ${participant.activeAssignmentLabel}`
                         : ""}
-                      {participant.disabledReason
-                        ? ` (${resolveOptionReason(participant.disabledReason)})`
-                        : ""}
                     </label>
                   );
                 })}
@@ -751,16 +759,29 @@ export function EventHostControlsPanel({
               ) : null}
             </div>
 
-            <GradientButton
-              type="button"
-              data-testid="create-session-button"
-              disabled={isCreatingSession}
-              onClick={handleCreateSession}
-            >
-              {state.sessions.length > 0
-                ? t("events.createAnotherSession")
-                : t("events.createSession")}
-            </GradientButton>
+            <div className="flex flex-wrap gap-2">
+              <GradientButton
+                type="button"
+                data-testid="create-session-button"
+                disabled={isCreatingSession}
+                onClick={handleCreateSession}
+              >
+                {state.sessions.length > 0
+                  ? t("events.createAnotherSession")
+                  : t("events.createSession")}
+              </GradientButton>
+              <SecondaryButton
+                type="button"
+                data-testid="cancel-session-setup-button"
+                onClick={() => {
+                  setShowSessionSetup(false);
+                  setIsEditingRoomLabel(false);
+                  setRoomLabelDraft(normalizedDraft.roomLabel);
+                }}
+              >
+                {t("common.cancel")}
+              </SecondaryButton>
+            </div>
           </div>
         ) : null}
 
