@@ -13,6 +13,7 @@ export function getPauseProcessingModeFromMetadata(
   const root = asObject(metadata);
   const pauseProcessing = asObject(root?.pauseProcessing);
   const mode = pauseProcessing?.mode;
+  // Keep legacy fallback for historical transcripts that predate source-audio metadata.
   return mode === "source_audio_cut"
     ? "source_audio_cut"
     : "transcript_interval_filter";

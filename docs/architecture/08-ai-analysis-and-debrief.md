@@ -8,8 +8,8 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 1. Facilitator starts analysis when transcript is ready and mapping prerequisites are met.
 2. Analysis context is built from transcript segments with pause processing mode awareness:
-   - `transcript_interval_filter`: apply shared interval filter to transcript segments;
-   - `source_audio_cut`: use transcript as-is (already generated from active-only audio).
+   - `source_audio_cut` (production default): use transcript as-is (already generated from active-only audio).
+   - `transcript_interval_filter` (legacy/deprecated fallback): apply shared interval filter to transcript segments.
 3. Provider-specific analysis execution runs (`openai` or `yandex`).
 4. Structured output is validated against schema.
 5. Analysis is persisted and optionally shared to session participants/observers.

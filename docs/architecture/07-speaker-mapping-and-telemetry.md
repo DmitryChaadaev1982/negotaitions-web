@@ -14,8 +14,8 @@ Map diarized transcript speakers (for example `speaker_1`) to actual session par
 
 - Build overlap score matrix between transcript windows and telemetry windows.
 - Pause handling depends on transcript pause processing mode:
-  - `transcript_interval_filter`: exclude transcript windows that overlap persisted pause intervals.
-  - `source_audio_cut`: transcript is already on active timeline; no additional pause-window transcript filtering is applied.
+  - `source_audio_cut` (production default): transcript is already on active timeline; no additional pause-window transcript filtering is applied.
+  - `transcript_interval_filter` (legacy/deprecated fallback): exclude transcript windows that overlap persisted pause intervals.
 - For `source_audio_cut`, telemetry rows are normalized from real timeline to active timeline before overlap scoring:
   - rows fully inside pause gaps are excluded;
   - rows crossing active/pause boundaries are split;

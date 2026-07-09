@@ -35,6 +35,7 @@ import {
   isPauseFilterCalibrationAutoRunEnabled,
   isPauseFilterCalibrationEnabled,
   getPauseProcessingMode,
+  getPauseSourceAudioDebugDir,
   getYandexSpeechKitModel,
   isYandexSpeechKitLiteratureTextEnabled,
   isYandexSpeechKitSpeakerLabelingEnabled,
@@ -72,8 +73,8 @@ import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
 import {
   buildPauseOffsetIntervals,
-  filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
+import { applyPauseSegmentProcessingMode } from "@/lib/transcription/pause-segment-processing";
 import {
   buildRawCalibrationInputArtifact,
   parseCalibrationMarkerList,
@@ -109,19 +110,6 @@ function mapPauseOffsetsToMs(
     startMs: Math.max(0, Math.round(interval.startSeconds * 1000)),
     endMs: Math.max(0, Math.round(interval.endSeconds * 1000)),
   }));
-}
-
-function buildNoopPauseFilteringDiagnostics(totalPausedIntervals: number) {
-  return {
-    totalPausedIntervals,
-    filteredSegmentCount: 0,
-    fullyPausedDroppedCount: 0,
-    boundaryOverlapKeptCount: 0,
-    boundaryOverlapDroppedCount: 0,
-    significantOverlapDroppedCount: 0,
-    maxKeptPauseOverlapSeconds: 0,
-    maxDroppedPauseOverlapSeconds: 0,
-  };
 }
 
 export const MANUAL_TRANSCRIPTION_STOP_SENTINEL = "__MANUAL_TRANSCRIPTION_STOP__";
@@ -439,7 +427,7 @@ export async function runRealTranscription(
       removedPauseDurationMs = timelineResult.diagnostics.removedPauseDurationMs;
 
       if (pauseOffsetIntervals.length > 0) {
-        const debugOutputDir = join(".debug", "pause-source-audio", sessionId);
+        const debugOutputDir = join(getPauseSourceAudioDebugDir(), sessionId);
         const tempSourceDir = await mkdtemp(join(tmpdir(), "pause-source-audio-"));
         try {
           const sourceExtension = resolveSourceRecordingExtension(recording);
@@ -464,6 +452,11 @@ export async function runRealTranscription(
         } finally {
           await rm(tempSourceDir, { recursive: true, force: true });
         }
+      } else {
+        ffmpegDiagnostics = {
+          status: "not_run",
+          reason: "no_pause_intervals",
+        };
       }
     }
 
@@ -671,21 +664,11 @@ export async function runRealTranscription(
       }
     }
 
-    const pauseFilteringResult =
-      pauseProcessingMode === "source_audio_cut"
-        ? {
-            keptSegments: mappedSegments,
-            droppedSegments: [] as typeof mappedSegments,
-            diagnostics: buildNoopPauseFilteringDiagnostics(pauseOffsetIntervals.length),
-          }
-        : filterSegmentsByPauseIntervals(
-            mappedSegments,
-            pauseOffsetIntervals,
-            (segment) => ({
-              startSeconds: segment.startSeconds,
-              endSeconds: segment.endSeconds,
-            }),
-          );
+    const pauseFilteringResult = applyPauseSegmentProcessingMode(
+      pauseProcessingMode,
+      mappedSegments,
+      pauseOffsetIntervals,
+    );
     const filteredSegments = pauseFilteringResult.keptSegments;
     const pauseFilteringApplied =
       pauseFilteringResult.diagnostics.filteredSegmentCount > 0;

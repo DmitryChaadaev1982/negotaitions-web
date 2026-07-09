@@ -51,6 +51,10 @@ export type PauseFilteringDiagnostics = {
   maxDroppedPauseOverlapSeconds: number;
 };
 
+/**
+ * Legacy/deprecated fallback pause filtering implementation.
+ * Production default pause handling should use source_audio_cut mode instead.
+ */
 const DEFAULT_DOMINANT_OVERLAP_RATIO_THRESHOLD = 0.6;
 const DEFAULT_BOUNDARY_TOLERANCE_SECONDS = 0.35;
 const DEFAULT_SIGNIFICANT_PAUSE_OVERLAP_SECONDS = 1.25;

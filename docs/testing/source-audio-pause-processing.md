@@ -1,18 +1,19 @@
-# Source-Audio Pause Processing (Experimental)
+# Source-Audio Pause Processing (Production Default)
 
-This runbook validates Stage 3.4.4 experimental mode that removes paused intervals from source audio before SpeechKit.
+This runbook validates Stage 3.4.4+ production mode that removes paused intervals from source audio before SpeechKit.
 
 ## Safety
 
-- Experimental only; not production default.
 - No Prisma schema/migration changes are required.
-- Keep `PAUSE_PROCESSING_MODE` unset in production unless explicitly approved.
+- Default production behavior is `source_audio_cut` when `PAUSE_PROCESSING_MODE` is unset.
+- Use `PAUSE_PROCESSING_MODE=transcript_interval_filter` only for explicit legacy fallback.
 
 ## Env Flags
 
-- `PAUSE_PROCESSING_MODE=source_audio_cut` enables source-level pause cutting.
-- `PAUSE_PROCESSING_MODE=transcript_interval_filter` keeps existing behavior.
+- `PAUSE_PROCESSING_MODE=source_audio_cut` enables source-level pause cutting (default when unset).
+- `PAUSE_PROCESSING_MODE=transcript_interval_filter` keeps legacy approximate filtering behavior.
 - FFmpeg override (optional): `FFMPEG_PATH` (or legacy `FFMPEG_BIN`).
+- Source-audio debug artifact root (optional): `PAUSE_SOURCE_AUDIO_DEBUG_DIR`.
 - Optional diagnostics:
   - `PAUSE_FILTER_CALIBRATION_ENABLED=1` (legacy interval-filter calibration artifacts).
 
@@ -23,8 +24,9 @@ This runbook validates Stage 3.4.4 experimental mode that removes paused interva
 
 ## Local Validation Steps
 
-1. Set mode:
+1. Optional explicit mode setup:
    - PowerShell: `$env:PAUSE_PROCESSING_MODE="source_audio_cut"`
+   - If omitted, `source_audio_cut` is still used by default.
 2. Run app locally and execute a session with pause/resume.
 3. Ensure recording reaches `FINISH`.
 4. Trigger transcription.
@@ -34,11 +36,11 @@ This runbook validates Stage 3.4.4 experimental mode that removes paused interva
 
 When `source_audio_cut` runs with pause intervals, artifacts are written under:
 
-- `.debug/pause-source-audio/<sessionId>/active-timeline.json`
-- `.debug/pause-source-audio/<sessionId>/active-audio.wav`
-- `.debug/pause-source-audio/<sessionId>/source-recording-info.json`
-- `.debug/pause-source-audio/<sessionId>/ffmpeg-command.txt`
-- `.debug/pause-source-audio/<sessionId>/diagnostics.json`
+- `<PAUSE_SOURCE_AUDIO_DEBUG_DIR>/<sessionId>/active-timeline.json`
+- `<PAUSE_SOURCE_AUDIO_DEBUG_DIR>/<sessionId>/active-audio.wav`
+- `<PAUSE_SOURCE_AUDIO_DEBUG_DIR>/<sessionId>/source-recording-info.json`
+- `<PAUSE_SOURCE_AUDIO_DEBUG_DIR>/<sessionId>/ffmpeg-command.txt`
+- `<PAUSE_SOURCE_AUDIO_DEBUG_DIR>/<sessionId>/diagnostics.json`
 
 `diagnostics.json` includes ffmpeg path/source/version and timeline build timings.
 
@@ -66,6 +68,7 @@ Outputs:
 ## Expected Failure Modes
 
 - If ffmpeg is unavailable in `source_audio_cut`, transcription fails explicitly.
+- If ffmpeg execution fails in `source_audio_cut`, transcription fails explicitly.
 - If recording duration cannot be resolved, source-audio cut fails explicitly.
 - There is no silent fallback to full-source transcription in `source_audio_cut`.
 
