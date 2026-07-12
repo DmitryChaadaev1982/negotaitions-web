@@ -5,6 +5,7 @@ import {
   buildSegmentEnhancementUpdates,
   MODE_SWITCH_REVERTS_PERSISTED_TEXT,
   resolveEnhancementOriginalText,
+  resolveInitialQualityText,
   shouldPersistEnhancedText,
   type PersistableTranscriptSegment,
 } from "@/lib/services/transcript-enhancement-persistence";
@@ -103,5 +104,20 @@ test("enhancement input falls back to text when qualityText is null", () => {
       text: "текущий текст сегмента",
     }),
     "текущий текст сегмента",
+  );
+});
+
+test("initial ingestion stores provider text in both text and qualityText", () => {
+  const providerText = "провайдерный текст сегмента";
+  const persistedText = providerText;
+  const persistedQualityText = resolveInitialQualityText(providerText, null);
+  assert.equal(persistedText, providerText);
+  assert.equal(persistedQualityText, providerText);
+});
+
+test("initial qualityText helper never overwrites existing non-null value", () => {
+  assert.equal(
+    resolveInitialQualityText("провайдерный текст", "уже сохраненный backup"),
+    "уже сохраненный backup",
   );
 });

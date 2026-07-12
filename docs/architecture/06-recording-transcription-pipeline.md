@@ -107,6 +107,17 @@
   - `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`),
   - `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`),
   - `TRANSCRIPT_ENHANCEMENT_MAX_RETRIES` (default `1`, transient timeout/network/provider errors only).
+- Empty-output reliability policy per chunk (bounded to max 3 attempts):
+  - attempt 1: primary model with normal prompt;
+  - attempt 2: primary model strict-JSON retry with increased bounded `max_output_tokens`;
+  - attempt 3: optional `TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL` strict-JSON retry when configured.
+- Empty-output diagnostics are persisted as sanitized attempt telemetry (no raw provider payload):
+  - `responseIdPresent`, `initialStatus`, `finalStatus`,
+  - `pollingAttemptCount`, `pollingElapsedMs`,
+  - `outputFieldDetected`, `rawOutputCharCount`,
+  - `parsedSegmentCount`, `emptyOutputStage`,
+  - `modelUsed`, `maxOutputTokens`,
+  - `fallbackTriggered`, `fallbackReason`.
 - Deterministic merge and no-loss rules:
   - merge strictly by original segment order,
   - unknown or duplicate model indexes reject that chunk,
@@ -120,6 +131,7 @@
   - `SKIPPED`: enhancement skipped due empty input.
 - Persistence safety and recovery path:
   - enhanced text is persisted into `Transcript.text`, `Transcript.diarizedText`, and `TranscriptSegment.text` when status is `COMPLETED` or `PARTIAL`;
+  - initial transcription ingestion now stores provider text in both `TranscriptSegment.text` and `TranscriptSegment.qualityText` for newly created rows;
   - pre-enhancement per-segment provider text is preserved once in existing `TranscriptSegment.qualityText` (`qualityText ?? text` at first enhancement write) and remains immutable backup;
   - every manual re-enhancement input segment starts from `originalText = qualityText ?? text`, so enhancement never recursively re-enhances previous AI output when backup exists;
   - original transcript can be reconstructed from ordered segments using preserved `qualityText` + existing speaker/timestamp fields;

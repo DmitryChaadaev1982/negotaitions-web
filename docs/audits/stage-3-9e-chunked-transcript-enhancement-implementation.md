@@ -4,6 +4,9 @@ Date: 2026-07-12
 Branch: `feat/stage-3-9e-chunked-transcript-enhancement`  
 Base: `deploy/yandex-poc`
 
+> Phase 2 reliability follow-up is documented in
+> `docs/audits/stage-3-9e-phase-2-enhancement-reliability.md`.
+
 ## Scope
 
 Implemented Stage 3.9E Phase 1 reliability changes for transcript enhancement:

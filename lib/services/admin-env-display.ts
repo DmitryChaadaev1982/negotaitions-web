@@ -115,6 +115,7 @@ export function getAdminEnvironmentDisplayGroups(): AdminEnvDisplayGroup[] {
         toDisplayItem("TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY", false),
         toDisplayItem("TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS", false),
         toDisplayItem("TRANSCRIPT_ENHANCEMENT_MAX_RETRIES", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL", false),
         {
           key: "YANDEX_SPEECHKIT_REQUIRED_KEYS_PRESENT",
           configured: Boolean(readEnv("YANDEX_FOLDER_ID") && readEnv("YANDEX_API_KEY")),

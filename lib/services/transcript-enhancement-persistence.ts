@@ -14,6 +14,10 @@ export function resolveEnhancementOriginalText(segment: {
   return segment.qualityText ?? segment.text;
 }
 
+export function resolveInitialQualityText(providerText: string, existingQualityText: string | null): string {
+  return existingQualityText ?? providerText;
+}
+
 export function shouldPersistEnhancedText(
   status: TranscriptEnhancementOverallStatus,
 ): boolean {

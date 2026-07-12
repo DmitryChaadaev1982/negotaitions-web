@@ -3,8 +3,8 @@ import {
   getTranscriptEnhancementChunkMaxSegments,
   getTranscriptEnhancementChunkTimeoutMs,
   getTranscriptEnhancementMaxConcurrency,
-  getTranscriptEnhancementMaxRetries,
   getTranscriptEnhancementMode,
+  getYandexTranscriptEnhancementFallbackModel,
   getYandexTranscriptEnhancementMaxOutputTokens,
   getYandexTranscriptEnhancementModel,
   type TranscriptEnhancementMode,
@@ -17,6 +17,36 @@ const CHUNK_CONTEXT_NEIGHBORS = 1;
 const CATASTROPHIC_SHRINK_MIN_SOURCE_CHARS = 40;
 const CATASTROPHIC_SHRINK_RATIO = 0.35;
 const CATASTROPHIC_SHRINK_MIN_REMOVED_CHARS = 30;
+const EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK = 3;
+
+export type TranscriptEnhancementEmptyOutputStage =
+  | "initial_response"
+  | "polling"
+  | "extraction"
+  | "parsing"
+  | "validation";
+
+type OutputFieldDetected =
+  | "output_text"
+  | "output.content.text"
+  | "output.text"
+  | "response.output_text"
+  | "result.output_text"
+  | "result"
+  | "none";
+
+type RequestOutputDiagnostics = {
+  responseIdPresent: boolean;
+  initialStatus: string | null;
+  finalStatus: string | null;
+  pollingAttemptCount: number;
+  pollingElapsedMs: number;
+  outputFieldDetected: OutputFieldDetected;
+  rawOutputCharCount: number;
+  emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null;
+  model: string;
+  maxOutputTokens: number;
+};
 
 export type TranscriptEnhancementInputSegment = {
   index: number;
@@ -54,6 +84,29 @@ export type TranscriptEnhancementChunkMetadata = {
   status: "COMPLETED" | "FAILED_FALLBACK";
   retryCount: number;
   errorCategory: string | null;
+  primaryModel?: string;
+  fallbackModel?: string | null;
+  modelUsed?: string;
+  fallbackTriggered?: boolean;
+  fallbackReason?: string | null;
+  attemptCount?: number;
+  attempts?: Array<{
+    attemptNumber: number;
+    attemptType: "primary_initial" | "primary_strict_retry" | "fallback_model_retry";
+    modelUsed: string;
+    maxOutputTokens: number;
+    responseIdPresent: boolean;
+    initialStatus: string | null;
+    finalStatus: string | null;
+    pollingAttemptCount: number;
+    pollingElapsedMs: number;
+    outputFieldDetected: OutputFieldDetected;
+    rawOutputCharCount: number;
+    parsedSegmentCount: number;
+    emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null;
+    status: "COMPLETED" | "FAILED";
+    errorCategory: string | null;
+  }>;
 };
 
 export type TranscriptEnhancementMeta = {
@@ -81,6 +134,10 @@ export type TranscriptEnhancementMeta = {
   maxOutputTokens?: number;
   estimatedDurationMs?: number | null;
   inputChars?: number;
+  primaryModel?: string;
+  fallbackModel?: string | null;
+  fallbackTriggered?: boolean;
+  fallbackReason?: string | null;
 };
 
 export type TranscriptEnhancementResult = {
@@ -106,12 +163,18 @@ type ChunkExecutionResult = {
   chunkIndex: number;
   enhancedByIndex: Map<number, string>;
   retryCount: number;
+  modelUsed: string;
+  fallbackTriggered: boolean;
+  fallbackReason: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   latencyMs: number | null;
   status: "COMPLETED" | "FAILED_FALLBACK";
   errorCategory: string | null;
   warnings: string[];
+  primaryModel: string;
+  fallbackModel: string | null;
+  attempts: TranscriptEnhancementChunkMetadata["attempts"];
 };
 
 class ChunkValidationError extends Error {
@@ -144,42 +207,111 @@ function getSegmentsText(segments: TranscriptEnhancementInputSegment[]): string 
     .trim();
 }
 
-function extractYandexOutputText(payload: Record<string, unknown>): string {
-  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
-    return payload.output_text;
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function extractYandexOutput(payload: Record<string, unknown>, depth = 0): {
+  text: string;
+  outputFieldDetected: OutputFieldDetected;
+  rawOutputCharCount: number;
+} {
+  if (depth > 4) {
+    return { text: "", outputFieldDetected: "none", rawOutputCharCount: 0 };
+  }
+
+  const directOutputText = payload.output_text;
+  if (typeof directOutputText === "string") {
+    return {
+      text: directOutputText.trim(),
+      outputFieldDetected: "output_text",
+      rawOutputCharCount: directOutputText.length,
+    };
   }
 
   const output = payload.output;
   const outputItems = Array.isArray(output) ? output : output ? [output] : [];
   const chunks: string[] = [];
+  let outputFieldDetected: OutputFieldDetected = "none";
+  let rawOutputCharCount = 0;
 
   for (const item of outputItems) {
-    if (!item || typeof item !== "object") continue;
-    const itemRecord = item as Record<string, unknown>;
+    const itemRecord = toRecord(item);
+    if (!itemRecord) continue;
+
+    if (typeof itemRecord.text === "string") {
+      outputFieldDetected = "output.text";
+      rawOutputCharCount += itemRecord.text.length;
+      if (itemRecord.text.trim()) chunks.push(itemRecord.text.trim());
+    }
+
     const content = itemRecord.content;
     const contentItems = Array.isArray(content) ? content : content ? [content] : [];
-
     for (const part of contentItems) {
-      if (!part || typeof part !== "object") continue;
-      const partRecord = part as Record<string, unknown>;
-      const text = partRecord.text;
-      if (typeof text === "string" && text.trim()) {
-        chunks.push(text);
+      const partRecord = toRecord(part);
+      if (!partRecord) continue;
+      const partText =
+        typeof partRecord.text === "string"
+          ? partRecord.text
+          : typeof partRecord.output_text === "string"
+            ? partRecord.output_text
+            : typeof toRecord(partRecord.output_text)?.text === "string"
+              ? String(toRecord(partRecord.output_text)?.text)
+              : "";
+      if (partText) {
+        outputFieldDetected = "output.content.text";
+        rawOutputCharCount += partText.length;
+        if (partText.trim()) chunks.push(partText.trim());
       }
     }
   }
 
-  if (chunks.length > 0) {
-    return chunks.join("\n").trim();
+  if (chunks.length > 0 || outputFieldDetected !== "none") {
+    return {
+      text: chunks.join("\n").trim(),
+      outputFieldDetected,
+      rawOutputCharCount,
+    };
   }
 
-  const result = payload.result;
-  if (result && typeof result === "object") {
-    const nested = extractYandexOutputText(result as Record<string, unknown>);
-    if (nested) return nested;
+  const responseRecord = toRecord(payload.response);
+  if (responseRecord) {
+    const nested = extractYandexOutput(responseRecord, depth + 1);
+    if (nested.outputFieldDetected !== "none" || nested.text) {
+      return {
+        text: nested.text,
+        outputFieldDetected:
+          nested.outputFieldDetected === "none"
+            ? "response.output_text"
+            : nested.outputFieldDetected,
+        rawOutputCharCount: nested.rawOutputCharCount,
+      };
+    }
   }
 
-  return "";
+  const resultRecord = toRecord(payload.result);
+  if (resultRecord) {
+    const nested = extractYandexOutput(resultRecord, depth + 1);
+    if (nested.outputFieldDetected !== "none" || nested.text) {
+      return {
+        text: nested.text,
+        outputFieldDetected:
+          nested.outputFieldDetected === "none" ? "result.output_text" : nested.outputFieldDetected,
+        rawOutputCharCount: nested.rawOutputCharCount,
+      };
+    }
+    return {
+      text: "",
+      outputFieldDetected: "result",
+      rawOutputCharCount: 0,
+    };
+  }
+
+  return {
+    text: "",
+    outputFieldDetected: "none",
+    rawOutputCharCount: 0,
+  };
 }
 
 function extractJsonCandidates(text: string): string[] {
@@ -414,31 +546,93 @@ async function pollResponseUntilOutput(
   responseId: string,
   headers: HeadersInit,
   timeoutMs: number,
-): Promise<Record<string, unknown> | null> {
+): Promise<{
+  payload: Record<string, unknown> | null;
+  attemptCount: number;
+  elapsedMs: number;
+  finalStatus: string | null;
+  outputFieldDetected: OutputFieldDetected;
+  rawOutputCharCount: number;
+  hasOutput: boolean;
+}> {
   const startedAt = Date.now();
+  let attemptCount = 0;
+  let finalStatus: string | null = null;
+  let outputFieldDetected: OutputFieldDetected = "none";
+  let rawOutputCharCount = 0;
   while (Date.now() - startedAt < timeoutMs) {
+    attemptCount += 1;
     const { response, text } = await fetchTextWithTimeout(
       `${baseUrl}/responses/${encodeURIComponent(responseId)}`,
       { method: "GET", headers },
       Math.min(20_000, timeoutMs),
     );
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return {
+        payload: null,
+        attemptCount,
+        elapsedMs: Date.now() - startedAt,
+        finalStatus,
+        outputFieldDetected,
+        rawOutputCharCount,
+        hasOutput: false,
+      };
+    }
     let payload: Record<string, unknown> | null = null;
     try {
       payload = JSON.parse(text) as Record<string, unknown>;
     } catch {
       payload = null;
     }
-    if (!payload) return null;
-    const outputText = extractYandexOutputText(payload);
-    if (outputText) return payload;
+    if (!payload) {
+      return {
+        payload: null,
+        attemptCount,
+        elapsedMs: Date.now() - startedAt,
+        finalStatus,
+        outputFieldDetected,
+        rawOutputCharCount,
+        hasOutput: false,
+      };
+    }
+    const output = extractYandexOutput(payload);
+    outputFieldDetected = output.outputFieldDetected;
+    rawOutputCharCount = output.rawOutputCharCount;
+    if (output.text) {
+      return {
+        payload,
+        attemptCount,
+        elapsedMs: Date.now() - startedAt,
+        finalStatus: typeof payload.status === "string" ? payload.status : null,
+        outputFieldDetected,
+        rawOutputCharCount,
+        hasOutput: true,
+      };
+    }
     const status = payload.status;
+    finalStatus = typeof status === "string" ? status : null;
     if (status === "failed" || status === "cancelled" || status === "incomplete") {
-      return payload;
+      return {
+        payload,
+        attemptCount,
+        elapsedMs: Date.now() - startedAt,
+        finalStatus,
+        outputFieldDetected,
+        rawOutputCharCount,
+        hasOutput: false,
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, RESPONSE_POLL_INTERVAL_MS));
   }
-  return null;
+  return {
+    payload: null,
+    attemptCount,
+    elapsedMs: Date.now() - startedAt,
+    finalStatus,
+    outputFieldDetected,
+    rawOutputCharCount,
+    hasOutput: false,
+  };
 }
 
 type RequestEnhancementParams = {
@@ -457,6 +651,7 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
   envelope: Record<string, unknown>;
   outputText: string;
   tokensUsed: number;
+  diagnostics: RequestOutputDiagnostics;
 }> {
   const {
     apiKey,
@@ -502,24 +697,68 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
   } catch {
     throw new Error("Yandex transcript enhancement returned non-JSON envelope.");
   }
-  let outputText = extractYandexOutputText(envelope);
-  if (!outputText) {
-    const responseId =
-      typeof envelope.id === "string" && envelope.id.trim() ? envelope.id.trim() : null;
-    if (responseId) {
-      const polled = await pollResponseUntilOutput(
-        baseUrl,
-        responseId,
-        headers,
-        Math.min(timeoutMs, RESPONSE_POLL_TIMEOUT_MS),
-      );
-      if (polled) {
-        envelope = polled;
-        outputText = extractYandexOutputText(envelope);
+  const initialExtraction = extractYandexOutput(envelope);
+  let outputText = initialExtraction.text;
+  const responseId =
+    typeof envelope.id === "string" && envelope.id.trim() ? envelope.id.trim() : null;
+  const initialStatus = typeof envelope.status === "string" ? envelope.status : null;
+  let finalStatus = initialStatus;
+  let pollingAttemptCount = 0;
+  let pollingElapsedMs = 0;
+  let outputFieldDetected = initialExtraction.outputFieldDetected;
+  let rawOutputCharCount = initialExtraction.rawOutputCharCount;
+  let emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null = null;
+
+  if (!outputText && responseId) {
+    const pollingResult = await pollResponseUntilOutput(
+      baseUrl,
+      responseId,
+      headers,
+      Math.min(timeoutMs, RESPONSE_POLL_TIMEOUT_MS),
+    );
+    pollingAttemptCount = pollingResult.attemptCount;
+    pollingElapsedMs = pollingResult.elapsedMs;
+    finalStatus = pollingResult.finalStatus ?? finalStatus;
+    outputFieldDetected = pollingResult.outputFieldDetected;
+    rawOutputCharCount = pollingResult.rawOutputCharCount;
+    if (pollingResult.payload) {
+      envelope = pollingResult.payload;
+      outputText = extractYandexOutput(envelope).text;
+      if (!outputText) {
+        emptyOutputStage =
+          outputFieldDetected === "none" && pollingResult.finalStatus === null
+            ? "polling"
+            : "extraction";
       }
+    } else {
+      emptyOutputStage = "polling";
     }
+  } else if (!outputText) {
+    emptyOutputStage =
+      outputFieldDetected === "none" ? "initial_response" : "extraction";
   }
-  return { envelope, outputText, tokensUsed: maxTokens };
+
+  if (!outputText && emptyOutputStage === null) {
+    emptyOutputStage = outputFieldDetected === "none" ? "initial_response" : "extraction";
+  }
+
+  return {
+    envelope,
+    outputText,
+    tokensUsed: maxTokens,
+    diagnostics: {
+      responseIdPresent: Boolean(responseId),
+      initialStatus,
+      finalStatus: finalStatus ?? null,
+      pollingAttemptCount,
+      pollingElapsedMs,
+      outputFieldDetected,
+      rawOutputCharCount,
+      emptyOutputStage,
+      model: modelName,
+      maxOutputTokens: maxTokens,
+    },
+  };
 }
 
 function isCatastrophicShrink(originalText: string, cleanedText: string): boolean {
@@ -814,92 +1053,233 @@ async function runChunkedEnhancement(params: {
   const chunks = buildTranscriptEnhancementChunks(segments);
   const maxConcurrency = Math.max(1, getTranscriptEnhancementMaxConcurrency());
   const perChunkTimeoutMs = getTranscriptEnhancementChunkTimeoutMs();
-  const maxRetries = getTranscriptEnhancementMaxRetries();
   const chunkResults: ChunkExecutionResult[] = new Array(chunks.length);
   const chunkQueuedAt = chunks.map(() => new Date().toISOString());
+  const fallbackModel = getYandexTranscriptEnhancementFallbackModel();
+  const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();
 
   let workerCursor = 0;
   const workerCount = Math.min(maxConcurrency, chunks.length);
 
   async function processChunk(chunk: EnhancementChunk): Promise<ChunkExecutionResult> {
     const { maxOutputTokens } = resolveDynamicMaxOutputTokens(chunk.targets);
-    let attempt = 0;
-    let retryCount = 0;
-    while (attempt <= maxRetries) {
-      const attemptStartedAt = new Date();
-      const attemptStartedAtMs = Date.now();
+    const strictRetryMaxTokens = Math.max(
+      maxOutputTokens,
+      Math.min(maxTokensFromEnv, Math.max(1600, maxOutputTokens * 2)),
+    );
+    const attemptPlan: Array<{
+      attemptType: "primary_initial" | "primary_strict_retry" | "fallback_model_retry";
+      model: string;
+      maxTokens: number;
+      strictJsonMode: boolean;
+      fallbackTriggered: boolean;
+      fallbackReason: string | null;
+    }> = [
+      {
+        attemptType: "primary_initial",
+        model: modelName,
+        maxTokens: maxOutputTokens,
+        strictJsonMode: false,
+        fallbackTriggered: false,
+        fallbackReason: null,
+      },
+      {
+        attemptType: "primary_strict_retry",
+        model: modelName,
+        maxTokens: strictRetryMaxTokens,
+        strictJsonMode: true,
+        fallbackTriggered: false,
+        fallbackReason: null,
+      },
+    ];
+    if (fallbackModel && fallbackModel !== modelName) {
+      attemptPlan.push({
+        attemptType: "fallback_model_retry",
+        model: fallbackModel,
+        maxTokens: strictRetryMaxTokens,
+        strictJsonMode: true,
+        fallbackTriggered: true,
+        fallbackReason: "empty_output",
+      });
+    }
+    const boundedPlan = attemptPlan.slice(0, EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK);
+
+    const attempts: NonNullable<ChunkExecutionResult["attempts"]> = [];
+    const firstAttemptStartedAt = new Date();
+    const firstAttemptStartedAtMs = Date.now();
+    let lastErrorCategory: string | null = null;
+    let modelUsed = modelName;
+    let fallbackTriggered = false;
+    let fallbackReason: string | null = null;
+
+    for (let i = 0; i < boundedPlan.length; i += 1) {
+      const plan = boundedPlan[i];
+      modelUsed = plan.model;
+      fallbackTriggered = fallbackTriggered || plan.fallbackTriggered;
+      fallbackReason = fallbackReason ?? plan.fallbackReason;
+
       try {
         const requestResult = await requestEnhancement({
           apiKey,
           folderId,
           baseUrl,
-          modelName,
-          maxTokens: maxOutputTokens,
+          modelName: plan.model,
+          maxTokens: plan.maxTokens,
           timeoutMs: perChunkTimeoutMs,
           input: chunk,
           promptBuilder: (input, strictJsonMode) =>
             buildChunkPrompt(input as EnhancementChunk, strictJsonMode),
-          strictJsonMode: attempt > 0,
+          strictJsonMode: plan.strictJsonMode,
         });
+
         if (!requestResult.outputText) {
-          throw new Error(
-            `Yandex transcript enhancement returned empty model output (status=${String(requestResult.envelope.status ?? "unknown")}).`,
-          );
-        }
-        const parsed = parseEnhancementPayload(requestResult.outputText);
-        if (!parsed) {
-          throw new ChunkValidationError(
-            "Yandex transcript enhancement returned invalid JSON payload.",
-            "malformed_output",
-          );
-        }
-        const validated = validateChunkEnhancementResponse({
-          targets: chunk.targets,
-          parsed,
-        });
-        return {
-          chunkIndex: chunk.chunkIndex,
-          enhancedByIndex: validated.enhancedByIndex,
-          retryCount,
-          startedAt: attemptStartedAt.toISOString(),
-          finishedAt: new Date().toISOString(),
-          latencyMs: Date.now() - attemptStartedAtMs,
-          status: "COMPLETED",
-          errorCategory: null,
-          warnings: validated.warnings,
-        };
-      } catch (error) {
-        const classified = classifyChunkError(error);
-        const retryable = classified.retryable && attempt < maxRetries;
-        if (retryable) {
-          retryCount += 1;
-          attempt += 1;
+          attempts.push({
+            attemptNumber: i + 1,
+            attemptType: plan.attemptType,
+            modelUsed: plan.model,
+            maxOutputTokens: plan.maxTokens,
+            responseIdPresent: requestResult.diagnostics.responseIdPresent,
+            initialStatus: requestResult.diagnostics.initialStatus,
+            finalStatus: requestResult.diagnostics.finalStatus,
+            pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+            pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+            outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+            rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+            parsedSegmentCount: 0,
+            emptyOutputStage:
+              requestResult.diagnostics.emptyOutputStage ?? "initial_response",
+            status: "FAILED",
+            errorCategory: "empty_output",
+          });
+          lastErrorCategory = "empty_output";
           continue;
         }
-        return {
-          chunkIndex: chunk.chunkIndex,
-          enhancedByIndex: new Map<number, string>(),
-          retryCount,
-          startedAt: attemptStartedAt.toISOString(),
-          finishedAt: new Date().toISOString(),
-          latencyMs: Date.now() - attemptStartedAtMs,
-          status: "FAILED_FALLBACK",
+
+        const parsed = parseEnhancementPayload(requestResult.outputText);
+        if (!parsed) {
+          attempts.push({
+            attemptNumber: i + 1,
+            attemptType: plan.attemptType,
+            modelUsed: plan.model,
+            maxOutputTokens: plan.maxTokens,
+            responseIdPresent: requestResult.diagnostics.responseIdPresent,
+            initialStatus: requestResult.diagnostics.initialStatus,
+            finalStatus: requestResult.diagnostics.finalStatus,
+            pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+            pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+            outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+            rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+            parsedSegmentCount: 0,
+            emptyOutputStage: "parsing",
+            status: "FAILED",
+            errorCategory: "malformed_output",
+          });
+          lastErrorCategory = "malformed_output";
+          continue;
+        }
+
+        try {
+          const validated = validateChunkEnhancementResponse({
+            targets: chunk.targets,
+            parsed,
+          });
+          attempts.push({
+            attemptNumber: i + 1,
+            attemptType: plan.attemptType,
+            modelUsed: plan.model,
+            maxOutputTokens: plan.maxTokens,
+            responseIdPresent: requestResult.diagnostics.responseIdPresent,
+            initialStatus: requestResult.diagnostics.initialStatus,
+            finalStatus: requestResult.diagnostics.finalStatus,
+            pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+            pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+            outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+            rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+            parsedSegmentCount: parsed.segments.length,
+            emptyOutputStage: null,
+            status: "COMPLETED",
+            errorCategory: null,
+          });
+          return {
+            chunkIndex: chunk.chunkIndex,
+            enhancedByIndex: validated.enhancedByIndex,
+            retryCount: Math.max(0, i),
+            modelUsed: plan.model,
+            fallbackTriggered,
+            fallbackReason,
+            startedAt: firstAttemptStartedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            latencyMs: Date.now() - firstAttemptStartedAtMs,
+            status: "COMPLETED",
+            errorCategory: null,
+            warnings: validated.warnings,
+            primaryModel: modelName,
+            fallbackModel: fallbackModel ?? null,
+            attempts,
+          };
+        } catch (validationError) {
+          const category =
+            validationError instanceof ChunkValidationError
+              ? validationError.category
+              : classifyChunkError(validationError).category;
+          attempts.push({
+            attemptNumber: i + 1,
+            attemptType: plan.attemptType,
+            modelUsed: plan.model,
+            maxOutputTokens: plan.maxTokens,
+            responseIdPresent: requestResult.diagnostics.responseIdPresent,
+            initialStatus: requestResult.diagnostics.initialStatus,
+            finalStatus: requestResult.diagnostics.finalStatus,
+            pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+            pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+            outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+            rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+            parsedSegmentCount: parsed.segments.length,
+            emptyOutputStage: "validation",
+            status: "FAILED",
+            errorCategory: category,
+          });
+          lastErrorCategory = category;
+        }
+      } catch (error) {
+        const classified = classifyChunkError(error);
+        attempts.push({
+          attemptNumber: i + 1,
+          attemptType: plan.attemptType,
+          modelUsed: plan.model,
+          maxOutputTokens: plan.maxTokens,
+          responseIdPresent: false,
+          initialStatus: null,
+          finalStatus: null,
+          pollingAttemptCount: 0,
+          pollingElapsedMs: 0,
+          outputFieldDetected: "none",
+          rawOutputCharCount: 0,
+          parsedSegmentCount: 0,
+          emptyOutputStage: null,
+          status: "FAILED",
           errorCategory: classified.category,
-          warnings: [],
-        };
+        });
+        lastErrorCategory = classified.category;
       }
     }
 
     return {
       chunkIndex: chunk.chunkIndex,
       enhancedByIndex: new Map<number, string>(),
-      retryCount,
-      startedAt: null,
-      finishedAt: null,
-      latencyMs: null,
+      retryCount: Math.max(0, boundedPlan.length - 1),
+      modelUsed,
+      fallbackTriggered,
+      fallbackReason: fallbackTriggered ? fallbackReason ?? "empty_output" : null,
+      startedAt: firstAttemptStartedAt.toISOString(),
+      finishedAt: new Date().toISOString(),
+      latencyMs: Date.now() - firstAttemptStartedAtMs,
       status: "FAILED_FALLBACK",
-      errorCategory: "request_failed",
+      errorCategory: lastErrorCategory ?? "empty_output",
       warnings: [],
+      primaryModel: modelName,
+      fallbackModel: fallbackModel ?? null,
+      attempts,
     };
   }
 
@@ -918,10 +1298,16 @@ async function runChunkedEnhancement(params: {
   let successfulChunkCount = 0;
   let failedChunkCount = 0;
   let totalRetryCount = 0;
+  let fallbackTriggeredAny = false;
+  const fallbackReasons = new Set<string>();
   const failedChunkIndexes = new Set<number>();
 
   for (const result of chunkResults) {
     totalRetryCount += result.retryCount;
+    fallbackTriggeredAny = fallbackTriggeredAny || result.fallbackTriggered;
+    if (result.fallbackReason) {
+      fallbackReasons.add(result.fallbackReason);
+    }
     if (result.status === "COMPLETED") {
       successfulChunkCount += 1;
       for (const [index, cleanedText] of result.enhancedByIndex) {
@@ -985,6 +1371,10 @@ async function runChunkedEnhancement(params: {
     meta: {
       mode: "chunked",
       model: modelName,
+      primaryModel: modelName,
+      fallbackModel: fallbackModel ?? null,
+      fallbackTriggered: fallbackTriggeredAny,
+      fallbackReason: fallbackReasons.size > 0 ? Array.from(fallbackReasons).join(",") : null,
       overallStatus,
       startedAt: new Date(startedAtMs).toISOString(),
       finishedAt: new Date(finishedAtMs).toISOString(),
@@ -1014,6 +1404,13 @@ async function runChunkedEnhancement(params: {
           status: result?.status ?? "FAILED_FALLBACK",
           retryCount: result?.retryCount ?? 0,
           errorCategory: result?.errorCategory ?? null,
+          primaryModel: result?.primaryModel ?? modelName,
+          fallbackModel: result?.fallbackModel ?? null,
+          modelUsed: result?.modelUsed ?? modelName,
+          fallbackTriggered: result?.fallbackTriggered ?? false,
+          fallbackReason: result?.fallbackReason ?? null,
+          attemptCount: result?.attempts?.length ?? 0,
+          attempts: result?.attempts ?? [],
         };
       }),
       originalWordCount,

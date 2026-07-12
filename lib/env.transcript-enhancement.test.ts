@@ -8,6 +8,7 @@ import {
   getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementMaxRetries,
   getTranscriptEnhancementMode,
+  getYandexTranscriptEnhancementFallbackModel,
 } from "@/lib/env";
 
 test("TRANSCRIPT_ENHANCEMENT_MODE defaults to single", () => {
@@ -80,6 +81,22 @@ test("chunked enhancement env defaults and clamps are safe", () => {
       delete process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES;
     } else {
       process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES = previousRetries;
+    }
+  }
+});
+
+test("fallback model env is disabled by default and trimmed when set", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL;
+  try {
+    assert.equal(getYandexTranscriptEnhancementFallbackModel(), null);
+    process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL = "  yandexgpt-lite/latest  ";
+    assert.equal(getYandexTranscriptEnhancementFallbackModel(), "yandexgpt-lite/latest");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL = previous;
     }
   }
 });
