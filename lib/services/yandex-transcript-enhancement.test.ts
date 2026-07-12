@@ -206,9 +206,12 @@ test("json_schema mode sends Responses API text.format schema payload", async ()
     },
     async () => {
       const originalFetch = global.fetch;
-      let seenBody: Record<string, unknown> | null = null;
+      const seenBodies: Record<string, unknown>[] = [];
       global.fetch = (async (_url: string, init?: RequestInit) => {
-        seenBody = parseFetchBody(init);
+        seenBodies.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        const seenBody = seenBodies.at(-1) as Record<string, unknown>;
         const input = String(seenBody.input ?? "");
         const indexes = extractTargetIndexesFromPrompt(input);
         return new Response(
@@ -236,8 +239,9 @@ test("json_schema mode sends Responses API text.format schema payload", async ()
         const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "schema"));
         assert.equal(result.meta?.overallStatus, "COMPLETED");
         assert.equal(result.meta?.outputMode, "json_schema");
-        assert.ok(seenBody);
-        const text = seenBody?.text as Record<string, unknown>;
+        const seenBody = seenBodies.at(-1);
+        assert.ok(seenBody, "Expected provider request body");
+        const text = seenBody["text"] as Record<string, unknown>;
         const format = text?.format as Record<string, unknown>;
         assert.equal(format?.type, "json_schema");
         assert.equal(format?.strict, true);

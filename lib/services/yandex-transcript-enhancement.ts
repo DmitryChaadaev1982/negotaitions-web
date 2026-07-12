@@ -579,9 +579,23 @@ function buildChunkPrompt(chunk: EnhancementChunk, strictJsonMode = false): stri
 
 export function buildChunkSchemaJsonSchema(chunk: EnhancementChunk): TranscriptEnhancementResponseSchema {
   const keys = chunk.targets.map((segment) => String(segment.index));
-  const properties = Object.fromEntries(
-    keys.map((key) => [key, { type: "string" as const, minLength: 1 }]),
-  );
+  type SegmentPropertySchema = {
+    type: "string";
+    minLength: 1;
+  };
+
+  const properties: Record<string, SegmentPropertySchema> =
+    Object.fromEntries(
+      keys.map(
+        (key): [string, SegmentPropertySchema] => [
+          key,
+          {
+            type: "string",
+            minLength: 1,
+          },
+        ],
+      ),
+    );
   return {
     type: "object",
     additionalProperties: false,
