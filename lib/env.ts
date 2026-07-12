@@ -47,6 +47,7 @@ export type PauseProcessingMode =
   | "source_audio_cut";
 
 export type TranscriptEnhancementMode = "single" | "chunked";
+export type TranscriptEnhancementOutputMode = "legacy" | "json_schema";
 
 export function getVideoProvider(): VideoProvider {
   const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
@@ -191,6 +192,20 @@ export function getTranscriptEnhancementMode(): TranscriptEnhancementMode {
     `[env] Invalid TRANSCRIPT_ENHANCEMENT_MODE="${raw}". Falling back to default mode "single".`,
   );
   return "single";
+}
+
+export function getTranscriptEnhancementOutputMode(): TranscriptEnhancementOutputMode {
+  const raw = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE?.trim().toLowerCase();
+  if (!raw || raw === "legacy") {
+    return "legacy";
+  }
+  if (raw === "json_schema") {
+    return "json_schema";
+  }
+  console.warn(
+    `[env] Invalid TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="${raw}". Falling back to default mode "legacy".`,
+  );
+  return "legacy";
 }
 
 export function getTranscriptEnhancementChunkMaxSegments(): number {

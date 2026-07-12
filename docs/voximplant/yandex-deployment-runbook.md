@@ -88,6 +88,7 @@ YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED=true
 YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL=deepseek-v4-flash
 YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS=6000
 TRANSCRIPT_ENHANCEMENT_MODE=single
+TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=legacy
 TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS=6
 TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS=700
 TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY=4
@@ -170,4 +171,102 @@ NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
 - For regression rollback, redeploy previous stable image and env snapshot.
 - If transcription quality regresses, return to `standard` profile and re-run A/B procedure.
 - For transcript enhancement rollout rollback, switch `TRANSCRIPT_ENHANCEMENT_MODE=single` and restart service.
+
+## 14) Stage 3.9E JSON Schema rollout (manual env activation)
+
+Do not edit real env files from CI/agent automation. Apply manually after validated deploy.
+
+### Local activation
+
+Target file:
+
+- `C:\Projects\Negotiations AI\negotiations-web\.env`
+
+Required value:
+
+- `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"`
+
+Procedure (PowerShell):
+
+```powershell
+$path = "C:\Projects\Negotiations AI\negotiations-web\.env"
+$backup = "$path.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+Copy-Item $path $backup
+
+$content = Get-Content $path -Raw
+$content = [regex]::Replace(
+  $content,
+  '^\s*TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE\s*=.*$',
+  'TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"',
+  [System.Text.RegularExpressions.RegexOptions]::Multiline
+)
+if ($content -notmatch 'TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE') {
+  $content = $content.TrimEnd() + "`r`nTRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=""json_schema""`r`n"
+}
+Set-Content -Path $path -Value $content -NoNewline
+
+Get-Content $path | Select-String 'TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE'
+```
+
+Duplicate prevention:
+
+- Keep only one `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=` line.
+
+Restart:
+
+- Restart local Next.js process after update.
+
+Rollback:
+
+- Set `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="legacy"` and restart.
+
+### Server activation
+
+Target file:
+
+- `/var/www/negotaitions/app/.env.production`
+
+Required value:
+
+- `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"`
+
+Procedure (bash):
+
+```bash
+set -euo pipefail
+ENV_FILE="/var/www/negotaitions/app/.env.production"
+BACKUP="/var/www/negotaitions/app/.env.production.bak-$(date +%Y%m%d-%H%M%S)"
+cp "$ENV_FILE" "$BACKUP"
+
+if grep -q '^TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=' "$ENV_FILE"; then
+  sed -i 's/^TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=.*/TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"/' "$ENV_FILE"
+else
+  printf '\nTRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"\n' >> "$ENV_FILE"
+fi
+
+awk -F= '/^TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=/{print $1"="$2}' "$ENV_FILE"
+```
+
+Duplicate prevention:
+
+- Ensure exactly one `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=` line remains.
+
+Safe verification:
+
+- Verify only this key; do not print secrets.
+
+Restart and health:
+
+```bash
+sudo systemctl restart negotiations-web
+sudo systemctl status negotiations-web --no-pager
+journalctl -u negotiations-web -n 120 --no-pager
+```
+
+Rollback:
+
+```bash
+sed -i 's/^TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE=.*/TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="legacy"/' /var/www/negotaitions/app/.env.production
+sudo systemctl restart negotiations-web
+```
 

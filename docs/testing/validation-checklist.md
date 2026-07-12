@@ -16,6 +16,7 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:e2e:smoke:browser` (browser-first deterministic localhost smoke)
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)
 - `node --import tsx --test lib/services/transcript-enhancement-persistence.test.ts` (targeted enhancement/ingestion persistence safety)
+- `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
 - `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast preflight; read-only)
 - `npm run test:e2e:tunnel:list` (inventory of `@requires-tunnel` tests)
 - `npm run test:e2e:tunnel` (opt-in tunnel-only suite, excludes `@live-provider`)

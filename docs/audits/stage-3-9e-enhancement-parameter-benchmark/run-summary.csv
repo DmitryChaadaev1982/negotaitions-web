@@ -1,0 +1,2 @@
+sessionId,transcriptId,lifecycleVerdict,bestBudget,generationCalls,retrievalCalls,elapsedMs,successCalls,failedCalls,failureBreakdown
+cmrhs7ms80003mvm1tc8jv7ks,cmrhsg3fd0071mvm17z8j9oum,TERMINAL_INCOMPLETE,2400,27,1,592413,27,0,{}

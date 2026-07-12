@@ -1,0 +1,20 @@
+{
+  "description": "Representative dynamic schema for chunk 2 (indexes 12-16). In runtime, required keys are regenerated per chunk.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["segments"],
+  "properties": {
+    "segments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["12", "13", "14", "15", "16"],
+      "properties": {
+        "12": { "type": "string", "minLength": 1 },
+        "13": { "type": "string", "minLength": 1 },
+        "14": { "type": "string", "minLength": 1 },
+        "15": { "type": "string", "minLength": 1 },
+        "16": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

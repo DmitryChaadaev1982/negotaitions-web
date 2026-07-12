@@ -6,6 +6,9 @@ Base: `deploy/yandex-poc`
 
 > Phase 2 reliability follow-up is documented in
 > `docs/audits/stage-3-9e-phase-2-enhancement-reliability.md`.
+>
+> Stage 3.9E provider-enforced schema rollout is documented in
+> `docs/audits/stage-3-9e-json-schema-enhancement-implementation.md`.
 
 ## Scope
 

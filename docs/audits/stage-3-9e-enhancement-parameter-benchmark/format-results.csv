@@ -1,0 +1,5 @@
+chunkIndex,format,tokenBudget,httpStatus,status,requestDurationMs,validStructuredOutput,outputChars,outputTokens,parsingReliability,semanticQuality,failureCategory
+0,compact_json,2400,200,incomplete,30287,false,134,2400,false,,MALFORMED_JSON
+0,current_strict_json,2400,200,completed,22033,true,883,1909,true,FORMATTING_ONLY,
+2,compact_json,2400,200,incomplete,28283,false,0,2400,false,,MALFORMED_JSON
+2,current_strict_json,2400,200,incomplete,27487,false,0,2400,false,,MALFORMED_JSON

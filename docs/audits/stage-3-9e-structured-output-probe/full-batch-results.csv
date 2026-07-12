@@ -1,0 +1,5 @@
+selected_mode,full_batch_wall_time_ms,chunk_index,http_status,status,classification,duration_ms,input_tokens,output_tokens,reasoning_tokens,required_keys_present,extra_keys,empty_values,linguistic_class
+responses,3132,0,200,completed,SCHEMA_VALID,1662,383,117,0,true,0,0,ACCEPTABLE
+responses,3132,1,200,completed,SCHEMA_VALID,2373,413,156,0,true,0,0,ACCEPTABLE
+responses,3132,2,200,completed,SCHEMA_VALID,3130,492,233,0,true,0,0,ACCEPTABLE
+responses,3132,3,200,completed,SCHEMA_VALID,1523,359,90,0,true,0,0,ACCEPTABLE
