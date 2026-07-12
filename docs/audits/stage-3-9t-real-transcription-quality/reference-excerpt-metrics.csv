@@ -1,0 +1,2 @@
+reference_id,session_id,audio_basis,excerpt_duration_seconds,word_count,contains_overlap,contains_numeric_phrase,contains_sort_takoi_region,meets_target_3_to_5_min,meets_target_250_words,wer_reliability_note
+REF1,cmrhs7ms80003mvm1tc8jv7ks,active_audio_full,103.87,228,true,true,true,false,false,Provisional for global WER due shorter and lower-word excerpt than target

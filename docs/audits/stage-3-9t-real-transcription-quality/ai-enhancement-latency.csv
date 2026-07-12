@@ -1,0 +1,10 @@
+scenario,chunk_index,chunks_total,segment_count,input_chars,elapsed_ms,ok,error,model,max_output_tokens_configured,max_output_tokens_used,estimated_duration_ms,notes
+full_single,1,1,22,1299,120023,false,Yandex transcript enhancement timed out.,deepseek-v4-flash,6000,,,Single-shot run hits application timeout ceiling
+two_chunks_sequential,1,2,11,299,77557,true,,deepseek-v4-flash,6000,4800,30859,First half succeeds
+two_chunks_sequential,2,2,11,1000,120003,false,Yandex transcript enhancement timed out.,deepseek-v4-flash,6000,,,Second half still times out
+four_chunks_parallel,1,4,6,175,80173,true,,deepseek-v4-flash,6000,4800,19640,Parallel chunk success
+four_chunks_parallel,2,4,6,316,73654,true,,deepseek-v4-flash,6000,4800,27360,Parallel chunk success
+four_chunks_parallel,3,4,6,659,105385,true,,deepseek-v4-flash,6000,5372,56181,Slowest successful chunk
+four_chunks_parallel,4,4,4,149,34506,true,,deepseek-v4-flash,6000,2400,18169,Fastest successful chunk
+aggregate_success,all,5,na,na,74255,true,,deepseek-v4-flash,6000,na,na,Average successful call latency (ms)
+aggregate_wall_parallel,4_chunks,4,22,1299,105386,true,,deepseek-v4-flash,6000,na,na,End-to-end wall time for full transcript via 4 parallel chunks
