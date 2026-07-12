@@ -222,7 +222,7 @@ test.describe("Part 2 - Facilitator selection at creation", () => {
     expect(response.status()).not.toBe(500);
   });
 
-  test("createSession: facilitatorId in DB is resolvedFacilitatorUserId, not always creator", async () => {
+  test("createSession: facilitatorId in DB is resolvedFacilitatorUserId, not always creator @smoke", async () => {
     const admin = await createActiveUser("p610_admin3", "Admin3", "ADMIN");
     const facilitator = await createActiveUser("p610_facil2", "Facilitator2");
     const { caseId } = await createCaseWithRoles(admin.id);
@@ -290,7 +290,7 @@ test.describe("Part 3 - Account-based participant add (no guest)", () => {
     expect(guestRows.length).toBe(0);
   });
 
-  test("external email → SessionInvite row is created", async () => {
+  test("external email → SessionInvite row is created @smoke", async () => {
     const owner = await createActiveUser("p610_emailinv", "Email Inviter");
     const { sessionId } = await createStandaloneSession(owner.id);
 
@@ -305,7 +305,7 @@ test.describe("Part 3 - Account-based participant add (no guest)", () => {
     expect(inviteRows.length).toBe(1);
   });
 
-  test("duplicate registered user in session is prevented", async () => {
+  test("duplicate registered user in session is prevented @smoke", async () => {
     const owner = await createActiveUser("p610_dup", "Dup Owner");
     const player = await createActiveUser("p610_dup_pl", "Dup Player");
     const { sessionId, sessionRole1Id } = await createStandaloneSession(owner.id);
@@ -326,7 +326,7 @@ test.describe("Part 3 - Account-based participant add (no guest)", () => {
     expect(rows.length).toBe(1);
   });
 
-  test("duplicate external email invite is prevented", async () => {
+  test("duplicate external email invite is prevented @smoke", async () => {
     const owner = await createActiveUser("p610_dupem", "Dup Email Owner");
     const { sessionId } = await createStandaloneSession(owner.id);
     const email = `duptest_${uid("e")}@example.com`;

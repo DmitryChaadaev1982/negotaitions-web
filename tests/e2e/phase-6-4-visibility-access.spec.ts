@@ -344,7 +344,7 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     expect(visible).toContain(eventId);
   });
 
-  test("4. Private event NOT visible to unrelated ACTIVE user", async () => {
+  test("4. Private event NOT visible to unrelated ACTIVE user @smoke", async () => {
     const host = await createActiveUser("host_priv");
     const unrelated = await createActiveUser("unrelated_priv");
     const eventId = await createTrainingEvent({
@@ -358,7 +358,7 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     expect(visible).not.toContain(eventId);
   });
 
-  test("5. Private event visible to invited user (EventInvite)", async () => {
+  test("5. Private event visible to invited user (EventInvite) @smoke", async () => {
     const host = await createActiveUser("host_priv_inv");
     const invited = await createActiveUser("invited_priv");
     const eventId = await createTrainingEvent({
@@ -432,7 +432,7 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     expect(visible).not.toContain(sessionId);
   });
 
-  test("13. Standalone PRIVATE session visible to invited user (SessionInvite)", async () => {
+  test("13. Standalone PRIVATE session visible to invited user (SessionInvite) @smoke", async () => {
     const facilitator = await createActiveUser("fac_priv_sess");
     const invited = await createActiveUser("invited_priv_sess");
     const sessionId = await createStandaloneSession({
@@ -526,7 +526,7 @@ test.describe("Phase 6.4 — Visibility rules (DB-level)", () => {
     expect(Object.keys(row)).toContain("publicJoinCode");
   });
 
-  test("18. No duplicate EventParticipant when same user joins again (idempotent)", async () => {
+  test("18. No duplicate EventParticipant when same user joins again (idempotent) @smoke", async () => {
     const host = await createActiveUser("host_dedup");
     const user = await createActiveUser("user_dedup");
     const eventId = await createTrainingEvent({

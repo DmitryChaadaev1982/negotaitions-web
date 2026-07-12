@@ -40,6 +40,10 @@ Full Playwright regression:
 
 - `npm run test:e2e:full`
 
+Curated deterministic smoke:
+
+- `npm run test:e2e:smoke`
+
 ## Validation Gate Model
 
 `validate:fast` includes:
@@ -68,6 +72,14 @@ Properties:
 - Environment-sensitive
 - Not currently the default deploy gate
 
+`test:e2e:smoke` is:
+
+- Chromium-only curated subset (`--project=chromium --grep @smoke`)
+- No reverse tunnel required
+- Mock-provider compatible (no real Voximplant/Yandex/live callbacks)
+- DB-mutating by design (requires dedicated non-production test DB)
+- Intended for deploy-adjacent browser/API validation after stability checks
+
 `test:all` remains available for backward compatibility as a broad legacy/full-suite command, but it is not the recommended routine deploy gate while full Playwright remains unstable or environment-dependent.
 
 ## Playwright Runtime Behavior
@@ -91,6 +103,7 @@ Properties:
 - The current tunnel remains a manual operational step.
 - Future tunnel preflight should fail fast with clear instructions instead of hanging.
 - Tests must never automatically kill a stale remote tunnel by default.
+- Phase 3 will introduce explicit tunnel classification/preflight; Phase 2 smoke excludes tunnel-only checks.
 
 ## Future Suite Model (Planned, Not Yet Implemented)
 
@@ -98,6 +111,23 @@ Properties:
 - Tunnel-required tests: explicit opt-in group.
 - Provider/live tests: separate manual or dedicated-environment group.
 - Full Playwright: manual/nightly until stabilized.
+
+## Phase 2 Smoke Coverage (Current)
+
+Current `@smoke` scope emphasizes deterministic business guards:
+
+- Admin diagnostics secret masking and env grouping sanity.
+- Standalone session ownership/invite integrity (facilitator resolution, invite dedupe).
+- Event/session invite visibility rules for private resources.
+- Public/private authorization and participant dedupe guards.
+
+Intentionally not covered in Phase 2 smoke:
+
+- Real Voximplant conferencing/recording.
+- Real SpeechKit/Yandex provider flows.
+- Reverse tunnel and HTTPS callback behavior.
+- Audio/transcription heavy long workflows.
+- Full browser regression and multi-browser/mobile coverage.
 
 ## Base URL and Web Server
 

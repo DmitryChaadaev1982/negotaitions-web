@@ -11,6 +11,7 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run validate:deploy`
 - `npm run test:e2e:list` (inventory only)
 - `npm run test:e2e:install` (explicit browser setup when needed)
+- `npm run test:e2e:smoke` (curated deterministic Chromium subset)
 - `npm run test:e2e:full` (broad regression; manual/nightly until stabilized)
 
 ## Validation Gate Intent
@@ -22,8 +23,18 @@ Use this checklist for architecture/documentation-affecting changes and release 
   - unit tests
   - Playwright listing only (`--list`)
 - `validate:deploy` runs `validate:fast` and then production build.
+- `test:e2e:smoke` runs critical browser/API smoke checks only (`@smoke`, Chromium).
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
+
+## Smoke Suite Guardrails (Phase 2)
+
+- Chromium-only, curated tests tagged with `@smoke`.
+- No reverse tunnel requirement.
+- No real external providers (Voximplant/Yandex live flows excluded).
+- DB-mutating tests are allowed; use a dedicated non-production test DB.
+- Smoke is deploy-adjacent validation only after repeat-run stability is demonstrated.
+- Tunnel-specific classification/preflight is deferred to Phase 3.
 
 ## Playwright Browser Install Diagnostics (PowerShell)
 
