@@ -68,6 +68,7 @@ import {
   sanitizeRawProviderSnapshot,
   type PreprocessingDecisionLog,
 } from "@/lib/observability/transcription-observability";
+import { resolveInitialQualityText } from "@/lib/services/transcript-enhancement-persistence";
 import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
@@ -959,7 +960,7 @@ export async function runRealTranscription(
               orderIndex: segment.orderIndex,
               mappingSource: segment.speakerLabel ? "PROVIDER_DIARIZATION" : null,
               // Two-pass segment fields
-              qualityText: aligned?.qualityText ?? null,
+              qualityText: resolveInitialQualityText(segment.text, null),
               alignmentConfidence: aligned?.alignmentConfidence ?? null,
               textSource: aligned?.alignmentSource ?? null,
             };

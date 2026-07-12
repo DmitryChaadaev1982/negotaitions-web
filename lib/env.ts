@@ -169,6 +169,11 @@ export function getYandexTranscriptEnhancementModel(): string {
   return process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL?.trim() || "deepseek-v4-flash";
 }
 
+export function getYandexTranscriptEnhancementFallbackModel(): string | null {
+  const raw = process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL?.trim();
+  return raw ? raw : null;
+}
+
 export function getYandexTranscriptEnhancementMaxOutputTokens(): number {
   const raw = Number(process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS ?? "6000");
   return Number.isFinite(raw) && raw > 0 ? raw : 6000;

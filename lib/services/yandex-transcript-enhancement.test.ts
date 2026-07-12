@@ -203,7 +203,7 @@ test("chunked merge preserves canonical order with reordered model response", as
   );
 });
 
-test("chunked mode supports partial fallback, failed fallback, and retry semantics", async () => {
+test("chunked mode keeps partial fallback semantics with bounded retries", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -212,7 +212,6 @@ test("chunked mode supports partial fallback, failed fallback, and retry semanti
       TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
       TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS: "1000",
       TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "2",
-      TRANSCRIPT_ENHANCEMENT_MAX_RETRIES: "1",
       TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS: "120000",
     },
     async () => {
@@ -258,7 +257,7 @@ test("chunked mode supports partial fallback, failed fallback, and retry semanti
         assert.equal(result.meta?.overallStatus, "PARTIAL");
         assert.equal(result.meta?.successfulChunkCount, 1);
         assert.equal(result.meta?.failedChunkCount, 1);
-        assert.equal(result.meta?.retryCount, 1);
+        assert.equal(result.meta?.retryCount >= 2, true);
         assert.equal(
           result.segments.some((segment) => segment.cleanedText.includes("частичный")),
           true,
@@ -295,6 +294,332 @@ test("chunked mode all failed keeps original transcript and marks FAILED", async
           source.map((segment) => segment.originalText),
         );
         assert.equal(result.meta?.fallbackSegmentCount, source.length);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("initial response empty then polling output succeeds", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/responses") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              id: "resp-1",
+              status: "in_progress",
+              output_text: "",
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/responses/resp-1") && init?.method === "GET") {
+          return new Response(
+            JSON.stringify({
+              id: "resp-1",
+              status: "completed",
+              output_text: JSON.stringify({
+                segments: [
+                  { index: 0, cleanedText: "исправлено 0" },
+                  { index: 1, cleanedText: "исправлено 1" },
+                ],
+                globalWarnings: [],
+              }),
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "polling"));
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        const attempt = result.meta?.perChunk[0]?.attempts?.[0];
+        assert.equal(attempt?.responseIdPresent, true);
+        assert.equal((attempt?.pollingAttemptCount ?? 0) > 0, true);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("primary strict retry succeeds after initial empty output", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let call = 0;
+      global.fetch = (async (_url: string, _init?: RequestInit) => {
+        call += 1;
+        if (call === 1) {
+          return new Response(JSON.stringify({ status: "completed" }), {
+            status: 200,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: [
+                { index: 0, cleanedText: "исправлено 0" },
+                { index: 1, cleanedText: "исправлено 1" },
+              ],
+              globalWarnings: [],
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "strict"));
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(result.meta?.perChunk[0]?.attemptCount, 2);
+        assert.equal(result.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage, "initial_response");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("fallback model succeeds after primary empty attempts", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL: "deepseek-v4-flash",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+      TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL: "yandexgpt-lite/latest",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let call = 0;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        call += 1;
+        if (call <= 2) {
+          return new Response(JSON.stringify({ status: "completed", output_text: "" }), {
+            status: 200,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: [
+                { index: 0, cleanedText: "fallback модель исправила сегмент 0 безопасно" },
+                { index: 1, cleanedText: "fallback модель исправила сегмент 1 безопасно" },
+              ],
+              globalWarnings: [],
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "fallback-ok"));
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(result.meta?.fallbackTriggered, true);
+        assert.equal(result.meta?.perChunk[0]?.modelUsed, "yandexgpt-lite/latest");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("primary and fallback empty outputs end in FAILED_FALLBACK and preserve original", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL: "deepseek-v4-flash",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+      TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL: "yandexgpt-lite/latest",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(JSON.stringify({ status: "completed", output_text: "" }), {
+          status: 200,
+        })) as typeof fetch;
+      try {
+        const source = makeSegments(2, "original-safe");
+        const result = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(result.meta?.overallStatus, "FAILED");
+        assert.equal(result.meta?.perChunk[0]?.status, "FAILED_FALLBACK");
+        assert.deepEqual(
+          result.segments.map((segment) => segment.cleanedText),
+          source.map((segment) => segment.originalText),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("telemetry marks parsing stage for malformed output", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(JSON.stringify({ status: "completed", output_text: "{bad json" }), {
+          status: 200,
+        })) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "parsing"));
+        const stage = result.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage;
+        assert.equal(stage, "parsing");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("telemetry marks extraction stage when output field is present but empty", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            status: "completed",
+            output: [{ text: "   " }],
+          }),
+          { status: 200 },
+        )) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "extract"));
+        const stage = result.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage;
+        assert.equal(stage, "extraction");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("telemetry marks validation stage when payload validates JSON but fails semantic guards", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: [{ index: 999, cleanedText: "bad index" }],
+              globalWarnings: [],
+            }),
+          }),
+          { status: 200 },
+        )) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "validation"));
+        const stage = result.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage;
+        assert.equal(stage, "validation");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("retry plan stays bounded to three attempts per chunk", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL: "deepseek-v4-flash",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+      TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL: "yandexgpt-lite/latest",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let calls = 0;
+      global.fetch = (async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ status: "completed", output_text: "" }), {
+          status: 200,
+        });
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "bounded"));
+        assert.equal(result.meta?.perChunk[0]?.attemptCount, 3);
+        assert.equal(calls, 3);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("telemetry stores no raw provider payload or secrets", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(JSON.stringify({ status: "completed", output_text: "" }), {
+          status: 200,
+        })) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "secrets"));
+        const serialized = JSON.stringify(result.meta?.perChunk ?? []);
+        assert.equal(serialized.includes("Api-Key"), false);
+        assert.equal(serialized.includes("test-key"), false);
+        assert.equal(serialized.includes("rawProviderSnapshot"), false);
       } finally {
         global.fetch = originalFetch;
       }
