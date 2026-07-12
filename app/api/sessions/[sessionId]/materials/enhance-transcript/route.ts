@@ -7,8 +7,14 @@ import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import {
   enhanceTranscriptWithYandexAi,
+  type TranscriptEnhancementOverallStatus,
   type TranscriptEnhancementInputSegment,
 } from "@/lib/services/yandex-transcript-enhancement";
+import {
+  buildSegmentEnhancementUpdates,
+  resolveEnhancementOriginalText,
+  shouldPersistEnhancedText,
+} from "@/lib/services/transcript-enhancement-persistence";
 import { buildDiarizedText } from "@/lib/transcription/speaker-labels";
 
 export const runtime = "nodejs";
@@ -38,7 +44,10 @@ function mapTranscriptSegmentsToEnhancementInput(
     speakerLabel: string | null;
     startSeconds: number | null;
     endSeconds: number | null;
+    mappedParticipantId: string | null;
+    id: string;
     text: string;
+    qualityText: string | null;
   }>,
 ): TranscriptEnhancementInputSegment[] {
   return segments.map((segment) => ({
@@ -47,7 +56,9 @@ function mapTranscriptSegmentsToEnhancementInput(
     startMs:
       segment.startSeconds !== null ? Math.round(segment.startSeconds * 1000) : null,
     endMs: segment.endSeconds !== null ? Math.round(segment.endSeconds * 1000) : null,
-    originalText: segment.text,
+    originalText: resolveEnhancementOriginalText(segment),
+    segmentId: segment.id,
+    mappedParticipantId: segment.mappedParticipantId,
   }));
 }
 
@@ -62,7 +73,9 @@ async function runEnhancementJob(params: {
     speakerLabel: string | null;
     startSeconds: number | null;
     endSeconds: number | null;
+    mappedParticipantId: string | null;
     text: string;
+    qualityText: string | null;
   }>;
   enhancementInput: TranscriptEnhancementInputSegment[];
 }): Promise<void> {
@@ -78,18 +91,22 @@ async function runEnhancementJob(params: {
 
   try {
     const enhanced = await enhanceTranscriptWithYandexAi(enhancementInput);
-    const byIndex = new Map(enhanced.segments.map((segment) => [segment.index, segment]));
-    const isValid =
-      enhanced.segments.length === enhancementInput.length &&
-      enhancementInput.every((segment) => byIndex.has(segment.index));
+    const byIndex = new Map(
+      enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
+    );
+    const overallStatus =
+      enhanced.meta?.overallStatus ??
+      ("COMPLETED" satisfies TranscriptEnhancementOverallStatus);
+    const enhancementFailed = overallStatus === "FAILED";
+    const enhancementCompleted = shouldPersistEnhancedText(overallStatus);
 
-    if (!isValid) {
-      throw new Error("Enhancement validation failed: segment count/index mismatch.");
+    if (!enhancementCompleted && !enhancementFailed) {
+      throw new Error("Enhancement returned unsupported status.");
     }
 
     const updatedSegments = enhancementInput.map((inputSegment) => ({
       ...inputSegment,
-      cleanedText: byIndex.get(inputSegment.index)?.cleanedText ?? inputSegment.originalText,
+      cleanedText: byIndex.get(inputSegment.index) ?? inputSegment.originalText,
     }));
 
     const enhancedTranscriptText = updatedSegments
@@ -99,27 +116,31 @@ async function runEnhancementJob(params: {
       .trim();
 
     const normalizedSegments = transcriptSegments.map((segment) => {
-      const replacement = byIndex.get(segment.orderIndex);
+      const replacementText = byIndex.get(segment.orderIndex);
       return {
         speakerLabel: segment.speakerLabel,
         displaySpeakerLabel: null,
         startSeconds: segment.startSeconds,
         endSeconds: segment.endSeconds,
-        text: replacement?.cleanedText?.trim() || segment.text,
+        text: replacementText?.trim() || segment.text,
         orderIndex: segment.orderIndex,
       };
     });
     const diarizedText =
       normalizedSegments.length > 0 ? buildDiarizedText(normalizedSegments) : enhancedTranscriptText;
+    const segmentUpdates = buildSegmentEnhancementUpdates(transcriptSegments, byIndex);
 
     await prisma.$transaction(async (tx) => {
-      for (const segment of transcriptSegments) {
-        const replacement = byIndex.get(segment.orderIndex);
-        if (!replacement) continue;
-        await tx.transcriptSegment.update({
-          where: { id: segment.id },
-          data: { text: replacement.cleanedText.trim() || segment.text },
-        });
+      if (enhancementCompleted) {
+        for (const segmentUpdate of segmentUpdates) {
+          await tx.transcriptSegment.update({
+            where: { id: segmentUpdate.id },
+            data: {
+              text: segmentUpdate.text,
+              qualityText: segmentUpdate.qualityText,
+            },
+          });
+        }
       }
 
       const fresh = await tx.transcript.findUnique({
@@ -131,8 +152,14 @@ async function runEnhancementJob(params: {
       await tx.transcript.update({
         where: { id: transcriptId },
         data: {
-          text: enhancedTranscriptText || initialTranscriptText,
-          diarizedText: diarizedText || transcriptDiarizedText,
+          text:
+            enhancementCompleted
+              ? enhancedTranscriptText || initialTranscriptText
+              : initialTranscriptText,
+          diarizedText:
+            enhancementCompleted
+              ? diarizedText || transcriptDiarizedText
+              : transcriptDiarizedText,
           processingMetadata: {
             ...nextMetadata,
             transcriptEnhancementRecommendation: {
@@ -142,10 +169,12 @@ async function runEnhancementJob(params: {
             },
             transcriptEnhancement: {
               ...(asMetadata(nextMetadata.transcriptEnhancement) ?? {}),
-              status: "COMPLETED",
+              status: enhancementCompleted ? overallStatus : "FAILED",
               completedAt: new Date().toISOString(),
               durationMs: Date.now() - enhancementStartedAt,
-              error: null,
+              error: enhancementFailed
+                ? "All enhancement chunks failed. Original transcript preserved."
+                : null,
               meta: enhanced.meta ?? null,
             },
           },
@@ -244,11 +273,14 @@ export async function POST(request: Request, context: RouteContext) {
     transcript.segments.length > 0
       ? mapTranscriptSegmentsToEnhancementInput(
           transcript.segments.map((segment) => ({
+            id: segment.id,
             orderIndex: segment.orderIndex,
             speakerLabel: segment.speakerLabel,
             startSeconds: segment.startSeconds,
             endSeconds: segment.endSeconds,
+            mappedParticipantId: segment.mappedParticipantId,
             text: segment.text,
+            qualityText: segment.qualityText,
           })),
         )
       : [
@@ -298,7 +330,9 @@ export async function POST(request: Request, context: RouteContext) {
       speakerLabel: segment.speakerLabel,
       startSeconds: segment.startSeconds,
       endSeconds: segment.endSeconds,
+      mappedParticipantId: segment.mappedParticipantId,
       text: segment.text,
+      qualityText: segment.qualityText,
     })),
     enhancementInput,
   });

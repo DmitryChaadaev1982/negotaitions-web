@@ -109,6 +109,12 @@ export function getAdminEnvironmentDisplayGroups(): AdminEnvDisplayGroup[] {
         toDisplayItem("YANDEX_SPEECHKIT_LITERATURE_TEXT", false),
         toDisplayItem("YANDEX_SPEECHKIT_ENABLE_SPEAKER_LABELING", false),
         toDisplayItem("YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_MODE", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS", false),
+        toDisplayItem("TRANSCRIPT_ENHANCEMENT_MAX_RETRIES", false),
         {
           key: "YANDEX_SPEECHKIT_REQUIRED_KEYS_PRESENT",
           configured: Boolean(readEnv("YANDEX_FOLDER_ID") && readEnv("YANDEX_API_KEY")),
