@@ -1,0 +1,9 @@
+mode,run_label,chunk_index,segment_range,http_status,status,schema_accepted,schema_rejected,classification,parse_success,required_keys_present,additional_keys_count,empty_values_count,linguistic_class,duration_ms,output_chars,input_tokens,output_tokens,reasoning_tokens,response_id_present
+responses,probe,2,12-16,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,3309,729,491,250,0,true
+responses,probe,3,17-21,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,1619,242,358,91,0,true
+chat,probe,2,12-16,200,,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,3297,727,487,249,,true
+chat,probe,3,17-21,200,,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,1748,278,354,107,,true
+responses,full_batch,0,0-5,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,1662,279,383,117,0,true
+responses,full_batch,1,6-11,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,2373,429,413,156,0,true
+responses,full_batch,2,12-16,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,3130,689,492,233,0,true
+responses,full_batch,3,17-21,200,completed,true,false,SCHEMA_VALID,true,true,0,0,ACCEPTABLE,1523,240,359,90,0,true

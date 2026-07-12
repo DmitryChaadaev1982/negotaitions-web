@@ -1,0 +1,9 @@
+mode,run_label,chunk_index,segment_range,linguistic_class,semantic_regression,severe_shrink_detected,notes
+responses,probe,2,12-16,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+responses,probe,3,17-21,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+chat,probe,2,12-16,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+chat,probe,3,17-21,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+responses,full_batch,0,0-5,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+responses,full_batch,1,6-11,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+responses,full_batch,2,12-16,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
+responses,full_batch,3,17-21,ACCEPTABLE,false,false,No severe shrink; constrained edits only.
