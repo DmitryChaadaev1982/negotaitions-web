@@ -820,15 +820,16 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
       const enhancementStartedAt = Date.now();
       const enhanced = await enhanceTranscriptWithYandexAi(enhancementInput);
       enhancementMs = Date.now() - enhancementStartedAt;
+      const enhancementStatus = enhanced.meta?.overallStatus ?? "COMPLETED";
       const byIndex = new Map(enhanced.segments.map((segment) => [segment.index, segment]));
       const isValid =
         enhanced.segments.length === normalizedSegments.length &&
         normalizedSegments.every((segment) => byIndex.has(segment.orderIndex));
 
-      if (!isValid) {
+      if (!isValid || enhancementStatus === "FAILED") {
         enhancementFallbackReason = "validation_failed";
         console.warn(
-          "[SpeechKit] transcript enhancement validation failed: segment count/index mismatch.",
+          "[SpeechKit] transcript enhancement validation failed or all chunks fell back.",
         );
       } else {
         enhancementApplied = true;

@@ -89,6 +89,45 @@
   - `pauseProcessing.sourceAudioArtifactPath`
   - `pauseProcessing.ffmpegDiagnostics`
 
+## Transcript Enhancement Modes (Stage 3.9E Phase 1)
+
+- Enhancement runtime mode is controlled by `TRANSCRIPT_ENHANCEMENT_MODE`:
+  - `single` (default, rollback-safe): existing one-request enhancement flow.
+  - `chunked`: bounded chunk enhancement with deterministic merge and per-chunk fallback.
+- Chunked mode uses ordered `TranscriptSegment` input and keeps canonical fields unchanged:
+  - segment identity (`orderIndex` / ID),
+  - start/end timestamps,
+  - speaker labels and participant mapping,
+  - original segment ordering.
+- Chunk planning is deterministic and contiguous:
+  - balanced split by segment count and character budget,
+  - bounded by `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS` and `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS`,
+  - context neighbors are read-only and cannot overwrite target segments.
+- Concurrency and retry are bounded:
+  - `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`),
+  - `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`),
+  - `TRANSCRIPT_ENHANCEMENT_MAX_RETRIES` (default `1`, transient timeout/network/provider errors only).
+- Deterministic merge and no-loss rules:
+  - merge strictly by original segment order,
+  - unknown or duplicate model indexes reject that chunk,
+  - empty non-empty segment rewrites are rejected,
+  - catastrophic shrinkage is rejected per segment,
+  - missing/failed chunk outputs fall back to original text.
+- Enhancement statuses in `processingMetadata.transcriptEnhancement.status`:
+  - `COMPLETED`: all chunks succeeded;
+  - `PARTIAL`: at least one chunk succeeded and at least one chunk used fallback;
+  - `FAILED`: all chunks used fallback or orchestration failed;
+  - `SKIPPED`: enhancement skipped due empty input.
+- Persistence safety and recovery path:
+  - enhanced text is persisted into `Transcript.text`, `Transcript.diarizedText`, and `TranscriptSegment.text` when status is `COMPLETED` or `PARTIAL`;
+  - pre-enhancement per-segment provider text is preserved once in existing `TranscriptSegment.qualityText` (`qualityText ?? text` at first enhancement write) and remains immutable backup;
+  - every manual re-enhancement input segment starts from `originalText = qualityText ?? text`, so enhancement never recursively re-enhances previous AI output when backup exists;
+  - original transcript can be reconstructed from ordered segments using preserved `qualityText` + existing speaker/timestamp fields;
+  - `TRANSCRIPT_ENHANCEMENT_MODE=single|chunked` only changes execution mode for future runs and does not revert already persisted enhanced text.
+- UI rendering path is unchanged and single-source:
+  - transcript/materials UI reads persisted canonical text (`Transcript.text`, `Transcript.diarizedText`, `TranscriptSegment.text`);
+  - UI does not currently expose side-by-side original vs enhanced transcript versions.
+
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
 - Local-only calibration mode is gated by `PAUSE_FILTER_CALIBRATION_ENABLED=1`.

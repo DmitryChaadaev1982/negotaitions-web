@@ -46,6 +46,8 @@ export type PauseProcessingMode =
    */
   | "source_audio_cut";
 
+export type TranscriptEnhancementMode = "single" | "chunked";
+
 export function getVideoProvider(): VideoProvider {
   const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
   return raw === "voximplant" ? "voximplant" : "livekit";
@@ -170,6 +172,48 @@ export function getYandexTranscriptEnhancementModel(): string {
 export function getYandexTranscriptEnhancementMaxOutputTokens(): number {
   const raw = Number(process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS ?? "6000");
   return Number.isFinite(raw) && raw > 0 ? raw : 6000;
+}
+
+export function getTranscriptEnhancementMode(): TranscriptEnhancementMode {
+  const raw = process.env.TRANSCRIPT_ENHANCEMENT_MODE?.trim().toLowerCase();
+  if (!raw || raw === "single") {
+    return "single";
+  }
+  if (raw === "chunked") {
+    return "chunked";
+  }
+  console.warn(
+    `[env] Invalid TRANSCRIPT_ENHANCEMENT_MODE="${raw}". Falling back to default mode "single".`,
+  );
+  return "single";
+}
+
+export function getTranscriptEnhancementChunkMaxSegments(): number {
+  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS ?? "6");
+  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.round(raw)) : 6;
+}
+
+export function getTranscriptEnhancementChunkMaxChars(): number {
+  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS ?? "700");
+  return Number.isFinite(raw) && raw > 0 ? Math.max(80, Math.round(raw)) : 700;
+}
+
+export function getTranscriptEnhancementMaxConcurrency(): number {
+  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY ?? "4");
+  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.round(raw)) : 4;
+}
+
+export function getTranscriptEnhancementChunkTimeoutMs(): number {
+  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS ?? "120000");
+  return Number.isFinite(raw) && raw > 0 ? Math.max(5000, Math.round(raw)) : 120000;
+}
+
+export function getTranscriptEnhancementMaxRetries(): number {
+  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES ?? "1");
+  if (!Number.isFinite(raw) || raw < 0) {
+    return 1;
+  }
+  return Math.min(3, Math.round(raw));
 }
 
 /**

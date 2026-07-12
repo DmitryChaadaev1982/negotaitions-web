@@ -56,13 +56,14 @@ function asMetadata(value: unknown): Record<string, unknown> {
 
 function resolveTranscriptEnhancementStatus(
   processingMetadata: unknown,
-): "NOT_AVAILABLE" | "IDLE" | "SUGGESTED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" {
+): "NOT_AVAILABLE" | "IDLE" | "SUGGESTED" | "IN_PROGRESS" | "COMPLETED" | "PARTIAL" | "FAILED" {
   const metadata = asMetadata(processingMetadata);
   const enhancement = asMetadata(metadata.transcriptEnhancement);
   const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
   const status = enhancement.status;
   if (status === "IN_PROGRESS") return "IN_PROGRESS";
   if (status === "FAILED") return "FAILED";
+  if (status === "PARTIAL") return "PARTIAL";
   if (status === "COMPLETED") return "COMPLETED";
   if (recommendation.suggested === true) return "SUGGESTED";
   if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
