@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   buildTranscriptEnhancementChunks,
+  buildChunkSchemaJsonSchema,
   enhanceTranscriptWithYandexAi,
   validateChunkEnhancementResponse,
+  validateChunkSchemaEnhancementResponse,
   type TranscriptEnhancementInputSegment,
 } from "@/lib/services/yandex-transcript-enhancement";
 
@@ -37,6 +39,10 @@ function extractTargetIndexesFromPrompt(input: string): number[] {
   return (parsed.targetSegments ?? [])
     .map((segment) => segment.index)
     .filter((index): index is number => typeof index === "number");
+}
+
+function parseFetchBody(init?: RequestInit): Record<string, unknown> {
+  return JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
 }
 
 function withEnv(vars: Record<string, string>, fn: () => Promise<void> | void): Promise<void> | void {
@@ -145,6 +151,144 @@ test("validation rejects unknown, duplicate, empty, and catastrophic shrink", ()
         },
       }),
     /catastrophic shrink/i,
+  );
+});
+
+test("dynamic schema requires exact chunk keys and non-empty strings", () => {
+  const chunk = buildTranscriptEnhancementChunks(makeSegments(3), {
+    maxSegmentsPerChunk: 3,
+    maxCharsPerChunk: 1000,
+  })[0]!;
+  const schema = buildChunkSchemaJsonSchema(chunk);
+  const keys = chunk.targets.map((segment) => String(segment.index));
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ["segments"]);
+  assert.equal(schema.properties.segments.type, "object");
+  assert.equal(schema.properties.segments.additionalProperties, false);
+  assert.deepEqual(schema.properties.segments.required, keys);
+  for (const key of keys) {
+    assert.deepEqual(schema.properties.segments.properties[key], {
+      type: "string",
+      minLength: 1,
+    });
+  }
+});
+
+test("schema validation rejects missing, extra, and empty values", () => {
+  const targets = [makeSegment(12, "один"), makeSegment(13, "два")];
+  const missing = validateChunkSchemaEnhancementResponse({
+    targets,
+    parsed: { segments: { "12": "исправлено" } },
+  });
+  assert.equal(missing.missingKeys.length, 1);
+  const extra = validateChunkSchemaEnhancementResponse({
+    targets,
+    parsed: { segments: { "12": "исправлено", "13": "исправлено", "99": "лишнее" } },
+  });
+  assert.equal(extra.extraKeys.length, 1);
+  const empty = validateChunkSchemaEnhancementResponse({
+    targets,
+    parsed: { segments: { "12": "   ", "13": "ok" } },
+  });
+  assert.equal(empty.emptyKeys.length, 1);
+});
+
+test("json_schema mode sends Responses API text.format schema payload", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let seenBody: Record<string, unknown> | null = null;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        seenBody = parseFetchBody(init);
+        const input = String(seenBody.input ?? "");
+        const indexes = extractTargetIndexesFromPrompt(input);
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output: [
+              {
+                content: [
+                  {
+                    text: JSON.stringify({
+                      segments: Object.fromEntries(
+                        indexes.map((index) => [String(index), `исправлено ${index}`]),
+                      ),
+                    }),
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "schema"));
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(result.meta?.outputMode, "json_schema");
+        assert.ok(seenBody);
+        const text = seenBody?.text as Record<string, unknown>;
+        const format = text?.format as Record<string, unknown>;
+        assert.equal(format?.type, "json_schema");
+        assert.equal(format?.strict, true);
+        assert.equal(typeof format?.name, "string");
+        const schema = format?.schema as Record<string, unknown>;
+        assert.equal(schema?.type, "object");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("json_schema prompt does not ask for manual output arrays", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let prompt = "";
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = parseFetchBody(init);
+        prompt = String(body.input ?? "");
+        const indexes = extractTargetIndexesFromPrompt(prompt);
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: Object.fromEntries(
+                indexes.map((index) => [String(index), `исправлено ${index}`]),
+              ),
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+
+      try {
+        await enhanceTranscriptWithYandexAi(makeSegments(2, "prompt"));
+        assert.equal(prompt.includes('"segments": ['), false);
+        assert.equal(prompt.includes("globalWarnings"), false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
   );
 });
 
@@ -270,6 +414,149 @@ test("chunked mode keeps partial fallback semantics with bounded retries", async
   );
 });
 
+test("json_schema mode missing key fails and preserves originals after retries", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let calls = 0;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        calls += 1;
+        const body = parseFetchBody(init);
+        const indexes = extractTargetIndexesFromPrompt(String(body.input ?? ""));
+        const partial = Object.fromEntries(indexes.slice(0, 1).map((i) => [String(i), "ok"]));
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({ segments: partial }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const source = makeSegments(2, "missing");
+        const result = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(result.meta?.overallStatus, "FAILED");
+        assert.equal(calls, 2);
+        assert.deepEqual(
+          result.segments.map((segment) => segment.cleanedText),
+          source.map((segment) => segment.originalText),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("json_schema mode extra key fails validation", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = parseFetchBody(init);
+        const indexes = extractTargetIndexesFromPrompt(String(body.input ?? ""));
+        const valid = Object.fromEntries(indexes.map((i) => [String(i), `ok ${i}`]));
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: { ...valid, "9999": "extra" },
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "extra"));
+        assert.equal(result.meta?.overallStatus, "FAILED");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("json_schema mode empty value fails validation", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = parseFetchBody(init);
+        const indexes = extractTargetIndexesFromPrompt(String(body.input ?? ""));
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: { [String(indexes[0])]: " ", [String(indexes[1])]: "ok" },
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "empty"));
+        assert.equal(result.meta?.overallStatus, "FAILED");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("json_schema malformed JSON is not repaired", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: "```json\n{\"segments\":{\"0\":\"ok\"}}\n```",
+          }),
+          { status: 200 },
+        )) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "malformed"));
+        assert.equal(result.meta?.overallStatus, "FAILED");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
 test("chunked mode all failed keeps original transcript and marks FAILED", async () => {
   await withEnv(
     {
@@ -354,6 +641,42 @@ test("initial response empty then polling output succeeds", async () => {
   );
 });
 
+test("json_schema mode treats terminal incomplete as failed without polling", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      const seenUrls: string[] = [];
+      global.fetch = (async (url: string, init?: RequestInit) => {
+        seenUrls.push(`${init?.method ?? "GET"} ${url}`);
+        return new Response(
+          JSON.stringify({
+            id: "resp-incomplete",
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output_text: "",
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "incomplete"));
+        assert.equal(result.meta?.overallStatus, "FAILED");
+        assert.equal(seenUrls.some((url) => url.includes("/responses/resp-incomplete")), false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
 test("primary strict retry succeeds after initial empty output", async () => {
   await withEnv(
     {
@@ -366,7 +689,7 @@ test("primary strict retry succeeds after initial empty output", async () => {
     async () => {
       const originalFetch = global.fetch;
       let call = 0;
-      global.fetch = (async (_url: string, _init?: RequestInit) => {
+      global.fetch = (async () => {
         call += 1;
         if (call === 1) {
           return new Response(JSON.stringify({ status: "completed" }), {
@@ -413,7 +736,7 @@ test("fallback model succeeds after primary empty attempts", async () => {
     async () => {
       const originalFetch = global.fetch;
       let call = 0;
-      global.fetch = (async (_url: string, init?: RequestInit) => {
+      global.fetch = (async () => {
         call += 1;
         if (call <= 2) {
           return new Response(JSON.stringify({ status: "completed", output_text: "" }), {
@@ -592,6 +915,45 @@ test("retry plan stays bounded to three attempts per chunk", async () => {
         const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "bounded"));
         assert.equal(result.meta?.perChunk[0]?.attemptCount, 3);
         assert.equal(calls, 3);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("legacy output mode keeps existing prompt-generated json path", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "legacy",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "2",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      let sawTextFormat = false;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = parseFetchBody(init);
+        sawTextFormat = Boolean(body.text);
+        const indexes = extractTargetIndexesFromPrompt(String(body.input ?? ""));
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: indexes.map((index) => ({ index, cleanedText: `исправлено ${index}` })),
+              globalWarnings: [],
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "legacy"));
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(sawTextFormat, false);
       } finally {
         global.fetch = originalFetch;
       }

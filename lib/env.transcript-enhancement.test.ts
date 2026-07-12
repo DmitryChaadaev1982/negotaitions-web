@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   getTranscriptEnhancementChunkMaxChars,
   getTranscriptEnhancementChunkMaxSegments,
+  getTranscriptEnhancementOutputMode,
   getTranscriptEnhancementChunkTimeoutMs,
   getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementMaxRetries,
@@ -35,6 +36,50 @@ test("TRANSCRIPT_ENHANCEMENT_MODE supports chunked", () => {
       delete process.env.TRANSCRIPT_ENHANCEMENT_MODE;
     } else {
       process.env.TRANSCRIPT_ENHANCEMENT_MODE = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE defaults to legacy", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+  try {
+    assert.equal(getTranscriptEnhancementOutputMode(), "legacy");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE accepts legacy and json_schema", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = "legacy";
+    assert.equal(getTranscriptEnhancementOutputMode(), "legacy");
+    process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = "json_schema";
+    assert.equal(getTranscriptEnhancementOutputMode(), "json_schema");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE invalid value falls back to legacy", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+  process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = "bad-value";
+  try {
+    assert.equal(getTranscriptEnhancementOutputMode(), "legacy");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = previous;
     }
   }
 });

@@ -140,6 +140,27 @@
   - transcript/materials UI reads persisted canonical text (`Transcript.text`, `Transcript.diarizedText`, `TranscriptSegment.text`);
   - UI does not currently expose side-by-side original vs enhanced transcript versions.
 
+## Transcript Enhancement Structured Output (Stage 3.9E JSON Schema)
+
+- Output mode is now independently controlled by `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE`:
+  - `legacy` (default): prompt-generated JSON path.
+  - `json_schema`: Responses API provider-enforced schema via `text.format`.
+- In `json_schema` mode, each chunk sends a dynamic strict schema:
+  - root object with required `segments`;
+  - `segments` is an object keyed by exact chunk target indexes (`"12"`, `"13"`, ...);
+  - root and `segments` both use `additionalProperties=false`;
+  - each key value is `string` with `minLength=1`.
+- Response handling in `json_schema` mode is strict and deterministic:
+  - parse extracted output as JSON without repair;
+  - reject missing/extra keys, non-string values, empty/whitespace-only values;
+  - retain catastrophic-shrink guard before applying any text update;
+  - preserve no-loss fallback to original text on invalid chunk output.
+- Retry and safety semantics are unchanged:
+  - bounded retries only;
+  - no long polling in schema mode;
+  - statuses remain `COMPLETED`/`PARTIAL`/`FAILED`/`SKIPPED`;
+  - `FAILED` means no transcript text mutation.
+
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
 - Local-only calibration mode is gated by `PAUSE_FILTER_CALIBRATION_ENABLED=1`.

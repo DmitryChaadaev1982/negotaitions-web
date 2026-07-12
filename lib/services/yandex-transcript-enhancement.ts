@@ -1,6 +1,7 @@
 import {
   getTranscriptEnhancementChunkMaxChars,
   getTranscriptEnhancementChunkMaxSegments,
+  getTranscriptEnhancementOutputMode,
   getTranscriptEnhancementChunkTimeoutMs,
   getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementMode,
@@ -8,6 +9,7 @@ import {
   getYandexTranscriptEnhancementMaxOutputTokens,
   getYandexTranscriptEnhancementModel,
   type TranscriptEnhancementMode,
+  type TranscriptEnhancementOutputMode,
 } from "@/lib/env";
 
 const SINGLE_REQUEST_TIMEOUT_MS = 120_000;
@@ -18,6 +20,8 @@ const CATASTROPHIC_SHRINK_MIN_SOURCE_CHARS = 40;
 const CATASTROPHIC_SHRINK_RATIO = 0.35;
 const CATASTROPHIC_SHRINK_MIN_REMOVED_CHARS = 30;
 const EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK = 3;
+const TRANSCRIPT_ENHANCEMENT_SCHEMA_NAME = "transcript_enhancement_segments";
+const TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION = "v1";
 
 export type TranscriptEnhancementEmptyOutputStage =
   | "initial_response"
@@ -44,6 +48,9 @@ type RequestOutputDiagnostics = {
   outputFieldDetected: OutputFieldDetected;
   rawOutputCharCount: number;
   emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null;
+  providerStatus: string | null;
+  incompleteReason: string | null;
+  schemaAccepted: boolean | null;
   model: string;
   maxOutputTokens: number;
 };
@@ -103,10 +110,28 @@ export type TranscriptEnhancementChunkMetadata = {
     outputFieldDetected: OutputFieldDetected;
     rawOutputCharCount: number;
     parsedSegmentCount: number;
+    outputMode?: TranscriptEnhancementOutputMode;
+    providerStatus?: string | null;
+    incompleteReason?: string | null;
+    schemaValidationPassed?: boolean;
+    schemaAccepted?: boolean | null;
+    schemaName?: string | null;
+    schemaVersion?: string | null;
+    failureStage?: "provider" | "extraction" | "parsing" | "schema_validation" | "integrity_validation";
     emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null;
     status: "COMPLETED" | "FAILED";
     errorCategory: string | null;
   }>;
+  outputMode?: TranscriptEnhancementOutputMode;
+  schemaName?: string | null;
+  schemaVersion?: string | null;
+  expectedSchemaKeyCount?: number;
+  returnedSchemaKeyCount?: number;
+  schemaAccepted?: boolean | null;
+  schemaValidationPassed?: boolean;
+  missingKeyCount?: number;
+  extraKeyCount?: number;
+  emptyValueCount?: number;
 };
 
 export type TranscriptEnhancementMeta = {
@@ -138,6 +163,10 @@ export type TranscriptEnhancementMeta = {
   fallbackModel?: string | null;
   fallbackTriggered?: boolean;
   fallbackReason?: string | null;
+  outputMode?: TranscriptEnhancementOutputMode;
+  structuredOutputEnabled?: boolean;
+  schemaVersion?: string | null;
+  schemaChunkCount?: number;
 };
 
 export type TranscriptEnhancementResult = {
@@ -149,6 +178,24 @@ export type TranscriptEnhancementResult = {
 type ParsedEnhancementPayload = {
   segments: TranscriptEnhancementRawSegment[];
   globalWarnings: string[];
+};
+
+type ParsedSchemaEnhancementPayload = {
+  segments: Record<string, string>;
+};
+
+type TranscriptEnhancementResponseSchema = {
+  type: "object";
+  additionalProperties: false;
+  required: ["segments"];
+  properties: {
+    segments: {
+      type: "object";
+      additionalProperties: false;
+      required: string[];
+      properties: Record<string, { type: "string"; minLength: 1 }>;
+    };
+  };
 };
 
 type EnhancementChunk = {
@@ -175,6 +222,16 @@ type ChunkExecutionResult = {
   primaryModel: string;
   fallbackModel: string | null;
   attempts: TranscriptEnhancementChunkMetadata["attempts"];
+  outputMode?: TranscriptEnhancementOutputMode;
+  schemaName?: string | null;
+  schemaVersion?: string | null;
+  expectedSchemaKeyCount?: number;
+  returnedSchemaKeyCount?: number;
+  schemaAccepted?: boolean | null;
+  schemaValidationPassed?: boolean;
+  missingKeyCount?: number;
+  extraKeyCount?: number;
+  emptyValueCount?: number;
 };
 
 class ChunkValidationError extends Error {
@@ -520,6 +577,79 @@ function buildChunkPrompt(chunk: EnhancementChunk, strictJsonMode = false): stri
   ].join("\n");
 }
 
+export function buildChunkSchemaJsonSchema(chunk: EnhancementChunk): TranscriptEnhancementResponseSchema {
+  const keys = chunk.targets.map((segment) => String(segment.index));
+  const properties = Object.fromEntries(
+    keys.map((key) => [key, { type: "string" as const, minLength: 1 }]),
+  );
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["segments"],
+    properties: {
+      segments: {
+        type: "object",
+        additionalProperties: false,
+        required: keys,
+        properties,
+      },
+    },
+  };
+}
+
+function buildChunkSchemaPrompt(chunk: EnhancementChunk): string {
+  return [
+    "You are cleaning automatic Russian ASR transcript segments for negotiation training.",
+    "Correct obvious ASR mistakes, morphology/grammar, and punctuation while preserving meaning.",
+    "Preserve speaker ownership and do not invent facts.",
+    "Return one corrected text value for every required segment key.",
+    "Editable target segments are below; context segments are read-only.",
+    "",
+    "Input JSON:",
+    JSON.stringify({
+      readOnlyContextBefore: chunk.contextBefore.map((segment) => ({
+        index: segment.index,
+        speakerLabel: segment.speakerLabel,
+        text: segment.originalText,
+      })),
+      targetSegments: chunk.targets.map((segment) => ({
+        index: segment.index,
+        speakerLabel: segment.speakerLabel,
+        startMs: segment.startMs,
+        endMs: segment.endMs,
+        segmentId: segment.segmentId ?? null,
+        mappedParticipantId: segment.mappedParticipantId ?? null,
+        originalText: segment.originalText,
+      })),
+      readOnlyContextAfter: chunk.contextAfter.map((segment) => ({
+        index: segment.index,
+        speakerLabel: segment.speakerLabel,
+        text: segment.originalText,
+      })),
+    }),
+  ].join("\n");
+}
+
+function parseSchemaEnhancementPayload(text: string): ParsedSchemaEnhancementPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.trim());
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const root = parsed as Record<string, unknown>;
+  if (Object.keys(root).length !== 1 || !("segments" in root)) return null;
+  if (!root.segments || typeof root.segments !== "object" || Array.isArray(root.segments)) return null;
+  const segments = root.segments as Record<string, unknown>;
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(segments)) {
+    if (typeof value !== "string") return null;
+    normalized[key] = value;
+  }
+  return { segments: normalized };
+}
+
 async function fetchTextWithTimeout(
   url: string,
   init: RequestInit,
@@ -645,6 +775,13 @@ type RequestEnhancementParams = {
   input: TranscriptEnhancementInputSegment[] | EnhancementChunk;
   promptBuilder: (input: TranscriptEnhancementInputSegment[] | EnhancementChunk, strictJsonMode?: boolean) => string;
   strictJsonMode?: boolean;
+  outputMode: TranscriptEnhancementOutputMode;
+  textFormat?: {
+    type: "json_schema";
+    name: string;
+    strict: true;
+    schema: TranscriptEnhancementResponseSchema;
+  };
 };
 
 async function requestEnhancement(params: RequestEnhancementParams): Promise<{
@@ -663,6 +800,8 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
     input,
     promptBuilder,
     strictJsonMode = false,
+    outputMode,
+    textFormat,
   } = params;
   const headers: HeadersInit = {
     Authorization: `Api-Key ${apiKey}`,
@@ -680,8 +819,17 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
         temperature: 0,
         max_output_tokens: maxTokens,
         instructions:
-          "Return ONLY a valid JSON object with keys segments and globalWarnings.",
+          outputMode === "json_schema"
+            ? "Return valid JSON that satisfies the provided schema."
+            : "Return ONLY a valid JSON object with keys segments and globalWarnings.",
         input: promptBuilder(input, strictJsonMode),
+        ...(outputMode === "json_schema" && textFormat
+          ? {
+              text: {
+                format: textFormat,
+              },
+            }
+          : {}),
       }),
     },
     timeoutMs,
@@ -708,8 +856,19 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
   let outputFieldDetected = initialExtraction.outputFieldDetected;
   let rawOutputCharCount = initialExtraction.rawOutputCharCount;
   let emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null = null;
+  const incompleteReasonRaw = toRecord(envelope.incomplete_details)?.reason;
+  const initialIncompleteReason =
+    typeof incompleteReasonRaw === "string" ? incompleteReasonRaw : null;
+  let incompleteReason = initialIncompleteReason;
+  const schemaAcceptedValue = toRecord(envelope.text)?.format;
+  const schemaAccepted =
+    toRecord(schemaAcceptedValue)?.type === "json_schema"
+      ? true
+      : outputMode === "json_schema"
+        ? null
+        : null;
 
-  if (!outputText && responseId) {
+  if (!outputText && responseId && outputMode !== "json_schema") {
     const pollingResult = await pollResponseUntilOutput(
       baseUrl,
       responseId,
@@ -723,6 +882,9 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
     rawOutputCharCount = pollingResult.rawOutputCharCount;
     if (pollingResult.payload) {
       envelope = pollingResult.payload;
+      const polledIncompleteReasonRaw = toRecord(envelope.incomplete_details)?.reason;
+      incompleteReason =
+        typeof polledIncompleteReasonRaw === "string" ? polledIncompleteReasonRaw : incompleteReason;
       outputText = extractYandexOutput(envelope).text;
       if (!outputText) {
         emptyOutputStage =
@@ -755,6 +917,9 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
       outputFieldDetected,
       rawOutputCharCount,
       emptyOutputStage,
+      providerStatus: finalStatus ?? null,
+      incompleteReason,
+      schemaAccepted,
       model: modelName,
       maxOutputTokens: maxTokens,
     },
@@ -872,6 +1037,52 @@ export function validateChunkEnhancementResponse(params: {
   return { enhancedByIndex, warnings: parsed.globalWarnings };
 }
 
+export function validateChunkSchemaEnhancementResponse(params: {
+  targets: TranscriptEnhancementInputSegment[];
+  parsed: ParsedSchemaEnhancementPayload;
+}): {
+  enhancedByIndex: Map<number, string>;
+  missingKeys: string[];
+  extraKeys: string[];
+  emptyKeys: string[];
+} {
+  const expectedKeys = params.targets.map((segment) => String(segment.index));
+  const expectedSet = new Set(expectedKeys);
+  const actualKeys = Object.keys(params.parsed.segments);
+  const actualSet = new Set(actualKeys);
+  const missingKeys = expectedKeys.filter((key) => !actualSet.has(key));
+  const extraKeys = actualKeys.filter((key) => !expectedSet.has(key));
+  const emptyKeys: string[] = [];
+  const enhancedByIndex = new Map<number, string>();
+
+  for (const key of expectedKeys) {
+    const value = params.parsed.segments[key];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      emptyKeys.push(key);
+      continue;
+    }
+    const index = Number(key);
+    if (!Number.isFinite(index)) {
+      extraKeys.push(key);
+      continue;
+    }
+    const target = params.targets.find((segment) => segment.index === index);
+    if (!target) {
+      extraKeys.push(key);
+      continue;
+    }
+    if (isCatastrophicShrink(target.originalText, value.trim())) {
+      throw new ChunkValidationError(
+        `Chunk triggered catastrophic shrink guard for segment ${index}.`,
+        "catastrophic_shrinkage",
+      );
+    }
+    enhancedByIndex.set(index, value.trim());
+  }
+
+  return { enhancedByIndex, missingKeys, extraKeys, emptyKeys };
+}
+
 function classifyChunkError(error: unknown): { category: string; retryable: boolean } {
   if (error instanceof ChunkValidationError) {
     return { category: error.category, retryable: false };
@@ -909,6 +1120,7 @@ async function runSingleShotEnhancement(params: {
   baseUrl: string;
 }): Promise<TranscriptEnhancementResult> {
   const { segments, apiKey, folderId, modelName, baseUrl } = params;
+  const outputMode = getTranscriptEnhancementOutputMode();
   const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();
   const { maxOutputTokens, estimatedDurationMs, inputChars } =
     resolveDynamicMaxOutputTokens(segments);
@@ -924,6 +1136,7 @@ async function runSingleShotEnhancement(params: {
     input: segments,
     promptBuilder: (input, strictJsonMode) =>
       buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
+    outputMode,
   });
 
   if (!outputText) {
@@ -940,6 +1153,7 @@ async function runSingleShotEnhancement(params: {
         input: segments,
         promptBuilder: (input, strictJsonMode) =>
           buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
+        outputMode,
       });
       envelope = retryResult.envelope;
       outputText = retryResult.outputText;
@@ -968,6 +1182,7 @@ async function runSingleShotEnhancement(params: {
         promptBuilder: (input, strictJsonMode) =>
           buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
         strictJsonMode: true,
+        outputMode,
       });
       outputText = strictRetry.outputText;
       tokensUsed = strictRetry.tokensUsed;
@@ -1000,6 +1215,10 @@ async function runSingleShotEnhancement(params: {
     meta: {
       mode: "single",
       model: modelName,
+      outputMode,
+      structuredOutputEnabled: false,
+      schemaVersion: null,
+      schemaChunkCount: 0,
       overallStatus: "COMPLETED",
       startedAt: new Date(startedAt).toISOString(),
       finishedAt: new Date(finishedAt).toISOString(),
@@ -1049,13 +1268,16 @@ async function runChunkedEnhancement(params: {
   baseUrl: string;
 }): Promise<TranscriptEnhancementResult> {
   const { segments, apiKey, folderId, modelName, baseUrl } = params;
+  const outputMode = getTranscriptEnhancementOutputMode();
+  const structuredOutputEnabled = outputMode === "json_schema";
   const startedAtMs = Date.now();
   const chunks = buildTranscriptEnhancementChunks(segments);
   const maxConcurrency = Math.max(1, getTranscriptEnhancementMaxConcurrency());
   const perChunkTimeoutMs = getTranscriptEnhancementChunkTimeoutMs();
   const chunkResults: ChunkExecutionResult[] = new Array(chunks.length);
   const chunkQueuedAt = chunks.map(() => new Date().toISOString());
-  const fallbackModel = getYandexTranscriptEnhancementFallbackModel();
+  const fallbackModel =
+    outputMode === "legacy" ? getYandexTranscriptEnhancementFallbackModel() : null;
   const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();
 
   let workerCursor = 0;
@@ -1067,6 +1289,9 @@ async function runChunkedEnhancement(params: {
       maxOutputTokens,
       Math.min(maxTokensFromEnv, Math.max(1600, maxOutputTokens * 2)),
     );
+    const schema = buildChunkSchemaJsonSchema(chunk);
+    const schemaName = `${TRANSCRIPT_ENHANCEMENT_SCHEMA_NAME}_${TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION}`;
+    const expectedSchemaKeys = chunk.targets.map((segment) => String(segment.index));
     const attemptPlan: Array<{
       attemptType: "primary_initial" | "primary_strict_retry" | "fallback_model_retry";
       model: string;
@@ -1074,40 +1299,64 @@ async function runChunkedEnhancement(params: {
       strictJsonMode: boolean;
       fallbackTriggered: boolean;
       fallbackReason: string | null;
-    }> = [
-      {
-        attemptType: "primary_initial",
-        model: modelName,
-        maxTokens: maxOutputTokens,
-        strictJsonMode: false,
-        fallbackTriggered: false,
-        fallbackReason: null,
-      },
-      {
-        attemptType: "primary_strict_retry",
-        model: modelName,
-        maxTokens: strictRetryMaxTokens,
-        strictJsonMode: true,
-        fallbackTriggered: false,
-        fallbackReason: null,
-      },
-    ];
-    if (fallbackModel && fallbackModel !== modelName) {
-      attemptPlan.push({
-        attemptType: "fallback_model_retry",
-        model: fallbackModel,
-        maxTokens: strictRetryMaxTokens,
-        strictJsonMode: true,
-        fallbackTriggered: true,
-        fallbackReason: "empty_output",
-      });
-    }
+    }> = structuredOutputEnabled
+      ? [
+          {
+            attemptType: "primary_initial",
+            model: modelName,
+            maxTokens: maxOutputTokens,
+            strictJsonMode: false,
+            fallbackTriggered: false,
+            fallbackReason: null,
+          },
+          {
+            attemptType: "primary_strict_retry",
+            model: modelName,
+            maxTokens: strictRetryMaxTokens,
+            strictJsonMode: true,
+            fallbackTriggered: false,
+            fallbackReason: null,
+          },
+        ]
+      : [
+          {
+            attemptType: "primary_initial",
+            model: modelName,
+            maxTokens: maxOutputTokens,
+            strictJsonMode: false,
+            fallbackTriggered: false,
+            fallbackReason: null,
+          },
+          {
+            attemptType: "primary_strict_retry",
+            model: modelName,
+            maxTokens: strictRetryMaxTokens,
+            strictJsonMode: true,
+            fallbackTriggered: false,
+            fallbackReason: null,
+          },
+          ...(fallbackModel && fallbackModel !== modelName
+            ? [
+                {
+                  attemptType: "fallback_model_retry" as const,
+                  model: fallbackModel,
+                  maxTokens: strictRetryMaxTokens,
+                  strictJsonMode: true,
+                  fallbackTriggered: true,
+                  fallbackReason: "empty_output",
+                },
+              ]
+            : []),
+        ];
     const boundedPlan = attemptPlan.slice(0, EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK);
 
     const attempts: NonNullable<ChunkExecutionResult["attempts"]> = [];
     const firstAttemptStartedAt = new Date();
     const firstAttemptStartedAtMs = Date.now();
     let lastErrorCategory: string | null = null;
+    let lastMissingKeyCount = 0;
+    let lastExtraKeyCount = 0;
+    let lastEmptyValueCount = 0;
     let modelUsed = modelName;
     let fallbackTriggered = false;
     let fallbackReason: string | null = null;
@@ -1128,8 +1377,19 @@ async function runChunkedEnhancement(params: {
           timeoutMs: perChunkTimeoutMs,
           input: chunk,
           promptBuilder: (input, strictJsonMode) =>
-            buildChunkPrompt(input as EnhancementChunk, strictJsonMode),
+            structuredOutputEnabled
+              ? buildChunkSchemaPrompt(input as EnhancementChunk)
+              : buildChunkPrompt(input as EnhancementChunk, strictJsonMode),
           strictJsonMode: plan.strictJsonMode,
+          outputMode,
+          textFormat: structuredOutputEnabled
+            ? {
+                type: "json_schema",
+                name: schemaName,
+                strict: true,
+                schema,
+              }
+            : undefined,
         });
 
         if (!requestResult.outputText) {
@@ -1146,6 +1406,14 @@ async function runChunkedEnhancement(params: {
             outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
             rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
             parsedSegmentCount: 0,
+            outputMode,
+            providerStatus: requestResult.diagnostics.providerStatus,
+            incompleteReason: requestResult.diagnostics.incompleteReason,
+            schemaValidationPassed: false,
+            schemaAccepted: requestResult.diagnostics.schemaAccepted,
+            schemaName: structuredOutputEnabled ? schemaName : null,
+            schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
+            failureStage: "extraction",
             emptyOutputStage:
               requestResult.diagnostics.emptyOutputStage ?? "initial_response",
             status: "FAILED",
@@ -1153,6 +1421,177 @@ async function runChunkedEnhancement(params: {
           });
           lastErrorCategory = "empty_output";
           continue;
+        }
+
+        if (structuredOutputEnabled) {
+          const parsedSchema = parseSchemaEnhancementPayload(requestResult.outputText);
+          if (!parsedSchema) {
+            attempts.push({
+              attemptNumber: i + 1,
+              attemptType: plan.attemptType,
+              modelUsed: plan.model,
+              maxOutputTokens: plan.maxTokens,
+              responseIdPresent: requestResult.diagnostics.responseIdPresent,
+              initialStatus: requestResult.diagnostics.initialStatus,
+              finalStatus: requestResult.diagnostics.finalStatus,
+              pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+              pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+              outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+              rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+              parsedSegmentCount: 0,
+              outputMode,
+              providerStatus: requestResult.diagnostics.providerStatus,
+              incompleteReason: requestResult.diagnostics.incompleteReason,
+              schemaValidationPassed: false,
+              schemaAccepted: requestResult.diagnostics.schemaAccepted,
+              schemaName,
+              schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
+              failureStage: "parsing",
+              emptyOutputStage: "parsing",
+              status: "FAILED",
+              errorCategory: "malformed_output",
+            });
+            lastErrorCategory = "malformed_output";
+            continue;
+          }
+
+          try {
+            const validated = validateChunkSchemaEnhancementResponse({
+              targets: chunk.targets,
+              parsed: parsedSchema,
+            });
+            if (
+              validated.missingKeys.length > 0 ||
+              validated.extraKeys.length > 0 ||
+              validated.emptyKeys.length > 0
+            ) {
+              lastMissingKeyCount = validated.missingKeys.length;
+              lastExtraKeyCount = validated.extraKeys.length;
+              lastEmptyValueCount = validated.emptyKeys.length;
+              attempts.push({
+                attemptNumber: i + 1,
+                attemptType: plan.attemptType,
+                modelUsed: plan.model,
+                maxOutputTokens: plan.maxTokens,
+                responseIdPresent: requestResult.diagnostics.responseIdPresent,
+                initialStatus: requestResult.diagnostics.initialStatus,
+                finalStatus: requestResult.diagnostics.finalStatus,
+                pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+                pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+                outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+                rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+                parsedSegmentCount: Object.keys(parsedSchema.segments).length,
+                outputMode,
+                providerStatus: requestResult.diagnostics.providerStatus,
+                incompleteReason: requestResult.diagnostics.incompleteReason,
+                schemaValidationPassed: false,
+                schemaAccepted: requestResult.diagnostics.schemaAccepted,
+                schemaName,
+                schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
+                failureStage: "schema_validation",
+                emptyOutputStage: "validation",
+                status: "FAILED",
+                errorCategory:
+                  validated.missingKeys.length > 0
+                    ? "missing_segment_id"
+                    : validated.extraKeys.length > 0
+                      ? "unknown_segment_id"
+                      : "empty_enhanced_text",
+              });
+              lastErrorCategory =
+                validated.missingKeys.length > 0
+                  ? "missing_segment_id"
+                  : validated.extraKeys.length > 0
+                    ? "unknown_segment_id"
+                    : "empty_enhanced_text";
+              continue;
+            }
+
+            attempts.push({
+              attemptNumber: i + 1,
+              attemptType: plan.attemptType,
+              modelUsed: plan.model,
+              maxOutputTokens: plan.maxTokens,
+              responseIdPresent: requestResult.diagnostics.responseIdPresent,
+              initialStatus: requestResult.diagnostics.initialStatus,
+              finalStatus: requestResult.diagnostics.finalStatus,
+              pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+              pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+              outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+              rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+              parsedSegmentCount: Object.keys(parsedSchema.segments).length,
+              outputMode,
+              providerStatus: requestResult.diagnostics.providerStatus,
+              incompleteReason: requestResult.diagnostics.incompleteReason,
+              schemaValidationPassed: true,
+              schemaAccepted: requestResult.diagnostics.schemaAccepted,
+              schemaName,
+              schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
+              failureStage: "integrity_validation",
+              emptyOutputStage: null,
+              status: "COMPLETED",
+              errorCategory: null,
+            });
+            return {
+              chunkIndex: chunk.chunkIndex,
+              enhancedByIndex: validated.enhancedByIndex,
+              retryCount: Math.max(0, i),
+              modelUsed: plan.model,
+              fallbackTriggered,
+              fallbackReason,
+              startedAt: firstAttemptStartedAt.toISOString(),
+              finishedAt: new Date().toISOString(),
+              latencyMs: Date.now() - firstAttemptStartedAtMs,
+              status: "COMPLETED",
+              errorCategory: null,
+              warnings: [],
+              primaryModel: modelName,
+              fallbackModel: fallbackModel ?? null,
+              attempts,
+              outputMode,
+              schemaName,
+              schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
+              expectedSchemaKeyCount: expectedSchemaKeys.length,
+              returnedSchemaKeyCount: Object.keys(parsedSchema.segments).length,
+              schemaAccepted: requestResult.diagnostics.schemaAccepted,
+              schemaValidationPassed: true,
+              missingKeyCount: lastMissingKeyCount,
+              extraKeyCount: lastExtraKeyCount,
+              emptyValueCount: lastEmptyValueCount,
+            };
+          } catch (validationError) {
+            const category =
+              validationError instanceof ChunkValidationError
+                ? validationError.category
+                : classifyChunkError(validationError).category;
+            attempts.push({
+              attemptNumber: i + 1,
+              attemptType: plan.attemptType,
+              modelUsed: plan.model,
+              maxOutputTokens: plan.maxTokens,
+              responseIdPresent: requestResult.diagnostics.responseIdPresent,
+              initialStatus: requestResult.diagnostics.initialStatus,
+              finalStatus: requestResult.diagnostics.finalStatus,
+              pollingAttemptCount: requestResult.diagnostics.pollingAttemptCount,
+              pollingElapsedMs: requestResult.diagnostics.pollingElapsedMs,
+              outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
+              rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
+              parsedSegmentCount: 0,
+              outputMode,
+              providerStatus: requestResult.diagnostics.providerStatus,
+              incompleteReason: requestResult.diagnostics.incompleteReason,
+              schemaValidationPassed: false,
+              schemaAccepted: requestResult.diagnostics.schemaAccepted,
+              schemaName,
+              schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
+              failureStage: "integrity_validation",
+              emptyOutputStage: "validation",
+              status: "FAILED",
+              errorCategory: category,
+            });
+            lastErrorCategory = category;
+            continue;
+          }
         }
 
         const parsed = parseEnhancementPayload(requestResult.outputText);
@@ -1170,6 +1609,14 @@ async function runChunkedEnhancement(params: {
             outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
             rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
             parsedSegmentCount: 0,
+            outputMode,
+            providerStatus: requestResult.diagnostics.providerStatus,
+            incompleteReason: requestResult.diagnostics.incompleteReason,
+            schemaValidationPassed: false,
+            schemaAccepted: null,
+            schemaName: null,
+            schemaVersion: null,
+            failureStage: "parsing",
             emptyOutputStage: "parsing",
             status: "FAILED",
             errorCategory: "malformed_output",
@@ -1196,6 +1643,14 @@ async function runChunkedEnhancement(params: {
             outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
             rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
             parsedSegmentCount: parsed.segments.length,
+            outputMode,
+            providerStatus: requestResult.diagnostics.providerStatus,
+            incompleteReason: requestResult.diagnostics.incompleteReason,
+            schemaValidationPassed: false,
+            schemaAccepted: null,
+            schemaName: null,
+            schemaVersion: null,
+            failureStage: "integrity_validation",
             emptyOutputStage: null,
             status: "COMPLETED",
             errorCategory: null,
@@ -1216,6 +1671,7 @@ async function runChunkedEnhancement(params: {
             primaryModel: modelName,
             fallbackModel: fallbackModel ?? null,
             attempts,
+            outputMode,
           };
         } catch (validationError) {
           const category =
@@ -1235,6 +1691,14 @@ async function runChunkedEnhancement(params: {
             outputFieldDetected: requestResult.diagnostics.outputFieldDetected,
             rawOutputCharCount: requestResult.diagnostics.rawOutputCharCount,
             parsedSegmentCount: parsed.segments.length,
+            outputMode,
+            providerStatus: requestResult.diagnostics.providerStatus,
+            incompleteReason: requestResult.diagnostics.incompleteReason,
+            schemaValidationPassed: false,
+            schemaAccepted: null,
+            schemaName: null,
+            schemaVersion: null,
+            failureStage: "integrity_validation",
             emptyOutputStage: "validation",
             status: "FAILED",
             errorCategory: category,
@@ -1256,6 +1720,14 @@ async function runChunkedEnhancement(params: {
           outputFieldDetected: "none",
           rawOutputCharCount: 0,
           parsedSegmentCount: 0,
+          outputMode,
+          providerStatus: null,
+          incompleteReason: null,
+          schemaValidationPassed: false,
+          schemaAccepted: structuredOutputEnabled ? false : null,
+          schemaName: structuredOutputEnabled ? schemaName : null,
+          schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
+          failureStage: "provider",
           emptyOutputStage: null,
           status: "FAILED",
           errorCategory: classified.category,
@@ -1280,6 +1752,22 @@ async function runChunkedEnhancement(params: {
       primaryModel: modelName,
       fallbackModel: fallbackModel ?? null,
       attempts,
+      outputMode,
+      schemaName: structuredOutputEnabled ? schemaName : null,
+      schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
+      expectedSchemaKeyCount: structuredOutputEnabled ? expectedSchemaKeys.length : undefined,
+      returnedSchemaKeyCount:
+        structuredOutputEnabled && attempts.length > 0
+          ? attempts[attempts.length - 1]?.parsedSegmentCount ?? 0
+          : undefined,
+      schemaAccepted:
+        structuredOutputEnabled && attempts.length > 0
+          ? (attempts[attempts.length - 1]?.schemaAccepted ?? null)
+          : null,
+      schemaValidationPassed: false,
+      missingKeyCount: structuredOutputEnabled ? lastMissingKeyCount : undefined,
+      extraKeyCount: structuredOutputEnabled ? lastExtraKeyCount : undefined,
+      emptyValueCount: structuredOutputEnabled ? lastEmptyValueCount : undefined,
     };
   }
 
@@ -1375,6 +1863,10 @@ async function runChunkedEnhancement(params: {
       fallbackModel: fallbackModel ?? null,
       fallbackTriggered: fallbackTriggeredAny,
       fallbackReason: fallbackReasons.size > 0 ? Array.from(fallbackReasons).join(",") : null,
+      outputMode,
+      structuredOutputEnabled,
+      schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
+      schemaChunkCount: structuredOutputEnabled ? chunks.length : 0,
       overallStatus,
       startedAt: new Date(startedAtMs).toISOString(),
       finishedAt: new Date(finishedAtMs).toISOString(),
@@ -1411,6 +1903,16 @@ async function runChunkedEnhancement(params: {
           fallbackReason: result?.fallbackReason ?? null,
           attemptCount: result?.attempts?.length ?? 0,
           attempts: result?.attempts ?? [],
+          outputMode: result?.outputMode ?? outputMode,
+          schemaName: result?.schemaName ?? null,
+          schemaVersion: result?.schemaVersion ?? null,
+          expectedSchemaKeyCount: result?.expectedSchemaKeyCount,
+          returnedSchemaKeyCount: result?.returnedSchemaKeyCount,
+          schemaAccepted: result?.schemaAccepted ?? null,
+          schemaValidationPassed: result?.schemaValidationPassed ?? false,
+          missingKeyCount: result?.missingKeyCount ?? 0,
+          extraKeyCount: result?.extraKeyCount ?? 0,
+          emptyValueCount: result?.emptyValueCount ?? 0,
         };
       }),
       originalWordCount,
@@ -1426,6 +1928,8 @@ export async function enhanceTranscriptWithYandexAi(
 ): Promise<TranscriptEnhancementResult> {
   const startedAt = Date.now();
   const mode = getTranscriptEnhancementMode();
+  const outputMode = getTranscriptEnhancementOutputMode();
+  const structuredOutputEnabled = outputMode === "json_schema";
   if (segments.length === 0) {
     const finishedAt = Date.now();
     return {
@@ -1434,6 +1938,10 @@ export async function enhanceTranscriptWithYandexAi(
       meta: {
         mode,
         model: getYandexTranscriptEnhancementModel(),
+        outputMode,
+        structuredOutputEnabled,
+        schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
+        schemaChunkCount: 0,
         overallStatus: "SKIPPED",
         startedAt: new Date(startedAt).toISOString(),
         finishedAt: new Date(finishedAt).toISOString(),
