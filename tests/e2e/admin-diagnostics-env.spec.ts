@@ -6,7 +6,7 @@ import {
 } from "../../lib/services/admin-env-display";
 
 test.describe("admin diagnostics env display", () => {
-  test("secret masking helper masks keys/passwords/tokens", async () => {
+  test("secret masking helper masks keys/passwords/tokens @smoke", async () => {
     expect(maskSecretValue("sh")).toBe("s********");
     expect(maskSecretValue("abcd1234")).toBe("ab********");
     expect(maskSecretValue("abcdef123456xyz")).toBe("abc********xyz");
@@ -27,7 +27,7 @@ test.describe("admin diagnostics env display", () => {
     }
   });
 
-  test("grouped diagnostics include Voximplant and Yandex vars", async () => {
+  test("grouped diagnostics include Voximplant and Yandex vars @smoke", async () => {
     const groups = getAdminEnvironmentDisplayGroups();
     const names = groups.map((group) => group.group);
 

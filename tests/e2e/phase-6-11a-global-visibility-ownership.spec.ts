@@ -577,7 +577,7 @@ test.describe("Phase 6.11A — Access rules: Cases (DB)", () => {
 });
 
 test.describe("Phase 6.11A — Access rules: Events (DB)", () => {
-  test("19. Email-invited user sees Private Event", async () => {
+  test("19. Email-invited user sees Private Event @smoke", async () => {
     const host = await createActiveUser("event_host_inv");
     const invited = await createActiveUser("event_invited");
     const eventId = await createEvent({
@@ -630,7 +630,7 @@ test.describe("Phase 6.11A — Access rules: Events (DB)", () => {
 });
 
 test.describe("Phase 6.11A — Access rules: Sessions (DB)", () => {
-  test("22. Email-invited user sees Private Session", async () => {
+  test("22. Email-invited user sees Private Session @smoke", async () => {
     const facilitator = await createActiveUser("sess_fac_inv");
     const invited = await createActiveUser("sess_invited");
     const sharedCase = await createCase({
