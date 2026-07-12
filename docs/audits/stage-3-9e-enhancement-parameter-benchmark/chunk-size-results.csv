@@ -1,0 +1,5 @@
+baseChunk,variant,segmentCount,tokenBudget,requestDurationMs,validStructuredOutput,outputTokens,qualityClass,failureCategory
+0,0a,3,2400,7294,true,577,UNCHANGED,
+0,0b,3,2400,19523,true,1709,FORMATTING_ONLY,
+2,2a,3,2400,28920,false,2400,,MALFORMED_JSON
+2,2b,2,2400,11157,true,923,QUESTIONABLE,

@@ -1,0 +1,2 @@
+elapsedMs,httpStatus,status,incompleteDetails,rawOutputCharCount,outputFieldDetected,usageInputTokens,usageOutputTokens,usageReasoningTokens,completedAt
+24,200,incomplete,"{""reason"":""max_output_tokens"",""valid"":true}",0,none,639,1200,,

@@ -1,0 +1,7 @@
+chunkIndex,tokenBudget,repetition,httpStatus,status,incompleteDetails,requestDurationMs,validStructuredOutput,parsedSegmentCount,semanticIntegrity,usageInputTokens,usageOutputTokens,usageReasoningTokens,rawOutputCharCount,failureCategory
+0,2400,1,200,completed,null,22033,true,6,FORMATTING_ONLY,658,1909,,883,
+2,2400,1,200,incomplete,"{""reason"":""max_output_tokens"",""valid"":true}",27487,false,0,,814,2400,,0,MALFORMED_JSON
+0,3600,1,200,incomplete,"{""reason"":""max_output_tokens"",""valid"":true}",39722,false,0,,658,3600,,0,MALFORMED_JSON
+2,3600,1,200,incomplete,"{""reason"":""max_output_tokens"",""valid"":true}",41635,false,0,,814,3600,,892,MALFORMED_JSON
+0,4800,1,200,completed,null,33012,true,6,FORMATTING_ONLY,658,2748,,884,
+2,4800,1,200,incomplete,"{""reason"":""max_output_tokens"",""valid"":true}",55078,false,0,,814,4800,,766,MALFORMED_JSON
