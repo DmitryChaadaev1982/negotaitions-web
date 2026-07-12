@@ -52,6 +52,32 @@ Curated deterministic browser smoke:
 
 - `npm run test:e2e:smoke:browser`
 
+Tunnel preflight and classified suites (opt-in only):
+
+- `npm run test:e2e:tunnel:check`
+- `npm run test:e2e:tunnel:list`
+- `npm run test:e2e:tunnel`
+- `npm run test:e2e:live:list`
+- `npm run test:e2e:live`
+
+## Mandatory validation gates
+
+For implementation phases that modify code, tests, config, or runtime behavior, run and report all gates below:
+
+- `npm run validate:fast`
+- `npm run validate:deploy`
+- `npm run test:e2e:smoke`
+- `npm run test:e2e:smoke:browser`
+
+Rules:
+
+- All four gates are mandatory unless the task is strictly audit-only or docs-only.
+- If a gate cannot run, report the exact blocker; do not silently omit gates.
+- Do not hide failures via retries or by skipping tests.
+- `npm run test:e2e:full` remains manual/nightly unless explicitly requested.
+- Tunnel/live-provider suites are opt-in and never part of default mandatory gates.
+- A change is not merge-ready until applicable mandatory gates pass, or the user explicitly accepts a documented exception.
+
 ## Validation Gate Model
 
 `validate:fast` includes:
@@ -121,12 +147,14 @@ Properties:
 ## Reverse Tunnel Policy (Phase 1)
 
 - Default tests should not require a reverse tunnel.
-- Tunnel-required tests will be explicitly classified in a later phase.
+- Tunnel-required tests are explicitly classified with `@requires-tunnel`.
+- Live-provider tests are explicitly classified with `@live-provider`.
+- `test:e2e:tunnel` excludes `@live-provider` tests by default.
 - Tunnel auto-start is not supported in Phase 1.
 - The current tunnel remains a manual operational step.
-- Future tunnel preflight should fail fast with clear instructions instead of hanging.
+- Tunnel preflight fails fast with clear instructions and non-zero exit on failure.
 - Tests must never automatically kill a stale remote tunnel by default.
-- Phase 3 will introduce explicit tunnel classification/preflight; Phase 2 smoke excludes tunnel-only checks.
+- No SSH auto-start and no stale-tunnel auto-kill are performed by test scripts.
 
 ## Future Suite Model (Planned, Not Yet Implemented)
 

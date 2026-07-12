@@ -16,6 +16,37 @@
 
 ---
 
+## Mandatory validation gates (code/config changes)
+
+Default mandatory gates remain local-deterministic and must be reported for implementation work:
+
+- `npm run validate:fast`
+- `npm run validate:deploy`
+- `npm run test:e2e:smoke`
+- `npm run test:e2e:smoke:browser`
+
+Optional/manual suites:
+
+- `npm run test:e2e:full`
+- `npm run test:e2e:tunnel:check`
+- `npm run test:e2e:tunnel:list`
+- `npm run test:e2e:tunnel`
+- `npm run test:e2e:live:list`
+- `npm run test:e2e:live`
+
+Tunnel and live-provider policies:
+
+- Tunnel/live-provider suites are opt-in and not part of default deploy gates.
+- Tunnel preflight is read-only; it never auto-starts SSH and never kills stale tunnels.
+- Manual tunnel command:
+  - `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=2 -R 127.0.0.1:3300:127.0.0.1:3000 deploy@172.29.172.1`
+- Typical tunnel env:
+  - `APP_URL=https://local.negotaitions.ru`
+  - `BASE_URL=https://local.negotaitions.ru`
+  - `NEXT_PUBLIC_APP_URL=https://local.negotaitions.ru`
+
+---
+
 ## 2. Prerequisites
 
 ### 2.1 Environment (POC)

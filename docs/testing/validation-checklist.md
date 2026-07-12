@@ -14,7 +14,30 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:e2e:install` (explicit browser setup when needed)
 - `npm run test:e2e:smoke` (curated deterministic Chromium subset)
 - `npm run test:e2e:smoke:browser` (browser-first deterministic localhost smoke)
+- `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast preflight; read-only)
+- `npm run test:e2e:tunnel:list` (inventory of `@requires-tunnel` tests)
+- `npm run test:e2e:tunnel` (opt-in tunnel-only suite, excludes `@live-provider`)
+- `npm run test:e2e:live:list` (inventory of `@live-provider` tests)
+- `npm run test:e2e:live` (opt-in live-provider suite)
 - `npm run test:e2e:full` (broad regression; manual/nightly until stabilized)
+
+## Mandatory validation gates
+
+For all non-audit, non-doc-only implementation phases, run and report:
+
+- `npm run validate:fast`
+- `npm run validate:deploy`
+- `npm run test:e2e:smoke`
+- `npm run test:e2e:smoke:browser`
+
+Rules:
+
+- All four commands are mandatory unless the task is strictly audit-only or docs-only.
+- If any gate cannot run, document the exact blocker and do not silently skip it.
+- Do not hide failures with retries or skipped tests.
+- `npm run test:e2e:full` is manual/nightly and is not mandatory unless explicitly requested.
+- Tunnel/live-provider suites are opt-in and not part of default gates.
+- Changes are not merge-ready until applicable gates pass or a user-approved exception is documented.
 
 ## Validation Gate Intent
 
@@ -47,6 +70,20 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - No reverse tunnel requirement.
 - No external HTTPS callback dependency.
 - Local config is isolated from shell URL overrides for test routing.
+
+## Tunnel and Live-provider Guardrails (Phase 3B)
+
+- `@requires-tunnel` marks tests that genuinely require publicly reachable tunnel routing.
+- `@live-provider` marks tests that are explicitly live-provider sensitive.
+- Tunnel preflight (`test:e2e:tunnel:check`) never starts SSH, never kills processes, and never mutates remote state.
+- If tunnel preflight fails, fix prerequisites manually before running tunnel-tagged suites.
+- Live-provider suites may create external side effects/cost and require dedicated non-production credentials.
+- Manual tunnel baseline:
+  - `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=2 -R 127.0.0.1:3300:127.0.0.1:3000 deploy@172.29.172.1`
+- Typical tunnel env:
+  - `APP_URL=https://local.negotaitions.ru`
+  - `BASE_URL=https://local.negotaitions.ru`
+  - `NEXT_PUBLIC_APP_URL=https://local.negotaitions.ru`
 
 ## Playwright Browser Install Diagnostics (PowerShell)
 
