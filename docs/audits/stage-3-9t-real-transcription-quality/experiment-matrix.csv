@@ -1,0 +1,9 @@
+variant_id,provider,audio_basis,audio_sha256,hypothesis,status,evidence,decision_impact
+Y1,yandex,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Reproduce production baseline on canonical active audio,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,high
+Y2,yandex,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Diarization OFF may improve lexical form but may hurt structure,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,high
+Y3,yandex,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Normalization OFF may reduce numeric rendering artifacts,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,high
+Y4,yandex,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Best punctuation/literature settings evaluation,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,medium
+Y5,yandex,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Alternative supported model evaluation,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,medium
+Y6,yandex,source_audio,8159e7aeb99a23587dfb84628a761984a52e6648e683c58fe95ae8c35842bbe6,Source recording vs active-audio quality tradeoff,completed,tmp/stage-3-9t-audit/yandex-conclusive-runs.json,high
+O1,openai,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,OpenAI baseline on identical audio,completed,tmp/stage-3-9t-audit/provider-comparison-runs.json,high
+O2,openai,active_audio,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,OpenAI auto-language variant,completed,tmp/stage-3-9t-audit/provider-comparison-runs.json,medium

@@ -1,0 +1,9 @@
+rank,optimization,layer,expected_gain,confidence,implementation_effort,cost,risk,priority,quick_win,medium_term,long_term,evidence_summary
+1,Implement chunked transcript enhancement with deterministic merge,ai_post_processing,High,Confirmed,Medium,Low,Low,P0,yes,yes,no,Full single-shot timed out while 4-chunk parallel succeeded within ~105s wall time
+2,Keep Yandex baseline with explicit ru-RU and diarization ON,provider_config,Medium,Confirmed,Low,Low,Low,P0,yes,yes,no,Y1 remained most stable for readability plus speaker structure
+3,Add canonical SHA-locked benchmark harness for Y1-Yn regressions,observability_audit,High,Confirmed,Medium,Low,Low,P0,yes,yes,no,Extraction mismatch previously hid true variant outcomes
+4,Add phrase-level pathology regression set,quality_control,Medium,Confirmed,Low,Low,Low,P1,yes,yes,no,sort/sorok/40 and arterial-hallucination patterns reproduced across runs
+5,Evaluate normalization-OFF forensic mode behind feature flag,provider_config,Medium,Likely,Medium,Low,Medium,P1,no,yes,no,Y3 removed numeric rendering artifact but reduced readability
+6,Increase upstream recording quality (beyond 8kHz mono),audio_capture,High,Likely,High,Medium,Medium,P1,no,yes,yes,Source probe confirms 8kHz mono ceiling and low-confidence warnings
+7,Expand raw provider snapshot retention (sanitized+bounds),observability,Medium,Confirmed,Medium,Low,Low,P2,no,yes,yes,Current snapshot too narrow for full hypothesis/lattice forensics
+8,Avoid parser deletion rewrites in Phase 1,parser,Medium,Confirmed,Low,Low,Low,P0,yes,no,no,No direct parser/persistence/UI deletion evidence for target substitutions

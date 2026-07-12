@@ -1,0 +1,8 @@
+metric,yandex_baseline,openai_ru,openai_auto,interpretation
+audio_sha256,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Identical canonical audio used
+text_words,228,217,210,OpenAI outputs are shorter in this sample
+segment_count,22,28,26,OpenAI produced finer segmentation
+contains_phrase_sort_takoi,true,true,true,All providers retained this phrase at least once
+contains_numeric_40,true,false,false,Pathological numeric substitution appears only in Yandex baseline sample
+readability_observation,low punctuation/formatting,more readable punctuation,more readable punctuation,OpenAI appears more fluent in this sample
+hallucination_signal,not_clear,not_clear,not_clear,No definitive hallucination evidence in short audited excerpts

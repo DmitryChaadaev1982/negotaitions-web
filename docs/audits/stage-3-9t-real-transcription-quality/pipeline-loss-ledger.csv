@@ -1,0 +1,13 @@
+stage,artifact,count_or_metric,observed_value,loss_or_transformation,evidence,first_confirmed_loss
+audio_source,storage_object,duration_seconds,114.696,Mono 8kHz acoustic ceiling,source-head-probe.json,false
+audio_source,storage_object,sample_rate_hz,8000,None in transport but low-fidelity input,source-head-probe.json,false
+audio_active,source_audio_cut,duration_seconds,103.87,Pause windows removed by design,transcript.processingMetadata.pauseProcessing,false
+audio_active,source_audio_cut,sha256,257bb6885405b616e0c06c29943381f78c058e9017070f8343bc07a24a09af19,Canonical comparison audio fixed,active-audio.sha256.txt,false
+provider_raw,yandex_raw_result_count,entries,66,Raw provider lattice/hypothesis stream larger than persisted segments,processingMetadata.rawResultCount,false
+provider_normalized,yandex_segments,segments,22,Provider normalization chooses best alternatives and deduplicates hypotheses,processingMetadata.segmentQuality,false
+provider_normalized,yandex_text,phrase_pathology,contains_40_numeric,Lexical substitution present (e.g. sort phrase region),transcript text + segments,true
+parser_mapping,applySpeakerMapping,segments,22,No segment drop attributable to mapping function,code audit + segment count,false
+persistence_segments,TranscriptSegment,segments,22,Segments persisted and visible in DB,transcript-segments.txt,false
+persistence_transcript,Transcript,text_words,228,Persisted text scale matches provider baseline scale,processingMetadata.qualityReport,false
+ai_postprocessing,transcript_enhancement,status,FAILED,No enhancement applied due timeout,processingMetadata.transcriptEnhancement,false
+ui_render,recording_route_plus_ui,render_source,persisted_transcript_and_segments,UI reads stored transcript fields; no extra text deletion path in UI,recording route + component audit,false

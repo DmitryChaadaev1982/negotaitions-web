@@ -1,0 +1,9 @@
+variant_id,provider,model,language,audio_basis,text_words,text_chars,segments,diarization_status,contains_sort_takoi,contains_40,contains_arterial_gnili,notes
+Y1,yandex,speechkit:general:rc,ru-RU,active,228,1320,22,COMPLETED,true,true,true,Production baseline reproduced
+Y2,yandex,speechkit:general:rc,ru-RU,active,228,1297,5,SINGLE_SPEAKER_ONLY,true,false,true,Diarization off removed numeric rendering but collapsed speaker structure
+Y3,yandex,speechkit:general:rc,ru-RU,active,228,1276,22,COMPLETED,true,false,true,Normalization off preserved word form сорок but reduced readability
+Y4,yandex,speechkit:general:rc,ru-RU,active,228,1320,22,COMPLETED,true,true,true,Best readability settings matched baseline behavior
+Y5,yandex,speechkit:general,ru-RU,active,228,1320,22,COMPLETED,true,true,true,Alternative model showed no material gain in this sample
+Y6,yandex,speechkit:general:rc,ru-RU,source,251,1471,26,COMPLETED,true,true,true,Source audio increased words but introduced extra noisy content
+O1,openai,gpt-4o-transcribe-diarize,ru,active,217,1326,28,COMPLETED,true,false,false,No 40 token in tested output
+O2,openai,gpt-4o-transcribe-diarize,auto,active,210,1285,26,COMPLETED,true,false,false,No 40 token; slightly shorter than O1
