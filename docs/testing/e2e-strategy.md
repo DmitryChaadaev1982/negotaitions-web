@@ -78,6 +78,33 @@ Rules:
 - Tunnel/live-provider suites are opt-in and never part of default mandatory gates.
 - A change is not merge-ready until applicable mandatory gates pass, or the user explicitly accepts a documented exception.
 
+### Gate execution order
+
+- Run gates sequentially in this exact order:
+  1. `npm run validate:fast`
+  2. `npm run validate:deploy`
+  3. `npm run test:e2e:smoke`
+  4. `npm run test:e2e:smoke:browser`
+- Do not overlap browser smoke with other local Playwright runs because local config binds port `3100`.
+
+## Phase 4 fixture stabilization policy
+
+- Use run-scoped fixture namespace helpers from `tests/e2e/helpers/db.ts`:
+  - `getE2eRunId()`
+  - `e2eName(base)`
+  - `e2eEmail(base)`
+  - `e2eId(base)`
+- `E2E_RUN_ID` may be set externally; otherwise it is generated once per Playwright process.
+- DB-mutating queries are guarded by a safety assertion:
+  - Accepts explicit test DB env (`E2E_DATABASE_URL` or `TEST_DATABASE_URL`), or
+  - test/e2e-style DB naming, or
+  - explicit local override `E2E_ALLOW_DB_MUTATION=1`.
+- Safety guard rejects obviously production-like DB host/name patterns.
+- Cleanup ownership rule:
+  - `cleanupE2eData()` must remove only current run namespace data plus rows owned by current run users.
+  - New tests must avoid broad wildcard cleanup (`LIKE '%E2E%'`) against shared data.
+- Residual legacy suites may still use older cleanup patterns; migrate incrementally and document remaining debt in phase reports.
+
 ## Validation Gate Model
 
 `validate:fast` includes:

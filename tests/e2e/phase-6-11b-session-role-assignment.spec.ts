@@ -24,6 +24,10 @@
  */
 
 import { test, expect } from "@playwright/test";
+import {
+  addAccountParticipantSchema,
+  assignParticipantRoleSchema,
+} from "../../lib/validations/session";
 
 // ─── SECTION 1: Facilitator/owner model ──────────────────────────────────────
 
@@ -337,7 +341,17 @@ test.describe("API-level: assignParticipantRole action validation", () => {
   });
 
   test("API05 — assignParticipantRole allows null roleId (unassign)", async () => {
-    test.skip(true, "Requires DATABASE_URL. null sessionRoleId clears the assignment.");
+    const parsed = assignParticipantRoleSchema.parse({
+      sessionId: "session-1",
+      assignments: [
+        {
+          sessionParticipantId: "participant-1",
+          sessionParticipantType: "PARTICIPANT",
+          sessionRoleId: null,
+        },
+      ],
+    });
+    expect(parsed.assignments[0]?.sessionRoleId).toBeNull();
   });
 
   test("API06 — saveAccountParticipantNotes rejects unassigned PARTICIPANT", async () => {
@@ -403,11 +417,27 @@ test.describe("Structural assertions", () => {
   });
 
   test("STRUCT03 — addAccountParticipantSchema allows PARTICIPANT without sessionRoleId", async () => {
-    test.skip(true, "Schema validation verified via TypeScript type check and build. addAccountParticipantSchema.superRefine for PARTICIPANT type no longer requires sessionRoleId. See lib/validations/session.ts.");
+    const parsed = addAccountParticipantSchema.parse({
+      sessionId: "session-1",
+      type: "PARTICIPANT",
+    });
+    expect(parsed.type).toBe("PARTICIPANT");
+    expect(parsed.sessionRoleId).toBeUndefined();
   });
 
   test("STRUCT04 — assignParticipantRoleSchema validates correctly", async () => {
-    test.skip(true, "Schema validation verified via TypeScript type check and build. assignParticipantRoleSchema requires sessionId + assignments[].{sessionParticipantId, sessionRoleId|null}. See lib/validations/session.ts.");
+    const parsed = assignParticipantRoleSchema.parse({
+      sessionId: "session-1",
+      assignments: [
+        {
+          sessionParticipantId: "participant-1",
+          sessionParticipantType: "PARTICIPANT",
+          sessionRoleId: "role-1",
+        },
+      ],
+    });
+    expect(parsed.assignments).toHaveLength(1);
+    expect(parsed.assignments[0]?.sessionRoleId).toBe("role-1");
   });
 
   test("STRUCT05 — RoomSidebarData type includes hasAssignedRole and sessionId", async () => {

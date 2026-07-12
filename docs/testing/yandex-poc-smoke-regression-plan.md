@@ -25,6 +25,15 @@ Default mandatory gates remain local-deterministic and must be reported for impl
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:smoke:browser`
 
+Execution order is mandatory:
+
+1. `npm run validate:fast`
+2. `npm run validate:deploy`
+3. `npm run test:e2e:smoke`
+4. `npm run test:e2e:smoke:browser`
+
+`test:e2e:smoke:browser` uses local port `3100`; run these gates sequentially and never in parallel.
+
 Optional/manual suites:
 
 - `npm run test:e2e:full`
@@ -44,6 +53,14 @@ Tunnel and live-provider policies:
   - `APP_URL=https://local.negotaitions.ru`
   - `BASE_URL=https://local.negotaitions.ru`
   - `NEXT_PUBLIC_APP_URL=https://local.negotaitions.ru`
+
+Fixture and DB safety policy:
+
+- Use a dedicated non-production DB for all DB-mutating e2e runs.
+- Preferred DB URL inputs for e2e helpers: `E2E_DATABASE_URL` or `TEST_DATABASE_URL`; `DATABASE_URL` is compatibility fallback.
+- E2E DB mutation is guarded and rejects obviously production-like host/name targets.
+- Use `E2E_RUN_ID` (or auto-generated run ID) namespace helpers to isolate fixture rows between runs.
+- Cleanup must only remove rows owned by the current run namespace; avoid broad wildcard cleanup for new tests.
 
 ---
 

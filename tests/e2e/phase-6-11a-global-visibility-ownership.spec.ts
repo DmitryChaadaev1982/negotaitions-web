@@ -61,7 +61,7 @@ import { randomBytes } from "crypto";
 
 import { expect, test } from "@playwright/test";
 
-import { cleanupE2eData, query } from "./helpers/db";
+import { cleanupE2eData, e2eId, query } from "./helpers/db";
 
 test.beforeAll(cleanupE2eData);
 test.afterAll(cleanupE2eData);
@@ -70,7 +70,7 @@ const BROWSER_BASE_URL =
   process.env.BASE_URL ?? process.env.PLAYWRIGHT_BASE_URL ?? "";
 
 function uid(prefix: string) {
-  return `${prefix}_${Date.now()}_${randomBytes(3).toString("hex")}`;
+  return `${e2eId(prefix)}_${randomBytes(3).toString("hex")}`;
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────

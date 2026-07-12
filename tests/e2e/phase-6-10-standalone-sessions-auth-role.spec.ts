@@ -17,13 +17,13 @@
 import { expect, test } from "@playwright/test";
 import { createHash, randomBytes } from "crypto";
 
-import { cleanupE2eData, query } from "./helpers/db";
+import { cleanupE2eData, e2eId, query } from "./helpers/db";
 
 test.beforeAll(cleanupE2eData);
 test.afterAll(cleanupE2eData);
 
 function uid(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return e2eId(prefix);
 }
 
 // ─── DB helpers ────────────────────────────────────────────────────────────────
