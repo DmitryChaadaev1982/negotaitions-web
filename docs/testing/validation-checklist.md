@@ -2,15 +2,46 @@
 
 Use this checklist for architecture/documentation-affecting changes and release readiness checks.
 
-## Required Commands
+## Recommended Validation Commands
 
 - `git status`
 - `git diff --stat`
 - `git diff --name-status`
-- `npm run lint`
-- `npm run build`
-- `npx prisma validate`
-- `npm run test:unit`
+- `npm run validate:fast`
+- `npm run validate:deploy`
+- `npm run test:e2e:list` (inventory only)
+- `npm run test:e2e:install` (explicit browser setup when needed)
+- `npm run test:e2e:full` (broad regression; manual/nightly until stabilized)
+
+## Validation Gate Intent
+
+- `validate:fast` is the routine local gate:
+  - lint
+  - `prisma validate`
+  - `prisma generate`
+  - unit tests
+  - Playwright listing only (`--list`)
+- `validate:deploy` runs `validate:fast` and then production build.
+- `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
+- `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
+
+## Playwright Browser Install Diagnostics (PowerShell)
+
+Use these commands to inspect browser cache behavior in your shell:
+
+```powershell
+Get-ChildItem Env:PLAYWRIGHT* -ErrorAction SilentlyContinue
+Test-Path "$env:LOCALAPPDATA\ms-playwright"
+Get-ChildItem "$env:LOCALAPPDATA\ms-playwright" -ErrorAction SilentlyContinue
+Test-Path "$env:PLAYWRIGHT_BROWSERS_PATH"
+npx playwright install --dry-run chromium
+```
+
+Notes:
+
+- Package install and browser install are different.
+- Routine test commands should not intentionally run browser install.
+- Do not enforce repository-level `PLAYWRIGHT_BROWSERS_PATH` overrides in Phase 1.
 
 ## Functional Guardrails
 
