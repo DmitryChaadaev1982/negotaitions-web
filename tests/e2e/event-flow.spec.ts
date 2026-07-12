@@ -8,6 +8,7 @@ import {
   createActiveUser,
   createE2eCase,
   createE2eEvent,
+  getE2eRunId,
   getEventParticipants,
   getSession,
   getTrainingEvent,
@@ -176,7 +177,7 @@ test("event lobby session setup uses role-slot rules and observer flow", async (
          "joinedAt", "lastSeenAt", "updatedAt")
        VALUES (gen_random_uuid(), $1, $2, $3, 'UNDECIDED',
         false, false, false, false, NOW(), NOW(), NOW())`,
-      [event.id, `Extra ${i + 1}`, `extra-${Date.now()}-${i}`],
+      [event.id, `Extra ${i + 1}`, `extra-${getE2eRunId()}-${i}`],
     );
   }
 

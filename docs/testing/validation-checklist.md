@@ -39,6 +39,11 @@ Rules:
 - Tunnel/live-provider suites are opt-in and not part of default gates.
 - Changes are not merge-ready until applicable gates pass or a user-approved exception is documented.
 
+Sequential requirement:
+
+- Run mandatory gates in strict order: `validate:fast` -> `validate:deploy` -> `test:e2e:smoke` -> `test:e2e:smoke:browser`.
+- Do not overlap browser smoke with other local Playwright runs because localhost port `3100` is shared.
+
 ## Validation Gate Intent
 
 - `validate:fast` is the routine local gate:
@@ -109,6 +114,14 @@ Notes:
 - No Prisma schema/migration edits for docs-only work.
 - No env value changes committed.
 - No server/nginx/systemd edits in docs-only scope.
+
+## Fixture Guardrails (Phase 4)
+
+- DB mutation safety must run through `tests/e2e/helpers/db.ts`.
+- Preferred DB URL order: `E2E_DATABASE_URL` -> `TEST_DATABASE_URL` -> `DATABASE_URL` (compatibility fallback).
+- Reject production-like DB host/name targets unless `E2E_ALLOW_DB_MUTATION=1` is explicitly set for controlled local use.
+- Use run-scoped namespace helpers (`E2E_RUN_ID`, `getE2eRunId`, `e2eName`, `e2eEmail`, `e2eId`) for new fixture data.
+- Cleanup must be ownership-scoped to current run namespace; new broad wildcard cleanup patterns are not allowed.
 
 ## Architecture Documentation Guardrails
 

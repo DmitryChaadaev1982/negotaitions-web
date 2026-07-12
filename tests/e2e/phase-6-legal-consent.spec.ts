@@ -11,7 +11,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { cleanupE2eData } from "./helpers/db";
+import { cleanupE2eData, e2eEmail } from "./helpers/db";
 
 // The registration consent test creates a `test-*@example.com` account via the
 // signup form; clean it (and any other leftovers) up around this file.
@@ -130,7 +130,7 @@ test.describe("Registration consent", () => {
   test("7. Registration without legal checkboxes fails", async ({ page }) => {
     await page.goto("/register");
     await page.fill('[name="name"]', "Test User");
-    await page.fill('[name="email"]', `test-${Date.now()}@example.com`);
+    await page.fill('[name="email"]', e2eEmail("legal-consent-register"));
     await page.fill('[name="password"]', "Password123!");
     await page.fill('[name="confirmPassword"]', "Password123!");
     // Do NOT check consent boxes

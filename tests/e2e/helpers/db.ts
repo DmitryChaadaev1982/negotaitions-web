@@ -3,13 +3,119 @@ import "dotenv/config";
 import { hash } from "bcryptjs";
 import { Pool } from "pg";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const DATABASE_URL_RAW =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  process.env.TEST_DATABASE_URL?.trim() ||
+  process.env.DATABASE_URL?.trim() ||
+  "";
+
+if (!DATABASE_URL_RAW) {
+  throw new Error(
+    "E2E database URL is not configured. Set E2E_DATABASE_URL, TEST_DATABASE_URL, or DATABASE_URL.",
+  );
+}
+
+const pool = new Pool({ connectionString: DATABASE_URL_RAW });
+
+let hasCheckedDbSafety = false;
+
+function parseDatabaseDescriptor(databaseUrl: string) {
+  try {
+    const parsed = new URL(databaseUrl);
+    const dbName = parsed.pathname.replace(/^\//, "").toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    return { dbName, host };
+  } catch {
+    return { dbName: "", host: "" };
+  }
+}
+
+function assertSafeDbMutationTarget() {
+  if (hasCheckedDbSafety) {
+    return;
+  }
+
+  const urlSource =
+    process.env.E2E_DATABASE_URL?.trim()
+      ? "E2E_DATABASE_URL"
+      : process.env.TEST_DATABASE_URL?.trim()
+        ? "TEST_DATABASE_URL"
+        : "DATABASE_URL";
+
+  const { dbName, host } = parseDatabaseDescriptor(DATABASE_URL_RAW);
+  const dbLooksTestLike = /(?:test|e2e|staging|sandbox|local|dev)/i.test(dbName);
+  const hostLooksLocal = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0)/i.test(host);
+  const hostLooksSafe = hostLooksLocal || /(?:test|staging|sandbox|dev)/i.test(host);
+  const hasExplicitTestUrl =
+    Boolean(process.env.E2E_DATABASE_URL?.trim()) ||
+    Boolean(process.env.TEST_DATABASE_URL?.trim());
+  const allowOverride = process.env.E2E_ALLOW_DB_MUTATION === "1";
+  const blockedHost = /(?:prod|production|primary|master)/i.test(host);
+  const blockedDb = /(?:prod|production|main)/i.test(dbName);
+
+  if ((blockedHost || blockedDb) && !allowOverride) {
+    throw new Error(
+      `Refusing E2E DB mutation against unsafe DB target (source=${urlSource}, host=${host || "unknown"}, db=${dbName || "unknown"}). Use a dedicated test DB or set E2E_ALLOW_DB_MUTATION=1 for an explicit local override.`,
+    );
+  }
+
+  if (!(hasExplicitTestUrl || dbLooksTestLike || hostLooksSafe || allowOverride)) {
+    throw new Error(
+      `Refusing E2E DB mutation without test signal (source=${urlSource}, host=${host || "unknown"}, db=${dbName || "unknown"}). Provide E2E_DATABASE_URL or TEST_DATABASE_URL, use a DB with test/e2e naming, or set E2E_ALLOW_DB_MUTATION=1 for controlled local runs.`,
+    );
+  }
+
+  hasCheckedDbSafety = true;
+}
+
+const processPid =
+  typeof process.pid === "number" && Number.isFinite(process.pid) ? process.pid : 0;
+const generatedRunId = `r${Date.now().toString(36)}p${processPid.toString(36)}${Math.random()
+  .toString(36)
+  .slice(2, 6)}`.toLowerCase();
+const e2eRunId = (
+  process.env.E2E_RUN_ID?.trim().toLowerCase() || generatedRunId
+).replace(/[^a-z0-9_-]/g, "");
+
+export function getE2eRunId() {
+  return e2eRunId;
+}
+
+function sanitizeNamePart(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+}
+
+export function e2eName(base: string) {
+  return `${base} [E2E ${getE2eRunId()}]`;
+}
+
+export function e2eEmail(base: string) {
+  const local = sanitizeNamePart(base) || "user";
+  const uniqueSuffix = Math.random().toString(36).slice(2, 7);
+  return `${local}.${getE2eRunId()}.${uniqueSuffix}@test.negotaitions.local`;
+}
+
+export function e2eId(base: string) {
+  const prefix = sanitizeNamePart(base) || "e2e";
+  return `${prefix}_${getE2eRunId()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function id(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return e2eId(prefix);
 }
 
 export async function query<T>(text: string, params: unknown[] = []) {
+  const mutatingStatement = /^\s*(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE)\b/i.test(
+    text,
+  );
+  if (mutatingStatement) {
+    assertSafeDbMutationTarget();
+  }
   const result = await pool.query(text, params);
   return result.rows as T[];
 }
@@ -105,21 +211,46 @@ export const TEST_USER_EMAIL_PREDICATE = `(
 ) AND "email" <> 'demo@example.com'`;
 
 export async function cleanupE2eData() {
-  // 1. Title-based artifacts (sessions before cases: Session.negotiationCaseId is Restrict).
-  await query(`DELETE FROM "Session" WHERE "title" LIKE '%E2E%' OR "snapshotCaseTitle" LIKE '%E2E%'`);
-  await query(`DELETE FROM "TrainingEvent" WHERE "title" LIKE '%E2E%'`);
-  await query(`DELETE FROM "NegotiationCase" WHERE "title" LIKE '%E2E%'`);
+  assertSafeDbMutationTarget();
+  const runId = getE2eRunId();
+  const runPattern = `%${runId}%`;
+
+  // Remove run-owned leaf data first.
   await query(
-    `DELETE FROM "ExternalServiceEvent" WHERE "title" LIKE '%Mock%' OR "message" LIKE '%Mock%' OR "message" LIKE '%quota%' OR "message" LIKE '%billing%'`,
+    `DELETE FROM "ExternalServiceEvent"
+     WHERE "title" ILIKE $1
+        OR "message" ILIKE $1`,
+    [runPattern],
   );
 
-  // 2. Test users plus everything they own. Sessions/cases/events reference the
-  //    user via Restrict (facilitator) or SetNull, so delete owned rows first,
-  //    then the users themselves.
+  // Remove run-owned top-level entities by explicit run marker.
+  await query(
+    `DELETE FROM "Session"
+     WHERE "title" ILIKE $1
+        OR "snapshotCaseTitle" ILIKE $1`,
+    [runPattern],
+  );
+  await query(
+    `DELETE FROM "TrainingEvent"
+     WHERE "title" ILIKE $1
+        OR "publicJoinCode" ILIKE $1
+        OR "hostToken" ILIKE $1
+        OR "lobbyRoomName" ILIKE $1`,
+    [runPattern],
+  );
+  await query(`DELETE FROM "NegotiationCase" WHERE "title" ILIKE $1`, [runPattern]);
+
+  // Remove run-owned users and rows they own directly.
   const testUsers = await query<{ id: string }>(
+    `SELECT "id" FROM "User"
+     WHERE "email" ILIKE $1
+        OR "email" LIKE $2`,
+    [`%${runId}@%`, `%${runId}%@test.invalid`],
+  );
+  const legacyUsers = await query<{ id: string }>(
     `SELECT "id" FROM "User" WHERE ${TEST_USER_EMAIL_PREDICATE}`,
   );
-  const ids = testUsers.map((u) => u.id);
+  const ids = [...new Set([...testUsers, ...legacyUsers].map((u) => u.id))];
   if (ids.length > 0) {
     await query(`DELETE FROM "Session" WHERE "facilitatorId" = ANY($1)`, [ids]);
     await query(
@@ -140,7 +271,7 @@ export async function createActiveUser(input?: {
   password?: string;
   preferredLocale?: "ru" | "en";
 }) {
-  const email = input?.email ?? `e2e-locale-${id("u")}@example.com`;
+  const email = input?.email ?? e2eEmail(`locale-user-${id("u")}`);
   const password = input?.password ?? "e2e-pass-1234";
   const passwordHash = await hash(password, 12);
   const userId = id("user");
@@ -185,7 +316,7 @@ export async function ensureDemoFacilitator() {
 export async function createE2eCase() {
   const facilitator = await ensureDemoFacilitator();
   const caseId = id("case");
-  const title = `E2E Case Duration Test ${Date.now()}`;
+  const title = e2eName("E2E Case Duration Test");
 
   await query(
     `INSERT INTO "NegotiationCase"
@@ -229,7 +360,7 @@ export async function createTestCase(input?: {
 }) {
   const facilitator = await ensureDemoFacilitator();
   const caseId = id("case");
-  const title = input?.title ?? "E2E Case A — Scope Change";
+  const title = input?.title ?? e2eName("E2E Case A Scope Change");
   const [roleA, roleB] = input?.roles ?? ["Client CFO", "Vendor Project Director"];
 
   await query(
@@ -322,9 +453,9 @@ export async function createE2eEvent(input?: {
   withParticipants?: boolean;
   title?: string;
 }) {
-  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const suffix = `${getE2eRunId()}-${Math.random().toString(36).slice(2, 7)}`;
   const eventId = id("event");
-  const title = input?.title ?? `E2E Club Event ${suffix}`;
+  const title = input?.title ?? e2eName(`E2E Club Event ${suffix}`);
   const hostToken = `host-${suffix}`;
   const publicJoinCode = `e2e-${suffix}`;
 
@@ -939,10 +1070,16 @@ export async function createSnapshotJoinFixture() {
        ("id", "negotiationCaseId", "facilitatorId", "title", "snapshotCaseTitle",
         "snapshotBusinessContext", "snapshotPublicInstructions", "snapshotCaseLanguage",
         "preparationDurationSeconds", "durationSeconds", "updatedAt")
-     VALUES ($1, $2, $3, 'E2E i18n Snapshot Session', $4,
+     VALUES ($1, $2, $3, $5, $4,
         'E2E_DYNAMIC_CASE_TEXT_STAYS_ENGLISH', 'E2E_DYNAMIC_PUBLIC_INSTRUCTIONS',
         'EN', 300, 900, NOW())`,
-    [sessionId, negotiationCase.id, facilitator.id, negotiationCase.title],
+    [
+      sessionId,
+      negotiationCase.id,
+      facilitator.id,
+      negotiationCase.title,
+      e2eName("E2E i18n Snapshot Session"),
+    ],
   );
 
   const firstRole = negotiationCase.roles[0]!;
@@ -964,7 +1101,7 @@ export async function createSnapshotJoinFixture() {
     ],
   );
 
-  const joinToken = `e2e-join-${Date.now()}`;
+  const joinToken = `e2e-join-${getE2eRunId()}-${Math.random().toString(36).slice(2, 6)}`;
   await query(
     `INSERT INTO "SessionParticipant"
        ("id", "sessionId", "sessionRoleId", "type", "joinToken", "displayName", "notes", "updatedAt")

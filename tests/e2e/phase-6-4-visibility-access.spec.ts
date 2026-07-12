@@ -31,7 +31,7 @@ import { createHash, randomBytes } from "crypto";
 
 import { test, expect } from "@playwright/test";
 
-import { cleanupE2eData, query } from "./helpers/db";
+import { cleanupE2eData, e2eId, query } from "./helpers/db";
 
 // Remove any leftover test users/events/sessions before and after this file runs.
 test.beforeAll(cleanupE2eData);
@@ -40,7 +40,7 @@ test.afterAll(cleanupE2eData);
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function uid(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return e2eId(prefix);
 }
 
 function hashToken(raw: string) {
