@@ -355,13 +355,13 @@ test.describe("API server-side consent flag enforcement", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Regression — Phase 5 protections intact", () => {
-  test("23. Login page loads", async ({ page }) => {
+  test("23. Login page loads @browser-smoke", async ({ page }) => {
     await page.goto("/login");
     await expect(page.locator('[name="email"]')).toBeVisible();
     await expect(page.locator('[name="password"]')).toBeVisible();
   });
 
-  test("24. /join/invalid-token returns 404 or not-found page", async ({ page }) => {
+  test("24. /join/invalid-token returns 404 or not-found page @browser-smoke", async ({ page }) => {
     const resp = await page.goto("/join/invalid-test-token-xxxxxxxx");
     // Should not be 500; 404 or not-found page
     expect(resp?.status()).not.toBe(500);

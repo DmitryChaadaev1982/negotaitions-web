@@ -64,7 +64,7 @@ async function createEventSession(request: import("@playwright/test").APIRequest
   return { event, sessionId: body.session.id, participants };
 }
 
-test("complete event from lobby closes event and disables session creation", async ({
+test("complete event from lobby closes event and disables session creation @browser-smoke", async ({
   page,
   request,
 }) => {
