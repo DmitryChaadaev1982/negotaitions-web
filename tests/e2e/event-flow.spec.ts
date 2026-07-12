@@ -25,12 +25,6 @@ test.afterAll(async () => {
   await cleanupE2eData();
 });
 
-const browserBaseUrl =
-  process.env.PLAYWRIGHT_BASE_URL?.trim() ||
-  process.env.BASE_URL?.trim() ||
-  process.env.APP_URL?.trim() ||
-  "http://127.0.0.1:3100";
-
 async function createUserSessionCookie(userId: string) {
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
@@ -46,20 +40,21 @@ async function createUserSessionCookie(userId: string) {
 async function loginToPageWithSessionCookie(
   page: import("@playwright/test").Page,
   cookieHeader: string,
+  baseUrl: string,
 ) {
   const rawToken = cookieHeader.replace(/^auth_session=/, "");
   await page.context().addCookies([
     {
       name: "auth_session",
       value: rawToken,
-      url: browserBaseUrl,
+      url: baseUrl,
       httpOnly: true,
       sameSite: "Lax",
     },
   ]);
 }
 
-test("account-first join redirects unauth users and prevents duplicate event participants", async ({
+test("account-first join redirects unauth users and prevents duplicate event participants @browser-smoke", async ({
   page,
   request,
 }) => {
@@ -260,7 +255,7 @@ test("event lobby session setup uses role-slot rules and observer flow", async (
   expect(sergRow?.participantType).toBe("OBSERVER");
 });
 
-test("event lobby host can finish active session from sessions board", async ({
+test("event lobby host can finish active session from sessions board @browser-smoke", async ({
   page,
   request,
 }) => {
@@ -339,7 +334,11 @@ test("event lobby host can finish active session from sessions board", async ({
     session: { id: string };
   };
 
-  await loginToPageWithSessionCookie(page, hostCookie);
+  await loginToPageWithSessionCookie(
+    page,
+    hostCookie,
+    test.info().project.use.baseURL ?? "http://127.0.0.1:3100",
+  );
   await page.goto(`/events/${event.id}/lobby`);
   await expect(page.getByTestId("host-controls-panel")).toBeVisible();
   await expect(page.getByTestId("finish-session-button")).toHaveCount(1);

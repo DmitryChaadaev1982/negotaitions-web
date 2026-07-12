@@ -36,6 +36,10 @@ Explicit browser setup:
 
 - `npm run test:e2e:install`
 
+Deterministic local Playwright inventory:
+
+- `npm run test:e2e:local:list`
+
 Full Playwright regression:
 
 - `npm run test:e2e:full`
@@ -43,6 +47,10 @@ Full Playwright regression:
 Curated deterministic smoke:
 
 - `npm run test:e2e:smoke`
+
+Curated deterministic browser smoke:
+
+- `npm run test:e2e:smoke:browser`
 
 ## Validation Gate Model
 
@@ -80,6 +88,15 @@ Properties:
 - DB-mutating by design (requires dedicated non-production test DB)
 - Intended for deploy-adjacent browser/API validation after stability checks
 
+`test:e2e:smoke:browser` is:
+
+- Chromium-only curated browser-first subset (`--config=playwright.local.config.ts --project=chromium --grep @browser-smoke`)
+- Deterministic local mode only
+- Localhost only (`http://127.0.0.1:3100`)
+- Playwright-managed local `webServer`
+- Mock external providers only
+- No reverse tunnel and no external HTTPS callback dependency
+
 `test:all` remains available for backward compatibility as a broad legacy/full-suite command, but it is not the recommended routine deploy gate while full Playwright remains unstable or environment-dependent.
 
 ## Playwright Runtime Behavior
@@ -94,6 +111,12 @@ Properties:
 - Default `ms-playwright` cache locations:
   - Windows: `%LOCALAPPDATA%\ms-playwright`
   - Linux: `~/.cache/ms-playwright`
+
+## Runtime Modes
+
+- Deterministic local browser mode: `playwright.local.config.ts` + localhost + managed local `webServer`.
+- General/default mode: `playwright.config.ts` + existing env-driven behavior.
+- Future tunnel/provider mode: planned for Phase 3B (`@requires-tunnel` + preflight), not implemented in this phase.
 
 ## Reverse Tunnel Policy (Phase 1)
 
@@ -134,6 +157,7 @@ Intentionally not covered in Phase 2 smoke:
 - With no external base URL env set, Playwright starts local web server automatically from config.
 - Setting external `PLAYWRIGHT_BASE_URL`, `BASE_URL`, or `APP_URL` suppresses Playwright `webServer` startup.
 - Documentation and runbooks should assume this current behavior.
+- Deterministic local config explicitly pins base URL to `http://127.0.0.1:3100` and does not route tests via shell-provided `APP_URL`, `BASE_URL`, `NEXT_PUBLIC_APP_URL`, or `PLAYWRIGHT_BASE_URL`.
 
 ## Key E2E Coverage Areas
 

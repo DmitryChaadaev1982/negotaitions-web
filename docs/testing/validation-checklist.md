@@ -10,8 +10,10 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run validate:fast`
 - `npm run validate:deploy`
 - `npm run test:e2e:list` (inventory only)
+- `npm run test:e2e:local:list` (deterministic local inventory)
 - `npm run test:e2e:install` (explicit browser setup when needed)
 - `npm run test:e2e:smoke` (curated deterministic Chromium subset)
+- `npm run test:e2e:smoke:browser` (browser-first deterministic localhost smoke)
 - `npm run test:e2e:full` (broad regression; manual/nightly until stabilized)
 
 ## Validation Gate Intent
@@ -24,6 +26,7 @@ Use this checklist for architecture/documentation-affecting changes and release 
   - Playwright listing only (`--list`)
 - `validate:deploy` runs `validate:fast` and then production build.
 - `test:e2e:smoke` runs critical browser/API smoke checks only (`@smoke`, Chromium).
+- `test:e2e:smoke:browser` runs critical browser-first smoke checks only (`@browser-smoke`) under deterministic local config.
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
 
@@ -35,6 +38,15 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - DB-mutating tests are allowed; use a dedicated non-production test DB.
 - Smoke is deploy-adjacent validation only after repeat-run stability is demonstrated.
 - Tunnel-specific classification/preflight is deferred to Phase 3.
+
+## Browser Smoke Guardrails (Phase 3A)
+
+- Localhost routing only (`http://127.0.0.1:3100`).
+- Playwright-managed local `webServer` (Next.js dev server).
+- Mock provider defaults (`EXTERNAL_SERVICES_MODE=mock`, `RECORDING_MODE=mock`, `TRANSCRIPTION_MODE=mock`).
+- No reverse tunnel requirement.
+- No external HTTPS callback dependency.
+- Local config is isolated from shell URL overrides for test routing.
 
 ## Playwright Browser Install Diagnostics (PowerShell)
 
