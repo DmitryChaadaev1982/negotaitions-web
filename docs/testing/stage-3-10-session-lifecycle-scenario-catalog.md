@@ -1,11 +1,11 @@
 # Stage 3.10 Session Lifecycle Scenario Catalog
 
-This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-traceability.csv` and reflects the final Stage 3.10 foundation/A7 checkpoint evidence on branch `feature/stage-3-10-session-completion-flow`.
+This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-traceability.csv` and reflects Stage 3.10 foundation plus Checkpoint B guard-path evidence on branch `feature/stage-3-10-session-completion-flow`.
 
 ## Coverage Totals
 
-- Total distinct scenarios: `70`
-- `AUTOMATED`: `57`
+- Total distinct scenarios: `75`
+- `AUTOMATED`: `62`
 - `MANUAL_PROVIDER_CANARY`: `3`
 - `MANUAL_MULTI_BROWSER`: `2`
 - `DEFERRED_WITH_REASON`: `8`
@@ -38,7 +38,10 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 - `ST310-NAV-002` (`AUTOMATED`, `P1`) Unmount cleanup does not call explicit leave. Coverage: `API/components` via `components/voximplant-negotiation-room-page.tsx` :: `cleanup path no leave`. Notes: validated by code path and E2E behavior.
 - `ST310-NAV-003` (`AUTOMATED`, `P1`) FINISHED+DEBRIEF_OPEN authorized rejoin allowed. Coverage: `API/UI` via `app/api/sessions/[sessionId]/control-state/route.ts` :: `rejoin policy`.
 - `ST310-NAV-004` (`AUTOMATED`, `P1`) FINISHED+CLOSED redirects to materials. Coverage: `Browser E2E` via `tests/e2e/session-finish-canonical.spec.ts` :: `closed terminal navigation`.
-- `ST310-NAV-005` (`AUTOMATED`, `P0`) Completed event denies lobby/debrief. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `rejoin after event completed`.
+- `ST310-NAV-005` (`AUTOMATED`, `P0`) Completed event denies lobby/debrief. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `rejoin after event completed denies lobby and redirects to login [ST310-NAV-005]`.
+- `ST310-NAV-006` (`AUTOMATED`, `P1`) OPEN direct entry remains allowed under canonical server guard. Coverage: `Unit` via `lib/session-room-access.test.ts` :: `allows OPEN lifecycle room access`.
+- `ST310-NAV-007` (`AUTOMATED`, `P1`) FINISHED+DEBRIEF_OPEN direct entry remains allowed. Coverage: `Unit` via `lib/session-room-access.test.ts` :: `allows FINISHED + DEBRIEF_OPEN access`.
+- `ST310-NAV-008` (`AUTOMATED`, `P1`) FINISHED+CLOSED direct entry resolves deterministic materials redirect. Coverage: `Unit` via `lib/session-room-access.test.ts` :: `redirects CLOSED room to materials`.
 
 ## SESSION
 
@@ -80,14 +83,16 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 ## EVENT
 
 - `ST310-EVENT-001` (`AUTOMATED`, `P0`) Event complete closes linked session via canonical finish. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `complete event closes session`.
-- `ST310-EVENT-004` (`AUTOMATED`, `P0`) Mixed recording states handled during event completion. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `running session stop behavior`.
+- `ST310-EVENT-004` (`AUTOMATED`, `P0`) Mixed recording states handled during event completion. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `complete event closes running session and stops active recording [ST310-EVENT-004]`.
 - `ST310-EVENT-005` (`AUTOMATED`, `P1`) No recording session still closes on event complete. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `session without recording`.
 - `ST310-EVENT-006` (`AUTOMATED`, `P0`) Duplicate event completion idempotent. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `complete from lobby idempotent`.
 - `ST310-EVENT-009` (`AUTOMATED`, `P0`) Partial stop failure does not block event completion. Coverage: `Browser E2E` via `tests/e2e/event-completion.spec.ts` :: `stop failure still completes`.
+- `ST310-EVENT-010` (`AUTOMATED`, `P1`) Completed event-linked room entry resolves `EVENT_CLOSED` and redirect target. Coverage: `Unit` via `lib/session-room-access.test.ts` :: `returns EVENT_CLOSED for completed event-linked session`.
 
 ## MATERIALS
 
 - `ST310-MATERIALS-001` (`AUTOMATED`, `P1`) Delayed finalization does not block materials availability. Coverage: `API` via `app/api/sessions/[sessionId]/materials/status/route.ts` :: `materials while finalizing`.
+- `ST310-MATERIALS-002` (`AUTOMATED`, `P1`) Completed-event owner hierarchy may resolve to event results destination. Coverage: `Unit` via `lib/session-room-access.test.ts` :: `prefers event lobby results for event owners when requested`.
 
 ## MIGRATION
 

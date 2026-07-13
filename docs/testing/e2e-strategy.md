@@ -257,3 +257,14 @@ Intentionally not covered in Phase 2 smoke:
 - `docs/testing/yandex-poc-smoke-regression-plan.md`
 - `docs/audits/archive/old-root-reports/TEST_PLAN.md`
 - `docs/audits/archive/old-root-reports/TEST_RESULTS.md`
+
+## Stage 3.10 Checkpoint B guard focus
+
+Checkpoint B adds explicit routing/lifecycle guard expectations:
+
+- room direct URL for `OPEN`, `DEBRIEF_OPEN`, `CLOSED`;
+- completed event lobby direct URL server guard;
+- refresh/back/stale-tab close handling without reconnect loops;
+- closed-room provider credential denial (`ROOM_CLOSED` / `EVENT_CLOSED`).
+
+Deterministic policy checks are anchored in `lib/session-room-access.test.ts`; browser confirmation remains part of `test:stage310` and `test:stage310:browser`.

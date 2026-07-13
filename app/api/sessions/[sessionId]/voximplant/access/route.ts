@@ -8,6 +8,10 @@ import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
+import {
   claimSessionRoomConnectionLease,
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
@@ -146,6 +150,77 @@ export async function POST(_request: Request, context: RouteContext) {
         code: "VOXIMPLANT_GUEST_DEFERRED",
       },
       { status: 403 },
+    );
+  }
+
+  const participantSession = await prisma.sessionParticipant.findUnique({
+    where: { id: participant.id },
+    select: {
+      joinToken: true,
+      type: true,
+      session: {
+        select: {
+          id: true,
+          eventId: true,
+          roomLifecycle: true,
+          deletedAt: true,
+          closeReason: true,
+          closedByEventAt: true,
+          negotiationState: true,
+          event: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!participantSession) {
+    return NextResponse.json({ error: "Participant not found." }, { status: 404 });
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId,
+      negotiationState: participantSession.session.negotiationState,
+      roomLifecycle: participantSession.session.roomLifecycle ?? null,
+      deletedAt: participantSession.session.deletedAt ?? null,
+      closeReason: participantSession.session.closeReason ?? null,
+      closedByEventAt: participantSession.session.closedByEventAt ?? null,
+      eventId: participantSession.session.eventId ?? null,
+      eventStatus: participantSession.session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId,
+      participantJoinToken: participantSession.joinToken,
+      eventId: participantSession.session.eventId ?? null,
+      eventStatus: participantSession.session.event?.status ?? null,
+      preferEventResultsForEventOwner: participantSession.type === ParticipantType.FACILITATOR,
+    },
+  });
+  if (!isRoomAccessAllowed(accessDecision.output)) {
+    if (accessDecision.output === "DENY_DELETED") {
+      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
+    }
+    if (accessDecision.output === "DENY_UNAUTHORIZED") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    return NextResponse.json(
+      {
+        error:
+          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+        code:
+          accessDecision.output === "EVENT_CLOSED"
+            ? "EVENT_CLOSED"
+            : "ROOM_CLOSED",
+        redirectTo: accessDecision.redirectTo,
+      },
+      { status: 409 },
     );
   }
 

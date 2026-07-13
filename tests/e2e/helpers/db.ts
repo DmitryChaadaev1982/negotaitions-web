@@ -576,6 +576,18 @@ export async function getSessionNegotiationState(sessionId: string) {
   )[0]!;
 }
 
+export async function forceSessionRunningForE2e(sessionId: string) {
+  await query(
+    `UPDATE "Session"
+     SET "negotiationState" = 'RUNNING',
+         "roomLifecycle" = 'OPEN',
+         "negotiationStartedAt" = COALESCE("negotiationStartedAt", NOW()),
+         "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [sessionId],
+  );
+}
+
 export async function getRoomConnectionByConnectionId(connectionId: string) {
   return (
     await query<{

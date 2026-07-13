@@ -19,6 +19,10 @@ import {
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
 import { completeSessionCanonical } from "@/lib/session-completion";
+import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
 import { getStopRelayHintForSession } from "@/lib/session-recording-stop-relay";
 
 export const runtime = "nodejs";
@@ -42,6 +46,50 @@ export async function GET(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Invalid join token." }, { status: 400 });
     }
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId,
+      negotiationState: participant.session.negotiationState,
+      roomLifecycle: participant.session.roomLifecycle ?? null,
+      deletedAt: participant.session.deletedAt ?? null,
+      closeReason: participant.session.closeReason ?? null,
+      closedByEventAt: participant.session.closedByEventAt ?? null,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId,
+      participantJoinToken: participant.joinToken,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+      preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
+    },
+  });
+  if (!isRoomAccessAllowed(accessDecision.output)) {
+    if (accessDecision.output === "DENY_DELETED") {
+      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
+    }
+    if (accessDecision.output === "DENY_UNAUTHORIZED") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    return NextResponse.json(
+      {
+        error:
+          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+        code:
+          accessDecision.output === "EVENT_CLOSED"
+            ? "EVENT_CLOSED"
+            : "ROOM_CLOSED",
+        redirectTo: accessDecision.redirectTo,
+      },
+      { status: 409 },
+    );
   }
 
   const connectionId = url.searchParams.get("connectionId")?.trim() ?? null;
@@ -100,6 +148,9 @@ export async function GET(request: Request, context: RouteContext) {
         where: { id: sessionId },
         data: getAutoFinishPreparationUpdateData(session, now),
         select: {
+          deletedAt: true,
+          eventId: true,
+          roomLifecycle: true,
           facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
@@ -116,6 +167,9 @@ export async function GET(request: Request, context: RouteContext) {
       session = await prisma.session.findUniqueOrThrow({
         where: { id: sessionId },
         select: {
+          deletedAt: true,
+          eventId: true,
+          roomLifecycle: true,
           facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,

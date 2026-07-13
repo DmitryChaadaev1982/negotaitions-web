@@ -47,7 +47,10 @@ import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remot
 import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import { useClientConnectionId } from "@/lib/client/connection-id";
-import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
+import {
+  getRoomClosureRedirectFromConflict,
+  isStaleConnectionResponse,
+} from "@/lib/client/stale-connection";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -156,6 +159,7 @@ type RecordingControlResponse = {
   warning?: string;
   error?: string;
   code?: string;
+  redirectTo?: string;
   fileKeyHandoff?: "webhook";
   fileKeyHandoffDeferred?: boolean;
 };
@@ -276,6 +280,14 @@ export default function VoximplantNegotiationRoomPage(
           ),
         ]);
 
+        const redirectTarget =
+          (await getRoomClosureRedirectFromConflict(sidebarResult)) ??
+          (await getRoomClosureRedirectFromConflict(controlResult));
+        if (redirectTarget) {
+          window.location.replace(redirectTarget);
+          return;
+        }
+
         type ControlPayload = ControlState &
           ShellSessionCloseState & {
             recording?: RoomRecordingState;
@@ -381,6 +393,12 @@ export default function VoximplantNegotiationRoomPage(
             closedBeforeNegotiation: nextState.closedBeforeNegotiation,
           });
         } else if (controlResponse.status === 409) {
+          const redirectTarget =
+            await getRoomClosureRedirectFromConflict(controlResponse);
+          if (redirectTarget) {
+            window.location.replace(redirectTarget);
+            return;
+          }
           activateStaleConnection();
         }
 
@@ -388,6 +406,12 @@ export default function VoximplantNegotiationRoomPage(
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
         } else if (sidebarResponse.status === 409) {
+          const redirectTarget =
+            await getRoomClosureRedirectFromConflict(sidebarResponse);
+          if (redirectTarget) {
+            window.location.replace(redirectTarget);
+            return;
+          }
           activateStaleConnection();
         }
       } catch {
@@ -542,9 +566,18 @@ export default function VoximplantNegotiationRoomPage(
         console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.action, "recording.status:", payload.recording?.status);
 
         if (!response.ok) {
-          if (response.status === 409 && payload.code === "STALE_CONNECTION") {
-            setStaleConnection(true);
-            return;
+          if (response.status === 409) {
+            if (payload.code === "STALE_CONNECTION") {
+              setStaleConnection(true);
+              return;
+            }
+            if (
+              (payload.code === "ROOM_CLOSED" || payload.code === "EVENT_CLOSED") &&
+              payload.redirectTo
+            ) {
+              window.location.replace(payload.redirectTo);
+              return;
+            }
           }
           postRecordingDebug(
             `recording-control:${action}:response:error`,
@@ -897,6 +930,12 @@ export default function VoximplantNegotiationRoomPage(
         );
         if (await isStaleConnectionResponse(response)) {
           activateStaleConnection();
+        } else {
+          const redirectTarget =
+            await getRoomClosureRedirectFromConflict(response);
+          if (redirectTarget) {
+            window.location.replace(redirectTarget);
+          }
         }
       } catch {
         // Ignore transient network errors.

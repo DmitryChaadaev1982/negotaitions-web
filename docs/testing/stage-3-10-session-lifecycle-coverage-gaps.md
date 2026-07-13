@@ -1,6 +1,6 @@
 # Stage 3.10 Coverage Gaps (P0/P1)
 
-This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10-session-lifecycle-traceability.csv` for Stage 3.10 foundation/A7.
+This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10-session-lifecycle-traceability.csv` for Stage 3.10 foundation/A7 plus Checkpoint B guard-path updates.
 
 - Total manual/deferred `P0`/`P1` scenarios: `11`
 
@@ -50,3 +50,7 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
 
 - No-browser server-owned Vox stop transport remains deferred backlog.
 - Browser relay absence can leave stop operation in terminal relay-required diagnostic until provider/webhook reconciliation.
+
+## Checkpoint B note
+
+Checkpoint B added automated canonical guard scenarios (`ST310-NAV-006/007/008`, `ST310-EVENT-010`, `ST310-MATERIALS-002`) through `lib/session-room-access.test.ts`. Manual/deferred gaps listed above remain unchanged and are still out of scope for Checkpoint C UI work.

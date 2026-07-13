@@ -6,6 +6,10 @@ import { isAdmin } from "@/lib/auth/admin";
 import { getRoomSidebarData, getRoomSidebarDataByParticipantId } from "@/lib/room-sidebar";
 import { prisma } from "@/lib/prisma";
 import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
+import {
   claimSessionRoomConnectionLease,
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
@@ -70,6 +74,73 @@ async function enforceConnectionLease(params: {
   return null;
 }
 
+async function enforceRoomAccess(params: {
+  sessionId: string;
+  role: ParticipantType;
+  joinToken: string | null;
+}) {
+  const session = await prisma.session.findUnique({
+    where: { id: params.sessionId },
+    select: {
+      id: true,
+      eventId: true,
+      negotiationState: true,
+      roomLifecycle: true,
+      deletedAt: true,
+      closeReason: true,
+      closedByEventAt: true,
+      event: {
+        select: { status: true },
+      },
+    },
+  });
+  if (!session) {
+    return { status: 404 as const, body: { error: "sessionDeleted" } };
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId: session.id,
+      negotiationState: session.negotiationState,
+      roomLifecycle: session.roomLifecycle ?? null,
+      deletedAt: session.deletedAt ?? null,
+      closeReason: session.closeReason ?? null,
+      closedByEventAt: session.closedByEventAt ?? null,
+      eventId: session.eventId ?? null,
+      eventStatus: session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId: session.id,
+      participantJoinToken: params.joinToken ?? undefined,
+      eventId: session.eventId ?? null,
+      eventStatus: session.event?.status ?? null,
+      preferEventResultsForEventOwner: params.role === ParticipantType.FACILITATOR,
+    },
+  });
+  if (isRoomAccessAllowed(accessDecision.output)) {
+    return null;
+  }
+  if (accessDecision.output === "DENY_DELETED") {
+    return { status: 404 as const, body: { error: "sessionDeleted" } };
+  }
+  if (accessDecision.output === "DENY_UNAUTHORIZED") {
+    return { status: 403 as const, body: { error: "Forbidden." } };
+  }
+
+  return {
+    status: 409 as const,
+    body: {
+      error: accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+      code: accessDecision.output === "EVENT_CLOSED" ? "EVENT_CLOSED" : "ROOM_CLOSED",
+      redirectTo: accessDecision.redirectTo,
+    },
+  };
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const joinToken = url.searchParams.get("joinToken")?.trim() ?? null;
@@ -110,6 +181,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
     if (participantForToken.userId) {
+      const roomAccessError = await enforceRoomAccess({
+        sessionId: participantForToken.sessionId,
+        role: participantForToken.type,
+        joinToken: participantForToken.joinToken,
+      });
+      if (roomAccessError) {
+        return NextResponse.json(roomAccessError.body, { status: roomAccessError.status });
+      }
+
       const leaseError = await enforceConnectionLease({
         sessionId: participantForToken.sessionId,
         userId: participantForToken.userId,
@@ -160,6 +240,15 @@ export async function GET(request: Request) {
   }
 
   if (participant.userId) {
+    const roomAccessError = await enforceRoomAccess({
+      sessionId: participant.sessionId,
+      role: participant.type,
+      joinToken: null,
+    });
+    if (roomAccessError) {
+      return NextResponse.json(roomAccessError.body, { status: roomAccessError.status });
+    }
+
     const leaseError = await enforceConnectionLease({
       sessionId: participant.sessionId,
       userId: participant.userId,

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { EventLobbyView } from "@/components/event-lobby-view";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { getVideoProvider } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,17 @@ export default async function EventLobbyPage({
   const { hostToken, participantToken } = await searchParams;
   const user = await getOptionalCurrentUser();
   const videoProvider = getVideoProvider();
+
+  const event = await prisma.trainingEvent.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!event) {
+    redirect("/events");
+  }
+  if (event.status === "COMPLETED") {
+    redirect(user ? "/events" : "/");
+  }
 
   if (!hostToken && !participantToken && !user) {
     // Redirect unauthenticated users to login so they can return here after signing in.

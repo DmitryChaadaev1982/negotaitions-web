@@ -1,4 +1,4 @@
-# Stage 3.10 Implementation Status (Checkpoint A Progress)
+# Stage 3.10 Implementation Status (Checkpoint A + B Progress)
 
 ## Implemented in current branch
 
@@ -103,9 +103,69 @@
 
 ## Remaining later checkpoints
 
-- **Checkpoint B** guards/rejoin/redirects finalization.
+- **Checkpoint B** guards/rejoin/redirects finalization is now partially implemented in this branch with canonical server room-access decisions and redirect policy wiring.
 - **Checkpoint C** administrative completion entry points and Sessions/Event UI updates.
 - **Checkpoint D** full test matrix closure, docs completion, and gate evidence.
+
+## Checkpoint B: canonical access guard inventory (implemented)
+
+Canonical server-side room-entry and room-operation guard now applies to:
+
+- `app/room/[sessionId]/page.tsx` (direct URL + refresh/back server routing gate)
+- `app/api/livekit/token/route.ts` (provider credentials)
+- `app/api/sessions/[sessionId]/voximplant/access/route.ts` (provider credentials)
+- `app/api/livekit/sidebar/route.ts` (bootstrap/sidebar room surface)
+- `app/api/sessions/[sessionId]/control-state/route.ts` (bootstrap/poll state)
+- `app/api/sessions/[sessionId]/control/route.ts` (negotiation controls)
+- `app/api/sessions/[sessionId]/recording-control/route.ts` (recording controls + stop relay)
+- `app/api/sessions/[sessionId]/heartbeat/route.ts` (presence renew)
+- `app/api/sessions/[sessionId]/media-status/route.ts` (room media operation)
+- `app/events/[id]/lobby/page.tsx` (completed-event lobby hard guard)
+
+### Canonical helper paths
+
+- Room decision + output type + closed redirect resolver:
+  - `lib/session-room-access.ts`
+- Null lifecycle compatibility derivation:
+  - `lib/session-room-lifecycle.ts`
+
+### Access-path inventory snapshot (Checkpoint B)
+
+| Entry path | Actor/auth source | State inputs | Previous behavior | Target + implemented behavior |
+| --- | --- | --- | --- | --- |
+| `/room/[sessionId]` | authenticated account participant/facilitator/observer | session membership + lifecycle + event status | mostly client/bootstrap-led outcomes | server decision first; `OPEN` allow, `DEBRIEF_OPEN` allow debrief, `CLOSED` redirect materials/results |
+| `/api/livekit/token` | authenticated room member | session + lifecycle + lease | could issue token before unified close check | canonical decision blocks `CLOSED` / `EVENT_COMPLETED`; no provider token on closed room |
+| `/api/sessions/[sessionId]/voximplant/access` | authenticated room member | session + lifecycle + lease | stale/lease check present; close policy fragmented | canonical decision before credential issue; closed/event-completed denied with stable redirect metadata |
+| `/api/livekit/sidebar` | authenticated room member via joinToken/participantId | session + lifecycle + lease | stale handling only | canonical room-access decision + lease; closed/event-closed conflicts returned consistently |
+| `/api/sessions/[sessionId]/control-state` | authenticated room member | session + lifecycle + lease | mostly stale handling | canonical decision + close conflict redirect metadata; no reopen |
+| `/api/sessions/[sessionId]/control` | facilitator member | session + lifecycle + lease | facilitator gate only | debrief/closed control denied (`DEBRIEF_CONTROL_DENIED` / closed conflict) |
+| `/api/sessions/[sessionId]/recording-control` | role-aware room member | session + lifecycle + lease + action | facilitator/relay checks but no unified room policy | debrief allows only `refresh`/`relay_stop`/`relay_stop_report`; closed/event-closed denied |
+| `/api/sessions/[sessionId]/heartbeat` | room member | session + lifecycle + lease | lease renew path, no canonical close redirect metadata | canonical decision before renew; closed/event-closed rejects renew |
+| `/api/sessions/[sessionId]/media-status` | room member | session + lifecycle + lease | lease check only | canonical decision blocks closed/event-completed room operations |
+| `/events/[id]/lobby` | authenticated lobby user/token holder | event status | completed guard mostly in client overlay | server route now guards `COMPLETED` directly; no interactive lobby render |
+
+### Focused browser failure resolution (final hardening)
+
+- Former failing focused case: `tests/e2e/event-completion.spec.ts` :: `complete event closes running session and stops active recording`.
+- Root-cause classification: `FIXTURE_DEFECT`.
+- Exact cause: the test relied on implicit runtime side-effects (`START`) to produce a recording row, but that precondition is provider/config dependent and not deterministic for this scenario.
+- Fix: hardened the test fixture to explicitly establish `RUNNING` session state and seed an active recording row before event completion; assertions remained strict and stop-operation checks were preserved.
+- Stable scenario IDs now referenced in test names and traceability:
+  - `ST310-EVENT-004`
+  - `ST310-NAV-005`
+
+### Output contract now used
+
+`RoomAccessDecisionOutput` in `lib/session-room-access.ts`:
+
+- `ALLOW_ACTIVE_ROOM`
+- `ALLOW_DEBRIEF`
+- `REDIRECT_MATERIALS`
+- `REDIRECT_EVENT_RESULTS`
+- `DENY_UNAUTHORIZED`
+- `DENY_DELETED`
+- `STALE_CONNECTION`
+- `EVENT_CLOSED`
 
 ## Test catalog and traceability artifacts (Checkpoint A foundation)
 
@@ -117,8 +177,8 @@
 
 Current traceability totals (recalculated from CSV):
 
-- Total distinct scenarios: `70`
-- `AUTOMATED`: `57`
+- Total distinct scenarios: `75`
+- `AUTOMATED`: `62`
 - `MANUAL_PROVIDER_CANARY`: `3`
 - `MANUAL_MULTI_BROWSER`: `2`
 - `DEFERRED_WITH_REASON`: `8`

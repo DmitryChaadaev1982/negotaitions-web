@@ -32,7 +32,10 @@ import {
 } from "@/lib/rejoin/recovery-storage";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
-import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
+import {
+  getRoomClosureRedirectFromConflict,
+  isStaleConnectionResponse,
+} from "@/lib/client/stale-connection";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -319,6 +322,15 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           ),
         ]);
 
+        const redirectTarget =
+          (await getRoomClosureRedirectFromConflict(tokenResult)) ??
+          (await getRoomClosureRedirectFromConflict(sidebarResult)) ??
+          (await getRoomClosureRedirectFromConflict(controlResult));
+        if (redirectTarget) {
+          window.location.replace(redirectTarget);
+          return;
+        }
+
         const tokenPayload = (await tokenResult.json()) as
           | LiveKitTokenResponse
           | { error?: string };
@@ -438,6 +450,13 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           });
         } else if (await isStaleConnectionResponse(controlResponse)) {
           activateStaleConnection();
+        } else {
+          const redirectTarget =
+            await getRoomClosureRedirectFromConflict(controlResponse);
+          if (redirectTarget) {
+            window.location.replace(redirectTarget);
+            return;
+          }
         }
 
         if (sidebarResponse.ok) {
@@ -445,6 +464,13 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           setSidebar(nextSidebar);
         } else if (await isStaleConnectionResponse(sidebarResponse)) {
           activateStaleConnection();
+        } else {
+          const redirectTarget =
+            await getRoomClosureRedirectFromConflict(sidebarResponse);
+          if (redirectTarget) {
+            window.location.replace(redirectTarget);
+            return;
+          }
         }
       } catch {
         // Ignore transient polling errors.

@@ -5,6 +5,7 @@ import {
   countTranscripts,
   createE2eCase,
   createE2eEvent,
+  forceSessionRunningForE2e,
   getEventParticipants,
   getExternalServiceEvent,
   getRecordingBySession,
@@ -12,6 +13,7 @@ import {
   getSessionNegotiationState,
   getTrainingEvent,
   participantByName,
+  upsertRecordingForSession,
 } from "./helpers/db";
 
 // Stage 3.10 traceability:
@@ -117,21 +119,21 @@ test("complete event closes preparation session without recording", async ({
   expect(recording).toBeNull();
 });
 
-test("complete event closes running session and stops active recording", async ({
+test("complete event closes running session and stops active recording [ST310-EVENT-004]", async ({
   request,
 }) => {
   const { event, sessionId } = await createEventSession(request);
-  const sessionParticipants = await import("./helpers/db").then((db) =>
-    db.getSession(sessionId),
-  );
-  const facilitator = participantByName(sessionParticipants.participants, "Dmitry");
+  await forceSessionRunningForE2e(sessionId);
 
-  await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "START" },
+  await upsertRecordingForSession({
+    sessionId,
+    status: "RECORDING",
+    provider: "LIVEKIT_CLOUD",
+    egressId: `mock-egress-${sessionId}`,
   });
 
   const recordingBefore = await getRecordingBySession(sessionId);
-  expect(recordingBefore?.status).toBeTruthy();
+  expect(recordingBefore?.status).toBe("RECORDING");
 
   const completeResponse = await request.post(`/api/events/${event.id}/complete`, {
     data: { hostToken: event.hostToken },
@@ -156,13 +158,12 @@ test("complete event closes running session and stops active recording", async (
 
 test("recording stop failure still completes event", async ({ request }) => {
   const { event, sessionId } = await createEventSession(request);
-  const sessionParticipants = await import("./helpers/db").then((db) =>
-    db.getSession(sessionId),
-  );
-  const facilitator = participantByName(sessionParticipants.participants, "Dmitry");
-
-  await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "START" },
+  await forceSessionRunningForE2e(sessionId);
+  await upsertRecordingForSession({
+    sessionId,
+    status: "RECORDING",
+    provider: "LIVEKIT_CLOUD",
+    egressId: `mock-egress-${sessionId}`,
   });
 
   await request.post("/api/test/mock-external-service", {
@@ -186,7 +187,7 @@ test("recording stop failure still completes event", async ({ request }) => {
   expect(stopOperations.length).toBe(1);
 });
 
-test("rejoin after event completed shows completed message", async ({
+test("rejoin after event completed denies lobby and redirects to login [ST310-NAV-005]", async ({
   page,
   request,
 }) => {
@@ -197,26 +198,10 @@ test("rejoin after event completed shows completed message", async ({
     data: { hostToken: event.hostToken },
   });
 
-  await page.goto("/");
-  await page.evaluate(
-    ({ eventId, participantToken }) => {
-      window.localStorage.setItem(
-        "negotaitions.recovery.v1",
-        JSON.stringify({
-          type: "EVENT_LOBBY",
-          eventId,
-          participantToken,
-          displayName: "Igor",
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-    },
-    { eventId: event.id, participantToken: igor.participantToken },
+  await page.goto(
+    `/events/${event.id}/lobby?participantToken=${encodeURIComponent(igor.participantToken)}`,
   );
 
-  await page.goto("/rejoin");
-
-  await expect(
-    page.getByText(/completed by the host|завершена организатором/i),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/login/);
+  await expect(page.getByRole("heading", { name: /welcome back|вход/i })).toBeVisible();
 });

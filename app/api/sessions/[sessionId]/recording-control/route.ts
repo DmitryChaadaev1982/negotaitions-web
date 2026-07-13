@@ -9,6 +9,10 @@ import {
 } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
 import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import {
@@ -72,6 +76,66 @@ export async function POST(request: Request, context: RouteContext) {
   if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId,
+      negotiationState: participant.session.negotiationState,
+      roomLifecycle: participant.session.roomLifecycle ?? null,
+      deletedAt: participant.session.deletedAt ?? null,
+      closeReason: participant.session.closeReason ?? null,
+      closedByEventAt: participant.session.closedByEventAt ?? null,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId,
+      participantJoinToken: participant.joinToken,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+      preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
+    },
+  });
+  if (!isRoomAccessAllowed(accessDecision.output)) {
+    if (accessDecision.output === "DENY_DELETED") {
+      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
+    }
+    if (accessDecision.output === "DENY_UNAUTHORIZED") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    return NextResponse.json(
+      {
+        error:
+          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+        code:
+          accessDecision.output === "EVENT_CLOSED"
+            ? "EVENT_CLOSED"
+            : "ROOM_CLOSED",
+        redirectTo: accessDecision.redirectTo,
+      },
+      { status: 409 },
+    );
+  }
+
+  if (
+    accessDecision.output === "ALLOW_DEBRIEF" &&
+    parsed.data.action !== "refresh" &&
+    parsed.data.action !== "relay_stop" &&
+    parsed.data.action !== "relay_stop_report"
+  ) {
+    return NextResponse.json(
+      {
+        error: "recordingControlUnavailableInDebrief",
+        code: "DEBRIEF_RECORDING_CONTROL_DENIED",
+      },
+      { status: 409 },
+    );
+  }
+
   if (participant.userId && parsed.data.connectionId) {
     const leaseState = await validateSessionRoomConnectionLease({
       sessionId,

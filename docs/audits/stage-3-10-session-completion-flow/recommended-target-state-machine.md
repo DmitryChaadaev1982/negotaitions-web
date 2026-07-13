@@ -105,3 +105,21 @@ Not active:
   - compatibility app release (read/write new + tolerate legacy);
   - bounded rerunnable backfill;
   - optional later constraint tightening.
+
+## Checkpoint B implementation alignment
+
+Current branch implementation aligns this target by introducing and wiring:
+
+- `lib/session-room-access.ts` as the single room access decision source.
+- `RoomAccessDecisionOutput` contract:
+  - `ALLOW_ACTIVE_ROOM`
+  - `ALLOW_DEBRIEF`
+  - `REDIRECT_MATERIALS`
+  - `REDIRECT_EVENT_RESULTS`
+  - `DENY_UNAUTHORIZED`
+  - `DENY_DELETED`
+  - `STALE_CONNECTION`
+  - `EVENT_CLOSED`
+- canonical closed destination resolver (`resolveSessionClosedRedirectPath`).
+- debrief-only recording-control restrictions after `FINISHED`.
+- closed/event-completed provider credential denial before token issuance.

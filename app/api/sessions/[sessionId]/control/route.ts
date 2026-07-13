@@ -25,6 +25,10 @@ import {
   createPauseInterval,
 } from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
 import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { shouldRunLivekitRecordingLifecycle } from "@/lib/session-control-recording-policy";
@@ -153,6 +157,63 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!participant) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId,
+      negotiationState: participant.session.negotiationState,
+      roomLifecycle: participant.session.roomLifecycle ?? null,
+      deletedAt: participant.session.deletedAt ?? null,
+      closeReason: participant.session.closeReason ?? null,
+      closedByEventAt: participant.session.closedByEventAt ?? null,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId,
+      participantJoinToken: participant.joinToken,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+      preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
+    },
+  });
+  if (!isRoomAccessAllowed(accessDecision.output)) {
+    if (accessDecision.output === "DENY_DELETED") {
+      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
+    }
+    if (accessDecision.output === "DENY_UNAUTHORIZED") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    return NextResponse.json(
+      {
+        error:
+          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+        code:
+          accessDecision.output === "EVENT_CLOSED"
+            ? "EVENT_CLOSED"
+            : "ROOM_CLOSED",
+        redirectTo: accessDecision.redirectTo,
+      },
+      { status: 409 },
+    );
+  }
+
+  if (
+    accessDecision.output === "ALLOW_DEBRIEF" &&
+    action !== "FINISH"
+  ) {
+    return NextResponse.json(
+      {
+        error: "negotiationAlreadyFinished",
+        code: "DEBRIEF_CONTROL_DENIED",
+      },
+      { status: 409 },
+    );
   }
 
   if (participant.userId && parsed.data.connectionId) {
