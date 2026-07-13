@@ -117,7 +117,14 @@ export type TranscriptEnhancementChunkMetadata = {
     schemaAccepted?: boolean | null;
     schemaName?: string | null;
     schemaVersion?: string | null;
-    failureStage?: "provider" | "extraction" | "parsing" | "schema_validation" | "integrity_validation";
+      failureStage?:
+        | "provider"
+        | "extraction"
+        | "parsing"
+        | "schema_validation"
+        | "integrity_validation"
+        | null;
+      lastValidationStage?: "integrity_validation" | null;
     emptyOutputStage: TranscriptEnhancementEmptyOutputStage | null;
     status: "COMPLETED" | "FAILED";
     errorCategory: string | null;
@@ -1541,7 +1548,8 @@ async function runChunkedEnhancement(params: {
               schemaAccepted: requestResult.diagnostics.schemaAccepted,
               schemaName,
               schemaVersion: TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION,
-              failureStage: "integrity_validation",
+              failureStage: null,
+              lastValidationStage: "integrity_validation",
               emptyOutputStage: null,
               status: "COMPLETED",
               errorCategory: null,
@@ -1664,7 +1672,8 @@ async function runChunkedEnhancement(params: {
             schemaAccepted: null,
             schemaName: null,
             schemaVersion: null,
-            failureStage: "integrity_validation",
+            failureStage: null,
+            lastValidationStage: "integrity_validation",
             emptyOutputStage: null,
             status: "COMPLETED",
             errorCategory: null,

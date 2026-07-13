@@ -69,6 +69,7 @@ import {
   type PreprocessingDecisionLog,
 } from "@/lib/observability/transcription-observability";
 import { resolveInitialQualityText } from "@/lib/services/transcript-enhancement-persistence";
+import { executeTranscriptEnhancement } from "@/lib/services/transcript-enhancement-orchestration";
 import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
@@ -970,6 +971,29 @@ export async function runRealTranscription(
 
       return updated;
     });
+
+    // Stage 3.9F: auto-trigger transcript enhancement after raw persistence.
+    // Non-fatal by design: completed transcription must remain usable.
+    if (transcriptionProvider === "yandex_speechkit") {
+      const autoEnhancementTriggerSource =
+        (saved.retranscribeCount ?? 0) > 0
+          ? "automatic_retranscription"
+          : "automatic_initial_transcription";
+      try {
+        await executeTranscriptEnhancement({
+          transcriptId: saved.id,
+          triggerSource: autoEnhancementTriggerSource,
+        });
+      } catch (enhancementError) {
+        console.warn(
+          `[transcription-run] auto transcript enhancement failed for session ${sessionId}: ${
+            enhancementError instanceof Error
+              ? enhancementError.message
+              : "unknown error"
+          }`,
+        );
+      }
+    }
 
     // Phase 4: auto-trigger speaker mapping suggestion after transcription.
     // Resilient — a failure here must not fail the completed transcription.

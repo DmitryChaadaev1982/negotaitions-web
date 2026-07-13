@@ -44,6 +44,7 @@ type MaterialsStatusResponse = {
       suggested: boolean;
       reasons: string[];
       error: string | null;
+      skipReason?: string | null;
     } | null;
   };
   aiAnalysis: {
@@ -293,7 +294,9 @@ export function SessionPostProcessingPanel({
     isFacilitator &&
     !readOnly &&
     transcript?.enhancement?.available &&
-    transcript?.processingStage === "ready";
+    (transcript?.processingStage === "ready" ||
+      transcript?.processingStage === "enhancing");
+  const enhancementRunning = transcript?.enhancement?.status === "IN_PROGRESS";
   const canStartAi = isFacilitator && !readOnly && ai?.canStart;
   const canRetryAi = isFacilitator && !readOnly && ai?.canRetry;
   const canRerunAi = isFacilitator && !readOnly && ai?.canRerun;
@@ -553,11 +556,16 @@ export function SessionPostProcessingPanel({
             ) : null}
             {canRunTranscriptEnhancement ? (
               <SecondaryButton
-                disabled={enhancementBusy || transcriptionBusy || rerunBusy}
+                disabled={
+                  enhancementBusy ||
+                  enhancementRunning ||
+                  transcriptionBusy ||
+                  rerunBusy
+                }
                 onClick={() => void handleRunTranscriptEnhancement()}
                 data-testid="post-processing-run-transcript-enhancement-button"
               >
-                {enhancementBusy
+                {enhancementBusy || enhancementRunning
                   ? t("sessionMaterials.transcriptEnhancementInProgress")
                   : t("sessionMaterials.runTranscriptEnhancement")}
               </SecondaryButton>
@@ -605,6 +613,27 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-2 text-xs text-rose-400">{rerunError}</p> : null}
+        {transcript?.enhancement?.status === "IN_PROGRESS" ? (
+          <p className="mt-2 text-xs text-violet-300">
+            {t("sessionMaterials.transcriptEnhancementInProgress")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "COMPLETED" ||
+        transcript?.enhancement?.status === "PARTIAL" ? (
+          <p className="mt-2 text-xs text-emerald-300">
+            {t("sessionMaterials.transcriptEnhancementCompleted")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "FAILED" ? (
+          <p className="mt-2 text-xs text-amber-300">
+            {t("sessionMaterials.transcriptEnhancementFailed")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "SKIPPED" ? (
+          <p className="mt-2 text-xs text-slate-300">
+            {t("sessionMaterials.transcriptEnhancementSkipped")}
+          </p>
+        ) : null}
         {transcript?.enhancement?.suggested ? (
           <p className="mt-2 text-xs text-violet-300">
             {t("sessionMaterials.transcriptEnhancementRecommended")}
@@ -740,12 +769,17 @@ export function SessionPostProcessingPanel({
             ) : null}
             {canRunTranscriptEnhancement ? (
               <SecondaryButton
-                disabled={enhancementBusy || transcriptionBusy || rerunBusy}
+                disabled={
+                  enhancementBusy ||
+                  enhancementRunning ||
+                  transcriptionBusy ||
+                  rerunBusy
+                }
                 onClick={() => void handleRunTranscriptEnhancement()}
                 data-testid="post-processing-run-transcript-enhancement-button"
                 className="w-full text-xs"
               >
-                {enhancementBusy
+                {enhancementBusy || enhancementRunning
                   ? t("sessionMaterials.transcriptEnhancementInProgress")
                   : t("sessionMaterials.runTranscriptEnhancement")}
               </SecondaryButton>
@@ -782,6 +816,27 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-1 text-xs text-rose-400">{rerunError}</p> : null}
+        {transcript?.enhancement?.status === "IN_PROGRESS" ? (
+          <p className="mt-1 text-xs text-violet-300">
+            {t("sessionMaterials.transcriptEnhancementInProgress")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "COMPLETED" ||
+        transcript?.enhancement?.status === "PARTIAL" ? (
+          <p className="mt-1 text-xs text-emerald-300">
+            {t("sessionMaterials.transcriptEnhancementCompleted")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "FAILED" ? (
+          <p className="mt-1 text-xs text-amber-300">
+            {t("sessionMaterials.transcriptEnhancementFailed")}
+          </p>
+        ) : null}
+        {transcript?.enhancement?.status === "SKIPPED" ? (
+          <p className="mt-1 text-xs text-slate-300">
+            {t("sessionMaterials.transcriptEnhancementSkipped")}
+          </p>
+        ) : null}
         {transcript?.enhancement?.suggested ? (
           <p className="mt-1 text-xs text-violet-300">
             {t("sessionMaterials.transcriptEnhancementRecommended")}

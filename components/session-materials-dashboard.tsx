@@ -60,6 +60,7 @@ type MaterialsStatusTranscription = {
     suggested: boolean;
     reasons: string[];
     error: string | null;
+    skipReason?: string | null;
   } | null;
 };
 
@@ -1013,7 +1014,10 @@ export function SessionMaterialsDashboard({
   const canRerunTranscription = liveData?.transcription?.canRerun ?? false;
   const canRunTranscriptEnhancement =
     (liveData?.transcription?.enhancement?.available ?? false) &&
-    liveTranscriptionStage === "ready";
+    (liveTranscriptionStage === "ready" || liveTranscriptionStage === "enhancing");
+  const enhancementStatus = liveData?.transcription?.enhancement?.status ?? null;
+  const enhancementError = liveData?.transcription?.enhancement?.error ?? null;
+  const enhancementRunning = enhancementStatus === "IN_PROGRESS";
   const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
   const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 
@@ -1445,7 +1449,7 @@ export function SessionMaterialsDashboard({
           </h2>
         </CardHeader>
         <CardContent className="space-y-3">
-          {transcriptReady && transcriptText ? (
+          {(transcriptReady || liveTranscriptionStage === "enhancing") && transcriptText ? (
             <p
               className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-300"
               data-testid="transcript-text"
@@ -1501,6 +1505,28 @@ export function SessionMaterialsDashboard({
               ) : null}
             </div>
           ) : null}
+          {enhancementStatus === "IN_PROGRESS" ? (
+            <p className="text-sm text-violet-300">
+              {t("sessionMaterials.transcriptEnhancementInProgress")}
+            </p>
+          ) : null}
+          {enhancementStatus === "COMPLETED" || enhancementStatus === "PARTIAL" ? (
+            <p className="text-sm text-emerald-300">
+              {t("sessionMaterials.transcriptEnhancementCompleted")}
+            </p>
+          ) : null}
+          {enhancementStatus === "FAILED" ? (
+            <p className="text-sm text-amber-300">
+              {t("sessionMaterials.transcriptEnhancementFailed")}
+              {enhancementError ? ` ${enhancementError}` : ""}
+            </p>
+          ) : null}
+          {enhancementStatus === "SKIPPED" ? (
+            <p className="text-sm text-slate-300">
+              {t("sessionMaterials.transcriptEnhancementSkipped")}
+            </p>
+          ) : null}
+
           {canRunTranscriptEnhancement ? (
             <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
               <p className="text-xs text-violet-200">
@@ -1511,11 +1537,11 @@ export function SessionMaterialsDashboard({
               </p>
               <div className="mt-2">
                 <SecondaryButton
-                  disabled={enhancementBusy}
+                  disabled={enhancementBusy || enhancementRunning}
                   onClick={() => void handleRunTranscriptEnhancement()}
                   data-testid="run-transcript-enhancement-button"
                 >
-                  {enhancementBusy
+                  {enhancementBusy || enhancementRunning
                     ? t("sessionMaterials.transcriptEnhancementInProgress")
                     : t("sessionMaterials.runTranscriptEnhancement")}
                 </SecondaryButton>
