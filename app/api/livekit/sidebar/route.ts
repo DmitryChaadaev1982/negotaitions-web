@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ParticipantType } from "@/app/generated/prisma/client";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
@@ -9,9 +10,10 @@ import {
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
 
-function enforceConnectionLease(params: {
+async function enforceConnectionLease(params: {
   sessionId: string;
   userId: string;
+  role: ParticipantType;
   connectionId: string | null;
   claimLease: boolean;
 }) {
@@ -19,24 +21,42 @@ function enforceConnectionLease(params: {
     return null;
   }
   if (params.claimLease) {
-    claimSessionRoomConnectionLease({
+    const lease = await claimSessionRoomConnectionLease({
       sessionId: params.sessionId,
       userId: params.userId,
       connectionId: params.connectionId,
+      role: params.role,
     });
+    if (!lease.isCurrentConnectionActive) {
+      return {
+        error: "staleConnection",
+        code: "STALE_CONNECTION",
+        activeConnectionVersion: lease.version,
+        status: 409 as const,
+      };
+    }
     return null;
   }
-  const state = validateSessionRoomConnectionLease({
+  const state = await validateSessionRoomConnectionLease({
     sessionId: params.sessionId,
     userId: params.userId,
     connectionId: params.connectionId,
   });
   if (state.version === 0) {
-    claimSessionRoomConnectionLease({
+    const lease = await claimSessionRoomConnectionLease({
       sessionId: params.sessionId,
       userId: params.userId,
       connectionId: params.connectionId,
+      role: params.role,
     });
+    if (!lease.isCurrentConnectionActive) {
+      return {
+        error: "staleConnection",
+        code: "STALE_CONNECTION",
+        activeConnectionVersion: lease.version,
+        status: 409 as const,
+      };
+    }
     return null;
   }
   if (!state.isCurrentConnectionActive) {
@@ -79,7 +99,7 @@ export async function GET(request: Request) {
     // Verify the user owns or may use this participant before returning sidebar data.
     const participantForToken = await prisma.sessionParticipant.findUnique({
       where: { joinToken },
-      select: { id: true, joinToken: true, userId: true, sessionId: true },
+      select: { id: true, joinToken: true, userId: true, sessionId: true, type: true },
     });
 
     if (!participantForToken) {
@@ -90,9 +110,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
     if (participantForToken.userId) {
-      const leaseError = enforceConnectionLease({
+      const leaseError = await enforceConnectionLease({
         sessionId: participantForToken.sessionId,
         userId: participantForToken.userId,
+        role: participantForToken.type,
         connectionId,
         claimLease,
       });
@@ -125,6 +146,7 @@ export async function GET(request: Request) {
       id: true,
       userId: true,
       sessionId: true,
+      type: true,
     },
   });
 
@@ -138,9 +160,10 @@ export async function GET(request: Request) {
   }
 
   if (participant.userId) {
-    const leaseError = enforceConnectionLease({
+    const leaseError = await enforceConnectionLease({
       sessionId: participant.sessionId,
       userId: participant.userId,
+      role: participant.type,
       connectionId,
       claimLease,
     });

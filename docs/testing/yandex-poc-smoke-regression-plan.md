@@ -61,6 +61,14 @@ Fixture and DB safety policy:
 - E2E DB mutation is guarded and rejects obviously production-like host/name targets.
 - Use `E2E_RUN_ID` (or auto-generated run ID) namespace helpers to isolate fixture rows between runs.
 - Cleanup must only remove rows owned by the current run namespace; avoid broad wildcard cleanup for new tests.
+- Stage 3.10 additive schema prerequisite for local suites:
+  - `npx prisma migrate status`
+  - `npx prisma migrate deploy` (non-production only)
+  - `npx prisma generate && npx prisma validate`
+- Stage 3.10 focused provider-free regression command:
+  - `npm run test:stage310`
+- Stage 3.10 browser subset command:
+  - `npm run test:stage310:browser`
 
 ---
 
@@ -237,6 +245,16 @@ Record codec, sample rate, bitrate in test notes.
 | Event lobby | `voximplant-event-lobby.spec.ts` |
 | Layout / camera | `voximplant-layout-camera-model.spec.ts` |
 | Recording debug | `voximplant-recording-debug.spec.ts` |
+| Session FINISH stop operation convergence | `session-finish-canonical.spec.ts` |
+| Event completion + durable stop operation | `event-completion.spec.ts` |
+
+Stage 3.10 A7 relay focus (manual + automated):
+
+- finish with facilitator connected: relay hint appears and stop operation converges;
+- participant/observer connected after facilitator disconnect: eligible client can claim relay;
+- duplicate client relay attempts: durable operation remains single and convergent;
+- relay timeout does not block leave/navigation/materials;
+- webhook finalization reconciles operation even without client ACK.
 
 Run locally:
 

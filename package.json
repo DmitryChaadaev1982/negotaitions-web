@@ -17,6 +17,8 @@
     "test:e2e:local:list": "playwright test --config=playwright.local.config.ts --list",
     "test:e2e:local": "playwright test --config=playwright.local.config.ts",
     "test:e2e:smoke:browser": "playwright test --config=playwright.local.config.ts --project=chromium --grep @browser-smoke",
+    "test:stage310": "node --import tsx --test \"lib/session-room-lifecycle.test.ts\" \"lib/session-recording-stop-relay.test.ts\" \"lib/recording-stop-delivery-policy.test.ts\" \"lib/stage-3-10-maintenance.test.ts\" \"lib/voximplant/main-room-scenario.test.ts\" && playwright test --config=playwright.local.config.ts tests/e2e/session-finish-canonical.spec.ts tests/e2e/voximplant-room-presence.spec.ts --project=chromium",
+    "test:stage310:browser": "playwright test --config=playwright.local.config.ts --project=chromium tests/e2e/event-completion.spec.ts --grep @browser-smoke",
     "test:e2e:tunnel:check": "node scripts/e2e/check-reverse-tunnel.mjs",
     "test:e2e:tunnel:list": "playwright test --list --grep @requires-tunnel",
     "test:e2e:tunnel": "npm run test:e2e:tunnel:check && playwright test --project=chromium --grep @requires-tunnel --grep-invert @live-provider",
@@ -34,7 +36,8 @@
     "vox:scenario:dry-run": "node scripts/voximplant-upload-scenario.mjs --dry-run",
     "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs",
     "inspect:audio": "tsx scripts/inspect-audio-recording.ts",
-    "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts"
+    "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts",
+    "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

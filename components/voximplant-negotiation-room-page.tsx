@@ -147,6 +147,11 @@ type RecordingControlResponse = {
   ok: boolean;
   provider?: string;
   scenarioMessage?: RecordingControlMessage;
+  stopRelay?: {
+    operationId: string;
+    requestId: string;
+    scenarioMessage: RecordingControlMessage;
+  };
   recording?: { status: string; errorMessage: string | null } | null;
   warning?: string;
   error?: string;
@@ -154,6 +159,13 @@ type RecordingControlResponse = {
   fileKeyHandoff?: "webhook";
   fileKeyHandoffDeferred?: boolean;
 };
+
+type RecordingStopRelayHint = {
+  operationId: string;
+  requestId: string;
+  operationState: string;
+  recordingId: string;
+} | null;
 
 // ─── VoximplantNegotiationRoomPage ────────────────────────────────────────────
 
@@ -228,6 +240,9 @@ export default function VoximplantNegotiationRoomPage(
   const [sidebar, setSidebar] = useState<RoomSidebarData | null>(null);
   const [controlState, setControlState] = useState<ControlState | null>(null);
   const [recordingState, setRecordingState] = useState<RoomRecordingState>(null);
+  const recordingStateRef = useRef<RoomRecordingState>(null);
+  const [recordingStopRelayHint, setRecordingStopRelayHint] =
+    useState<RecordingStopRelayHint>(null);
   const [sessionCloseState, setSessionCloseState] = useState<ShellSessionCloseState>({
     isClosed: false,
     closeMessageKey: null,
@@ -264,6 +279,7 @@ export default function VoximplantNegotiationRoomPage(
         type ControlPayload = ControlState &
           ShellSessionCloseState & {
             recording?: RoomRecordingState;
+            recordingStopRelay?: RecordingStopRelayHint;
             closeMessageKey?: ShellSessionCloseState["closeMessageKey"];
           };
 
@@ -302,6 +318,7 @@ export default function VoximplantNegotiationRoomPage(
           const cp = controlPayload as ControlPayload;
           setControlState(cp);
           setRecordingState(cp.recording ?? null);
+          setRecordingStopRelayHint(cp.recordingStopRelay ?? null);
           setSessionCloseState({
             isClosed: cp.isClosed,
             closeMessageKey: cp.closeMessageKey ?? null,
@@ -351,11 +368,13 @@ export default function VoximplantNegotiationRoomPage(
           type ControlPayload = ControlState &
             ShellSessionCloseState & {
               recording?: RoomRecordingState;
+              recordingStopRelay?: RecordingStopRelayHint;
               closeMessageKey?: ShellSessionCloseState["closeMessageKey"];
             };
           const nextState = (await controlResponse.json()) as ControlPayload;
           setControlState(nextState);
           setRecordingState(nextState.recording ?? null);
+          setRecordingStopRelayHint(nextState.recordingStopRelay ?? null);
           setSessionCloseState({
             isClosed: nextState.isClosed,
             closeMessageKey: nextState.closeMessageKey ?? null,
@@ -416,6 +435,12 @@ export default function VoximplantNegotiationRoomPage(
   // handles actual recording and later sends a status webhook.
 
   const [recordingRelayError, setRecordingRelayError] = useState<string | null>(null);
+  const explicitLeaveInFlightRef = useRef(false);
+  const relayInFlightOperationsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    recordingStateRef.current = recordingState;
+  }, [recordingState]);
 
   // ── Recording diagnostics (dev-only) ──────────────────────────────────────
   // postRecordingDebug: fire-and-forget POST to diagnostics API.
@@ -605,6 +630,136 @@ export default function VoximplantNegotiationRoomPage(
     ],
   );
 
+  const waitMs = useCallback((ms: number) => {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+  }, []);
+
+  const attemptAuthorizedStopRelay = useCallback(
+    async (reason: string) => {
+      const hint = recordingStopRelayHint;
+      if (!hint || !roomConnectionId || !joined || !sendMessageAvailable) {
+        return;
+      }
+      if (relayInFlightOperationsRef.current.has(hint.operationId)) {
+        return;
+      }
+
+      relayInFlightOperationsRef.current.add(hint.operationId);
+      try {
+        // Reduce relay stampede when multiple tabs observe the same stop intent.
+        await waitMs(150 + Math.floor(Math.random() * 500));
+
+        const claimResponse = await fetch(
+          `/api/sessions/${encodeURIComponent(props.sessionId)}/recording-control`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
+              action: "relay_stop",
+              stopOperationId: hint.operationId,
+            }),
+          },
+        );
+
+        const claimPayload = (await claimResponse.json().catch(() => ({}))) as RecordingControlResponse;
+        if (!claimResponse.ok || !claimPayload.stopRelay?.scenarioMessage) {
+          return;
+        }
+
+        const relayed = sendConferenceMessage(
+          JSON.stringify(claimPayload.stopRelay.scenarioMessage),
+        );
+        if (!relayed) {
+          void fetch(`/api/sessions/${encodeURIComponent(props.sessionId)}/recording-control`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
+              action: "relay_stop_report",
+              stopOperationId: claimPayload.stopRelay.operationId,
+              relayOutcome: "SEND_FAILED",
+            }),
+          }).catch(() => undefined);
+          return;
+        }
+
+        let acknowledged = false;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          await waitMs(700);
+          const status = recordingStateRef.current?.status ?? null;
+          if (
+            status === "STOPPED" ||
+            status === "PROCESSING" ||
+            status === "COMPLETED"
+          ) {
+            acknowledged = true;
+            break;
+          }
+        }
+
+        await fetch(`/api/sessions/${encodeURIComponent(props.sessionId)}/recording-control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
+            action: "relay_stop_report",
+            stopOperationId: claimPayload.stopRelay.operationId,
+            relayOutcome: acknowledged ? "ACKNOWLEDGED" : "TIMEOUT",
+          }),
+        });
+
+        postRecordingDebug(
+          "relay-stop",
+          `authorized relay ${acknowledged ? "acknowledged" : "timed out"}`,
+          { reason, operationId: claimPayload.stopRelay.operationId, acknowledged },
+          acknowledged ? "success" : "warn",
+        );
+      } catch {
+        // Best-effort relay only.
+      } finally {
+        relayInFlightOperationsRef.current.delete(hint.operationId);
+      }
+    },
+    [
+      joined,
+      postRecordingDebug,
+      props.sessionId,
+      recordingStopRelayHint,
+      roomAuth,
+      roomConnectionId,
+      sendConferenceMessage,
+      sendMessageAvailable,
+      waitMs,
+    ],
+  );
+
+  useEffect(() => {
+    if (!recordingStopRelayHint) return;
+    if (!joined || !sendMessageAvailable) return;
+    void attemptAuthorizedStopRelay("control-state");
+  }, [
+    attemptAuthorizedStopRelay,
+    joined,
+    recordingStopRelayHint,
+    sendMessageAvailable,
+  ]);
+
+  useEffect(() => {
+    if (!recordingStopRelayHint) return;
+    if (!sessionCloseState.isClosed) return;
+    if (!joined || !sendMessageAvailable) return;
+    void attemptAuthorizedStopRelay("event-hard-close");
+  }, [
+    attemptAuthorizedStopRelay,
+    joined,
+    recordingStopRelayHint,
+    sendMessageAvailable,
+    sessionCloseState.isClosed,
+  ]);
+
   // Callbacks wired to FacilitatorRoomControls negotiation lifecycle.
   const handleNegotiationStarted = useCallback(() => {
     console.log("[VoxRecording] onNegotiationStarted callback invoked");
@@ -614,16 +769,57 @@ export default function VoximplantNegotiationRoomPage(
 
   const handleNegotiationFinished = useCallback(() => {
     console.log("[VoxRecording] onNegotiationFinished callback invoked");
-    postRecordingDebug("handleNegotiationFinished:invoked", "handleNegotiationFinished invoked — triggering stop");
-    void relayVoximplantRecording("stop");
-  }, [relayVoximplantRecording, postRecordingDebug]);
+    postRecordingDebug(
+      "handleNegotiationFinished:invoked",
+      "handleNegotiationFinished invoked — waiting for authorized stop relay hint",
+    );
+    void attemptAuthorizedStopRelay("finish-callback");
+  }, [attemptAuthorizedStopRelay, postRecordingDebug]);
 
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
+    if (explicitLeaveInFlightRef.current || !roomConnectionId) {
+      return;
+    }
+    explicitLeaveInFlightRef.current = true;
+    try {
+      const shouldAttemptRelayBeforeLeave =
+        Boolean(recordingStopRelayHint) &&
+        (controlState?.negotiationState === "FINISHED" || sessionCloseState.isClosed);
+      if (shouldAttemptRelayBeforeLeave) {
+        await Promise.race([
+          attemptAuthorizedStopRelay("explicit-leave"),
+          waitMs(1800),
+        ]);
+      }
+
+      await fetch(`/api/sessions/${props.sessionId}/presence/leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
+        ),
+        keepalive: true,
+      });
+    } catch {
+      // Best-effort explicit leave. Expiry sweep still guarantees eventual cleanup.
+    }
     markSessionLeftFlag(props.sessionId);
     await leave();
     router.push(materialsUrl);
-  }, [leave, materialsUrl, props.sessionId, router]);
+  }, [
+    attemptAuthorizedStopRelay,
+    controlState,
+    leave,
+    materialsUrl,
+    props.sessionId,
+    recordingStopRelayHint,
+    roomAuth,
+    roomConnectionId,
+    router,
+    sessionCloseState,
+    waitMs,
+  ]);
 
   useEffect(() => {
     clearSessionLeftFlag(props.sessionId);

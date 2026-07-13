@@ -19,6 +19,11 @@ import {
 } from "@/lib/voximplant/recording-dispatch";
 import { resolveVoximplantRecordingWebhookUrlFromDb } from "@/lib/voximplant/recording-webhook-url";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
+import {
+  claimStopRelayDispatch,
+  getStopRelayHintForSession,
+  reportStopRelayOutcome,
+} from "@/lib/session-recording-stop-relay";
 
 export const runtime = "nodejs";
 
@@ -26,7 +31,11 @@ const actionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
   connectionId: z.string().trim().min(1).max(128).optional(),
-  action: z.enum(["start", "stop", "refresh"]),
+  action: z.enum(["start", "stop", "refresh", "relay_stop", "relay_stop_report"]),
+  stopOperationId: z.string().trim().min(1).optional(),
+  relayOutcome: z
+    .enum(["ACKNOWLEDGED", "SEND_FAILED", "TIMEOUT", "UNAVAILABLE"])
+    .optional(),
   // Required for start action: caller must explicitly confirm recording consent in UI.
   // Absent or false → 400 for start; ignored for stop/refresh.
   recordingConsentConfirmed: z.boolean().optional(),
@@ -54,17 +63,17 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  // ── Baseline permission checks (same for all providers) ──────────────────
+  // ── Baseline participant + lease checks ───────────────────────────────────
   const participant = await resolveRoomParticipantFromBody(
     parsed.data as Record<string, unknown>,
     sessionId,
   );
 
-  if (!participant || participant.type !== ParticipantType.FACILITATOR) {
+  if (!participant) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
   if (participant.userId && parsed.data.connectionId) {
-    const leaseState = validateSessionRoomConnectionLease({
+    const leaseState = await validateSessionRoomConnectionLease({
       sessionId,
       userId: participant.userId,
       connectionId: parsed.data.connectionId,
@@ -110,11 +119,83 @@ export async function POST(request: Request, context: RouteContext) {
   );
 
   if (provider === "voximplant") {
+    if (parsed.data.action === "relay_stop") {
+      const hint = await getStopRelayHintForSession({
+        sessionId,
+        participantType: participant.type,
+      });
+      if (!hint) {
+        return NextResponse.json(
+          { error: "stopRelayUnavailable", code: "STOP_RELAY_UNAVAILABLE" },
+          { status: 409 },
+        );
+      }
+      if (
+        parsed.data.stopOperationId &&
+        parsed.data.stopOperationId !== hint.operationId
+      ) {
+        return NextResponse.json(
+          { error: "stopRelayOperationMismatch", code: "STOP_RELAY_OPERATION_MISMATCH" },
+          { status: 403 },
+        );
+      }
+
+      const claim = await claimStopRelayDispatch({
+        sessionId,
+        operationId: hint.operationId,
+        participant: {
+          id: participant.id,
+          type: participant.type,
+        },
+      });
+
+      if (!claim) {
+        return NextResponse.json(
+          { error: "stopRelayClaimUnavailable", code: "STOP_RELAY_CLAIM_UNAVAILABLE" },
+          { status: 409 },
+        );
+      }
+
+      const recording = await getVoximplantRecordingStateFromDb(sessionId);
+      return NextResponse.json({
+        ok: true,
+        provider: "voximplant" as const,
+        stopRelay: {
+          operationId: claim.operationId,
+          requestId: claim.requestId,
+          scenarioMessage: claim.scenarioMessage,
+        },
+        recording,
+      });
+    }
+
+    if (parsed.data.action === "relay_stop_report") {
+      if (!parsed.data.stopOperationId || !parsed.data.relayOutcome) {
+        return NextResponse.json(
+          { error: "stopOperationId and relayOutcome are required." },
+          { status: 400 },
+        );
+      }
+      await reportStopRelayOutcome({
+        sessionId,
+        operationId: parsed.data.stopOperationId,
+        outcome: parsed.data.relayOutcome,
+      });
+      return NextResponse.json({ ok: true, provider: "voximplant" as const });
+    }
+
+    if (participant.type !== ParticipantType.FACILITATOR) {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
     return handleVoximplantRecording(
       parsed.data.action,
       sessionId,
       participant.id,
     );
+  }
+
+  if (participant.type !== ParticipantType.FACILITATOR) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   // ── LiveKit dispatch (existing behavior — unchanged) ─────────────────────

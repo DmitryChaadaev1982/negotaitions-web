@@ -1,20 +1,11 @@
 import {
   NegotiationState,
-  SessionStatus,
   TrainingEventStatus,
-  type Recording,
-  type Session,
 } from "@/app/generated/prisma/client";
 import type { AuthUser } from "@/lib/auth";
 import { canManageEvent, getCurrentUserEventAccess } from "@/lib/access-control";
-import {
-  findActiveRecordingForSession,
-  stopRecording,
-} from "@/lib/livekit-egress";
-import { isSessionActiveForAssignment } from "@/lib/event-active-assignment";
-import { getControlUpdateData } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
-import { closeLatestPauseInterval } from "@/lib/session-pause-intervals";
+import { completeSessionCanonical } from "@/lib/session-completion";
 
 export type RecordingStopResult = {
   sessionId: string;
@@ -38,17 +29,18 @@ export type CompleteEventResult = {
   warnings: string[];
 };
 
-type SessionWithRecording = Session & {
-  recording: Recording | null;
-};
-
 function buildAlreadyCompletedResult(
   event: {
     status: TrainingEventStatus;
     completedAt: Date | null;
     completionReason: string | null;
   },
-  sessions: SessionWithRecording[],
+  sessions: Array<{
+    id: string;
+    negotiationState: NegotiationState;
+    closeReason: string | null;
+    closedByEventAt: Date | null;
+  }>,
 ): CompleteEventResult {
   return {
     eventStatus: event.status,
@@ -62,59 +54,6 @@ function buildAlreadyCompletedResult(
     })),
     recordingStopResults: [],
     warnings: [],
-  };
-}
-
-function buildSessionCloseUpdate(
-  session: Session,
-  eventId: string,
-  now: Date,
-) {
-  if (session.negotiationState === NegotiationState.FINISHED) {
-    return null;
-  }
-
-  return {
-    ...getControlUpdateData(session, "FINISH", now),
-    closedByEventAt: now,
-    closedByEventId: eventId,
-    closeReason: "EVENT_COMPLETED",
-    status: SessionStatus.COMPLETED,
-  };
-}
-
-async function stopSessionRecordingIfActive(
-  sessionId: string,
-): Promise<RecordingStopResult> {
-  const activeRecording = await findActiveRecordingForSession(sessionId);
-
-  if (!activeRecording) {
-    return {
-      sessionId,
-      recordingId: null,
-      ok: true,
-      status: null,
-    };
-  }
-
-  if (!activeRecording.egressId) {
-    return {
-      sessionId,
-      recordingId: activeRecording.id,
-      ok: true,
-      status: activeRecording.status,
-      warning: "recordingMissingEgressId",
-    };
-  }
-
-  const result = await stopRecording(activeRecording);
-
-  return {
-    sessionId,
-    recordingId: result.recording.id,
-    ok: result.ok,
-    status: result.recording.status,
-    warning: result.warning,
   };
 }
 
@@ -140,13 +79,12 @@ export async function completeTrainingEvent(
 
   const event = await prisma.trainingEvent.findUnique({
     where: { id: eventId },
-    include: {
-      sessions: {
-        where: { deletedAt: null },
-        include: {
-          recording: true,
-        },
-      },
+    select: {
+      id: true,
+      status: true,
+      deletedAt: true,
+      completedAt: true,
+      completionReason: true,
     },
   });
 
@@ -157,7 +95,18 @@ export async function completeTrainingEvent(
   if (event.status === TrainingEventStatus.COMPLETED) {
     return {
       ok: true,
-      result: buildAlreadyCompletedResult(event, event.sessions),
+      result: buildAlreadyCompletedResult(
+        event,
+        await prisma.session.findMany({
+          where: { eventId, deletedAt: null },
+          select: {
+            id: true,
+            negotiationState: true,
+            closeReason: true,
+            closedByEventAt: true,
+          },
+        }),
+      ),
     };
   }
 
@@ -166,55 +115,63 @@ export async function completeTrainingEvent(
   }
 
   const now = new Date();
-  const sessionsToClose = event.sessions.filter(isSessionActiveForAssignment);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.trainingEvent.update({
-      where: { id: eventId },
-      data: {
-        status: TrainingEventStatus.COMPLETED,
-        completedAt: now,
-        completedBy: access.actorUser?.id ?? access.hostToken ?? null,
-        completionReason: completionReason?.trim() || null,
-      },
-    });
-
-    for (const session of sessionsToClose) {
-      const updateData = buildSessionCloseUpdate(session, eventId, now);
-
-      if (!updateData) {
-        continue;
-      }
-
-      await tx.session.update({
-        where: { id: session.id },
-        data: updateData,
-      });
-    }
+  await prisma.trainingEvent.update({
+    where: { id: eventId },
+    data: {
+      status: TrainingEventStatus.COMPLETED,
+      completedAt: now,
+      completedBy: access.actorUser?.id ?? access.hostToken ?? null,
+      completionReason: completionReason?.trim() || null,
+    },
   });
-
-  for (const session of sessionsToClose) {
-    if (session.negotiationState !== NegotiationState.FINISHED) {
-      await closeLatestPauseInterval(session.id, now);
-    }
-  }
 
   const recordingStopResults: RecordingStopResult[] = [];
   const warnings: string[] = [];
 
-  for (const session of event.sessions) {
-    const stopResult = await stopSessionRecordingIfActive(session.id);
+  const sessions = await prisma.session.findMany({
+    where: {
+      eventId,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+    },
+  });
 
-    if (!stopResult.recordingId && stopResult.ok) {
-      continue;
-    }
+  for (const session of sessions) {
+    try {
+      const finishResult = await completeSessionCanonical({
+        sessionId: session.id,
+        mode: "EVENT_COMPLETION",
+        hardClose: true,
+        closedByEventId: eventId,
+        reason: completionReason?.trim() || "EVENT_COMPLETION",
+      });
+      recordingStopResults.push({
+        sessionId: session.id,
+        recordingId: finishResult.recording.recordingId,
+        ok:
+          finishResult.recording.stopOperationState !== "FAILED",
+        status: finishResult.recording.status,
+        warning: finishResult.recording.warning ?? undefined,
+      });
 
-    recordingStopResults.push(stopResult);
-
-    if (!stopResult.ok || stopResult.warning) {
-      warnings.push(
-        stopResult.warning ?? `recordingStopFailed:${session.id}`,
-      );
+      if (finishResult.recording.warning) {
+        warnings.push(`${session.id}:${finishResult.recording.warning}`);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "sessionCompletionFailed";
+      recordingStopResults.push({
+        sessionId: session.id,
+        recordingId: null,
+        ok: false,
+        status: null,
+        warning: message,
+      });
+      warnings.push(`${session.id}:${message}`);
     }
   }
 

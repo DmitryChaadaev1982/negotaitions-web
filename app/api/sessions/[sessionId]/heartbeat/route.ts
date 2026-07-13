@@ -4,6 +4,7 @@ import { updateParticipantPresence } from "@/lib/participant-presence";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import {
   claimSessionRoomConnectionLease,
+  touchSessionRoomConnectionLease,
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
 
@@ -35,17 +36,28 @@ export async function POST(request: Request, context: RouteContext) {
   const connectionId =
     typeof body.connectionId === "string" ? body.connectionId.trim() : "";
   if (participant.userId && connectionId) {
-    const leaseState = validateSessionRoomConnectionLease({
+    const leaseState = await validateSessionRoomConnectionLease({
       sessionId,
       userId: participant.userId,
       connectionId,
     });
     if (leaseState.version === 0) {
-      claimSessionRoomConnectionLease({
+      const claimed = await claimSessionRoomConnectionLease({
         sessionId,
         userId: participant.userId,
         connectionId,
+        role: participant.type,
       });
+      if (!claimed.isCurrentConnectionActive) {
+        return NextResponse.json(
+          {
+            error: "staleConnection",
+            code: "STALE_CONNECTION",
+            activeConnectionVersion: claimed.version,
+          },
+          { status: 409 },
+        );
+      }
     } else if (!leaseState.isCurrentConnectionActive) {
       return NextResponse.json(
         {
@@ -55,6 +67,12 @@ export async function POST(request: Request, context: RouteContext) {
         },
         { status: 409 },
       );
+    } else {
+      await touchSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId,
+      });
     }
   }
 

@@ -562,17 +562,93 @@ export async function getSessionNegotiationState(sessionId: string) {
   return (
     await query<{
       negotiationState: string;
+      roomLifecycle: string | null;
       closeReason: string | null;
       closedByEventAt: string | null;
       status: string;
       negotiationStartedAt: string | null;
     }>(
-      `SELECT "negotiationState", "closeReason", "closedByEventAt", "status", "negotiationStartedAt"
+      `SELECT "negotiationState", "roomLifecycle", "closeReason", "closedByEventAt", "status", "negotiationStartedAt"
        FROM "Session"
        WHERE "id" = $1`,
       [sessionId],
     )
   )[0]!;
+}
+
+export async function getRoomConnectionByConnectionId(connectionId: string) {
+  return (
+    await query<{
+      id: string;
+      sessionId: string;
+      userId: string;
+      connectionId: string;
+      leaseVersion: number;
+      role: string;
+      expiresAt: string;
+      disconnectedAt: string | null;
+      supersededAt: string | null;
+      revokedAt: string | null;
+      supersededByConnectionId: string | null;
+    }>(
+      `SELECT "id", "sessionId", "userId", "connectionId", "leaseVersion", "role",
+              "expiresAt", "disconnectedAt", "supersededAt", "revokedAt", "supersededByConnectionId"
+       FROM "SessionRoomConnection"
+       WHERE "connectionId" = $1`,
+      [connectionId],
+    )
+  )[0] ?? null;
+}
+
+export async function expireRoomConnection(connectionId: string) {
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "expiresAt" = NOW() - INTERVAL '5 minutes',
+         "updatedAt" = NOW()
+     WHERE "connectionId" = $1`,
+    [connectionId],
+  );
+}
+
+export async function disconnectRoomConnection(connectionId: string) {
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "disconnectedAt" = NOW(),
+         "updatedAt" = NOW()
+     WHERE "connectionId" = $1`,
+    [connectionId],
+  );
+}
+
+export async function revokeRoomConnection(connectionId: string) {
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "revokedAt" = NOW(),
+         "updatedAt" = NOW()
+     WHERE "connectionId" = $1`,
+    [connectionId],
+  );
+}
+
+export async function getRecordingStopOperations(sessionId: string) {
+  return query<{
+    id: string;
+    recordingId: string;
+    state: string;
+    attemptCount: number;
+    lastError: string | null;
+    lastErrorClass: string | null;
+    nextRetryAt: string | null;
+    lastDeliveryTransport: string | null;
+    operationId: string;
+  }>(
+    `SELECT "id", "recordingId", "state", "attemptCount", "lastError",
+            "lastErrorClass", "nextRetryAt", "lastDeliveryTransport", "operationId"
+     FROM "SessionRecordingStopOperation"
+     WHERE "sessionId" = $1
+     ORDER BY "createdAt" ASC`,
+    [sessionId],
+  );
 }
 
 export async function getSession(sessionId: string): Promise<E2eSession> {
@@ -622,6 +698,31 @@ export async function getRecordingBySession(sessionId: string) {
       [sessionId],
     )
   )[0] ?? null;
+}
+
+export async function upsertRecordingForSession(input: {
+  sessionId: string;
+  status: string;
+  provider?: string;
+  egressId?: string | null;
+}) {
+  await query(
+    `INSERT INTO "Recording"
+       ("id", "sessionId", "provider", "status", "egressId", "recordingType", "updatedAt")
+     VALUES ($1, $2, $3, $4::"RecordingStatus", $5, 'AUDIO_ONLY', NOW())
+     ON CONFLICT ("sessionId") DO UPDATE
+       SET "provider" = EXCLUDED."provider",
+           "status" = EXCLUDED."status",
+           "egressId" = EXCLUDED."egressId",
+           "updatedAt" = NOW()`,
+    [
+      id("rec"),
+      input.sessionId,
+      input.provider ?? "LIVEKIT_CLOUD",
+      input.status,
+      input.egressId ?? null,
+    ],
+  );
 }
 
 export async function countTranscripts(sessionId: string) {

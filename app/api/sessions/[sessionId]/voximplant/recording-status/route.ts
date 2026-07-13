@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { RecordingStatus } from "@/app/generated/prisma/client";
+import { Prisma, RecordingStatus } from "@/app/generated/prisma/client";
 import { getVoximplantRecordingWebhookSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
@@ -119,6 +119,39 @@ function isValidStatusTransition(
   }
   // All other transitions are allowed.
   return true;
+}
+
+async function reconcileStopOperationsAfterRecordingUpdate(
+  recordingId: string,
+  status: RecordingStatus,
+  reconciliationTransport: "voximplant_webhook_reconciliation" | "voximplant_provider_auto_finalization",
+) {
+  if (
+    status !== RecordingStatus.PROCESSING &&
+    status !== RecordingStatus.STOPPED &&
+    status !== RecordingStatus.COMPLETED
+  ) {
+    return;
+  }
+
+  await prisma.sessionRecordingStopOperation.updateMany({
+    where: {
+      recordingId,
+      state: {
+        in: ["PENDING", "DELIVERING", "FAILED"],
+      },
+    },
+    data: {
+      state: "DELIVERED",
+      deliveredAt: new Date(),
+      failedAt: null,
+      lastError: null,
+      lastErrorClass: null,
+      nextRetryAt: null,
+      lastDeliveryTransport: reconciliationTransport,
+      fallbackPayload: Prisma.JsonNull,
+    },
+  });
 }
 
 // ─── objectKey → fileKey normalization ───────────────────────────────────────
@@ -331,6 +364,15 @@ export async function POST(request: Request, context: RouteContext) {
         message: `Recording row created: recordingId=${created.id} status=${created.status}`,
         data: { recordingId: created.id, status: created.status, fileKeyPresent: hasFileKey },
       });
+      const reconciliationTransport =
+        payload.status === "stopped"
+          ? "voximplant_provider_auto_finalization"
+          : "voximplant_webhook_reconciliation";
+      await reconcileStopOperationsAfterRecordingUpdate(
+        created.id,
+        created.status,
+        reconciliationTransport,
+      );
       return NextResponse.json({ ok: true, action: "created", status: targetStatus });
     }
 
@@ -391,6 +433,15 @@ export async function POST(request: Request, context: RouteContext) {
       message: `Recording updated: recordingId=${existing.id} status=${targetStatus}`,
       data: { recordingId: existing.id, status: targetStatus, fileKeyPresent: hasFileKey },
     });
+      const reconciliationTransport =
+        payload.status === "stopped"
+          ? "voximplant_provider_auto_finalization"
+          : "voximplant_webhook_reconciliation";
+      await reconcileStopOperationsAfterRecordingUpdate(
+        existing.id,
+        targetStatus,
+        reconciliationTransport,
+      );
     return NextResponse.json({ ok: true, action: "updated", status: targetStatus });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "DB update failed.";

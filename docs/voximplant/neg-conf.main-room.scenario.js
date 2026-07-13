@@ -50,7 +50,7 @@ try {
 //
 // Search Voximplant logs for this build id to confirm the correct scenario is running.
 // __LOCAL_DEV_BUILD__ is replaced by scripts/voximplant-sync-scenario.mjs when using CI sync.
-var SCENARIO_BUILD_ID   = "server-poc-webhook-fix-2026-07-04";
+var SCENARIO_BUILD_ID   = "server-poc-webhook-fix-2026-07-13-a7";
 var SCENARIO_SOURCE_NAME = "neg-conf-main-room";
 
 // Audio recording mode:
@@ -1117,30 +1117,78 @@ function resumeRecording(call, requestId) {
   }
 }
 
+function requestRecorderStopForScenarioShutdown(reason) {
+  var safeReason = safeToString(reason) || "scenario_shutdown";
+  if (!recorder) {
+    log("scenario shutdown stop skipped reason=" + safeReason + " recorderPresent=false");
+    return;
+  }
+  if (recordingState === STATE_IDLE || recordingState === STATE_STOPPED) {
+    log("scenario shutdown stop skipped reason=" + safeReason + " state=" + recordingState);
+    return;
+  }
+  if (recordingState === STATE_STOPPING) {
+    log("scenario shutdown stop already in progress reason=" + safeReason);
+    return;
+  }
+
+  var fallbackRequestId = "scenario-shutdown-stop-" + Date.now();
+  var shutdownRequestId =
+    (currentRecordingContext && currentRecordingContext.stopRequestId) ||
+    lastRequestId ||
+    fallbackRequestId;
+
+  if (currentRecordingContext && !currentRecordingContext.stopRequestId) {
+    currentRecordingContext.stopRequestId = shutdownRequestId;
+  }
+
+  log("scenario shutdown stop requested reason=" + safeReason + " state=" + recordingState);
+  stopRecording(lastControllerCall, shutdownRequestId);
+}
+
 function stopRecording(call, requestId) {
+  var effectiveRequestId =
+    requestId ||
+    (currentRecordingContext && currentRecordingContext.stopRequestId) ||
+    lastRequestId ||
+    ("internal-stop-" + Date.now());
+
+  if (recordingState === STATE_STOPPING) {
+    sendStatus(call, effectiveRequestId, STATE_STOPPING, "Recording stop is already in progress.", null);
+    return;
+  }
+
+  if (recordingState === STATE_IDLE || recordingState === STATE_STOPPED) {
+    sendStatus(call, effectiveRequestId, "not_recording", "Recording is not active.", null);
+    return;
+  }
+
   if (
     recordingState !== STATE_RECORDING &&
     recordingState !== STATE_PAUSED &&
     recordingState !== STATE_STARTING &&
     recordingState !== STATE_ERROR
   ) {
-    sendStatus(call, requestId, "not_recording", "Recording is not active.", null);
+    sendStatus(call, effectiveRequestId, recordingState, "Stop is not valid from current state.", null);
     return;
   }
   if (!recorder) {
     recordingState = STATE_STOPPED;
-    sendStatus(call, requestId, STATE_STOPPED, "Recorder not present; treated as stopped.", null);
+    sendStatus(call, effectiveRequestId, STATE_STOPPED, "Recorder not present; treated as stopped.", null);
     return;
   }
 
   recordingState = STATE_STOPPING;
   lastControllerCall = call;
-  lastRequestId = requestId;
+  lastRequestId = effectiveRequestId;
+  if (currentRecordingContext) {
+    currentRecordingContext.stopRequestId = effectiveRequestId;
+  }
   startingWatchdogId = clearWatchdog(startingWatchdogId);
   resumingWatchdogId = clearWatchdog(resumingWatchdogId);
-  sendStatus(call, requestId, STATE_STOPPING, "Recording stop requested.", null);
+  sendStatus(call, effectiveRequestId, STATE_STOPPING, "Recording stop requested.", null);
   log("webhook POST intent status=stopping sessionId=" + (resolvedSessionId || "null"));
-  sendRecordingWebhook(resolvedSessionId, buildStatusPayload(requestId, STATE_STOPPING, "Recording stop requested.", null), null);
+  sendRecordingWebhook(resolvedSessionId, buildStatusPayload(effectiveRequestId, STATE_STOPPING, "Recording stop requested.", null), null);
 
   try {
     if (typeof recorder.stop === "function") {
@@ -1149,11 +1197,11 @@ function stopRecording(call, requestId) {
       recorder.stopRecord();
     } else {
       setErrorState("RECORDER_STOP_UNAVAILABLE", "Recorder stop method unavailable.");
-      sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+      sendStatus(call, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
       log("webhook POST intent status=error reason=RECORDER_STOP_UNAVAILABLE sessionId=" + (resolvedSessionId || "null"));
       sendRecordingWebhook(
         resolvedSessionId,
-        buildStatusPayload(requestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
+        buildStatusPayload(effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
         null,
       );
       return;
@@ -1163,17 +1211,17 @@ function stopRecording(call, requestId) {
       stoppingWatchdogId = null;
       if (recordingState === STATE_STOPPING) {
         setErrorState("STOPPING_TIMEOUT", "Recorder did not stop in time.");
-        sendStatus(lastControllerCall, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+        sendStatus(lastControllerCall, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
         recorder = null;
       }
     }, STOPPING_TIMEOUT_MS);
   } catch (e) {
     setErrorState("STOP_EXCEPTION", safeToString(e));
-    sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    sendStatus(call, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     log("webhook POST intent status=error reason=STOP_EXCEPTION sessionId=" + (resolvedSessionId || "null"));
     sendRecordingWebhook(
       resolvedSessionId,
-      buildStatusPayload(requestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
+      buildStatusPayload(effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode),
       null,
     );
     recorder = null;
@@ -1419,8 +1467,13 @@ function onAppStarted() {
 
   addSafeEventListener(conference, "ConferenceEvents", "Stopped", function () {
     log("conference stopped");
-    // Conference can stop/restart independently from recording controls.
+    requestRecorderStopForScenarioShutdown("ConferenceEvents.Stopped");
   }, "ConferenceEvents.Stopped");
+
+  addSafeEventListener(VoxEngine, "AppEvents", "Terminating", function () {
+    log("app terminating");
+    requestRecorderStopForScenarioShutdown("AppEvents.Terminating");
+  }, "AppEvents.Terminating");
 }
 
 addSafeEventListener(VoxEngine, "AppEvents", "Started", onAppStarted, "AppEvents.Started");

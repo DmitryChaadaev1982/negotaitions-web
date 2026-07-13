@@ -151,23 +151,45 @@ export async function POST(_request: Request, context: RouteContext) {
 
   if (participant.userId && parsedBody.connectionId) {
     if (parsedBody.claimLease) {
-      claimSessionRoomConnectionLease({
+      const claimed = await claimSessionRoomConnectionLease({
         sessionId,
         userId: participant.userId,
         connectionId: parsedBody.connectionId,
+        role: participant.type,
       });
+      if (!claimed.isCurrentConnectionActive) {
+        return NextResponse.json(
+          {
+            error: "staleConnection",
+            code: "STALE_CONNECTION",
+            activeConnectionVersion: claimed.version,
+          },
+          { status: 409 },
+        );
+      }
     } else {
-      const leaseState = validateSessionRoomConnectionLease({
+      const leaseState = await validateSessionRoomConnectionLease({
         sessionId,
         userId: participant.userId,
         connectionId: parsedBody.connectionId,
       });
       if (leaseState.version === 0) {
-        claimSessionRoomConnectionLease({
+        const claimed = await claimSessionRoomConnectionLease({
           sessionId,
           userId: participant.userId,
           connectionId: parsedBody.connectionId,
+          role: participant.type,
         });
+        if (!claimed.isCurrentConnectionActive) {
+          return NextResponse.json(
+            {
+              error: "staleConnection",
+              code: "STALE_CONNECTION",
+              activeConnectionVersion: claimed.version,
+            },
+            { status: 409 },
+          );
+        }
       } else if (!leaseState.isCurrentConnectionActive) {
         return NextResponse.json(
           {

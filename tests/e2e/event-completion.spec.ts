@@ -8,10 +8,14 @@ import {
   getEventParticipants,
   getExternalServiceEvent,
   getRecordingBySession,
+  getRecordingStopOperations,
   getSessionNegotiationState,
   getTrainingEvent,
   participantByName,
 } from "./helpers/db";
+
+// Stage 3.10 traceability:
+// ST310-EVENT-001..010, ST310-NAV-005, ST310-RACE-007, ST310-RACE-010
 
 test.describe.configure({ mode: "serial" });
 
@@ -105,6 +109,7 @@ test("complete event closes preparation session without recording", async ({
 
   const session = await getSessionNegotiationState(sessionId);
   expect(session.negotiationState).toBe("FINISHED");
+  expect(session.roomLifecycle).toBe("CLOSED");
   expect(session.closeReason).toBe("EVENT_COMPLETED");
   expect(session.negotiationStartedAt).toBeNull();
 
@@ -135,11 +140,15 @@ test("complete event closes running session and stops active recording", async (
 
   const session = await getSessionNegotiationState(sessionId);
   expect(session.negotiationState).toBe("FINISHED");
+  expect(session.roomLifecycle).toBe("CLOSED");
   expect(session.closeReason).toBe("EVENT_COMPLETED");
 
   const recording = await getRecordingBySession(sessionId);
   expect(recording).not.toBeNull();
   expect(["PROCESSING", "STOPPED", "COMPLETED"]).toContain(recording?.status);
+  const stopOperations = await getRecordingStopOperations(sessionId);
+  expect(stopOperations.length).toBe(1);
+  expect(["DELIVERED", "FAILED"]).toContain(stopOperations[0]!.state);
 
   const transcriptCount = await countTranscripts(sessionId);
   expect(transcriptCount).toBe(0);
@@ -173,6 +182,8 @@ test("recording stop failure still completes event", async ({ request }) => {
 
   const externalEvent = await getExternalServiceEvent(sessionId, "LIVEKIT");
   expect(externalEvent).not.toBeNull();
+  const stopOperations = await getRecordingStopOperations(sessionId);
+  expect(stopOperations.length).toBe(1);
 });
 
 test("rejoin after event completed shows completed message", async ({

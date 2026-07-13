@@ -128,6 +128,32 @@ Do **not** use `ng-session-{sessionId}` or `VoxEngine.applicationName()` for ses
 7. When `RecorderEvents.Started` fires, the scenario sends a `recording_status` message back to the browser AND sends a signed webhook to the server.
 8. Stop recording follows the same relay flow with `action: "stop"`.
 
+### Stage 3.10 bounded-risk stop transport (A7 accepted)
+
+Canonical stop transport for Voximplant in Stage 3.10:
+
+1. Server canonical FINISH/Event completion persists one durable `SessionRecordingStopOperation`.
+2. `control-state` exposes a server-issued relay hint (`operationId`/`requestId`) only for eligible connected room participants.
+3. Any eligible connected client (facilitator, participant, observer) may claim relay once via `recording-control` (`action: "relay_stop"`).
+4. Browser relays only the server-issued `scenarioMessage` (client does not invent session/request/provider payload fields).
+5. Client reports bounded relay outcome (`ACKNOWLEDGED` / `TIMEOUT` / `SEND_FAILED`) via `recording-control` (`action: "relay_stop_report"`).
+6. Duplicate relays are concurrency-safe and converge on one durable operation + authoritative webhook finalization.
+
+Important constraints:
+
+- No `StartConference` / `media_session_access_url` server-owned control channel is introduced.
+- No scenario polling channel is introduced.
+- Existing conference startup architecture (Web SDK join) is unchanged.
+- Provider/session auto-termination remains fallback when no relay-capable browser is connected.
+- Webhook reconciliation remains authoritative for final recording completion.
+
+Stage 3.10 validation references:
+
+- Scenario catalog: `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
+- Traceability: `docs/testing/stage-3-10-session-lifecycle-traceability.csv`
+- Coverage gaps/manual canaries: `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
+- Provider-free contract/static regression command: `npm run test:stage310`
+
 ### Scenario message fields (recording_control)
 
 Server-built `scenarioMessage` includes:
@@ -289,7 +315,8 @@ resolvedSessionId = resolveSessionId(payload);
 
 ### Security checklist
 
-- Non-facilitator cannot start/stop recording: `recording-control` validates `ParticipantType.FACILITATOR`.
+- Non-facilitator cannot initiate business recording start/stop.
+- For Stage 3.10 A7, participant/observer may transport only server-authorized durable stop relay (`relay_stop`) after FINISH/Event completion.
 - Webhook without secret → HTTP 401.
 - Webhook with wrong secret → HTTP 401 (constant-time comparison via `timingSafeEqual`).
 - Browser responses do not include `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`.
@@ -303,6 +330,9 @@ resolvedSessionId = resolveSessionId(payload);
 - Browser `sendMessage` availability depends on the Voximplant WebSDK version; if unavailable, a UI error is shown and recording is blocked.
 - VoxEngine `crypto.createHmac()` availability depends on VoxEngine runtime version — if unavailable, webhooks are silently skipped and recording still works (server won't receive status updates in that case).
 - No automatic retry for failed webhooks — transient network errors may cause missed status updates (recording still works on Voximplant side).
+- No proven server-only stop transport is wired in current startup architecture; canonical stop intent is durable on server, but command ingress still depends on browser relay to scenario.
+- Stage 3.10 A7 accepts this bounded residual risk temporarily; true no-browser server-owned stop transport is deferred backlog.
+- Remote drift verification and provider auto-termination timing remain manual provider canaries (not CI).
 - No visible pause/resume recording UI (pause/resume may exist internally in scenario only).
 - Remote active speaker mapping deferred to Stage 5.5+.
 - Duplicate-user lock deferred to Stage 5.5+.

@@ -34,7 +34,7 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
 import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,19 +73,22 @@ type VideoRoomPageProps =
 function LeaveRoomButton({
   sessionId,
   materialsUrl,
+  onExplicitLeave,
 }: {
   sessionId: string;
   materialsUrl: string;
+  onExplicitLeave: () => Promise<void>;
 }) {
   const router = useRouter();
   const room = useRoomContext();
   const { t } = useI18n();
 
-  const handleLeave = useCallback(() => {
+  const handleLeave = useCallback(async () => {
+    await onExplicitLeave();
+    void room.disconnect();
     markSessionLeftFlag(sessionId);
     router.push(materialsUrl);
-    void room.disconnect();
-  }, [materialsUrl, room, router, sessionId]);
+  }, [materialsUrl, onExplicitLeave, room, router, sessionId]);
 
   return (
     <button
@@ -133,11 +136,30 @@ function ConnectedRoom({
   staleConnection: boolean;
 }) {
   const router = useRouter();
+  const leaveInFlightRef = useRef(false);
 
-  const handleLeave = useCallback(() => {
+  const performExplicitLeave = useCallback(async () => {
+    if (leaveInFlightRef.current || !roomConnectionId) {
+      return;
+    }
+    leaveInFlightRef.current = true;
+    try {
+      await fetch(`/api/sessions/${sessionId}/presence/leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(roomAuthBody(roomAuth, { connectionId: roomConnectionId })),
+        keepalive: true,
+      });
+    } catch {
+      // Best-effort explicit leave. Expiry sweep still guarantees eventual cleanup.
+    }
+  }, [roomAuth, roomConnectionId, sessionId]);
+
+  const handleLeave = useCallback(async () => {
+    await performExplicitLeave();
     markSessionLeftFlag(sessionId);
     router.push(materialsUrl);
-  }, [materialsUrl, router, sessionId]);
+  }, [materialsUrl, performExplicitLeave, router, sessionId]);
 
   const handleManualRejoin = useCallback(() => {
     router.push("/rejoin");
@@ -175,7 +197,7 @@ function ConnectedRoom({
         onStaleConnection={onStaleConnection}
         connectionId={roomConnectionId}
         staleConnection={staleConnection}
-        onLeave={handleLeave}
+        onLeave={() => void handleLeave()}
         // LiveKit-specific slots
         audioRenderer={<RoomAudioRenderer />}
         micEnforcement={<MicEnforcement controlState={controlState} />}
@@ -197,10 +219,16 @@ function ConnectedRoom({
         controlBar={
           <RestrictedControlBar
             micAllowed={controlState.micAllowed}
-            onLeave={handleLeave}
+            onLeave={() => void handleLeave()}
           />
         }
-        leaveButton={<LeaveRoomButton sessionId={sessionId} materialsUrl={materialsUrl} />}
+        leaveButton={
+          <LeaveRoomButton
+            sessionId={sessionId}
+            materialsUrl={materialsUrl}
+            onExplicitLeave={performExplicitLeave}
+          />
+        }
         // LiveKit has no media warnings via this channel (managed by LiveKit components)
         mediaWarnings={[]}
         autoplayUnlockBanner={null}

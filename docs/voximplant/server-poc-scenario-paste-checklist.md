@@ -50,12 +50,14 @@ In Voximplant Console → Scenarios → Logs, search for:
 
 | Search string | Expected meaning |
 |---------------|------------------|
-| `server-poc-webhook-fix` | Correct scenario build is running |
+| `server-poc-webhook-fix-2026-07-13-a7` | Correct Stage 3.10 A7 build is running |
 | `webhook config` | Startup config summary (base URL, secret configured, HMAC provider) |
 | `recording_control received` | Browser sent start/stop commands |
 | `Recorder.Stopped handler entered` | Recording finished in VoxEngine |
 | `webhook POST attempted` | Scenario attempted HTTP POST to Next.js |
 | `webhook response status` | Server responded (look for 2xx) |
+| `scenario shutdown stop requested reason=ConferenceEvents.Stopped` | Shutdown hardening triggered on conference stop |
+| `scenario shutdown stop requested reason=AppEvents.Terminating` | Shutdown hardening triggered on app termination |
 
 If you see `webhook skipped: WEBHOOK_SECRET not configured`, the secret placeholder was not replaced.
 
