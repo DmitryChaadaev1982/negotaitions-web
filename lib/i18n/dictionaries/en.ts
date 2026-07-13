@@ -510,7 +510,7 @@ export const en = {
     suggestAutomatically: "Suggest automatically",
     autoMappingRequiresTimestamps: "Automatic mapping requires transcript timestamps.",
     autoMappingFutureSessionsOnly:
-      "Automatic mapping will be available for future sessions after microphone activity data is collected.",
+      "Automatic mapping was not applied for this session. Review the suggested assignment or assign speakers manually.",
     telemetryMappingReviewRequired:
       "Automatic mapping was skipped because microphone activity telemetry is incomplete for one of the participants. Please assign speakers manually.",
     mappingFailureTitle: "Why automatic matching was not completed",
@@ -526,7 +526,7 @@ export const en = {
     preprocessingReason: "Preprocessing reason",
     mappingFailureCompact: {
       noAudioActivity: "Manual matching required: no microphone telemetry.",
-      generic: "Manual matching required. Open details for the exact reason.",
+      generic: "Manual matching required. Assign speakers manually.",
     },
     mappingFailureReason: {
       unavailableNoAudioActivity:
@@ -550,6 +550,16 @@ export const en = {
     confirmSpeakersTitle: "Confirm speakers",
     confirmSpeakersDescription:
       "The system is not confident enough to apply speaker mapping automatically. Review the suggested assignment.",
+    mappingStatusDescription: {
+      reviewWithSuggestion:
+        "Automatic mapping was not applied. Review the suggested assignment.",
+      reviewWithoutSuggestion:
+        "Not enough data for automatic mapping. Assign speakers manually.",
+      partiallyMapped:
+        "Speaker mapping is partially complete. Assign the remaining speakers.",
+      appliedNeedsConfirmation:
+        "Speaker mapping was applied. Review and confirm it.",
+    },
     suggested: "Suggested",
     confidenceHigh: "High",
     confidenceMedium: "Medium",
@@ -560,6 +570,7 @@ export const en = {
     speakerMappingSaved: "Speaker mapping saved",
     speakerMappingCanChangeLater: "You can change speaker mapping later",
     speakerMappingAutoAppliedCompact: "Speaker mapping was applied automatically.",
+    secondsShort: "s",
     confidence: "Confidence",
     weakSuggestion: "Weak suggestion",
     strongSuggestion: "Strong suggestion",
@@ -574,7 +585,7 @@ export const en = {
     copyDiarizedTranscript: "Copy diarized transcript",
     speakerLabelsNotReturned:
       "Speaker labels were not returned by the transcription model.",
-    rawSpeakerPrefix: "raw:",
+    rawSpeakerPrefix: "Technical label:",
     mappingRequiredShort: "mapping required",
     diarizationFailed:
       "Transcription succeeded, but speaker separation failed.",

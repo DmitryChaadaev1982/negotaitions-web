@@ -19,6 +19,8 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
 - `node --import tsx --test lib/services/transcript-enhancement-orchestration.test.ts` (idempotency identity hashing invariants)
 - `node --import tsx --test lib/services/admin-env-display.test.ts` (admin env diagnostics include enhancement auto-run flag)
+- `node --import tsx --test lib/transcription/transcript-timing.test.ts` (UI-only transcript timestamp/duration readability formatter and grouped-turn ordering)
+- `node --import tsx --test lib/transcription/mapping-ui-presentation.test.ts` (speaker-mapping reason-priority and status-copy presentation rules)
 - `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast preflight; read-only)
 - `npm run test:e2e:tunnel:list` (inventory of `@requires-tunnel` tests)
 - `npm run test:e2e:tunnel` (opt-in tunnel-only suite, excludes `@live-provider`)

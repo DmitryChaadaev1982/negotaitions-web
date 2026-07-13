@@ -190,6 +190,24 @@
 - `processingMetadata.transcriptEnhancement` stores trigger source, idempotency decision,
   timing, chunk telemetry, and skip/failure metadata without transcript text payloads.
 
+## Transcript Readability Presentation (Stage 3.9G)
+
+- Transcript segment timestamps originate from SpeechKit alternative-level timing and are
+  persisted unchanged.
+- Facilitator transcript UI now uses a presentation-only formatter:
+  - under one hour: `MM:SS.t`;
+  - one hour and above: `HH:MM:SS.t`;
+  - rounding is to nearest tenth before splitting into hour/minute/second fields.
+- UI displays compact range + duration metadata in one line (`start-end · duration`).
+- Duration is computed client-side from numeric `endSeconds - startSeconds` and is never
+  derived from formatted strings.
+- Grouped transcript view keeps existing contiguous-turn grouping and shows grouped-turn
+  duration (first segment start to last segment end of the rendered turn).
+- Canonical transcript order remains `orderIndex`; no timestamp-based row re-sorting is applied.
+- No overlap indicators are shown in facilitator transcript UI.
+- No per-segment ambiguity markers/counts are shown in facilitator transcript UI.
+- API contracts and transcript persistence fields are unchanged by this presentation layer.
+
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
 - Local-only calibration mode is gated by `PAUSE_FILTER_CALIBRATION_ENABLED=1`.
