@@ -1,0 +1,7 @@
+sample_label,session_id_sanitized,session_type,session_status,negotiation_state,recording_status,transcript_status,mapping_status,ai_status,materials_exists,room_url_likely_allowed,ordering_reconstructable,last_update_window,notes
+reference_completed_session,cmrhs7ms...,sanitized,COMPLETED,FINISHED,COMPLETED,COMPLETED,sanitized,COMPLETED,yes,no,partial,historical,reference id provided by requester for read-only context
+recent_active_candidate,sanitized-1,event or standalone,sanitized,not FINISHED,sanitized,sanitized,sanitized,sanitized,possibly,yes,partial,recent,requires private raw evidence in /tmp path
+recent_finished_candidate,sanitized-2,event or standalone,sanitized,FINISHED,sanitized,sanitized,sanitized,sanitized,yes,no,partial,recent,room guard expected to deny active-room path
+finalized_recording_candidate,sanitized-3,event or standalone,sanitized,FINISHED or active,COMPLETED,sanitized,sanitized,sanitized,yes,depends on negotiation state,partial,recent,recording finalization independent from room occupancy
+materials_ready_candidate,sanitized-4,event or standalone,sanitized,FINISHED or active,sanitized,COMPLETED,sanitized,COMPLETED,yes,depends on negotiation state,partial,recent,materials availability not blocked by AI when transcript exists
+evidence_note,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,n/a,Raw production SQL/log snapshots are kept private and sanitized; no PII/tokens/URLs committed

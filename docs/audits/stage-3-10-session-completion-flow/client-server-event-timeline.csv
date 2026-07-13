@@ -1,0 +1,13 @@
+scenario,sequence,actor,layer,event,state_before,state_after,network_request,redirect,failure_mode,evidence
+facilitator_finish,1,facilitator,client,click finish,RUNNING,RUNNING,pending /control,no,duplicate click until disabled,components/facilitator-room-controls.tsx
+facilitator_finish,2,server,api,apply FINISH,RUNNING,FINISHED,POST /api/sessions/[id]/control,no,partial non-transactional with recording,app/api/sessions/[sessionId]/control/route.ts
+facilitator_finish,3,facilitator,client,trigger onNegotiationFinished,FINISHED,FINISHED,POST /recording-control stop,no,tab/network can break relay,components/voximplant-negotiation-room-page.tsx
+facilitator_finish,4,server+provider,webhook,recording stopped/completed,STOPPED,COMPLETED,POST /voximplant/recording-status,no,delayed/missing webhook,app/api/sessions/[sessionId]/voximplant/recording-status/route.ts
+participant_leave,1,participant,client,click leave,active,active,none yet,yes materials,leave before provider disconnect errors possible,components/voximplant-negotiation-room-page.tsx
+participant_leave,2,participant,provider,disconnect room transport,active,active,no explicit API required,already pushing materials,abrupt disconnect bypasses explicit signal,lib/voximplant/use-voximplant-room.ts
+participant_leave,3,server,presence,heartbeat silence timeout,ONLINE,RECENT/OFFLINE,heartbeat stops,n/a,not immediate,lib/presence.ts
+observer_leave,1,observer,client,click leave,active,active,none,yes materials,same as participant,components/voximplant-negotiation-room-page.tsx
+last_participant_leave,1,multiple clients,client+server,all tabs disconnect,possibly FINISHED,unchanged by last disconnect,no dedicated close API,n/a,last-user detection not durable,no dedicated handler in current model
+abrupt_browser_close,1,any user,browser,tab/process closed,ONLINE,stale eventually,no guaranteed unload API,n/a,missed final heartbeat,components/session-room-presence-heartbeat.tsx
+refresh_rejoin_active,1,user,server/client,open /rejoin with active session,active,active,POST /api/rejoin/validate or server account lookup,room redirect,stale token context rejected,lib/rejoin/account.ts + lib/rejoin/validate.ts
+refresh_rejoin_finished,1,user,server/client,open /rejoin after FINISHED,FINISHED,FINISHED,rejoin validation,materials redirect,debrief re-entry blocked by guard,lib/rejoin/validate.ts
