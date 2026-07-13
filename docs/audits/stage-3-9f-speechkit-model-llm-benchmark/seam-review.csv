@@ -1,0 +1,3 @@
+seam_id,original_boundary_start_ms,original_boundary_end_ms,active_boundary_ms,window_before_ms,window_after_ms,config,audio_pair,automated_observation,error_classification,manual_priority
+S01,57458,68284,57458,1500,1500,general:rc baseline,B_vs_C,removed interval has non-silent speech-like activity and lexical content in A/B windows; C seam window keeps neighboring speech but with lower total coverage,pause_interval_contains_speech,resolved
+S02,57458,68284,57458,1500,1500,general alternative,B_vs_C,same coverage behavior as baseline model tag; no extra speaker-label drift detected near seam,pause_interval_contains_speech,resolved

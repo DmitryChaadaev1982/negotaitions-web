@@ -1,0 +1,7 @@
+rank,raw_config,qualification_status,pros,cons,decision
+1,speechkit:general:rc + ru-RU + diarization_on + normalization_on + literature_on,qualified,stable_repeated_hash; preserves_2_speakers; baseline_production_compatible,known_anchor_lexeme_not_fixed_in_raw,selected
+2,speechkit:general + ru-RU + diarization_on + normalization_on + literature_on,qualified,tie_with_rank1_identical_hash_and_metrics,not_better_than_baseline,shortlisted_tie_not_preferred
+3,deferred-general / deferred-general:rc,conditionally_qualified,accepted_and_identical_on_probe,higher_latency_once; no_quality_gain,not_selected
+4,speechkit:general:rc + speaker_labeling_off,rejected,same_word_count,loses_diarization_and_segment_structure,reject
+5,speechkit:general:rc + text_normalization_off,rejected,removes_literal_40_token,degrades formatting contract; no validated lexical gain,reject
+6,speechkit:general:rc + literature_text_off,rejected,removes_literal_40_token,degrades formatting contract; no validated lexical gain,reject

@@ -1,0 +1,3 @@
+id,use_schema,ok,elapsed_ms,polls,has_summarization,body_keys_count,result_keys_count,transcript_safe,notes
+L01,false,true,12867,7,false,0,0,false,no summarization payload observed
+L02,true,true,12623,7,false,0,0,false,no summarization payload observed

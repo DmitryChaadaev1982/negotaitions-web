@@ -1,0 +1,7 @@
+model_identifier,api_mode,language_support,diarization_support,file_recognition_support,status,evidence,tested
+general,recognizeFileAsync,ru-RU (validated),yes (validated),yes (validated),available,R04/R09/R11/R13 successful with diarization,true
+general:rc,recognizeFileAsync,ru-RU (validated),yes (validated),yes (validated),available,R01/R02/R03/R12 successful with diarization,true
+deferred-general,recognizeFileAsync,ru-RU (validated),yes (validated),yes (validated),available,R14 successful,true
+deferred-general:rc,recognizeFileAsync,ru-RU (validated),yes (validated),yes (validated),available,R15 successful,true
+general:deprecated,recognizeFileAsync,unknown,unknown,unknown,unknown,documented in official model page snippet,false
+deferred-general:deprecated,recognizeFileAsync,unknown,unknown,unknown,unknown,documented in official model page snippet,false

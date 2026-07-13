@@ -1,0 +1,4 @@
+variant,file,container_or_format,codec,sample_rate_hz,channels,duration_s,size_bytes,sha256,mean_volume_db,max_volume_db,clips,notes
+A,A-original.bin,flac,flac,8000,1,114.696000,1031765,8159e7aeb99a23587dfb84628a761984a52e6648e683c58fe95ae8c35842bbe6,-21.7,0,46,original object
+B,B-processed-no-cut.wav,wav,pcm_s16le,8000,1,114.696000,1835214,763e5456dc1c05ef17f88a8f77a39b34b53200602e39b7fa7a01fbd757a97c1c,-21.7,0,46,technical control no cut
+C,C-active-audio.wav,wav,pcm_s16le,8000,1,103.870000,1661998,7b4b836993a56537e64b5530bbf8d744006464945f577fa6819c429ae337f09d,-21.4,0,46,pause-removed active audio

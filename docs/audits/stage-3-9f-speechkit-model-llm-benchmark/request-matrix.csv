@@ -1,0 +1,15 @@
+request_id,stage,input_variant,request_delta_from_baseline,model,language,diarization,text_normalization,literature_text,request_mode,status,elapsed_ms
+R01,baseline,A,none,speechkit:general:rc,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6589
+R02,baseline,B,none,speechkit:general:rc,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6621
+R03,baseline,C,none,speechkit:general:rc,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6628
+R04,model_param,A,model->general,speechkit:general,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6504
+R05,model_param,A,speaker_labeling->off,speechkit:general:rc,ru-RU,off,on,on,recognizeFileAsync:plain,ok,6550
+R06,model_param,A,text_normalization->off,speechkit:general:rc,ru-RU,on,off,on,recognizeFileAsync:diarize,ok,6497
+R07,model_param,A,literature_text->off,speechkit:general:rc,ru-RU,on,on,off,recognizeFileAsync:diarize,ok,6717
+R09,shortlist_abc,A,model->general,speechkit:general,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6585
+R10,shortlist_abc,B,model->general,speechkit:general,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6696
+R11,shortlist_abc,C,model->general,speechkit:general,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6558
+R12,stability,A,baseline_repeat,speechkit:general:rc,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6465
+R13,stability,A,alt_repeat_general,speechkit:general,ru-RU,on,on,on,recognizeFileAsync:diarize,ok,6521
+R14,model_probe,A,model->deferred-general,deferred-general,ru-RU,on,baseline,baseline,recognizeFileAsync:diarize,ok,10625
+R15,model_probe,A,model->deferred-general:rc,deferred-general:rc,ru-RU,on,baseline,baseline,recognizeFileAsync:diarize,ok,6627
