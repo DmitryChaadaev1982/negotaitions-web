@@ -20,14 +20,14 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/voximplant-room-presence.spec.ts`, `tests/e2e/voximplant-room-parity.spec.ts`, `tests/e2e/voximplant-event-lobby.spec.ts`, `lib/client/connection-id.test.ts`, `lib/voximplant/participant-presence-media-model.test.ts`
 
 - Recording and transcription pipeline
-  - Code: `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/materials/enhance-transcript/route.ts`, `lib/services/transcription-runner.ts`, `lib/services/transcription-provider.ts`, `lib/services/yandex-speechkit-transcription.ts`, `lib/services/yandex-transcript-enhancement.ts`, `lib/services/transcript-enhancement-persistence.ts`, `lib/services/transcript-enhancement-orchestration.ts`, `lib/transcription/active-audio-timeline.ts`, `lib/transcription/active-audio-builder.ts`, `lib/transcription/pause-segment-processing.ts`, `lib/transcription/pause-processing-mode.ts`, `lib/recording/provider.ts`
+  - Code: `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/materials/enhance-transcript/route.ts`, `components/recording-transcription-section.tsx`, `lib/services/transcription-runner.ts`, `lib/services/transcription-provider.ts`, `lib/services/yandex-speechkit-transcription.ts`, `lib/services/yandex-transcript-enhancement.ts`, `lib/services/transcript-enhancement-persistence.ts`, `lib/services/transcript-enhancement-orchestration.ts`, `lib/transcription/active-audio-timeline.ts`, `lib/transcription/active-audio-builder.ts`, `lib/transcription/pause-segment-processing.ts`, `lib/transcription/pause-processing-mode.ts`, `lib/transcription/transcript-timing.ts`, `lib/recording/provider.ts`
   - Docs: `06-recording-transcription-pipeline.md`
-  - Tests: `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/two-pass-transcription.spec.ts`, `lib/services/yandex-transcript-enhancement.test.ts`, `lib/services/transcript-enhancement-persistence.test.ts`, `lib/env.transcript-enhancement.test.ts`, `lib/transcription/pause-interval-filter.test.ts`, `lib/transcription/pause-segment-processing.test.ts`
+  - Tests: `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/two-pass-transcription.spec.ts`, `lib/transcription/transcript-timing.test.ts`, `lib/services/yandex-transcript-enhancement.test.ts`, `lib/services/transcript-enhancement-persistence.test.ts`, `lib/env.transcript-enhancement.test.ts`, `lib/transcription/pause-interval-filter.test.ts`, `lib/transcription/pause-segment-processing.test.ts`
 
 - Speaker mapping and telemetry
-  - Code: `app/api/sessions/[sessionId]/speaker-mapping/route.ts`, `lib/transcription/auto-speaker-mapping.ts`, `lib/transcription/auto-trigger-mapping.ts`, `lib/telemetry/active-timeline-normalization.ts`, `lib/telemetry/**/*.ts`
+  - Code: `app/api/sessions/[sessionId]/speaker-mapping/route.ts`, `components/recording-transcription-section.tsx`, `lib/transcription/auto-speaker-mapping.ts`, `lib/transcription/auto-trigger-mapping.ts`, `lib/transcription/mapping-ui-presentation.ts`, `lib/telemetry/active-timeline-normalization.ts`, `lib/telemetry/**/*.ts`
   - Docs: `07-speaker-mapping-and-telemetry.md`
-  - Tests: `tests/e2e/diarization-speaker-mapping.spec.ts`
+  - Tests: `tests/e2e/diarization-speaker-mapping.spec.ts`, `lib/transcription/mapping-ui-presentation.test.ts`
 
 - AI analysis and debrief
   - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/session-analysis-context.ts`

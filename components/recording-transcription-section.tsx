@@ -13,6 +13,16 @@ import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels"
 import { shouldSyncSpeakerMappingDraft } from "@/lib/transcription/speaker-mapping-draft-sync";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import {
+  resolvePrimaryMappingReasonI18nKey,
+  resolveSpeakerMappingStatusDescriptionKey,
+} from "@/lib/transcription/mapping-ui-presentation";
+import {
+  formatTranscriptTimeRangeUi,
+  formatTranscriptTimeRangeWithDurationUi,
+  groupSegmentsIntoTurns,
+  type GroupedTranscriptTurn,
+} from "@/lib/transcription/transcript-timing";
+import {
   resolveAssistedMappingSuggestion,
   resolveSpeakerReviewMode,
   type MappingConfidenceLevel,
@@ -195,44 +205,14 @@ function resolveSegmentSpeakerDisplay(
 }
 
 type DiarizedTurn = {
-  speakerName: string;
-  rawSpeakerLabel: string | null;
-  mappingApplied: boolean;
-  speakerKey: string;
-  text: string;
+  speakerName: GroupedTranscriptTurn["speakerName"];
+  rawSpeakerLabel: GroupedTranscriptTurn["rawSpeakerLabel"];
+  mappingApplied: GroupedTranscriptTurn["mappingApplied"];
+  speakerKey: GroupedTranscriptTurn["speakerKey"];
+  text: GroupedTranscriptTurn["text"];
+  startSeconds: GroupedTranscriptTurn["startSeconds"];
+  endSeconds: GroupedTranscriptTurn["endSeconds"];
 };
-
-function groupSegmentsIntoTurns(
-  segments: TranscriptSegmentData[],
-  speakerMapping: Record<string, string | null> | null,
-  participantsById: Map<string, ParticipantOption>,
-  allowMappedNames: boolean,
-): DiarizedTurn[] {
-  const turns: DiarizedTurn[] = [];
-
-  for (const segment of segments) {
-    const resolvedSpeaker = resolveSegmentSpeakerDisplay(
-      segment,
-      speakerMapping,
-      participantsById,
-      allowMappedNames,
-    );
-    const speakerKey = `${resolvedSpeaker.speakerName}::${resolvedSpeaker.rawSpeakerLabel ?? "unknown"}::${resolvedSpeaker.mappingApplied ? "mapped" : "raw"}`;
-    const lastTurn = turns.at(-1);
-
-    if (lastTurn && lastTurn.speakerKey === speakerKey) {
-      lastTurn.text = `${lastTurn.text} ${segment.text}`.trim();
-    } else {
-      turns.push({
-        ...resolvedSpeaker,
-        speakerKey,
-        text: segment.text,
-      });
-    }
-  }
-
-  return turns;
-}
 
 type ManualSpeakerTurn = {
   id: string;
@@ -313,30 +293,6 @@ function buildInitialManualTurnsFromSegments(
     displaySpeakerLabel: item.segment.displaySpeakerLabel ?? item.segment.speakerLabel,
     speakerSlot: item.segment.speakerLabel ?? null,
   }));
-}
-
-function formatTurnTime(startSeconds: number | null, endSeconds: number | null): string {
-  const toTimestamp = (value: number) => {
-    const safe = Math.max(0, Math.floor(value));
-    const hours = Math.floor(safe / 3600)
-      .toString()
-      .padStart(2, "0");
-    const minutes = Math.floor((safe % 3600) / 60)
-      .toString()
-      .padStart(2, "0");
-    const seconds = (safe % 60).toString().padStart(2, "0");
-    return `${hours}:${minutes}:${seconds}`;
-  };
-
-  if (startSeconds == null && endSeconds == null) {
-    return "00:00:00";
-  }
-
-  if (startSeconds != null && endSeconds != null) {
-    return `${toTimestamp(startSeconds)}-${toTimestamp(endSeconds)}`;
-  }
-
-  return toTimestamp(startSeconds ?? endSeconds ?? 0);
 }
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
@@ -475,9 +431,18 @@ export function RecordingTranscriptionSection({
 
     return groupSegmentsIntoTurns(
       segments,
-      transcript?.speakerMapping ?? null,
-      participantsById,
-      isSpeakerMappingDisplayable(transcript?.speakerMappingStatus),
+      (segment) => {
+        const resolvedSpeaker = resolveSegmentSpeakerDisplay(
+          segment,
+          transcript?.speakerMapping ?? null,
+          participantsById,
+          isSpeakerMappingDisplayable(transcript?.speakerMappingStatus),
+        );
+        return {
+          ...resolvedSpeaker,
+          speakerKey: `${resolvedSpeaker.speakerName}::${resolvedSpeaker.rawSpeakerLabel ?? "unknown"}::${resolvedSpeaker.mappingApplied ? "mapped" : "raw"}`,
+        };
+      },
     );
   }, [participantsById, transcript]);
 
@@ -1118,7 +1083,6 @@ export function RecordingTranscriptionSection({
     transcript?.source === "GENERATED" &&
     !transcript.hasSpeakerDiarization &&
     hasUsableTranscript(transcript);
-  const mappingFailureReasonKey = transcript?.mappingFailureI18nKey;
   const processingMetadata =
     transcript?.processingMetadata && typeof transcript.processingMetadata === "object"
       ? (transcript.processingMetadata as Record<string, unknown>)
@@ -1194,6 +1158,17 @@ export function RecordingTranscriptionSection({
   const hasFullSuggestedMapping = speakerSuggestion.hasFullSuggestionForSpeakers(
     speakerLabels,
   );
+  const hasAnySuggestedMapping = speakerSuggestion.hasAnySuggestion;
+  const mappingStatusDescriptionKey = resolveSpeakerMappingStatusDescriptionKey({
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    hasSuggestedMapping: hasAnySuggestedMapping,
+  });
+  const primaryMappingReasonI18nKey = resolvePrimaryMappingReasonI18nKey({
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    mappingFailureI18nKey: transcript?.mappingFailureI18nKey ?? null,
+    mappingFailureCompactI18nKey: transcript?.mappingFailureCompactI18nKey ?? null,
+    mappingSuggestionDiagnostics: transcript?.mappingSuggestionDiagnostics ?? null,
+  });
 
   const reviewMode = resolveSpeakerReviewMode({
     speakerMappingStatus: transcript?.speakerMappingStatus,
@@ -1456,7 +1431,10 @@ export function RecordingTranscriptionSection({
                               })}
                             </span>
                             <span className="text-xs text-slate-500">
-                              {formatTurnTime(turn.startSeconds, turn.endSeconds)}
+                              {formatTranscriptTimeRangeUi(
+                                turn.startSeconds,
+                                turn.endSeconds,
+                              )}
                             </span>
                           </div>
                           {manualSpeakerTurns.length > 1 ? (
@@ -1639,10 +1617,19 @@ export function RecordingTranscriptionSection({
 
             {showAutoAppliedNote ? (
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-                <p className="font-semibold">{t("recording.speakerMappingAutoAppliedCompact")}</p>
+                <p className="font-semibold">
+                  {t("recording.mappingStatusDescription.appliedNeedsConfirmation")}
+                </p>
                 <p className="mt-1 text-emerald-200/90">
                   {t("recording.speakerMappingCanChangeLater")}
                 </p>
+              </div>
+            ) : null}
+
+            {transcript?.speakerMappingStatus === "PARTIALLY_MAPPED" &&
+            !showAssistedReviewCard ? (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                {t("recording.mappingStatusDescription.partiallyMapped")}
               </div>
             ) : null}
 
@@ -1656,11 +1643,13 @@ export function RecordingTranscriptionSection({
                     {t("recording.confirmSpeakersTitle")}
                   </h3>
                   <p className="text-xs text-amber-200/90">
-                    {t("recording.confirmSpeakersDescription")}
+                    {mappingStatusDescriptionKey
+                      ? t(mappingStatusDescriptionKey as never)
+                      : t("recording.confirmSpeakersDescription")}
                   </p>
-                  {mappingFailureReasonKey ? (
+                  {primaryMappingReasonI18nKey ? (
                     <p className="text-xs text-amber-200/80">
-                      {t(mappingFailureReasonKey as never)}
+                      {t(primaryMappingReasonI18nKey as never)}
                     </p>
                   ) : null}
                   {speakerSuggestion.globalConfidenceLevel ? (
@@ -1891,11 +1880,13 @@ export function RecordingTranscriptionSection({
                             ? turn.speakerName
                             : `${turn.speakerName} · ${t("recording.mappingRequiredShort")}`}
                         </p>
-                        {turn.mappingApplied && turn.rawSpeakerLabel ? (
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            {`${t("recording.rawSpeakerPrefix")} ${turn.rawSpeakerLabel}`}
-                          </p>
-                        ) : null}
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {formatTranscriptTimeRangeWithDurationUi({
+                            startSeconds: turn.startSeconds,
+                            endSeconds: turn.endSeconds,
+                            durationUnitLabel: t("recording.secondsShort"),
+                          })}
+                        </p>
                         <p className="mt-2 text-sm leading-relaxed text-slate-200">
                           {turn.text}
                         </p>

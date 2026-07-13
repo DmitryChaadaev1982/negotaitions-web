@@ -509,7 +509,7 @@ export const ru: Dictionary = {
     copyDiarizedTranscript: "Скопировать транскрипт с говорящими",
     speakerLabelsNotReturned:
       "Модель транскрибации не вернула метки говорящих.",
-    rawSpeakerPrefix: "raw:",
+    rawSpeakerPrefix: "Техническая метка:",
     mappingRequiredShort: "требуется сопоставление",
     diarizationFailed:
       "Транскрибация выполнена, но разделить говорящих не удалось.",
@@ -553,7 +553,7 @@ export const ru: Dictionary = {
     suggestAutomatically: "Предложить автоматически",
     autoMappingRequiresTimestamps: "Автоматическое сопоставление требует таймкодов транскрипта.",
     autoMappingFutureSessionsOnly:
-      "Автоматическое сопоставление будет доступно для будущих сессий после сбора данных активности микрофона.",
+      "Автосопоставление не применено для этой сессии. Проверьте предложенное соответствие или назначьте говорящих вручную.",
     telemetryMappingReviewRequired:
       "Автосопоставление не выполнено: телеметрия активности микрофона неполная по одному из участников. Назначьте говорящих вручную.",
     mappingFailureTitle: "Почему автосопоставление не выполнено",
@@ -569,7 +569,7 @@ export const ru: Dictionary = {
     preprocessingReason: "Причина предобработки",
     mappingFailureCompact: {
       noAudioActivity: "Требуется ручное сопоставление: нет телеметрии микрофона.",
-      generic: "Требуется ручное сопоставление. Откройте детали причины.",
+      generic: "Требуется ручное сопоставление. Назначьте говорящих вручную.",
     },
     mappingFailureReason: {
       unavailableNoAudioActivity:
@@ -593,6 +593,16 @@ export const ru: Dictionary = {
     confirmSpeakersTitle: "Подтвердите говорящих",
     confirmSpeakersDescription:
       "Система не уверена в автосопоставлении. Проверьте предложенное соответствие.",
+    mappingStatusDescription: {
+      reviewWithSuggestion:
+        "Автосопоставление не применено. Проверьте предложенное соответствие.",
+      reviewWithoutSuggestion:
+        "Недостаточно данных для автосопоставления. Назначьте говорящих вручную.",
+      partiallyMapped:
+        "Сопоставление заполнено частично. Назначьте оставшихся говорящих.",
+      appliedNeedsConfirmation:
+        "Сопоставление применено. Проверьте и подтвердите его.",
+    },
     suggested: "Предложено",
     confidenceHigh: "Высокая",
     confidenceMedium: "Средняя",
@@ -603,6 +613,7 @@ export const ru: Dictionary = {
     speakerMappingSaved: "Сопоставление сохранено",
     speakerMappingCanChangeLater: "Сопоставление можно изменить позже",
     speakerMappingAutoAppliedCompact: "Сопоставление применено автоматически.",
+    secondsShort: "с",
     confidence: "Уверенность",
     weakSuggestion: "Слабое предположение",
     strongSuggestion: "Надёжное предположение",
