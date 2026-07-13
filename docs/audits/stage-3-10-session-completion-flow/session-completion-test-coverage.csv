@@ -1,0 +1,28 @@
+behavior,current_coverage,evidence,required_target_test,priority,risk_if_missing
+Canonical in-room FINISH,partial,tests/e2e/session-lifecycle.spec.ts,Duplicate FINISH idempotency across multi-client and multi-tab,P0,high
+FINISH stop orchestration durability,partial,tests/e2e/event-completion.spec.ts (warning path only),Server-authoritative durable stop retry and visibility flow,P0,high
+Debrief rejoin when room still occupied,partial,tests/e2e/debrief-ai-sharing.spec.ts (in-room only),Rejoin into FINISHED + DEBRIEF_OPEN for authorized roles,P1,high
+Last-disconnect room closure,none,n/a,Atomic idempotent closure under simultaneous disconnect race,P0,high
+Reconnect within grace,no direct test,n/a,Reconnect inside grace retains DEBRIEF_OPEN,P0,high
+Explicit leave immediate connection close,partial,indirect presence tests,Explicit leave bypasses grace and closes connection now,P0,medium
+Refresh/back/direct URL parity,partial,tests/e2e/session-navigation.spec.ts,Matrix test for OPEN/DEBRIEF_OPEN/CLOSED,P0,high
+Event COMPLETED hard-close lobby guard,partial,tests/e2e/event-completion.spec.ts,Direct URL and history cannot restore interactive lobby,P0,high
+Event-linked vs standalone completion parity,partial,mixed specs,Same backend completion flow from all entry points,P1,medium
+Administrative completion from Sessions overview,none,n/a,Action visible only for allowed roles and valid states,P1,high
+Administrative completion from Session detail,none,n/a,Uses canonical backend finish flow,P1,high
+Administrative completion from Event host controls,partial,event host completion exists,Per-session completion action parity,P1,medium
+No-recording session completion path,none,n/a,Completion succeeds without transcript/AI and materials render no-recording state,P1,medium
+Sessions overview AI aggregate status,none,n/a,Single aggregate none/partial/full with no duplicate published rows,P2,medium
+Completed-event Sessions action policy,none,n/a,Hide Open lobby when parent event is COMPLETED,P1,medium
+Abrupt disconnect without follow-up requests,none,n/a,Server-side expiry worker closes abandoned DEBRIEF_OPEN with no client traffic,P0,high
+Expiry worker retry safety,none,n/a,Retrying expiry run is idempotent and does not duplicate closure transitions,P0,high
+Concurrent expiry workers,none,n/a,Two workers running together remain safe and produce one logical closure,P0,high
+Restart before expiry cleanup,none,n/a,Expired rows still cleaned and closure applied after app/server restart,P0,high
+Reconnect racing close commit,none,n/a,Reconnect before commit may keep DEBRIEF_OPEN; after CLOSED commit must redirect,P0,high
+OPEN negotiation false-closure guard,none,n/a,Debrief-expiry logic must not close OPEN negotiation rooms,P0,high
+Event completion with mixed recording states,partial,tests/e2e/event-completion.spec.ts,Mixed active paused processing completed failed and none-recording sessions handled without invalid stop ops,P1,high
+Repeated Event completion idempotency,none,n/a,Second completion request returns already-completed result without duplicate stop ops,P1,high
+Event completion racing facilitator FINISH,none,n/a,Race safe and resolves to one canonical Session completion outcome,P1,high
+Partial per-session stop failure in Event completion,partial,tests/e2e/event-completion.spec.ts (single warning path),Failure remains visible/retryable and does not roll Event back to active,P1,high
+Active-connection predicate exclusions,none,n/a,Expired disconnected superseded revoked deleted unauthorized event-lobby and materials polling are not counted active,P0,high
+Server time authority for expiry,none,n/a,Expiry compares expiresAt with database/server time not browser timestamps,P0,high
