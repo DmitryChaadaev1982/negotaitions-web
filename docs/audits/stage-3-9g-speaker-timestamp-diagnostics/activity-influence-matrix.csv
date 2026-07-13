@@ -1,0 +1,7 @@
+pipeline_stage,uses_activity,activity_source,purpose,can_change_text,can_change_start_end,can_change_speaker_label,can_change_participant_mapping,evidence_file,evidence_function
+SpeechKit request creation,false,,none,false,false,false,false,lib/services/transcription-runner.ts,runRealTranscription
+Raw result parsing,false,,none,false,false,false,false,lib/services/yandex-speechkit-transcription.ts,extractSegmentsFromRecognition
+Segment boundary persistence,false,,none,false,false,false,false,lib/services/transcription-runner.ts,createMany(filteredSegments)
+Pause cutting,false,,pause intervals only,false,false,false,false,lib/services/transcription-runner.ts,buildActiveAudioTimeline
+Speaker mapping suggestion,true,VOX_REMOTE_STREAM_ACTIVITY|VOXIMPLANT_MIC_ACTIVITY,overlap scoring,false,false,false,true,lib/transcription/auto-speaker-mapping.ts,suggestSpeakerMapping
+Final participant assignment persistence,indirect,suggestion output only,facilitator confirmation,false,false,false,true,app/api/sessions/[sessionId]/speaker-mapping/route.ts,POST
