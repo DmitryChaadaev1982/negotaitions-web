@@ -148,6 +148,7 @@ export async function POST(request: Request, context: RouteContext) {
       text: existingTranscript?.text ?? "",
       language: language === "auto" ? null : language,
       startedAt: now,
+      processingMetadata: {},
     },
     update: {
       recordingId: recording.id,
@@ -157,6 +158,7 @@ export async function POST(request: Request, context: RouteContext) {
       startedAt: now,
       completedAt: null,
       errorMessage: null,
+      processingMetadata: {},
     },
   });
 

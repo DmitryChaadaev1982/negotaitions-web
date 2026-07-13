@@ -120,6 +120,17 @@ export function isYandexTranscriptEnhancementEnabled(): boolean {
   return getEnvBoolean("YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED", false);
 }
 
+export function isTranscriptEnhancementAutoRunEnabled(): boolean {
+  return getEnvBoolean("TRANSCRIPT_ENHANCEMENT_AUTO_RUN", false);
+}
+
+export function isTranscriptEnhancementAutoTriggerEnabled(): boolean {
+  return (
+    isYandexTranscriptEnhancementEnabled() &&
+    isTranscriptEnhancementAutoRunEnabled()
+  );
+}
+
 export function isPauseFilterCalibrationEnabled(): boolean {
   return getEnvBoolean("PAUSE_FILTER_CALIBRATION_ENABLED", false);
 }

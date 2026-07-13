@@ -17,6 +17,8 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)
 - `node --import tsx --test lib/services/transcript-enhancement-persistence.test.ts` (targeted enhancement/ingestion persistence safety)
 - `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
+- `node --import tsx --test lib/services/transcript-enhancement-orchestration.test.ts` (idempotency identity hashing invariants)
+- `node --import tsx --test lib/services/admin-env-display.test.ts` (admin env diagnostics include enhancement auto-run flag)
 - `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast preflight; read-only)
 - `npm run test:e2e:tunnel:list` (inventory of `@requires-tunnel` tests)
 - `npm run test:e2e:tunnel` (opt-in tunnel-only suite, excludes `@live-provider`)

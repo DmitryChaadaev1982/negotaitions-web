@@ -3,10 +3,7 @@ import { z } from "zod";
 
 import {
   ParticipantType,
-  Prisma,
   RecordingStatus,
-  TranscriptSource,
-  TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -18,6 +15,11 @@ import {
   runMockTranscription,
   runRealTranscription,
 } from "@/lib/services/transcription-runner";
+import {
+  buildRetranscriptionUpsertData,
+  buildFailedRetranscriptionRestoreData,
+  shouldRestoreArchivedTranscript,
+} from "@/lib/services/retranscription-safety";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
@@ -125,6 +127,7 @@ export async function POST(request: Request, context: RouteContext) {
       speakerMapping: true,
       speakerMappingStatus: true,
       completedAt: true,
+      processingMetadata: true,
       retranscribeCount: true,
       retranscribeHistory: true,
     },
@@ -158,6 +161,7 @@ export async function POST(request: Request, context: RouteContext) {
     speakerMapping: unknown;
     speakerMappingStatus: string | null;
     completedAt: string | null;
+    processingMetadata: unknown;
   };
 
   const existingHistory = Array.isArray(existingTranscript?.retranscribeHistory)
@@ -181,6 +185,7 @@ export async function POST(request: Request, context: RouteContext) {
         speakerMapping: existingTranscript.speakerMapping,
         speakerMappingStatus: existingTranscript.speakerMappingStatus,
         completedAt: existingTranscript.completedAt?.toISOString() ?? null,
+        processingMetadata: existingTranscript.processingMetadata,
       }
     : null;
 
@@ -188,40 +193,33 @@ export async function POST(request: Request, context: RouteContext) {
     ? [...existingHistory, archiveEntry]
     : existingHistory;
 
-  // Archive current segment data by deleting them — segments are re-created after transcription.
-  // History only stores text-level data; segments from previous versions are not preserved.
-  // Segment history could be added later if needed.
+  const upsertData = buildRetranscriptionUpsertData({
+    sessionId,
+    recordingId: recording.id,
+    language,
+    newVersion,
+    history: updatedHistory as object[],
+    now,
+    existingTranscript: existingTranscript
+      ? {
+          status: existingTranscript.status,
+          text: existingTranscript.text,
+          diarizedText: existingTranscript.diarizedText,
+          language: existingTranscript.language,
+          transcriptionModel: existingTranscript.transcriptionModel,
+          hasSpeakerDiarization: existingTranscript.hasSpeakerDiarization,
+          diarizationStatus: existingTranscript.diarizationStatus,
+          speakerMapping: existingTranscript.speakerMapping,
+          speakerMappingStatus: existingTranscript.speakerMappingStatus,
+          completedAt: existingTranscript.completedAt,
+          processingMetadata: existingTranscript.processingMetadata,
+        }
+      : null,
+  });
 
   const transcript = await prisma.transcript.upsert({
     where: { sessionId },
-    create: {
-      sessionId,
-      recordingId: recording.id,
-      source: TranscriptSource.GENERATED,
-      status: TranscriptStatus.QUEUED,
-      text: "",
-      language: language === "auto" ? null : language,
-      retranscribeCount: newVersion,
-      retranscribeHistory: updatedHistory as object[],
-      startedAt: now,
-    },
-    update: {
-      recordingId: recording.id,
-      source: TranscriptSource.GENERATED,
-      status: TranscriptStatus.QUEUED,
-      language: language === "auto" ? null : language,
-      retranscribeCount: newVersion,
-      retranscribeHistory: updatedHistory as object[],
-      speakerMapping: Prisma.JsonNull,
-      speakerMappingStatus: "NOT_REQUIRED",
-      speakerMappingConfirmedAt: null,
-      speakerMappingConfirmedBy: null,
-      diarizationStatus: null,
-      diarizationError: null,
-      errorMessage: null,
-      startedAt: now,
-      completedAt: null,
-    },
+    ...upsertData,
   });
 
   if (isTranscriptionMockMode()) {
@@ -241,21 +239,36 @@ export async function POST(request: Request, context: RouteContext) {
 
   // If the new transcription failed and we had a previous completed transcript,
   // restore its text content so the old transcript is not lost.
-  if (!result.ok && archiveEntry?.status === "COMPLETED" && archiveEntry.text) {
+  const restoreEntry = archiveEntry;
+  if (
+    restoreEntry &&
+    shouldRestoreArchivedTranscript({
+      runFailed: !result.ok,
+      archiveStatus: restoreEntry.status,
+      archiveText: restoreEntry.text,
+    })
+  ) {
     try {
       await prisma.transcript.update({
         where: { id: transcript.id },
         data: {
-          // Keep FAILED status and error, but restore text from previous completed version
-          text: archiveEntry.text,
-          diarizedText: archiveEntry.diarizedText,
-          language: archiveEntry.language,
-          transcriptionModel: archiveEntry.transcriptionModel,
-          hasSpeakerDiarization: archiveEntry.hasSpeakerDiarization,
-          diarizationStatus: archiveEntry.diarizationStatus,
-          speakerMapping: (archiveEntry.speakerMapping as object) ?? Prisma.JsonNull,
-          speakerMappingStatus: archiveEntry.speakerMappingStatus ?? "NOT_REQUIRED",
-          completedAt: archiveEntry.completedAt ? new Date(archiveEntry.completedAt) : null,
+          ...buildFailedRetranscriptionRestoreData({
+            archiveEntry: {
+              status: restoreEntry.status,
+              text: restoreEntry.text ?? transcript.text,
+              diarizedText: restoreEntry.diarizedText,
+              language: restoreEntry.language,
+              transcriptionModel: restoreEntry.transcriptionModel,
+              hasSpeakerDiarization: restoreEntry.hasSpeakerDiarization,
+              diarizationStatus: restoreEntry.diarizationStatus,
+              speakerMapping: restoreEntry.speakerMapping,
+              speakerMappingStatus: restoreEntry.speakerMappingStatus,
+              completedAt: restoreEntry.completedAt
+                ? new Date(restoreEntry.completedAt)
+                : null,
+              processingMetadata: restoreEntry.processingMetadata,
+            },
+          }),
         },
       });
     } catch {

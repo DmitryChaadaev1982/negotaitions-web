@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isTranscriptEnhancementAutoRunEnabled,
+  isTranscriptEnhancementAutoTriggerEnabled,
+  isYandexTranscriptEnhancementEnabled,
   getTranscriptEnhancementChunkMaxChars,
   getTranscriptEnhancementChunkMaxSegments,
   getTranscriptEnhancementOutputMode,
@@ -142,6 +145,76 @@ test("fallback model env is disabled by default and trimmed when set", () => {
       delete process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL;
     } else {
       process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN defaults to false", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  try {
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN parses valid true/false values", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "true";
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), true);
+    process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "false";
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previous;
+    }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN invalid value falls back to false", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "not-a-boolean";
+  try {
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previous;
+    }
+  }
+});
+
+test("auto trigger requires both enhancement flags", () => {
+  const previousAuto = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  const previousEnhancement = process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "true";
+    process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = "false";
+    assert.equal(isYandexTranscriptEnhancementEnabled(), false);
+    assert.equal(isTranscriptEnhancementAutoTriggerEnabled(), false);
+
+    process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = "true";
+    assert.equal(isYandexTranscriptEnhancementEnabled(), true);
+    assert.equal(isTranscriptEnhancementAutoTriggerEnabled(), true);
+  } finally {
+    if (previousAuto === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previousAuto;
+    }
+    if (previousEnhancement === undefined) {
+      delete process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+    } else {
+      process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = previousEnhancement;
     }
   }
 });

@@ -5,17 +5,7 @@ import { ParticipantType } from "@/app/generated/prisma/client";
 import { isYandexTranscriptEnhancementEnabled } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
-import {
-  enhanceTranscriptWithYandexAi,
-  type TranscriptEnhancementOverallStatus,
-  type TranscriptEnhancementInputSegment,
-} from "@/lib/services/yandex-transcript-enhancement";
-import {
-  buildSegmentEnhancementUpdates,
-  resolveEnhancementOriginalText,
-  shouldPersistEnhancedText,
-} from "@/lib/services/transcript-enhancement-persistence";
-import { buildDiarizedText } from "@/lib/transcription/speaker-labels";
+import { executeTranscriptEnhancement } from "@/lib/services/transcript-enhancement-orchestration";
 
 export const runtime = "nodejs";
 
@@ -36,175 +26,6 @@ type ProcessingMetadata = Record<string, unknown>;
 
 function asMetadata(value: unknown): ProcessingMetadata {
   return value && typeof value === "object" ? (value as ProcessingMetadata) : {};
-}
-
-function mapTranscriptSegmentsToEnhancementInput(
-  segments: Array<{
-    orderIndex: number;
-    speakerLabel: string | null;
-    startSeconds: number | null;
-    endSeconds: number | null;
-    mappedParticipantId: string | null;
-    id: string;
-    text: string;
-    qualityText: string | null;
-  }>,
-): TranscriptEnhancementInputSegment[] {
-  return segments.map((segment) => ({
-    index: segment.orderIndex,
-    speakerLabel: segment.speakerLabel ?? "Speaker",
-    startMs:
-      segment.startSeconds !== null ? Math.round(segment.startSeconds * 1000) : null,
-    endMs: segment.endSeconds !== null ? Math.round(segment.endSeconds * 1000) : null,
-    originalText: resolveEnhancementOriginalText(segment),
-    segmentId: segment.id,
-    mappedParticipantId: segment.mappedParticipantId,
-  }));
-}
-
-async function runEnhancementJob(params: {
-  transcriptId: string;
-  initialTranscriptText: string;
-  transcriptDiarizedText: string | null;
-  transcriptMetadata: ProcessingMetadata;
-  transcriptSegments: Array<{
-    id: string;
-    orderIndex: number;
-    speakerLabel: string | null;
-    startSeconds: number | null;
-    endSeconds: number | null;
-    mappedParticipantId: string | null;
-    text: string;
-    qualityText: string | null;
-  }>;
-  enhancementInput: TranscriptEnhancementInputSegment[];
-}): Promise<void> {
-  const {
-    transcriptId,
-    initialTranscriptText,
-    transcriptDiarizedText,
-    transcriptMetadata,
-    transcriptSegments,
-    enhancementInput,
-  } = params;
-  const enhancementStartedAt = Date.now();
-
-  try {
-    const enhanced = await enhanceTranscriptWithYandexAi(enhancementInput);
-    const byIndex = new Map(
-      enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
-    );
-    const overallStatus =
-      enhanced.meta?.overallStatus ??
-      ("COMPLETED" satisfies TranscriptEnhancementOverallStatus);
-    const enhancementFailed = overallStatus === "FAILED";
-    const enhancementCompleted = shouldPersistEnhancedText(overallStatus);
-
-    if (!enhancementCompleted && !enhancementFailed) {
-      throw new Error("Enhancement returned unsupported status.");
-    }
-
-    const updatedSegments = enhancementInput.map((inputSegment) => ({
-      ...inputSegment,
-      cleanedText: byIndex.get(inputSegment.index) ?? inputSegment.originalText,
-    }));
-
-    const enhancedTranscriptText = updatedSegments
-      .map((segment) => segment.cleanedText.trim())
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-
-    const normalizedSegments = transcriptSegments.map((segment) => {
-      const replacementText = byIndex.get(segment.orderIndex);
-      return {
-        speakerLabel: segment.speakerLabel,
-        displaySpeakerLabel: null,
-        startSeconds: segment.startSeconds,
-        endSeconds: segment.endSeconds,
-        text: replacementText?.trim() || segment.text,
-        orderIndex: segment.orderIndex,
-      };
-    });
-    const diarizedText =
-      normalizedSegments.length > 0 ? buildDiarizedText(normalizedSegments) : enhancedTranscriptText;
-    const segmentUpdates = buildSegmentEnhancementUpdates(transcriptSegments, byIndex);
-
-    await prisma.$transaction(async (tx) => {
-      if (enhancementCompleted) {
-        for (const segmentUpdate of segmentUpdates) {
-          await tx.transcriptSegment.update({
-            where: { id: segmentUpdate.id },
-            data: {
-              text: segmentUpdate.text,
-              qualityText: segmentUpdate.qualityText,
-            },
-          });
-        }
-      }
-
-      const fresh = await tx.transcript.findUnique({
-        where: { id: transcriptId },
-        select: { processingMetadata: true },
-      });
-      const nextMetadata = asMetadata(fresh?.processingMetadata ?? transcriptMetadata);
-
-      await tx.transcript.update({
-        where: { id: transcriptId },
-        data: {
-          text:
-            enhancementCompleted
-              ? enhancedTranscriptText || initialTranscriptText
-              : initialTranscriptText,
-          diarizedText:
-            enhancementCompleted
-              ? diarizedText || transcriptDiarizedText
-              : transcriptDiarizedText,
-          processingMetadata: {
-            ...nextMetadata,
-            transcriptEnhancementRecommendation: {
-              ...(asMetadata(nextMetadata.transcriptEnhancementRecommendation) ?? {}),
-              suggested: false,
-              reasons: [],
-            },
-            transcriptEnhancement: {
-              ...(asMetadata(nextMetadata.transcriptEnhancement) ?? {}),
-              status: enhancementCompleted ? overallStatus : "FAILED",
-              completedAt: new Date().toISOString(),
-              durationMs: Date.now() - enhancementStartedAt,
-              error: enhancementFailed
-                ? "All enhancement chunks failed. Original transcript preserved."
-                : null,
-              meta: enhanced.meta ?? null,
-            },
-          },
-        },
-      });
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Transcript enhancement failed.";
-    const fresh = await prisma.transcript.findUnique({
-      where: { id: transcriptId },
-      select: { processingMetadata: true },
-    });
-    const nextMetadata = asMetadata(fresh?.processingMetadata ?? transcriptMetadata);
-    await prisma.transcript.update({
-      where: { id: transcriptId },
-      data: {
-        processingMetadata: {
-          ...nextMetadata,
-          transcriptEnhancement: {
-            ...(asMetadata(nextMetadata.transcriptEnhancement) ?? {}),
-            status: "FAILED",
-            completedAt: new Date().toISOString(),
-            durationMs: Date.now() - enhancementStartedAt,
-            error: message,
-          },
-        },
-      },
-    });
-  }
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -269,78 +90,47 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const enhancementInput =
-    transcript.segments.length > 0
-      ? mapTranscriptSegmentsToEnhancementInput(
-          transcript.segments.map((segment) => ({
-            id: segment.id,
-            orderIndex: segment.orderIndex,
-            speakerLabel: segment.speakerLabel,
-            startSeconds: segment.startSeconds,
-            endSeconds: segment.endSeconds,
-            mappedParticipantId: segment.mappedParticipantId,
-            text: segment.text,
-            qualityText: segment.qualityText,
-          })),
-        )
-      : [
-          {
-            index: 0,
-            speakerLabel: "Speaker",
-            startMs: null,
-            endMs: null,
-            originalText: transcript.text,
-          },
-        ];
-
   const enhancementStatus = asMetadata(metadata.transcriptEnhancement).status;
-  if (enhancementStatus === "IN_PROGRESS") {
+  if (enhancementStatus === "IN_PROGRESS" || enhancementStatus === "RUNNING") {
     return NextResponse.json(
       { error: "Transcript enhancement is already in progress." },
       { status: 409 },
     );
   }
 
-  await prisma.transcript.update({
-    where: { id: transcript.id },
-    data: {
-      processingMetadata: {
-        ...metadata,
-        transcriptEnhancement: {
-          ...(asMetadata(metadata.transcriptEnhancement) ?? {}),
-          status: "IN_PROGRESS",
-          startedAt: new Date().toISOString(),
-          completedAt: null,
-          durationMs: null,
-          error: null,
-          meta: null,
-        },
-      },
-    },
+  const triggerSource =
+    enhancementStatus === "COMPLETED" ||
+    enhancementStatus === "PARTIAL" ||
+    enhancementStatus === "FAILED" ||
+    enhancementStatus === "SKIPPED"
+      ? "manual_reenhancement"
+      : "manual";
+
+  const runResult = await executeTranscriptEnhancement({
+    transcriptId: transcript.id,
+    triggerSource,
+    forceReenhancement: triggerSource === "manual_reenhancement",
+    runInBackground: true,
   });
 
-  void runEnhancementJob({
-    transcriptId: transcript.id,
-    initialTranscriptText: transcript.text,
-    transcriptDiarizedText: transcript.diarizedText,
-    transcriptMetadata: metadata,
-    transcriptSegments: transcript.segments.map((segment) => ({
-      id: segment.id,
-      orderIndex: segment.orderIndex,
-      speakerLabel: segment.speakerLabel,
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-      mappedParticipantId: segment.mappedParticipantId,
-      text: segment.text,
-      qualityText: segment.qualityText,
-    })),
-    enhancementInput,
-  });
+  if (runResult.outcome === "already_running") {
+    return NextResponse.json(
+      { error: "Transcript enhancement is already in progress." },
+      { status: 409 },
+    );
+  }
+
+  if (runResult.outcome === "skipped") {
+    return NextResponse.json(
+      { error: "Transcript enhancement run was skipped." },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json(
     {
       transcriptId: transcript.id,
-      enhancementStatus: "IN_PROGRESS",
+      enhancementStatus: "RUNNING",
       queued: true,
     },
     { status: 202 },

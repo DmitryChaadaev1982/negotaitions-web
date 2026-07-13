@@ -5,8 +5,10 @@
 1. Recording state transitions to complete with persisted storage key.
 2. Transcription run downloads source audio from object storage.
 3. Audio is evaluated for compatibility and optionally transcoded/compressed.
-4. Selected transcription provider runs diarization/transcription.
-5. Transcript and segments are stored with processing metadata.
+4. Active-audio (pause-cut) is built and sent to Yandex SpeechKit (`source_audio_cut`).
+5. Raw transcript and raw transcript segments are durably persisted.
+6. Optional automatic transcript enhancement runs (DeepSeek JSON Schema mode).
+7. Transcript and segments are finalized for speaker mapping and AI analysis.
 
 ## Pause/Resume Recording Continuity (Stages 3.4.1-3.4.4)
 
@@ -39,6 +41,8 @@
   - ffmpeg cuts pause windows and concatenates active parts into `active-audio.wav`;
   - SpeechKit receives active-only audio.
 - In `source_audio_cut`, transcript interval filtering is bypassed by design (no double filtering).
+- Active-audio remains the production ASR input; full-length/original audio is not used
+  by default in this pipeline.
 - Transcript metadata stores `pauseProcessing` diagnostics:
   - mode, source/active durations, pause/active interval counts,
   - removed pause duration,
@@ -160,6 +164,31 @@
   - no long polling in schema mode;
   - statuses remain `COMPLETED`/`PARTIAL`/`FAILED`/`SKIPPED`;
   - `FAILED` means no transcript text mutation.
+
+## Automatic Transcript Enhancement (Stage 3.9F)
+
+- Auto-run is controlled by `TRANSCRIPT_ENHANCEMENT_AUTO_RUN` (default `false`).
+- Automatic trigger is enabled only when both flags are true:
+  - `YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED=true`
+  - `TRANSCRIPT_ENHANCEMENT_AUTO_RUN=true`
+- Trigger points:
+  - successful initial Yandex transcription;
+  - successful Yandex manual re-transcription.
+- Execution order inside transcription runner:
+  1. SpeechKit transcription completes;
+  2. raw `Transcript` + `TranscriptSegment` persistence completes;
+  3. transcript status is already usable (`COMPLETED`);
+  4. enhancement runs as a non-fatal post-step;
+  5. speaker mapping auto-suggestion continues independently.
+- Safety invariants:
+  - `qualityText` remains canonical raw SpeechKit text;
+  - `text` changes only after validated enhancement persistence (`COMPLETED`/`PARTIAL`);
+  - enhancement never mutates timestamps, speaker labels, segment ordering, or mapping fields;
+  - enhancement failure never downgrades successful transcription usability.
+- Idempotency identity includes transcript id + canonical raw hash + model + output mode +
+  schema version + prompt version.
+- `processingMetadata.transcriptEnhancement` stores trigger source, idempotency decision,
+  timing, chunk telemetry, and skip/failure metadata without transcript text payloads.
 
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
