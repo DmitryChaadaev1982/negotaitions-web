@@ -1,0 +1,12 @@
+from_state,event,to_state,mapping_persisted,participant_names_visible,manual_controls_visible,warning_visible,message_key,evidence_file,evidence_function
+NOT_REQUIRED,transcription_with_diarization,REQUIRED,false,false,true,true,recording.speakerMappingRequired,lib/services/transcription-runner.ts,runRealTranscription
+REQUIRED,auto_mapping_safe_complete,AUTO_SUGGESTED,true,true,true,false,recording.speakerMappingAutoAppliedCompact,lib/transcription/auto-trigger-mapping.ts,autoTriggerSpeakerMappingAfterTranscription
+REQUIRED,auto_mapping_unavailable_or_low_confidence,REQUIRED,false,false,true,true,recording.mappingFailureReason.*,lib/transcription/auto-trigger-mapping.ts,autoTriggerSpeakerMappingAfterTranscription
+REQUIRED,auto_mapping_requires_manual_review,NEEDS_REVIEW,false,false,true,true,recording.mappingFailureReason.*,lib/transcription/auto-trigger-mapping.ts,autoTriggerSpeakerMappingAfterTranscription
+NEEDS_REVIEW,manual_partial_save,NEEDS_REVIEW,true,false,true,true,recording.confirmSpeakersTitle,lib/transcription/speaker-mapping-state.ts,deriveSpeakerMappingStatus
+REQUIRED,manual_partial_save,PARTIALLY_MAPPED,true,false,true,true,recording.saveSpeakerMapping,lib/transcription/speaker-mapping-state.ts,deriveSpeakerMappingStatus
+PARTIALLY_MAPPED,manual_complete_save,AUTO_SUGGESTED,true,true,true,false,recording.speakerMappingSaved,lib/transcription/speaker-mapping-state.ts,deriveSpeakerMappingStatus
+AUTO_SUGGESTED,manual_confirm_complete,CONFIRMED,true,true,true,false,recording.speakerMappingConfirmed,app/api/sessions/[sessionId]/speaker-mapping/route.ts,POST
+REQUIRED,manual_confirm_incomplete,REQUIRED,false,false,true,true,error:Assign all detected speakers...,app/api/sessions/[sessionId]/speaker-mapping/route.ts,POST
+ANY,manual_speaker_attribution_save,CONFIRMED,true,true,true,false,recording.transcriptSaved,app/api/sessions/[sessionId]/manual-speaker-attribution/route.ts,POST
+CONFIRMED,retranscription_success,new_transcript_required_or_not_required,false,false,true,true,recording.rerunTranscription,app/api/sessions/[sessionId]/materials/retranscribe/route.ts,POST

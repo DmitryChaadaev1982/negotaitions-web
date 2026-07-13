@@ -1,0 +1,3 @@
+sample,technical_label_count,segment_count,mapped_segment_count,fully_mapped_labels,partially_mapped_labels,unmapped_labels,distinct_participant_assignments,mapping_status,mapping_source,manual_confirmation,activity_source_count,telemetry_complete,warnings_count,partial_mapping_observed
+primary,2,22,22,2,0,0,2,CONFIRMED,CLUSTER_MAPPING,true,2,true,3,false
+secondary,2,3,0,0,0,2,0,REQUIRED,PROVIDER_DIARIZATION,false,1,false,10,false
