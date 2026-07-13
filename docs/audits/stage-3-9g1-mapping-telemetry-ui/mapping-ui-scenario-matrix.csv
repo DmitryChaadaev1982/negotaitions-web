@@ -1,0 +1,21 @@
+scenario,visible_status,visible_warning,participant_names_shown,technical_labels_shown,selectors_shown,controls_enabled,mapping_persisted,transcript_readable,warning_accurate
+1 no transcription yet,transcription absent/no transcript yet,none,no,no,no,transcribe actions by role,no,no,n/a
+2 transcription running,queued/downloading/transcribing,processing indicators,no,no,no,stop/retry depending route,no,no,n/a
+3 transcript completed mapping not started,speakerMappingStatus REQUIRED,mapping required/failure details,no,yes,yes for facilitator,save mapping true,not yet (mapping may be JsonNull),yes,usually
+4 telemetry missing,REQUIRED with unavailable reason,no audio activity failure,no,yes,yes,manual mapping controls,true only after manual save,yes,yes
+5 telemetry for one participant,NEEDS_REVIEW or REQUIRED,coverage/imbalance warning,no,yes,yes,manual mapping controls,true only after manual save,yes,yes
+6 candidate exists threshold not met,REQUIRED or NEEDS_REVIEW,low margin/quality warning,suggested may prefill but names not rendered in transcript rows,yes,yes,save/confirm,diagnostics only (no active auto map),yes,partly (message can be generic)
+7 automatic mapping succeeds,AUTO_SUGGESTED,auto-applied note,yes,raw label optionally shown as raw prefix,no review card selectors by default,can still edit later,true,yes,yes
+8 automatic mapping fails or REQUIRED,REQUIRED or NEEDS_REVIEW,failure reason block,no,yes,yes,manual actions enabled,not auto-applied,yes,mostly
+9 one label inferred another not,REQUIRED/NEEDS_REVIEW,manual review warning,suggested draft may contain one value,yes,yes,manual save/confirm,partial only after manual save,yes,yes
+10 partial mapping in DB,PARTIALLY_MAPPED,mapping required remains,for mapped rows may still not display names unless status displayable,yes,yes,save/confirm,true (partial),yes,yes
+11 facilitator selected speaker_1 only,PARTIALLY_MAPPED after save,mapping required remains,no global display switch,yes,yes,confirm blocked until all assigned,true (partial),yes,yes
+12 selected both not confirmed,AUTO_SUGGESTED on save,may show saved message not confirmed badge,yes when status displayable,yes,yes or hidden by mode,confirm still possible,true,yes,can look close to confirmed
+13 manual mapping confirmed,CONFIRMED,no mapping-required warning,yes,yes,typically hidden/locked UI,true,true,yes,yes
+14 failed automatic then manually confirmed,CONFIRMED,previous failure block not rendered by state,yes,yes,no review card,true,true,yes,yes
+15 retranscription running with previous mapping,queued/retranscribing,rerun confirmation/progress,old transcript may remain until replacement,old labels until new transcript,no new mapping edits if locked,limited,true from old until replacement,yes,n/a
+16 retranscription completed new labels,new REQUIRED/NOT_REQUIRED depending diarization,mapping may be required again,depends on new state,yes if diarization,yes for facilitator,save/confirm,true after user action,yes,yes
+17 DeepSeek enhancement running,enhancement IN_PROGRESS,enhancement status message,mapping presentation unchanged,unchanged,unchanged,mapping controls still role/state driven,unchanged,yes,yes
+18 DeepSeek enhancement completed,enhancement COMPLETED,none or completion notice,unchanged,unchanged,unchanged,unchanged,unchanged,yes,yes
+19 page refresh after manual confirmation,CONFIRMED,none,yes,yes,no review card,normal view,true,yes,yes
+20 standalone vs event session,same mapping states,none specific to mode,same,same,same,same,same,same,yes

@@ -1,0 +1,17 @@
+behavior,covered,test_file,test_name,coverage_type,missing_case,risk
+telemetry source authorization,true,lib/telemetry/audio-activity-authorization.test.ts,mic self-report + remote facilitator gating,unit,multi-facilitator duplicate rows,medium
+activity interval clamping,true,lib/telemetry/audio-activity-event-processor.test.ts,speaking_interval clamped to recording window,unit,clock skew stress,low
+active timeline normalization,true,lib/telemetry/active-timeline-normalization.test.ts,split/exclude around pause gaps,unit,very dense overlap stress,low
+source selection fallback,true,lib/transcription/speaker-mapping-telemetry-source-selection.test.ts,remote preferred then local fallback or manual review,unit,tri-source future extensions,low
+mapping safety many-to-one,true,lib/transcription/mapping-safety.test.ts,reject many-to-one in multi participant session,unit,manual override analytics messaging,medium
+auto apply gate thresholds,true,lib/transcription/mapping-decision.test.ts,weak margin and count mismatch blocks,unit,combined edge case matrix completeness,medium
+global margin override,true,lib/transcription/auto-trigger-mapping.test.ts,2x2 override strict constraints,unit,non-2x2 future behavior,low
+status derivation,true,lib/transcription/speaker-mapping-state.test.ts,confirm requires full mapping and prefill precedence,unit,FAILED status writer path,low
+assisted UI mode,true,lib/transcription/assisted-speaker-mapping.test.ts,review card vs auto-applied note,unit,copy-level assertions,medium
+draft sync dirty protection,true,lib/transcription/speaker-mapping-draft-sync.test.ts,preserve dirty draft on same transcript,unit,concurrent multi-tab edits,low
+cluster propagation with lock,true,tests/e2e/diarization-speaker-mapping.spec.ts,propagate by label and honor mappingLocked unless forced,e2e,large transcript performance,medium
+ai blocked until mapping ready,true,tests/e2e/session-materials-processing.spec.ts,REQUIRED blocks AI and confirmed unlocks,e2e,observer-specific copy,low
+automatic suggestion availability,true,tests/e2e/session-materials-processing.spec.ts,no audio activity unavailable + mock suggestion,e2e,real telemetry noise scenarios,medium
+retranscription history/restore,true,tests/e2e/diarization-speaker-mapping.spec.ts,retranscribe archives and restore-on-failure,e2e,mapping lock retention across reruns,medium
+deepseek compatibility,partial,tests/e2e/two-pass-transcription.spec.ts,mapping flow still works on enhanced transcript,e2e,direct assertion mapping fields unchanged during enhancement,medium
+mapping RU/EN message rendering,partial,none,none,ui,no full dictionary key matrix assertions,medium
