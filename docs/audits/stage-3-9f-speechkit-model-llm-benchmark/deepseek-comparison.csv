@@ -1,0 +1,2 @@
+run_id,model,output_mode,status,elapsed_ms,segment_count,changed_segments,unchanged_segments,raw_words,enhanced_words,raw_chars,enhanced_chars,raw_sha256,enhanced_sha256,anchor_raw_has40,anchor_enhanced_has40,schema_valid,retries,fallback_chunks
+D01,deepseek-v4-flash,json_schema,COMPLETED,5557,22,16,6,229,223,1321,1341,b67fcd2f550f82455e621f40b78b1592931b3000c44da78db1800f60232d2566,7098fb1e888d012668586a54d1b5b4f026d7303a27922f357db067c003c788d2,true,false,true,0,0
