@@ -5,6 +5,9 @@ import { expect, test } from "@playwright/test";
 import {
   cleanupE2eData,
   createE2eCase,
+  createE2eEvent,
+  getEventParticipants,
+  participantByName,
   getRecordingBySession,
   getRecordingStopOperations,
   getSessionNegotiationState,
@@ -76,7 +79,112 @@ async function createSessionFixture() {
   return {
     sessionId,
     facilitatorParticipantId,
+    facilitatorUserId,
     facilitatorCookie: await createUserSession(facilitatorUserId),
+  };
+}
+
+async function createEventLinkedSessionFixture() {
+  const kase = await createE2eCase();
+  const event = await createE2eEvent({
+    withParticipants: true,
+    title: `E2E Complete Auth Event ${Date.now()}`,
+  });
+
+  const eventHostUserId = await createActiveUser(
+    `event-host-${Date.now()}@test.invalid`,
+    "Event Host",
+  );
+  const eventFacilitatorOwnerUserId = await createActiveUser(
+    `event-fac-owner-${Date.now()}@test.invalid`,
+    "Event Facilitator Owner",
+  );
+  const assignedSessionFacilitatorUserId = await createActiveUser(
+    `event-session-fac-${Date.now()}@test.invalid`,
+    "Assigned Session Facilitator",
+  );
+  const eventParticipantUserId = await createActiveUser(
+    `event-participant-${Date.now()}@test.invalid`,
+    "Event Participant",
+  );
+  const sessionObserverUserId = await createActiveUser(
+    `event-observer-${Date.now()}@test.invalid`,
+    "Event Observer",
+  );
+
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "hostUserId" = $2,
+         "facilitatorUserId" = $3,
+         "visibility" = 'PUBLIC',
+         "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [event.id, eventHostUserId, eventFacilitatorOwnerUserId],
+  );
+
+  const eventParticipants = await getEventParticipants(event.id);
+  const dmitry = participantByName(eventParticipants, "Dmitry");
+  const igor = participantByName(eventParticipants, "Igor");
+  const serg = participantByName(eventParticipants, "Serg");
+  await query(`UPDATE "EventParticipant" SET "userId" = $2 WHERE "id" = $1`, [
+    dmitry.id,
+    eventHostUserId,
+  ]);
+  await query(`UPDATE "EventParticipant" SET "userId" = $2 WHERE "id" = $1`, [
+    igor.id,
+    eventParticipantUserId,
+  ]);
+  await query(`UPDATE "EventParticipant" SET "userId" = $2 WHERE "id" = $1`, [
+    serg.id,
+    sessionObserverUserId,
+  ]);
+
+  const sessionId = `e2e-event-finish-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  await query(
+    `INSERT INTO "Session"
+      ("id", "negotiationCaseId", "facilitatorId", "eventId", "title", "snapshotCaseTitle",
+       "snapshotBusinessContext", "snapshotPublicInstructions", "snapshotCaseLanguage",
+       "preparationDurationSeconds", "durationSeconds", "status", "updatedAt")
+    VALUES ($1, $2, $3, $4, 'E2E Event Complete Session', $5,
+       'E2E canonical context', 'E2E canonical instructions', 'EN', 300, 900, 'READY', NOW())`,
+    [sessionId, kase.id, assignedSessionFacilitatorUserId, event.id, kase.title],
+  );
+
+  await query(
+    `INSERT INTO "SessionParticipant"
+      ("id","sessionId","userId","eventParticipantId","type","joinToken","displayName","joinedAt","lastSeenAt","updatedAt")
+     VALUES
+      ($1,$4,$5,$6,'FACILITATOR',$7,'Assigned Session Facilitator',NOW(),NOW(),NOW()),
+      ($2,$4,$8,$9,'PARTICIPANT',$10,'Event Participant',NOW(),NOW(),NOW()),
+      ($3,$4,$11,$12,'OBSERVER',$13,'Event Observer',NOW(),NOW(),NOW())`,
+    [
+      id("sp"),
+      id("sp"),
+      id("sp"),
+      sessionId,
+      assignedSessionFacilitatorUserId,
+      dmitry.id,
+      `join-fac-${Date.now()}`,
+      eventParticipantUserId,
+      igor.id,
+      `join-part-${Date.now()}`,
+      sessionObserverUserId,
+      serg.id,
+      `join-obs-${Date.now()}`,
+    ],
+  );
+
+  return {
+    sessionId,
+    eventId: event.id,
+    hostToken: event.hostToken,
+    users: {
+      eventHostUserId,
+      eventFacilitatorOwnerUserId,
+      assignedSessionFacilitatorUserId,
+      eventParticipantUserId,
+      sessionObserverUserId,
+    },
   };
 }
 
@@ -216,5 +324,227 @@ test.describe("Canonical session finish", () => {
 
     const recording = await getRecordingBySession(fixture.sessionId);
     expect(["STOPPED", "COMPLETED"]).toContain(recording?.status);
+  });
+
+  test("administrative complete endpoint is idempotent for manager", async ({
+    request,
+  }) => {
+    const fixture = await createSessionFixture();
+    const headers = cookieHeader(fixture.facilitatorCookie);
+
+    const first = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+      headers: { ...headers, "Content-Type": "application/json" },
+      data: {},
+    });
+    expect(first.ok()).toBeTruthy();
+    const firstPayload = (await first.json()) as {
+      completed: boolean;
+      alreadyCompleted: boolean;
+      negotiationState: string;
+    };
+    expect(firstPayload.completed).toBe(true);
+    expect(firstPayload.alreadyCompleted).toBe(false);
+    expect(firstPayload.negotiationState).toBe("FINISHED");
+
+    const second = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+      headers: { ...headers, "Content-Type": "application/json" },
+      data: {},
+    });
+    expect(second.ok()).toBeTruthy();
+    const secondPayload = (await second.json()) as {
+      completed: boolean;
+      alreadyCompleted: boolean;
+      negotiationState: string;
+    };
+    expect(secondPayload.completed).toBe(false);
+    expect(secondPayload.alreadyCompleted).toBe(true);
+    expect(secondPayload.negotiationState).toBe("FINISHED");
+  });
+
+  test("administrative complete endpoint denies participant", async ({
+    request,
+  }) => {
+    const fixture = await createSessionFixture();
+    const participantUserId = await createActiveUser(
+      `finish-participant-${Date.now()}@test.invalid`,
+      "Finish Participant",
+    );
+    const participantCookie = await createUserSession(participantUserId);
+    await query(
+      `INSERT INTO "SessionParticipant"
+        ("id","sessionId","userId","type","joinToken","displayName","joinedAt","lastSeenAt","updatedAt")
+       VALUES ($1,$2,$3,'PARTICIPANT',$4,'Finish Participant',NOW(),NOW(),NOW())`,
+      [id("sp"), fixture.sessionId, participantUserId, `finish-player-${Date.now()}`],
+    );
+
+    const response = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+      headers: {
+        ...cookieHeader(participantCookie),
+        "Content-Type": "application/json",
+      },
+      data: {},
+    });
+
+    expect(response.status()).toBe(403);
+  });
+
+  test("administrative complete endpoint denies observer [ST310-SESSION-007]", async ({
+    request,
+  }) => {
+    const fixture = await createSessionFixture();
+    const observerUserId = await createActiveUser(
+      `finish-observer-${Date.now()}@test.invalid`,
+      "Finish Observer",
+    );
+    const observerCookie = await createUserSession(observerUserId);
+    await query(
+      `INSERT INTO "SessionParticipant"
+        ("id","sessionId","userId","type","joinToken","displayName","joinedAt","lastSeenAt","updatedAt")
+       VALUES ($1,$2,$3,'OBSERVER',$4,'Finish Observer',NOW(),NOW(),NOW())`,
+      [id("sp"), fixture.sessionId, observerUserId, `finish-observer-${Date.now()}`],
+    );
+
+    const response = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+      headers: {
+        ...cookieHeader(observerCookie),
+        "Content-Type": "application/json",
+      },
+      data: {},
+    });
+
+    expect(response.status()).toBe(403);
+  });
+
+  test("administrative complete authorization matrix for event sessions and host tokens", async ({
+    request,
+  }) => {
+    const fixture = await createEventLinkedSessionFixture();
+    const nonMemberUserId = await createActiveUser(
+      `finish-nonmember-${Date.now()}@test.invalid`,
+      "Finish NonMember",
+    );
+    const adminUserId = id("admin");
+    await query(
+      `INSERT INTO "User"
+         ("id","email","passwordHash","name","globalRole","status","updatedAt")
+       VALUES ($1,$2,'hash','Finish Admin','ADMIN','ACTIVE',NOW())`,
+      [adminUserId, `finish-admin-${Date.now()}@test.invalid`],
+    );
+
+    const eventHostCookie = await createUserSession(fixture.users.eventHostUserId);
+    const eventFacilitatorOwnerCookie = await createUserSession(
+      fixture.users.eventFacilitatorOwnerUserId,
+    );
+    const sessionFacilitatorCookie = await createUserSession(
+      fixture.users.assignedSessionFacilitatorUserId,
+    );
+    const participantCookie = await createUserSession(fixture.users.eventParticipantUserId);
+    const observerCookie = await createUserSession(fixture.users.sessionObserverUserId);
+    const nonMemberCookie = await createUserSession(nonMemberUserId);
+    const adminCookie = await createUserSession(adminUserId);
+
+    // wrong-event host token must not authorize.
+    const anotherEvent = await createE2eEvent({ title: `Wrong Host Token ${Date.now()}` });
+
+    // Participant/observer deny.
+    {
+      const participantResponse = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: {
+            ...cookieHeader(participantCookie),
+            "Content-Type": "application/json",
+          },
+          data: {},
+        },
+      );
+      expect(participantResponse.status()).toBe(403);
+
+      const observerResponse = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: {
+            ...cookieHeader(observerCookie),
+            "Content-Type": "application/json",
+          },
+          data: {},
+        },
+      );
+      expect(observerResponse.status()).toBe(403);
+    }
+
+    // Non-member is non-disclosing.
+    {
+      const nonMemberResponse = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: {
+            ...cookieHeader(nonMemberCookie),
+            "Content-Type": "application/json",
+          },
+          data: {},
+        },
+      );
+      expect(nonMemberResponse.status()).toBe(404);
+    }
+
+    // Host/facilitator/admin/assigned facilitator are authorized.
+    for (const token of [
+      adminCookie,
+      eventHostCookie,
+      eventFacilitatorOwnerCookie,
+      sessionFacilitatorCookie,
+    ]) {
+      const response = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+        headers: {
+          ...cookieHeader(token),
+          "Content-Type": "application/json",
+        },
+        data: {},
+      });
+      expect(response.ok()).toBeTruthy();
+    }
+
+    // Host-token flow: valid, invalid, wrong-event
+    {
+      const validHostToken = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: { "Content-Type": "application/json" },
+          data: { hostToken: fixture.hostToken },
+        },
+      );
+      expect(validHostToken.ok()).toBeTruthy();
+
+      const invalidHostToken = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: { "Content-Type": "application/json" },
+          data: { hostToken: "invalid-token" },
+        },
+      );
+      expect(invalidHostToken.status()).toBe(404);
+
+      const wrongEventHostToken = await request.post(
+        `/api/sessions/${fixture.sessionId}/complete`,
+        {
+          headers: { "Content-Type": "application/json" },
+          data: { hostToken: anotherEvent.hostToken },
+        },
+      );
+      expect(wrongEventHostToken.status()).toBe(404);
+    }
+  });
+
+  test("host-token cannot complete standalone sessions", async ({ request }) => {
+    const fixture = await createSessionFixture();
+    const event = await createE2eEvent({ title: `Host token standalone deny ${Date.now()}` });
+
+    const response = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
+      headers: { "Content-Type": "application/json" },
+      data: { hostToken: event.hostToken },
+    });
+
+    expect(response.status()).toBe(404);
   });
 });

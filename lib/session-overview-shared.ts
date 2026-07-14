@@ -40,6 +40,7 @@ export type SessionListItem = {
   transcriptStage: string | null;
   speakerMappingStage: string | null;
   aiStage: string | null;
+  aiPublicationStatus: "none" | "partial" | "full" | null;
   aiVisibility: string;
   roomUrl: string;
   materialsUrl: string;

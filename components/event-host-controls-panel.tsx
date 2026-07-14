@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
+import { CompleteSessionButton } from "@/components/complete-session-button";
 import { EventCaseLibrary } from "@/components/event-case-library";
 import {
   GradientButton,
@@ -11,7 +12,6 @@ import {
 } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import {
-  alertErrorClassName,
   inputClassName,
   labelClassName,
 } from "@/components/ui/form-styles";
@@ -45,6 +45,7 @@ type EventHostControlsPanelProps = {
     assignmentDraft?: EventAssignmentDraft;
   }) => void;
   createSessionError: string | null;
+  hostToken?: string;
 };
 
 export function EventHostControlsPanel({
@@ -58,6 +59,7 @@ export function EventHostControlsPanel({
   onUpdateHost,
   onCreateSession,
   createSessionError,
+  hostToken,
 }: EventHostControlsPanelProps) {
   const { t } = useI18n();
   const selectedCase = state.selectedCase;
@@ -65,8 +67,6 @@ export function EventHostControlsPanel({
   const [libraryMode, setLibraryMode] = useState(!selectedCase);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
-  const [finishingSessionId, setFinishingSessionId] = useState<string | null>(null);
   const [roomLabelDraft, setRoomLabelDraft] = useState("");
   const [isEditingRoomLabel, setIsEditingRoomLabel] = useState(false);
   const showLibrary = !selectedCase || libraryMode;
@@ -243,53 +243,6 @@ export function EventHostControlsPanel({
     [state.sessions, t],
   );
 
-  const finishSession = useCallback(
-    async (sessionId: string) => {
-      setSessionActionError(null);
-      const session = state.sessions.find((item) => item.id === sessionId);
-      const roomUrl = session?.roomUrl;
-      if (!roomUrl) {
-        setSessionActionError(`${t("common.error")}: ${t("events.openRoom")}`);
-        return;
-      }
-
-      const params = new URLSearchParams(roomUrl.split("?")[1] ?? "");
-      const joinToken = params.get("joinToken");
-      const facilitatorParticipantId =
-        session?.participants.find(
-          (participant) => participant.participantType === "FACILITATOR",
-        )?.id ?? null;
-      if (!joinToken && !facilitatorParticipantId) {
-        setSessionActionError(`${t("common.error")}: ${t("room.finishEarly")}`);
-        return;
-      }
-
-      setFinishingSessionId(sessionId);
-      try {
-        const response = await fetch(`/api/sessions/${sessionId}/control`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "FINISH",
-            ...(facilitatorParticipantId
-              ? { participantId: facilitatorParticipantId }
-              : { joinToken }),
-          }),
-        });
-        if (!response.ok) {
-          setSessionActionError(`${t("common.error")}: ${t("room.finishEarly")}`);
-          return;
-        }
-        await onUpdateHost({});
-      } finally {
-        setFinishingSessionId((current) =>
-          current === sessionId ? null : current,
-        );
-      }
-    },
-    [onUpdateHost, state.sessions, t],
-  );
-
   return (
     <div data-testid="host-controls-panel">
     <GlassCard elevated>
@@ -380,9 +333,6 @@ export function EventHostControlsPanel({
           </div>
           {copyMessage ? (
             <p className="text-xs text-emerald-400">{copyMessage}</p>
-          ) : null}
-          {sessionActionError ? (
-            <div className={alertErrorClassName}>{sessionActionError}</div>
           ) : null}
           {state.sessions.length === 0 ? (
             <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
@@ -475,18 +425,16 @@ export function EventHostControlsPanel({
                     >
                       {t("events.copyRoomLinks")}
                     </SecondaryButton>
-                    {session.isActive && session.roomUrl ? (
-                      <button
-                        type="button"
-                        data-testid="finish-session-button"
-                        className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20"
-                        disabled={finishingSessionId === session.id}
-                        onClick={() => void finishSession(session.id)}
-                      >
-                        {finishingSessionId === session.id
-                          ? t("common.loading")
-                          : t("room.finishEarly")}
-                      </button>
+                    {session.isActive ? (
+                      <CompleteSessionButton
+                        sessionId={session.id}
+                        testId="finish-session-button"
+                        className="rounded-lg px-2 py-1 text-xs"
+                        requestPayload={hostToken ? { hostToken } : undefined}
+                        onCompleted={() => {
+                          void onUpdateHost({});
+                        }}
+                      />
                     ) : null}
                   </div>
                 </div>

@@ -245,6 +245,14 @@ export const ru: Dictionary = {
     deleteConfirmBody:
       "Удалить эту сессию? Она будет скрыта из списка сессий. Ссылки участников и данные сессии больше не будут использоваться для тренировки.",
     deleteConfirmButton: "Удалить сессию",
+    completeSession: "Завершить сессию",
+    sessionCompleted: "Сессия завершена",
+    alreadyCompleted: "Сессия уже завершена.",
+    completeSessionConfirmTitle: "Завершить сессию?",
+    completeSessionConfirmBody:
+      "Переговоры будут завершены. Если участники ещё в комнате, они смогут остаться в дебрифинге до закрытия комнаты.",
+    completeSessionConfirm: "Завершить сессию",
+    completeSessionFailed: "Не удалось завершить сессию.",
     deletedBadge: "Удалённая сессия",
     deletedSessionReadOnly:
       "Эта сессия удалена. Детали доступны только для просмотра, действия для тренировки отключены.",
@@ -276,6 +284,8 @@ export const ru: Dictionary = {
     aiStatusReady: "Готов",
     aiStatusFailed: "Ошибка",
     aiStatusShared: "Опубликован",
+    aiStatusPublished: "AI-отчёт опубликован",
+    aiStatusPartiallyPublished: "AI-отчёт опубликован частично",
     runAiAnalysis: "Запустить AI-разбор",
     openAiReport: "Открыть отчёт",
     shareAnalysis: "Опубликовать",

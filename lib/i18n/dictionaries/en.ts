@@ -241,6 +241,14 @@ export const en = {
     deleteConfirmBody:
       "Delete this session? It will be hidden from session lists. Participants' join links and session data may no longer be used for training.",
     deleteConfirmButton: "Delete session",
+    completeSession: "Complete session",
+    sessionCompleted: "Session completed",
+    alreadyCompleted: "Session is already completed.",
+    completeSessionConfirmTitle: "Complete session?",
+    completeSessionConfirmBody:
+      "Negotiation will be finished. If participants are still connected, they can remain in debrief until the room is closed.",
+    completeSessionConfirm: "Complete session",
+    completeSessionFailed: "Unable to complete the session.",
     deletedBadge: "Deleted session",
     deletedSessionReadOnly:
       "This session has been deleted. Details are read-only and training actions are disabled.",
@@ -272,6 +280,8 @@ export const en = {
     aiStatusReady: "Ready",
     aiStatusFailed: "Failed",
     aiStatusShared: "Shared",
+    aiStatusPublished: "AI report published",
+    aiStatusPartiallyPublished: "AI report partially published",
     runAiAnalysis: "Run AI analysis",
     openAiReport: "Open report",
     shareAnalysis: "Share",

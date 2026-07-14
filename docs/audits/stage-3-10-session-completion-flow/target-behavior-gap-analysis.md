@@ -56,17 +56,18 @@
 
 ## 7) Completed Event lobby access leakage
 
-- Current evidence:
-  - `components/sessions-list-view.tsx` may show `Open lobby` without explicit completed-event predicate.
-- Target requirement:
-  - hide action for completed events and enforce route/server completed-event guard.
+- Checkpoint C status: **resolved in touched management surfaces**.
+  - `components/sessions-list-view.tsx` now hides `Open lobby` when `eventStatus=COMPLETED`.
+  - account materials navigation now hides completed-event lobby action and keeps materials access.
+  - server/route guards from Checkpoint B continue to protect stale direct links.
 
 ## 8) AI publication status aggregation
 
-- Current evidence:
-  - `components/sessions-list-view.tsx` can render duplicate shared publication labels.
-- Target requirement:
-  - one aggregate publication status per session with independent speaker-mapping state.
+- Checkpoint C status: **resolved and hardened**.
+  - duplicate publication badges removed.
+  - reusable aggregate helper added (`lib/ai-publication-aggregate.ts`) and applied in session overview stats pipeline.
+  - identity matching now prioritizes stable recipient IDs and rejects ambiguous legacy name-only matches.
+  - mapping status remains independent from publication label in `AiStatusCell`.
 
 ## Key code paths likely to change in implementation stage
 
@@ -80,3 +81,13 @@
 - `lib/session-overview-stats.ts`
 - durable replacement for `lib/session-room-connection-lease.ts`
 - scheduler/maintenance entrypoint chosen for expiry worker execution
+
+## Checkpoint C key paths changed
+
+- `app/api/sessions/[sessionId]/complete/route.ts`
+- `components/complete-session-button.tsx`
+- `components/sessions-list-view.tsx`
+- `components/session-detail-view.tsx`
+- `components/event-host-controls-panel.tsx`
+- `lib/ai-publication-aggregate.ts`
+- `lib/session-overview-stats.ts`

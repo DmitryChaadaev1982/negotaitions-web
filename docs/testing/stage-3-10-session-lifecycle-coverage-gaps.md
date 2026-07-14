@@ -2,7 +2,7 @@
 
 This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10-session-lifecycle-traceability.csv` for Stage 3.10 foundation/A7 plus Checkpoint B guard-path updates.
 
-- Total manual/deferred `P0`/`P1` scenarios: `11`
+- Total manual/deferred `P0`/`P1` scenarios: `5`
 
 ## Manual Provider Canary
 
@@ -27,24 +27,7 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
 
 ## Deferred With Reason
 
-- `ST310-SESSION-006` (`P1`): Participant denied FINISH.
-  - Reason/evidence gap: needs explicit negative API spec
-  - Traceability reference: `tests/e2e/session-finish-canonical.spec.ts` :: `participant denial`
-- `ST310-SESSION-007` (`P1`): Observer denied FINISH.
-  - Reason/evidence gap: needs explicit negative API spec
-  - Traceability reference: `tests/e2e/session-finish-canonical.spec.ts` :: `observer denial`
-- `ST310-SESSION-008` (`P1`): Administrative finish UI route.
-  - Reason/evidence gap: Checkpoint C UI not implemented
-  - Traceability reference: `N/A` :: `N/A`
-- `ST310-UI-001` (`P1`): Administrative finish visibility.
-  - Reason/evidence gap: Checkpoint C
-  - Traceability reference: `N/A` :: `N/A`
-- `ST310-UI-002` (`P1`): Complete versus Delete UX distinction.
-  - Reason/evidence gap: Checkpoint C
-  - Traceability reference: `N/A` :: `N/A`
-- `ST310-UI-003` (`P1`): Completed event hides open lobby action.
-  - Reason/evidence gap: Checkpoint C
-  - Traceability reference: `N/A` :: `N/A`
+- None for `P0`/`P1` after Checkpoint C final hardening. Remaining non-automated items are environment-bound manual canaries only.
 
 ## Residual accepted risk references
 
@@ -53,4 +36,4 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
 
 ## Checkpoint B note
 
-Checkpoint B added automated canonical guard scenarios (`ST310-NAV-006/007/008`, `ST310-EVENT-010`, `ST310-MATERIALS-002`) through `lib/session-room-access.test.ts`. Manual/deferred gaps listed above remain unchanged and are still out of scope for Checkpoint C UI work.
+Checkpoint C closed previously deferred administrative-completion and management-UI scenarios (`ST310-SESSION-007/008`, `ST310-UI-001/002/003`) with API/browser coverage in `tests/e2e/session-finish-canonical.spec.ts` and `tests/e2e/session-completion-management-ui.spec.ts`.

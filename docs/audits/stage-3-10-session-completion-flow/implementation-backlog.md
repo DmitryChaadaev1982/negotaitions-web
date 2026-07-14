@@ -39,24 +39,26 @@
 
 ## P1
 
-- **P1-1: Administrative Session completion from overview/detail/Event surfaces**
-  - include confirmation copy and permission gating.
+- **P1-1: Administrative Session completion from overview/detail/Event surfaces** ✅ implemented in Checkpoint C
+  - canonical endpoint: `POST /api/sessions/[sessionId]/complete`
+  - UI surfaces: sessions overview, session detail, event host controls
+  - confirmation dialog, permission gating, idempotent result handling
 - **P1-2: Normal FINISHED debrief rejoin**
   - authorized re-entry when room lifecycle is `DEBRIEF_OPEN`.
 - **P1-3: Event-vs-Standalone Session completion parity**
   - one canonical backend session completion flow for all entry points.
-- **P1-4: Completed-Event lobby guard and action removal**
-  - hide `Open lobby` when parent Event is `COMPLETED`;
-  - prevent interactive lobby restoration via direct URL/history.
+- **P1-4: Completed-Event lobby guard and action removal** ✅ implemented in Checkpoint C (surface cleanup)
+  - hide `Open lobby` when parent Event is `COMPLETED` on sessions/materials management surfaces
+  - direct URL/history protection remains server-guarded from Checkpoint B
 - **P1-5: Role-consistent navigation and messaging**
   - facilitator/participant/observer/event-host clarity across room/lobby/materials.
 
 ## P2
 
-- **P2-1: AI publication status aggregation in Sessions overview**
-  - one aggregate session-level state: none/partial/full;
-  - final full state text: `AI-отчёт опубликован`;
-  - no duplicate published rows.
+- **P2-1: AI publication status aggregation in Sessions overview** ✅ implemented in Checkpoint C
+  - one aggregate session-level state: none/partial/full
+  - no duplicate publication rows in overview UI
+  - independent speaker-mapping status preserved
 - **P2-2: UI copy and alignment cleanup**
   - completion/debrief/processing wording harmonization.
 - **P2-3: Telemetry and operator diagnostics**
@@ -66,4 +68,6 @@
 
 ## Sequencing note
 
-- If AI status aggregation fix is trivial and low-risk, it may be included in the same controlled Stage 3.10 implementation stage instead of splitting a separate stage.
+- Checkpoint C closure note:
+  - previously deferred UI/admin scenarios (`ST310-SESSION-007/008`, `ST310-UI-001..005`) are now automated and moved out of backlog scope.
+  - remaining non-automated work is environment-dependent provider/multi-device canary validation and stays outside Checkpoint C.

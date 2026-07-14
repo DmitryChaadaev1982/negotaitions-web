@@ -5,10 +5,10 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 ## Coverage Totals
 
 - Total distinct scenarios: `75`
-- `AUTOMATED`: `62`
+- `AUTOMATED`: `70`
 - `MANUAL_PROVIDER_CANARY`: `3`
 - `MANUAL_MULTI_BROWSER`: `2`
-- `DEFERRED_WITH_REASON`: `8`
+- `DEFERRED_WITH_REASON`: `0`
 - `NOT_APPLICABLE`: `0`
 
 ## PRESENCE
@@ -50,9 +50,9 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 - `ST310-SESSION-003` (`AUTOMATED`, `P0`) Repeated FINISH idempotent. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `repeated finish idempotent`.
 - `ST310-SESSION-004` (`AUTOMATED`, `P0`) CLOSED terminal session does not reopen. Coverage: `Unit/API` via `lib/session-room-lifecycle.test.ts` :: `terminal closed mapping`.
 - `ST310-SESSION-005` (`AUTOMATED`, `P0`) Facilitator is authorized to FINISH. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `facilitator finish accepted`.
-- `ST310-SESSION-006` (`DEFERRED_WITH_REASON`, `P1`) Participant denied FINISH. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `participant denial`. Notes: needs explicit negative API spec.
-- `ST310-SESSION-007` (`DEFERRED_WITH_REASON`, `P1`) Observer denied FINISH. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `observer denial`. Notes: needs explicit negative API spec.
-- `ST310-SESSION-008` (`DEFERRED_WITH_REASON`, `P1`) Administrative finish UI route. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C UI not implemented.
+- `ST310-SESSION-006` (`AUTOMATED`, `P1`) Participant denied administrative completion. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `administrative complete endpoint denies participant`.
+- `ST310-SESSION-007` (`AUTOMATED`, `P1`) Observer denied administrative completion. Coverage: `API` via `tests/e2e/session-finish-canonical.spec.ts` :: `administrative complete endpoint denies observer [ST310-SESSION-007]`.
+- `ST310-SESSION-008` (`AUTOMATED`, `P1`) Administrative finish UI route. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
 
 ## RECORDING
 
@@ -113,9 +113,9 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 
 ## UI
 
-- `ST310-UI-001` (`DEFERRED_WITH_REASON`, `P1`) Administrative finish visibility. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C.
-- `ST310-UI-002` (`DEFERRED_WITH_REASON`, `P1`) Complete versus Delete UX distinction. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C.
-- `ST310-UI-003` (`DEFERRED_WITH_REASON`, `P1`) Completed event hides open lobby action. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C.
-- `ST310-UI-004` (`DEFERRED_WITH_REASON`, `P2`) AI publication aggregation in completed events. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C.
-- `ST310-UI-005` (`DEFERRED_WITH_REASON`, `P2`) Speaker mapping status independence in completion UI. Coverage: `UI` via `N/A` :: `N/A`. Notes: Checkpoint C.
+- `ST310-UI-001` (`AUTOMATED`, `P1`) Administrative finish visibility. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
+- `ST310-UI-002` (`AUTOMATED`, `P1`) Complete versus Delete UX distinction. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
+- `ST310-UI-003` (`AUTOMATED`, `P1`) Completed event hides open lobby action. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
+- `ST310-UI-004` (`AUTOMATED`, `P2`) AI publication aggregation in completed events. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
+- `ST310-UI-005` (`AUTOMATED`, `P2`) Speaker mapping status independence in completion UI. Coverage: `Browser E2E` via `tests/e2e/session-completion-management-ui.spec.ts` :: `management UI shows canonical complete flow and preserves sibling/event state`.
 

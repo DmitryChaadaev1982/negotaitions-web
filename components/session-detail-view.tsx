@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/badge";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { DeleteSessionButton } from "@/components/delete-session-button";
+import { CompleteSessionButton } from "@/components/complete-session-button";
 import { PageHeader } from "@/components/page-header";
 import { ParticipantsTable } from "@/components/participants-table";
 import {
@@ -227,6 +228,9 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
         badge={session.visibility ? <VisibilityBadge visibility={session.visibility} /> : undefined}
         action={
           <div className="flex flex-wrap items-center gap-2">
+            {!isReadOnly && session.negotiationState !== "FINISHED" ? (
+              <CompleteSessionButton sessionId={session.id} variant="button" />
+            ) : null}
             {!isReadOnly ? (
               <DeleteSessionButton sessionId={session.id} variant="button" />
             ) : null}

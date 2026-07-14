@@ -1,4 +1,4 @@
-# Stage 3.10 Implementation Status (Checkpoint A + B Progress)
+# Stage 3.10 Implementation Status (Checkpoint A + B + C Progress)
 
 ## Implemented in current branch
 
@@ -104,8 +104,45 @@
 ## Remaining later checkpoints
 
 - **Checkpoint B** guards/rejoin/redirects finalization is now partially implemented in this branch with canonical server room-access decisions and redirect policy wiring.
-- **Checkpoint C** administrative completion entry points and Sessions/Event UI updates.
+- **Checkpoint C** administrative completion entry points and Sessions/Event UI updates are implemented for API + overview/detail/event host controls, with aggregate AI publication status and independent speaker-mapping indicators in Sessions overview.
 - **Checkpoint D** full test matrix closure, docs completion, and gate evidence.
+
+## Checkpoint C implementation snapshot
+
+- **Canonical administrative completion endpoint**
+  - Added `POST /api/sessions/[sessionId]/complete` (`app/api/sessions/[sessionId]/complete/route.ts`).
+  - Reuses canonical `completeSessionCanonical()` with mode `ADMINISTRATIVE_SESSION_FINISH`.
+  - Authorization is server-side and supports both account-authenticated managers and event host-token management context.
+  - Response returns idempotent completion fields (`completed/alreadyCompleted`, `negotiationState`, `roomLifecycle`, recording stop warning summary, refresh/redirect hints).
+
+- **Management surface actions**
+  - Sessions overview: added `Complete session` action in existing actions group (`components/sessions-list-view.tsx`) without adding new table columns.
+  - Session detail: added same canonical completion action (`components/session-detail-view.tsx`).
+  - Event host controls: replaced room-control FINISH path with canonical administrative completion action (`components/event-host-controls-panel.tsx`).
+  - Complete and Delete remain separate controls and semantics.
+
+- **Completed Event lobby/action cleanup**
+  - Sessions overview hides `Open lobby` for sessions linked to completed events.
+  - Account materials view hides lobby navigation when linked event is completed and keeps materials/results navigation available (`components/account-session-materials-view.tsx`).
+
+- **AI publication aggregation + mapping independence**
+  - Added reusable aggregate helper: `lib/ai-publication-aggregate.ts`.
+  - Sessions overview now renders one session-level publication status (`none/partial/full`) and keeps speaker mapping status as independent line (`components/sessions-list-view.tsx`, `lib/session-overview-stats.ts`).
+  - Added unit coverage for aggregation edge cases: duplicates, malformed payloads, removed/unknown recipients, duplicate names, name changes, stable ID matching, and ambiguous legacy fallback handling (`lib/ai-publication-aggregate.test.ts`).
+
+### AI publication recipient identity evidence
+
+| source_field | semantic_meaning | stable_across_name_change | unique_within_session | available_in_current_payload | used_by_current_aggregation | recommended_use |
+| --- | --- | --- | --- | --- | --- | --- |
+| `SessionParticipant.id` | canonical recipient row identity in current session | yes | yes | yes (current session participants) | yes | primary |
+| `userId` | account identity linked to participant row | yes | usually (not guaranteed) | sometimes (payload-dependent) | yes (only if unique in current recipient set) | secondary |
+| `participantId`/`sessionParticipantId` in `sharedAnalysisJson.participantPersonalFeedback` | published recipient identity in shared payload | yes | yes when present | partial (legacy payloads may omit) | yes | preferred payload field |
+| `recipientId`/`publicationRecipientId` | generic recipient identity aliases | unknown | unknown | partial | yes (only when directly mappable to current `SessionParticipant.id`) | fallback alias |
+| normalized `participantName` | display-name fallback for legacy payloads | no | no (duplicates possible) | yes | yes (only when unique among current required recipients) | legacy fallback only |
+
+- **Checkpoint C focused evidence**
+  - Added API + idempotency + authorization coverage for administrative endpoint in `tests/e2e/session-finish-canonical.spec.ts`.
+  - Updated host-controls UI flow test for confirmation-based completion action in `tests/e2e/event-flow.spec.ts`.
 
 ## Checkpoint B: canonical access guard inventory (implemented)
 
@@ -178,13 +215,14 @@ Canonical server-side room-entry and room-operation guard now applies to:
 Current traceability totals (recalculated from CSV):
 
 - Total distinct scenarios: `75`
-- `AUTOMATED`: `62`
+- `AUTOMATED`: `70`
 - `MANUAL_PROVIDER_CANARY`: `3`
 - `MANUAL_MULTI_BROWSER`: `2`
-- `DEFERRED_WITH_REASON`: `8`
+- `DEFERRED_WITH_REASON`: `0`
 - `NOT_APPLICABLE`: `0`
 
 Checkpoint status note:
 
 - Stage 3.10 foundation/A7 is implemented and validated with deterministic non-provider automation.
-- Full Stage 3.10 completion is not claimed; Checkpoint B/C UI and manual provider/multi-device canaries remain open.
+- Checkpoint C administrative completion and management UI automation is complete in this branch.
+- Remaining manual scope is limited to provider/multi-device canaries and belongs to environment-dependent validation, not Checkpoint C product correctness.
