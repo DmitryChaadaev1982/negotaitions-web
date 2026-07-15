@@ -15,6 +15,7 @@ export type EventAccessContext = {
   isHost: boolean;
   isEventOwner: boolean;
   isAdmin: boolean;
+  hasUserParticipant: boolean;
   currentParticipant: EventParticipant | null;
 };
 
@@ -57,6 +58,7 @@ export async function resolveEventAccess(
     isHost: access.isHost,
     isEventOwner: access.isEventOwner,
     isAdmin: access.isAdmin,
+    hasUserParticipant: access.hasUserParticipant,
     currentParticipant: access.currentParticipant,
   };
 }

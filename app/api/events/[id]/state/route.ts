@@ -48,7 +48,18 @@ export async function GET(request: Request, context: RouteContext) {
   // but no EventParticipant row yet, auto-create one so their identity is correct.
   // Never represent them as host/first participant.
   let { currentParticipant } = access;
-  if (!currentParticipant && user && (isAdmin(user) || user.status === "ACTIVE")) {
+  const hasDirectMembership = Boolean(
+    user &&
+      (access.isEventOwner ||
+        access.hasUserParticipant ||
+        currentParticipant?.userId === user.id),
+  );
+  if (
+    !currentParticipant &&
+    hasDirectMembership &&
+    user &&
+    (isAdmin(user) || user.status === "ACTIVE")
+  ) {
     currentParticipant = await ensureUserEventParticipant(eventId, user);
   }
 
@@ -91,6 +102,7 @@ export async function GET(request: Request, context: RouteContext) {
     isAdmin: access.isAdmin,
     currentParticipant,
     accountMode: Boolean(user),
+    canJoinEventSessionsAsObserver: hasDirectMembership,
     userId: user?.id ?? null,
   });
 

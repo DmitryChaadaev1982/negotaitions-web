@@ -11,6 +11,8 @@ const actionButtonVariantClassNames = {
   secondary:
     "bg-slate-800/80 text-slate-300 ring-1 ring-inset ring-slate-600/30 hover:bg-slate-700/80 hover:text-slate-100",
   link: "bg-blue-500/12 text-blue-300 ring-1 ring-inset ring-blue-500/20 hover:bg-blue-500/20 hover:text-blue-200",
+  dangerOutline:
+    "bg-transparent text-rose-300 ring-1 ring-inset ring-rose-500/35 hover:bg-rose-500/10 hover:text-rose-200",
   danger:
     "bg-rose-500/10 text-rose-300 ring-1 ring-inset ring-rose-500/25 hover:bg-rose-500/20 hover:text-rose-200",
 } as const;
@@ -55,6 +57,7 @@ export function ListActionLink({
   return (
     <Link
       {...props}
+      data-action-variant={variant}
       className={getListActionButtonClassName(variant, className)}
     />
   );
@@ -73,6 +76,7 @@ export function ListActionButton({
   return (
     <button
       {...props}
+      data-action-variant={variant}
       className={getListActionButtonClassName(variant, className)}
     />
   );

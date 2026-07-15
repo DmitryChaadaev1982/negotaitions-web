@@ -299,6 +299,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
       ) : null}
       {canCompleteEvent(event) ? (
         <form
+          data-testid="event-complete-list-action"
           action={completeTrainingEventFromList}
           onSubmit={(submitEvent) => {
             if (
@@ -313,7 +314,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           <input type="hidden" name="eventId" value={event.id} />
           <ListActionButton
             type="submit"
-            variant="secondary"
+            variant="dangerOutline"
             title={t("events.completeEvent")}
             aria-label={t("events.completeEvent")}
             data-testid="complete-event-button"

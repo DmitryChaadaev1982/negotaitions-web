@@ -99,6 +99,14 @@ export function sessionVisibilityWhere(userId: string | null, userEmail?: string
       { event: { hostUserId: userId } },
       // event facilitator
       { event: { facilitatorUserId: userId } },
+      // event participant membership (account mode)
+      {
+        event: {
+          participants: {
+            some: { userId },
+          },
+        },
+      },
       // standalone PUBLIC session that is open (not completed/finished)
       {
         eventId: null,

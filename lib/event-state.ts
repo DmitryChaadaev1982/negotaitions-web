@@ -1,6 +1,7 @@
 import type {
   EventParticipant,
   ParticipantType,
+  RoomLifecycle,
   SessionParticipant,
   TrainingEvent,
 } from "@/app/generated/prisma/client";
@@ -24,6 +25,7 @@ import { resolveConnectionStatusForLobby } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { getEventMediaStatusMap } from "@/lib/voximplant/media-status-store";
+import { decideSessionRoomAccess, isRoomAccessAllowed } from "@/lib/session-room-access";
 
 export type EventStateParticipant = {
   id: string;
@@ -69,8 +71,11 @@ export type EventStateSession = {
   isFinished: boolean;
   roomUrl: string | null;
   materialsUrl: string | null;
+  canJoinAsObserver: boolean;
+  observerJoinUrl: string | null;
   createdAt: string;
   recordingStatus: string | null;
+  roomLifecycle: RoomLifecycle | null;
   closeReason: string | null;
   closedByEventAt: string | null;
   participants: Array<{
@@ -140,6 +145,7 @@ type BuildEventStateInput = {
   isAdmin?: boolean;
   currentParticipant: EventParticipant | null;
   accountMode?: boolean;
+  canJoinEventSessionsAsObserver?: boolean;
   /** ID of the authenticated user making this request. Used to resolve case library when event has no hostUserId. */
   userId?: string | null;
 };
@@ -267,6 +273,7 @@ export async function buildEventState(
           recording: {
             select: { status: true },
           },
+          roomLifecycle: true,
           participants: {
             orderBy: { createdAt: "asc" },
             include: {
@@ -401,6 +408,8 @@ export async function buildEventState(
       isHost: input.isHost,
       currentParticipantId,
       accountMode: Boolean(input.accountMode),
+      canJoinEventSessionsAsObserver: Boolean(input.canJoinEventSessionsAsObserver),
+      eventStatus: input.event.status,
     }),
   );
 
@@ -547,6 +556,8 @@ function mapEventSession({
   isHost,
   currentParticipantId,
   accountMode,
+  canJoinEventSessionsAsObserver,
+  eventStatus,
 }: {
   session: {
     id: string;
@@ -564,6 +575,7 @@ function mapEventSession({
     closedByEventAt: Date | null;
     deletedAt: Date | null;
     recording: { status: string } | null;
+    roomLifecycle: RoomLifecycle | null;
     participants: Array<
       SessionParticipant & {
         sessionRole: { name: string } | null;
@@ -573,6 +585,8 @@ function mapEventSession({
   isHost: boolean;
   currentParticipantId: string | null;
   accountMode: boolean;
+  canJoinEventSessionsAsObserver: boolean;
+  eventStatus: TrainingEvent["status"];
 }): EventStateSession {
   const facilitator = session.participants.find(
     (participant) => participant.type === "FACILITATOR",
@@ -586,6 +600,42 @@ function mapEventSession({
   const isActive = isSessionActiveForAssignment(session);
   const isFinished = !isActive;
   const canOpenMaterials = Boolean(isHost || currentParticipant);
+  const userAlreadyAssignedToSession = currentParticipantId
+    ? session.participants.some(
+        (participant) => participant.eventParticipantId === currentParticipantId,
+      )
+    : false;
+  const observerAccessDecision =
+    accountMode &&
+    canJoinEventSessionsAsObserver &&
+    Boolean(currentParticipantId) &&
+    !userAlreadyAssignedToSession
+      ? decideSessionRoomAccess({
+          user: {
+            isAuthenticated: true,
+            isAuthorizedMember: true,
+          },
+          session: {
+            sessionId: session.id,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+            deletedAt: session.deletedAt,
+            closeReason: session.closeReason,
+            closedByEventAt: session.closedByEventAt,
+            eventStatus,
+          },
+          redirect: {
+            sessionId: session.id,
+            eventStatus,
+          },
+        })
+      : null;
+  const canJoinAsObserver = Boolean(
+    observerAccessDecision && isRoomAccessAllowed(observerAccessDecision.output),
+  );
+  const observerJoinUrl = canJoinAsObserver
+    ? buildAccountSessionRoomPath(session.id)
+    : null;
 
   return {
     id: session.id,
@@ -624,8 +674,11 @@ function mapEventSession({
             : buildSessionMaterialsPath(currentParticipant.joinToken)
           : null
       : null,
+    canJoinAsObserver,
+    observerJoinUrl,
     createdAt: session.createdAt.toISOString(),
     recordingStatus: session.recording?.status ?? null,
+    roomLifecycle: session.roomLifecycle,
     closeReason: session.closeReason,
     closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
     participants: session.participants.map((participant) => {

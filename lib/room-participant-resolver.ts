@@ -88,6 +88,21 @@ async function findParticipantForAccount(sessionId: string, userId: string) {
   });
 }
 
+async function findEventParticipantIdForUser(params: {
+  eventId: string;
+  userId: string;
+}) {
+  const eventParticipant = await prisma.eventParticipant.findFirst({
+    where: {
+      eventId: params.eventId,
+      userId: params.userId,
+    },
+    select: { id: true },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+  });
+  return eventParticipant?.id ?? null;
+}
+
 async function resolveEffectiveTypeForSessionParticipant(params: {
   sessionId: string;
   sessionFacilitatorId: string | null;
@@ -132,6 +147,21 @@ export async function ensureAccountRoomParticipant(
 
   const existing = await findParticipantForAccount(sessionId, user.id);
   if (existing) {
+    if (!existing.eventParticipantId && existing.session.eventId) {
+      const linkedEventParticipantId = await findEventParticipantIdForUser({
+        eventId: existing.session.eventId,
+        userId: user.id,
+      });
+      if (linkedEventParticipantId) {
+        const linkedParticipant = await prisma.sessionParticipant.update({
+          where: { id: existing.id },
+          data: { eventParticipantId: linkedEventParticipantId },
+          include: roomParticipantInclude,
+        });
+        return linkedParticipant as unknown as RoomParticipantResult;
+      }
+    }
+
     const effectiveType = await resolveEffectiveTypeForSessionParticipant({
       sessionId,
       sessionFacilitatorId: existing.session.facilitatorId ?? null,
@@ -164,6 +194,7 @@ export async function ensureAccountRoomParticipant(
     },
     select: {
       id: true,
+      eventId: true,
       facilitatorId: true,
       event: {
         select: {
@@ -198,13 +229,45 @@ export async function ensureAccountRoomParticipant(
           });
 
           if (existingInTransaction) {
+            if (
+              !existingInTransaction.eventParticipantId &&
+              existingInTransaction.session.eventId
+            ) {
+              const linkedEventParticipant = await tx.eventParticipant.findFirst({
+                where: {
+                  eventId: existingInTransaction.session.eventId,
+                  userId: user.id,
+                },
+                select: { id: true },
+                orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+              });
+              if (linkedEventParticipant) {
+                return tx.sessionParticipant.update({
+                  where: { id: existingInTransaction.id },
+                  data: { eventParticipantId: linkedEventParticipant.id },
+                  include: roomParticipantInclude,
+                });
+              }
+            }
             return existingInTransaction;
           }
+
+          const linkedEventParticipant = session.eventId
+            ? await tx.eventParticipant.findFirst({
+                where: {
+                  eventId: session.eventId,
+                  userId: user.id,
+                },
+                select: { id: true },
+                orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+              })
+            : null;
 
           return tx.sessionParticipant.create({
             data: {
               sessionId,
               userId: user.id,
+              eventParticipantId: linkedEventParticipant?.id ?? null,
               displayName,
               type: participantType,
               joinToken: generateJoinToken(),

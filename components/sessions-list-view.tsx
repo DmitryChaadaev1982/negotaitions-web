@@ -649,6 +649,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           href={session.roomUrl}
                           variant="primary"
                           className="h-6 px-1.5 text-[10px]"
+                          data-testid="open-room-button"
                         >
                           {t("dashboard.openRoom")}
                         </ListActionLink>
@@ -657,15 +658,27 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                         href={session.materialsUrl}
                         variant="secondary"
                         className="h-6 px-1.5 text-[10px]"
+                        data-testid="open-materials-button"
                       >
                         {t("dashboard.openMaterials")}
                       </ListActionLink>
                       {session.canManage ? (
                         <>
+                          <ListActionLink
+                            href={`/sessions/${session.id}`}
+                            variant="secondary"
+                            className="h-6 px-1.5 text-[10px]"
+                            data-testid="manage-session-button"
+                          >
+                            {t("common.manage")}
+                          </ListActionLink>
                           {session.status !== "FINISHED" ? (
                             <CompleteSessionButton
                               sessionId={session.id}
-                              className={getListActionButtonClassName("secondary", "h-6 px-1.5 text-[10px]")}
+                              className={getListActionButtonClassName(
+                                "dangerOutline",
+                                "h-6 px-1.5 text-[10px]",
+                              )}
                               onCompleted={() => {
                                 setSessions((current) =>
                                   current.map((item) =>
@@ -681,15 +694,9 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                               }}
                             />
                           ) : null}
-                          <ListActionLink
-                            href={`/sessions/${session.id}`}
-                            variant="secondary"
-                            className="h-6 px-1.5 text-[10px]"
-                          >
-                            {t("common.manage")}
-                          </ListActionLink>
                           <DeleteSessionButton
                             sessionId={session.id}
+                            testId="delete-session-button"
                             className={getListActionButtonClassName("danger", "h-6 px-1.5 text-[10px]")}
                           />
                         </>

@@ -3,7 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { GradientButton, SecondaryButton } from "@/components/ui/buttons";
+import { DangerButton, SecondaryButton } from "@/components/ui/buttons";
 import { cn } from "@/lib/cn";
 import { useI18n } from "@/lib/i18n/useI18n";
 
@@ -122,8 +122,8 @@ export function CompleteSessionButton({
           disabled={disabled || submitting}
           className={cn(
             variant === "button"
-              ? "inline-flex items-center justify-center rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-5 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-50"
-              : "text-sm font-medium text-cyan-300 hover:text-cyan-200 disabled:opacity-50",
+              ? "complete-session-trigger complete-session-trigger-danger inline-flex items-center justify-center rounded-lg border border-rose-500/40 bg-transparent px-5 py-2.5 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/10 disabled:opacity-50"
+              : "complete-session-trigger complete-session-trigger-danger text-sm font-medium text-rose-300 hover:text-rose-200 disabled:opacity-50",
             className,
           )}
           aria-label={t("sessions.completeSession")}
@@ -168,7 +168,7 @@ export function CompleteSessionButton({
               <SecondaryButton type="button" onClick={closeDialog} disabled={submitting}>
                 {t("common.cancel")}
               </SecondaryButton>
-              <GradientButton
+              <DangerButton
                 type="button"
                 disabled={submitting}
                 onClick={() => void handleComplete()}
@@ -176,7 +176,7 @@ export function CompleteSessionButton({
                 data-testid="confirm-complete-session-button"
               >
                 {submitting ? t("common.loading") : t("sessions.completeSessionConfirm")}
-              </GradientButton>
+              </DangerButton>
             </div>
           </div>
         </div>
