@@ -522,6 +522,7 @@ export function SharedRoomShell({
         sessionId={sessionId}
         roomAuth={roomAuth}
         connectionId={connectionId}
+        enabled={!staleConnection}
         onInvalidToken={onInvalidToken}
         onStaleConnection={onStaleConnection}
       />

@@ -198,7 +198,10 @@ export default function VoximplantNegotiationRoomPage(
 
   const roomConnectionId = useClientConnectionId(`room-${props.sessionId}`);
   const [staleConnection, setStaleConnection] = useState(false);
+  const staleConnectionRef = useRef(false);
   const activateStaleConnection = useCallback(() => {
+    if (staleConnectionRef.current) return;
+    staleConnectionRef.current = true;
     setStaleConnection(true);
   }, []);
 
@@ -267,6 +270,7 @@ export default function VoximplantNegotiationRoomPage(
       setBusinessError(null);
 
       try {
+        if (staleConnectionRef.current) return;
         const [sidebarResult, controlResult] = await Promise.all([
           fetch(
             `/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined, claimLease: true })}`,
@@ -287,6 +291,13 @@ export default function VoximplantNegotiationRoomPage(
           window.location.replace(redirectTarget);
           return;
         }
+        if (
+          (await isStaleConnectionResponse(sidebarResult)) ||
+          (await isStaleConnectionResponse(controlResult))
+        ) {
+          activateStaleConnection();
+          return;
+        }
 
         type ControlPayload = ControlState &
           ShellSessionCloseState & {
@@ -303,10 +314,6 @@ export default function VoximplantNegotiationRoomPage(
           | { error?: string };
 
         if (!sidebarResult.ok) {
-          if (sidebarResult.status === 409) {
-            activateStaleConnection();
-            return;
-          }
           throw new Error(
             "error" in sidebarPayload && sidebarPayload.error
               ? sidebarPayload.error
@@ -314,10 +321,6 @@ export default function VoximplantNegotiationRoomPage(
           );
         }
         if (!controlResult.ok) {
-          if (controlResult.status === 409) {
-            activateStaleConnection();
-            return;
-          }
           throw new Error(
             "error" in controlPayload && controlPayload.error
               ? controlPayload.error
@@ -363,6 +366,7 @@ export default function VoximplantNegotiationRoomPage(
     if (!roomConnectionId || staleConnection || businessLoading || businessError) return;
 
     const intervalId = window.setInterval(async () => {
+      if (staleConnectionRef.current) return;
       touchRecoveryContext();
 
       try {
@@ -376,6 +380,10 @@ export default function VoximplantNegotiationRoomPage(
           }),
         ]);
 
+        if (await isStaleConnectionResponse(controlResponse)) {
+          activateStaleConnection();
+          return;
+        }
         if (controlResponse.ok) {
           type ControlPayload = ControlState &
             ShellSessionCloseState & {
@@ -402,6 +410,10 @@ export default function VoximplantNegotiationRoomPage(
           activateStaleConnection();
         }
 
+        if (await isStaleConnectionResponse(sidebarResponse)) {
+          activateStaleConnection();
+          return;
+        }
         if (sidebarResponse.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
@@ -503,6 +515,7 @@ export default function VoximplantNegotiationRoomPage(
 
   const relayVoximplantRecording = useCallback(
     async (action: "start" | "stop", consentGiven = false) => {
+      if (staleConnectionRef.current) return;
       if (action === "start") {
         // Guard: skip duplicate start if DB/UI already shows recording active.
         const status = recordingState?.status;
@@ -562,13 +575,17 @@ export default function VoximplantNegotiationRoomPage(
         );
 
         const payload = (await response.json().catch(() => ({}))) as RecordingControlResponse;
+        if (payload.code === "STALE_CONNECTION" || staleConnectionRef.current) {
+          activateStaleConnection();
+          return;
+        }
 
         console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.action, "recording.status:", payload.recording?.status);
 
         if (!response.ok) {
           if (response.status === 409) {
             if (payload.code === "STALE_CONNECTION") {
-              setStaleConnection(true);
+              activateStaleConnection();
               return;
             }
             if (
@@ -651,6 +668,7 @@ export default function VoximplantNegotiationRoomPage(
       }
     },
     [
+      activateStaleConnection,
       joined,
       sendMessageAvailable,
       roomAuth,
@@ -671,6 +689,7 @@ export default function VoximplantNegotiationRoomPage(
 
   const attemptAuthorizedStopRelay = useCallback(
     async (reason: string) => {
+      if (staleConnectionRef.current) return;
       const hint = recordingStopRelayHint;
       if (!hint || !roomConnectionId || !joined || !sendMessageAvailable) {
         return;
@@ -698,6 +717,10 @@ export default function VoximplantNegotiationRoomPage(
         );
 
         const claimPayload = (await claimResponse.json().catch(() => ({}))) as RecordingControlResponse;
+        if (claimPayload.code === "STALE_CONNECTION" || staleConnectionRef.current) {
+          activateStaleConnection();
+          return;
+        }
         if (!claimResponse.ok || !claimPayload.stopRelay?.scenarioMessage) {
           return;
         }
@@ -757,6 +780,7 @@ export default function VoximplantNegotiationRoomPage(
       }
     },
     [
+      activateStaleConnection,
       joined,
       postRecordingDebug,
       props.sessionId,

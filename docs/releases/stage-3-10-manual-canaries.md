@@ -86,3 +86,34 @@ Expected evidence:
 - Scenario logs: relay attempts + stop status.
 - App logs: single operation id, duplicate handling.
 - DB: one stop operation per recording, terminal status convergence.
+
+## ST310-VOX-027 — Takeover Race + Observer Endpoint Churn
+
+Setup:
+
+- Browser A: facilitator (active tab first).
+- Browser B: participant.
+- Browser C: same facilitator account (newest-tab takeover).
+- Optional Browser D: observer joining/leaving while session is active.
+
+Procedure:
+
+1. Takeover before preparation and confirm only newest tab keeps control.
+2. Takeover during preparation while stale tab is still connecting.
+3. Takeover during active negotiation while media is flowing.
+4. Takeover during `DEBRIEF_OPEN`.
+5. Run repeated A -> B -> A lease supersession cycle.
+6. From stale tab attempt mic/camera toggle and facilitator control actions.
+7. Verify participant continuity (no duplicate participant identities).
+8. Keep recording active during takeover, then finish and stop recording from active tab.
+9. Confirm there are no uncaught page errors and no development overlay errors for:
+   - `ConferenceImpl.handleReInvite` / `mids`
+   - `EndpointManagerImpl.setEndpointVad: Can't find endpoint ...`
+10. Observer canary: observer joins active conference, participant speaks, observer leaves, active participants keep audio/video, observer appears once, facilitator keeps control authority.
+
+Expected evidence:
+
+- UI: stale tab blocked immediately; active tab remains fully functional.
+- Logs: single active lease holder; stale tab heartbeat/control polling stops.
+- Provider behavior: no stale-tab media/control mutation reaches SDK.
+- Recording: active tab can still complete session and stop recording.

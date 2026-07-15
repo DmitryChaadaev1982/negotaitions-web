@@ -17,7 +17,6 @@ import { AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER } from "@/lib/telemetry/speaking-
 import { clearRemoteAudioElements, stopVoxLikeStreamTracks } from "@/lib/voximplant/media-cleanup";
 import {
   installVoxCameraErrorSuppressor,
-  installVoxRuntimeErrorSuppressor,
   isAlreadyExistsStreamError,
   isRecoverableVoxMediaError,
   toVoxErrorMessage,
@@ -183,6 +182,39 @@ type VoxRoomParticipant = {
   audioStream?: MediaStream | null;
 };
 
+type VoxTabTakeoverMessage = {
+  type: "lease_takeover_claimed";
+  sessionId: string;
+  connectionId: string;
+  sdkUsername: string;
+};
+
+const VOX_TAKEOVER_CHANNEL = "vox-room-lifecycle";
+
+function isVoxTabTakeoverMessage(value: unknown): value is VoxTabTakeoverMessage {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.type === "lease_takeover_claimed" &&
+    typeof record.sessionId === "string" &&
+    typeof record.connectionId === "string" &&
+    typeof record.sdkUsername === "string"
+  );
+}
+
+export function shouldApplyVoxTakeoverMessage(input: {
+  message: VoxTabTakeoverMessage;
+  sessionId: string;
+  connectionId?: string;
+  sdkUsername: string;
+}) {
+  return (
+    input.message.sessionId === input.sessionId &&
+    input.message.sdkUsername === input.sdkUsername &&
+    input.message.connectionId !== input.connectionId
+  );
+}
+
 type UpsertRemoteParticipantInput = {
   id: string;
   displayName: string;
@@ -262,12 +294,14 @@ type UseVoximplantRoomResult = {
 // ─── Runtime mutable state (lives in a ref, never triggers renders) ───────────
 
 type RuntimeState = {
+  generation: number;
   core: VoxCore;
   /** Retained so toggles can create new streams after joining. */
   streamModule: VoxStreamModule;
   /** VideoQuality enum value from the SDK used for new camera streams. */
   videoQuality: unknown;
   conference: VoxConference | null;
+  conferenceConnected: boolean;
   localAudioStream: VoxStream | null;
   localVideoStream: VoxStream | null;
   /**
@@ -287,6 +321,7 @@ type RuntimeState = {
     string,
     {
       endpoint: VoxEndpoint;
+      generation: number;
       onAdded: (event: VoxEndpointMediaEvent) => void;
       onRemoved: (event: VoxEndpointMediaEvent) => void;
     }
@@ -310,6 +345,82 @@ type RuntimeState = {
   /** Poll fallback for endpoint media status sync. */
   endpointSyncIntervalId: number | null;
 };
+
+type VoxLifecycleAbortReason =
+  | "stale_connection"
+  | "invalidated_generation"
+  | "component_unmounted";
+
+class VoxLifecycleAbortError extends Error {
+  readonly reason: VoxLifecycleAbortReason;
+
+  constructor(reason: VoxLifecycleAbortReason) {
+    super(`Vox lifecycle aborted: ${reason}`);
+    this.name = "VoxLifecycleAbortError";
+    this.reason = reason;
+  }
+}
+
+function isVoxLifecycleAbortError(error: unknown): error is VoxLifecycleAbortError {
+  return error instanceof VoxLifecycleAbortError;
+}
+
+function isKnownStaleTeardownSdkNoise(message: string): boolean {
+  const lower = message.toLowerCase();
+  const isMuteTransportNotReady =
+    lower.includes("transport is not ready") &&
+    lower.includes("message sending will be delayed") &&
+    lower.includes("\"name\":\"mute\"");
+  const isReinviteMidsNoise =
+    lower.includes("mids") &&
+    (lower.includes("handlereinvite") || lower.includes("conferencemanager"));
+  const isEndpointVadNoise =
+    lower.includes("setendpointvad") &&
+    lower.includes("can't find endpoint");
+  return isMuteTransportNotReady || isReinviteMidsNoise || isEndpointVadNoise;
+}
+
+export function createVoxGenerationTracker() {
+  let currentGeneration = 0;
+  let stale = false;
+  let mounted = true;
+
+  return {
+    begin(): number {
+      stale = false;
+      currentGeneration += 1;
+      return currentGeneration;
+    },
+    invalidate(reason: VoxLifecycleAbortReason): void {
+      currentGeneration += 1;
+      if (reason === "stale_connection") stale = true;
+      if (reason === "component_unmounted") mounted = false;
+    },
+    assertCurrent(generation: number): void {
+      if (!mounted) throw new VoxLifecycleAbortError("component_unmounted");
+      if (stale) throw new VoxLifecycleAbortError("stale_connection");
+      if (currentGeneration !== generation) {
+        throw new VoxLifecycleAbortError("invalidated_generation");
+      }
+    },
+    isCurrent(generation: number): boolean {
+      return mounted && !stale && currentGeneration === generation;
+    },
+  };
+}
+
+export function createSingleFlightAsync<TArgs extends unknown[]>(
+  handler: (...args: TArgs) => Promise<void>,
+) {
+  let inFlight: Promise<void> | null = null;
+  return (...args: TArgs): Promise<void> => {
+    if (inFlight) return inFlight;
+    inFlight = handler(...args).finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
 
 // ─── Pure utility functions ───────────────────────────────────────────────────
 
@@ -464,9 +575,80 @@ export function useVoximplantRoom({
   const runtimeRef = useRef<RuntimeState | null>(null);
   const mountedRef = useRef(true);
   const isJoiningRef = useRef(false);
+  const generationRef = useRef(0);
+  const staleLifecycleRef = useRef(false);
+  const cleanupPromiseRef = useRef<Promise<void> | null>(null);
+  const staleNotifiedRef = useRef(false);
+  const sdkUsernameRef = useRef<string | null>(null);
+  const takeoverChannelRef = useRef<BroadcastChannel | null>(null);
+  const staleTeardownSuppressionRef = useRef(false);
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
   const audioProcessingEnabledRef = useRef(true);
+
+  const invalidateGeneration = useCallback((reason: VoxLifecycleAbortReason) => {
+    generationRef.current += 1;
+    if (reason === "stale_connection") {
+      staleLifecycleRef.current = true;
+    }
+    if (reason === "component_unmounted") {
+      mountedRef.current = false;
+    }
+  }, []);
+
+  const beginJoinGeneration = useCallback(() => {
+    staleLifecycleRef.current = false;
+    staleNotifiedRef.current = false;
+    staleTeardownSuppressionRef.current = false;
+    generationRef.current += 1;
+    return generationRef.current;
+  }, []);
+
+  const assertGenerationCurrent = useCallback(
+    (generation: number) => {
+      if (!mountedRef.current) {
+        throw new VoxLifecycleAbortError("component_unmounted");
+      }
+      if (staleLifecycleRef.current) {
+        throw new VoxLifecycleAbortError("stale_connection");
+      }
+      if (generationRef.current !== generation) {
+        throw new VoxLifecycleAbortError("invalidated_generation");
+      }
+    },
+    [],
+  );
+
+  const isRuntimeActive = useCallback((runtime: RuntimeState | null, generation: number) => {
+    if (!runtime) return false;
+    if (staleLifecycleRef.current) return false;
+    return runtime.generation === generation && generationRef.current === generation;
+  }, []);
+
+  const handleStaleConnection = useCallback(() => {
+    if (staleLifecycleRef.current) return;
+    staleTeardownSuppressionRef.current = true;
+    invalidateGeneration("stale_connection");
+    if (!staleNotifiedRef.current) {
+      staleNotifiedRef.current = true;
+      onStaleConnection?.();
+    }
+  }, [invalidateGeneration, onStaleConnection]);
+
+  const broadcastTakeoverClaimed = useCallback((sdkUsername: string) => {
+    if (!connectionId || typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+      return;
+    }
+    if (!takeoverChannelRef.current) {
+      takeoverChannelRef.current = new BroadcastChannel(VOX_TAKEOVER_CHANNEL);
+    }
+    takeoverChannelRef.current.postMessage({
+      type: "lease_takeover_claimed",
+      sessionId,
+      connectionId,
+      sdkUsername,
+    } as VoxTabTakeoverMessage);
+  }, [connectionId, sessionId]);
 
   // ── React state ──────────────────────────────────────────────────────────
   const [isLoading, setIsLoading] = useState(true);
@@ -630,8 +812,9 @@ export function useVoximplantRoom({
    * Safe to call multiple times for the same key (idempotent).
    */
   const attachRemoteAudioStream = useCallback(
-    (endpointId: string, voxStream: VoxStream) => {
+    (endpointId: string, voxStream: VoxStream, generation: number) => {
       const rt = runtimeRef.current;
+      if (!isRuntimeActive(rt, generation)) return;
       if (!rt) return;
 
       const ms = streamToMediaStream(voxStream);
@@ -652,9 +835,11 @@ export function useVoximplantRoom({
       setRemoteAudioElementCount(rt.remoteAudioElements.size);
 
       audio.play().then(() => {
-        if (mountedRef.current) setRemotePlaybackBlocked(false);
+        if (mountedRef.current && generationRef.current === generation) {
+          setRemotePlaybackBlocked(false);
+        }
       }).catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || generationRef.current !== generation) return;
         const msg = toErrorMessage(err);
         const isAutoplayBlock =
           (err instanceof Error && err.name === "NotAllowedError") ||
@@ -669,7 +854,7 @@ export function useVoximplantRoom({
         }
       });
     },
-    [upsertRemote],
+    [isRuntimeActive, upsertRemote],
   );
 
   /** Pause and remove all audio elements associated with an endpoint. */
@@ -717,7 +902,8 @@ export function useVoximplantRoom({
    */
   const sendConferenceMessage = useCallback((text: string): boolean => {
     const rt = runtimeRef.current;
-    if (!rt?.conference) return false;
+    if (!rt?.conference || !rt.conferenceConnected || staleLifecycleRef.current) return false;
+    if (generationRef.current !== rt.generation) return false;
     const conf = rt.conference as VoxConference;
     if (typeof conf.sendMessage !== "function") return false;
     try {
@@ -738,9 +924,19 @@ export function useVoximplantRoom({
     [detachRemoteAudioStreams],
   );
 
+  const unsubscribeEndpoint = useCallback((runtime: RuntimeState, endpointId: string) => {
+    const subscription = runtime.endpointSubscriptions.get(endpointId);
+    if (!subscription) return;
+    subscription.endpoint.removeEventListener("RemoteMediaAdded", subscription.onAdded);
+    subscription.endpoint.removeEventListener("RemoteMediaRemoved", subscription.onRemoved);
+    runtime.endpointSubscriptions.delete(endpointId);
+    detachRemoteAudioStreams(endpointId);
+  }, [detachRemoteAudioStreams]);
+
   /** Refresh the remote video stream for an endpoint. */
   const applyRemoteVideoStream = useCallback(
-    (endpoint: VoxEndpoint) => {
+    (endpoint: VoxEndpoint, generation: number) => {
+      if (generationRef.current !== generation || staleLifecycleRef.current) return;
       const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
       const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
       upsertRemote({
@@ -756,77 +952,15 @@ export function useVoximplantRoom({
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
 
-  const cleanup = useCallback(async () => {
-    const runtime = runtimeRef.current;
-    if (!runtime) return;
-
-    // Stop mic level meter in-place (don't use stopMicLevelMeter callback to avoid dep cycle).
-    if (runtime.animFrameId !== null) {
-      cancelAnimationFrame(runtime.animFrameId);
-      runtime.animFrameId = null;
-    }
-    if (runtime.analyserNode) {
-      try { runtime.analyserNode.disconnect(); } catch { /* ignore */ }
-      runtime.analyserNode = null;
-    }
-    if (runtime.analyserCtx) {
-      void runtime.analyserCtx.close();
-      runtime.analyserCtx = null;
-    }
-
-    // Release remote audio elements.
-    clearRemoteAudioElements(runtime.remoteAudioElements);
-    if (runtime.endpointSyncIntervalId !== null) {
-      window.clearInterval(runtime.endpointSyncIntervalId);
-      runtime.endpointSyncIntervalId = null;
-    }
-
-    // Unsubscribe endpoint listeners.
-    for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
-      endpoint.removeEventListener("RemoteMediaAdded", onAdded);
-      endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
-    }
-    runtime.endpointSubscriptions.clear();
-
-    // Unsubscribe conference listeners.
-    if (runtime.conference && runtime.conferenceListeners) {
-      runtime.conference.removeEventListener("Connected", runtime.conferenceListeners.onConnected);
-      runtime.conference.removeEventListener("Failed", runtime.conferenceListeners.onFailed);
-      runtime.conference.removeEventListener("Disconnected", runtime.conferenceListeners.onDisconnected);
-      runtime.conference.removeEventListener("EndpointAdded", runtime.conferenceListeners.onEndpointAdded);
-      runtime.conference.removeEventListener("EndpointRemoved", runtime.conferenceListeners.onEndpointRemoved);
-    }
-
-    if (runtime.conference) {
-      try { runtime.conference.hangup(); } catch { /* ignore */ }
-    }
-
-    // Stop browser tracks to release hardware. Silent stream close() also closes AudioContext.
-    stopVoxLikeStreamTracks(runtime.localAudioStream);
-    stopVoxLikeStreamTracks(runtime.localVideoStream);
-    runtime.localAudioStream?.close?.();
-    runtime.localVideoStream?.close?.();
-
-    await registerVoxClientDisconnect(runtime.core.client.disconnect());
-
-    runtimeRef.current = null;
-  }, []);
-
-  // ── Leave ─────────────────────────────────────────────────────────────────
-
-  const leave = useCallback(async () => {
-    if (isLeaving) return;
-    setIsLeaving(true);
-    await cleanup();
+  const clearStateAfterCleanup = useCallback(() => {
+    sdkUsernameRef.current = null;
     if (!mountedRef.current) return;
     setJoined(false);
-    setStatus("Отключено.");
     setRemoteParticipants([]);
     setLocalParticipant(null);
     setIsMicMuted(false);
     setIsCameraOn(false);
     setCameraUnavailable(false);
-    setIsLeaving(false);
     setMicCaptureStatus("not_requested");
     setLocalAudioStreamCreated(false);
     setLocalAudioStreamAddedToConference(false);
@@ -835,37 +969,249 @@ export function useVoximplantRoom({
     setRemotePlaybackBlocked(false);
     setSendMessageAvailable(false);
     setAudioProcessingEnabled(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof process === "undefined" || process.env.NODE_ENV !== "development") {
+      return;
+    }
+    const originalError = console.error;
+    console.error = (...args: Parameters<typeof console.error>) => {
+      const combined = args
+        .map((arg) =>
+          typeof arg === "string"
+            ? arg
+            : arg instanceof Error
+              ? `${arg.name}: ${arg.message}`
+              : String(arg),
+        )
+        .join(" ");
+      if (
+        staleTeardownSuppressionRef.current &&
+        isKnownStaleTeardownSdkNoise(combined)
+      ) {
+        return;
+      }
+      originalError(...args);
+    };
+    return () => {
+      console.error = originalError;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      takeoverChannelRef.current?.close();
+      takeoverChannelRef.current = null;
+    };
+  }, []);
+
+  const cleanup = useCallback(
+    async (
+      reason: VoxLifecycleAbortReason = "invalidated_generation",
+      options?: {
+        preserveStatus?: boolean;
+        skipInvalidation?: boolean;
+        expectedGeneration?: number;
+      },
+    ) => {
+      // Allow a new lifecycle to start immediately after invalidation/teardown trigger.
+      isJoiningRef.current = false;
+
+      if (cleanupPromiseRef.current) {
+        return cleanupPromiseRef.current;
+      }
+
+      if (!options?.skipInvalidation) {
+        invalidateGeneration(reason);
+      }
+
+      // Detach current runtime immediately so no future operation can reuse it.
+      const runtimeSnapshot = runtimeRef.current;
+      const expectedGeneration = options?.expectedGeneration;
+      const runtimeBelongsToExpected =
+        expectedGeneration === undefined ||
+        runtimeSnapshot?.generation === expectedGeneration;
+      const lifecycleStillAtExpected =
+        expectedGeneration !== undefined && generationRef.current === expectedGeneration;
+      const shouldSkipAsStaleLifecycle =
+        expectedGeneration !== undefined &&
+        !runtimeBelongsToExpected &&
+        !lifecycleStillAtExpected;
+      if (shouldSkipAsStaleLifecycle) {
+        return;
+      }
+
+      if (runtimeBelongsToExpected) {
+        runtimeRef.current = null;
+      }
+
+      const promise = (async () => {
+        if (!runtimeBelongsToExpected) {
+          return;
+        }
+        if (!runtimeSnapshot) {
+          clearStateAfterCleanup();
+          return;
+        }
+        const shouldSuppressSdkNoise = reason === "stale_connection";
+        if (shouldSuppressSdkNoise) {
+          staleTeardownSuppressionRef.current = true;
+        }
+
+        // Stop mic level meter in-place (don't use stopMicLevelMeter callback to avoid dep cycle).
+        if (runtimeSnapshot.animFrameId !== null) {
+          cancelAnimationFrame(runtimeSnapshot.animFrameId);
+          runtimeSnapshot.animFrameId = null;
+        }
+        if (runtimeSnapshot.analyserNode) {
+          try { runtimeSnapshot.analyserNode.disconnect(); } catch { /* ignore */ }
+          runtimeSnapshot.analyserNode = null;
+        }
+        if (runtimeSnapshot.analyserCtx) {
+          void runtimeSnapshot.analyserCtx.close();
+          runtimeSnapshot.analyserCtx = null;
+        }
+
+        // Release remote audio elements.
+        clearRemoteAudioElements(runtimeSnapshot.remoteAudioElements);
+        if (runtimeSnapshot.endpointSyncIntervalId !== null) {
+          window.clearInterval(runtimeSnapshot.endpointSyncIntervalId);
+          runtimeSnapshot.endpointSyncIntervalId = null;
+        }
+
+        // Unsubscribe endpoint listeners.
+        for (const { endpoint, onAdded, onRemoved } of runtimeSnapshot.endpointSubscriptions.values()) {
+          endpoint.removeEventListener("RemoteMediaAdded", onAdded);
+          endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
+        }
+        runtimeSnapshot.endpointSubscriptions.clear();
+
+        // Unsubscribe conference listeners.
+        if (runtimeSnapshot.conference && runtimeSnapshot.conferenceListeners) {
+          runtimeSnapshot.conference.removeEventListener("Connected", runtimeSnapshot.conferenceListeners.onConnected);
+          runtimeSnapshot.conference.removeEventListener("Failed", runtimeSnapshot.conferenceListeners.onFailed);
+          runtimeSnapshot.conference.removeEventListener("Disconnected", runtimeSnapshot.conferenceListeners.onDisconnected);
+          runtimeSnapshot.conference.removeEventListener("EndpointAdded", runtimeSnapshot.conferenceListeners.onEndpointAdded);
+          runtimeSnapshot.conference.removeEventListener("EndpointRemoved", runtimeSnapshot.conferenceListeners.onEndpointRemoved);
+          runtimeSnapshot.conferenceListeners = null;
+        }
+
+        if (runtimeSnapshot.conference) {
+          runtimeSnapshot.conferenceConnected = false;
+          try { runtimeSnapshot.conference.hangup(); } catch { /* ignore */ }
+          runtimeSnapshot.conference = null;
+        }
+
+        // Stop browser tracks to release hardware. Silent stream close() also closes AudioContext.
+        stopVoxLikeStreamTracks(runtimeSnapshot.localAudioStream);
+        stopVoxLikeStreamTracks(runtimeSnapshot.localVideoStream);
+        runtimeSnapshot.localAudioStream?.close?.();
+        runtimeSnapshot.localVideoStream?.close?.();
+        runtimeSnapshot.localAudioStream = null;
+        runtimeSnapshot.localVideoStream = null;
+
+        await registerVoxClientDisconnect(runtimeSnapshot.core.client.disconnect());
+        clearStateAfterCleanup();
+        if (!options?.preserveStatus && mountedRef.current) {
+          setStatus("Отключено.");
+        }
+        staleTeardownSuppressionRef.current = false;
+      })().finally(() => {
+        staleTeardownSuppressionRef.current = false;
+        cleanupPromiseRef.current = null;
+      });
+
+      cleanupPromiseRef.current = promise;
+      return promise;
+    },
+    [clearStateAfterCleanup, invalidateGeneration],
+  );
+
+  useEffect(() => {
+    if (!connectionId || typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+      return;
+    }
+    if (!takeoverChannelRef.current) {
+      takeoverChannelRef.current = new BroadcastChannel(VOX_TAKEOVER_CHANNEL);
+    }
+
+    const channel = takeoverChannelRef.current;
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!isVoxTabTakeoverMessage(event.data)) return;
+      const sdkUsername = sdkUsernameRef.current;
+      if (!sdkUsername) return;
+      if (
+        shouldApplyVoxTakeoverMessage({
+          message: event.data,
+          sessionId,
+          connectionId,
+          sdkUsername,
+        })
+      ) {
+        handleStaleConnection();
+        void cleanup("stale_connection", { preserveStatus: true });
+      }
+    };
+    channel.addEventListener("message", onMessage);
+    return () => {
+      channel.removeEventListener("message", onMessage);
+    };
+  }, [cleanup, connectionId, handleStaleConnection, sessionId]);
+
+  // ── Leave ─────────────────────────────────────────────────────────────────
+
+  const leave = useCallback(async () => {
+    if (isLeaving) return;
+    setIsLeaving(true);
+    await cleanup("invalidated_generation");
+    if (!mountedRef.current) return;
+    setStatus("Отключено.");
+    setIsLeaving(false);
   }, [cleanup, isLeaving]);
 
   // ── Endpoint subscription ─────────────────────────────────────────────────
 
   const subscribeEndpoint = useCallback(
-    (endpoint: VoxEndpoint) => {
+    (endpoint: VoxEndpoint, generation: number) => {
       const runtime = runtimeRef.current;
-      if (!runtime || runtime.endpointSubscriptions.has(endpoint.id)) return;
+      if (!isRuntimeActive(runtime, generation)) return;
+      if (!runtime) return;
+
+      const existing = runtime.endpointSubscriptions.get(endpoint.id);
+      if (existing?.endpoint === endpoint) {
+        return;
+      }
+      if (existing) {
+        unsubscribeEndpoint(runtime, endpoint.id);
+      }
 
       const onAdded = (event: VoxEndpointMediaEvent) => {
+        if (generationRef.current !== generation || staleLifecycleRef.current) return;
         if (!event.payload?.stream) return;
         const stream = event.payload.stream;
         if (stream.type === "audio") {
-          attachRemoteAudioStream(endpoint.id, stream);
+          attachRemoteAudioStream(endpoint.id, stream, generation);
         } else {
-          applyRemoteVideoStream(endpoint);
+          applyRemoteVideoStream(endpoint, generation);
         }
       };
-      const onRemoved = () => { applyRemoteVideoStream(endpoint); };
+      const onRemoved = () => {
+        if (generationRef.current !== generation || staleLifecycleRef.current) return;
+        applyRemoteVideoStream(endpoint, generation);
+      };
 
       endpoint.addEventListener("RemoteMediaAdded", onAdded);
       endpoint.addEventListener("RemoteMediaRemoved", onRemoved);
-      runtime.endpointSubscriptions.set(endpoint.id, { endpoint, onAdded, onRemoved });
+      runtime.endpointSubscriptions.set(endpoint.id, { endpoint, generation, onAdded, onRemoved });
 
       // Apply any streams already present on this endpoint.
-      applyRemoteVideoStream(endpoint);
+      applyRemoteVideoStream(endpoint, generation);
       for (const audioStream of endpoint.getAnyAudioStreams()) {
-        attachRemoteAudioStream(endpoint.id, audioStream);
+        attachRemoteAudioStream(endpoint.id, audioStream, generation);
       }
     },
-    [applyRemoteVideoStream, attachRemoteAudioStream],
+    [applyRemoteVideoStream, attachRemoteAudioStream, isRuntimeActive, unsubscribeEndpoint],
   );
 
   // ── Microphone toggle ─────────────────────────────────────────────────────
@@ -876,20 +1222,26 @@ export function useVoximplantRoom({
 
   const toggleMic = useCallback(() => {
     const runtime = runtimeRef.current;
-    if (!runtime?.conference || runtime.audioOpPending) return;
+    if (!runtime?.conference || !runtime.conferenceConnected || runtime.audioOpPending || staleLifecycleRef.current) return;
+    if (generationRef.current !== runtime.generation) return;
+    const operationGeneration = runtime.generation;
 
     runtime.audioOpPending = true;
     const nextMuted = !isMicMuted;
 
     void (async () => {
       try {
+        if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
         if (nextMuted) {
           // ── Mute path ──
           if (!runtime.isSilentAudio) {
             const audioTrack = getAudioTrack(runtime.localAudioStream);
             if (audioTrack) audioTrack.enabled = false;
           }
-          runtime.conference!.muteMicrophone();
+          if (runtime.conferenceConnected) {
+            runtime.conference!.muteMicrophone();
+          }
+          if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
           setIsMicMuted(true);
           setMicCaptureStatus("muted");
         } else {
@@ -916,6 +1268,11 @@ export function useVoximplantRoom({
                   audioProcessing: audioProcessingEnabledRef.current,
                 },
               );
+              if (generationRef.current !== operationGeneration || staleLifecycleRef.current) {
+                stopVoxLikeStreamTracks(audioStream);
+                audioStream.close?.();
+                return;
+              }
               runtime.localAudioStream = audioStream;
               setLocalAudioStreamCreated(true);
 
@@ -941,13 +1298,17 @@ export function useVoximplantRoom({
               runtime.conference!,
               runtime.localAudioStream,
             );
+            if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
             setLocalAudioStreamAddedToConference(runtime.audioStreamAdded);
             removeMediaWarningsByKeyword("микрофон");
           }
 
           const audioTrack = getAudioTrack(runtime.localAudioStream);
           if (audioTrack) audioTrack.enabled = true;
-          runtime.conference!.unmuteMicrophone();
+          if (runtime.conferenceConnected) {
+            runtime.conference!.unmuteMicrophone();
+          }
+          if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
           setIsMicMuted(false);
           setMicCaptureStatus("active");
         }
@@ -955,7 +1316,9 @@ export function useVoximplantRoom({
         setLastAudioError(toErrorMessage(e));
         addMediaWarning(`Не удалось изменить состояние микрофона: ${toErrorMessage(e)}`);
       } finally {
-        runtime.audioOpPending = false;
+        if (runtimeRef.current?.generation === operationGeneration) {
+          runtime.audioOpPending = false;
+        }
       }
     })();
   }, [isMicMuted, addMediaWarning, removeMediaWarningsByKeyword, startMicLevelMeter, stopMicLevelMeter]);
@@ -968,14 +1331,17 @@ export function useVoximplantRoom({
 
   const toggleCamera = useCallback(() => {
     const runtime = runtimeRef.current;
-    if (!runtime?.conference || runtime.videoOpPending) return;
+    if (!runtime?.conference || !runtime.conferenceConnected || runtime.videoOpPending || staleLifecycleRef.current) return;
+    if (generationRef.current !== runtime.generation) return;
     const conference = runtime.conference;
+    const operationGeneration = runtime.generation;
 
     runtime.videoOpPending = true;
     const nextOn = !isCameraOn;
 
     void (async () => {
       try {
+        if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
         if (!nextOn) {
           // Turn camera off idempotently: keep conference stream slot and
           // disable the existing track instead of re-adding another video stream later.
@@ -1013,6 +1379,11 @@ export function useVoximplantRoom({
               videoStream = await runtime.streamModule.streamManager.createVideoStream(
                 runtime.videoQuality,
               );
+              if (generationRef.current !== operationGeneration || staleLifecycleRef.current) {
+                stopVoxLikeStreamTracks(videoStream);
+                videoStream?.close?.();
+                return;
+              }
             } catch (e) {
               if (isNonFatalMediaError(e)) {
                 setCameraUnavailable(true);
@@ -1032,6 +1403,7 @@ export function useVoximplantRoom({
             if (plan.shouldAddStreamToConference) {
               try {
                 runtime.videoStreamAdded = await safeAddStream(conference, videoStream);
+                if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
               } catch (addErr) {
                 const message = toErrorMessage(addErr);
                 if (isDuplicateVideoStreamError(message)) {
@@ -1048,6 +1420,7 @@ export function useVoximplantRoom({
             } else if (!runtime.videoStreamAdded) {
               try {
                 runtime.videoStreamAdded = await safeAddStream(conference, videoStream);
+                if (generationRef.current !== operationGeneration || staleLifecycleRef.current) return;
               } catch (addErr) {
                 addMediaWarning(
                   `Не удалось добавить видеопоток в конференцию: ${toErrorMessage(addErr)}`,
@@ -1073,7 +1446,9 @@ export function useVoximplantRoom({
       } catch (e) {
         addMediaWarning(`Не удалось изменить состояние камеры: ${toErrorMessage(e)}`);
       } finally {
-        runtime.videoOpPending = false;
+        if (runtimeRef.current?.generation === operationGeneration) {
+          runtime.videoOpPending = false;
+        }
       }
     })();
   }, [isCameraOn, addMediaWarning, removeMediaWarningsByKeyword]);
@@ -1086,16 +1461,19 @@ export function useVoximplantRoom({
     }
 
     mountedRef.current = true;
-    const restoreRuntimeSuppressor = installVoxRuntimeErrorSuppressor();
 
     const join = async () => {
-      if (isJoiningRef.current) return;
       isJoiningRef.current = true;
+      const joinGeneration = beginJoinGeneration();
+      if (mountedRef.current) {
+        setIsLoading(true);
+      }
       setError(null);
 
       try {
         setStatus("Ожидание завершения предыдущего подключения...");
         await waitForVoxClientIdle();
+        assertGenerationCurrent(joinGeneration);
 
         // Step 1 — fetch initial access token.
         const initialResponse = await fetch(
@@ -1108,13 +1486,20 @@ export function useVoximplantRoom({
             }),
           },
         );
+        assertGenerationCurrent(joinGeneration);
 
         if (await isStaleConnectionResponse(initialResponse)) {
-          onStaleConnection?.();
+          handleStaleConnection();
+          await cleanup("stale_connection", {
+            preserveStatus: true,
+            skipInvalidation: true,
+            expectedGeneration: joinGeneration,
+          });
           return;
         }
 
         const initialPayload = (await initialResponse.json().catch(() => ({}))) as AccessReadyPayload;
+        assertGenerationCurrent(joinGeneration);
         if (!initialResponse.ok) {
           throw new Error(
             buildAccessErrorMessage(initialResponse.status, {
@@ -1132,6 +1517,8 @@ export function useVoximplantRoom({
         }
 
         const sdkUsername = initialPayload.user.sdkUsername;
+        sdkUsernameRef.current = sdkUsername;
+        broadcastTakeoverClaimed(sdkUsername);
         const roomName = initialPayload.roomNameOrConferenceName;
         const displayName = initialPayload.user.displayName || "User";
         const userRole = initialPayload.user.role ?? "unknown";
@@ -1144,6 +1531,7 @@ export function useVoximplantRoom({
         setLocalDisplayName(displayName);
         localDisplayNameRef.current = displayName;
         setConferenceName(roomName);
+        assertGenerationCurrent(joinGeneration);
 
         // Step 2 — load SDK modules.
         setStatus("Инициализация Voximplant SDK...");
@@ -1152,6 +1540,7 @@ export function useVoximplantRoom({
           import("@voximplant/websdk/modules/conference-manager"),
           import("@voximplant/websdk/modules/stream"),
         ]);
+        assertGenerationCurrent(joinGeneration);
 
         const core = Core.init({}) as unknown as VoxCore;
         try {
@@ -1170,13 +1559,16 @@ export function useVoximplantRoom({
         ) as VoxConferenceManager;
         const streamModule = core.getModule(streamModulePackage.streamToken) as VoxStreamModule;
         const videoQuality = streamModulePackage.VideoQuality.Medium;
+        assertGenerationCurrent(joinGeneration);
 
         // Step 3 — connect and authenticate.
         setStatus("Подключение к Voximplant...");
         await core.client.connect({});
+        assertGenerationCurrent(joinGeneration);
 
         setStatus("Запрос одноразового ключа...");
         const oneTimeKey = await core.client.requestOneTimeKey({ username: sdkUsername });
+        assertGenerationCurrent(joinGeneration);
 
         setStatus("Завершение безопасного входа...");
         const readyResponse = await fetch(
@@ -1190,12 +1582,19 @@ export function useVoximplantRoom({
             }),
           },
         );
+        assertGenerationCurrent(joinGeneration);
         if (await isStaleConnectionResponse(readyResponse)) {
+          handleStaleConnection();
           await registerVoxClientDisconnect(core.client.disconnect());
-          onStaleConnection?.();
+          await cleanup("stale_connection", {
+            preserveStatus: true,
+            skipInvalidation: true,
+            expectedGeneration: joinGeneration,
+          });
           return;
         }
         const readyPayload = (await readyResponse.json().catch(() => ({}))) as AccessReadyPayload;
+        assertGenerationCurrent(joinGeneration);
         if (!readyResponse.ok) {
           throw new Error(
             buildAccessErrorMessage(readyResponse.status, {
@@ -1220,6 +1619,7 @@ export function useVoximplantRoom({
           username: sdkUsername,
           hash: readyPayload.credentials.oneTimeKeyHash,
         });
+        assertGenerationCurrent(joinGeneration);
 
         // Step 4 — acquire media devices (audio and video are fully independent).
         setStatus("Получение доступа к устройствам...");
@@ -1236,6 +1636,7 @@ export function useVoximplantRoom({
             localAudioStream = await streamModule.streamManager.createAudioStream({
               audioProcessing: audioProcessingEnabledRef.current,
             });
+            assertGenerationCurrent(joinGeneration);
             setLocalAudioStreamCreated(true);
           } catch (audioError) {
             if (isNonFatalMediaError(audioError)) {
@@ -1262,6 +1663,7 @@ export function useVoximplantRoom({
           const restoreCameraFilter = installCameraErrorSuppressor();
           try {
             localVideoStream = await streamModule.streamManager.createVideoStream(videoQuality);
+            assertGenerationCurrent(joinGeneration);
           } catch (videoError) {
             if (isNonFatalMediaError(videoError)) {
               initialWarnings.push(
@@ -1285,10 +1687,12 @@ export function useVoximplantRoom({
         });
 
         const runtimeState: RuntimeState = {
+          generation: joinGeneration,
           core,
           streamModule,
           videoQuality,
           conference,
+          conferenceConnected: false,
           localAudioStream,
           localVideoStream,
           isSilentAudio,
@@ -1308,28 +1712,37 @@ export function useVoximplantRoom({
         runtimeRef.current = runtimeState;
 
         const onConnected = () => {
+          runtimeState.conferenceConnected = true;
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           setJoined(true);
           setStatus("Подключено к переговорной комнате.");
         };
         const onFailed = (event: VoxConferenceEvent) => {
+          runtimeState.conferenceConnected = false;
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           const reason = event.payload?.reason ?? "Неизвестная ошибка конференции.";
           setError(`Ошибка подключения к конференции: ${reason}`);
         };
         const onDisconnected = (event: VoxConferenceEvent) => {
+          runtimeState.conferenceConnected = false;
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           const reason = event.payload?.reason ?? "Отключено.";
           setJoined(false);
           setStatus(`Отключено: ${reason}`);
         };
         const onEndpointAdded = (event: VoxConferenceEvent) => {
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           const endpointId = event.payload?.newEndpointId;
           if (!endpointId) return;
           const endpoint = conference.endpoints.value.get(endpointId);
           if (!endpoint) return;
-          subscribeEndpoint(endpoint);
+          subscribeEndpoint(endpoint, joinGeneration);
         };
         const onEndpointRemoved = (event: VoxConferenceEvent) => {
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           const endpointId = event.payload?.removedEndpointId;
           if (!endpointId) return;
+          unsubscribeEndpoint(runtimeState, endpointId);
           removeRemoteById(endpointId);
         };
 
@@ -1348,17 +1761,21 @@ export function useVoximplantRoom({
 
         // Step 6 — add streams to conference (each type added at most once).
         runtimeState.audioStreamAdded = await safeAddStream(conference, localAudioStream);
+        assertGenerationCurrent(joinGeneration);
         setLocalAudioStreamAddedToConference(runtimeState.audioStreamAdded);
 
         if (localVideoStream) {
           runtimeState.videoStreamAdded = await safeAddStream(conference, localVideoStream);
+          assertGenerationCurrent(joinGeneration);
         }
 
         // Step 7 — join.
         await conference.join();
+        runtimeState.conferenceConnected = true;
+        assertGenerationCurrent(joinGeneration);
 
         // Detect conference.sendMessage() availability for recording relay.
-        if (mountedRef.current) {
+        if (mountedRef.current && generationRef.current === joinGeneration) {
           setSendMessageAvailable(typeof (conference as VoxConference).sendMessage === "function");
         }
 
@@ -1366,7 +1783,6 @@ export function useVoximplantRoom({
         const micIsReal = !isSilentAudio;
         setIsMicMuted(!micIsReal);
         if (isSilentAudio) {
-          conference.muteMicrophone();
           setMicCaptureStatus(disableInitialMic ? "not_requested" : "unavailable");
         } else {
           setMicCaptureStatus("active");
@@ -1393,12 +1809,13 @@ export function useVoximplantRoom({
 
         // Subscribe to endpoints already in the conference at join time.
         for (const endpoint of conference.endpoints.value.values()) {
-          subscribeEndpoint(endpoint);
+          subscribeEndpoint(endpoint, joinGeneration);
         }
         runtimeState.endpointSyncIntervalId = window.setInterval(() => {
+          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           for (const endpoint of conference.endpoints.value.values()) {
-            subscribeEndpoint(endpoint);
-            applyRemoteVideoStream(endpoint);
+            subscribeEndpoint(endpoint, joinGeneration);
+            applyRemoteVideoStream(endpoint, joinGeneration);
           }
           const endpointIds = new Set(Array.from(conference.endpoints.value.keys()));
           setRemoteParticipants((current) =>
@@ -1406,12 +1823,22 @@ export function useVoximplantRoom({
           );
         }, 1000);
       } catch (joinError) {
+        if (isVoxLifecycleAbortError(joinError)) {
+          await cleanup(joinError.reason, {
+            preserveStatus: true,
+            skipInvalidation: true,
+            expectedGeneration: joinGeneration,
+          });
+          return;
+        }
         const message = toErrorMessage(joinError);
         setError(message);
         setStatus("Не удалось подключиться к Voximplant.");
-        await cleanup();
+        await cleanup("invalidated_generation");
       } finally {
-        if (mountedRef.current) setIsLoading(false);
+        if (mountedRef.current) {
+          setIsLoading(false);
+        }
         isJoiningRef.current = false;
       }
     };
@@ -1419,21 +1846,26 @@ export function useVoximplantRoom({
     void join();
 
     return () => {
-      mountedRef.current = false;
-      restoreRuntimeSuppressor();
-      void cleanup();
+      invalidateGeneration("component_unmounted");
+      isJoiningRef.current = false;
+      void cleanup("component_unmounted", { preserveStatus: true });
     };
   }, [
+    assertGenerationCurrent,
     applyRemoteVideoStream,
+    beginJoinGeneration,
     cleanup,
     disableInitialCamera,
     disableInitialMic,
+    broadcastTakeoverClaimed,
     connectionId,
+    handleStaleConnection,
+    invalidateGeneration,
     removeRemoteById,
-    onStaleConnection,
     sessionId,
     startMicLevelMeter,
     subscribeEndpoint,
+    unsubscribeEndpoint,
   ]);
 
   // ── Return value ──────────────────────────────────────────────────────────
