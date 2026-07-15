@@ -19,6 +19,7 @@
     "test:e2e:smoke:browser": "playwright test --config=playwright.local.config.ts --project=chromium --grep @browser-smoke",
     "test:stage310": "node --import tsx --test \"lib/session-room-lifecycle.test.ts\" \"lib/session-recording-stop-relay.test.ts\" \"lib/recording-stop-delivery-policy.test.ts\" \"lib/stage-3-10-maintenance.test.ts\" \"lib/voximplant/main-room-scenario.test.ts\" && playwright test --config=playwright.local.config.ts tests/e2e/session-finish-canonical.spec.ts tests/e2e/voximplant-room-presence.spec.ts --project=chromium",
     "test:stage310:browser": "playwright test --config=playwright.local.config.ts --project=chromium tests/e2e/event-completion.spec.ts --grep @browser-smoke",
+    "test:e2e:db:check": "tsx scripts/e2e/check-database.ts",
     "test:e2e:tunnel:check": "node scripts/e2e/check-reverse-tunnel.mjs",
     "test:e2e:tunnel:list": "playwright test --list --grep @requires-tunnel",
     "test:e2e:tunnel": "npm run test:e2e:tunnel:check && playwright test --project=chromium --grep @requires-tunnel --grep-invert @live-provider",

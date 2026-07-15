@@ -142,7 +142,7 @@ async function createEventAndParticipant(hostUserId: string): Promise<{
   return { eventId, participantId };
 }
 
-const DB_AVAILABLE = Boolean(process.env.DATABASE_URL);
+const DB_AVAILABLE = Boolean(process.env.E2E_DATABASE_URL?.trim());
 const BASE_URL = process.env.BASE_URL ?? "";
 const API_AVAILABLE = DB_AVAILABLE && Boolean(BASE_URL);
 

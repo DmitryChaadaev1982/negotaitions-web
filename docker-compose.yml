@@ -12,5 +12,19 @@ services:
     volumes:
       - postgres_data_local:/var/lib/postgresql/data
 
+  postgres_e2e:
+    image: postgres:16-alpine
+    container_name: negotiations_postgres_e2e
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: negotiations_e2e
+      POSTGRES_USER: negotiations
+      POSTGRES_PASSWORD: negotiations_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data_e2e:/var/lib/postgresql/data
+
 volumes:
   postgres_data_local:
+  postgres_data_e2e:

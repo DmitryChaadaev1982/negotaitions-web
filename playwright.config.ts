@@ -1,4 +1,8 @@
+import "dotenv/config";
+
 import { defineConfig, devices } from "@playwright/test";
+
+import { buildE2eServerEnvironment } from "./tests/e2e/helpers/e2e-database";
 
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
 const envBaseUrl =
@@ -45,7 +49,7 @@ export default defineConfig({
         url: fallbackBaseUrl,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
-        env: {
+        env: buildE2eServerEnvironment({
           APP_URL: fallbackBaseUrl,
           EXTERNAL_SERVICES_MODE: "mock",
           RECORDING_MODE: "mock",
@@ -56,7 +60,7 @@ export default defineConfig({
           // Disabled by default in tests to prevent unintended OpenAI charges
           // and to keep tests deterministic. Enable per-test-run when needed.
           AUTO_TRANSCRIBE_AFTER_RECORDING: "false",
-        },
+        }),
       },
   metadata: {
     baseURLSource: useExternalBaseUrl ? "env" : "playwright-webserver",

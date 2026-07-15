@@ -1,4 +1,8 @@
+import "dotenv/config";
+
 import { defineConfig, devices } from "@playwright/test";
+
+import { buildE2eServerEnvironment } from "./tests/e2e/helpers/e2e-database";
 
 const port = 3100;
 const localBaseUrl = `http://127.0.0.1:${port}`;
@@ -36,7 +40,7 @@ export default defineConfig({
     url: localBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: {
+    env: buildE2eServerEnvironment({
       APP_URL: localBaseUrl,
       BASE_URL: localBaseUrl,
       PLAYWRIGHT_BASE_URL: localBaseUrl,
@@ -50,7 +54,7 @@ export default defineConfig({
       // Disabled by default in tests to prevent unintended OpenAI charges
       // and to keep tests deterministic. Enable per-test-run when needed.
       AUTO_TRANSCRIBE_AFTER_RECORDING: "false",
-    },
+    }),
   },
   metadata: {
     runtimeMode: "local-deterministic",

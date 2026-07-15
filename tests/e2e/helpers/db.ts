@@ -3,70 +3,27 @@ import "dotenv/config";
 import { hash } from "bcryptjs";
 import { Pool } from "pg";
 
-const DATABASE_URL_RAW =
-  process.env.E2E_DATABASE_URL?.trim() ||
-  process.env.TEST_DATABASE_URL?.trim() ||
-  process.env.DATABASE_URL?.trim() ||
-  "";
+import {
+  assertIsolatedE2eDatabase,
+  isE2eDatabaseConfigured,
+  resolveE2eDatabaseUrl,
+} from "./e2e-database";
 
-if (!DATABASE_URL_RAW) {
-  throw new Error(
-    "E2E database URL is not configured. Set E2E_DATABASE_URL, TEST_DATABASE_URL, or DATABASE_URL.",
-  );
-}
-
+const DATABASE_URL_RAW = resolveE2eDatabaseUrl();
 const pool = new Pool({ connectionString: DATABASE_URL_RAW });
 
 let hasCheckedDbSafety = false;
-
-function parseDatabaseDescriptor(databaseUrl: string) {
-  try {
-    const parsed = new URL(databaseUrl);
-    const dbName = parsed.pathname.replace(/^\//, "").toLowerCase();
-    const host = parsed.hostname.toLowerCase();
-    return { dbName, host };
-  } catch {
-    return { dbName: "", host: "" };
-  }
-}
 
 function assertSafeDbMutationTarget() {
   if (hasCheckedDbSafety) {
     return;
   }
 
-  const urlSource =
-    process.env.E2E_DATABASE_URL?.trim()
-      ? "E2E_DATABASE_URL"
-      : process.env.TEST_DATABASE_URL?.trim()
-        ? "TEST_DATABASE_URL"
-        : "DATABASE_URL";
-
-  const { dbName, host } = parseDatabaseDescriptor(DATABASE_URL_RAW);
-  const dbLooksTestLike = /(?:test|e2e|staging|sandbox|local|dev)/i.test(dbName);
-  const hostLooksLocal = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0)/i.test(host);
-  const hostLooksSafe = hostLooksLocal || /(?:test|staging|sandbox|dev)/i.test(host);
-  const hasExplicitTestUrl =
-    Boolean(process.env.E2E_DATABASE_URL?.trim()) ||
-    Boolean(process.env.TEST_DATABASE_URL?.trim());
-  const allowOverride = process.env.E2E_ALLOW_DB_MUTATION === "1";
-  const blockedHost = /(?:prod|production|primary|master)/i.test(host);
-  const blockedDb = /(?:prod|production|main)/i.test(dbName);
-
-  if ((blockedHost || blockedDb) && !allowOverride) {
-    throw new Error(
-      `Refusing E2E DB mutation against unsafe DB target (source=${urlSource}, host=${host || "unknown"}, db=${dbName || "unknown"}). Use a dedicated test DB or set E2E_ALLOW_DB_MUTATION=1 for an explicit local override.`,
-    );
-  }
-
-  if (!(hasExplicitTestUrl || dbLooksTestLike || hostLooksSafe || allowOverride)) {
-    throw new Error(
-      `Refusing E2E DB mutation without test signal (source=${urlSource}, host=${host || "unknown"}, db=${dbName || "unknown"}). Provide E2E_DATABASE_URL or TEST_DATABASE_URL, use a DB with test/e2e naming, or set E2E_ALLOW_DB_MUTATION=1 for controlled local runs.`,
-    );
-  }
-
+  assertIsolatedE2eDatabase();
   hasCheckedDbSafety = true;
 }
+
+export { isE2eDatabaseConfigured };
 
 const processPid =
   typeof process.pid === "number" && Number.isFinite(process.pid) ? process.pid : 0;

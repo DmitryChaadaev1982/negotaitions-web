@@ -31,6 +31,7 @@ Deploy validation:
 Test inventory only:
 
 - `npm run test:e2e:list`
+- `npm run test:e2e:db:check` (read-only E2E database preflight)
 
 Explicit browser setup:
 
@@ -103,11 +104,21 @@ Rules:
   - `e2eEmail(base)`
   - `e2eId(base)`
 - `E2E_RUN_ID` may be set externally; otherwise it is generated once per Playwright process.
-- DB-mutating queries are guarded by a safety assertion:
-  - Accepts explicit test DB env (`E2E_DATABASE_URL` or `TEST_DATABASE_URL`), or
-  - test/e2e-style DB naming, or
-  - explicit local override `E2E_ALLOW_DB_MUTATION=1`.
-- Safety guard rejects obviously production-like DB host/name patterns.
+- Database isolation is enforced by `tests/e2e/helpers/e2e-database.ts`:
+  - `E2E_DATABASE_URL` is mandatory for Playwright tests and E2E helpers.
+  - `DATABASE_URL` and `TEST_DATABASE_URL` are not accepted as E2E fallbacks.
+  - E2E and development targets must differ by host/port/database tuple.
+  - Production-like host/database names are refused.
+  - Remote E2E databases require explicit `E2E_ALLOW_REMOTE_DATABASE=1`.
+- Playwright-managed `webServer` processes override `DATABASE_URL` to the resolved `E2E_DATABASE_URL`.
+- Manual `npm run dev` outside Playwright continues to use development `DATABASE_URL` on port `5432`.
+- Run read-only E2E database preflight before browser suites:
+  - `npm run test:e2e:db:check`
+- Local Docker E2E database service:
+  - service: `postgres_e2e`
+  - container: `negotiations_postgres_e2e`
+  - exposed port: `5433`
+  - database: `negotiations_e2e`
 - Stage 3.10 browser/API suites require local DB schema aligned with additive migration:
   - run `npx prisma migrate status`
   - run `npx prisma migrate deploy` (non-production only)

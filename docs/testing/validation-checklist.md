@@ -21,6 +21,7 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `node --import tsx --test lib/services/admin-env-display.test.ts` (admin env diagnostics include enhancement auto-run flag)
 - `node --import tsx --test lib/transcription/transcript-timing.test.ts` (UI-only transcript timestamp/duration readability formatter and grouped-turn ordering)
 - `node --import tsx --test lib/transcription/mapping-ui-presentation.test.ts` (speaker-mapping reason-priority and status-copy presentation rules)
+- `npm run test:e2e:db:check` (read-only E2E database preflight)
 - `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast preflight; read-only)
 - `npm run test:e2e:tunnel:list` (inventory of `@requires-tunnel` tests)
 - `npm run test:e2e:tunnel` (opt-in tunnel-only suite, excludes `@live-provider`)
@@ -124,9 +125,13 @@ Notes:
 
 ## Fixture Guardrails (Phase 4)
 
-- DB mutation safety must run through `tests/e2e/helpers/db.ts`.
-- Preferred DB URL order: `E2E_DATABASE_URL` -> `TEST_DATABASE_URL` -> `DATABASE_URL` (compatibility fallback).
-- Reject production-like DB host/name targets unless `E2E_ALLOW_DB_MUTATION=1` is explicitly set for controlled local use.
+- DB mutation safety must run through `tests/e2e/helpers/db.ts` and `tests/e2e/helpers/e2e-database.ts`.
+- `E2E_DATABASE_URL` is mandatory for Playwright tests; do not fall back to `DATABASE_URL` or `TEST_DATABASE_URL`.
+- Development database: `DATABASE_URL` -> `localhost:5432/negotiations`.
+- Automated E2E database: `E2E_DATABASE_URL` -> `localhost:5433/negotiations_e2e`.
+- Playwright overrides `DATABASE_URL` only for its managed Next.js process; manual `npm run dev` stays on the development database.
+- Run read-only preflight: `npm run test:e2e:db:check`.
+- Docker E2E service: `postgres_e2e` (`negotiations_postgres_e2e`, port `5433`).
 - Use run-scoped namespace helpers (`E2E_RUN_ID`, `getE2eRunId`, `e2eName`, `e2eEmail`, `e2eId`) for new fixture data.
 - Cleanup must be ownership-scoped to current run namespace; new broad wildcard cleanup patterns are not allowed.
 
