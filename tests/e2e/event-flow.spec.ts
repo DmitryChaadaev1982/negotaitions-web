@@ -344,6 +344,7 @@ test("event lobby host can finish active session from sessions board @browser-sm
   await expect(page.getByTestId("host-controls-panel")).toBeVisible();
   await expect(page.getByTestId("finish-session-button")).toHaveCount(1);
   await page.getByTestId("finish-session-button").click();
+  await page.getByTestId("confirm-complete-session-button").click();
 
   await expect
     .poll(async () => {

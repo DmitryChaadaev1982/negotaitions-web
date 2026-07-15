@@ -1,0 +1,124 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  NegotiationState,
+  RoomLifecycle,
+  TrainingEventStatus,
+} from "@/app/generated/prisma/client";
+import {
+  decideSessionRoomAccess,
+  resolveSessionClosedRedirectPath,
+} from "@/lib/session-room-access";
+
+const baseInput = {
+  user: {
+    isAuthenticated: true,
+    isAuthorizedMember: true,
+  },
+  session: {
+    sessionId: "session-1",
+    negotiationState: NegotiationState.RUNNING,
+    roomLifecycle: RoomLifecycle.OPEN,
+    deletedAt: null,
+    closeReason: null,
+    closedByEventAt: null,
+    eventId: null,
+    eventStatus: null,
+  },
+  redirect: {
+    sessionId: "session-1",
+    participantJoinToken: "join-token-1",
+    eventId: null,
+    eventStatus: null,
+    preferEventResultsForEventOwner: false,
+  },
+} as const;
+
+describe("decideSessionRoomAccess", () => {
+  it("allows OPEN lifecycle room access", () => {
+    const decision = decideSessionRoomAccess(baseInput);
+    assert.equal(decision.output, "ALLOW_ACTIVE_ROOM");
+  });
+
+  it("allows FINISHED + DEBRIEF_OPEN access", () => {
+    const decision = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+      },
+    });
+    assert.equal(decision.output, "ALLOW_DEBRIEF");
+    assert.equal(decision.isDebrief, true);
+  });
+
+  it("redirects CLOSED room to materials", () => {
+    const decision = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.CLOSED,
+      },
+    });
+    assert.equal(decision.output, "REDIRECT_MATERIALS");
+    assert.equal(decision.redirectTo, "/join/join-token-1");
+  });
+
+  it("returns EVENT_CLOSED for completed event-linked session", () => {
+    const decision = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+        eventId: "event-1",
+        eventStatus: TrainingEventStatus.COMPLETED,
+      },
+      redirect: {
+        ...baseInput.redirect,
+        eventId: "event-1",
+        eventStatus: TrainingEventStatus.COMPLETED,
+      },
+    });
+    assert.equal(decision.output, "EVENT_CLOSED");
+    assert.equal(decision.redirectTo, "/join/join-token-1");
+  });
+
+  it("treats legacy null lifecycle + finished as closed redirect", () => {
+    const decision = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        roomLifecycle: null,
+        negotiationState: NegotiationState.FINISHED,
+      },
+    });
+    assert.equal(decision.output, "REDIRECT_MATERIALS");
+  });
+
+  it("denies deleted session", () => {
+    const decision = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        deletedAt: new Date(),
+      },
+    });
+    assert.equal(decision.output, "DENY_DELETED");
+  });
+});
+
+describe("resolveSessionClosedRedirectPath", () => {
+  it("prefers event lobby results for event owners when requested", () => {
+    const path = resolveSessionClosedRedirectPath({
+      sessionId: "session-1",
+      eventId: "event-1",
+      eventStatus: TrainingEventStatus.COMPLETED,
+      participantJoinToken: "join-token-1",
+      preferEventResultsForEventOwner: true,
+    });
+    assert.equal(path, "/events/event-1/lobby");
+  });
+});

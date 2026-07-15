@@ -2,6 +2,10 @@
 
 This folder contains the Stage 3.10 docs-only audit artifacts and finalized target decisions.
 
+Implementation progress for the active execution branch is tracked in:
+
+- `docs/audits/stage-3-10-session-completion-flow/implementation-status.md`
+
 ## Scope
 
 - Session completion and leave behavior;

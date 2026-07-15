@@ -1,0 +1,18 @@
+[Unit]
+Description=Negotiations Stage 3.10 maintenance sweep
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run maintenance:stage310 -- --task all
+TimeoutStartSec=180
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

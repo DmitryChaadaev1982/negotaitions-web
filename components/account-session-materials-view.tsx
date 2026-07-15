@@ -288,7 +288,7 @@ export function AccountSessionMaterialsView({
                   : t("dashboard.openRoom")}
               </GradientButtonLink>
             ) : null}
-            {event ? (
+            {event && event.status !== "COMPLETED" ? (
               <SecondaryButtonLink href={event.lobbyUrl}>
                 {t("events.openLobby")}
               </SecondaryButtonLink>
@@ -409,7 +409,7 @@ export function AccountSessionMaterialsView({
             variant="page"
             participantType={participantType}
             showNavigation={false}
-            eventLobbyUrl={event?.lobbyUrl}
+            eventLobbyUrl={event && event.status !== "COMPLETED" ? event.lobbyUrl : undefined}
           />
         </div>
 
@@ -505,13 +505,19 @@ export function AccountSessionMaterialsView({
               <GlassCardContent className="py-4">
                 <p className="mb-2 text-xs text-slate-500">{t("events.eventColumn")}</p>
                 <p className="mb-3 font-medium text-slate-200">{event.title}</p>
-                <Link
-                  href={event.lobbyUrl}
-                  className="text-sm font-semibold text-cyan-400 hover:text-cyan-300"
-                  data-testid="materials-event-lobby-link"
-                >
-                  {t("events.openLobby")}
-                </Link>
+                {event.status !== "COMPLETED" ? (
+                  <Link
+                    href={event.lobbyUrl}
+                    className="text-sm font-semibold text-cyan-400 hover:text-cyan-300"
+                    data-testid="materials-event-lobby-link"
+                  >
+                    {t("events.openLobby")}
+                  </Link>
+                ) : (
+                  <span className="text-sm font-semibold text-emerald-300">
+                    {t("events.materials")}
+                  </span>
+                )}
               </GlassCardContent>
             </GlassCard>
           ) : null}

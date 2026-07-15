@@ -49,6 +49,12 @@ enum NegotiationState {
   FINISHED
 }
 
+enum RoomLifecycle {
+  OPEN
+  DEBRIEF_OPEN
+  CLOSED
+}
+
 enum TrainingEventStatus {
   DRAFT
   LOBBY_OPEN
@@ -185,6 +191,7 @@ model User {
   facilitatedTrainingEvents TrainingEvent[] @relation("TrainingEventFacilitator")
   eventParticipants   EventParticipant[]
   sessionParticipants SessionParticipant[]
+  roomConnections   SessionRoomConnection[]
   videoProviderIdentities VideoProviderIdentity[]
   userSessions        UserSession[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
@@ -312,6 +319,7 @@ model Session {
   closedByEventAt            DateTime?
   closedByEventId            String?
   closeReason                String?
+  roomLifecycle              RoomLifecycle?
   createdAt                  DateTime         @default(now())
   updatedAt                  DateTime         @updatedAt
 
@@ -326,10 +334,41 @@ model Session {
   pauseIntervals  SessionPauseInterval[]
   eventParticipants EventParticipant[]   @relation("EventAssignedSession")
   sessionInvites    SessionInvite[]
+  roomConnections   SessionRoomConnection[]
+  recordingStopOperations SessionRecordingStopOperation[]
 
   @@index([negotiationCaseId])
   @@index([facilitatorId])
   @@index([eventId])
+  @@index([roomLifecycle])
+}
+
+model SessionRoomConnection {
+  id                       String    @id @default(cuid())
+  sessionId                String
+  userId                   String
+  connectionId             String    @unique
+  leaseVersion             Int       @default(1)
+  role                     ParticipantType
+  expiresAt                DateTime
+  disconnectedAt           DateTime?
+  disconnectedReason       String?
+  supersededAt             DateTime?
+  supersededByConnectionId String?
+  revokedAt                DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId])
+  @@index([sessionId, disconnectedAt])
+  @@index([sessionId, expiresAt])
+  @@index([sessionId, role, disconnectedAt, supersededAt, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@index([sessionId, userId])
+  @@index([sessionId, userId, disconnectedAt, supersededAt, revokedAt, expiresAt])
 }
 
 model SessionPauseInterval {
@@ -529,6 +568,36 @@ model Recording {
 
   session    Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   transcript Transcript?
+  stopOperation SessionRecordingStopOperation?
+}
+
+model SessionRecordingStopOperation {
+  id                String   @id @default(cuid())
+  sessionId         String
+  recordingId       String   @unique
+  provider          String
+  requestedByMode   String
+  requestReason     String?
+  operationId       String   @unique
+  state             String   @default("PENDING")
+  attemptCount      Int      @default(0)
+  lastAttemptAt     DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  lastError         String?
+  lastErrorClass    String?
+  nextRetryAt       DateTime?
+  lastDeliveryTransport String?
+  fallbackPayload   Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  recording Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([state, updatedAt])
+  @@index([state, nextRetryAt])
 }
 
 model Transcript {

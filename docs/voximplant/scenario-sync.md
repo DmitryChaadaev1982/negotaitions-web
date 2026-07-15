@@ -216,6 +216,12 @@ Then check Voximplant server logs for:
 
 The build ID must match the value printed during `vox:scenario:prepare`.
 
+For Stage 3.10 A7 manual rollout, expected marker in repository artifact:
+
+`SCENARIO_BUILD_ID = "server-poc-webhook-fix-2026-07-13-a7"`
+
+If runtime logs show a different build marker, deployed scenario drift is present until manually reconciled.
+
 The **recording diagnostics panel** (enabled via `NEXT_PUBLIC_RECORDING_DEBUG_PANEL=true`)
 shows the expected build ID in the **"1b. Scenario Sync"** section and provides a
 "Copy expected log marker" button.
@@ -271,3 +277,12 @@ npm run vox:scenario:upload:direct
 # Compare local vs remote snapshot
 npm run vox:scenario:check
 ```
+
+## 11. Stage 3.10 validation gates
+
+- Local/provider-free contract checks (no provider calls):
+  - `node --check docs/voximplant/neg-conf.main-room.scenario.js`
+  - `node --check .voxengine-ci/scenarios/src/neg-conf-main-room.voxengine.js`
+  - `node --import tsx --test lib/voximplant/main-room-scenario.test.ts`
+- Manual provider drift and canary checks remain outside default CI commands:
+  - see `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`

@@ -52,6 +52,14 @@ Curated deterministic browser smoke:
 
 - `npm run test:e2e:smoke:browser`
 
+Stage 3.10 focused deterministic regression (provider-free):
+
+- `npm run test:stage310`
+
+Stage 3.10 focused browser smoke subset:
+
+- `npm run test:stage310:browser`
+
 Tunnel preflight and classified suites (opt-in only):
 
 - `npm run test:e2e:tunnel:check`
@@ -100,6 +108,10 @@ Rules:
   - test/e2e-style DB naming, or
   - explicit local override `E2E_ALLOW_DB_MUTATION=1`.
 - Safety guard rejects obviously production-like DB host/name patterns.
+- Stage 3.10 browser/API suites require local DB schema aligned with additive migration:
+  - run `npx prisma migrate status`
+  - run `npx prisma migrate deploy` (non-production only)
+  - rerun `npx prisma generate` and `npx prisma validate`
 - Cleanup ownership rule:
   - `cleanupE2eData()` must remove only current run namespace data plus rows owned by current run users.
   - New tests must avoid broad wildcard cleanup (`LIKE '%E2E%'`) against shared data.
@@ -149,6 +161,19 @@ Properties:
 - Playwright-managed local `webServer`
 - Mock external providers only
 - No reverse tunnel and no external HTTPS callback dependency
+
+`test:stage310` is:
+
+- Non-provider Stage 3.10 subset (unit + scenario contract + deterministic API/browserless E2E)
+- No real provider calls
+- No reverse tunnel requirement
+- Requires non-production DB with Stage 3.10 migration applied
+
+`test:stage310:browser` is:
+
+- Local deterministic browser subset (`playwright.local.config.ts`)
+- Requires Chromium runtime (`npm run test:e2e:install`)
+- Uses local Playwright web server, no provider access
 
 `test:all` remains available for backward compatibility as a broad legacy/full-suite command, but it is not the recommended routine deploy gate while full Playwright remains unstable or environment-dependent.
 
@@ -225,7 +250,21 @@ Intentionally not covered in Phase 2 smoke:
 ## Canonical References
 
 - `tests/e2e/**`
+- `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
+- `docs/testing/stage-3-10-session-lifecycle-traceability.csv`
+- `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
 - `docs/testing/validation-checklist.md`
 - `docs/testing/yandex-poc-smoke-regression-plan.md`
 - `docs/audits/archive/old-root-reports/TEST_PLAN.md`
 - `docs/audits/archive/old-root-reports/TEST_RESULTS.md`
+
+## Stage 3.10 Checkpoint B guard focus
+
+Checkpoint B adds explicit routing/lifecycle guard expectations:
+
+- room direct URL for `OPEN`, `DEBRIEF_OPEN`, `CLOSED`;
+- completed event lobby direct URL server guard;
+- refresh/back/stale-tab close handling without reconnect loops;
+- closed-room provider credential denial (`ROOM_CLOSED` / `EVENT_CLOSED`).
+
+Deterministic policy checks are anchored in `lib/session-room-access.test.ts`; browser confirmation remains part of `test:stage310` and `test:stage310:browser`.

@@ -9,6 +9,10 @@ import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { prisma } from "@/lib/prisma";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
+import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
 
 type RoomPageProps = {
   params: Promise<{ sessionId: string }>;
@@ -59,6 +63,36 @@ export default async function RoomPage({
           </h1>
         </div>
       );
+    }
+
+    const decision = decideSessionRoomAccess({
+      user: {
+        isAuthenticated: true,
+        isAuthorizedMember: true,
+      },
+      session: {
+        sessionId,
+        negotiationState: participant.session.negotiationState,
+        roomLifecycle: participant.session.roomLifecycle ?? null,
+        deletedAt: participant.session.deletedAt ?? null,
+        closeReason: participant.session.closeReason ?? null,
+        closedByEventAt: participant.session.closedByEventAt ?? null,
+        eventId: participant.session.eventId ?? null,
+        eventStatus: participant.session.event?.status ?? null,
+      },
+      redirect: {
+        sessionId,
+        participantJoinToken: participant.joinToken,
+        eventId: participant.session.eventId ?? null,
+        eventStatus: participant.session.event?.status ?? null,
+        preferEventResultsForEventOwner: participant.type === "FACILITATOR",
+      },
+    });
+    if (!isRoomAccessAllowed(decision.output)) {
+      if (decision.redirectTo) {
+        redirect(decision.redirectTo);
+      }
+      notFound();
     }
 
     // Account mode: no joinToken in props; VideoRoomPage authenticates via cookie.

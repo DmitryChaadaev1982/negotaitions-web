@@ -149,6 +149,7 @@ export async function buildVoximplantRecordingDispatch(
     sessionId: string;
     participantId?: string;
     role?: VoximplantRoomRole;
+    requestId?: string;
   },
 ): Promise<VoximplantRecordingDispatchResult> {
   let config;
@@ -166,7 +167,7 @@ export async function buildVoximplantRecordingDispatch(
   const conferenceName = buildVoximplantConferenceName(context.sessionId);
   const webhookBaseUrl = await getVoximplantRecordingWebhookBaseUrl();
   const scenarioMessage = createRecordingControlMessage(scenarioAction, {
-    requestId: nanoid(12),
+    requestId: context.requestId?.trim() || nanoid(12),
     sessionId: context.sessionId,
     conferenceName,
     ...(webhookBaseUrl ? { webhookBaseUrl } : {}),

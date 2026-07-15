@@ -66,7 +66,12 @@ export type AccountMaterialsData = {
     publicInstructions: string;
     caseLanguage: string;
   };
-  event: { id: string; title: string; lobbyUrl: string } | null;
+  event: {
+    id: string;
+    title: string;
+    status: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED";
+    lobbyUrl: string;
+  } | null;
   assignedParticipants: Array<{
     id: string;
     displayName: string;
@@ -259,6 +264,7 @@ export async function getAccountMaterialsData(
       ? {
           id: sessionData.event.id,
           title: sessionData.event.title,
+          status: sessionData.event.status,
           lobbyUrl: `/events/${sessionData.event.id}/lobby`,
         }
       : null,

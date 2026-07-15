@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
+import { ParticipantType } from "@/app/generated/prisma/client";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { getRoomSidebarData, getRoomSidebarDataByParticipantId } from "@/lib/room-sidebar";
 import { prisma } from "@/lib/prisma";
 import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
+import {
   claimSessionRoomConnectionLease,
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
 
-function enforceConnectionLease(params: {
+async function enforceConnectionLease(params: {
   sessionId: string;
   userId: string;
+  role: ParticipantType;
   connectionId: string | null;
   claimLease: boolean;
 }) {
@@ -19,24 +25,42 @@ function enforceConnectionLease(params: {
     return null;
   }
   if (params.claimLease) {
-    claimSessionRoomConnectionLease({
+    const lease = await claimSessionRoomConnectionLease({
       sessionId: params.sessionId,
       userId: params.userId,
       connectionId: params.connectionId,
+      role: params.role,
     });
+    if (!lease.isCurrentConnectionActive) {
+      return {
+        error: "staleConnection",
+        code: "STALE_CONNECTION",
+        activeConnectionVersion: lease.version,
+        status: 409 as const,
+      };
+    }
     return null;
   }
-  const state = validateSessionRoomConnectionLease({
+  const state = await validateSessionRoomConnectionLease({
     sessionId: params.sessionId,
     userId: params.userId,
     connectionId: params.connectionId,
   });
   if (state.version === 0) {
-    claimSessionRoomConnectionLease({
+    const lease = await claimSessionRoomConnectionLease({
       sessionId: params.sessionId,
       userId: params.userId,
       connectionId: params.connectionId,
+      role: params.role,
     });
+    if (!lease.isCurrentConnectionActive) {
+      return {
+        error: "staleConnection",
+        code: "STALE_CONNECTION",
+        activeConnectionVersion: lease.version,
+        status: 409 as const,
+      };
+    }
     return null;
   }
   if (!state.isCurrentConnectionActive) {
@@ -48,6 +72,73 @@ function enforceConnectionLease(params: {
     };
   }
   return null;
+}
+
+async function enforceRoomAccess(params: {
+  sessionId: string;
+  role: ParticipantType;
+  joinToken: string | null;
+}) {
+  const session = await prisma.session.findUnique({
+    where: { id: params.sessionId },
+    select: {
+      id: true,
+      eventId: true,
+      negotiationState: true,
+      roomLifecycle: true,
+      deletedAt: true,
+      closeReason: true,
+      closedByEventAt: true,
+      event: {
+        select: { status: true },
+      },
+    },
+  });
+  if (!session) {
+    return { status: 404 as const, body: { error: "sessionDeleted" } };
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId: session.id,
+      negotiationState: session.negotiationState,
+      roomLifecycle: session.roomLifecycle ?? null,
+      deletedAt: session.deletedAt ?? null,
+      closeReason: session.closeReason ?? null,
+      closedByEventAt: session.closedByEventAt ?? null,
+      eventId: session.eventId ?? null,
+      eventStatus: session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId: session.id,
+      participantJoinToken: params.joinToken ?? undefined,
+      eventId: session.eventId ?? null,
+      eventStatus: session.event?.status ?? null,
+      preferEventResultsForEventOwner: params.role === ParticipantType.FACILITATOR,
+    },
+  });
+  if (isRoomAccessAllowed(accessDecision.output)) {
+    return null;
+  }
+  if (accessDecision.output === "DENY_DELETED") {
+    return { status: 404 as const, body: { error: "sessionDeleted" } };
+  }
+  if (accessDecision.output === "DENY_UNAUTHORIZED") {
+    return { status: 403 as const, body: { error: "Forbidden." } };
+  }
+
+  return {
+    status: 409 as const,
+    body: {
+      error: accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+      code: accessDecision.output === "EVENT_CLOSED" ? "EVENT_CLOSED" : "ROOM_CLOSED",
+      redirectTo: accessDecision.redirectTo,
+    },
+  };
 }
 
 export async function GET(request: Request) {
@@ -79,7 +170,7 @@ export async function GET(request: Request) {
     // Verify the user owns or may use this participant before returning sidebar data.
     const participantForToken = await prisma.sessionParticipant.findUnique({
       where: { joinToken },
-      select: { id: true, joinToken: true, userId: true, sessionId: true },
+      select: { id: true, joinToken: true, userId: true, sessionId: true, type: true },
     });
 
     if (!participantForToken) {
@@ -90,9 +181,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
     if (participantForToken.userId) {
-      const leaseError = enforceConnectionLease({
+      const roomAccessError = await enforceRoomAccess({
+        sessionId: participantForToken.sessionId,
+        role: participantForToken.type,
+        joinToken: participantForToken.joinToken,
+      });
+      if (roomAccessError) {
+        return NextResponse.json(roomAccessError.body, { status: roomAccessError.status });
+      }
+
+      const leaseError = await enforceConnectionLease({
         sessionId: participantForToken.sessionId,
         userId: participantForToken.userId,
+        role: participantForToken.type,
         connectionId,
         claimLease,
       });
@@ -125,6 +226,7 @@ export async function GET(request: Request) {
       id: true,
       userId: true,
       sessionId: true,
+      type: true,
     },
   });
 
@@ -138,9 +240,19 @@ export async function GET(request: Request) {
   }
 
   if (participant.userId) {
-    const leaseError = enforceConnectionLease({
+    const roomAccessError = await enforceRoomAccess({
+      sessionId: participant.sessionId,
+      role: participant.type,
+      joinToken: null,
+    });
+    if (roomAccessError) {
+      return NextResponse.json(roomAccessError.body, { status: roomAccessError.status });
+    }
+
+    const leaseError = await enforceConnectionLease({
       sessionId: participant.sessionId,
       userId: participant.userId,
+      role: participant.type,
       connectionId,
       claimLease,
     });

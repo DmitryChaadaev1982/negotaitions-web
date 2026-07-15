@@ -1,5 +1,6 @@
 import type { AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { aggregateAiPublicationStatus } from "@/lib/ai-publication-aggregate";
 import { normalizeUserEmail } from "@/lib/invite-email";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
@@ -77,6 +78,8 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       },
       participants: {
         select: {
+          id: true,
+          displayName: true,
           userId: true,
           type: true,
           joinedAt: true,
@@ -94,7 +97,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         select: { status: true, hasSpeakerDiarization: true, speakerMappingStatus: true },
       },
       aiAnalysis: {
-        select: { status: true, visibility: true },
+        select: { status: true, visibility: true, sharedAnalysisJson: true },
       },
     },
   });
@@ -142,6 +145,17 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
           ? "failed"
           : "in_progress"
       : null;
+    const aiPublication = aggregateAiPublicationStatus({
+      aiStatus,
+      aiVisibility: session.aiAnalysis?.visibility ?? null,
+      sharedAnalysisJson: session.aiAnalysis?.sharedAnalysisJson ?? null,
+      participants: session.participants.map((participant) => ({
+        id: participant.id,
+        userId: participant.userId,
+        displayName: participant.displayName,
+        type: participant.type,
+      })),
+    });
 
     return {
       id: session.id,
@@ -193,9 +207,8 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       recordingStage,
       transcriptStage,
       speakerMappingStage,
-      aiStage: aiStage === "ready" && session.aiAnalysis?.visibility === "SHARED_WITH_SESSION"
-        ? "shared"
-        : aiStage,
+      aiStage,
+      aiPublicationStatus: aiPublication.status === "none" ? null : aiPublication.status,
       aiVisibility: session.aiAnalysis?.visibility ?? "FACILITATOR_ONLY",
       roomUrl: `/room/${session.id}`,
       materialsUrl: `/sessions/${session.id}/materials`,

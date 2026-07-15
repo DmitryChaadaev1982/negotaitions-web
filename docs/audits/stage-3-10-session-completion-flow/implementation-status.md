@@ -1,0 +1,237 @@
+# Stage 3.10 Implementation Status (Checkpoint A + B + C + D)
+
+## Release-readiness status
+
+- Implementation complete: yes
+- Locally validated: yes
+- Migration rehearsal: complete (local disposable DB)
+- Provider canary: pending manual execution
+- Multi-browser canary: pending manual execution
+- Production deployment: pending
+
+## Implemented in current branch
+
+- **A1 additive schema**
+  - Added `Session.roomLifecycle` (`RoomLifecycle` enum) as nullable compatibility field.
+  - Added durable `SessionRoomConnection` ledger table and additive indexes.
+  - Added `SessionRecordingStopOperation` table for durable idempotent recording-stop orchestration.
+
+- **A2 compatibility and durable ledger integration**
+  - Replaced in-memory room-connection lease with PostgreSQL-backed lease operations.
+  - Kept compatibility behavior for legacy sessions where `roomLifecycle` is still `null`.
+  - Separated lease validation from explicit lease renewal (`heartbeat` renews; validate-only callers do not).
+  - Added stale-connection hardening to prevent reactivation of superseded/disconnected/revoked/expired connection IDs.
+
+- **A3 canonical server-authoritative Session finish**
+  - Added canonical finish service at `lib/session-completion.ts`.
+  - Session finish now resolves room lifecycle (`DEBRIEF_OPEN` vs `CLOSED`) using durable active-connection predicate.
+  - Added non-reopen guard (`CLOSED` remains terminal).
+  - Added idempotent recording-stop intent claiming and durable delivery state machine.
+  - Refactored facilitator room finish and timer auto-finish paths to use canonical finish service.
+
+- **A4 Event completion orchestration through canonical Session completion**
+  - Refactored `lib/complete-event.ts` to complete each linked session through canonical finish service in `EVENT_COMPLETION` mode.
+  - Event completion now hard-closes linked session rooms (`roomLifecycle=CLOSED`) regardless of presence.
+  - Per-session recording-stop failures are captured as warnings; Event status remains `COMPLETED`.
+
+- **A5 durable room occupancy operations**
+  - Added canonical occupancy helper `lib/session-room-occupancy.ts` with DB-time active predicate and reusable active-count diagnostics.
+  - Added durable idempotent explicit disconnect operation in `lib/session-room-connection-lease.ts`.
+  - Occupancy closure decisions now use DB `NOW()` for final active-connection checks.
+
+- **A6 explicit leave and atomic last-disconnect closure**
+  - Added explicit leave API endpoint `app/api/sessions/[sessionId]/presence/leave/route.ts`.
+  - Corrected semantics: explicit leave is now invoked only from explicit user leave actions; generic heartbeat cleanup/unmount no longer calls `/presence/leave`.
+  - LiveKit and Vox room leave handlers now call canonical explicit leave endpoint first, then provider disconnect/navigation.
+  - Implemented atomic `DEBRIEF_OPEN -> CLOSED` compare-and-set update (`NOT EXISTS` active-connection subquery) in `closeDebriefRoomIfEmpty()`.
+  - Added structured non-PII occupancy logging for disconnect/expiry closure outcomes.
+
+## Recording stop orchestration notes
+
+- Exactly one logical stop operation per recording is enforced by unique `recordingId` in `SessionRecordingStopOperation`.
+- LiveKit stop delivery is server-authoritative and retryable via persisted operation state.
+- Voximplant stop intent is durable and retryable server-side, but delivery still depends on browser relay in current architecture.
+- Retry policy is bounded; unsupported browser-dependent flow now transitions to terminal operator-attention class `VOXIMPLANT_BROWSER_RELAY_REQUIRED_TERMINAL`.
+- Webhook/provider completion remains authoritative for terminal recording finalization.
+
+## A7/A8/A9 status in this checkpoint
+
+- **A7 accepted architecture (bounded risk)**
+  - Canonical FINISH/Event completion persists one durable `SessionRecordingStopOperation`.
+  - Any eligible connected room client (facilitator, participant, observer) may relay the server-authorized stop operation by server-issued `operationId/requestId`.
+  - Duplicate client relays converge on one operation and webhook finalization.
+  - Scenario adds shutdown hardening (`ConferenceEvents.Stopped`, `AppEvents.Terminating`) without changing conference startup architecture.
+  - Provider auto-termination remains fallback when no client can relay.
+  - **Status:** accepted for Stage 3.10 Checkpoint A (`A7`), with explicit residual risk.
+- **A8 bounded backfill and verification**: implemented rerunnable batch backfill + verification counters in maintenance command.
+- **A9 restart/concurrency/rollback validation**: code-level protections and focused tests added; full deployment rollback rehearsal remains pending environment-level checkpoint review.
+
+## Residual risks (accepted in A7)
+
+1. All clients can disappear before seeing FINISHED/event close and before relay claim.
+2. Clients can remain connected but fail relay transport (`sendMessage` unavailable, timing out, transient network/client failures).
+3. Provider session termination can lag behind expected timing, extending recording window.
+4. Debrief speech may still be captured until relay succeeds or provider session terminates.
+5. Webhook delivery/finalization can be delayed.
+6. Shutdown-handler webhook delivery is best effort under forced provider termination.
+
+## Escalation conditions for deferred server-owned Vox control
+
+- recurring debrief over-recording outside accepted window;
+- repeated materially delayed stop finalization;
+- privacy-boundary incidents tied to delayed stop;
+- frequent event/session completion without relay-capable clients;
+- observable provider cost growth from delayed termination;
+- missing webhook past operational timeout threshold.
+
+## Deferred backlog item (explicit)
+
+- Implement true server-owned, no-browser VoxEngine stop transport for active conferences (without WebSDK client relay), including durable command ingress and runtime verification.
+
+## Leave trigger inventory (correctness evidence)
+
+- **Explicit leave API invoked**
+  - `components/video-room-page.tsx`: explicit room leave button, control-bar leave, session-closed overlay leave.
+  - `components/voximplant-negotiation-room-page.tsx`: explicit room leave button and session-closed overlay leave.
+- **No explicit leave API invocation**
+  - `components/session-room-presence-heartbeat.tsx` effect cleanup (refresh/unmount/navigation/page termination path).
+  - stale-tab auto cleanup path in Vox room (`staleConnection` hook effect) only disconnects provider media; does not call `/presence/leave`.
+- **Heartbeat touch path**
+  - `POST /api/sessions/[sessionId]/heartbeat` remains only TTL-renewal caller.
+- **Claim/validate paths**
+  - room bootstrap and polling calls continue to use claim/validate via sidebar/control-state/access routes.
+
+## Vox no-browser transport evidence table
+
+| candidate_transport | supported_by_current_start_flow | required_identifier | identifier_currently_persisted | scenario_change_required | server_secret_required | retryable | works_without_browser | evidence |
+|---|---|---|---|---|---|---|---|---|
+| Browser `conference.sendMessage` relay | yes | active browser conference object | n/a server-side | no | no | yes (via stop operation retries waiting for browser path) | no | `lib/voximplant/use-voximplant-room.ts`, `lib/voximplant/recording-dispatch.ts`, `docs/architecture/05-voximplant-integration.md` |
+| `media_session_access_url` HTTP control | not in current flow | `media_session_access_url` from StartScenarios/StartConference response | no | likely yes (add AppEvents.HttpRequest command handler hardening) | yes | potentially | unknown in current app | app currently starts conference through WebSDK join, not StartScenarios/StartConference control response persistence; no stored access URL in schema/routes |
+| Management API direct “send to running conference” | no repository evidence | active session control handle | no | yes | yes | n/a | no evidence | `lib/voximplant/management-api.ts` implements identity/user management calls, no active-session message bridge |
+| Server-owned scenario polling channel | no | durable server command pull endpoint/queue | no | yes | yes | potentially | potentially | no existing polling/control endpoint in scenario artifact; would be new architecture work |
+
+## Remaining later checkpoints
+
+- **Checkpoint B** guards/rejoin/redirects finalization is now partially implemented in this branch with canonical server room-access decisions and redirect policy wiring.
+- **Checkpoint C** administrative completion entry points and Sessions/Event UI updates are implemented for API + overview/detail/event host controls, with aggregate AI publication status and independent speaker-mapping indicators in Sessions overview.
+- **Checkpoint D** full test matrix closure, docs completion, and gate evidence.
+
+## Checkpoint C implementation snapshot
+
+- **Canonical administrative completion endpoint**
+  - Added `POST /api/sessions/[sessionId]/complete` (`app/api/sessions/[sessionId]/complete/route.ts`).
+  - Reuses canonical `completeSessionCanonical()` with mode `ADMINISTRATIVE_SESSION_FINISH`.
+  - Authorization is server-side and supports both account-authenticated managers and event host-token management context.
+  - Response returns idempotent completion fields (`completed/alreadyCompleted`, `negotiationState`, `roomLifecycle`, recording stop warning summary, refresh/redirect hints).
+
+- **Management surface actions**
+  - Sessions overview: added `Complete session` action in existing actions group (`components/sessions-list-view.tsx`) without adding new table columns.
+  - Session detail: added same canonical completion action (`components/session-detail-view.tsx`).
+  - Event host controls: replaced room-control FINISH path with canonical administrative completion action (`components/event-host-controls-panel.tsx`).
+  - Complete and Delete remain separate controls and semantics.
+
+- **Completed Event lobby/action cleanup**
+  - Sessions overview hides `Open lobby` for sessions linked to completed events.
+  - Account materials view hides lobby navigation when linked event is completed and keeps materials/results navigation available (`components/account-session-materials-view.tsx`).
+
+- **AI publication aggregation + mapping independence**
+  - Added reusable aggregate helper: `lib/ai-publication-aggregate.ts`.
+  - Sessions overview now renders one session-level publication status (`none/partial/full`) and keeps speaker mapping status as independent line (`components/sessions-list-view.tsx`, `lib/session-overview-stats.ts`).
+  - Added unit coverage for aggregation edge cases: duplicates, malformed payloads, removed/unknown recipients, duplicate names, name changes, stable ID matching, and ambiguous legacy fallback handling (`lib/ai-publication-aggregate.test.ts`).
+
+### AI publication recipient identity evidence
+
+| source_field | semantic_meaning | stable_across_name_change | unique_within_session | available_in_current_payload | used_by_current_aggregation | recommended_use |
+| --- | --- | --- | --- | --- | --- | --- |
+| `SessionParticipant.id` | canonical recipient row identity in current session | yes | yes | yes (current session participants) | yes | primary |
+| `userId` | account identity linked to participant row | yes | usually (not guaranteed) | sometimes (payload-dependent) | yes (only if unique in current recipient set) | secondary |
+| `participantId`/`sessionParticipantId` in `sharedAnalysisJson.participantPersonalFeedback` | published recipient identity in shared payload | yes | yes when present | partial (legacy payloads may omit) | yes | preferred payload field |
+| `recipientId`/`publicationRecipientId` | generic recipient identity aliases | unknown | unknown | partial | yes (only when directly mappable to current `SessionParticipant.id`) | fallback alias |
+| normalized `participantName` | display-name fallback for legacy payloads | no | no (duplicates possible) | yes | yes (only when unique among current required recipients) | legacy fallback only |
+
+- **Checkpoint C focused evidence**
+  - Added API + idempotency + authorization coverage for administrative endpoint in `tests/e2e/session-finish-canonical.spec.ts`.
+  - Updated host-controls UI flow test for confirmation-based completion action in `tests/e2e/event-flow.spec.ts`.
+
+## Checkpoint B: canonical access guard inventory (implemented)
+
+Canonical server-side room-entry and room-operation guard now applies to:
+
+- `app/room/[sessionId]/page.tsx` (direct URL + refresh/back server routing gate)
+- `app/api/livekit/token/route.ts` (provider credentials)
+- `app/api/sessions/[sessionId]/voximplant/access/route.ts` (provider credentials)
+- `app/api/livekit/sidebar/route.ts` (bootstrap/sidebar room surface)
+- `app/api/sessions/[sessionId]/control-state/route.ts` (bootstrap/poll state)
+- `app/api/sessions/[sessionId]/control/route.ts` (negotiation controls)
+- `app/api/sessions/[sessionId]/recording-control/route.ts` (recording controls + stop relay)
+- `app/api/sessions/[sessionId]/heartbeat/route.ts` (presence renew)
+- `app/api/sessions/[sessionId]/media-status/route.ts` (room media operation)
+- `app/events/[id]/lobby/page.tsx` (completed-event lobby hard guard)
+
+### Canonical helper paths
+
+- Room decision + output type + closed redirect resolver:
+  - `lib/session-room-access.ts`
+- Null lifecycle compatibility derivation:
+  - `lib/session-room-lifecycle.ts`
+
+### Access-path inventory snapshot (Checkpoint B)
+
+| Entry path | Actor/auth source | State inputs | Previous behavior | Target + implemented behavior |
+| --- | --- | --- | --- | --- |
+| `/room/[sessionId]` | authenticated account participant/facilitator/observer | session membership + lifecycle + event status | mostly client/bootstrap-led outcomes | server decision first; `OPEN` allow, `DEBRIEF_OPEN` allow debrief, `CLOSED` redirect materials/results |
+| `/api/livekit/token` | authenticated room member | session + lifecycle + lease | could issue token before unified close check | canonical decision blocks `CLOSED` / `EVENT_COMPLETED`; no provider token on closed room |
+| `/api/sessions/[sessionId]/voximplant/access` | authenticated room member | session + lifecycle + lease | stale/lease check present; close policy fragmented | canonical decision before credential issue; closed/event-completed denied with stable redirect metadata |
+| `/api/livekit/sidebar` | authenticated room member via joinToken/participantId | session + lifecycle + lease | stale handling only | canonical room-access decision + lease; closed/event-closed conflicts returned consistently |
+| `/api/sessions/[sessionId]/control-state` | authenticated room member | session + lifecycle + lease | mostly stale handling | canonical decision + close conflict redirect metadata; no reopen |
+| `/api/sessions/[sessionId]/control` | facilitator member | session + lifecycle + lease | facilitator gate only | debrief/closed control denied (`DEBRIEF_CONTROL_DENIED` / closed conflict) |
+| `/api/sessions/[sessionId]/recording-control` | role-aware room member | session + lifecycle + lease + action | facilitator/relay checks but no unified room policy | debrief allows only `refresh`/`relay_stop`/`relay_stop_report`; closed/event-closed denied |
+| `/api/sessions/[sessionId]/heartbeat` | room member | session + lifecycle + lease | lease renew path, no canonical close redirect metadata | canonical decision before renew; closed/event-closed rejects renew |
+| `/api/sessions/[sessionId]/media-status` | room member | session + lifecycle + lease | lease check only | canonical decision blocks closed/event-completed room operations |
+| `/events/[id]/lobby` | authenticated lobby user/token holder | event status | completed guard mostly in client overlay | server route now guards `COMPLETED` directly; no interactive lobby render |
+
+### Focused browser failure resolution (final hardening)
+
+- Former failing focused case: `tests/e2e/event-completion.spec.ts` :: `complete event closes running session and stops active recording`.
+- Root-cause classification: `FIXTURE_DEFECT`.
+- Exact cause: the test relied on implicit runtime side-effects (`START`) to produce a recording row, but that precondition is provider/config dependent and not deterministic for this scenario.
+- Fix: hardened the test fixture to explicitly establish `RUNNING` session state and seed an active recording row before event completion; assertions remained strict and stop-operation checks were preserved.
+- Stable scenario IDs now referenced in test names and traceability:
+  - `ST310-EVENT-004`
+  - `ST310-NAV-005`
+
+### Output contract now used
+
+`RoomAccessDecisionOutput` in `lib/session-room-access.ts`:
+
+- `ALLOW_ACTIVE_ROOM`
+- `ALLOW_DEBRIEF`
+- `REDIRECT_MATERIALS`
+- `REDIRECT_EVENT_RESULTS`
+- `DENY_UNAUTHORIZED`
+- `DENY_DELETED`
+- `STALE_CONNECTION`
+- `EVENT_CLOSED`
+
+## Test catalog and traceability artifacts (Checkpoint A foundation)
+
+- Scenario catalog: `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
+- Traceability matrix: `docs/testing/stage-3-10-session-lifecycle-traceability.csv`
+- Coverage gaps and manual canaries: `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
+- Focused deterministic regression command: `npm run test:stage310`
+- Focused browser subset command: `npm run test:stage310:browser`
+
+Current traceability totals (recalculated from CSV):
+
+- Total distinct scenarios: `75`
+- `AUTOMATED`: `70`
+- `MANUAL_PROVIDER_CANARY`: `3`
+- `MANUAL_MULTI_BROWSER`: `2`
+- `DEFERRED_WITH_REASON`: `0`
+- `NOT_APPLICABLE`: `0`
+
+Checkpoint status note:
+
+- Stage 3.10 foundation/A7 is implemented and validated with deterministic non-provider automation.
+- Checkpoint C administrative completion and management UI automation is complete in this branch.
+- Remaining manual scope is limited to provider/multi-device canaries and belongs to environment-dependent validation, not Checkpoint C product correctness.

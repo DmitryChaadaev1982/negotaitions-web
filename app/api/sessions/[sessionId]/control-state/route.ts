@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
-import { handleNegotiationFinishRecording } from "@/lib/livekit-egress";
 import {
   buildControlState,
   getAutoFinishPreparationUpdateData,
-  getControlUpdateData,
   SESSION_CONTROL_SELECT,
   shouldAutoFinish,
   shouldAutoFinishPreparation,
@@ -17,9 +15,15 @@ import {
 } from "@/lib/session-room-connection-lease";
 import {
   buildSessionCloseState,
+  isSessionClosedByOrganizer,
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
-import { closeAllOpenPauseIntervals } from "@/lib/session-pause-intervals";
+import { completeSessionCanonical } from "@/lib/session-completion";
+import {
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+} from "@/lib/session-room-access";
+import { getStopRelayHintForSession } from "@/lib/session-recording-stop-relay";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,31 +48,78 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
   }
 
+  const accessDecision = decideSessionRoomAccess({
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId,
+      negotiationState: participant.session.negotiationState,
+      roomLifecycle: participant.session.roomLifecycle ?? null,
+      deletedAt: participant.session.deletedAt ?? null,
+      closeReason: participant.session.closeReason ?? null,
+      closedByEventAt: participant.session.closedByEventAt ?? null,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+    },
+    redirect: {
+      sessionId,
+      participantJoinToken: participant.joinToken,
+      eventId: participant.session.eventId ?? null,
+      eventStatus: participant.session.event?.status ?? null,
+      preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
+    },
+  });
+  if (!isRoomAccessAllowed(accessDecision.output)) {
+    if (accessDecision.output === "DENY_DELETED") {
+      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
+    }
+    if (accessDecision.output === "DENY_UNAUTHORIZED") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+    return NextResponse.json(
+      {
+        error:
+          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+        code:
+          accessDecision.output === "EVENT_CLOSED"
+            ? "EVENT_CLOSED"
+            : "ROOM_CLOSED",
+        redirectTo: accessDecision.redirectTo,
+      },
+      { status: 409 },
+    );
+  }
+
   const connectionId = url.searchParams.get("connectionId")?.trim() ?? null;
   const claimLease = url.searchParams.get("claimLease") === "1";
   if (participant.userId && connectionId) {
     let isCurrentConnectionActive = true;
     let activeVersion = 0;
     if (claimLease) {
-      const lease = claimSessionRoomConnectionLease({
+      const lease = await claimSessionRoomConnectionLease({
         sessionId,
         userId: participant.userId,
         connectionId,
+        role: participant.type,
       });
       isCurrentConnectionActive = lease.isCurrentConnectionActive;
       activeVersion = lease.version;
     } else {
-      const leaseState = validateSessionRoomConnectionLease({
+      const leaseState = await validateSessionRoomConnectionLease({
         sessionId,
         userId: participant.userId,
         connectionId,
       });
       if (leaseState.version === 0) {
-        const firstLease = claimSessionRoomConnectionLease({
+        const firstLease = await claimSessionRoomConnectionLease({
           sessionId,
           userId: participant.userId,
           connectionId,
+          role: participant.type,
         });
+        isCurrentConnectionActive = firstLease.isCurrentConnectionActive;
         activeVersion = firstLease.version;
       } else {
         isCurrentConnectionActive = leaseState.isCurrentConnectionActive;
@@ -91,20 +142,15 @@ export async function GET(request: Request, context: RouteContext) {
   const now = new Date();
   let session = participant.session;
 
-  const closeInfo = buildSessionCloseState({
-    negotiationState: session.negotiationState,
-    negotiationStartedAt: session.negotiationStartedAt,
-    closedByEventAt: session.closedByEventAt,
-    closeReason: session.closeReason,
-    event: session.event,
-  });
-
-  if (!closeInfo.isClosed) {
+  if (!isSessionClosedByOrganizer(session)) {
     if (shouldAutoFinishPreparation(session, now)) {
       session = await prisma.session.update({
         where: { id: sessionId },
         data: getAutoFinishPreparationUpdateData(session, now),
         select: {
+          deletedAt: true,
+          eventId: true,
+          roomLifecycle: true,
           facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
@@ -113,19 +159,22 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     if (shouldAutoFinish(session, now)) {
-      const updateData = getControlUpdateData(session, "FINISH", now);
-      session = await prisma.session.update({
+      await completeSessionCanonical({
+        sessionId,
+        mode: "ROOM_FACILITATOR_FINISH",
+        reason: "AUTO_TIMER_FINISH",
+      });
+      session = await prisma.session.findUniqueOrThrow({
         where: { id: sessionId },
-        data: updateData,
         select: {
+          deletedAt: true,
+          eventId: true,
+          roomLifecycle: true,
           facilitatorId: true,
           ...SESSION_CONTROL_SELECT,
           ...SESSION_CLOSE_SELECT,
         },
       });
-
-      await closeAllOpenPauseIntervals(sessionId, now);
-      await handleNegotiationFinishRecording(sessionId);
     }
   }
 
@@ -141,6 +190,10 @@ export async function GET(request: Request, context: RouteContext) {
 
   const isFacilitator = participant.type === ParticipantType.FACILITATOR;
   const sessionCloseState = buildSessionCloseState(session);
+  const stopRelayHint = await getStopRelayHintForSession({
+    sessionId,
+    participantType: participant.type,
+  });
 
   return NextResponse.json(
     {
@@ -152,6 +205,14 @@ export async function GET(request: Request, context: RouteContext) {
             errorMessage: isFacilitator ? recording.errorMessage : null,
             startedAt: recording.startedAt?.toISOString() ?? null,
             endedAt: recording.endedAt?.toISOString() ?? null,
+          }
+        : null,
+      recordingStopRelay: stopRelayHint
+        ? {
+            operationId: stopRelayHint.operationId,
+            requestId: stopRelayHint.requestId,
+            operationState: stopRelayHint.operationState,
+            recordingId: stopRelayHint.recordingId,
           }
         : null,
     },

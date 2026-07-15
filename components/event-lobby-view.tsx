@@ -977,6 +977,7 @@ export function EventLobbyView({
             <EventHostControlsPanel
               state={state}
               draft={draft}
+              hostToken={hostAccessToken}
               isCreatingSession={isCreatingSession}
               showCompleteDialog={showCompleteDialog}
               isCompletingEvent={isCompletingEvent}

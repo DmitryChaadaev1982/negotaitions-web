@@ -148,3 +148,13 @@ Not active:
 
 - Keep `Session.status` for coarse lifecycle metadata.
 - Do not use `Session.status` as durable room occupancy/closure authority.
+
+## Checkpoint B implementation note
+
+Implemented in current feature branch:
+
+- one canonical room-access decision helper at `lib/session-room-access.ts`;
+- durable compatibility derivation remains centralized at `deriveEffectiveRoomLifecycle()` in `lib/session-room-lifecycle.ts`;
+- server guards now enforce lifecycle policy for direct room route and room-sensitive APIs (provider access, control-state, control, recording-control, heartbeat, media-status, sidebar);
+- `TrainingEvent.status=COMPLETED` is treated as hard-close for linked session room access decisions;
+- closed-room responses now include deterministic redirect metadata (`ROOM_CLOSED` / `EVENT_CLOSED`) for stable direct URL/refresh/back behavior.

@@ -94,3 +94,35 @@ Exact Prisma names are implementation-stage decisions and must follow repository
   - superseded connection must not count as active;
   - superseded connection cannot renew itself;
   - supersession must be durable (not in-memory only).
+
+## Checkpoint B implementation update
+
+- Rejoin in `FINISHED + DEBRIEF_OPEN` is now explicitly allowed by canonical room-access decision (`ALLOW_DEBRIEF`).
+- `DEBRIEF_OPEN` reconnect can still claim durable connection lease while room remains open.
+- `CLOSED` / `EVENT_COMPLETED` now reject renew/claim surfaces with stable close metadata (`ROOM_CLOSED` / `EVENT_CLOSED`) and redirect destination.
+- Race behavior preserved:
+  - reconnect can win only while `DEBRIEF_OPEN` still exists;
+  - if close commits first, reconnect receives closed redirect result;
+  - if reconnect claim commits first, atomic close sees active connection and skips closure;
+  - `CLOSED` remains terminal (no reopen transition in this checkpoint).
+
+## Reconnect vs close race evidence (DB-backed)
+
+Validated through durable lease + canonical close tests (`tests/e2e/voximplant-room-presence.spec.ts`, `tests/e2e/session-finish-canonical.spec.ts`, `lib/session-room-lifecycle.test.ts`):
+
+- Ordering A (reconnect claim commits first):
+  - reconnect claim persists active connection;
+  - close CAS sees active occupancy and does not hard-close to `CLOSED`;
+  - room can remain `DEBRIEF_OPEN`.
+- Ordering B (close CAS commits first):
+  - room closes terminally;
+  - subsequent reconnect claim path receives closed/event-closed denial and redirect metadata;
+  - no credential or lease renewal for stale/superseded connection.
+
+Additional verified outcomes:
+
+- stale tab cannot reclaim `CLOSED`;
+- newest-tab takeover remains valid in `DEBRIEF_OPEN`;
+- expired/disconnected/revoked connection rows do not block closure;
+- provider access calls are guarded after close and do not issue new credentials;
+- terminal `CLOSED` does not transition back to `DEBRIEF_OPEN`.

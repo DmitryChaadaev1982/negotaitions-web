@@ -33,9 +33,11 @@ const roomParticipantInclude = {
   session: {
     select: {
       id: true,
+      deletedAt: true,
       facilitatorId: true,
       eventId: true,
       negotiationState: true,
+      roomLifecycle: true,
       negotiationStartedAt: true,
       negotiationEndedAt: true,
       preparationDurationSeconds: true,

@@ -44,35 +44,35 @@
 
 ## Administrative completion entry points (new product requirement)
 
-Required UI entry points (future implementation):
+Required UI entry points (implemented in Checkpoint C):
 
-- Sessions overview;
-- Session detail/management page;
-- existing Event lobby host controls;
-- Event session-management surfaces where appropriate.
+- Sessions overview (`components/sessions-list-view.tsx`);
+- Session detail/management page (`components/session-detail-view.tsx`);
+- Event lobby host controls (`components/event-host-controls-panel.tsx`);
+- Session action component reused across surfaces (`components/complete-session-button.tsx`).
 
 Authorization:
 
 - facilitator/session owner/authorized Event host only;
-- participant and observer completion is forbidden.
+- participant and observer completion forbidden by server route authorization (`/api/sessions/[sessionId]/complete`);
+- non-member access returns stable non-disclosing `Not found`.
 
 Visibility:
 
-- show completion only for non-finished, non-deleted sessions.
+- show completion only for non-finished sessions on management surfaces.
 
-Confirmation copy must state:
+Confirmation copy implemented:
 
-- active negotiations will end;
-- active recording will be stopped;
-- existing recording/materials remain available;
-- session is not deleted.
+- active negotiation ends;
+- debrief may remain open while participants are still connected;
+- recording stop is requested canonically and warnings are shown without rollback;
+- materials remain available and the session is not deleted.
 
 ## Sessions overview action layout requirement
 
-- Do not add a new table column.
-- Do not widen/break Sessions overview layout.
-- Keep completion in existing Actions area or compact overflow menu.
-- Preserve semantic separation between Complete and Delete.
+- No new Sessions column was added.
+- Actions remain in existing compact actions group.
+- Complete and Delete stay separate controls and labels.
 
 Recommended action grouping:
 
@@ -81,13 +81,13 @@ Recommended action grouping:
 
 ## Sessions overview AI analysis column gap
 
-### Current audited behavior
+### Current behavior after Checkpoint C
 
 - Component: `components/sessions-list-view.tsx` (`AiStatusCell`).
-- Data source: `lib/session-overview-stats.ts` returns session-level `aiStage`, `speakerMappingStage`, `aiVisibility`.
-- Current defect evidence:
-  - duplicated shared publication labels are rendered in `AiStatusCell` (`sessions.aiStatusShared` and `sessions.analysisSharedBadge`);
-  - no single aggregate publication state exists for recipient completion coverage.
+- Data source now includes aggregate publication state from `lib/ai-publication-aggregate.ts` via `lib/session-overview-stats.ts`.
+- One publication status is rendered per session (`AI report partially published` / `AI report published`).
+- Speaker mapping badges remain independent (`required` / `confirmed`) and are rendered separately from publication status.
+- Aggregation identity policy now prefers stable recipient identity (`SessionParticipant.id` -> `userId` scoped to session), with conservative legacy name fallback only when unique among required recipients.
 
 ### Final target decision
 
@@ -101,10 +101,10 @@ Recommended action grouping:
 
 ## Sessions overview "Open lobby" for completed Event gap
 
-### Current audited behavior
+### Current behavior after Checkpoint C
 
 - Component: `components/sessions-list-view.tsx`.
-- `Open lobby` action is shown when `eventLobbyUrl` exists; no explicit `eventStatus !== COMPLETED` predicate.
+- `Open lobby` action is now hidden when `eventStatus === COMPLETED`.
 
 ### Final target decision
 
@@ -112,12 +112,21 @@ Recommended action grouping:
 - Primary action becomes session materials/results.
 - Avoid disabled dead-end button unless existing pattern strictly requires it.
 
-## Event lobby completed-state guard gap
+### Checkpoint C final evidence
 
-### Current audited behavior
+- Browser automation: `tests/e2e/session-completion-management-ui.spec.ts` verifies:
+  - Complete action visibility for eligible unfinished session;
+  - Complete and Delete as separate controls;
+  - completed-event row hides `Open lobby`, while active event retains `Open lobby`;
+  - aggregate AI publication badge renders once per session;
+  - speaker-mapping badge remains independently visible.
 
-- Route: `app/events/[id]/lobby/page.tsx` mounts `EventLobbyView`.
-- Guard is primarily state-driven in `components/event-lobby-view.tsx` (`isEventCompleted` -> `EventCompletedOverlay`).
+## Event lobby completed-state guard
+
+### Current behavior
+
+- Route: `app/events/[id]/lobby/page.tsx` keeps completed-event guard.
+- `components/event-lobby-view.tsx` renders completion overlay and removes interactive lobby controls for completed events.
 
 ### Final target decision
 

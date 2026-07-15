@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { CompleteSessionButton } from "@/components/complete-session-button";
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import {
   getListActionButtonClassName,
@@ -66,6 +67,7 @@ type SessionRow = {
   transcriptStage: string | null;
   speakerMappingStage: string | null;
   aiStage: string | null;
+  aiPublicationStatus?: "none" | "partial" | "full" | null;
   aiVisibility: string;
   roomUrl: string;
   materialsUrl: string;
@@ -181,16 +183,20 @@ function aiStageTone(stage: string | null): string {
 function AiStatusCell({ session }: { session: SessionRow }) {
   const { t } = useI18n();
 
-  const aiShared = session.aiStage === "shared";
   const aiReady = session.aiStage === "ready";
   const aiInProgress = session.aiStage === "in_progress";
 
   const speakerMappingRequired = session.speakerMappingStage === "required";
   const speakerMappingConfirmed = session.speakerMappingStage === "confirmed";
 
-  const stageLabel = aiShared
-    ? t("sessions.aiStatusShared")
-    : aiReady
+  const publicationLabel =
+    session.aiPublicationStatus === "full"
+      ? t("sessions.aiStatusPublished")
+      : session.aiPublicationStatus === "partial"
+        ? t("sessions.aiStatusPartiallyPublished")
+        : null;
+
+  const stageLabel = aiReady
       ? t("sessions.aiStatusReady")
       : aiInProgress
         ? t("sessions.aiStatusInProgress")
@@ -222,12 +228,12 @@ function AiStatusCell({ session }: { session: SessionRow }) {
         </span>
       ) : null}
 
-      {aiShared ? (
+      {publicationLabel ? (
         <span
           className="text-xs font-medium text-cyan-400"
           data-testid="sessions-analysis-shared-badge"
         >
-          {t("sessions.analysisSharedBadge")}
+          {publicationLabel}
         </span>
       ) : null}
     </div>
@@ -240,7 +246,8 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [sessionStats, setSessionStats] = useState<SessionOverviewStats[]>([]);
-  const sessions = applySessionOverviewStats(initialSessions, sessionStats);
+  const [sessions, setSessions] = useState<SessionRow[]>(initialSessions);
+  const sessionsWithStats = applySessionOverviewStats(sessions, sessionStats);
   const query = searchParams.get("q")?.trim() ?? "";
   const statusFilter = parseSessionStatusFilter(searchParams.get("status"));
   const aiFilter = parseSessionAiFilter(searchParams.get("ai"));
@@ -310,7 +317,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
 
   const filteredSessions = useMemo(() => {
     const normalizedQuery = query.toLocaleLowerCase();
-    return sessions.filter((session) => {
+    return sessionsWithStats.filter((session) => {
       if (eventIdFilter.length > 0 && session.eventId !== eventIdFilter) {
         return false;
       }
@@ -340,7 +347,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
         .toLocaleLowerCase()
         .includes(normalizedQuery);
     });
-  }, [aiFilter, eventIdFilter, query, sessions, statusFilter]);
+  }, [aiFilter, eventIdFilter, query, sessionsWithStats, statusFilter]);
 
   const sortedSessions = useMemo(() => {
     const result = [...filteredSessions];
@@ -369,7 +376,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
 
   const activeEventTitle =
     eventIdFilter.length > 0
-      ? sessions.find((session) => session.eventId === eventIdFilter)?.eventTitle ?? eventIdFilter
+      ? sessionsWithStats.find((session) => session.eventId === eventIdFilter)?.eventTitle ?? eventIdFilter
       : null;
 
   const toggleSort = (field: SessionSortField) => {
@@ -398,7 +405,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
         }
       />
 
-      {sessions.length === 0 ? (
+      {sessionsWithStats.length === 0 ? (
         <EmptyState
           message={t("dashboard.noSessionsYetAccount")}
           action={
@@ -627,7 +634,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                   </DataTableCell>
                   <DataTableCell align="right" className="max-w-[10rem] px-1.5 py-1 align-top text-xs">
                     <ListActionGroup className="flex-nowrap flex-col items-end gap-1">
-                      {session.eventLobbyUrl ? (
+                      {session.eventLobbyUrl && session.eventStatus !== "COMPLETED" ? (
                         <ListActionLink
                           href={session.eventLobbyUrl}
                           variant="primary"
@@ -655,6 +662,25 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                       </ListActionLink>
                       {session.canManage ? (
                         <>
+                          {session.status !== "FINISHED" ? (
+                            <CompleteSessionButton
+                              sessionId={session.id}
+                              className={getListActionButtonClassName("secondary", "h-6 px-1.5 text-[10px]")}
+                              onCompleted={() => {
+                                setSessions((current) =>
+                                  current.map((item) =>
+                                    item.id === session.id
+                                      ? {
+                                          ...item,
+                                          status: "FINISHED",
+                                          negotiationState: "FINISHED",
+                                        }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                            />
+                          ) : null}
                           <ListActionLink
                             href={`/sessions/${session.id}`}
                             variant="secondary"

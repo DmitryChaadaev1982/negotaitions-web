@@ -37,6 +37,15 @@ Replace `__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__` with the value of *
 
 ## 3. After paste — smoke test
 
+Before smoke:
+
+1. Export/backup currently deployed scenario source/version.
+2. Record current build marker from provider logs.
+3. Paste updated source and save as a new scenario version when provider workflow allows.
+4. Verify rule binding points to `neg-conf-main-room`.
+
+Then smoke:
+
 1. Save the scenario in Voximplant Console.
 2. Start a **new** negotiation room session at `https://negotaitions.ru/room/<sessionId>`.
 3. Record for **30–60 seconds**, then stop recording.
@@ -50,12 +59,14 @@ In Voximplant Console → Scenarios → Logs, search for:
 
 | Search string | Expected meaning |
 |---------------|------------------|
-| `server-poc-webhook-fix` | Correct scenario build is running |
+| `server-poc-webhook-fix-2026-07-13-a7` | Correct Stage 3.10 A7 build is running |
 | `webhook config` | Startup config summary (base URL, secret configured, HMAC provider) |
 | `recording_control received` | Browser sent start/stop commands |
 | `Recorder.Stopped handler entered` | Recording finished in VoxEngine |
 | `webhook POST attempted` | Scenario attempted HTTP POST to Next.js |
 | `webhook response status` | Server responded (look for 2xx) |
+| `scenario shutdown stop requested reason=ConferenceEvents.Stopped` | Shutdown hardening triggered on conference stop |
+| `scenario shutdown stop requested reason=AppEvents.Terminating` | Shutdown hardening triggered on app termination |
 
 If you see `webhook skipped: WEBHOOK_SECRET not configured`, the secret placeholder was not replaced.
 
@@ -101,3 +112,14 @@ After a successful webhook:
 ## 8. Conference name prefix
 
 The scenario uses `negotiation-{sessionId}`, matching `lib/voximplant/conference-name.ts`. Session ID is taken from `recording_control.message.sessionId` first; parsing `conferenceName` is fallback only.
+
+---
+
+## 9. Rollback
+
+If canary fails:
+
+1. Restore previous scenario version/source.
+2. Re-verify rule binding.
+3. Re-run basic join/start/stop canary.
+4. Confirm webhook receipt and recording transition on rollback version.
