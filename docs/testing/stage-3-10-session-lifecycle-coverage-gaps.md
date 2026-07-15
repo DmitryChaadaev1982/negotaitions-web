@@ -16,6 +16,10 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
   - Reason/evidence gap: requires provider access
   - Traceability reference: `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md` :: `manual stopped webhook`
 
+Canonical step-by-step procedures for `ST310-VOX-023/024/025` are defined in:
+
+- `docs/releases/stage-3-10-manual-canaries.md`
+
 ## Manual Multi-Browser / Multi-Device
 
 - `ST310-PRESENCE-011` (`P1`): Multi-device media disconnect behavior.
@@ -24,6 +28,10 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
 - `ST310-VOX-026` (`P1`): Real multi-client relay transport from distinct clients.
   - Reason/evidence gap: requires multiple real clients
   - Traceability reference: `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md` :: `multi-client relay`
+
+Canonical step-by-step procedures for `ST310-PRESENCE-011` and `ST310-VOX-026` are defined in:
+
+- `docs/releases/stage-3-10-manual-canaries.md`
 
 ## Deferred With Reason
 

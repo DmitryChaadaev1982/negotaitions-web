@@ -29,20 +29,27 @@ Templates are provided in:
 - `deploy/systemd/negotiations-stage310-maintenance.service`
 - `deploy/systemd/negotiations-stage310-maintenance.timer`
 
-Install steps (server-side):
+Install and validation steps (server-side, disabled-first):
 
 1. Copy both files into `/etc/systemd/system/`.
 2. `sudo systemctl daemon-reload`
-3. `sudo systemctl enable negotiations-stage310-maintenance.timer`
-4. `sudo systemctl start negotiations-stage310-maintenance.timer`
-5. Check: `systemctl list-timers | rg negotiations-stage310-maintenance`
-6. Inspect latest run: `journalctl -u negotiations-stage310-maintenance.service -n 200 --no-pager`
+3. `sudo systemd-analyze verify /etc/systemd/system/negotiations-stage310-maintenance.service /etc/systemd/system/negotiations-stage310-maintenance.timer`
+4. Keep timer disabled initially: `sudo systemctl disable --now negotiations-stage310-maintenance.timer`
+5. Run one-shot manually: `sudo systemctl start negotiations-stage310-maintenance.service`
+6. Inspect result: `journalctl -u negotiations-stage310-maintenance.service -n 200 --no-pager`
+7. If one-shot is healthy, enable/start timer:
+   - `sudo systemctl enable negotiations-stage310-maintenance.timer`
+   - `sudo systemctl start negotiations-stage310-maintenance.timer`
+8. Check next execution: `systemctl list-timers | rg negotiations-stage310-maintenance`
 
 Disable/rollback steps:
 
 1. `sudo systemctl stop negotiations-stage310-maintenance.timer`
 2. `sudo systemctl disable negotiations-stage310-maintenance.timer`
-3. Optional: `sudo systemctl disable negotiations-stage310-maintenance.service`
+3. Optional unit removal after verification:
+   - `sudo rm /etc/systemd/system/negotiations-stage310-maintenance.service`
+   - `sudo rm /etc/systemd/system/negotiations-stage310-maintenance.timer`
+   - `sudo systemctl daemon-reload`
 4. Leave additive DB schema and history tables in place.
 
 The app can be rolled back without dropping Stage 3.10 additive schema objects.

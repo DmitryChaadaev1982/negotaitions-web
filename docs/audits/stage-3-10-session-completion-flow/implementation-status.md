@@ -1,4 +1,13 @@
-# Stage 3.10 Implementation Status (Checkpoint A + B + C Progress)
+# Stage 3.10 Implementation Status (Checkpoint A + B + C + D)
+
+## Release-readiness status
+
+- Implementation complete: yes
+- Locally validated: yes
+- Migration rehearsal: complete (local disposable DB)
+- Provider canary: pending manual execution
+- Multi-browser canary: pending manual execution
+- Production deployment: pending
 
 ## Implemented in current branch
 

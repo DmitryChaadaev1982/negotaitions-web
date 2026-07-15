@@ -37,6 +37,15 @@ Replace `__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__` with the value of *
 
 ## 3. After paste — smoke test
 
+Before smoke:
+
+1. Export/backup currently deployed scenario source/version.
+2. Record current build marker from provider logs.
+3. Paste updated source and save as a new scenario version when provider workflow allows.
+4. Verify rule binding points to `neg-conf-main-room`.
+
+Then smoke:
+
 1. Save the scenario in Voximplant Console.
 2. Start a **new** negotiation room session at `https://negotaitions.ru/room/<sessionId>`.
 3. Record for **30–60 seconds**, then stop recording.
@@ -103,3 +112,14 @@ After a successful webhook:
 ## 8. Conference name prefix
 
 The scenario uses `negotiation-{sessionId}`, matching `lib/voximplant/conference-name.ts`. Session ID is taken from `recording_control.message.sessionId` first; parsing `conferenceName` is fallback only.
+
+---
+
+## 9. Rollback
+
+If canary fails:
+
+1. Restore previous scenario version/source.
+2. Re-verify rule binding.
+3. Re-run basic join/start/stop canary.
+4. Confirm webhook receipt and recording transition on rollback version.

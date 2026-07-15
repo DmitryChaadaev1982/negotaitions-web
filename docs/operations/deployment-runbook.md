@@ -39,6 +39,21 @@ Run from repository before deployment:
 - Verify materials status progression for a completed session.
 - For Stage 3.10 maintenance timer rollout: verify dry-run command first (`npm run maintenance:stage310 -- --task all --dry-run`) before enabling timer.
 
+## Stage 3.10 Release Order (Exact)
+
+1. Confirm backups and rollback owner.
+2. Stage code at `/var/www/negotaitions/app`.
+3. Apply migration (`npx prisma migrate deploy`).
+4. Verify migration status (`npx prisma migrate status`).
+5. Restart `negotaitions-poc`.
+6. Run smoke (`npm run test:e2e:smoke` and browser smoke subset as applicable).
+7. Run backfill dry-run + first bounded batch.
+8. Verify counters (`npm run maintenance:stage310 -- --task verify-backfill`).
+9. Continue bounded backfill with cursor resume.
+10. Deploy Vox scenario manually and run disposable provider canary.
+11. Install maintenance units disabled, run manual one-shot.
+12. Enable timer only after one-shot review.
+
 ## Vox scenario rollout safety (manual, non-automatic)
 
 The `neg-conf-main-room` scenario artifact is manually deployed. For Stage 3.10 A7 rollout, prepare and execute in this order:

@@ -1,5 +1,3 @@
-import "server-only";
-
 import { Prisma, RoomLifecycle } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 

@@ -16,7 +16,6 @@ import { closeDebriefRoomIfEmpty } from "@/lib/session-room-occupancy";
 import {
   deriveBackfillLifecycle,
 } from "@/lib/stage-3-10-maintenance-utils";
-import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dispatch";
 
 type JsonLogLevel = "info" | "warn" | "error";
 
@@ -294,6 +293,9 @@ export async function runRecordingStopDeliverySweep(params?: {
         orderBy: { createdAt: "asc" },
         select: { id: true },
       });
+      const { buildVoximplantRecordingDispatch } = await import(
+        "@/lib/voximplant/recording-dispatch"
+      );
       const dispatch = await buildVoximplantRecordingDispatch("stop", {
         sessionId: operation.sessionId,
         participantId: facilitator?.id,
