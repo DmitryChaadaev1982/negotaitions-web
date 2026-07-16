@@ -43,7 +43,15 @@ function shouldSuppressKnownVoxDevError(lowerMessage: string): boolean {
     lowerMessage.includes("[websdk]") &&
     lowerMessage.includes("reinvitequeue") &&
     lowerMessage.includes("reinvite rejected");
-  return isCameraDeviceBusy || isReinviteQueueNoise;
+  const isSignallingGatewayNoise =
+    (lowerMessage.includes("[websdk]") &&
+      lowerMessage.includes("conferencesignallingtransportconnectionerror")) ||
+    (lowerMessage.includes("signaling failed to connect to gateway") &&
+      lowerMessage.includes("transport establishing failed with code 500")) ||
+    (lowerMessage.includes("ms-transport") &&
+      lowerMessage.includes("ws transport") &&
+      lowerMessage.includes("closed with error"));
+  return isCameraDeviceBusy || isReinviteQueueNoise || isSignallingGatewayNoise;
 }
 
 function installVoxDevConsoleSuppressor(): () => void {
@@ -84,4 +92,16 @@ export function installVoxCameraErrorSuppressor(): () => void {
  */
 export function installVoxRuntimeErrorSuppressor(): () => void {
   return installVoxDevConsoleSuppressor();
+}
+
+export function isRecoverableVoxSignallingError(error: unknown): boolean {
+  const message = toVoxErrorMessage(error).toLowerCase();
+  return (
+    message.includes("conferencesignallingtransportconnectionerror") ||
+    (message.includes("signaling failed to connect to gateway") &&
+      message.includes("transport establishing failed with code 500")) ||
+    (message.includes("ws transport") &&
+      message.includes("closed with error")) ||
+    message.includes("internal error")
+  );
 }

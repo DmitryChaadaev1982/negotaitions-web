@@ -2,78 +2,23 @@
 
 import { NegotiationState, ParticipantType } from "@/app/generated/prisma/enums";
 import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  getRecordingDisplayPresentation,
+  getRecordingDisplayState,
+} from "@/lib/recording-display-state";
 
 type RecordingIndicatorProps = {
   status: string | null | undefined;
+  stopOperationState?: string | null | undefined;
   negotiationState?: NegotiationState;
   participantType: ParticipantType;
   isFacilitator: boolean;
   errorMessage?: string | null;
 };
 
-function resolveEffectiveStatus(
-  status: string,
-  negotiationState?: NegotiationState,
-) {
-  if (
-    negotiationState === "PAUSED" &&
-    (status === "RECORDING" || status === "STARTING" || status === "PAUSED")
-  ) {
-    return "RECORDING";
-  }
-
-  return status;
-}
-
-function getIndicatorLabel(
-  status: string,
-  labels: {
-    recording: string;
-    paused: string;
-    failed: string;
-    processing: string;
-    completed: string;
-  },
-) {
-  switch (status) {
-    case "RECORDING":
-    case "STARTING":
-      return labels.recording;
-    case "PAUSED":
-      return labels.paused;
-    case "FAILED":
-      return labels.failed;
-    case "PROCESSING":
-    case "STOPPED":
-      return labels.processing;
-    case "COMPLETED":
-      return labels.completed;
-    default:
-      return null;
-  }
-}
-
-function getIndicatorClass(status: string) {
-  switch (status) {
-    case "RECORDING":
-    case "STARTING":
-      return "border-rose-500/40 bg-rose-500/15 text-rose-200";
-    case "PAUSED":
-      return "border-amber-500/40 bg-amber-500/15 text-amber-100";
-    case "FAILED":
-      return "border-amber-500/40 bg-amber-500/15 text-amber-100";
-    case "PROCESSING":
-    case "STOPPED":
-      return "border-blue-500/40 bg-blue-500/15 text-blue-100";
-    case "COMPLETED":
-      return "border-emerald-500/40 bg-emerald-500/15 text-emerald-100";
-    default:
-      return "border-slate-600/40 bg-slate-800/60 text-slate-300";
-  }
-}
-
 export function RecordingIndicator({
   status,
+  stopOperationState,
   negotiationState,
   participantType,
   isFacilitator,
@@ -81,37 +26,43 @@ export function RecordingIndicator({
 }: RecordingIndicatorProps) {
   const { t } = useI18n();
 
-  if (!status || status === "NOT_STARTED") {
-    return null;
-  }
-
-  const effectiveStatus = resolveEffectiveStatus(status, negotiationState);
-
-  const label = getIndicatorLabel(effectiveStatus, {
-    recording: t("room.recordingIndicator"),
-    paused: t("room.recordingPausedIndicator"),
-    failed: t("room.recordingFailedIndicator"),
-    processing: t("room.recordingProcessingIndicator"),
-    completed: t("room.recordingCompletedIndicator"),
+  const displayState = getRecordingDisplayState({
+    recordingStatus: status,
+    stopOperationState,
+    negotiationState,
   });
-  if (!label) {
+
+  if (displayState === "none") {
     return null;
   }
+
+  const presentation = getRecordingDisplayPresentation(displayState);
 
   const showFailureDetails =
     isFacilitator &&
     participantType === ParticipantType.FACILITATOR &&
-    effectiveStatus === "FAILED";
+    displayState === "failed";
 
   return (
     <div className="space-y-1">
       <span
         data-testid="recording-status"
-        data-status={effectiveStatus}
-        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${getIndicatorClass(effectiveStatus)}`}
+        data-status={status ?? "NOT_STARTED"}
+        data-recording-state={presentation.state}
+        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
+          displayState === "active"
+            ? "border-rose-500/40 bg-rose-500/15 text-rose-200"
+            : displayState === "paused"
+              ? "border-amber-500/40 bg-amber-500/15 text-amber-100"
+              : displayState === "stopping"
+                ? "border-violet-500/40 bg-violet-500/15 text-violet-100"
+                : displayState === "completed"
+                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-100"
+                  : "border-rose-500/40 bg-rose-500/15 text-rose-100"
+        }`}
       >
         <span className="h-2 w-2 rounded-full bg-current opacity-80" aria-hidden="true" />
-        {label}
+        {t(presentation.labelKey)}
       </span>
       {showFailureDetails ? (
         <p className="max-w-md text-xs text-amber-300">

@@ -416,3 +416,37 @@ export async function disconnectSessionRoomConnectionLease(params: {
     roomClosed: roomClosure.closed,
   };
 }
+
+export async function disconnectSessionRoomConnectionLeaseByConnectionId(params: {
+  sessionId: string;
+  connectionId: string;
+  reason?: string;
+}): Promise<DisconnectResult> {
+  const now = new Date();
+  const reason = params.reason ?? "EXPLICIT_LEAVE";
+
+  const updated = await prisma.sessionRoomConnection.updateMany({
+    where: {
+      sessionId: params.sessionId,
+      connectionId: params.connectionId,
+      disconnectedAt: null,
+      supersededAt: null,
+      revokedAt: null,
+      expiresAt: {
+        gt: now,
+      },
+    },
+    data: {
+      disconnectedAt: now,
+      disconnectedReason: reason,
+    },
+  });
+
+  const roomClosure = await closeDebriefRoomIfEmpty(params.sessionId);
+
+  return {
+    disconnected: updated.count > 0,
+    alreadyFinalized: updated.count === 0,
+    roomClosed: roomClosure.closed,
+  };
+}

@@ -1,5 +1,6 @@
 import {
   NegotiationState,
+  SessionStatus,
   RoomLifecycle,
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
@@ -53,6 +54,29 @@ export type SessionRoomAccessDecision = {
   effectiveRoomLifecycle: RoomLifecycle;
   isDebrief: boolean;
 };
+
+export type LateObserverCreationDenyReason =
+  | "UNAUTHENTICATED"
+  | "UNAUTHORIZED_MEMBER"
+  | "EXISTING_SESSION_PARTICIPANT"
+  | "EVENT_COMPLETED"
+  | "SESSION_DELETED"
+  | "SESSION_FINISHED"
+  | "NEGOTIATION_FINISHED"
+  | "ROOM_NOT_OPEN"
+  | "ROOM_POLICY_DENIED";
+
+export type LateObserverCreationDecision =
+  | {
+      allowed: true;
+      reason: null;
+      accessDecision: SessionRoomAccessDecision;
+    }
+  | {
+      allowed: false;
+      reason: LateObserverCreationDenyReason;
+      accessDecision: SessionRoomAccessDecision | null;
+    };
 
 export function resolveSessionClosedRedirectPath(
   input: ResolveMaterialsRedirectPathInput,
@@ -148,6 +172,99 @@ export function decideSessionRoomAccess(input: {
     redirectTo,
     effectiveRoomLifecycle: RoomLifecycle.CLOSED,
     isDebrief: false,
+  };
+}
+
+export function canCreateLateObserverParticipant(input: {
+  event: {
+    status: TrainingEventStatus | string | null;
+  };
+  user: SessionRoomAccessUserContext;
+  session: SessionRoomAccessSessionContext & {
+    eventId: string | null;
+    status: SessionStatus | string;
+  };
+  existingSessionParticipant: boolean;
+}): LateObserverCreationDecision {
+  if (!input.user.isAuthenticated) {
+    return {
+      allowed: false,
+      reason: "UNAUTHENTICATED",
+      accessDecision: null,
+    };
+  }
+
+  if (!input.user.isAuthorizedMember) {
+    return {
+      allowed: false,
+      reason: "UNAUTHORIZED_MEMBER",
+      accessDecision: null,
+    };
+  }
+
+  if (input.existingSessionParticipant) {
+    return {
+      allowed: false,
+      reason: "EXISTING_SESSION_PARTICIPANT",
+      accessDecision: null,
+    };
+  }
+
+  if (input.event.status === TrainingEventStatus.COMPLETED) {
+    return {
+      allowed: false,
+      reason: "EVENT_COMPLETED",
+      accessDecision: null,
+    };
+  }
+
+  if (input.session.deletedAt) {
+    return {
+      allowed: false,
+      reason: "SESSION_DELETED",
+      accessDecision: null,
+    };
+  }
+
+  if (input.session.status === SessionStatus.COMPLETED) {
+    return {
+      allowed: false,
+      reason: "SESSION_FINISHED",
+      accessDecision: null,
+    };
+  }
+
+  if (input.session.negotiationState === NegotiationState.FINISHED) {
+    return {
+      allowed: false,
+      reason: "NEGOTIATION_FINISHED",
+      accessDecision: null,
+    };
+  }
+
+  const accessDecision = decideSessionRoomAccess({
+    user: input.user,
+    session: input.session,
+    redirect: {
+      sessionId: input.session.sessionId,
+      eventId: input.session.eventId,
+      eventStatus: input.event.status,
+      preferEventResultsForEventOwner: false,
+    },
+  });
+
+  if (accessDecision.output !== "ALLOW_ACTIVE_ROOM") {
+    return {
+      allowed: false,
+      reason: "ROOM_POLICY_DENIED",
+      accessDecision,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: null,
+    accessDecision,
   };
 }
 

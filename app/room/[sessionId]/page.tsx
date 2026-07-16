@@ -54,8 +54,11 @@ export default async function RoomPage({
     const user = await requireActiveUser(`/room/${sessionId}`);
 
     // Resolve/create the caller's own participant row server-side without exposing joinToken.
-    const participant = await ensureAccountRoomParticipant(sessionId, user);
-    if (!participant) {
+    const participantResult = await ensureAccountRoomParticipant(sessionId, user);
+    if (participantResult.kind === "denied") {
+      if (participantResult.redirectTo) {
+        redirect(participantResult.redirectTo);
+      }
       return (
         <div className="flex h-dvh flex-col items-center justify-center gap-3 app-gradient-bg px-4 text-center">
           <h1 className="text-lg font-bold text-slate-50">
@@ -64,6 +67,7 @@ export default async function RoomPage({
         </div>
       );
     }
+    const participant = participantResult.participant;
 
     const decision = decideSessionRoomAccess({
       user: {

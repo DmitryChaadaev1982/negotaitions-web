@@ -105,22 +105,56 @@ async function createEventSession(request: import("@playwright/test").APIRequest
     negotiationDurationMinutes: 15,
   };
 
-  await request.patch(`/api/events/${event.id}/host`, {
+  const configureResponse = await request.patch(`/api/events/${event.id}/host`, {
     data: {
       hostToken: event.hostToken,
       selectedCaseId: negotiationCase.id,
       assignmentDraft,
     },
   });
+  const configureBodyText = await configureResponse.text();
+  if (!configureResponse.ok()) {
+    throw new Error(
+      [
+        "Failed to configure Event before session creation",
+        "HTTP method: PATCH",
+        `Path: /api/events/${event.id}/host`,
+        `HTTP status: ${configureResponse.status()}`,
+        `Response body: ${(configureBodyText || "<empty>").slice(0, 3000)}`,
+      ].join("\n"),
+    );
+  }
 
   const createResponse = await request.post(`/api/events/${event.id}/host`, {
     data: { hostToken: event.hostToken },
   });
+  const createResponseText = await createResponse.text();
+  if (!createResponse.ok()) {
+    throw new Error(
+      [
+        "Failed to create Event Session",
+        "HTTP method: POST",
+        `Path: /api/events/${event.id}/host`,
+        `HTTP status: ${createResponse.status()}`,
+        `Response body: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+      ].join("\n"),
+    );
+  }
   expect(createResponse.ok()).toBeTruthy();
 
-  const body = (await createResponse.json()) as {
-    session: { id: string };
-  };
+  let body: { session: { id: string } };
+  try {
+    body = JSON.parse(createResponseText) as { session: { id: string } };
+  } catch {
+    throw new Error(
+      `Create Event Session returned invalid JSON: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+    );
+  }
+  if (!body?.session?.id) {
+    throw new Error(
+      `Create Event Session returned invalid payload: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+    );
+  }
 
   return { event, sessionId: body.session.id, participants, negotiationCase };
 }
@@ -155,13 +189,50 @@ async function createSessionInEvent(
       assignmentDraft,
     },
   });
+  const patchResponseText = await patchResponse.text();
+  if (!patchResponse.ok()) {
+    throw new Error(
+      [
+        "Failed to configure Event before session creation",
+        "HTTP method: PATCH",
+        `Path: /api/events/${input.eventId}/host`,
+        `HTTP status: ${patchResponse.status()}`,
+        `Response body: ${(patchResponseText || "<empty>").slice(0, 3000)}`,
+      ].join("\n"),
+    );
+  }
   expect(patchResponse.ok()).toBeTruthy();
 
   const createResponse = await request.post(`/api/events/${input.eventId}/host`, {
     data: { hostToken: input.hostToken },
   });
+  const createResponseText = await createResponse.text();
+  if (!createResponse.ok()) {
+    throw new Error(
+      [
+        "Failed to create Event Session",
+        "HTTP method: POST",
+        `Path: /api/events/${input.eventId}/host`,
+        `HTTP status: ${createResponse.status()}`,
+        `Response body: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+      ].join("\n"),
+    );
+  }
   expect(createResponse.ok()).toBeTruthy();
-  const body = (await createResponse.json()) as { session: { id: string } };
+
+  let body: { session: { id: string } };
+  try {
+    body = JSON.parse(createResponseText) as { session: { id: string } };
+  } catch {
+    throw new Error(
+      `Create Event Session returned invalid JSON: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+    );
+  }
+  if (!body?.session?.id) {
+    throw new Error(
+      `Create Event Session returned invalid payload: ${(createResponseText || "<empty>").slice(0, 3000)}`,
+    );
+  }
   return body.session.id;
 }
 

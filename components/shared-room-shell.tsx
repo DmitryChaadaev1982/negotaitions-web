@@ -345,6 +345,8 @@ export type SharedRoomShellProps = {
   controlState: ControlState;
   /** Recording status from the recording-control API. */
   recordingState: RoomRecordingState;
+  /** Durable stop-operation state for recording (if available). */
+  recordingStopOperationState?: string | null;
   /** Session closed/debrief state. */
   sessionCloseState: ShellSessionCloseState;
 
@@ -475,6 +477,7 @@ export function SharedRoomShell({
   sidebar,
   controlState,
   recordingState,
+  recordingStopOperationState = null,
   sessionCloseState,
   participantType,
   participantTypeLabel,
@@ -506,6 +509,8 @@ export function SharedRoomShell({
   const isDebriefMode =
     sessionCloseState.isClosed &&
     sessionCloseState.closeMessageKey === "join.sessionFinishedMessage";
+  const showDebriefModeNotice =
+    isDebriefMode && sidebar.event?.status !== "COMPLETED";
 
   // Event-closed or other closures → blocking overlay
   const isEventClosed = sessionCloseState.isClosed && !isDebriefMode;
@@ -580,6 +585,7 @@ export function SharedRoomShell({
             ) : (
               <RecordingIndicator
                 status={recordingState?.status}
+                stopOperationState={recordingStopOperationState}
                 negotiationState={controlState.negotiationState}
                 participantType={participantType}
                 isFacilitator={controlState.canControl}
@@ -632,6 +638,14 @@ export function SharedRoomShell({
 
         {/* Left column: video + controls */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {showDebriefModeNotice ? (
+            <div
+              className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+              data-testid="debrief-mode-notice"
+            >
+              {t("room.debriefModeNotice")}
+            </div>
+          ) : null}
           {staleConnection ? (
             <div
               className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"

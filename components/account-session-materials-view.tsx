@@ -15,6 +15,10 @@ import {
 } from "@/app/actions/sessions";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { AccountMaterialsData, AccountMaterialsRole } from "@/lib/account-session-materials";
+import {
+  getRecordingDisplayPresentation,
+  getRecordingDisplayState,
+} from "@/lib/recording-display-state";
 import { resolveMaterialsScreenUiState } from "@/lib/session-materials-ui-state";
 import {
   getSessionLeftFlagSnapshot,
@@ -39,37 +43,30 @@ function RecordingSection({
   const { t } = useI18n();
 
   if (!recording) {
+    const presentation = getRecordingDisplayPresentation("none");
     return (
-      <p className="text-sm text-slate-500">{t("recording.noRecordingYet")}</p>
+      <p className={`text-sm ${presentation.className}`} data-recording-state={presentation.state}>
+        {t(presentation.labelKey)}
+      </p>
     );
   }
 
-  const isReady = recording.status === "COMPLETED";
-  const isFailed = recording.status === "FAILED";
-  const isProcessing =
-    recording.status === "PROCESSING" || recording.status === "STOPPED";
+  const displayState = getRecordingDisplayState({
+    recordingStatus: recording.status,
+    stopOperationState: recording.stopOperationState,
+  });
+  const presentation = getRecordingDisplayPresentation(displayState);
+  const isReady = displayState === "completed";
+  const isFailed = displayState === "failed";
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <span
-          className={
-            isReady
-              ? "text-sm font-medium text-emerald-400"
-              : isFailed
-                ? "text-sm font-medium text-rose-400"
-                : isProcessing
-                  ? "text-sm font-medium text-amber-400"
-                  : "text-sm text-slate-400"
-          }
+          className={`text-sm font-medium ${presentation.className}`}
+          data-recording-state={presentation.state}
         >
-          {isReady
-            ? t("sessionMaterials.recordingReady")
-            : isFailed
-              ? t("sessionMaterials.recordingFailed")
-              : isProcessing
-                ? t("sessionMaterials.recordingProcessing")
-                : recording.status}
+          {t(presentation.labelKey)}
         </span>
       </div>
       {isReady && recording.fileUrl ? (

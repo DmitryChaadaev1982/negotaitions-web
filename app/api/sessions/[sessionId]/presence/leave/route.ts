@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
-import { disconnectSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
+import {
+  disconnectSessionRoomConnectionLease,
+  disconnectSessionRoomConnectionLeaseByConnectionId,
+} from "@/lib/session-room-connection-lease";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -29,7 +32,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const connectionId =
     typeof body.connectionId === "string" ? body.connectionId.trim() : "";
-  if (!participant.userId || !connectionId) {
+  if (!connectionId) {
     return NextResponse.json({
       ok: true,
       disconnected: false,
@@ -38,12 +41,18 @@ export async function POST(request: Request, context: RouteContext) {
     });
   }
 
-  const result = await disconnectSessionRoomConnectionLease({
-    sessionId,
-    userId: participant.userId,
-    connectionId,
-    reason: "EXPLICIT_LEAVE",
-  });
+  const result = participant.userId
+    ? await disconnectSessionRoomConnectionLease({
+        sessionId,
+        userId: participant.userId,
+        connectionId,
+        reason: "EXPLICIT_LEAVE",
+      })
+    : await disconnectSessionRoomConnectionLeaseByConnectionId({
+        sessionId,
+        connectionId,
+        reason: "EXPLICIT_LEAVE",
+      });
 
   return NextResponse.json({
     ok: true,

@@ -14,6 +14,10 @@ export function buildAccountSessionMaterialsPath(sessionId: string) {
   return `/sessions/${sessionId}/materials`;
 }
 
+export function buildAccountObserverSessionMaterialsPath(sessionId: string) {
+  return `/sessions/${sessionId}/observer-materials`;
+}
+
 export function buildSessionMaterialsUrl(joinToken: string) {
   return `${getAppUrl()}${buildSessionMaterialsPath(joinToken)}`;
 }

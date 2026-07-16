@@ -117,3 +117,22 @@ Expected evidence:
 - Logs: single active lease holder; stale tab heartbeat/control polling stops.
 - Provider behavior: no stale-tab media/control mutation reaches SDK.
 - Recording: active tab can still complete session and stop recording.
+
+## ST310-013/014/015 — Presence + Vox SDK Regression Addendum
+
+Run this addendum on the same disposable event/session setup used for Tests 13–15.
+
+Presence assertions:
+
+1. Explicit participant leave updates Events `In Sessions` within 3-5 seconds.
+2. Browser close/F5/network drop does not immediately remove in-session presence.
+3. After lease expiry, `In Sessions` drops on the next list poll.
+4. Multiple active tabs for one user count once in `In Sessions`.
+
+Vox SDK assertions:
+
+1. Late observer can join an already active session.
+2. Facilitator control authority remains correct during `RUNNING`.
+3. No Next.js overlay appears for known benign SDK races (`mids`, `mute`, VAD endpoint race).
+4. Real transport/gateway failures remain visible in console errors.
+5. Audio/video, timer, and recording continue to function normally.

@@ -30,6 +30,7 @@ import {
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { getRecordingDisplayPresentation } from "@/lib/recording-display-state";
 
 type EventHostControlsPanelProps = {
   state: EventStateResponse;
@@ -446,11 +447,20 @@ export function EventHostControlsPanel({
                           minutes: Math.round(session.negotiationDuration / 60),
                         })}
                       </p>
-                      {session.recordingStatus === "RECORDING" ? (
-                        <p className="text-rose-300">{t("recording.recordingInProgress")}</p>
-                      ) : session.recordingStatus ? (
-                        <p>{t("recording.recordingStatus")}: {session.recordingStatus}</p>
-                      ) : null}
+                      {(() => {
+                        const recordingPresentation = getRecordingDisplayPresentation(
+                          session.recordingDisplayState,
+                        );
+                        return (
+                          <p
+                            data-recording-state={recordingPresentation.state}
+                            className={recordingPresentation.className}
+                          >
+                            {t("recording.recordingStatus")}:{" "}
+                            {t(recordingPresentation.labelKey)}
+                          </p>
+                        );
+                      })()}
                       <div className="mt-1 space-y-1">
                         {session.participants.map((participant) => (
                           <p key={participant.id}>

@@ -1040,6 +1040,7 @@ export default function VoximplantNegotiationRoomPage(
         sidebar={sidebar}
         controlState={controlState}
         recordingState={recordingState}
+        recordingStopOperationState={recordingStopRelayHint?.operationState ?? null}
         sessionCloseState={sessionCloseState}
         participantType={effectiveParticipantType ?? "OBSERVER"}
         participantTypeLabel={participantTypeLabel}

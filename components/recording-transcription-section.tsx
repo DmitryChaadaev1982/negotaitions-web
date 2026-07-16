@@ -27,6 +27,7 @@ import {
   resolveSpeakerReviewMode,
   type MappingConfidenceLevel,
 } from "@/lib/transcription/assisted-speaker-mapping";
+import { getRecordingDisplayState } from "@/lib/recording-display-state";
 
 type RecordingData = {
   id: string;
@@ -125,8 +126,9 @@ function formatBytes(bytes: number | null) {
 function recordingStatusLabel(
   status: string,
   labels: Record<string, string>,
+  unknownLabel: string,
 ) {
-  return labels[status] ?? status;
+  return labels[status] ?? unknownLabel;
 }
 
 function resolveDisplayRecordingStatus(
@@ -1065,6 +1067,10 @@ export function RecordingTranscriptionSection({
   const displayRecordingStatus = recording
     ? resolveDisplayRecordingStatus(recording.status, sessionStatus)
     : null;
+  const displayRecordingSemanticState = getRecordingDisplayState({
+    recordingStatus: displayRecordingStatus,
+    sessionStatus,
+  });
 
   const showPauseRecordingNotice = sessionStatus === "PAUSED";
   const showActiveRecordingNotice =
@@ -1228,12 +1234,14 @@ export function RecordingTranscriptionSection({
                     <p
                       data-testid="recording-status"
                       data-status={displayRecordingStatus ?? "NOT_STARTED"}
+                      data-recording-state={displayRecordingSemanticState}
                       className="text-sm font-medium text-slate-100"
                     >
                       {recording && displayRecordingStatus
                         ? recordingStatusLabel(
                             displayRecordingStatus,
                             recordingStatusLabels,
+                            t("recording.recordingStatusUnknown"),
                           )
                         : t("recording.noRecordingYet")}
                     </p>
@@ -1313,12 +1321,14 @@ export function RecordingTranscriptionSection({
                 <p
                   data-testid="recording-status"
                   data-status={displayRecordingStatus ?? "NOT_STARTED"}
+                  data-recording-state={displayRecordingSemanticState}
                   className="text-sm font-medium text-slate-100"
                 >
                   {recording && displayRecordingStatus
                     ? recordingStatusLabel(
                         displayRecordingStatus,
                         recordingStatusLabels,
+                        t("recording.recordingStatusUnknown"),
                       )
                     : t("recording.noRecordingYet")}
                 </p>

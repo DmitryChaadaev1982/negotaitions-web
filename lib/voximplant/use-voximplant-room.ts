@@ -21,6 +21,7 @@ import {
   isRecoverableVoxMediaError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
+import { createWebSdkLogFilterAdapter } from "@/lib/voximplant/websdk-log-filter";
 import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -365,21 +366,6 @@ function isVoxLifecycleAbortError(error: unknown): error is VoxLifecycleAbortErr
   return error instanceof VoxLifecycleAbortError;
 }
 
-function isKnownStaleTeardownSdkNoise(message: string): boolean {
-  const lower = message.toLowerCase();
-  const isMuteTransportNotReady =
-    lower.includes("transport is not ready") &&
-    lower.includes("message sending will be delayed") &&
-    lower.includes("\"name\":\"mute\"");
-  const isReinviteMidsNoise =
-    lower.includes("mids") &&
-    (lower.includes("handlereinvite") || lower.includes("conferencemanager"));
-  const isEndpointVadNoise =
-    lower.includes("setendpointvad") &&
-    lower.includes("can't find endpoint");
-  return isMuteTransportNotReady || isReinviteMidsNoise || isEndpointVadNoise;
-}
-
 export function createVoxGenerationTracker() {
   let currentGeneration = 0;
   let stale = false;
@@ -581,7 +567,12 @@ export function useVoximplantRoom({
   const staleNotifiedRef = useRef(false);
   const sdkUsernameRef = useRef<string | null>(null);
   const takeoverChannelRef = useRef<BroadcastChannel | null>(null);
-  const staleTeardownSuppressionRef = useRef(false);
+  const webSdkLogFilterRef = useRef(
+    createWebSdkLogFilterAdapter({
+      emitWarn: (message) => console.warn(message),
+      emitError: (...args) => console.error(...args),
+    }),
+  );
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
   const audioProcessingEnabledRef = useRef(true);
@@ -599,7 +590,7 @@ export function useVoximplantRoom({
   const beginJoinGeneration = useCallback(() => {
     staleLifecycleRef.current = false;
     staleNotifiedRef.current = false;
-    staleTeardownSuppressionRef.current = false;
+    webSdkLogFilterRef.current.reset();
     generationRef.current += 1;
     return generationRef.current;
   }, []);
@@ -627,7 +618,6 @@ export function useVoximplantRoom({
 
   const handleStaleConnection = useCallback(() => {
     if (staleLifecycleRef.current) return;
-    staleTeardownSuppressionRef.current = true;
     invalidateGeneration("stale_connection");
     if (!staleNotifiedRef.current) {
       staleNotifiedRef.current = true;
@@ -972,34 +962,6 @@ export function useVoximplantRoom({
   }, []);
 
   useEffect(() => {
-    if (typeof process === "undefined" || process.env.NODE_ENV !== "development") {
-      return;
-    }
-    const originalError = console.error;
-    console.error = (...args: Parameters<typeof console.error>) => {
-      const combined = args
-        .map((arg) =>
-          typeof arg === "string"
-            ? arg
-            : arg instanceof Error
-              ? `${arg.name}: ${arg.message}`
-              : String(arg),
-        )
-        .join(" ");
-      if (
-        staleTeardownSuppressionRef.current &&
-        isKnownStaleTeardownSdkNoise(combined)
-      ) {
-        return;
-      }
-      originalError(...args);
-    };
-    return () => {
-      console.error = originalError;
-    };
-  }, []);
-
-  useEffect(() => {
     return () => {
       takeoverChannelRef.current?.close();
       takeoverChannelRef.current = null;
@@ -1054,11 +1016,6 @@ export function useVoximplantRoom({
           clearStateAfterCleanup();
           return;
         }
-        const shouldSuppressSdkNoise = reason === "stale_connection";
-        if (shouldSuppressSdkNoise) {
-          staleTeardownSuppressionRef.current = true;
-        }
-
         // Stop mic level meter in-place (don't use stopMicLevelMeter callback to avoid dep cycle).
         if (runtimeSnapshot.animFrameId !== null) {
           cancelAnimationFrame(runtimeSnapshot.animFrameId);
@@ -1116,9 +1073,7 @@ export function useVoximplantRoom({
         if (!options?.preserveStatus && mountedRef.current) {
           setStatus("Отключено.");
         }
-        staleTeardownSuppressionRef.current = false;
       })().finally(() => {
-        staleTeardownSuppressionRef.current = false;
         cleanupPromiseRef.current = null;
       });
 
@@ -1535,14 +1490,26 @@ export function useVoximplantRoom({
 
         // Step 2 — load SDK modules.
         setStatus("Инициализация Voximplant SDK...");
-        const [{ Core }, conferenceModule, streamModulePackage] = await Promise.all([
+        const [{ Core, LogLevel }, conferenceModule, streamModulePackage] = await Promise.all([
           import("@voximplant/websdk"),
           import("@voximplant/websdk/modules/conference-manager"),
           import("@voximplant/websdk/modules/stream"),
         ]);
         assertGenerationCurrent(joinGeneration);
 
-        const core = Core.init({}) as unknown as VoxCore;
+        const core = Core.init({
+          logger: {
+            enableConsoleLogger: false,
+            callbackLogLevel: LogLevel.Error,
+            onLogCallback: (props) => {
+              webSdkLogFilterRef.current.onLog({
+                fullMessage: props.fullMessage,
+                message: props.message,
+                extraData: props.extraData,
+              });
+            },
+          },
+        }) as unknown as VoxCore;
         try {
           if (!core.getModule(streamModulePackage.streamToken)) {
             core.registerModules([streamModulePackage.StreamLoader()]);

@@ -13,6 +13,7 @@ import {
   installVoxRuntimeErrorSuppressor,
   isAlreadyExistsStreamError,
   isRecoverableVoxMediaError,
+  isRecoverableVoxSignallingError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
@@ -921,7 +922,11 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         }
       } catch (joinError) {
         const details = toErrorMessage(joinError);
-        console.error("[EventLobbyVox] connect failed:", joinError);
+        if (isRecoverableVoxSignallingError(joinError)) {
+          console.warn("[EventLobbyVox] transient signalling failure:", details);
+        } else {
+          console.error("[EventLobbyVox] connect failed:", joinError);
+        }
         setError(t("events.voxLobbyUnableToConnect"));
         setErrorDetails(details);
         setStatus(t("events.voxLobbyUnableToConnect"));

@@ -24,6 +24,7 @@ import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
+import { getRecordingDisplayState } from "@/lib/recording-display-state";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,25 +80,34 @@ function resolveTranscriptEnhancementStatus(
   return "NOT_AVAILABLE";
 }
 
-function resolveRecordingProcessingStage(status: RecordingStatus): string {
-  switch (status) {
-    case RecordingStatus.NOT_STARTED:
-      return "not_available";
-    case RecordingStatus.STARTING:
-    case RecordingStatus.RECORDING:
-    case RecordingStatus.PAUSED:
-      return "in_progress";
-    case RecordingStatus.STOPPED:
-      return "finalizing";
-    case RecordingStatus.PROCESSING:
-      return "processing";
-    case RecordingStatus.COMPLETED:
-      return "ready";
-    case RecordingStatus.FAILED:
-      return "failed";
-    default:
-      return "not_available";
+function resolveRecordingProcessingStage(input: {
+  recordingStatus: RecordingStatus | null;
+  stopOperationState: string | null;
+  sessionStatus: string;
+  negotiationState: string;
+  roomLifecycle: string | null;
+}) {
+  const displayState = getRecordingDisplayState({
+    recordingStatus: input.recordingStatus,
+    stopOperationState: input.stopOperationState,
+    sessionStatus: input.sessionStatus,
+    negotiationState: input.negotiationState,
+    roomLifecycle: input.roomLifecycle,
+  });
+
+  if (displayState === "active" || displayState === "paused") {
+    return "in_progress";
   }
+  if (displayState === "stopping") {
+    return "finalizing";
+  }
+  if (displayState === "completed") {
+    return "ready";
+  }
+  if (displayState === "failed") {
+    return "failed";
+  }
+  return "not_available";
 }
 
 function isRecordingReadyForTranscription(
@@ -272,6 +282,11 @@ export async function GET(request: Request, context: RouteContext) {
           endedAt: true,
           errorMessage: true,
           egressId: true,
+          stopOperation: {
+            select: {
+              state: true,
+            },
+          },
         },
       },
       transcript: {
@@ -476,7 +491,13 @@ export async function GET(request: Request, context: RouteContext) {
             fileKeyNormalization?.containsRawUrl ||
             fileKeyNormalization?.containsEncodedUrl)
         ? "failed"
-        : resolveRecordingProcessingStage(recordingStatus)
+        : resolveRecordingProcessingStage({
+            recordingStatus,
+            stopOperationState: recording?.stopOperation?.state ?? null,
+            sessionStatus: session.status,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+          })
     : "not_available";
 
   const transcriptStage = resolveTranscriptProcessingStage(

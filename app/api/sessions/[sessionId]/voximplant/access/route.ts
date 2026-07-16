@@ -142,8 +142,29 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const participant = await ensureAccountRoomParticipant(sessionId, user);
-  if (!participant || participant.userId !== user.id) {
+  const participantResult = await ensureAccountRoomParticipant(sessionId, user);
+  if (participantResult.kind === "denied") {
+    return NextResponse.json(
+      {
+        error:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED"
+            ? "roomClosed"
+            : "Forbidden.",
+        code:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED"
+            ? "ROOM_CLOSED"
+            : "VOXIMPLANT_GUEST_DEFERRED",
+        redirectTo: participantResult.redirectTo,
+        denialReason: participantResult.reason,
+      },
+      {
+        status:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED" ? 409 : 403,
+      },
+    );
+  }
+  const participant = participantResult.participant;
+  if (participant.userId !== user.id) {
     return NextResponse.json(
       {
         error: "Guest Voximplant access is not supported yet. Use authenticated account access.",

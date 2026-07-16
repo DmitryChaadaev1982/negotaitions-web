@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -56,6 +56,8 @@ type CasesListViewProps = {
   isAdminViewer: boolean;
 };
 
+const CASES_OVERVIEW_POLL_INTERVAL_MS = 3_000;
+
 const CASE_VISIBILITY_FILTERS = ["all", "public", "private"] as const;
 type CaseVisibilityFilter = (typeof CASE_VISIBILITY_FILTERS)[number];
 
@@ -109,6 +111,7 @@ function sortDirectionForCaseField(field: CaseSortField): SortDirection {
 }
 
 export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
+  const [caseRows, setCaseRows] = useState<CaseRow[]>(cases);
   const { t, locale } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
@@ -135,6 +138,58 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
     });
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    let currentController: AbortController | null = null;
+
+    const refreshCases = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      currentController?.abort();
+      const controller = new AbortController();
+      currentController = controller;
+      try {
+        const response = await fetch("/api/cases/list", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok || cancelled) return;
+        const data = (await response.json()) as { cases: CaseRow[] };
+        setCaseRows(data.cases);
+      } catch {
+        // Ignore transient polling errors.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshCases();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refreshCases();
+      }
+    }, CASES_OVERVIEW_POLL_INTERVAL_MS);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshCases();
+      }
+    };
+    const handleFocus = () => {
+      void refreshCases();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      cancelled = true;
+      currentController?.abort();
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
   const formatDate = (iso: string) =>
     new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
       month: "short",
@@ -144,7 +199,7 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
 
   const filteredCases = useMemo(() => {
     const normalizedQuery = query.toLocaleLowerCase();
-    return cases.filter((negotiationCase) => {
+    return caseRows.filter((negotiationCase) => {
       if (
         visibilityFilter !== "all" &&
         negotiationCase.visibility !== visibilityFilter.toUpperCase()
@@ -175,7 +230,7 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
         .toLocaleLowerCase()
         .includes(normalizedQuery);
     });
-  }, [cases, difficultyFilter, languageFilter, query, visibilityFilter]);
+  }, [caseRows, difficultyFilter, languageFilter, query, visibilityFilter]);
 
   const sortedCases = useMemo(() => {
     const result = [...filteredCases];
@@ -231,7 +286,7 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
         }
       />
 
-      {cases.length === 0 ? (
+      {caseRows.length === 0 ? (
         <EmptyState
           message={t("cases.noCases")}
           action={

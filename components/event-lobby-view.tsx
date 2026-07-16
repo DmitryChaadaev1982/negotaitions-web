@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
-import { ConnectionStatusBadge } from "@/components/connection-status-badge";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { EventLobbyVoximplantRoom } from "@/components/event-lobby-voximplant-room";
@@ -29,7 +28,7 @@ import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@
 import type { EventStateResponse } from "@/lib/event-state";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
-import { useI18n } from "@/lib/i18n/useI18n";
+import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 
@@ -68,6 +67,21 @@ function deviceWarningLabel(
     return t("events.microphoneUnavailable");
   }
   return null;
+}
+
+function participantLocationLabel(
+  participant: EventStateResponse["participants"][number],
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+) {
+  if (participant.currentLocation.kind === "session") {
+    return t("events.participantLocationSession", {
+      title: participant.currentLocation.sessionTitle,
+    });
+  }
+  if (participant.currentLocation.kind === "lobby") {
+    return t("events.participantLocationLobby");
+  }
+  return t("rejoin.offline");
 }
 
 export function EventLobbyView({
@@ -649,12 +663,29 @@ export function EventLobbyView({
       )
     : [];
   const showOwnerHostManagement = isEventOwner && !staleConnection;
-  const joinableObserverSessions =
+  const mySessionsInEvent =
     !showOwnerHostManagement && state.currentParticipant
+      ? participantHistoricalSessions
+      : [];
+  const mySessionIdSet = new Set(mySessionsInEvent.map((session) => session.id));
+  const observerActiveSessions =
+    !showOwnerHostManagement &&
+    state.currentParticipant &&
+    !currentAssignment?.assignedSessionId
       ? state.sessions.filter(
           (session) =>
-            session.canJoinAsObserver &&
-            Boolean(session.observerJoinUrl),
+            !mySessionIdSet.has(session.id) &&
+            session.sessionDisplayState === "joinable",
+        )
+      : [];
+  const observerMaterialsOnlySessions =
+    !showOwnerHostManagement &&
+    state.currentParticipant &&
+    !currentAssignment?.assignedSessionId
+      ? state.sessions.filter(
+          (session) =>
+            !mySessionIdSet.has(session.id) &&
+            session.sessionDisplayState === "materials-only",
         )
       : [];
   const staleLobbyMessage = t("events.lobbyTakeoverDisconnected");
@@ -884,12 +915,15 @@ export function EventLobbyView({
                           {t("events.activeSession")}: {participant.activeAssignmentLabel}
                         </span>
                       ) : null}
+                      <span className="mt-1 block text-xs font-normal text-slate-400">
+                        {participant.presenceStatus === "online"
+                          ? t("events.onlineWithLocation", {
+                              location: participantLocationLabel(participant, t),
+                            })
+                          : t("rejoin.offline")}
+                      </span>
                     </span>
                     <div className="flex flex-col items-end gap-1">
-                      <ConnectionStatusBadge
-                        lastSeenAt={participant.lastSeenAt}
-                        showLastSeen={isHost}
-                      />
                       <Badge variant="default" className="text-[10px]">
                         {participant.preference === "PLAY"
                           ? t("events.wantToPlay")
@@ -999,18 +1033,19 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          {joinableObserverSessions.length > 0 ? (
+          {observerActiveSessions.length > 0 ? (
             <GlassCard data-testid="joinable-event-session-list">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm font-semibold text-slate-100">
                   {t("events.activeSessions")}
                 </p>
                 <div className="space-y-2">
-                  {joinableObserverSessions.map((session) => (
+                  {observerActiveSessions.map((session) => (
                     <article
                       key={session.id}
                       className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
                       data-testid="joinable-event-session-card"
+                      data-session-access-state={session.sessionDisplayState}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -1019,16 +1054,18 @@ export function EventLobbyView({
                           </p>
                           <p className="text-xs text-slate-400">{session.caseTitle}</p>
                           <p className="mt-1 text-xs text-slate-500">
-                            {t(
-                              `status.${session.negotiationState}` as
-                                | "status.PREPARATION"
-                                | "status.PREPARATION_RUNNING"
-                                | "status.PREPARATION_PAUSED"
-                                | "status.READY_TO_START"
-                                | "status.RUNNING"
-                                | "status.PAUSED"
-                                | "status.FINISHED",
-                            )}
+                            {session.sessionDisplayState === "materials-only"
+                              ? t("events.completedSessionStatus")
+                              : t(
+                                  `status.${session.negotiationState}` as
+                                    | "status.PREPARATION"
+                                    | "status.PREPARATION_RUNNING"
+                                    | "status.PREPARATION_PAUSED"
+                                    | "status.READY_TO_START"
+                                    | "status.RUNNING"
+                                    | "status.PAUSED"
+                                    | "status.FINISHED",
+                                )}
                           </p>
                         </div>
                         {session.observerJoinUrl ? (
@@ -1047,14 +1084,14 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
-          {participantHistoricalSessions.length > 0 && !showOwnerHostManagement ? (
+          {mySessionsInEvent.length > 0 && !showOwnerHostManagement ? (
             <GlassCard data-testid="my-sessions-in-event-section">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm font-semibold text-slate-100">
                   {isEventOwner ? t("events.sessionsInThisEvent") : t("events.mySessionsInThisEvent")}
                 </p>
                 <div className="space-y-2">
-                  {participantHistoricalSessions.map((session) => {
+                  {mySessionsInEvent.map((session) => {
                     const participantLink = session.participants.find(
                       (participant) =>
                         participant.eventParticipantId ===
@@ -1100,10 +1137,46 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
+          {observerMaterialsOnlySessions.length > 0 ? (
+            <GlassCard data-testid="sessions-without-my-participation-section">
+              <GlassCardContent className="space-y-3">
+                <p className="text-sm font-semibold text-slate-100">
+                  {t("events.sessionsWithoutMyParticipation")}
+                </p>
+                <div className="space-y-2">
+                  {observerMaterialsOnlySessions.map((session) => (
+                    <article
+                      key={session.id}
+                      className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-100">
+                            {session.roomLabel ?? session.title}
+                          </p>
+                          <p className="text-xs text-slate-400">{session.caseTitle}</p>
+                        </div>
+                        {session.observerMaterialsUrl ? (
+                          <SecondaryButtonLink
+                            href={session.observerMaterialsUrl}
+                            data-testid="open-observer-session-materials"
+                          >
+                            {t("events.openMaterialsAction")}
+                          </SecondaryButtonLink>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
+
           {state.sessions.length > 0 &&
           !currentAssignment?.assignedSessionId &&
-          participantHistoricalSessions.length === 0 &&
-          joinableObserverSessions.length === 0 ? (
+          mySessionsInEvent.length === 0 &&
+          observerActiveSessions.length === 0 &&
+          observerMaterialsOnlySessions.length === 0 ? (
             <GlassCard>
               <GlassCardContent>
                 <p className="text-sm text-slate-400">{t("events.waitingForAssignment")}</p>

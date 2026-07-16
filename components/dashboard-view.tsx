@@ -300,11 +300,12 @@ export function DashboardView({
                     </div>
                     <div className="flex flex-wrap gap-1" data-testid="event-stats-summary">
                       {[
+                        [t("events.activityLobby"), eventActive ? event.participantsInLobby : "—", "event-participants-in-lobby"],
+                        [t("events.activityInSessions"), eventActive ? event.participantsInActiveSessions : "—", "event-participants-in-active-sessions"],
+                        [t("events.activityTotal"), event.totalSessionParticipantCount, "event-total-assigned-participants"],
                         [t("events.activitySessions"), event.totalSessions, "event-total-sessions"],
                         [t("events.activeSession"), event.activeSessions, "event-active-sessions"],
                         [t("events.finishedSession"), event.finishedSessions, "event-finished-sessions"],
-                        [t("events.activityLobby"), eventActive ? event.participantsInLobby : "—", "event-participants-in-lobby"],
-                        [t("events.activityInSessions"), eventActive ? event.participantsInActiveSessions : "—", "event-participants-in-active-sessions"],
                       ].map(([label, value, testId]) => (
                         <span
                           key={String(testId)}

@@ -52,7 +52,9 @@ export async function GET(request: Request, context: RouteContext) {
     user &&
       (access.isEventOwner ||
         access.hasUserParticipant ||
-        currentParticipant?.userId === user.id),
+        access.hasEmailInvite ||
+        currentParticipant?.userId === user.id ||
+        currentParticipant),
   );
   if (
     !currentParticipant &&

@@ -12,6 +12,7 @@ import {
   joinEventAsParticipant,
   participantByName,
   query,
+  upsertRecordingForSession,
 } from "./helpers/db";
 
 test.describe.configure({ mode: "serial" });
@@ -404,7 +405,7 @@ test("event participant can join active event sessions as observer from lobby", 
          "status","negotiationState","roomLifecycle","preparationDurationSeconds","durationSeconds",
          "closedByEventAt","updatedAt")
        VALUES
-        (gen_random_uuid(),$1,$2,$3,'Room Finished','Room Finished',$4,$5,$6,'EN',
+       (gen_random_uuid(),$1,$2,$3,'Завершено','Завершено',$4,$5,$6,'EN',
          'COMPLETED','FINISHED','CLOSED',60,120,NOW(),NOW())
        RETURNING "id"`,
       [
@@ -458,6 +459,9 @@ test("event participant can join active event sessions as observer from lobby", 
       roomLabel: string | null;
       canJoinAsObserver: boolean;
       observerJoinUrl: string | null;
+      canViewObserverMaterials: boolean;
+      observerMaterialsUrl: string | null;
+      sessionDisplayState: "joinable" | "materials-only" | "unavailable";
     }>;
   };
   const roomAState = participantState.sessions.find(
@@ -474,7 +478,12 @@ test("event participant can join active event sessions as observer from lobby", 
   await expect(page.getByTestId("event-lobby-page")).toBeVisible();
   await expect(page.getByTestId("joinable-event-session-list")).toBeVisible();
   await expect(page.getByTestId("joinable-event-session-list")).toContainText("Room A");
-  await expect(page.getByTestId("joinable-event-session-list")).not.toContainText("Room Finished");
+  const materialsOnlyCard = page
+    .getByTestId("sessions-without-my-participation-section")
+    .getByRole("article")
+    .filter({ hasText: "Завершено" });
+  await expect(materialsOnlyCard).toBeVisible();
+  await expect(materialsOnlyCard.getByTestId("open-observer-session-materials")).toHaveCount(1);
 
   await dismissCookieBanner(page);
   await page
@@ -559,16 +568,31 @@ test("event participant can join active event sessions as observer from lobby", 
   await dismissCookieBanner(page);
   await expect(page.getByTestId("assigned-session-card")).toHaveCount(0);
   await expect(page.getByTestId("my-sessions-in-event-section")).toContainText("Room A");
-  await expect(page.getByTestId("joinable-event-session-list")).toContainText("Room B");
-  await expect(page.getByTestId("joinable-event-session-list")).not.toContainText("Room A");
+  await expect(page.getByTestId("joinable-event-session-list")).toHaveCount(0);
+  await expect(page.getByTestId("sessions-without-my-participation-section")).toContainText(
+    "Room B",
+  );
+  await expect(page.getByTestId("sessions-without-my-participation-section")).not.toContainText(
+    "Room A",
+  );
+  const finishedSessionCard = page
+    .getByTestId("sessions-without-my-participation-section")
+    .getByRole("article")
+    .filter({ hasText: "Room B" });
+  await expect(finishedSessionCard.getByTestId("open-observer-session-materials")).toBeVisible();
   await dismissCookieBanner(page);
-  await page
-    .getByTestId("joinable-event-session-card")
-    .filter({ hasText: "Room B" })
-    .getByTestId("join-session-as-observer")
-    .click();
-  await expect(page).toHaveURL(new RegExp(`/room/${sessionBBody.session.id}`));
+  await finishedSessionCard.getByTestId("open-observer-session-materials").click();
+  await expect(page).toHaveURL(new RegExp(`/sessions/${sessionBBody.session.id}/observer-materials`));
+  await expect(page.getByTestId("observer-materials-page")).toBeVisible();
+  await page.goto(`/events/${event.id}/lobby`);
+  await dismissCookieBanner(page);
 
+  await page.goto(`/room/${sessionBBody.session.id}`);
+  await expect(
+    page.getByRole("heading", {
+      name: /You do not have access to this session|У вас нет доступа к этой сессии/i,
+    }),
+  ).toBeVisible();
   await expect
     .poll(async () => {
       const rows = await query<{ count: string }>(
@@ -581,7 +605,7 @@ test("event participant can join active event sessions as observer from lobby", 
       );
       return Number(rows[0]?.count ?? 0);
     })
-    .toBe(1);
+    .toBe(0);
 
   await query(
     `UPDATE "Session"
@@ -604,12 +628,18 @@ test("event participant can join active event sessions as observer from lobby", 
     sessions: Array<{
       id: string;
       canJoinAsObserver: boolean;
+      canViewObserverMaterials: boolean;
+      observerMaterialsUrl: string | null;
     }>;
   };
   const closedSessionState = stateAfterSessionClosed.sessions.find(
     (session) => session.id === sessionBBody.session.id,
   );
   expect(closedSessionState?.canJoinAsObserver).toBe(false);
+  expect(closedSessionState?.canViewObserverMaterials).toBe(true);
+  expect(closedSessionState?.observerMaterialsUrl).toContain(
+    `/sessions/${sessionBBody.session.id}/observer-materials`,
+  );
 
   const ownerPage = await page.context().newPage();
   await loginWithUserSession(ownerPage, hostUser.id);
@@ -643,6 +673,94 @@ test("event participant can join active event sessions as observer from lobby", 
     maxRedirects: 0,
   });
   expect([200, 302, 404]).toContain(outsiderRoom.status());
+});
+
+test("host session board shows stopping/completed recording without raw enums", async ({
+  page,
+  request,
+}) => {
+  const hostUser = await createActiveUser({
+    email: `e2e-recording-status-host-${Date.now()}@test.negotaitions.local`,
+  });
+  const negotiationCase = await createTestCase({
+    title: "E2E Recording Status Mapping",
+  });
+  const event = await createTestEvent({
+    withParticipants: true,
+    title: "E2E Recording Status Event",
+  });
+
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "hostUserId" = $2,
+         "facilitatorUserId" = $2,
+         "visibility" = 'PRIVATE',
+         "status" = 'SESSION_CREATED',
+         "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [event.id, hostUser.id],
+  );
+
+  const participants = await getEventParticipants(event.id);
+  const dmitry = participantByName(participants, "Dmitry");
+  const igor = participantByName(participants, "Igor");
+  const alex = participantByName(participants, "Alex");
+  const [roleA, roleB] = negotiationCase.roles;
+
+  await query(`UPDATE "EventParticipant" SET "userId" = $2 WHERE "id" = $1`, [dmitry.id, hostUser.id]);
+
+  const sessionResponse = await createSessionFromEvent(request, {
+    eventId: event.id,
+    hostToken: event.hostToken,
+    caseId: negotiationCase.id,
+    roomLabel: "Room Recording",
+    facilitatorEventParticipantId: dmitry.id,
+    roleAssignments: [
+      { caseRoleId: roleA!.id, eventParticipantId: igor.id },
+      { caseRoleId: roleB!.id, eventParticipantId: alex.id },
+    ],
+  });
+  expect(sessionResponse.ok()).toBeTruthy();
+  const sessionBody = (await sessionResponse.json()) as { session: { id: string } };
+
+  await query(
+    `UPDATE "Session"
+     SET "negotiationState" = 'FINISHED',
+         "status" = 'COMPLETED',
+         "roomLifecycle" = 'DEBRIEF_OPEN',
+         "updatedAt" = NOW()
+     WHERE "id" = $1`,
+    [sessionBody.session.id],
+  );
+  await upsertRecordingForSession({
+    sessionId: sessionBody.session.id,
+    status: "RECORDING",
+    provider: "VOXIMPLANT",
+  });
+  await query(
+    `INSERT INTO "SessionRecordingStopOperation"
+       ("id","sessionId","recordingId","provider","requestedByMode","requestReason","operationId","state","deliveredAt","updatedAt")
+     VALUES
+       (gen_random_uuid(),$1,(SELECT "id" FROM "Recording" WHERE "sessionId" = $1),'VOXIMPLANT','ADMINISTRATIVE_SESSION_FINISH','e2e',concat('stop:e2e:', $1),'DELIVERED',NOW(),NOW())
+     ON CONFLICT ("recordingId") DO UPDATE
+       SET "state" = 'DELIVERED',
+           "deliveredAt" = NOW(),
+           "updatedAt" = NOW()`,
+    [sessionBody.session.id],
+  );
+
+  await loginWithUserSession(page, hostUser.id);
+  await seedCookieConsent(page);
+  await page.goto(`/events/${event.id}/lobby`);
+  await dismissCookieBanner(page);
+
+  const sessionCard = page
+    .getByTestId("event-session-card")
+    .filter({ hasText: "Room Recording" });
+  await expect(sessionCard).toBeVisible();
+  await expect(sessionCard.locator('[data-recording-state="stopping"]')).toBeVisible();
+  await expect(sessionCard).not.toContainText(/Recording in progress|Запись идёт/i);
+  await expect(sessionCard).not.toContainText(/\bCOMPLETED\b/);
 });
 
 test("events list complete action uses danger-outline and keeps cancel stronger destructive", async ({
