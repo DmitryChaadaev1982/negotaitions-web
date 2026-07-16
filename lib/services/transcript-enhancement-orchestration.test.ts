@@ -14,6 +14,7 @@ type InMemorySegment = {
 
 type InMemoryTranscript = {
   id: string;
+  sessionId: string;
   text: string;
   diarizedText: string | null;
   updatedAt: Date;
@@ -25,6 +26,7 @@ type InMemoryTranscript = {
 function cloneTranscript(state: InMemoryTranscript) {
   return {
     id: state.id,
+    sessionId: state.sessionId,
     text: state.text,
     diarizedText: state.diarizedText,
     updatedAt: state.updatedAt,
@@ -189,6 +191,7 @@ test("simultaneous equivalent runs acquire lock once", async () => {
 
       const state: InMemoryTranscript = {
         id: "tr_concurrent",
+        sessionId: "sess_concurrent",
         text: "raw transcript",
         diarizedText: "raw transcript",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -253,12 +256,20 @@ test("simultaneous equivalent runs acquire lock once", async () => {
         executeTranscriptEnhancement({
           transcriptId: state.id,
           triggerSource: "manual",
-          dependencies: { db: db as never, enhance: enhance as never },
+          dependencies: {
+            db: db as never,
+            enhance: enhance as never,
+            maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+          },
         }),
         executeTranscriptEnhancement({
           transcriptId: state.id,
           triggerSource: "manual",
-          dependencies: { db: db as never, enhance: enhance as never },
+          dependencies: {
+            db: db as never,
+            enhance: enhance as never,
+            maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+          },
         }),
       ]);
 
@@ -288,6 +299,7 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
 
       const state: InMemoryTranscript = {
         id: "tr_background",
+        sessionId: "sess_background",
         text: "raw transcript",
         diarizedText: "raw transcript",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -355,7 +367,11 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
         transcriptId: state.id,
         triggerSource: "manual",
         runInBackground: true,
-        dependencies: { db: db as never, enhance: enhance as never },
+        dependencies: {
+          db: db as never,
+          enhance: enhance as never,
+          maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+        },
       });
 
       assert.equal(result.outcome, "started");
@@ -376,4 +392,288 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
       }
     }
   });
+});
+
+test("automatic enhancement runs when feature and auto-run are enabled", async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const previousAutoRun = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  const previousEnabled = process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+  process.env.DATABASE_URL =
+    process.env.DATABASE_URL ??
+    "postgresql://user:password@localhost:5432/negotiations_test";
+  process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "true";
+  process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = "true";
+
+  try {
+    const { executeTranscriptEnhancement } = await import(
+      "@/lib/services/transcript-enhancement-orchestration"
+    );
+
+    const state: InMemoryTranscript = {
+      id: "tr_auto",
+      sessionId: "sess_auto",
+      text: "raw transcript",
+      diarizedText: "raw transcript",
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      retranscribeCount: 0,
+      processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+      segments: [
+        {
+          id: "seg-1",
+          orderIndex: 0,
+          speakerLabel: "speaker_1",
+          startSeconds: 0,
+          endSeconds: 1,
+          mappedParticipantId: null,
+          text: "raw transcript",
+          qualityText: "raw transcript",
+        },
+      ],
+    };
+    const db = createInMemoryDb(state);
+
+    const result = await executeTranscriptEnhancement({
+      transcriptId: state.id,
+      triggerSource: "automatic_initial_transcription",
+      dependencies: {
+        db: db as never,
+        maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+        enhance: (async (segments: Array<{ index: number; originalText: string }>) => ({
+          segments: segments.map((segment) => ({
+            index: segment.index,
+            cleanedText: `${segment.originalText} enhanced`,
+          })),
+          globalWarnings: [],
+          meta: {
+            mode: "single",
+            model: "deepseek-v4-flash",
+            overallStatus: "COMPLETED",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            totalLatencyMs: 1,
+            originalSegmentCount: 1,
+            originalCharacterCount: 10,
+            chunkCount: 1,
+            concurrency: 1,
+            successfulChunkCount: 1,
+            failedChunkCount: 0,
+            fallbackSegmentCount: 0,
+            changedSegmentCount: 1,
+            unchangedSegmentCount: 0,
+            retryCount: 0,
+            perChunk: [],
+            originalWordCount: 2,
+            enhancedWordCount: 3,
+            addedWordEstimate: 1,
+            removedWordEstimate: 0,
+            outputMode: "json_schema",
+            structuredOutputEnabled: true,
+            schemaVersion: "v1",
+            schemaChunkCount: 1,
+          },
+        })) as never,
+      },
+    });
+
+    assert.equal(result.outcome, "started");
+  } finally {
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    if (previousAutoRun === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previousAutoRun;
+    }
+    if (previousEnabled === undefined) {
+      delete process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+    } else {
+      process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = previousEnabled;
+    }
+  }
+});
+
+test("automatic enhancement is skipped when auto-run is explicitly disabled", async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const previousAutoRun = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  const previousEnabled = process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+  process.env.DATABASE_URL =
+    process.env.DATABASE_URL ??
+    "postgresql://user:password@localhost:5432/negotiations_test";
+  process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "false";
+  process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = "true";
+
+  try {
+    const { executeTranscriptEnhancement } = await import(
+      "@/lib/services/transcript-enhancement-orchestration"
+    );
+    const state: InMemoryTranscript = {
+      id: "tr_auto_disabled",
+      sessionId: "sess_auto_disabled",
+      text: "raw transcript",
+      diarizedText: "raw transcript",
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      retranscribeCount: 0,
+      processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+      segments: [
+        {
+          id: "seg-1",
+          orderIndex: 0,
+          speakerLabel: "speaker_1",
+          startSeconds: 0,
+          endSeconds: 1,
+          mappedParticipantId: null,
+          text: "raw transcript",
+          qualityText: "raw transcript",
+        },
+      ],
+    };
+    const db = createInMemoryDb(state);
+    let providerCalls = 0;
+
+    const result = await executeTranscriptEnhancement({
+      transcriptId: state.id,
+      triggerSource: "automatic_initial_transcription",
+      dependencies: {
+        db: db as never,
+        maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+        enhance: (async () => {
+          providerCalls += 1;
+          return {
+            segments: [],
+            globalWarnings: [],
+          };
+        }) as never,
+      },
+    });
+
+    assert.equal(result.outcome, "skipped");
+    if (result.outcome === "skipped") {
+      assert.equal(result.reason, "skipped_auto_run_disabled");
+    }
+    assert.equal(providerCalls, 0);
+  } finally {
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    if (previousAutoRun === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previousAutoRun;
+    }
+    if (previousEnabled === undefined) {
+      delete process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+    } else {
+      process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = previousEnabled;
+    }
+  }
+});
+
+test("manual enhancement remains available when auto-run is disabled", async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const previousAutoRun = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+  const previousEnabled = process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+  process.env.DATABASE_URL =
+    process.env.DATABASE_URL ??
+    "postgresql://user:password@localhost:5432/negotiations_test";
+  process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "false";
+  process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = "true";
+
+  try {
+    const { executeTranscriptEnhancement } = await import(
+      "@/lib/services/transcript-enhancement-orchestration"
+    );
+    const state: InMemoryTranscript = {
+      id: "tr_manual_auto_disabled",
+      sessionId: "sess_manual_auto_disabled",
+      text: "raw transcript",
+      diarizedText: "raw transcript",
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      retranscribeCount: 0,
+      processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+      segments: [
+        {
+          id: "seg-1",
+          orderIndex: 0,
+          speakerLabel: "speaker_1",
+          startSeconds: 0,
+          endSeconds: 1,
+          mappedParticipantId: null,
+          text: "raw transcript",
+          qualityText: "raw transcript",
+        },
+      ],
+    };
+    const db = createInMemoryDb(state);
+    let providerCalls = 0;
+
+    const result = await executeTranscriptEnhancement({
+      transcriptId: state.id,
+      triggerSource: "manual",
+      dependencies: {
+        db: db as never,
+        maybeRequestAutoAi: (async () => ({ outcome: "skipped", reason: "test" })) as never,
+        enhance: (async (segments: Array<{ index: number; originalText: string }>) => {
+          providerCalls += 1;
+          return {
+            segments: segments.map((segment) => ({
+              index: segment.index,
+              cleanedText: `${segment.originalText} enhanced`,
+            })),
+            globalWarnings: [],
+            meta: {
+              mode: "single",
+              model: "deepseek-v4-flash",
+              overallStatus: "COMPLETED",
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+              totalLatencyMs: 1,
+              originalSegmentCount: 1,
+              originalCharacterCount: 10,
+              chunkCount: 1,
+              concurrency: 1,
+              successfulChunkCount: 1,
+              failedChunkCount: 0,
+              fallbackSegmentCount: 0,
+              changedSegmentCount: 1,
+              unchangedSegmentCount: 0,
+              retryCount: 0,
+              perChunk: [],
+              originalWordCount: 2,
+              enhancedWordCount: 3,
+              addedWordEstimate: 1,
+              removedWordEstimate: 0,
+              outputMode: "json_schema",
+              structuredOutputEnabled: true,
+              schemaVersion: "v1",
+              schemaChunkCount: 1,
+            },
+          };
+        }) as never,
+      },
+    });
+
+    assert.equal(result.outcome, "started");
+    assert.equal(providerCalls, 1);
+  } finally {
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    if (previousAutoRun === undefined) {
+      delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
+    } else {
+      process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = previousAutoRun;
+    }
+    if (previousEnabled === undefined) {
+      delete process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED;
+    } else {
+      process.env.YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED = previousEnabled;
+    }
+  }
 });

@@ -139,6 +139,8 @@ const transcriptionStatusKeys: Record<
 
 const aiAnalysisStatusKeys: Record<ProcessingAiAnalysisStatus, TranslationKey> = {
   waiting_for_transcript: "sessionMaterials.waitingForTranscript",
+  waiting_for_speaker_mapping: "sessionMaterials.waitingForSpeakerMapping",
+  waiting_for_enhancement: "sessionMaterials.waitingForEnhancement",
   not_started: "sessionMaterials.transcriptReadyForAnalysis",
   queued: "sessionMaterials.aiAnalysisQueued",
   analyzing: "sessionMaterials.aiAnalysisAnalyzing",
@@ -169,6 +171,8 @@ const transcriptionStatusTone: Record<ProcessingTranscriptionStatus, string> = {
 
 const aiAnalysisStatusTone: Record<ProcessingAiAnalysisStatus, string> = {
   waiting_for_transcript: "border-slate-700/50 bg-slate-900/40 text-slate-400",
+  waiting_for_speaker_mapping: "border-amber-500/30 bg-amber-950/20 text-amber-200",
+  waiting_for_enhancement: "border-violet-500/30 bg-violet-950/20 text-violet-200",
   not_started: "border-slate-700/50 bg-slate-900/40 text-slate-400",
   queued: "border-cyan-500/30 bg-cyan-950/20 text-cyan-200",
   analyzing: "border-cyan-500/30 bg-cyan-950/20 text-cyan-200",
@@ -216,6 +220,8 @@ function mapApiRecordingStage(stage: string): ProcessingRecordingStatus {
 function mapApiAiAnalysisStage(stage: string): ProcessingAiAnalysisStatus {
   const map: Record<string, ProcessingAiAnalysisStatus> = {
     waiting_for_transcript: "waiting_for_transcript",
+    waiting_for_speaker_mapping: "waiting_for_speaker_mapping",
+    waiting_for_enhancement: "waiting_for_enhancement",
     not_started: "not_started",
     queued: "queued",
     analyzing: "analyzing",
@@ -1524,6 +1530,9 @@ export function SessionMaterialsDashboard({
           {enhancementStatus === "SKIPPED" ? (
             <p className="text-sm text-slate-300">
               {t("sessionMaterials.transcriptEnhancementSkipped")}
+              {liveData?.transcription?.enhancement?.skipReason
+                ? ` (${liveData.transcription.enhancement.skipReason})`
+                : ""}
             </p>
           ) : null}
 

@@ -19,6 +19,8 @@ export type ProcessingTranscriptionStatus =
 
 export type ProcessingAiAnalysisStatus =
   | "waiting_for_transcript"
+  | "waiting_for_speaker_mapping"
+  | "waiting_for_enhancement"
   | "not_started"
   | "queued"
   | "analyzing"

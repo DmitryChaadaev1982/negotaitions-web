@@ -799,6 +799,8 @@ export const ru: Dictionary = {
       "Улучшение качества транскрипта не удалось. Используется базовый транскрипт с говорящими.",
     aiAnalysis: "AI-разбор",
     waitingForTranscript: "Ожидаем транскрипт.",
+    waitingForSpeakerMapping: "Ожидаем подтверждения сопоставления говорящих.",
+    waitingForEnhancement: "Ожидаем завершения ИИ-улучшения транскрипта.",
     transcriptReadyForAnalysis: "Транскрипт готов. Можно запустить AI-разбор.",
     runAiAnalysis: "Запустить AI-разбор",
     retryAiAnalysis: "Повторить AI-разбор",

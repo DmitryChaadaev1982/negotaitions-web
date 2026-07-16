@@ -794,6 +794,8 @@ export const en = {
       "Transcript quality enhancement failed. Using base diarized transcript.",
     aiAnalysis: "AI analysis",
     waitingForTranscript: "Waiting for transcript.",
+    waitingForSpeakerMapping: "Waiting for confirmed speaker mapping.",
+    waitingForEnhancement: "Waiting for transcript enhancement to reach terminal state.",
     transcriptReadyForAnalysis: "Transcript is ready. AI analysis can be started.",
     runAiAnalysis: "Run AI analysis",
     retryAiAnalysis: "Retry AI analysis",

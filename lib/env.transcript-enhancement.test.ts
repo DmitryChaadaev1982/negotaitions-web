@@ -149,11 +149,11 @@ test("fallback model env is disabled by default and trimmed when set", () => {
   }
 });
 
-test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN defaults to false", () => {
+test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN defaults to true", () => {
   const previous = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
   delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
   try {
-    assert.equal(isTranscriptEnhancementAutoRunEnabled(), false);
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), true);
   } finally {
     if (previous === undefined) {
       delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
@@ -179,11 +179,11 @@ test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN parses valid true/false values", () => {
   }
 });
 
-test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN invalid value falls back to false", () => {
+test("TRANSCRIPT_ENHANCEMENT_AUTO_RUN invalid value falls back to true", () => {
   const previous = process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;
   process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN = "not-a-boolean";
   try {
-    assert.equal(isTranscriptEnhancementAutoRunEnabled(), false);
+    assert.equal(isTranscriptEnhancementAutoRunEnabled(), true);
   } finally {
     if (previous === undefined) {
       delete process.env.TRANSCRIPT_ENHANCEMENT_AUTO_RUN;

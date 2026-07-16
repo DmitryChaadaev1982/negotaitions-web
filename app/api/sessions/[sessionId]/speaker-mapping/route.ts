@@ -16,6 +16,7 @@ import {
 } from "@/lib/transcription/speaker-labels";
 import { deriveSpeakerMappingStatus, resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
+import { maybeRequestAutomaticAiAnalysis } from "@/lib/services/auto-ai-analysis-trigger";
 
 export const runtime = "nodejs";
 type RouteContext = {
@@ -369,6 +370,13 @@ export async function POST(request: Request, context: RouteContext) {
     resultingSpeakerMappingStatus: updated.speakerMappingStatus,
     confirm,
   });
+
+  if (confirm && newMappingStatus === "CONFIRMED") {
+    await maybeRequestAutomaticAiAnalysis({
+      sessionId,
+      triggerSource: "speaker_mapping_confirmed",
+    });
+  }
 
   return NextResponse.json({
     transcript: {

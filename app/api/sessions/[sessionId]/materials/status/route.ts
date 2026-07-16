@@ -6,7 +6,11 @@ import {
   RecordingStatus,
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
-import { autoTranscribeAfterRecording } from "@/lib/env";
+import {
+  autoTranscribeAfterRecording,
+  isTranscriptEnhancementAutoRunEnabled,
+  isYandexTranscriptEnhancementEnabled,
+} from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
@@ -24,6 +28,10 @@ import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
+import {
+  getEnhancementReadinessForAnalysisFromMetadata,
+  resolveTranscriptEnhancementStatus,
+} from "@/lib/services/auto-ai-analysis-trigger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -52,31 +60,6 @@ const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
 
 function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-function resolveTranscriptEnhancementStatus(
-  processingMetadata: unknown,
-):
-  | "NOT_AVAILABLE"
-  | "IDLE"
-  | "SUGGESTED"
-  | "IN_PROGRESS"
-  | "COMPLETED"
-  | "PARTIAL"
-  | "FAILED"
-  | "SKIPPED" {
-  const metadata = asMetadata(processingMetadata);
-  const enhancement = asMetadata(metadata.transcriptEnhancement);
-  const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
-  const status = enhancement.status;
-  if (status === "IN_PROGRESS" || status === "RUNNING") return "IN_PROGRESS";
-  if (status === "FAILED") return "FAILED";
-  if (status === "PARTIAL") return "PARTIAL";
-  if (status === "COMPLETED") return "COMPLETED";
-  if (status === "SKIPPED") return "SKIPPED";
-  if (recommendation.suggested === true) return "SUGGESTED";
-  if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
-  return "NOT_AVAILABLE";
 }
 
 function resolveRecordingProcessingStage(status: RecordingStatus): string {
@@ -157,11 +140,21 @@ function resolveTranscriptProcessingStage(
 
 function resolveAiAnalysisProcessingStage(
   aiStatus: AiAnalysisStatus | null,
-  transcriptStatus: TranscriptStatus | null,
   transcriptHasText: boolean,
+  speakerMappingReady: boolean,
+  enhancementReady: boolean,
 ): string {
   if (!aiStatus) {
-    return transcriptHasText ? "not_started" : "waiting_for_transcript";
+    if (!transcriptHasText) {
+      return "waiting_for_transcript";
+    }
+    if (!speakerMappingReady) {
+      return "waiting_for_speaker_mapping";
+    }
+    if (!enhancementReady) {
+      return "waiting_for_enhancement";
+    }
+    return "not_started";
   }
   switch (aiStatus) {
     case AiAnalysisStatus.QUEUED:
@@ -190,6 +183,7 @@ function computeShouldPoll(
   recordingHasFileKey: boolean,
   transcriptStatus: TranscriptStatus | null,
   transcriptEnhancementInProgress: boolean,
+  waitingForEnhancement: boolean,
   aiStatus: AiAnalysisStatus | null,
   isParticipantOrObserver = false,
   transcriptHasText = false,
@@ -221,6 +215,9 @@ function computeShouldPoll(
     return true;
   }
   if (transcriptEnhancementInProgress) {
+    return true;
+  }
+  if (waitingForEnhancement) {
     return true;
   }
   if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
@@ -385,6 +382,11 @@ export async function GET(request: Request, context: RouteContext) {
   const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
     transcript?.processingMetadata,
   );
+  const enhancementReadiness = getEnhancementReadinessForAnalysisFromMetadata({
+    processingMetadata: transcript?.processingMetadata,
+    enhancementEnabled: isYandexTranscriptEnhancementEnabled(),
+    enhancementAutoRun: isTranscriptEnhancementAutoRunEnabled(),
+  });
   const mappingFailure = resolveMappingFailure({
     speakerMappingStatus: transcript?.speakerMappingStatus ?? null,
     processingMetadata: transcript?.processingMetadata ?? null,
@@ -436,6 +438,7 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptCompleted &&
     !hasRunningAiAnalysis &&
     speakerMappingReady &&
+    enhancementReadiness.canRequestAnalysis &&
     (aiStatus === null ||
       aiStatus === AiAnalysisStatus.FAILED ||
       analysisOutdated);
@@ -444,12 +447,14 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptCompleted &&
     aiStatus === AiAnalysisStatus.FAILED &&
     !hasRunningAiAnalysis &&
-    speakerMappingReady;
+    speakerMappingReady &&
+    enhancementReadiness.canRequestAnalysis;
   const canRerunAiAnalysis =
     isFacilitator &&
     transcriptCompleted &&
     !hasRunningAiAnalysis &&
     speakerMappingReady &&
+    enhancementReadiness.canRequestAnalysis &&
     aiStatus === AiAnalysisStatus.COMPLETED;
   const canShareAiAnalysis =
     isFacilitator && aiStatus === AiAnalysisStatus.COMPLETED;
@@ -489,8 +494,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
     aiStatus,
-    transcriptStatus,
     transcriptHasText,
+    speakerMappingReady,
+    enhancementReadiness.canRequestAnalysis,
   );
 
   const isParticipantOrObserver = !isFacilitator;
@@ -500,6 +506,7 @@ export async function GET(request: Request, context: RouteContext) {
     recordingHasFileKey,
     transcriptStatus,
     transcriptEnhancementStatus === "IN_PROGRESS",
+    aiAnalysisStage === "waiting_for_enhancement",
     aiStatus,
     isParticipantOrObserver,
     transcriptHasText,
@@ -581,6 +588,9 @@ export async function GET(request: Request, context: RouteContext) {
     canView: canViewAiAnalysis,
     canShare: canShareAiAnalysis,
     speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
+    waitingForEnhancement:
+      isFacilitator && aiAnalysisStage === "waiting_for_enhancement",
+    enhancementReadinessCode: isFacilitator ? enhancementReadiness.code : null,
     participantPlaceholder: !isFacilitator && !isSharedWithSession,
     // Analysis version tracking
     analysisFromOlderTranscript: isFacilitator && analysisOutdated,

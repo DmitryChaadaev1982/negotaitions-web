@@ -93,7 +93,10 @@ export async function POST(request: Request, context: RouteContext) {
   const enhancementStatus = asMetadata(metadata.transcriptEnhancement).status;
   if (enhancementStatus === "IN_PROGRESS" || enhancementStatus === "RUNNING") {
     return NextResponse.json(
-      { error: "Transcript enhancement is already in progress." },
+      {
+        error: "Transcript enhancement is already in progress.",
+        errorCode: "ENHANCEMENT_ALREADY_RUNNING",
+      },
       { status: 409 },
     );
   }
@@ -115,14 +118,21 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (runResult.outcome === "already_running") {
     return NextResponse.json(
-      { error: "Transcript enhancement is already in progress." },
+      {
+        error: "Transcript enhancement is already in progress.",
+        errorCode: "ENHANCEMENT_ALREADY_RUNNING",
+      },
       { status: 409 },
     );
   }
 
   if (runResult.outcome === "skipped") {
     return NextResponse.json(
-      { error: "Transcript enhancement run was skipped." },
+      {
+        error: "Transcript enhancement run was skipped.",
+        errorCode: "ENHANCEMENT_SKIPPED",
+        skipReason: runResult.reason,
+      },
       { status: 400 },
     );
   }

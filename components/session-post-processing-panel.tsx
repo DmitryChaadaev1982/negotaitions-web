@@ -111,6 +111,8 @@ const transcriptionStageKeys: Record<string, TranslationKey> = {
 
 const aiStageKeys: Record<string, TranslationKey> = {
   waiting_for_transcript: "sessionMaterials.waitingForTranscript",
+  waiting_for_speaker_mapping: "sessionMaterials.waitingForSpeakerMapping",
+  waiting_for_enhancement: "sessionMaterials.waitingForEnhancement",
   not_started: "sessionMaterials.transcriptReadyForAnalysis",
   queued: "sessionMaterials.aiAnalysisQueued",
   analyzing: "sessionMaterials.aiAnalysisAnalyzing",
@@ -627,11 +629,17 @@ export function SessionPostProcessingPanel({
         {transcript?.enhancement?.status === "FAILED" ? (
           <p className="mt-2 text-xs text-amber-300">
             {t("sessionMaterials.transcriptEnhancementFailed")}
+            {transcript?.enhancement?.error
+              ? ` (${transcript.enhancement.error})`
+              : ""}
           </p>
         ) : null}
         {transcript?.enhancement?.status === "SKIPPED" ? (
           <p className="mt-2 text-xs text-slate-300">
             {t("sessionMaterials.transcriptEnhancementSkipped")}
+            {transcript?.enhancement?.skipReason
+              ? ` (${transcript.enhancement.skipReason})`
+              : ""}
           </p>
         ) : null}
         {transcript?.enhancement?.suggested ? (
@@ -830,11 +838,17 @@ export function SessionPostProcessingPanel({
         {transcript?.enhancement?.status === "FAILED" ? (
           <p className="mt-1 text-xs text-amber-300">
             {t("sessionMaterials.transcriptEnhancementFailed")}
+            {transcript?.enhancement?.error
+              ? ` (${transcript.enhancement.error})`
+              : ""}
           </p>
         ) : null}
         {transcript?.enhancement?.status === "SKIPPED" ? (
           <p className="mt-1 text-xs text-slate-300">
             {t("sessionMaterials.transcriptEnhancementSkipped")}
+            {transcript?.enhancement?.skipReason
+              ? ` (${transcript.enhancement.skipReason})`
+              : ""}
           </p>
         ) : null}
         {transcript?.enhancement?.suggested ? (

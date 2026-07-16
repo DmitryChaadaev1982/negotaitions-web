@@ -167,10 +167,15 @@
 
 ## Automatic Transcript Enhancement (Stage 3.9F)
 
-- Auto-run is controlled by `TRANSCRIPT_ENHANCEMENT_AUTO_RUN` (default `false`).
-- Automatic trigger is enabled only when both flags are true:
-  - `YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED=true`
-  - `TRANSCRIPT_ENHANCEMENT_AUTO_RUN=true`
+- Enhancement uses two independent flags:
+  - `YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED` — feature switch (global on/off).
+  - `TRANSCRIPT_ENHANCEMENT_AUTO_RUN` — automatic trigger switch only.
+- `TRANSCRIPT_ENHANCEMENT_AUTO_RUN` default is `true` when missing.
+  - Explicit `false` disables only automatic enhancement.
+  - Manual enhancement remains available when feature switch is enabled.
+- Recommended runtime configuration:
+  - local: set `TRANSCRIPT_ENHANCEMENT_AUTO_RUN=true` explicitly;
+  - production: set `TRANSCRIPT_ENHANCEMENT_AUTO_RUN=true` explicitly (do not rely on implicit defaults).
 - Trigger points:
   - successful initial Yandex transcription;
   - successful Yandex manual re-transcription.
@@ -189,6 +194,48 @@
   schema version + prompt version.
 - `processingMetadata.transcriptEnhancement` stores trigger source, idempotency decision,
   timing, chunk telemetry, and skip/failure metadata without transcript text payloads.
+
+## Mapping -> AI Analysis Auto Trigger
+
+- AI analysis remains gated by transcript completion and speaker mapping readiness.
+- Automatic AI-analysis uses one canonical helper (`maybeRequestAutomaticAiAnalysis`) and one
+  canonical service entry (`requestSessionAiAnalysis`) instead of self-HTTP callbacks.
+- The helper is invoked from both transition paths:
+  - mapping-first path: speaker mapping becomes `CONFIRMED`;
+  - enhancement-first path: enhancement reaches an accepted terminal state.
+- Configuration-aware readiness matrix:
+
+  | Enhancement enabled | Auto-run | `IDLE` / `SUGGESTED` behavior |
+  | --- | --- | --- |
+  | `false` | any | analysis may use original transcript |
+  | `true` | `false` | enhancement optional; analysis may use original transcript |
+  | `true` | `true` | analysis waits for terminal enhancement |
+
+- Auto-analysis readiness policy (`getEnhancementReadinessForAnalysis`):
+  - blocks while enhancement is waiting/queued/running (`IDLE`, `SUGGESTED`, `QUEUED`, `PENDING`, `IN_PROGRESS`) when `enabled=true` and `autoRun=true`;
+  - allows after terminal enhancement states:
+    - `COMPLETED`;
+    - `PARTIAL` (accepted fallback policy);
+    - `FAILED` only after terminal failure persistence is written (`finishedAt`/`completedAt`);
+    - `SKIPPED` only for terminal skip reasons:
+      - `skipped_disabled`
+      - `skipped_auto_run_disabled`
+      - `skipped_not_yandex`
+      - `skipped_empty_transcript`
+      - `skipped_empty_raw_text`
+      - `skip_completed_same_identity`
+      - `provider_skipped`
+  - rejects non-terminal/transient skip reasons (for example `coalesced_running_same_identity`, unknown values).
+- `NOT_AVAILABLE` is not universally terminal:
+  - accepted as terminal when enhancement is structurally unavailable (non-Yandex transcription provider);
+  - otherwise treated as unresolved and does not unblock analysis.
+- `empty_output` remains a provider enhancement failure category; it does not mean enhancement success.
+  Automatic analysis may proceed according to terminal-state policy and mapped transcript readiness.
+- Repeated mapping confirmations are idempotent and do not create duplicate analyses.
+- Repeated enhancement-terminal callbacks are idempotent and do not create duplicate analyses.
+- Manual `Run AI analysis` remains available as explicit retry/re-run control.
+- Later manual transcript enhancement does not auto-rerun or overwrite an already completed analysis;
+  facilitator manual AI rerun remains the explicit rebuild mechanism.
 
 ## Transcript Readability Presentation (Stage 3.9G)
 

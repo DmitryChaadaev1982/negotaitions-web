@@ -1,35 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  AiAnalysisStatus,
-  ExternalService,
-  ExternalServiceErrorCode,
-  ExternalServiceEventSeverity,
-  ParticipantType,
-  TranscriptStatus,
-} from "@/app/generated/prisma/client";
-import {
-  buildAnalysisPrompt,
-  buildSessionAnalysisContext,
-} from "@/lib/ai/session-analysis-context";
-import {
-  createMockAnalysisOutput,
-  isAiAnalysisConfiguredForSelectedProvider,
-  runNegotiationAnalysis,
-} from "@/lib/ai/negotiation-analysis";
+import { ParticipantType } from "@/app/generated/prisma/client";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
-import { classifyExternalServiceError } from "@/lib/services/error-classifier";
-import { logExternalServiceEvent } from "@/lib/services/external-service-events";
-import {
-  getMockExternalServiceError,
-  isAiAnalysisMockMode,
-} from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
-import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 import { getAiAnalysisProvider } from "@/lib/env";
+import { requestSessionAiAnalysis } from "@/lib/services/ai-analysis-orchestration";
 
 export const runtime = "nodejs";
 
@@ -47,11 +25,6 @@ const schema = z.object({
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
-
-const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
-  AiAnalysisStatus.QUEUED,
-  AiAnalysisStatus.ANALYZING,
-]);
 
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
@@ -112,7 +85,15 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  if (!isAiAnalysisMockMode() && !isAiAnalysisConfiguredForSelectedProvider()) {
+  const requested = await requestSessionAiAnalysis({
+    sessionId,
+    language,
+    triggerSource: "manual",
+    runInBackground: false,
+    forceRerun: true,
+  });
+
+  if (requested.outcome === "provider_not_configured") {
     const provider = getAiAnalysisProvider();
     return NextResponse.json(
       {
@@ -124,252 +105,82 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 503 },
     );
   }
-
-  const transcript = await prisma.transcript.findUnique({
-    where: { sessionId },
-    select: {
-      id: true,
-      status: true,
-      language: true,
-      hasSpeakerDiarization: true,
-      speakerMappingStatus: true,
-      speakerMapping: true,
-      retranscribeCount: true,
-      segments: {
-        select: {
-          speakerLabel: true,
-          mappedParticipantId: true,
-          text: true,
-        },
-      },
-    },
-  });
-
-  if (!transcript || transcript.status !== TranscriptStatus.COMPLETED) {
+  if (requested.outcome === "session_not_found") {
+    return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+  if (requested.outcome === "transcript_not_ready") {
     return NextResponse.json(
       { error: "Transcript must be completed before running AI analysis." },
       { status: 400 },
     );
   }
-
-  if (transcript.hasSpeakerDiarization && !isSpeakerMappingReadyForAnalysis(transcript)) {
+  if (requested.outcome === "speaker_mapping_required") {
     return NextResponse.json(
       {
         error: "Confirm speaker mapping before AI analysis.",
         errorCode: "SPEAKER_MAPPING_REQUIRED",
-        speakerMappingStatus: transcript.speakerMappingStatus,
+        speakerMappingStatus: requested.speakerMappingStatus,
       },
       { status: 422 },
     );
   }
-
-  const existingAnalysis = await prisma.aiAnalysis.findUnique({
-    where: { sessionId },
-    select: { id: true, status: true },
-  });
-
-  if (existingAnalysis && ACTIVE_AI_STATUSES.has(existingAnalysis.status)) {
+  if (requested.outcome === "already_running") {
     return NextResponse.json(
       {
         error: "An AI analysis is already in progress.",
-        analysisId: existingAnalysis.id,
-        status: existingAnalysis.status,
+        analysisId: requested.analysisId,
+        status: requested.status,
+      },
+      { status: 409 },
+    );
+  }
+  if (requested.outcome === "already_completed") {
+    return NextResponse.json(
+      {
+        analysisId: requested.analysisId,
+        status: requested.status,
+        reused: true,
+      },
+      { status: 200 },
+    );
+  }
+  if (requested.outcome === "already_failed") {
+    return NextResponse.json(
+      {
+        error: "Previous AI analysis failed. Retry manually.",
+        analysisId: requested.analysisId,
+        status: requested.status,
       },
       { status: 409 },
     );
   }
 
-  const analysisLanguage =
-    language ?? transcript.language ?? session.snapshotCaseLanguage.toLowerCase();
-
-  const now = new Date();
-
-  const analysis = await prisma.aiAnalysis.upsert({
-    where: { sessionId },
-    create: {
-      sessionId,
-      transcriptId: transcript.id,
-      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
-      status: AiAnalysisStatus.QUEUED,
-      language: analysisLanguage,
-      startedAt: now,
-      errorMessage: null,
-    },
-    update: {
-      transcriptId: transcript.id,
-      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
-      status: AiAnalysisStatus.QUEUED,
-      language: analysisLanguage,
-      startedAt: now,
-      completedAt: null,
-      errorMessage: null,
+  const analysis = await prisma.aiAnalysis.findUnique({
+    where: { id: requested.analysisId },
+    select: {
+      id: true,
+      status: true,
+      executiveSummary: true,
+      overallScore: true,
+      completedAt: true,
+      errorMessage: true,
     },
   });
 
-  await prisma.aiAnalysis.update({
-    where: { id: analysis.id },
-    data: { status: AiAnalysisStatus.ANALYZING },
-  });
-
-  if (isAiAnalysisMockMode()) {
-    return await processMockAnalysis(sessionId, analysis.id, analysisLanguage);
+  if (!analysis) {
+    return NextResponse.json({ error: "AI analysis failed." }, { status: 500 });
   }
-
-  return await processRealAnalysis(sessionId, analysis.id, analysisLanguage);
-}
-
-async function failAnalysis(
-  analysisId: string,
-  errorMessage: string,
-): Promise<void> {
-  await prisma.aiAnalysis.update({
-    where: { id: analysisId },
-    data: {
-      status: AiAnalysisStatus.FAILED,
-      errorMessage,
-      completedAt: new Date(),
-    },
-  });
-}
-
-async function processMockAnalysis(
-  sessionId: string,
-  analysisId: string,
-  language: string,
-) {
-  const simulatedError = getMockExternalServiceError();
-
-  if (
-    simulatedError === "OPENAI_AI_ANALYSIS_FAILED" ||
-    simulatedError === "OPENAI_QUOTA_EXCEEDED" ||
-    simulatedError === "OPENAI_BILLING_LIMIT" ||
-    simulatedError === "OPENAI_RATE_LIMIT"
-  ) {
-    const errorMsg =
-      simulatedError === "OPENAI_RATE_LIMIT"
-        ? "OpenAI rate limit reached. Try again later."
-        : simulatedError === "OPENAI_BILLING_LIMIT"
-          ? "OpenAI billing or payment limit may have been reached."
-          : simulatedError === "OPENAI_AI_ANALYSIS_FAILED"
-            ? "Mock AI analysis failure for testing."
-            : "OpenAI quota or billing limit may have been reached.";
-
-    const errorCode =
-      simulatedError === "OPENAI_RATE_LIMIT"
-        ? ExternalServiceErrorCode.RATE_LIMIT
-        : simulatedError === "OPENAI_BILLING_LIMIT"
-          ? ExternalServiceErrorCode.BILLING_LIMIT
-          : ExternalServiceErrorCode.QUOTA_EXCEEDED;
-
-    await logExternalServiceEvent({
-      service: ExternalService.OPENAI,
-      severity: ExternalServiceEventSeverity.ERROR,
-      errorCode,
-      title: "AI analysis failed (mock)",
-      message: errorMsg,
-      sessionId,
-    });
-
-    await failAnalysis(analysisId, errorMsg);
-    return NextResponse.json({ error: errorMsg }, { status: 500 });
+  if (analysis.status === "FAILED") {
+    return NextResponse.json(
+      { error: analysis.errorMessage ?? "AI analysis failed." },
+      { status: 500 },
+    );
   }
-
-  const mockOutput = createMockAnalysisOutput(language);
-
-  const saved = await prisma.aiAnalysis.update({
-    where: { id: analysisId },
-    data: {
-      status: AiAnalysisStatus.COMPLETED,
-      model: "mock-analysis",
-      executiveSummary: mockOutput.executiveSummary,
-      overallScore: mockOutput.overallScore,
-      analysisJson: mockOutput as object,
-      rawModelOutput: { mock: true },
-      completedAt: new Date(),
-      errorMessage: null,
-    },
-  });
-
   return NextResponse.json({
-    analysisId: saved.id,
-    status: saved.status,
-    executiveSummary: saved.executiveSummary,
-    overallScore: saved.overallScore,
-    completedAt: saved.completedAt?.toISOString() ?? null,
+    analysisId: analysis.id,
+    status: analysis.status,
+    executiveSummary: analysis.executiveSummary,
+    overallScore: analysis.overallScore,
+    completedAt: analysis.completedAt?.toISOString() ?? null,
   });
-}
-
-async function processRealAnalysis(
-  sessionId: string,
-  analysisId: string,
-  language: string,
-) {
-  const provider = getAiAnalysisProvider();
-  try {
-    const analysisContext = await buildSessionAnalysisContext(sessionId);
-    if (!analysisContext) {
-      await failAnalysis(analysisId, "Session not found during analysis.");
-      return NextResponse.json({ error: "Session not found." }, { status: 404 });
-    }
-
-    const prompt = buildAnalysisPrompt(analysisContext);
-
-    const { output, rawOutput, model } = await runNegotiationAnalysis(
-      prompt,
-      language,
-    );
-
-    const saved = await prisma.aiAnalysis.update({
-      where: { id: analysisId },
-      data: {
-        status: AiAnalysisStatus.COMPLETED,
-        model,
-        executiveSummary: output.executiveSummary,
-        overallScore: output.overallScore,
-        analysisJson: output as object,
-        rawModelOutput: rawOutput as object,
-        completedAt: new Date(),
-        errorMessage: null,
-      },
-    });
-
-    return NextResponse.json({
-      analysisId: saved.id,
-      status: saved.status,
-      executiveSummary: saved.executiveSummary,
-      overallScore: saved.overallScore,
-      completedAt: saved.completedAt?.toISOString() ?? null,
-    });
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "AI analysis failed.";
-
-    const classified = classifyExternalServiceError(
-      provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
-      error,
-      "ai_analysis",
-    );
-
-    const isJsonValidationError =
-      errorMessage.includes("schema validation") ||
-      errorMessage.includes("non-JSON response");
-
-    await logExternalServiceEvent({
-      service: provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
-      severity: ExternalServiceEventSeverity.ERROR,
-      errorCode: isJsonValidationError
-        ? ExternalServiceErrorCode.UNKNOWN
-        : classified.errorCode,
-      title: isJsonValidationError
-        ? "AI analysis: invalid model response"
-        : "AI analysis failed",
-      message: errorMessage,
-      rawError: isJsonValidationError ? { validationError: errorMessage } : classified.rawError,
-      sessionId,
-    });
-
-    await failAnalysis(analysisId, errorMessage);
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
 }

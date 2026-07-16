@@ -4,7 +4,7 @@ import { Prisma } from "@/app/generated/prisma/client";
 import {
   getTranscriptEnhancementOutputMode,
   getYandexTranscriptEnhancementModel,
-  isTranscriptEnhancementAutoTriggerEnabled,
+  isTranscriptEnhancementAutoRunEnabled,
   isYandexTranscriptEnhancementEnabled,
 } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
@@ -19,6 +19,7 @@ import {
   type TranscriptEnhancementMeta,
   type TranscriptEnhancementOverallStatus,
 } from "@/lib/services/yandex-transcript-enhancement";
+import { maybeRequestAutomaticAiAnalysis } from "@/lib/services/auto-ai-analysis-trigger";
 import { buildDiarizedText } from "@/lib/transcription/speaker-labels";
 
 const ENHANCEMENT_SCHEMA_VERSION = "v1";
@@ -65,6 +66,7 @@ type TranscriptSegmentForEnhancement = {
 
 type LoadedTranscriptForEnhancement = {
   id: string;
+  sessionId: string;
   text: string;
   diarizedText: string | null;
   updatedAt: Date;
@@ -88,6 +90,7 @@ type TranscriptEnhancementDbClient = {
 type TranscriptEnhancementDependencies = {
   db: TranscriptEnhancementDbClient;
   enhance: typeof enhanceTranscriptWithYandexAi;
+  maybeRequestAutoAi: typeof maybeRequestAutomaticAiAnalysis;
 };
 
 export type TranscriptEnhancementRunResult =
@@ -115,6 +118,13 @@ export type TranscriptEnhancementRunResult =
       transcriptId: string;
       triggerSource: TranscriptEnhancementTriggerSource;
     };
+
+function isAutomaticTriggerSource(triggerSource: TranscriptEnhancementTriggerSource): boolean {
+  return (
+    triggerSource === "automatic_initial_transcription" ||
+    triggerSource === "automatic_retranscription"
+  );
+}
 
 function asMetadata(value: unknown): ProcessingMetadata {
   return value && typeof value === "object" ? (value as ProcessingMetadata) : {};
@@ -389,6 +399,7 @@ function buildFailedMetadata(params: {
 async function runEnhancementExecution(params: {
   db: TranscriptEnhancementDbClient;
   enhance: typeof enhanceTranscriptWithYandexAi;
+  maybeRequestAutoAi: typeof maybeRequestAutomaticAiAnalysis;
   transcript: LoadedTranscriptForEnhancement;
   enhancementInput: TranscriptEnhancementInputSegment[];
   triggerSource: TranscriptEnhancementTriggerSource;
@@ -399,6 +410,7 @@ async function runEnhancementExecution(params: {
   const {
     db,
     enhance,
+    maybeRequestAutoAi,
     transcript,
     enhancementInput,
     triggerSource,
@@ -480,6 +492,10 @@ async function runEnhancementExecution(params: {
         },
       });
     });
+    await maybeRequestAutoAi({
+      sessionId: transcript.sessionId,
+      triggerSource: "enhancement_terminal",
+    });
   } catch (error) {
     const latest = await db.transcript.findUnique({
       where: { id: transcript.id },
@@ -500,6 +516,10 @@ async function runEnhancementExecution(params: {
         processingMetadata: failedMetadata as Prisma.InputJsonValue,
       },
     });
+    await maybeRequestAutoAi({
+      sessionId: transcript.sessionId,
+      triggerSource: "enhancement_terminal",
+    });
   }
 }
 
@@ -519,11 +539,14 @@ export async function executeTranscriptEnhancement(params: {
   } = params;
   const db = dependencies?.db ?? prisma;
   const enhance = dependencies?.enhance ?? enhanceTranscriptWithYandexAi;
+  const maybeRequestAutoAi =
+    dependencies?.maybeRequestAutoAi ?? maybeRequestAutomaticAiAnalysis;
 
   const transcript = (await db.transcript.findUnique({
     where: { id: transcriptId },
     select: {
       id: true,
+      sessionId: true,
       text: true,
       diarizedText: true,
       updatedAt: true,
@@ -594,10 +617,7 @@ export async function executeTranscriptEnhancement(params: {
     };
   }
 
-  if (
-    triggerSource.startsWith("automatic_") &&
-    !isTranscriptEnhancementAutoTriggerEnabled()
-  ) {
+  if (isAutomaticTriggerSource(triggerSource) && !isTranscriptEnhancementAutoRunEnabled()) {
     const nextMetadata = buildSkipMetadata({
       metadata,
       triggerSource,
@@ -748,6 +768,7 @@ export async function executeTranscriptEnhancement(params: {
     void runEnhancementExecution({
       db,
       enhance,
+      maybeRequestAutoAi,
       transcript,
       enhancementInput,
       triggerSource,
@@ -767,6 +788,7 @@ export async function executeTranscriptEnhancement(params: {
     await runEnhancementExecution({
       db,
       enhance,
+      maybeRequestAutoAi,
       transcript,
       enhancementInput,
       triggerSource,

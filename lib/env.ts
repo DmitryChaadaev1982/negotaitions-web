@@ -15,6 +15,9 @@ export function getEnvBoolean(key: string, defaultValue = false): boolean {
   if (!raw) return defaultValue;
   if (["true", "1", "yes", "on"].includes(raw)) return true;
   if (["false", "0", "no", "off"].includes(raw)) return false;
+  console.warn(
+    `[env] Invalid boolean value for ${key}="${process.env[key]}". Falling back to default (${defaultValue}).`,
+  );
   return defaultValue;
 }
 
@@ -121,7 +124,7 @@ export function isYandexTranscriptEnhancementEnabled(): boolean {
 }
 
 export function isTranscriptEnhancementAutoRunEnabled(): boolean {
-  return getEnvBoolean("TRANSCRIPT_ENHANCEMENT_AUTO_RUN", false);
+  return getEnvBoolean("TRANSCRIPT_ENHANCEMENT_AUTO_RUN", true);
 }
 
 export function isTranscriptEnhancementAutoTriggerEnabled(): boolean {
