@@ -71,6 +71,9 @@ export type PocCallbackEventRecord = {
   callSessionHistoryId: string | null;
   recorderState: string | null;
   errorCode: string | null;
+  scenarioBuild?: string | null;
+  routingRuleIdentity?: string | null;
+  sourceBrowserCallId?: string | null;
   receivedAt: string;
   signatureVerified: boolean;
 };
@@ -725,6 +728,9 @@ export function toPublicPocStateView(state: VoximplantServerStopPocState) {
       callSessionHistoryId: event.callSessionHistoryId,
       recorderState: event.recorderState,
       errorCode: event.errorCode,
+      scenarioBuild: event.scenarioBuild ?? null,
+      routingRuleIdentity: event.routingRuleIdentity ?? null,
+      sourceBrowserCallId: event.sourceBrowserCallId ?? null,
       receivedAt: event.receivedAt,
       signatureVerified: event.signatureVerified,
     })),

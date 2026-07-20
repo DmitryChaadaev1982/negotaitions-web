@@ -84,9 +84,9 @@ test("5. relay claim failure is typed", () => {
       requestSent: true,
       httpStatus: 200,
       scenarioMessagePresent: true,
-      relayClaimed: false,
+      browserCommandClaimed: false,
     }),
-    "RECORDING_START_RELAY_NOT_CLAIMED",
+    "RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED",
   );
 });
 
@@ -130,6 +130,33 @@ test("7. POC scenario recognises the start command (static)", () => {
   assert.match(source, /CallEvents\.MessageReceived/);
   assert.match(source, /startRecordingFromBrowser/);
   assert.match(source, /action === "start"/);
+  assert.match(source, /recording_command_received/);
+  assert.match(source, /recorder_created/);
+  assert.match(source, /recording_start_failed/);
+});
+
+test("7b. recording_command_received is emitted before recorder creation (static)", () => {
+  const source = readFileSync(
+    join(process.cwd(), "docs/voximplant/neg-conf.server-stop-poc.scenario.js"),
+    "utf8",
+  );
+  const handleStart = source.indexOf("function handleRecordingControlMessage");
+  const handleEnd = source.indexOf("function attachRecorderHandlers");
+  const handleBody = source.slice(handleStart, handleEnd);
+  const commandAt = handleBody.indexOf('"recording_command_received"');
+  const startInvokeAt = handleBody.indexOf("startRecordingFromBrowser(");
+  assert.ok(commandAt >= 0);
+  assert.ok(startInvokeAt >= 0);
+  assert.ok(commandAt < startInvokeAt);
+
+  const startFnStart = source.indexOf("function startRecordingFromBrowser");
+  const startFnEnd = source.indexOf("function parseRecordingControlPayload");
+  const startFnBody = source.slice(startFnStart, startFnEnd);
+  const createRecorderAt = startFnBody.indexOf("VoxEngine.createRecorder");
+  const recorderCreatedAt = startFnBody.indexOf('"recorder_created"');
+  assert.ok(createRecorderAt >= 0);
+  assert.ok(recorderCreatedAt >= 0);
+  assert.ok(recorderCreatedAt > createRecorderAt);
 });
 
 test("8. recorder creation failure is distinct", () => {
@@ -144,7 +171,7 @@ test("8. recorder creation failure is distinct", () => {
       httpStatus: 500,
       errorText: "recorder",
     }),
-    "RECORDING_START_PROVIDER_EVENT_TIMEOUT",
+    "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED",
   );
 });
 
@@ -159,11 +186,16 @@ test("9. provider-start evidence is mandatory (HTTP alone insufficient)", () => 
       requestSent: true,
       httpStatus: 200,
       scenarioMessagePresent: true,
-      relayClaimed: true,
-      browserCommandSent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: true,
+      browserSendCompleted: true,
+      providerMessageReceived: false,
       providerStarted: false,
     }),
-    "RECORDING_START_PROVIDER_EVENT_TIMEOUT",
+    "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED",
   );
 });
 
@@ -175,11 +207,100 @@ test("10. stop cannot execute before provider-start evidence", () => {
       requestSent: true,
       httpStatus: 200,
       scenarioMessagePresent: true,
-      relayClaimed: true,
-      browserCommandSent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: true,
+      browserSendCompleted: true,
+      providerMessageReceived: false,
       providerStarted: false,
     }),
-    "RECORDING_START_PROVIDER_EVENT_TIMEOUT",
+    "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED",
+  );
+});
+
+test("10b. operation ID missing is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      operationIdPresent: false,
+      requestSent: true,
+    }),
+    "RECORDING_START_OPERATION_ID_MISSING",
+  );
+});
+
+test("10c. operation ID mismatch is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      operationIdPresent: true,
+      operationIdMatched: false,
+      requestSent: true,
+    }),
+    "RECORDING_START_OPERATION_MISMATCH",
+  );
+});
+
+test("10d. browser call-not-found is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: false,
+    }),
+    "RECORDING_START_BROWSER_CALL_NOT_FOUND",
+  );
+});
+
+test("10e. browser call-not-connected is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: false,
+    }),
+    "RECORDING_START_BROWSER_CALL_NOT_CONNECTED",
+  );
+});
+
+test("10f. browser send invocation failure is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: false,
+    }),
+    "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+  );
+});
+
+test("10g. browser send completion failure is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: true,
+      browserSendCompleted: false,
+      browserSendErrorCode: "boom",
+    }),
+    "RECORDING_START_BROWSER_SEND_FAILED",
   );
 });
 
@@ -371,6 +492,38 @@ test("20. production/default recording flow remains unchanged (dispatch fallback
   );
   assert.match(flagSource, /buildVoximplantConferenceName/);
   assert.match(flagSource, /isServerStartedConferencePocEnabled/);
+});
+
+test("21. browser-first timing fields use browserReleaseTo* names", () => {
+  const source = readFileSync(
+    join(
+      process.cwd(),
+      "lib/voximplant/poc/orchestrator/browser-join.ts",
+    ),
+    "utf8",
+  );
+  assert.match(source, /browserReleaseToFirstAccessMs/);
+  assert.match(source, /browserReleaseToFirstJoinMs/);
+  assert.match(source, /browserReleaseToBothJoinedMs/);
+});
+
+test("22. provider rule identity is sourced from AppEvents.Started dialplanName", () => {
+  const source = readFileSync(
+    join(process.cwd(), "docs/voximplant/neg-conf.server-stop-poc.scenario.js"),
+    "utf8",
+  );
+  assert.match(source, /extractDialplanName/);
+  assert.match(source, /runtimeRuleIdentity = extractDialplanName\(e\)/);
+});
+
+test("23. facilitator-only relay ownership is enforced in browser consumer", () => {
+  const source = readFileSync(
+    join(process.cwd(), "components/voximplant-negotiation-room-page.tsx"),
+    "utf8",
+  );
+  assert.match(source, /contextRole !== "FACILITATOR"/);
+  assert.match(source, /relayOwnerRef/);
+  assert.match(source, /RECORDING_START_BROWSER_CONTEXT_MISMATCH/);
 });
 
 test("recording-start artifact never contains secrets", () => {

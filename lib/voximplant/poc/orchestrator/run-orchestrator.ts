@@ -317,6 +317,11 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
     participantAccessRequestedAt: partial.participantAccessRequestedAt ?? null,
     facilitatorCallConnectedAt: partial.facilitatorCallConnectedAt ?? null,
     participantCallConnectedAt: partial.participantCallConnectedAt ?? null,
+    browserReleaseToFirstAccessMs:
+      partial.browserReleaseToFirstAccessMs ?? null,
+    browserReleaseToFirstJoinMs: partial.browserReleaseToFirstJoinMs ?? null,
+    browserReleaseToBothJoinedMs:
+      partial.browserReleaseToBothJoinedMs ?? null,
     startConferenceToFirstAccessMs:
       partial.startConferenceToFirstAccessMs ?? null,
     startConferenceToFirstJoinMs: partial.startConferenceToFirstJoinMs ?? null,
@@ -469,6 +474,9 @@ export async function runPocOrchestrator(
     participantAccessRequestedAt: null,
     facilitatorCallConnectedAt: null,
     participantCallConnectedAt: null,
+    browserReleaseToFirstAccessMs: null,
+    browserReleaseToFirstJoinMs: null,
+    browserReleaseToBothJoinedMs: null,
     startConferenceToFirstAccessMs: null,
     startConferenceToFirstJoinMs: null,
     startConferenceToBothJoinedMs: null,
@@ -855,6 +863,12 @@ export async function runPocOrchestrator(
       browser.timing.facilitatorCallConnectedAt;
     reportDraft.participantCallConnectedAt =
       browser.timing.participantCallConnectedAt;
+    reportDraft.browserReleaseToFirstAccessMs =
+      browser.timing.browserReleaseToFirstAccessMs;
+    reportDraft.browserReleaseToFirstJoinMs =
+      browser.timing.browserReleaseToFirstJoinMs;
+    reportDraft.browserReleaseToBothJoinedMs =
+      browser.timing.browserReleaseToBothJoinedMs;
     reportDraft.startConferenceToFirstAccessMs =
       browser.timing.startConferenceToFirstAccessMs;
     reportDraft.startConferenceToFirstJoinMs =
@@ -958,15 +972,25 @@ export async function runPocOrchestrator(
     let recordingEvidence: RecordingStartEvidence = emptyRecordingStartEvidence(
       conferenceName,
     );
+    const startOperationId = `recording-start-${runId}-${randomBytes(4).toString("hex")}`;
     const httpStart = await requestRecordingStartViaHttp({
       appBaseUrl: options.appBaseUrl,
       sessionId: sessionFixture!.sessionId,
       facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
       facilitatorJoinToken: sessionFixture!.facilitatorJoinToken,
       conferenceName,
+      operationId: startOperationId,
+      requireOperationId: true,
       fetchImpl: deps.fetchImpl,
     });
-    recordingEvidence = { ...httpStart.evidence, conferenceName };
+    recordingEvidence = {
+      ...httpStart.evidence,
+      conferenceName,
+      operationId: httpStart.evidence.operationId ?? startOperationId,
+      operationIdFingerprint:
+        httpStart.evidence.operationIdFingerprint ??
+        httpStart.evidence.requestIdFingerprint,
+    };
     if (!httpStart.ok) {
       failureStage = "recording_start";
       failureCode = httpStart.failureCode ?? "RECORDING_START_FAILED";
@@ -976,37 +1000,189 @@ export async function runPocOrchestrator(
       return finish({ result: "FAIL" });
     }
 
-    recordingEvidence.recordingRelayClaimedAt = new Date(nowMs()).toISOString();
-
-    let browserCommandSent = false;
-    if (browser.startRecordingViaUi) {
-      const ui = await browser.startRecordingViaUi(timeouts.recordingStartMs);
-      browserCommandSent = ui.started || Boolean(httpStart.scenarioMessage);
-    } else if (browser.relayScenarioMessage && httpStart.scenarioMessage) {
-      browserCommandSent = await browser.relayScenarioMessage(
-        httpStart.scenarioMessage,
-      );
-    } else if (httpStart.scenarioMessage) {
-      // Test/mocks without a live page: command payload is valid; send is simulated.
-      browserCommandSent = true;
-    }
-
-    if (!browserCommandSent) {
+    if (!httpStart.scenarioMessage) {
       failureStage = "recording_start";
-      failureCode = "RECORDING_START_BROWSER_COMMAND_NOT_SENT";
+      failureCode = "RECORDING_START_RELAY_NOT_CREATED";
       recordingEvidence.recordingStartFailureReason = failureCode;
       writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
       await browser.close();
       return finish({ result: "FAIL" });
     }
-    recordingEvidence.recordingBrowserCommandSentAt = new Date(
+
+    if (!browser.relayScenarioMessage) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_BROWSER_SEND_NOT_INVOKED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const relayRaw = await browser.relayScenarioMessage({
+      scenarioMessage: httpStart.scenarioMessage,
+      operationId: startOperationId,
+      expectedSessionId: sessionFixture!.sessionId,
+      expectedConferenceName: conferenceName,
+    });
+    const relayResult =
+      typeof relayRaw === "boolean"
+        ? {
+            ok: relayRaw,
+            recordingBrowserCommandClaimedAt: new Date(nowMs()).toISOString(),
+            recordingBrowserCommandReceivedAt: new Date(nowMs()).toISOString(),
+            recordingBrowserContextRole: null,
+            recordingBrowserContextId: null,
+            recordingBrowserCallReferenceFound: relayRaw,
+            recordingBrowserCallId: null,
+            recordingBrowserCallState: null,
+            recordingBrowserSendMessageInvokedAt: relayRaw
+              ? new Date(nowMs()).toISOString()
+              : null,
+            recordingBrowserSendMessageCompletedAt: relayRaw
+              ? new Date(nowMs()).toISOString()
+              : null,
+            recordingBrowserSendMessageErrorCode: relayRaw
+              ? null
+              : "RECORDING_START_BROWSER_SEND_FAILED",
+            relayOwnerRole: null,
+            relayOwnerParticipantId: null,
+            relayOwnerConnectionId: null,
+            relayClaimedAt: new Date(nowMs()).toISOString(),
+            relayConsumedAt: relayRaw ? new Date(nowMs()).toISOString() : null,
+            recordingBrowserCommandSentAt: relayRaw
+              ? new Date(nowMs()).toISOString()
+              : null,
+            operationId: startOperationId,
+            errorCode: relayRaw ? null : "RECORDING_START_BROWSER_SEND_FAILED",
+          }
+        : relayRaw;
+    recordingEvidence.recordingBrowserCommandClaimedAt =
+      relayResult.recordingBrowserCommandClaimedAt;
+    recordingEvidence.recordingBrowserCommandReceivedAt =
+      relayResult.recordingBrowserCommandReceivedAt;
+    recordingEvidence.recordingBrowserContextRole =
+      relayResult.recordingBrowserContextRole;
+    recordingEvidence.recordingBrowserContextId =
+      relayResult.recordingBrowserContextId;
+    recordingEvidence.recordingBrowserCallReferenceFound =
+      relayResult.recordingBrowserCallReferenceFound;
+    recordingEvidence.recordingBrowserCallId = relayResult.recordingBrowserCallId;
+    recordingEvidence.recordingBrowserCallState =
+      relayResult.recordingBrowserCallState;
+    recordingEvidence.recordingBrowserSendMessageInvokedAt =
+      relayResult.recordingBrowserSendMessageInvokedAt;
+    recordingEvidence.recordingBrowserSendMessageCompletedAt =
+      relayResult.recordingBrowserSendMessageCompletedAt;
+    recordingEvidence.recordingBrowserSendMessageErrorCode =
+      relayResult.recordingBrowserSendMessageErrorCode;
+    recordingEvidence.recordingBrowserCommandSentAt =
+      relayResult.recordingBrowserCommandSentAt;
+    recordingEvidence.relayOwnerRole = relayResult.relayOwnerRole;
+    recordingEvidence.relayOwnerParticipantId = relayResult.relayOwnerParticipantId;
+    recordingEvidence.relayOwnerConnectionId = relayResult.relayOwnerConnectionId;
+    recordingEvidence.relayClaimedAt = relayResult.relayClaimedAt;
+    recordingEvidence.relayConsumedAt = relayResult.relayConsumedAt;
+    recordingEvidence.operationId = relayResult.operationId ?? recordingEvidence.operationId;
+
+    if (!relayResult.operationId) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_OPERATION_ID_MISSING";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+    if (relayResult.operationId !== startOperationId) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_OPERATION_MISMATCH";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+    if (!relayResult.ok) {
+      failureStage = "recording_start";
+      failureCode = relayResult.errorCode ?? "RECORDING_START_BROWSER_SEND_FAILED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const providerCommandReceived = await waitForCallback({
+      stateRoot: options.stateRoot,
+      operationId: startOperationId,
+      eventType: "recording_command_received",
+      action: "start",
+      timeoutMs: Math.min(timeouts.recordingStartMs, 30_000),
+      sleep,
+      nowMs,
+    });
+    if (!providerCommandReceived) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+    recordingEvidence.recordingProviderCommandReceivedAt = new Date(
       nowMs(),
     ).toISOString();
-
-    const startOperationId = httpStart.scenarioMessage?.requestId ?? null;
-    if (!startOperationId) {
+    const stateAfterProviderCommand = readPocState(options.stateRoot);
+    const providerCommandEvent = stateAfterProviderCommand
+      ? findMatchingCallbackEvent(stateAfterProviderCommand, {
+          operationId: startOperationId,
+          eventType: "recording_command_received",
+          action: "start",
+        })
+      : null;
+    if (
+      reportDraft.registeredProviderSessionId &&
+      providerCommandEvent?.callSessionHistoryId &&
+      providerCommandEvent.callSessionHistoryId !== reportDraft.registeredProviderSessionId
+    ) {
       failureStage = "recording_start";
-      failureCode = "RECORDING_START_RELAY_NOT_CREATED";
+      failureCode = "RECORDING_START_OPERATION_MISMATCH";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const recorderCreated = await waitForCallback({
+      stateRoot: options.stateRoot,
+      operationId: startOperationId,
+      eventType: "recorder_created",
+      action: "start",
+      timeoutMs: Math.min(timeouts.recordingStartMs, 30_000),
+      sleep,
+      nowMs,
+    });
+    if (!recorderCreated) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_SCENARIO_REJECTED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+    recordingEvidence.recorderCreatedAt = new Date(nowMs()).toISOString();
+    const stateAfterRecorderCreated = readPocState(options.stateRoot);
+    const recorderCreatedEvent = stateAfterRecorderCreated
+      ? findMatchingCallbackEvent(stateAfterRecorderCreated, {
+          operationId: startOperationId,
+          eventType: "recorder_created",
+          action: "start",
+        })
+      : null;
+    if (
+      reportDraft.registeredProviderSessionId &&
+      recorderCreatedEvent?.callSessionHistoryId &&
+      recorderCreatedEvent.callSessionHistoryId !== reportDraft.registeredProviderSessionId
+    ) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_OPERATION_MISMATCH";
       recordingEvidence.recordingStartFailureReason = failureCode;
       writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
       await browser.close();
@@ -1024,7 +1200,7 @@ export async function runPocOrchestrator(
     });
     if (!providerStarted) {
       failureStage = "recording_start";
-      failureCode = "RECORDING_START_PROVIDER_EVENT_TIMEOUT";
+      failureCode = "RECORDING_START_SCENARIO_REJECTED";
       recordingEvidence.recordingStartFailureReason = failureCode;
       writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
       await browser.close();
@@ -1034,8 +1210,6 @@ export async function runPocOrchestrator(
     recordingEvidence.recordingProviderStartedAt = new Date(
       nowMs(),
     ).toISOString();
-    recordingEvidence.recorderCreatedAt =
-      recordingEvidence.recordingProviderStartedAt;
     recordingEvidence.recordingAppActiveAt =
       recordingEvidence.recordingProviderStartedAt;
     reportDraft.recordingStarted = true;
@@ -1325,6 +1499,9 @@ export function printHumanReport(
     browserParticipantJoined: report.browserParticipantJoined,
     sameConferenceConfirmed: report.sameConferenceConfirmed,
     recordingStarted: report.recordingStarted,
+    browserReleaseToFirstAccessMs: report.browserReleaseToFirstAccessMs,
+    browserReleaseToFirstJoinMs: report.browserReleaseToFirstJoinMs,
+    browserReleaseToBothJoinedMs: report.browserReleaseToBothJoinedMs,
     transportAccepted: report.transportAccepted,
     commandAccepted: report.commandAccepted,
     providerTerminal: report.providerTerminal,

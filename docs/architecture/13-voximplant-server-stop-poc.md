@@ -94,6 +94,14 @@ Full mode (browser-first) sequence:
 5. **browser_join_confirmation**: both joins + same conference name + single registered provider session identity.
 6. Recording start (app HTTP + browser relay) → server stop via registered control URL.
 
+Browser-first timing fields in report are canonicalized as:
+
+- `browserReleaseToFirstAccessMs`
+- `browserReleaseToFirstJoinMs`
+- `browserReleaseToBothJoinedMs`
+
+Legacy `startConferenceTo*` timing fields are retained as deprecated compatibility mirrors.
+
 Typed refusals when the browser lands on the wrong scenario/rule/build: `POC_BROWSER_ROUTED_TO_PRODUCTION_RULE`, `POC_UNEXPECTED_SCENARIO`, `POC_UNEXPECTED_SCENARIO_BUILD`, `POC_PROVIDER_SESSION_ID_MISMATCH`, `POC_MULTIPLE_PROVIDER_SESSIONS_DETECTED`.
 
 Prewarm auth is role-split:
@@ -103,7 +111,7 @@ Prewarm auth is role-split:
 - **Participant** (guest access closed): own `auth_session` / `UserSession` (never the facilitator cookie) + one navigation through the canonical join-token invite URL (`/room/{sessionId}?joinToken=…`). Join token is invite-claim only — not a guest identity and not exchanged into a cookie. The temporary fixture creates a distinct participant `User` + `UserSession` and returns `facilitatorAuth` / `participantAuth` separately. Live join resumes the durable account-mode context (does not re-hit joinToken). Access is account-cookie only (`apiRequireActiveUser` + `ensureAccountRoomParticipant`).
 - **Prewarm-only replay**: `npm run poc:vox:test-browser-prewarm -- --run-id <runId>` and `npm run poc:vox:test-participant-access -- --run-id <runId>` (provider-free access/POC_STATE check with temporary run pointer restore). Legacy runs lacking `participantAuthCookie` return `LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE` (no DB repair).
 - **Isolated local fixture mode**: `npm run poc:vox:test-participant-access -- --create-fixture --confirm-local-db-write` creates a temporary namespaced fixture, validates participant auth + POC_STATE access (no provider calls), then deletes only cleanup-manifest entities.
-- **Provider-free recording-start plan**: `npm run poc:vox:test-recording-start -- --create-fixture --confirm-local-db-write` exercises real facilitator authorization, connection lease, recording-control dispatch/relay claimability, and browser start-command validity — then stops before any WebSDK/provider send and cleans the fixture.
+- **Provider-free recording-start plan**: `npm run poc:vox:test-recording-start -- --create-fixture --confirm-local-db-write` exercises real facilitator authorization, connection lease, recording-control dispatch, deterministic relay ownership, simulated browser send completion, simulated provider callbacks (`recording_command_received` → `recorder_created` → `recording_started`), and operation correlation — then cleans the fixture.
 - **Prewarm secrets**: `local/prewarm-auth.json` stores only sanitized metadata (user IDs, roles, fingerprints, configured booleans). Passwords, auth cookies, join tokens, and tokenized room URLs stay in process memory only. Fixture passwords are unique per run.
 - **Private control state**: raw `mediaSessionAccessUrl` / `mediaSessionAccessSecureUrl` live under `runs/<runId>/private/control-state.json` (mode `0o600`, never listed in `remainingEvidencePaths` / status / inspect). Ordinary `state.json` keeps fingerprints + `hasControlUrl` only.
 
@@ -125,7 +133,7 @@ Live `PASS` only (dry-run uses `DRY_RUN_PASS` and does not require live evidence
 
 - callback self-test (`CALLBACK_SELF_TEST_PASSED`)
 - both WebSDK joins + same browser-created POC conference
-- dedicated POC scenario registered (`session_registered`) with expected build `server-stop-poc-2026-07-20-c2`
+- dedicated POC scenario registered (`session_registered`) with expected build `server-stop-poc-2026-07-20-c3`
 - exactly one provider session identity across registration / browser / recording / stop / history
 - `startConferenceCallCount === 0`
 - recording started through application flow **with provider-level** `recording_started` evidence (HTTP/relay alone is insufficient)
@@ -142,13 +150,25 @@ Transport live `PASS` still requires callback confirmation (`commandAccepted`) a
 Sanitized `runs/<runId>/recording-start.json` (never cookies, join tokens, connection IDs, control/recording URLs, or auth headers):
 
 - request/response timestamps + HTTP status + application code
-- authorized / relay created / relay claimed / browser command sent
-- recorder created / provider started / app active
+- operation correlation (`operationId`, fingerprint)
+- authorized / relay created
+- browser relay stages:
+  - `recordingBrowserCommandClaimedAt`
+  - `recordingBrowserCommandReceivedAt`
+  - browser context role/id
+  - call reference/id/state evidence
+  - send invoke/completion/error evidence
+  - deterministic relay owner metadata (`relayOwnerRole`, owner ids, `relayClaimedAt`, `relayConsumedAt`)
+- provider stages:
+  - `recordingProviderCommandReceivedAt`
+  - `recorderCreatedAt`
+  - `recordingProviderStartedAt`
+  - `recordingAppActiveAt`
 - typed `recordingStartFailureReason` (e.g. `RECORDING_START_UNAUTHORIZED`, not a generic collapse when precise)
 
-Orchestrator start path: facilitator `joinToken` + cookie → `/recording-control` → scenarioMessage relay via facilitator browser → wait for signed `recording_started` callback correlated by `operationId` (= requestId) + conferenceName.
+Orchestrator start path: facilitator `joinToken` + cookie → `/recording-control` (with pre-created `operationId`) → scenarioMessage relay via facilitator browser → wait for signed `recording_command_received` → `recorder_created` → `recording_started` callbacks correlated by `operationId` + conferenceName.
 
-POC scenario (`neg-conf.server-stop-poc.scenario.js`) listens for `CallEvents.MessageReceived` / `recording_control` `action=start`, creates `ConferenceRecorder`, `conference.sendMediaTo(recorder)`, and emits `recording_started` (server-stop HTTP protocol unchanged).
+POC scenario (`neg-conf.server-stop-poc.scenario.js`) listens for `CallEvents.MessageReceived` / `recording_control` `action=start`, validates `operationId`, emits `recording_command_received` before recorder creation, captures `dialplanName` from `AppEvents.Started` as `providerRuleIdentity`, then creates `ConferenceRecorder`, calls `conference.sendMediaTo(recorder)`, and emits `recorder_created` + `recording_started` (server-stop HTTP protocol unchanged).
 
 ## Runtime terminal states
 

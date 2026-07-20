@@ -2,7 +2,7 @@
  * Provider-free recording-start fixture exercise.
  * Creates a local fixture, claims a lease via SQL, exercises the real
  * /recording-control HTTP route with facilitator cookie + joinToken, validates
- * relay/command payload, then stops before any WebSDK/provider send.
+ * relay/command payload, then simulates browser send + provider callbacks.
  */
 
 import { randomBytes } from "node:crypto";
@@ -27,9 +27,14 @@ import {
   readCurrentPointer,
   writeJsonArtifact,
 } from "@/lib/voximplant/poc/poc-run-store";
-import { POC_CONFERENCE_NAME_PREFIX } from "@/lib/voximplant/poc/poc-safety";
 import {
+  POC_CONFERENCE_NAME_PREFIX,
+  POC_EXPECTED_SCENARIO_BUILD,
+} from "@/lib/voximplant/poc/poc-safety";
+import {
+  appendPocCallbackEvent,
   createEmptyPocState,
+  readPocState,
   writePocState,
 } from "@/lib/voximplant/poc/poc-state";
 import { fingerprintControlUrl } from "@/lib/voximplant/poc/url-fingerprint";
@@ -206,6 +211,7 @@ export async function runProviderFreeRecordingStartTest(params: {
     }
 
     // Real recording-control route (application service) — no WebSDK/provider.
+    const operationId = `recording-start-${runId}`;
     const httpStart = await requestRecordingStartViaHttp({
       appBaseUrl: params.appBaseUrl ?? "http://localhost:3000",
       sessionId: sessionFixture.sessionId,
@@ -213,9 +219,18 @@ export async function runProviderFreeRecordingStartTest(params: {
       facilitatorJoinToken: sessionFixture.facilitatorJoinToken,
       connectionId,
       conferenceName,
+      operationId,
+      requireOperationId: true,
       fetchImpl: params.fetchImpl,
     });
-    evidence = { ...httpStart.evidence, conferenceName };
+    evidence = {
+      ...httpStart.evidence,
+      conferenceName,
+      operationId: httpStart.evidence.operationId ?? operationId,
+      operationIdFingerprint:
+        httpStart.evidence.operationIdFingerprint ??
+        httpStart.evidence.requestIdFingerprint,
+    };
 
     if (httpStart.failureCode === "RECORDING_START_UNAUTHORIZED") {
       lines.push("RECORDING_START_UNAUTHORIZED");
@@ -257,15 +272,16 @@ export async function runProviderFreeRecordingStartTest(params: {
     }
 
     lines.push("RECORDING_START_REQUEST_ACCEPTED");
-    lines.push("RECORDING_START_RELAY_CREATED");
+    lines.push("RECORDING_RELAY_CREATED");
 
     const claimable = isValidBrowserStartCommand(httpStart.scenarioMessage, {
       sessionId: sessionFixture.sessionId,
       conferenceName,
     });
     if (!claimable) {
-      evidence.recordingStartFailureReason = "RECORDING_START_RELAY_NOT_CLAIMED";
-      lines.push("RECORDING_START_RELAY_NOT_CLAIMED");
+      evidence.recordingStartFailureReason =
+        "RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED";
+      lines.push("RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED");
       writeRecordingStartArtifact(runId, evidence, params.stateRoot);
       await cleanupPocSessionEntities({
         manifest: sessionFixture.cleanupManifest,
@@ -284,7 +300,7 @@ export async function runProviderFreeRecordingStartTest(params: {
         providerCalls: false,
         dbWrites: true,
         lines,
-        failureCode: "RECORDING_START_RELAY_NOT_CLAIMED",
+        failureCode: "RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED",
         evidence,
         details: {
           ...details,
@@ -294,16 +310,91 @@ export async function runProviderFreeRecordingStartTest(params: {
       };
     }
 
-    evidence.recordingRelayClaimedAt = new Date().toISOString();
-    lines.push("RECORDING_START_RELAY_CLAIMABLE");
-    lines.push("RECORDING_START_BROWSER_COMMAND_VALID");
-    lines.push("RECORDING_START_PLAN_TEST_PASS");
+    const now = new Date();
+    const plus = (ms: number) => new Date(now.getTime() + ms).toISOString();
+    evidence.recordingBrowserCommandClaimedAt = plus(0);
+    evidence.recordingBrowserCommandReceivedAt = plus(0);
+    evidence.recordingBrowserContextRole = "FACILITATOR";
+    evidence.recordingBrowserContextId = connectionId.slice(0, 24);
+    evidence.recordingBrowserCallReferenceFound = true;
+    evidence.recordingBrowserCallId = `call-${connectionId.slice(0, 12)}`;
+    evidence.recordingBrowserCallState = "CONNECTED";
+    evidence.recordingBrowserSendMessageInvokedAt = plus(5);
+    evidence.recordingBrowserSendMessageCompletedAt = plus(8);
+    evidence.recordingBrowserCommandSentAt =
+      evidence.recordingBrowserSendMessageCompletedAt;
+    evidence.relayOwnerRole = "FACILITATOR";
+    evidence.relayOwnerParticipantId = sessionFixture.facilitatorUserId;
+    evidence.relayOwnerConnectionId = connectionId.slice(0, 24);
+    evidence.relayClaimedAt = plus(0);
+    evidence.relayConsumedAt = plus(8);
+    lines.push("RECORDING_RELAY_CLAIMED");
+    lines.push("BROWSER_CONTEXT_SELECTED");
+    lines.push("BROWSER_CALL_FOUND");
+    lines.push("BROWSER_CALL_CONNECTED");
+    lines.push("BROWSER_SEND_INVOKED");
+    lines.push("BROWSER_SEND_COMPLETED");
+
+    const runState = readPocState(params.stateRoot);
+    if (!runState || runState.pocId !== runId) {
+      throw new Error("fixture_state_missing");
+    }
+    let nextState = runState;
+    const callbackBase = {
+      action: "start",
+      operationId,
+      conferenceName,
+      callSessionHistoryId: runState.providerSessionId ?? runState.callSessionHistoryId,
+      recorderState: "exists",
+      errorCode: null,
+      sourceBrowserCallId: evidence.recordingBrowserCallId,
+      scenarioBuild: POC_EXPECTED_SCENARIO_BUILD,
+      routingRuleIdentity: "neg-conf-server-stop-poc-rule",
+      signatureVerified: true,
+    };
+    nextState = appendPocCallbackEvent(
+      nextState,
+      {
+        ...callbackBase,
+        eventType: "recording_command_received",
+        receivedAt: plus(20),
+      },
+      `fixture-${operationId}-command`,
+    );
+    evidence.recordingProviderCommandReceivedAt = plus(20);
+    lines.push("PROVIDER_COMMAND_RECEIVED");
+    nextState = appendPocCallbackEvent(
+      nextState,
+      {
+        ...callbackBase,
+        eventType: "recorder_created",
+        receivedAt: plus(30),
+      },
+      `fixture-${operationId}-recorder`,
+    );
+    evidence.recorderCreatedAt = plus(30);
+    lines.push("RECORDER_CREATED");
+    nextState = appendPocCallbackEvent(
+      nextState,
+      {
+        ...callbackBase,
+        eventType: "recording_started",
+        recorderState: "recording_started",
+        receivedAt: plus(40),
+      },
+      `fixture-${operationId}-started`,
+    );
+    evidence.recordingProviderStartedAt = plus(40);
+    evidence.recordingAppActiveAt = plus(40);
+    writePocState(nextState, params.stateRoot);
+    lines.push("RECORDING_STARTED");
+    lines.push("RECORDING_START_FIXTURE_PASS");
 
     details.recordingStatus = httpStart.recordingStatus;
     details.providerCalls = false;
     details.scenarioMessagePresent = true;
     details.connectionLeaseActive = true;
-    // Intentionally do NOT set recordingBrowserCommandSentAt — stop before send.
+    details.operationId = operationId;
 
     writeRecordingStartArtifact(runId, evidence, params.stateRoot);
 

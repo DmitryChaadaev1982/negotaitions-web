@@ -35,13 +35,14 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-c2";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-c3";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
 /** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
 var PROTOCOL_VERSION = 1;
 /** Optional: set when pasting if rule identity is known (never production rule names). */
 var ROUTING_RULE_IDENTITY = "";
+var runtimeRuleIdentity = null;
 
 var CONTROL_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__";
 var CALLBACK_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__";
@@ -74,6 +75,7 @@ var recorderRegistry = {
 var seenNonces = {};
 var operationResults = {};
 var pendingStopOperationId = null;
+var recordingStartOperations = {};
 
 var STATE_ABSENT = "absent";
 var STATE_EXISTS = "exists";
@@ -330,7 +332,7 @@ function buildCallbackPayload(eventType, action, operationId, recorderState, err
     nonce: createNonce(),
     scenarioBuild: SCENARIO_BUILD_ID,
     scenarioSource: SCENARIO_SOURCE_NAME,
-    routingRuleIdentity: ROUTING_RULE_IDENTITY || null,
+    routingRuleIdentity: runtimeRuleIdentity || ROUTING_RULE_IDENTITY || null,
   };
   if (extraFields && typeof extraFields === "object") {
     var keys = Object.keys(extraFields);
@@ -556,6 +558,40 @@ function extractProviderSessionId(startedEvent) {
   return null;
 }
 
+function extractDialplanName(startedEvent) {
+  try {
+    if (startedEvent && typeof startedEvent.dialplanName === "string") {
+      return String(startedEvent.dialplanName);
+    }
+  } catch (e1) {}
+  try {
+    if (startedEvent && typeof startedEvent.ruleName === "string") {
+      return String(startedEvent.ruleName);
+    }
+  } catch (e2) {}
+  try {
+    if (startedEvent && startedEvent.rule && typeof startedEvent.rule.name === "string") {
+      return String(startedEvent.rule.name);
+    }
+  } catch (e3) {}
+  return null;
+}
+
+function resolveMessageSourceCallId(msgEvent, fallbackCallId) {
+  try {
+    if (msgEvent && msgEvent.call && typeof msgEvent.call.id === "function") {
+      return String(msgEvent.call.id());
+    }
+  } catch (e1) {}
+  try {
+    if (msgEvent && msgEvent.call && msgEvent.call.id != null) {
+      return String(msgEvent.call.id);
+    }
+  } catch (e2) {}
+  if (fallbackCallId != null) return String(fallbackCallId);
+  return null;
+}
+
 function extractMediaSessionUrls(startedEvent) {
   var secure = null;
   var plain = null;
@@ -719,33 +755,67 @@ var pendingStartRequestId = null;
  * Browser-originated recording start (same shape as main-room recording_control).
  * Idempotent one-recorder guard — does not alter server-stop HTTP control protocol.
  */
-function startRecordingFromBrowser(requestId) {
-  log("recording_start_accepted requestId=" + safeToString(requestId));
+function startRecordingFromBrowser(operationId, sourceBrowserCallId) {
+  log("recording_start_accepted operationId=" + safeToString(operationId));
+  if (!operationId) {
+    log("recording_control start failed — operationId missing");
+    return { ok: false, errorCode: "operation_id_missing" };
+  }
+
   if (recorder && recorderRegistry.recordingStarted) {
-    log("recording_control start ignored — recorder already active requestId=" + safeToString(requestId));
+    log(
+      "recording_control start ignored — recorder already active operationId=" +
+        safeToString(operationId),
+    );
     sendSignedPocCallback(
       "recording_started",
       "start",
-      requestId || pendingStartRequestId,
+      operationId,
       STATE_RECORDING_STARTED,
       "already_started",
+      { sourceBrowserCallId: sourceBrowserCallId || null },
     );
     return { ok: true, errorCode: "already_started" };
   }
   if (!conference) {
     log("recording_control start failed — conference missing");
+    sendSignedPocCallback(
+      "recording_start_failed",
+      "start",
+      operationId,
+      registryState(),
+      "conference_not_ready",
+      { sourceBrowserCallId: sourceBrowserCallId || null },
+    );
     return { ok: false, errorCode: "conference_not_ready" };
   }
   if (typeof VoxEngine.createRecorder !== "function") {
     log("recording_control start failed — createRecorder unavailable");
+    sendSignedPocCallback(
+      "recording_start_failed",
+      "start",
+      operationId,
+      registryState(),
+      "recorder_api_unavailable",
+      { sourceBrowserCallId: sourceBrowserCallId || null },
+    );
     return { ok: false, errorCode: "recorder_api_unavailable" };
   }
   if (typeof conference.sendMediaTo !== "function") {
     log("recording_control start failed — sendMediaTo unavailable");
+    sendSignedPocCallback(
+      "recording_start_failed",
+      "start",
+      operationId,
+      registryState(),
+      "conference_media_routing_unavailable",
+      { sourceBrowserCallId: sourceBrowserCallId || null },
+    );
     return { ok: false, errorCode: "conference_media_routing_unavailable" };
   }
 
-  pendingStartRequestId = requestId || null;
+  pendingStartRequestId = operationId;
+  recorderRegistry.lastOperationId = operationId;
   try {
     recorder = VoxEngine.createRecorder({
       video: false,
@@ -756,41 +826,52 @@ function startRecordingFromBrowser(requestId) {
     if (!recorder) {
       log("recording_control start failed — recorder not created");
       sendSignedPocCallback(
-        "command_rejected",
+        "recording_start_failed",
         "start",
-        requestId,
+        operationId,
         registryState(),
         "recorder_create_failed",
+        { sourceBrowserCallId: sourceBrowserCallId || null },
       );
       return { ok: false, errorCode: "recorder_create_failed" };
     }
-    log("recorder_created requestId=" + safeToString(requestId));
+    log("recorder_created operationId=" + safeToString(operationId));
     recorderRegistry.exists = true;
+    sendSignedPocCallback(
+      "recorder_created",
+      "start",
+      operationId,
+      STATE_EXISTS,
+      null,
+      { sourceBrowserCallId: sourceBrowserCallId || null },
+    );
     attachRecorderHandlers();
     conference.sendMediaTo(recorder);
-    log("recorder_media_attached requestId=" + safeToString(requestId));
+    log("recorder_media_attached operationId=" + safeToString(operationId));
     // createRecorder + sendMediaTo is the provider recording-start boundary.
     // RecorderEvents.Started (when available) also emits recording_started.
     if (!recorderRegistry.recordingStarted) {
       recorderRegistry.recordingStarted = true;
-      log("recording_started requestId=" + safeToString(requestId));
+      log("recording_started operationId=" + safeToString(operationId));
       sendSignedPocCallback(
         "recording_started",
         "start",
-        requestId || pendingStartRequestId,
+        operationId,
         STATE_RECORDING_STARTED,
         null,
+        { sourceBrowserCallId: sourceBrowserCallId || null },
       );
     }
     return { ok: true, errorCode: null };
   } catch (e) {
     log("recording_control start exception: " + safeToString(e));
     sendSignedPocCallback(
-      "command_rejected",
+      "recording_start_failed",
       "start",
-      requestId,
+      operationId,
       registryState(),
       "start_recording_exception",
+      { sourceBrowserCallId: sourceBrowserCallId || null },
     );
     return { ok: false, errorCode: "start_recording_exception" };
   }
@@ -820,7 +901,7 @@ function parseRecordingControlPayload(raw) {
   }
 }
 
-function handleRecordingControlMessage(msgEvent) {
+function handleRecordingControlMessage(msgEvent, sourceCallId) {
   var payload = parseRecordingControlPayload(msgEvent);
   if (!payload) return;
   log(
@@ -836,7 +917,72 @@ function handleRecordingControlMessage(msgEvent) {
       safeToString(payload.requestId),
   );
   if (payload.action === "start") {
-    startRecordingFromBrowser(payload.requestId || null);
+    var operationId =
+      typeof payload.requestId === "string" && payload.requestId.trim()
+        ? String(payload.requestId).trim()
+        : null;
+    var sourceBrowserCallId = resolveMessageSourceCallId(msgEvent, sourceCallId);
+    if (!operationId) {
+      log("recording_control start rejected — operationId missing");
+      return;
+    }
+    if (payload.conferenceName && expectedConferenceName && payload.conferenceName !== expectedConferenceName) {
+      log(
+        "recording_control start rejected — conference mismatch payload=" +
+          safeToString(payload.conferenceName) +
+          " expected=" +
+          safeToString(expectedConferenceName),
+      );
+      sendSignedPocCallback(
+        "recording_start_failed",
+        "start",
+        operationId,
+        registryState(),
+        "operation_mismatch",
+        { sourceBrowserCallId: sourceBrowserCallId || null },
+      );
+      return;
+    }
+    if (recordingStartOperations[operationId]) {
+      var existing = recordingStartOperations[operationId];
+      if (
+        existing &&
+        ((existing.providerSessionId && existing.providerSessionId !== callSessionHistoryId) ||
+          (existing.conferenceName && existing.conferenceName !== expectedConferenceName))
+      ) {
+        log("recording_control start rejected — duplicate operation mismatch");
+        sendSignedPocCallback(
+          "recording_start_failed",
+          "start",
+          operationId,
+          registryState(),
+          "operation_mismatch",
+          { sourceBrowserCallId: sourceBrowserCallId || null },
+        );
+        return;
+      }
+      log("recording_control start duplicate operationId=" + safeToString(operationId));
+      return;
+    }
+    recordingStartOperations[operationId] = {
+      providerSessionId: callSessionHistoryId || null,
+      conferenceName: expectedConferenceName || null,
+      sourceBrowserCallId: sourceBrowserCallId || null,
+      acceptedAt: safeNowIso(),
+    };
+    sendSignedPocCallback(
+      "recording_command_received",
+      "start",
+      operationId,
+      registryState(),
+      null,
+      {
+        sourceBrowserCallId: sourceBrowserCallId || null,
+        providerSessionId: callSessionHistoryId || null,
+        conferenceName: expectedConferenceName || null,
+      },
+    );
+    startRecordingFromBrowser(operationId, sourceBrowserCallId);
     return;
   }
   // Stop remains server-control only for this POC (HTTP stop_recording).
@@ -1142,7 +1288,7 @@ function handleIncomingCall(event) {
   // Browser-originated recording_control via CallEvents.MessageReceived.
   try {
     call.addEventListener(CallEvents.MessageReceived, function (msgEvent) {
-      handleRecordingControlMessage(msgEvent);
+      handleRecordingControlMessage(msgEvent, callId);
     });
     log("CallEvents.MessageReceived handler registered callId=" + callId);
   } catch (e4) {
@@ -1153,6 +1299,7 @@ function handleIncomingCall(event) {
 function onAppStarted(e) {
   expectedConferenceName = parseCustomDataConferenceName();
   callSessionHistoryId = extractProviderSessionId(e);
+  runtimeRuleIdentity = extractDialplanName(e) || ROUTING_RULE_IDENTITY || null;
   var urls = extractMediaSessionUrls(e);
   mediaSessionAccessSecureUrl = urls.secure;
   mediaSessionAccessUrl = urls.plain;
@@ -1166,6 +1313,8 @@ function onAppStarted(e) {
       safeToString(expectedConferenceName) +
       " providerSessionId=" +
       safeToString(callSessionHistoryId) +
+      " ruleIdentity=" +
+      safeToString(runtimeRuleIdentity) +
       " hasControlUrl=" +
       Boolean(mediaSessionAccessSecureUrl || mediaSessionAccessUrl) +
       " controlSecretConfigured=" +

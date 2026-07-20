@@ -288,8 +288,31 @@ type UseVoximplantRoomResult = {
    * not connected or the SDK does not expose sendMessage on this version.
    */
   sendConferenceMessage: (text: string) => boolean;
+  sendConferenceMessageDetailed: (
+    text: string,
+  ) => Promise<ConferenceMessageSendResult>;
   /** True when conference.sendMessage() is available on the current SDK object. */
   sendMessageAvailable: boolean;
+};
+
+export type ConferenceMessageSendResult = {
+  callLookupMethod: string;
+  callReferenceFound: boolean;
+  callId: string | null;
+  callState: string | null;
+  callConnected: boolean;
+  sendMethod: "call.sendMessage" | "conference.sendMessage" | null;
+  sendInvoked: boolean;
+  sendCompleted: boolean;
+  sendInvokedAt: string | null;
+  sendCompletedAt: string | null;
+  sendErrorCode:
+    | "RECORDING_START_BROWSER_CALL_NOT_FOUND"
+    | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+    | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
+    | "RECORDING_START_BROWSER_SEND_FAILED"
+    | null;
+  sendErrorMessage: string | null;
 };
 
 // ─── Runtime mutable state (lives in a ref, never triggers renders) ───────────
@@ -530,6 +553,106 @@ function getAudioContextCtor(): typeof AudioContext | null {
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext ??
     null
   );
+}
+
+type CallLookupResult = {
+  call: Record<string, unknown> | null;
+  lookupMethod: string;
+  callId: string | null;
+  callState: string | null;
+};
+
+function readCallStringField(
+  call: Record<string, unknown>,
+  methodName: string,
+  fieldName: string,
+): string | null {
+  const method = call[methodName];
+  if (typeof method === "function") {
+    try {
+      const value = (method as () => unknown)();
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    } catch {
+      // ignore
+    }
+  }
+  const field = call[fieldName];
+  if (typeof field === "string" && field.trim()) return field.trim();
+  if (typeof field === "number" && Number.isFinite(field)) return String(field);
+  return null;
+}
+
+function normalizeCallState(raw: string | null): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  return value.length > 0 ? value : null;
+}
+
+function isConnectedCallState(raw: string | null): boolean | null {
+  if (!raw) return null;
+  const state = raw.toLowerCase();
+  if (
+    state.includes("connected") ||
+    state.includes("established") ||
+    state.includes("active") ||
+    state.includes("inprogress")
+  ) {
+    return true;
+  }
+  if (
+    state.includes("disconnect") ||
+    state.includes("failed") ||
+    state.includes("ended") ||
+    state.includes("stopped") ||
+    state.includes("hangup") ||
+    state.includes("terminated")
+  ) {
+    return false;
+  }
+  return null;
+}
+
+function resolveConferenceCallReference(conference: VoxConference): CallLookupResult {
+  const conf = conference as unknown as Record<string, unknown>;
+  const candidates: Array<{ method: string; value: unknown }> = [
+    { method: "conference.call", value: conf.call },
+    { method: "conference._call", value: conf._call },
+    { method: "conference.__call", value: conf.__call },
+    { method: "conference.activeCall", value: conf.activeCall },
+    { method: "conference._activeCall", value: conf._activeCall },
+    { method: "conference.callSession", value: conf.callSession },
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate.value || typeof candidate.value !== "object") continue;
+    const call = candidate.value as Record<string, unknown>;
+    const hasSend =
+      typeof call.sendMessage === "function" ||
+      typeof call["sendText"] === "function";
+    const callId =
+      readCallStringField(call, "id", "id") ??
+      readCallStringField(call, "callId", "callId");
+    const callState = normalizeCallState(
+      readCallStringField(call, "state", "state") ??
+        readCallStringField(call, "status", "status"),
+    );
+    if (hasSend || callId || callState) {
+      return {
+        call,
+        lookupMethod: candidate.method,
+        callId,
+        callState,
+      };
+    }
+  }
+
+  return {
+    call: null,
+    lookupMethod: "none",
+    callId: null,
+    callState: null,
+  };
 }
 
 /**
@@ -903,6 +1026,119 @@ export function useVoximplantRoom({
       return false;
     }
   }, []);
+
+  const sendConferenceMessageDetailed = useCallback(
+    async (text: string): Promise<ConferenceMessageSendResult> => {
+      const rt = runtimeRef.current;
+      const base: ConferenceMessageSendResult = {
+        callLookupMethod: "none",
+        callReferenceFound: false,
+        callId: null,
+        callState: null,
+        callConnected: false,
+        sendMethod: null,
+        sendInvoked: false,
+        sendCompleted: false,
+        sendInvokedAt: null,
+        sendCompletedAt: null,
+        sendErrorCode: null,
+        sendErrorMessage: null,
+      };
+
+      if (!rt?.conference) {
+        return {
+          ...base,
+          sendErrorCode: "RECORDING_START_BROWSER_CALL_NOT_FOUND",
+          sendErrorMessage: "conference_unavailable",
+        };
+      }
+      if (staleLifecycleRef.current || generationRef.current !== rt.generation) {
+        return {
+          ...base,
+          sendErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+          sendErrorMessage: "stale_runtime_generation",
+        };
+      }
+
+      const conf = rt.conference as VoxConference;
+      const callRef = resolveConferenceCallReference(conf);
+      const callConnectedFromState = isConnectedCallState(callRef.callState);
+      const callConnected = callConnectedFromState ?? rt.conferenceConnected;
+      const withCall: ConferenceMessageSendResult = {
+        ...base,
+        callLookupMethod: callRef.lookupMethod,
+        callReferenceFound: Boolean(callRef.call),
+        callId: callRef.callId,
+        callState: callRef.callState,
+        callConnected,
+      };
+
+      if (!callRef.call) {
+        return {
+          ...withCall,
+          sendErrorCode: "RECORDING_START_BROWSER_CALL_NOT_FOUND",
+          sendErrorMessage: "call_reference_missing",
+        };
+      }
+      if (!callConnected) {
+        return {
+          ...withCall,
+          sendErrorCode: "RECORDING_START_BROWSER_CALL_NOT_CONNECTED",
+          sendErrorMessage: "call_not_connected",
+        };
+      }
+
+      const callSend = callRef.call.sendMessage;
+      const conferenceSend = conf.sendMessage;
+      const invoke =
+        typeof callSend === "function"
+          ? (callSend as (payload: string) => unknown).bind(callRef.call)
+          : typeof conferenceSend === "function"
+            ? (conferenceSend as (payload: string) => unknown).bind(conf)
+            : null;
+      const sendMethod: ConferenceMessageSendResult["sendMethod"] =
+        typeof callSend === "function"
+          ? "call.sendMessage"
+          : typeof conferenceSend === "function"
+            ? "conference.sendMessage"
+            : null;
+      if (!invoke || !sendMethod) {
+        return {
+          ...withCall,
+          sendMethod: null,
+          sendErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+          sendErrorMessage: "send_method_unavailable",
+        };
+      }
+
+      const sendInvokedAt = new Date().toISOString();
+      try {
+        const maybeResult = invoke(text);
+        if (maybeResult && typeof (maybeResult as Promise<unknown>).then === "function") {
+          await maybeResult;
+        }
+        return {
+          ...withCall,
+          sendMethod,
+          sendInvoked: true,
+          sendCompleted: true,
+          sendInvokedAt,
+          sendCompletedAt: new Date().toISOString(),
+        };
+      } catch (error) {
+        return {
+          ...withCall,
+          sendMethod,
+          sendInvoked: true,
+          sendCompleted: false,
+          sendInvokedAt,
+          sendErrorCode: "RECORDING_START_BROWSER_SEND_FAILED",
+          sendErrorMessage: toErrorMessage(error),
+        };
+      }
+    },
+    [],
+  );
 
   // ── Remote participants ───────────────────────────────────────────────────
 
@@ -1869,6 +2105,7 @@ export function useVoximplantRoom({
       lastRemoteAudioError,
       unlockAudioPlayback,
       sendConferenceMessage,
+      sendConferenceMessageDetailed,
       sendMessageAvailable,
     }),
     [
@@ -1897,6 +2134,7 @@ export function useVoximplantRoom({
       remotePlaybackBlocked,
       role,
       sendConferenceMessage,
+      sendConferenceMessageDetailed,
       sendMessageAvailable,
       status,
       toggleCamera,

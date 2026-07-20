@@ -43,6 +43,7 @@ import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
+import type { ConferenceMessageSendResult } from "@/lib/voximplant/use-voximplant-room";
 import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
 import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
@@ -171,6 +172,43 @@ type RecordingStopRelayHint = {
   recordingId: string;
 } | null;
 
+type PocRelayRecordingStartRequest = {
+  scenarioMessage: RecordingControlMessage;
+  operationId?: string | null;
+  expectedSessionId?: string | null;
+  expectedConferenceName?: string | null;
+};
+
+export type PocRelayRecordingStartResult = {
+  ok: boolean;
+  recordingBrowserCommandClaimedAt: string | null;
+  recordingBrowserCommandReceivedAt: string | null;
+  recordingBrowserContextRole: string | null;
+  recordingBrowserContextId: string | null;
+  recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallId: string | null;
+  recordingBrowserCallState: string | null;
+  recordingBrowserSendMessageInvokedAt: string | null;
+  recordingBrowserSendMessageCompletedAt: string | null;
+  recordingBrowserSendMessageErrorCode: string | null;
+  relayOwnerRole: string | null;
+  relayOwnerParticipantId: string | null;
+  relayOwnerConnectionId: string | null;
+  relayClaimedAt: string | null;
+  relayConsumedAt: string | null;
+  recordingBrowserCommandSentAt: string | null;
+  operationId: string | null;
+  errorCode:
+    | "RECORDING_START_OPERATION_ID_MISSING"
+    | "RECORDING_START_OPERATION_MISMATCH"
+    | "RECORDING_START_BROWSER_CONTEXT_MISMATCH"
+    | "RECORDING_START_BROWSER_CALL_NOT_FOUND"
+    | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+    | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
+    | "RECORDING_START_BROWSER_SEND_FAILED"
+    | null;
+};
+
 // ─── VoximplantNegotiationRoomPage ────────────────────────────────────────────
 
 export default function VoximplantNegotiationRoomPage(
@@ -230,6 +268,7 @@ export default function VoximplantNegotiationRoomPage(
     unlockAudioPlayback,
     // Stage 5.4: recording relay
     sendConferenceMessage,
+    sendConferenceMessageDetailed,
     sendMessageAvailable,
   } = useVoximplantRoom({
     sessionId: props.sessionId,
@@ -473,10 +512,49 @@ export default function VoximplantNegotiationRoomPage(
   const [recordingRelayError, setRecordingRelayError] = useState<string | null>(null);
   const explicitLeaveInFlightRef = useRef(false);
   const relayInFlightOperationsRef = useRef<Set<string>>(new Set());
+  const relayOwnerRef = useRef<{
+    operationId: string;
+    role: string;
+    participantId: string | null;
+    connectionId: string | null;
+    claimedAt: string;
+  } | null>(null);
+  const relayOperationMetaRef = useRef<
+    Map<
+      string,
+      {
+        sessionId: string;
+        conferenceName: string | null;
+      }
+    >
+  >(new Map());
+  const relayOperationResultRef = useRef<Map<string, PocRelayRecordingStartResult>>(
+    new Map(),
+  );
+  const joinedRef = useRef(false);
+  const roomConnectionIdRef = useRef<string | null>(null);
+  const participantTypeRef = useRef<ParticipantType | null>(null);
+  const trackerParticipantIdRef = useRef<string | null>(null);
+  const sendConferenceMessageDetailedRef = useRef(sendConferenceMessageDetailed);
 
   useEffect(() => {
     recordingStateRef.current = recordingState;
   }, [recordingState]);
+  useEffect(() => {
+    joinedRef.current = joined;
+  }, [joined]);
+  useEffect(() => {
+    roomConnectionIdRef.current = roomConnectionId ?? null;
+  }, [roomConnectionId]);
+  useEffect(() => {
+    participantTypeRef.current = effectiveParticipantType;
+  }, [effectiveParticipantType]);
+  useEffect(() => {
+    trackerParticipantIdRef.current = trackerSessionParticipantId;
+  }, [trackerSessionParticipantId]);
+  useEffect(() => {
+    sendConferenceMessageDetailedRef.current = sendConferenceMessageDetailed;
+  }, [sendConferenceMessageDetailed]);
 
   // ── Recording diagnostics (dev-only) ──────────────────────────────────────
   // postRecordingDebug: fire-and-forget POST to diagnostics API.
@@ -509,6 +587,309 @@ export default function VoximplantNegotiationRoomPage(
     },
     [showRecordingDebug, props.sessionId],
   );
+
+  const projectRelayResult = useCallback(
+    (
+      base: Omit<
+        PocRelayRecordingStartResult,
+        | "recordingBrowserCallReferenceFound"
+        | "recordingBrowserCallId"
+        | "recordingBrowserCallState"
+        | "recordingBrowserSendMessageInvokedAt"
+        | "recordingBrowserSendMessageCompletedAt"
+        | "recordingBrowserSendMessageErrorCode"
+        | "recordingBrowserCommandSentAt"
+        | "errorCode"
+        | "ok"
+      >,
+      sendResult: ConferenceMessageSendResult,
+    ): PocRelayRecordingStartResult => {
+      const callErrorCode =
+        sendResult.sendErrorCode === "RECORDING_START_BROWSER_CALL_NOT_FOUND"
+          ? "RECORDING_START_BROWSER_CALL_NOT_FOUND"
+          : sendResult.sendErrorCode === "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+            ? "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+            : sendResult.sendErrorCode ===
+                  "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
+              ? "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
+              : sendResult.sendErrorCode === "RECORDING_START_BROWSER_SEND_FAILED"
+                ? "RECORDING_START_BROWSER_SEND_FAILED"
+                : null;
+      const completed = Boolean(sendResult.sendCompletedAt && sendResult.sendCompleted);
+      const ok =
+        sendResult.callReferenceFound &&
+        sendResult.callConnected &&
+        sendResult.sendInvoked &&
+        completed &&
+        !callErrorCode;
+      return {
+        ...base,
+        ok,
+        recordingBrowserCallReferenceFound: sendResult.callReferenceFound,
+        recordingBrowserCallId: sendResult.callId,
+        recordingBrowserCallState: sendResult.callState,
+        recordingBrowserSendMessageInvokedAt: sendResult.sendInvokedAt,
+        recordingBrowserSendMessageCompletedAt: sendResult.sendCompletedAt,
+        recordingBrowserSendMessageErrorCode: callErrorCode,
+        recordingBrowserCommandSentAt: completed
+          ? sendResult.sendCompletedAt
+          : null,
+        errorCode: ok ? null : callErrorCode ?? "RECORDING_START_BROWSER_SEND_FAILED",
+      };
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const relayRecordingStart = async (
+      input: unknown,
+    ): Promise<PocRelayRecordingStartResult> => {
+      const now = new Date().toISOString();
+      const contextRole = participantTypeRef.current ?? "UNKNOWN";
+      const contextConnectionId = roomConnectionIdRef.current;
+      const contextParticipantId = trackerParticipantIdRef.current;
+      const base: Omit<
+        PocRelayRecordingStartResult,
+        | "recordingBrowserCallReferenceFound"
+        | "recordingBrowserCallId"
+        | "recordingBrowserCallState"
+        | "recordingBrowserSendMessageInvokedAt"
+        | "recordingBrowserSendMessageCompletedAt"
+        | "recordingBrowserSendMessageErrorCode"
+        | "recordingBrowserCommandSentAt"
+        | "errorCode"
+        | "ok"
+      > = {
+        recordingBrowserCommandClaimedAt: now,
+        recordingBrowserCommandReceivedAt: now,
+        recordingBrowserContextRole: String(contextRole),
+        recordingBrowserContextId: contextConnectionId,
+        relayOwnerRole: null,
+        relayOwnerParticipantId: contextParticipantId,
+        relayOwnerConnectionId: null,
+        relayClaimedAt: now,
+        relayConsumedAt: now,
+        operationId: null,
+      };
+
+      const payload =
+        input && typeof input === "object"
+          ? (input as Partial<PocRelayRecordingStartRequest>)
+          : null;
+      const scenarioMessage =
+        payload?.scenarioMessage as Partial<RecordingControlMessage> | undefined;
+      if (
+        !scenarioMessage ||
+        scenarioMessage.type !== "recording_control" ||
+        scenarioMessage.action !== "start"
+      ) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+          recordingBrowserCommandSentAt: null,
+          operationId: null,
+          errorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+        };
+      }
+
+      const operationIdFromMessage =
+        typeof scenarioMessage.requestId === "string"
+          ? scenarioMessage.requestId.trim()
+          : "";
+      const expectedOperationId =
+        typeof payload?.operationId === "string" ? payload.operationId.trim() : "";
+      const operationId = expectedOperationId || operationIdFromMessage || null;
+      if (!operationId) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_OPERATION_ID_MISSING",
+          recordingBrowserCommandSentAt: null,
+          operationId: null,
+          errorCode: "RECORDING_START_OPERATION_ID_MISSING",
+        };
+      }
+      if (expectedOperationId && operationIdFromMessage !== expectedOperationId) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_OPERATION_MISMATCH",
+          recordingBrowserCommandSentAt: null,
+          operationId,
+          errorCode: "RECORDING_START_OPERATION_MISMATCH",
+        };
+      }
+
+      if (scenarioMessage.sessionId && scenarioMessage.sessionId !== props.sessionId) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_OPERATION_MISMATCH",
+          recordingBrowserCommandSentAt: null,
+          operationId,
+          errorCode: "RECORDING_START_OPERATION_MISMATCH",
+        };
+      }
+
+      const priorMeta = relayOperationMetaRef.current.get(operationId);
+      const nextMeta = {
+        sessionId: props.sessionId,
+        conferenceName:
+          typeof scenarioMessage.conferenceName === "string"
+            ? scenarioMessage.conferenceName
+            : null,
+      };
+      if (
+        priorMeta &&
+        (priorMeta.sessionId !== nextMeta.sessionId ||
+          priorMeta.conferenceName !== nextMeta.conferenceName)
+      ) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_OPERATION_MISMATCH",
+          recordingBrowserCommandSentAt: null,
+          operationId,
+          errorCode: "RECORDING_START_OPERATION_MISMATCH",
+        };
+      }
+
+      const priorResult = relayOperationResultRef.current.get(operationId);
+      if (priorResult) {
+        return {
+          ...priorResult,
+          relayConsumedAt: now,
+          recordingBrowserCommandReceivedAt: now,
+        };
+      }
+
+      if (contextRole !== "FACILITATOR") {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode:
+            "RECORDING_START_BROWSER_CONTEXT_MISMATCH",
+          recordingBrowserCommandSentAt: null,
+          operationId,
+          errorCode: "RECORDING_START_BROWSER_CONTEXT_MISMATCH",
+        };
+      }
+
+      const existingOwner = relayOwnerRef.current;
+      if (existingOwner && existingOwner.operationId === operationId) {
+        const ownerMatches =
+          existingOwner.role === "FACILITATOR" &&
+          existingOwner.connectionId === contextConnectionId;
+        if (!ownerMatches) {
+          return {
+            ...base,
+            ok: false,
+            recordingBrowserCallReferenceFound: false,
+            recordingBrowserCallId: null,
+            recordingBrowserCallState: null,
+            recordingBrowserSendMessageInvokedAt: null,
+            recordingBrowserSendMessageCompletedAt: null,
+            recordingBrowserSendMessageErrorCode:
+              "RECORDING_START_BROWSER_CONTEXT_MISMATCH",
+            recordingBrowserCommandSentAt: null,
+            operationId,
+            errorCode: "RECORDING_START_BROWSER_CONTEXT_MISMATCH",
+          };
+        }
+      } else {
+        relayOwnerRef.current = {
+          operationId,
+          role: "FACILITATOR",
+          participantId: contextParticipantId,
+          connectionId: contextConnectionId,
+          claimedAt: now,
+        };
+      }
+
+      if (!joinedRef.current) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserCallReferenceFound: false,
+          recordingBrowserCallId: null,
+          recordingBrowserCallState: null,
+          recordingBrowserSendMessageInvokedAt: null,
+          recordingBrowserSendMessageCompletedAt: null,
+          recordingBrowserSendMessageErrorCode:
+            "RECORDING_START_BROWSER_CALL_NOT_CONNECTED",
+          recordingBrowserCommandSentAt: null,
+          operationId,
+          relayOwnerRole: "FACILITATOR",
+          relayOwnerParticipantId: contextParticipantId,
+          relayOwnerConnectionId: contextConnectionId,
+          errorCode: "RECORDING_START_BROWSER_CALL_NOT_CONNECTED",
+        };
+      }
+
+      relayOperationMetaRef.current.set(operationId, nextMeta);
+      const sendResult = await sendConferenceMessageDetailedRef.current(
+        JSON.stringify(scenarioMessage as RecordingControlMessage),
+      );
+      const relayResult = projectRelayResult(
+        {
+          ...base,
+          relayOwnerRole: "FACILITATOR",
+          relayOwnerParticipantId: contextParticipantId,
+          relayOwnerConnectionId: contextConnectionId,
+          operationId,
+          relayClaimedAt: relayOwnerRef.current?.claimedAt ?? now,
+          relayConsumedAt: new Date().toISOString(),
+        },
+        sendResult,
+      );
+      relayOperationResultRef.current.set(operationId, relayResult);
+      return relayResult;
+    };
+
+    const w = window as Window & {
+      __voxPocRelayRecordingStart?: (
+        input: unknown,
+      ) => Promise<PocRelayRecordingStartResult>;
+    };
+    w.__voxPocRelayRecordingStart = relayRecordingStart;
+    return () => {
+      if (w.__voxPocRelayRecordingStart === relayRecordingStart) {
+        delete w.__voxPocRelayRecordingStart;
+      }
+    };
+  }, [projectRelayResult, props.sessionId]);
 
   /** Prevents duplicate stop calls from double-clicks or re-renders. */
   const stopInFlightRef = useRef(false);

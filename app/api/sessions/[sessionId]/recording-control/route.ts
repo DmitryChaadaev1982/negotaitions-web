@@ -35,6 +35,7 @@ const actionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
   connectionId: z.string().trim().min(1).max(128).optional(),
+  operationId: z.string().trim().min(1).max(128).optional(),
   action: z.enum(["start", "stop", "refresh", "relay_stop", "relay_stop_report"]),
   stopOperationId: z.string().trim().min(1).optional(),
   relayOutcome: z
@@ -255,6 +256,7 @@ export async function POST(request: Request, context: RouteContext) {
       parsed.data.action,
       sessionId,
       participant.id,
+      parsed.data.operationId,
     );
   }
 
@@ -303,6 +305,7 @@ async function handleVoximplantRecording(
   action: "start" | "stop" | "refresh",
   sessionId: string,
   participantId: string,
+  requestId?: string,
 ) {
   console.log(
     `[recording-control] provider=voximplant action=${action} sessionId=${sessionId}`,
@@ -346,6 +349,7 @@ async function handleVoximplantRecording(
       buildVoximplantRecordingDispatch(action, {
         sessionId,
         participantId,
+        requestId,
       }),
       resolveVoximplantRecordingWebhookUrlFromDb(),
     ]);
@@ -366,6 +370,7 @@ async function handleVoximplantRecording(
         savedOverridePresent: webhookResolution.savedOverridePresent,
         envWebhookBaseUrlPresent: Boolean(webhookResolution.envWebhookBaseUrl),
         requestId: dispatch.scenarioMessage.requestId,
+        requestIdOverrideUsed: Boolean(requestId),
       },
     });
 

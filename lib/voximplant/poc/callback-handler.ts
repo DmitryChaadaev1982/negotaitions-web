@@ -161,6 +161,8 @@ function parsePayload(raw: unknown): PocCallbackPayload | null {
         : typeof obj.ruleIdentity === "string"
           ? obj.ruleIdentity
           : null,
+    sourceBrowserCallId:
+      typeof obj.sourceBrowserCallId === "string" ? obj.sourceBrowserCallId : null,
     mediaSessionAccessSecureUrl:
       typeof obj.mediaSessionAccessSecureUrl === "string"
         ? obj.mediaSessionAccessSecureUrl
@@ -500,6 +502,9 @@ export function processPocCallback(params: {
     callSessionHistoryId: providerSessionId,
     recorderState: payload.recorderState,
     errorCode: payload.errorCode,
+    scenarioBuild: payload.scenarioBuild ?? null,
+    routingRuleIdentity: payload.routingRuleIdentity ?? null,
+    sourceBrowserCallId: payload.sourceBrowserCallId ?? null,
     receivedAt,
     nonce: normalizedNonce,
     signatureVerified: true,

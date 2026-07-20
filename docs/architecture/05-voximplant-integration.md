@@ -20,7 +20,12 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 ## Control Channel
 
 - Server builds typed recording command payload.
-- Browser relays payload with `conference.sendMessage(...)`.
+- Browser relays payload through deterministic facilitator ownership and explicit
+  send boundaries:
+  - relay claim/consume timestamps
+  - browser context role/id
+  - active call lookup + connected-state validation
+  - `sendMessage` invoke/completion/error evidence
 - Vox scenario executes recording operation and posts status webhook back to app.
 
 ## Presence And Media Status Model (Stage 3.1)
@@ -82,6 +87,9 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 ## Operational Constraints
 
 - Current design relies on active browser relay for some recording transitions.
+- Relay claim is not treated as provider delivery; provider receipt is confirmed
+  only by signed scenario callbacks (`recording_command_received`,
+  `recorder_created`, `recording_started`).
 - Scenario webhook base URL is resolved from env/runtime override logic.
 - Keep scenario changes in dedicated Vox docs/scripts; application docs only describe current app-side contract.
 

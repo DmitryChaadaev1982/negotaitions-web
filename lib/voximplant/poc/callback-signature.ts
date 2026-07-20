@@ -9,7 +9,10 @@ export const POC_CALLBACK_EVENT_TYPES = [
   "session_registered",
   "command_accepted",
   "command_rejected",
+  "recording_command_received",
+  "recorder_created",
   "recording_started",
+  "recording_start_failed",
   "recording_stopped",
   "scenario_terminating",
 ] as const;
@@ -36,6 +39,7 @@ export type PocCallbackPayload = {
   scenarioBuild?: string | null;
   scenarioSource?: string | null;
   routingRuleIdentity?: string | null;
+  sourceBrowserCallId?: string | null;
   /** Private capability URL — never persisted to public state/events. */
   mediaSessionAccessSecureUrl?: string | null;
   mediaSessionAccessUrl?: string | null;
@@ -203,6 +207,7 @@ export function buildPocCallbackPayload(params: {
   scenarioBuild?: string | null;
   scenarioSource?: string | null;
   routingRuleIdentity?: string | null;
+  sourceBrowserCallId?: string | null;
   mediaSessionAccessSecureUrl?: string | null;
   mediaSessionAccessUrl?: string | null;
 }): PocCallbackPayload {
@@ -222,6 +227,7 @@ export function buildPocCallbackPayload(params: {
     scenarioBuild: params.scenarioBuild ?? null,
     scenarioSource: params.scenarioSource ?? null,
     routingRuleIdentity: params.routingRuleIdentity ?? null,
+    sourceBrowserCallId: params.sourceBrowserCallId ?? null,
     mediaSessionAccessSecureUrl: params.mediaSessionAccessSecureUrl ?? null,
     mediaSessionAccessUrl: params.mediaSessionAccessUrl ?? null,
   };

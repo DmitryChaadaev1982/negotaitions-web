@@ -84,9 +84,50 @@ export type BrowserJoinTiming = {
   participantAccessRequestedAt: string | null;
   facilitatorCallConnectedAt: string | null;
   participantCallConnectedAt: string | null;
+  browserReleaseToFirstAccessMs: number | null;
+  browserReleaseToFirstJoinMs: number | null;
+  browserReleaseToBothJoinedMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToFirstAccessMs.
+   */
   startConferenceToFirstAccessMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToFirstJoinMs.
+   */
   startConferenceToFirstJoinMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToBothJoinedMs.
+   */
   startConferenceToBothJoinedMs: number | null;
+};
+
+export type BrowserRelayRecordingStartInput = {
+  scenarioMessage: unknown;
+  operationId?: string | null;
+  expectedSessionId?: string | null;
+  expectedConferenceName?: string | null;
+};
+
+export type BrowserRelayRecordingStartResult = {
+  ok: boolean;
+  recordingBrowserCommandClaimedAt: string | null;
+  recordingBrowserCommandReceivedAt: string | null;
+  recordingBrowserContextRole: string | null;
+  recordingBrowserContextId: string | null;
+  recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallId: string | null;
+  recordingBrowserCallState: string | null;
+  recordingBrowserSendMessageInvokedAt: string | null;
+  recordingBrowserSendMessageCompletedAt: string | null;
+  recordingBrowserSendMessageErrorCode: string | null;
+  relayOwnerRole: string | null;
+  relayOwnerParticipantId: string | null;
+  relayOwnerConnectionId: string | null;
+  relayClaimedAt: string | null;
+  relayConsumedAt: string | null;
+  recordingBrowserCommandSentAt: string | null;
+  operationId: string | null;
+  errorCode: string | null;
 };
 
 export type BrowserJoinResult = {
@@ -111,9 +152,11 @@ export type BrowserJoinResult = {
   }>;
   /**
    * Live helper: relay a pre-built scenario message via conference.sendMessage.
-   * Returns false when the SDK channel is unavailable.
+   * Returns staged browser evidence for deterministic relay ownership.
    */
-  relayScenarioMessage?: (scenarioMessage: unknown) => Promise<boolean>;
+  relayScenarioMessage?: (
+    input: BrowserRelayRecordingStartInput,
+  ) => Promise<BrowserRelayRecordingStartResult>;
   close: () => Promise<void>;
 };
 
@@ -186,6 +229,9 @@ function emptyTiming(): BrowserJoinTiming {
     participantAccessRequestedAt: null,
     facilitatorCallConnectedAt: null,
     participantCallConnectedAt: null,
+    browserReleaseToFirstAccessMs: null,
+    browserReleaseToFirstJoinMs: null,
+    browserReleaseToBothJoinedMs: null,
     startConferenceToFirstAccessMs: null,
     startConferenceToFirstJoinMs: null,
     startConferenceToBothJoinedMs: null,
@@ -1378,8 +1424,9 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
           .map((v) => Date.parse(v!))
           .filter((n) => Number.isFinite(n));
         if (firstAccessMs.length && Number.isFinite(startCompletedMs)) {
-          timing.startConferenceToFirstAccessMs =
-            Math.min(...firstAccessMs) - startCompletedMs;
+          const value = Math.min(...firstAccessMs) - startCompletedMs;
+          timing.browserReleaseToFirstAccessMs = value;
+          timing.startConferenceToFirstAccessMs = value;
         }
         const firstJoinMs = [
           timing.facilitatorCallConnectedAt,
@@ -1389,8 +1436,9 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
           .map((v) => Date.parse(v!))
           .filter((n) => Number.isFinite(n));
         if (firstJoinMs.length && Number.isFinite(startCompletedMs)) {
-          timing.startConferenceToFirstJoinMs =
-            Math.min(...firstJoinMs) - startCompletedMs;
+          const value = Math.min(...firstJoinMs) - startCompletedMs;
+          timing.browserReleaseToFirstJoinMs = value;
+          timing.startConferenceToFirstJoinMs = value;
         }
         if (
           facilitator.joined &&
@@ -1409,7 +1457,9 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
                 live.startConferenceCompletedAt,
             ),
           );
-          timing.startConferenceToBothJoinedMs = bothAt - startCompletedMs;
+          const value = bothAt - startCompletedMs;
+          timing.browserReleaseToBothJoinedMs = value;
+          timing.startConferenceToBothJoinedMs = value;
         }
 
         const failureCode =
@@ -1487,28 +1537,99 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
             }
             return startRecordingViaUi({ page: facilitatorPage, timeoutMs });
           },
-          relayScenarioMessage: async (scenarioMessage: unknown) => {
-            if (!facilitatorPage) return false;
+          relayScenarioMessage: async (
+            relayInput: BrowserRelayRecordingStartInput,
+          ) => {
+            if (!facilitatorPage) {
+              return {
+                ok: false,
+                recordingBrowserCommandClaimedAt: null,
+                recordingBrowserCommandReceivedAt: null,
+                recordingBrowserContextRole: null,
+                recordingBrowserContextId: null,
+                recordingBrowserCallReferenceFound: false,
+                recordingBrowserCallId: null,
+                recordingBrowserCallState: null,
+                recordingBrowserSendMessageInvokedAt: null,
+                recordingBrowserSendMessageCompletedAt: null,
+                recordingBrowserSendMessageErrorCode:
+                  "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+                relayOwnerRole: null,
+                relayOwnerParticipantId: null,
+                relayOwnerConnectionId: null,
+                relayClaimedAt: null,
+                relayConsumedAt: null,
+                recordingBrowserCommandSentAt: null,
+                operationId: relayInput.operationId ?? null,
+                errorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+              };
+            }
+            const payload: BrowserRelayRecordingStartInput = {
+              scenarioMessage: relayInput.scenarioMessage,
+              operationId: relayInput.operationId ?? null,
+              expectedSessionId: relayInput.expectedSessionId ?? input.sessionId,
+              expectedConferenceName:
+                relayInput.expectedConferenceName ?? live.expectedConferenceName,
+            };
             try {
-              return await facilitatorPage.evaluate((message) => {
+              return await facilitatorPage.evaluate(async (relayPayload) => {
                 const w = window as unknown as {
-                  __voxPocSendConferenceMessage?: (text: string) => boolean;
+                  __voxPocRelayRecordingStart?: (
+                    input: unknown,
+                  ) => Promise<BrowserRelayRecordingStartResult>;
                 };
-                if (typeof w.__voxPocSendConferenceMessage === "function") {
-                  return w.__voxPocSendConferenceMessage(JSON.stringify(message));
+                if (typeof w.__voxPocRelayRecordingStart === "function") {
+                  return await w.__voxPocRelayRecordingStart(relayPayload);
                 }
-                // Fallback: dispatch a custom event the room page may listen for.
-                window.dispatchEvent(
-                  new CustomEvent("poc-vox-relay-scenario-message", {
-                    detail: message,
-                  }),
-                );
-                return Boolean(
-                  document.querySelector("[data-testid='vox-room-joined']"),
-                );
-              }, scenarioMessage);
-            } catch {
-              return false;
+                return {
+                  ok: false,
+                  recordingBrowserCommandClaimedAt: null,
+                  recordingBrowserCommandReceivedAt: null,
+                  recordingBrowserContextRole: null,
+                  recordingBrowserContextId: null,
+                  recordingBrowserCallReferenceFound: false,
+                  recordingBrowserCallId: null,
+                  recordingBrowserCallState: null,
+                  recordingBrowserSendMessageInvokedAt: null,
+                  recordingBrowserSendMessageCompletedAt: null,
+                  recordingBrowserSendMessageErrorCode:
+                    "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+                  relayOwnerRole: null,
+                  relayOwnerParticipantId: null,
+                  relayOwnerConnectionId: null,
+                  relayClaimedAt: null,
+                  relayConsumedAt: null,
+                  recordingBrowserCommandSentAt: null,
+                  operationId: null,
+                  errorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+                };
+              }, payload);
+            } catch (error) {
+              return {
+                ok: false,
+                recordingBrowserCommandClaimedAt: null,
+                recordingBrowserCommandReceivedAt: null,
+                recordingBrowserContextRole: null,
+                recordingBrowserContextId: null,
+                recordingBrowserCallReferenceFound: false,
+                recordingBrowserCallId: null,
+                recordingBrowserCallState: null,
+                recordingBrowserSendMessageInvokedAt: null,
+                recordingBrowserSendMessageCompletedAt: null,
+                recordingBrowserSendMessageErrorCode:
+                  "RECORDING_START_BROWSER_SEND_FAILED",
+                relayOwnerRole: null,
+                relayOwnerParticipantId: null,
+                relayOwnerConnectionId: null,
+                relayClaimedAt: null,
+                relayConsumedAt: null,
+                recordingBrowserCommandSentAt: null,
+                operationId: relayInput.operationId ?? null,
+                errorCode:
+                  error instanceof Error
+                    ? `RECORDING_START_BROWSER_SEND_FAILED:${error.name}`
+                    : "RECORDING_START_BROWSER_SEND_FAILED",
+              };
             }
           },
           close: async () => {

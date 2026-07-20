@@ -172,6 +172,12 @@ function main(): void {
       browserExecution: report.browserExecution ?? false,
       browserPrewarmStartedAt: report.browserPrewarmStartedAt ?? null,
       browserPrewarmCompletedAt: report.browserPrewarmCompletedAt ?? null,
+      browserReleaseToFirstAccessMs:
+        report.browserReleaseToFirstAccessMs ?? null,
+      browserReleaseToFirstJoinMs: report.browserReleaseToFirstJoinMs ?? null,
+      browserReleaseToBothJoinedMs:
+        report.browserReleaseToBothJoinedMs ?? null,
+      // Deprecated compatibility mirrors.
       startConferenceToFirstAccessMs:
         report.startConferenceToFirstAccessMs ?? null,
       startConferenceToFirstJoinMs: report.startConferenceToFirstJoinMs ?? null,

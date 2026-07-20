@@ -16,32 +16,62 @@ export type RecordingStartFailureCode =
   | "RECORDING_START_UNAUTHORIZED"
   | "RECORDING_START_STALE_CONNECTION"
   | "RECORDING_START_INVALID_SESSION_STATE"
+  | "RECORDING_START_OPERATION_ID_MISSING"
+  | "RECORDING_START_OPERATION_MISMATCH"
   | "RECORDING_START_RELAY_NOT_CREATED"
-  | "RECORDING_START_RELAY_NOT_CLAIMED"
-  | "RECORDING_START_BROWSER_COMMAND_NOT_SENT"
+  | "RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED"
+  | "RECORDING_START_BROWSER_CONTEXT_MISMATCH"
+  | "RECORDING_START_BROWSER_CALL_NOT_FOUND"
+  | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+  | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
+  | "RECORDING_START_BROWSER_SEND_FAILED"
   | "RECORDING_START_SCENARIO_REJECTED"
-  | "RECORDING_START_RECORDER_NOT_CREATED"
-  | "RECORDING_START_PROVIDER_EVENT_TIMEOUT"
+  | "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED"
   | "RECORDING_START_APP_STATE_TIMEOUT"
   | "RECORDING_START_BOTH_JOINS_REQUIRED"
   | "RECORDING_START_FAILED";
 
 export type RecordingStartEvidence = {
+  operationId: string | null;
+  operationIdFingerprint: string | null;
   recordingStartRequestedAt: string | null;
   recordingStartResponseAt: string | null;
   recordingStartHttpStatus: number | null;
   recordingStartApplicationCode: string | null;
   recordingStartAuthorized: boolean;
   recordingRelayCreatedAt: string | null;
-  recordingRelayClaimedAt: string | null;
+  recordingBrowserCommandClaimedAt: string | null;
+  recordingBrowserCommandReceivedAt: string | null;
+  recordingBrowserContextRole: string | null;
+  recordingBrowserContextId: string | null;
+  recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallId: string | null;
+  recordingBrowserCallState: string | null;
+  recordingBrowserSendMessageInvokedAt: string | null;
+  recordingBrowserSendMessageCompletedAt: string | null;
+  recordingBrowserSendMessageErrorCode: string | null;
+  /**
+   * @deprecated Use recordingBrowserSendMessageCompletedAt.
+   * Retained for backward compatibility with legacy tooling.
+   */
   recordingBrowserCommandSentAt: string | null;
+  recordingProviderCommandReceivedAt: string | null;
   recorderCreatedAt: string | null;
   recordingProviderStartedAt: string | null;
   recordingAppActiveAt: string | null;
+  relayOwnerRole: string | null;
+  relayOwnerParticipantId: string | null;
+  relayOwnerConnectionId: string | null;
+  relayClaimedAt: string | null;
+  relayConsumedAt: string | null;
   recordingStartFailureReason: RecordingStartFailureCode | string | null;
   conferenceName: string | null;
   scenarioMessageAction: string | null;
   scenarioMessageType: string | null;
+  /**
+   * @deprecated Use operationIdFingerprint.
+   * requestId is the operationId for recording start.
+   */
   requestIdFingerprint: string | null;
 };
 
@@ -49,17 +79,34 @@ export function emptyRecordingStartEvidence(
   conferenceName: string | null = null,
 ): RecordingStartEvidence {
   return {
+    operationId: null,
+    operationIdFingerprint: null,
     recordingStartRequestedAt: null,
     recordingStartResponseAt: null,
     recordingStartHttpStatus: null,
     recordingStartApplicationCode: null,
     recordingStartAuthorized: false,
     recordingRelayCreatedAt: null,
-    recordingRelayClaimedAt: null,
+    recordingBrowserCommandClaimedAt: null,
+    recordingBrowserCommandReceivedAt: null,
+    recordingBrowserContextRole: null,
+    recordingBrowserContextId: null,
+    recordingBrowserCallReferenceFound: false,
+    recordingBrowserCallId: null,
+    recordingBrowserCallState: null,
+    recordingBrowserSendMessageInvokedAt: null,
+    recordingBrowserSendMessageCompletedAt: null,
+    recordingBrowserSendMessageErrorCode: null,
     recordingBrowserCommandSentAt: null,
+    recordingProviderCommandReceivedAt: null,
     recorderCreatedAt: null,
     recordingProviderStartedAt: null,
     recordingAppActiveAt: null,
+    relayOwnerRole: null,
+    relayOwnerParticipantId: null,
+    relayOwnerConnectionId: null,
+    relayClaimedAt: null,
+    relayConsumedAt: null,
     recordingStartFailureReason: null,
     conferenceName,
     scenarioMessageAction: null,
@@ -101,14 +148,28 @@ export function classifyRecordingStartFailure(params: {
   errorText?: string | null;
   authorized?: boolean;
   scenarioMessagePresent?: boolean;
-  relayClaimed?: boolean;
-  browserCommandSent?: boolean;
+  browserCommandClaimed?: boolean;
+  browserContextMatch?: boolean;
+  browserCallFound?: boolean;
+  browserCallConnected?: boolean;
+  browserSendInvoked?: boolean;
+  browserSendCompleted?: boolean;
+  browserSendErrorCode?: string | null;
+  providerMessageReceived?: boolean;
   providerStarted?: boolean;
   appActive?: boolean;
   bothJoined?: boolean;
+  operationIdPresent?: boolean;
+  operationIdMatched?: boolean;
 }): RecordingStartFailureCode {
   if (params.bothJoined === false) {
     return "RECORDING_START_BOTH_JOINS_REQUIRED";
+  }
+  if (params.operationIdPresent === false) {
+    return "RECORDING_START_OPERATION_ID_MISSING";
+  }
+  if (params.operationIdMatched === false) {
+    return "RECORDING_START_OPERATION_MISMATCH";
   }
   if (!params.requestSent) {
     return "RECORDING_START_REQUEST_NOT_SENT";
@@ -137,14 +198,32 @@ export function classifyRecordingStartFailure(params: {
   if (!params.scenarioMessagePresent) {
     return "RECORDING_START_RELAY_NOT_CREATED";
   }
-  if (params.relayClaimed === false) {
-    return "RECORDING_START_RELAY_NOT_CLAIMED";
+  if (params.browserCommandClaimed === false) {
+    return "RECORDING_START_BROWSER_COMMAND_NOT_CLAIMED";
   }
-  if (params.browserCommandSent === false) {
-    return "RECORDING_START_BROWSER_COMMAND_NOT_SENT";
+  if (params.browserContextMatch === false) {
+    return "RECORDING_START_BROWSER_CONTEXT_MISMATCH";
+  }
+  if (params.browserCallFound === false) {
+    return "RECORDING_START_BROWSER_CALL_NOT_FOUND";
+  }
+  if (params.browserCallConnected === false) {
+    return "RECORDING_START_BROWSER_CALL_NOT_CONNECTED";
+  }
+  if (params.browserSendInvoked === false) {
+    return "RECORDING_START_BROWSER_SEND_NOT_INVOKED";
+  }
+  if (
+    params.browserSendCompleted === false ||
+    (params.browserSendErrorCode != null && params.browserSendErrorCode !== "")
+  ) {
+    return "RECORDING_START_BROWSER_SEND_FAILED";
+  }
+  if (params.providerMessageReceived === false) {
+    return "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED";
   }
   if (params.providerStarted === false) {
-    return "RECORDING_START_PROVIDER_EVENT_TIMEOUT";
+    return "RECORDING_START_PROVIDER_MESSAGE_NOT_RECEIVED";
   }
   if (params.appActive === false) {
     return "RECORDING_START_APP_STATE_TIMEOUT";
@@ -184,6 +263,8 @@ export async function requestRecordingStartViaHttp(params: {
   facilitatorJoinToken: string;
   connectionId?: string | null;
   conferenceName?: string | null;
+  operationId?: string | null;
+  requireOperationId?: boolean;
   fetchImpl?: typeof fetch;
 }): Promise<RecordingStartHttpResult> {
   const evidence = emptyRecordingStartEvidence(params.conferenceName ?? null);
@@ -203,6 +284,9 @@ export async function requestRecordingStartViaHttp(params: {
         action: "start",
         recordingConsentConfirmed: true,
         joinToken: params.facilitatorJoinToken,
+        ...(params.operationId?.trim()
+          ? { operationId: params.operationId.trim() }
+          : {}),
         ...(params.connectionId
           ? { connectionId: params.connectionId }
           : {}),
@@ -236,6 +320,20 @@ export async function requestRecordingStartViaHttp(params: {
   evidence.recordingStartApplicationCode = json?.code ?? null;
   const scenarioMessage = json?.scenarioMessage ?? null;
   const recordingStatus = json?.recording?.status ?? null;
+  const expectedOperationId = params.operationId?.trim() || null;
+
+  if (params.requireOperationId && !expectedOperationId) {
+    evidence.recordingStartFailureReason = "RECORDING_START_OPERATION_ID_MISSING";
+    return {
+      ok: false,
+      failureCode: "RECORDING_START_OPERATION_ID_MISSING",
+      evidence,
+      scenarioMessage,
+      recordingStatus,
+      httpStatus: response.status,
+      applicationCode: json?.code ?? null,
+    };
+  }
 
   if (response.status === 403) {
     evidence.recordingStartAuthorized = false;
@@ -302,7 +400,34 @@ export async function requestRecordingStartViaHttp(params: {
   evidence.recordingRelayCreatedAt = evidence.recordingStartResponseAt;
   evidence.scenarioMessageAction = scenarioMessage.action;
   evidence.scenarioMessageType = scenarioMessage.type;
-  evidence.requestIdFingerprint = fingerprintRequestId(scenarioMessage.requestId);
+  evidence.operationId = scenarioMessage.requestId?.trim() || null;
+  evidence.operationIdFingerprint = fingerprintRequestId(evidence.operationId);
+  evidence.requestIdFingerprint = evidence.operationIdFingerprint;
+
+  if (!evidence.operationId) {
+    evidence.recordingStartFailureReason = "RECORDING_START_OPERATION_ID_MISSING";
+    return {
+      ok: false,
+      failureCode: "RECORDING_START_OPERATION_ID_MISSING",
+      evidence,
+      scenarioMessage,
+      recordingStatus,
+      httpStatus: response.status,
+      applicationCode: json?.code ?? null,
+    };
+  }
+  if (expectedOperationId && evidence.operationId !== expectedOperationId) {
+    evidence.recordingStartFailureReason = "RECORDING_START_OPERATION_MISMATCH";
+    return {
+      ok: false,
+      failureCode: "RECORDING_START_OPERATION_MISMATCH",
+      evidence,
+      scenarioMessage,
+      recordingStatus,
+      httpStatus: response.status,
+      applicationCode: json?.code ?? null,
+    };
+  }
 
   const commandValid = isValidBrowserStartCommand(scenarioMessage, {
     sessionId: params.sessionId,

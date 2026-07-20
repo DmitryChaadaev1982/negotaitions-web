@@ -148,8 +148,20 @@ export type PocOrchestratorReport = {
   participantAccessRequestedAt: string | null;
   facilitatorCallConnectedAt: string | null;
   participantCallConnectedAt: string | null;
+  browserReleaseToFirstAccessMs: number | null;
+  browserReleaseToFirstJoinMs: number | null;
+  browserReleaseToBothJoinedMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToFirstAccessMs.
+   */
   startConferenceToFirstAccessMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToFirstJoinMs.
+   */
   startConferenceToFirstJoinMs: number | null;
+  /**
+   * @deprecated Use browserReleaseToBothJoinedMs.
+   */
   startConferenceToBothJoinedMs: number | null;
   facilitatorBrowserStage: string | null;
   participantBrowserStage: string | null;
@@ -245,6 +257,11 @@ export function formatLastReportSummary(report: Record<string, unknown>): {
       participantBrowserStage: report.participantBrowserStage ?? null,
       facilitatorFirstFailedStage: report.facilitatorFirstFailedStage ?? null,
       participantFirstFailedStage: report.participantFirstFailedStage ?? null,
+      browserReleaseToFirstAccessMs:
+        report.browserReleaseToFirstAccessMs ?? null,
+      browserReleaseToFirstJoinMs: report.browserReleaseToFirstJoinMs ?? null,
+      browserReleaseToBothJoinedMs:
+        report.browserReleaseToBothJoinedMs ?? null,
       startConferenceToFirstAccessMs:
         report.startConferenceToFirstAccessMs ?? null,
       startConferenceToBothJoinedMs:

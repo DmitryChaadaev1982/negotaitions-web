@@ -226,6 +226,9 @@ function baseDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
               participantAccessRequestedAt: new Date().toISOString(),
               facilitatorCallConnectedAt: new Date().toISOString(),
               participantCallConnectedAt: new Date().toISOString(),
+              browserReleaseToFirstAccessMs: 50,
+              browserReleaseToFirstJoinMs: 100,
+              browserReleaseToBothJoinedMs: 120,
               startConferenceToFirstAccessMs: 50,
               startConferenceToFirstJoinMs: 100,
               startConferenceToBothJoinedMs: 120,
@@ -697,6 +700,9 @@ test("3. live join occurs only after both auth contexts are ready (no StartConfe
                 participantAccessRequestedAt: null,
                 facilitatorCallConnectedAt: null,
                 participantCallConnectedAt: null,
+                browserReleaseToFirstAccessMs: null,
+                browserReleaseToFirstJoinMs: null,
+                browserReleaseToBothJoinedMs: null,
                 startConferenceToFirstAccessMs: null,
                 startConferenceToFirstJoinMs: null,
                 startConferenceToBothJoinedMs: null,
@@ -749,12 +755,15 @@ test("4/5. live join released once with exact POC conference (no StartConference
   }
 });
 
-test("15. startConferenceToFirstAccessMs is persisted", async () => {
+test("15. browserReleaseTo* timing fields are persisted", async () => {
   const previousDb = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
   try {
     const report = await runPocOrchestrator(baseOptions(), baseDeps());
-    assert.equal(typeof report.startConferenceToFirstAccessMs, "number");
+    assert.equal(typeof report.browserReleaseToFirstAccessMs, "number");
+    assert.equal(typeof report.browserReleaseToFirstJoinMs, "number");
+    assert.equal(typeof report.browserReleaseToBothJoinedMs, "number");
+    assert.ok((report.browserReleaseToFirstAccessMs as number) >= 0);
     assert.ok((report.startConferenceToFirstAccessMs as number) >= 0);
   } finally {
     if (previousDb === undefined) delete process.env.DATABASE_URL;
@@ -808,6 +817,9 @@ test("18. recording start not attempted unless both browsers joined", async () =
               participantAccessRequestedAt: null,
               facilitatorCallConnectedAt: null,
               participantCallConnectedAt: null,
+              browserReleaseToFirstAccessMs: null,
+              browserReleaseToFirstJoinMs: null,
+              browserReleaseToBothJoinedMs: null,
               startConferenceToFirstAccessMs: null,
               startConferenceToFirstJoinMs: null,
               startConferenceToBothJoinedMs: null,
