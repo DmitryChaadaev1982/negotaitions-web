@@ -34,6 +34,7 @@ import {
   writeTextArtifact,
 } from "@/lib/voximplant/poc/poc-run-store";
 import { POC_CONFERENCE_NAME_PREFIX, PocSafetyError } from "@/lib/voximplant/poc/poc-safety";
+import { writePrewarmFixture } from "@/lib/voximplant/poc/orchestrator/prewarm-fixture";
 import {
   applyStartConferenceToState,
   createEmptyPocState,
@@ -522,6 +523,27 @@ export async function runPocOrchestrator(
       });
       cleanupManifest = sessionFixture.cleanupManifest;
       writeJsonArtifact(paths.cleanupManifestPath, cleanupManifest);
+      writePrewarmFixture(
+        {
+          runId,
+          sessionId: sessionFixture.sessionId,
+          facilitatorUserId: sessionFixture.facilitatorUserId,
+          facilitatorEmail: sessionFixture.facilitatorEmail,
+          facilitatorPassword: sessionFixture.facilitatorPassword,
+          facilitatorAuthCookie: sessionFixture.facilitatorAuthCookie,
+          participantUserId: sessionFixture.participantUserId,
+          participantEmail: sessionFixture.participantEmail,
+          participantPassword: sessionFixture.participantPassword,
+          participantAuthCookie: sessionFixture.participantAuthCookie,
+          facilitatorJoinToken: sessionFixture.facilitatorJoinToken,
+          participantJoinToken: sessionFixture.participantJoinToken,
+          facilitatorRoomUrl: sessionFixture.facilitatorRoomUrl,
+          participantRoomUrl: sessionFixture.participantRoomUrl,
+          participantAccountRoomUrl: sessionFixture.participantAccountRoomUrl,
+          createdAt: new Date().toISOString(),
+        },
+        options.stateRoot,
+      );
       reportDraft.sessionId = sessionFixture.sessionId;
       reportDraft.localDatabaseTargetSanitized =
         sessionFixture.localDatabaseTargetSanitized;
@@ -583,6 +605,13 @@ export async function runPocOrchestrator(
         facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
         participantRoomUrl: sessionFixture!.participantRoomUrl,
         facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
+        facilitatorUserId: sessionFixture!.facilitatorUserId,
+        facilitatorEmail: sessionFixture!.facilitatorEmail,
+        facilitatorPassword: sessionFixture!.facilitatorPassword,
+        facilitatorAuthStrategy: "CANONICAL_COOKIE",
+        participantAuthCookie: sessionFixture!.participantAuthCookie,
+        participantUserId: sessionFixture!.participantUserId,
+        participantEmail: sessionFixture!.participantEmail,
         timeoutMs: timeouts.browserPrewarmMs,
         keepBrowser: options.keepBrowser,
         runId,

@@ -97,7 +97,7 @@ test("participant uses join-token flow without facilitator auth cookie", () => {
     participantRoomUrl:
       "http://localhost:3000/room/session-1?joinToken=participant-secret",
   });
-  assert.equal(setup.authStrategy, "JOIN_TOKEN_URL");
+  assert.equal(setup.authStrategy, "JOIN_TOKEN");
   assert.equal(setup.cookieInstalled, false);
   assert.equal(setup.pagePath, "/room/session-1");
   assert.throws(

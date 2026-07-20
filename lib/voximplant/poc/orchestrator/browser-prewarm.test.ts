@@ -37,14 +37,35 @@ function sessionFixture(runId: string): CreateVoxServerStopPocSessionResult {
     namespace: `poc-vox-server-stop-${runId}`,
     sessionId: `session-${runId}`,
     caseId: `case-${runId}`,
+    facilitatorAuth: {
+      userId: `user-${runId}`,
+      email: `f-${runId}@test.negotaitions.local`,
+      password: "x",
+      authCookie: "auth_session=token",
+      userSessionId: `usess-f-${runId}`,
+      role: "FACILITATOR",
+    },
+    participantAuth: {
+      userId: `puser-${runId}`,
+      email: `p-${runId}@test.negotaitions.local`,
+      password: "x",
+      authCookie: "auth_session=participant-token",
+      userSessionId: `usess-p-${runId}`,
+      role: "PARTICIPANT",
+    },
     facilitatorUserId: `user-${runId}`,
     facilitatorEmail: `f-${runId}@test.negotaitions.local`,
     facilitatorPassword: "x",
     facilitatorAuthCookie: "auth_session=token",
+    participantUserId: `puser-${runId}`,
+    participantEmail: `p-${runId}@test.negotaitions.local`,
+    participantPassword: "x",
+    participantAuthCookie: "auth_session=participant-token",
     facilitatorJoinToken: `fac-${runId}`,
     participantJoinToken: `part-${runId}`,
     facilitatorRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=fac`,
     participantRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=part`,
+    participantAccountRoomUrl: `http://localhost:3000/room/session-${runId}`,
     roomUrl: `http://localhost:3000/room/session-${runId}?joinToken=fac`,
     localDatabaseTargetSanitized: "postgres://localhost:5432/negotiations",
     cleanupManifest: {
@@ -52,7 +73,11 @@ function sessionFixture(runId: string): CreateVoxServerStopPocSessionResult {
       namespace: `poc-vox-server-stop-${runId}`,
       createdAt: new Date().toISOString(),
       databaseTargetSanitized: "postgres://localhost:5432/negotiations",
-      entities: [{ kind: "Session", id: `session-${runId}` }],
+      entities: [
+        { kind: "UserSession", id: `usess-f-${runId}` },
+        { kind: "UserSession", id: `usess-p-${runId}` },
+        { kind: "Session", id: `session-${runId}` },
+      ],
     },
   };
 }
@@ -360,6 +385,157 @@ test("2b. AUTH_COOKIE_INSTALL_FAILED blocks StartConference", async () => {
   }
 });
 
+test("11. successful prewarm reaches AUTH_ACCEPTED for facilitator", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  try {
+    let capturedFacStage: string | null = null;
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "full" }),
+      baseDeps({
+        browserPrewarm: async () => {
+          const handle = {
+            ok: true as const,
+            failureCode: null,
+            browserPrewarmStartedAt: new Date().toISOString(),
+            browserPrewarmCompletedAt: new Date().toISOString(),
+            facilitator: {
+              ...emptyBrowserContextEvidence("facilitator", "s"),
+              reachedStage: "AUTH_ACCEPTED" as const,
+              authAccepted: true,
+            },
+            participant: {
+              ...emptyBrowserContextEvidence("participant", "s"),
+              reachedStage: "AUTH_CONTEXT_CREATED" as const,
+            },
+            evidence: {
+              facilitatorAuthStrategy: "CANONICAL_COOKIE",
+              participantAuthStrategy: "JOIN_TOKEN",
+              participantCookieInstalled: false,
+              phase: "FACILITATOR_AUTH_ACCEPTED",
+            },
+            liveJoin: async () => {
+              throw new Error("live join should not run in this test");
+            },
+            close: async () => {},
+          };
+          capturedFacStage = handle.facilitator.reachedStage;
+          return handle;
+        },
+        startConference: async () => {
+          return {
+            dryRun: false,
+            missingPocRule: false,
+            request: { conference_name: "x", rule_id: "9175667" },
+            parsed: null,
+            publicResult: null,
+          };
+        },
+      }),
+    );
+    assert.equal(capturedFacStage, "AUTH_ACCEPTED");
+    assert.equal(report.facilitatorBrowserStage, "AUTH_ACCEPTED");
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
+});
+
+test("12. successful participant preparation reaches AUTH_CONTEXT_CREATED", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  try {
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "full" }),
+      baseDeps({
+        browserPrewarm: async () => ({
+          ok: true,
+          failureCode: null,
+          browserPrewarmStartedAt: new Date().toISOString(),
+          browserPrewarmCompletedAt: new Date().toISOString(),
+          facilitator: {
+            ...emptyBrowserContextEvidence("facilitator", "s"),
+            reachedStage: "AUTH_ACCEPTED",
+            authAccepted: true,
+          },
+          participant: {
+            ...emptyBrowserContextEvidence("participant", "s"),
+            reachedStage: "AUTH_CONTEXT_CREATED",
+            failureCode: null,
+          },
+          evidence: {
+            participantPreparation: "PARTICIPANT_CONTEXT_READY",
+            participantInheritedFacilitatorAuth: false,
+            participantAuthStrategy: "JOIN_TOKEN",
+          },
+          liveJoin: async () => {
+            throw new Error("no live");
+          },
+          close: async () => {},
+        }),
+        startConference: async () => ({
+          dryRun: false,
+          missingPocRule: false,
+          request: { conference_name: "x", rule_id: "9175667" },
+          parsed: null,
+          publicResult: null,
+        }),
+      }),
+    );
+    assert.equal(report.participantBrowserStage, "AUTH_CONTEXT_CREATED");
+    assert.equal(report.participantFirstFailedStage, null);
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
+});
+
+test("14. StartConference remains blocked unless prewarm passes", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  try {
+    let startCalls = 0;
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "full" }),
+      baseDeps({
+        browserPrewarm: async () => ({
+          ok: false,
+          failureCode: "AUTH_REDIRECTED_TO_LOGIN",
+          browserPrewarmStartedAt: new Date().toISOString(),
+          browserPrewarmCompletedAt: new Date().toISOString(),
+          facilitator: {
+            ...emptyBrowserContextEvidence("facilitator", "s"),
+            reachedStage: "AUTH_CONTEXT_CREATED",
+            firstFailedStage: "AUTH_ACCEPTED",
+            failureCode: "AUTH_REDIRECTED_TO_LOGIN",
+          },
+          participant: {
+            ...emptyBrowserContextEvidence("participant", "s"),
+            reachedStage: "AUTH_CONTEXT_CREATED",
+            failureCode: null,
+          },
+          evidence: { authNestedFailureCode: "AUTH_REDIRECTED_TO_LOGIN" },
+          liveJoin: async () => {
+            throw new Error("should not live join");
+          },
+          close: async () => {},
+        }),
+        startConference: async () => {
+          startCalls += 1;
+          throw new Error("should not start");
+        },
+      }),
+    );
+    assert.equal(startCalls, 0);
+    assert.equal(report.providerCalls, false);
+    assert.equal(report.failureCode, "AUTH_REDIRECTED_TO_LOGIN");
+    assert.equal(report.participantFirstFailedStage, null);
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
+});
+
 test("2c. successful prewarm reaches AUTH_CONTEXT_CREATED for both contexts", async () => {
   const previousDb = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
@@ -392,8 +568,8 @@ test("2c. successful prewarm reaches AUTH_CONTEXT_CREATED for both contexts", as
             evidence: {
               cookieBindingMode: "URL_BOUND",
               participantCookieInstalled: false,
-              facilitatorAuthStrategy: "AUTH_SESSION_COOKIE",
-              participantAuthStrategy: "JOIN_TOKEN_URL",
+              facilitatorAuthStrategy: "CANONICAL_COOKIE",
+              participantAuthStrategy: "JOIN_TOKEN",
             },
             liveJoin: async () => {
               throw new Error("live join should not run in this test");

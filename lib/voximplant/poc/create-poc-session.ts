@@ -1,13 +1,25 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import { hash } from "bcryptjs";
 import { Pool, type PoolClient } from "pg";
 
 import {
+  generateSessionToken,
+  hashSessionToken,
+} from "@/lib/auth/crypto";
+import {
   assertLocalDbWriteConfirmation,
   assertSafeLocalDatabaseTarget,
   type SanitizedDatabaseTarget,
 } from "@/lib/voximplant/poc/local-db-safety";
+
+/** Shared POC fixture password (facilitator + participant; not production). */
+export const POC_FACILITATOR_PASSWORD = "poc-vox-pass-1234";
+export const POC_PARTICIPANT_PASSWORD = POC_FACILITATOR_PASSWORD;
+
+export function namespaceForRunId(runId: string): string {
+  return `poc-vox-server-stop-${runId}`;
+}
 
 export type PocCleanupEntityKind =
   | "UserSession"
@@ -31,27 +43,45 @@ export type PocCleanupManifest = {
   entities: PocCleanupManifestEntry[];
 };
 
+/** Canonical role auth for POC browsers — cookie value must never be logged. */
+export type PocRoleAuthContext = {
+  userId: string;
+  email: string;
+  password: string;
+  /** Full header form: auth_session=<rawToken> (raw token, not UserSession.id). */
+  authCookie: string;
+  userSessionId: string;
+  role: "FACILITATOR" | "PARTICIPANT";
+};
+
 export type CreateVoxServerStopPocSessionResult = {
   runId: string;
   namespace: string;
   sessionId: string;
   caseId: string;
+  /** Facilitator identity + own UserSession cookie (never shared with participant). */
+  facilitatorAuth: PocRoleAuthContext;
+  /** Participant identity + own UserSession cookie (never facilitator privileges). */
+  participantAuth: PocRoleAuthContext;
   facilitatorUserId: string;
   facilitatorEmail: string;
   facilitatorPassword: string;
   facilitatorAuthCookie: string;
+  participantUserId: string;
+  participantEmail: string;
+  participantPassword: string;
+  /** Participant's own auth_session — never the facilitator cookie. */
+  participantAuthCookie: string;
   facilitatorJoinToken: string;
   participantJoinToken: string;
   facilitatorRoomUrl: string;
   participantRoomUrl: string;
+  /** Durable account-mode room URL after join-token claim (no joinToken query). */
+  participantAccountRoomUrl: string;
   roomUrl: string;
   cleanupManifest: PocCleanupManifest;
   localDatabaseTargetSanitized: string;
 };
-
-function namespaceForRun(runId: string): string {
-  return `poc-vox-server-stop-${runId}`;
-}
 
 function pocId(prefix: string, runId: string): string {
   const suffix = randomBytes(4).toString("hex");
@@ -84,7 +114,7 @@ export async function createVoxServerStopPocSession(params: {
   const target: SanitizedDatabaseTarget =
     assertSafeLocalDatabaseTarget(databaseUrl);
 
-  const namespace = namespaceForRun(params.runId);
+  const namespace = namespaceForRunId(params.runId);
   const baseUrl = (params.appBaseUrl ?? "http://localhost:3000").replace(
     /\/$/,
     "",
@@ -102,10 +132,14 @@ export async function createVoxServerStopPocSession(params: {
   try {
     await client.query("BEGIN");
 
-    const facilitatorPassword = "poc-vox-pass-1234";
-    const passwordHash = await hash(facilitatorPassword, 10);
+    const facilitatorPassword = POC_FACILITATOR_PASSWORD;
+    const participantPassword = POC_PARTICIPANT_PASSWORD;
+    const facilitatorPasswordHash = await hash(facilitatorPassword, 10);
+    const participantPasswordHash = await hash(participantPassword, 10);
     const facilitatorUserId = pocId("user", params.runId);
+    const participantUserId = pocId("user", params.runId);
     const facilitatorEmail = `${namespace}.facilitator@test.negotaitions.local`;
+    const participantEmail = `${namespace}.participant@test.negotaitions.local`;
 
     await query(
       client,
@@ -116,11 +150,26 @@ export async function createVoxServerStopPocSession(params: {
       [
         facilitatorUserId,
         facilitatorEmail,
-        passwordHash,
+        facilitatorPasswordHash,
         `${namespace} Facilitator`,
       ],
     );
     track("User", facilitatorUserId);
+
+    await query(
+      client,
+      `INSERT INTO "User"
+         ("id", "email", "passwordHash", "name", "role", "globalRole", "status",
+          "preferredLocale", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'PARTICIPANT', 'USER', 'ACTIVE', 'en', NOW())`,
+      [
+        participantUserId,
+        participantEmail,
+        participantPasswordHash,
+        `${namespace} Participant`,
+      ],
+    );
+    track("User", participantUserId);
 
     const caseId = pocId("case", params.runId);
     await query(
@@ -220,17 +269,22 @@ export async function createVoxServerStopPocSession(params: {
     );
     track("SessionParticipant", facilitatorParticipantId);
 
+    // Guest access is closed: joinToken is invite-claim only. Pre-bind the
+    // participant User (same pattern as E2E voximplant room fixtures) so the
+    // browser can authenticate with its own auth_session and enter via the
+    // canonical join-token URL without a guest identity.
     const participantJoinToken = `${namespace}-part-${randomBytes(4).toString("hex")}`;
     const participantId = pocId("sp", params.runId);
     await query(
       client,
       `INSERT INTO "SessionParticipant"
-         ("id", "sessionId", "sessionRoleId", "type", "joinToken",
+         ("id", "sessionId", "userId", "sessionRoleId", "type", "joinToken",
           "displayName", "notes", "updatedAt")
-       VALUES ($1, $2, $3, 'PARTICIPANT', $4, $5, $6, NOW())`,
+       VALUES ($1, $2, $3, $4, 'PARTICIPANT', $5, $6, $7, NOW())`,
       [
         participantId,
         sessionId,
+        participantUserId,
         sessionRoleId,
         participantJoinToken,
         `${namespace} Participant`,
@@ -239,17 +293,31 @@ export async function createVoxServerStopPocSession(params: {
     );
     track("SessionParticipant", participantId);
 
-    const rawAuthToken = randomBytes(32).toString("hex");
-    const tokenHash = createHash("sha256").update(rawAuthToken).digest("hex");
-    const userSessionId = pocId("usess", params.runId);
+    // Canonical auth_session value: raw unhashed session token (same as E2E /
+    // lib/auth createUserSession). Never put UserSession.id or User.id here.
+    const facilitatorRawAuthToken = generateSessionToken();
+    const facilitatorTokenHash = hashSessionToken(facilitatorRawAuthToken);
+    const facilitatorUserSessionId = pocId("usess", params.runId);
     await query(
       client,
       `INSERT INTO "UserSession"
          ("id", "userId", "sessionTokenHash", "expiresAt", "createdAt")
        VALUES ($1, $2, $3, NOW() + INTERVAL '1 day', NOW())`,
-      [userSessionId, facilitatorUserId, tokenHash],
+      [facilitatorUserSessionId, facilitatorUserId, facilitatorTokenHash],
     );
-    track("UserSession", userSessionId);
+    track("UserSession", facilitatorUserSessionId);
+
+    const participantRawAuthToken = generateSessionToken();
+    const participantTokenHash = hashSessionToken(participantRawAuthToken);
+    const participantUserSessionId = pocId("usess", params.runId);
+    await query(
+      client,
+      `INSERT INTO "UserSession"
+         ("id", "userId", "sessionTokenHash", "expiresAt", "createdAt")
+       VALUES ($1, $2, $3, NOW() + INTERVAL '1 day', NOW())`,
+      [participantUserSessionId, participantUserId, participantTokenHash],
+    );
+    track("UserSession", participantUserSessionId);
 
     await client.query("COMMIT");
 
@@ -263,20 +331,47 @@ export async function createVoxServerStopPocSession(params: {
 
     const facilitatorRoomUrl = `${baseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(facilitatorJoinToken)}`;
     const participantRoomUrl = `${baseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(participantJoinToken)}`;
+    const participantAccountRoomUrl = `${baseUrl}/room/${sessionId}`;
+
+    const facilitatorAuthCookie = `auth_session=${facilitatorRawAuthToken}`;
+    const participantAuthCookie = `auth_session=${participantRawAuthToken}`;
+    const facilitatorAuth: PocRoleAuthContext = {
+      userId: facilitatorUserId,
+      email: facilitatorEmail,
+      password: facilitatorPassword,
+      authCookie: facilitatorAuthCookie,
+      userSessionId: facilitatorUserSessionId,
+      role: "FACILITATOR",
+    };
+    const participantAuth: PocRoleAuthContext = {
+      userId: participantUserId,
+      email: participantEmail,
+      password: participantPassword,
+      authCookie: participantAuthCookie,
+      userSessionId: participantUserSessionId,
+      role: "PARTICIPANT",
+    };
 
     return {
       runId: params.runId,
       namespace,
       sessionId,
       caseId,
+      facilitatorAuth,
+      participantAuth,
       facilitatorUserId,
       facilitatorEmail,
       facilitatorPassword,
-      facilitatorAuthCookie: `auth_session=${rawAuthToken}`,
+      facilitatorAuthCookie,
+      participantUserId,
+      participantEmail,
+      participantPassword,
+      participantAuthCookie,
       facilitatorJoinToken,
       participantJoinToken,
       facilitatorRoomUrl,
       participantRoomUrl,
+      participantAccountRoomUrl,
       roomUrl: facilitatorRoomUrl,
       cleanupManifest,
       localDatabaseTargetSanitized: target.sanitizedUrl,

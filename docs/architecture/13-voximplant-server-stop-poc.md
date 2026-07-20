@@ -89,15 +89,21 @@ Full mode uses two browser phases so launch/auth do not consume the idle window:
 
 Prewarm auth is role-split:
 
-- **Facilitator**: install `auth_session` with a Playwright **URL-bound** cookie (`url` + `httpOnly`/`sameSite`/`secure` from `appBaseUrl` protocol). Never pass `url` together with `domain`/`path`.
-- **Participant**: join-token room URL only — do not install the facilitator `auth_session` cookie.
+- **Facilitator**: install canonical `auth_session=<rawSessionToken>` (same contract as `lib/auth` / E2E `createUserSession`) via a Playwright **URL-bound** cookie (`url` + `httpOnly`/`sameSite`/`secure` from `appBaseUrl` protocol). Never pass `url` together with `domain`/`path`. Never put `User.id` / `UserSession.id` into the cookie.
+- **Facilitator verification** (required before `AUTH_ACCEPTED` / StartConference): GET protected `/sessions/{sessionId}` — must not redirect to `/login`, host must remain `appBaseUrl`, temporary Session must be accessible. Nested typed reasons: `AUTH_COOKIE_MISSING`, `AUTH_COOKIE_REJECTED`, `AUTH_SESSION_NOT_FOUND`, `AUTH_USER_MISMATCH`, `AUTH_REDIRECTED_TO_LOGIN`, `AUTH_PROTECTED_ROUTE_DENIED`, `AUTH_VERIFICATION_HTTP_ERROR` (outer `FACILITATOR_AUTH_FAILED` when unclassified).
+- **Participant** (guest access closed): own `auth_session` / `UserSession` (never the facilitator cookie) + one navigation through the canonical join-token invite URL (`/room/{sessionId}?joinToken=…`). Join token is invite-claim only — not a guest identity and not exchanged into a cookie. The temporary fixture creates a distinct participant `User` + `UserSession` and returns `facilitatorAuth` / `participantAuth` separately. Live join resumes the durable account-mode context (does not re-hit joinToken). Access is account-cookie only (`apiRequireActiveUser` + `ensureAccountRoomParticipant`).
+- **Prewarm-only replay**: `npm run poc:vox:test-browser-prewarm -- --run-id <runId>` and `npm run poc:vox:test-participant-access -- --run-id <runId>` (provider-free access/POC_STATE check with temporary run pointer restore). Legacy runs lacking `participantAuthCookie` return `LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE` (no DB repair).
+- **Isolated local fixture mode**: `npm run poc:vox:test-participant-access -- --create-fixture --confirm-local-db-write` creates a temporary namespaced fixture, validates participant auth + POC_STATE access (no provider calls), then deletes only cleanup-manifest entities.
 
 Typed prewarm auth failures (not collapsed to `BROWSER_LAUNCHED`):
 
 - `AUTH_COOKIE_INSTALL_FAILED` — facilitator cookie install
 - `PARTICIPANT_CONTEXT_SETUP_FAILED` — participant join-token context setup
+- `PARTICIPANT_AUTH_ARTIFACT_MISSING` / `PARTICIPANT_AUTH_COOKIE_REJECTED` / `PARTICIPANT_AUTH_USER_MISMATCH` / `PARTICIPANT_AUTH_SESSION_NOT_FOUND` / `PARTICIPANT_REDIRECTED_TO_LOGIN` / `PARTICIPANT_SESSION_ACCESS_DENIED` — participant auth verification
+- `LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE` — retained run missing participant UserSession cookie artifact
+- nested `AUTH_*` codes above when facilitator verification fails
 
-Sanitized diagnostics may include role, failing operation, error name, redacted bounded message, `cookieBindingMode` (`URL_BOUND` | `DOMAIN_BOUND`), `appBaseUrl` host, and `secure` — never cookie values, join tokens, or full tokenized URLs.
+Sanitized diagnostics may include role, failing operation, error name, redacted bounded message, `cookieBindingMode` (`URL_BOUND` | `DOMAIN_BOUND`), `appBaseUrl` host, `secure`, auth strategy, final path/host, redirect-to-login, user match, session access — never cookie values, join tokens, or full tokenized URLs.
 
 Inspect a run: `npm run poc:vox:inspect-run -- --run-id <runId>` (sanitized phase timeline; no secrets/tokens/control URLs). Browser failures retain artifacts under `.agent/voximplant-server-stop/runs/<runId>/browser/{facilitator,participant}/`.
 

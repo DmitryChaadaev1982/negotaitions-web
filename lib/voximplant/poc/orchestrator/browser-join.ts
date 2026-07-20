@@ -22,6 +22,21 @@ import {
   prepareParticipantJoinContext,
   redactBoundedErrorMessage,
 } from "./browser-auth-cookie";
+import {
+  hasAuthSessionCookieHeader,
+  installFacilitatorAuthViaUiLogin,
+  isRawIdMistakenForAuthSession,
+  verifyFacilitatorAuthInContext,
+  type AuthNestedFailureCode,
+  type AuthStrategy,
+} from "./browser-auth-verify";
+import {
+  buildParticipantAuthCookieInstall,
+  classifyParticipantAccessFailure,
+  classifyParticipantNavigation,
+  extractJoinTokenFromRoomUrl,
+  verifyParticipantAuthInContext,
+} from "./participant-prewarm";
 import { persistBrowserContextArtifacts } from "./browser-artifacts";
 import {
   advanceStage,
@@ -36,6 +51,13 @@ import {
   type BrowserStage,
 } from "./browser-stages";
 
+function nestedToBrowserFailure(
+  nested: AuthNestedFailureCode | null,
+): BrowserFailureCode {
+  if (!nested) return "FACILITATOR_AUTH_FAILED";
+  return nested;
+}
+
 export type BrowserJoinInput = {
   appBaseUrl: string;
   sessionId: string;
@@ -43,6 +65,7 @@ export type BrowserJoinInput = {
   facilitatorRoomUrl: string;
   participantRoomUrl: string;
   facilitatorAuthCookie: string;
+  participantAuthCookie?: string | null;
   timeoutMs: number;
   keepBrowser?: boolean;
   runId?: string;
@@ -86,12 +109,29 @@ export type BrowserPrewarmInput = {
   sessionId: string;
   facilitatorRoomUrl: string;
   participantRoomUrl: string;
-  facilitatorAuthCookie: string;
+  /** Canonical auth_session=<rawToken> cookie header when available. */
+  facilitatorAuthCookie?: string | null;
+  facilitatorUserId: string;
+  facilitatorEmail?: string;
+  facilitatorPassword?: string;
+  /**
+   * Prefer CANONICAL_COOKIE when facilitatorAuthCookie is set.
+   * UI_LOGIN is recovery for prewarm-only runs without a stored cookie.
+   */
+  facilitatorAuthStrategy?: AuthStrategy;
+  /** Participant's own auth_session — never the facilitator cookie. */
+  participantAuthCookie?: string | null;
+  participantUserId?: string;
+  participantEmail?: string;
   timeoutMs: number;
   keepBrowser?: boolean;
   runId: string;
   stateRoot?: string;
   nowMs?: () => number;
+  /** When false, verification reports AUTH_SESSION_NOT_FOUND. */
+  sessionExists?: boolean;
+  /** Prewarm-only: stop before room navigation / access. */
+  prewarmOnly?: boolean;
 };
 
 export type BrowserPrewarmHandle = {
@@ -102,6 +142,8 @@ export type BrowserPrewarmHandle = {
   facilitator: BrowserContextEvidence;
   participant: BrowserContextEvidence;
   evidence: Record<string, unknown>;
+  /** Present after successful auth; never logged by callers. */
+  facilitatorAuthCookieHeader?: string | null;
   liveJoin: (params: {
     expectedConferenceName: string;
     expiresAt: string | null;
@@ -162,6 +204,12 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
   const browserPrewarmStartedAt = new Date(nowMs()).toISOString();
   let facilitator = emptyBrowserContextEvidence("facilitator", input.sessionId);
   let participant = emptyBrowserContextEvidence("participant", input.sessionId);
+  const preferredStrategy: AuthStrategy =
+    input.facilitatorAuthStrategy ??
+    (hasAuthSessionCookieHeader(input.facilitatorAuthCookie)
+      ? "CANONICAL_COOKIE"
+      : "UI_LOGIN");
+
   const evidence: Record<string, unknown> = {
     phase: "prewarm",
     appBaseUrlHost: (() => {
@@ -171,7 +219,7 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
         return "invalid";
       }
     })(),
-    cookieName: parseCookieHeader(input.facilitatorAuthCookie).name,
+    cookieName: "auth_session",
     cookieBindingMode: "URL_BOUND",
     secure: (() => {
       try {
@@ -180,9 +228,15 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
         return false;
       }
     })(),
-    facilitatorAuthStrategy: "AUTH_SESSION_COOKIE",
-    participantAuthStrategy: "JOIN_TOKEN_URL",
+    facilitatorAuthStrategy: preferredStrategy,
+    participantAuthStrategy: "JOIN_TOKEN",
     participantCookieInstalled: false,
+    authNestedFailureCode: null as AuthNestedFailureCode | null,
+    redirectToLogin: false,
+    authenticatedUserMatch: false,
+    sessionAccess: false,
+    finalPagePath: null as string | null,
+    finalHost: null as string | null,
   };
 
   const { chromium } = await import("@playwright/test");
@@ -280,73 +334,6 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       ignoreHTTPSErrors: true,
     });
 
-    // Facilitator: authenticated auth_session via URL-bound cookie only.
-    try {
-      const built = buildUrlBoundAuthCookie({
-        cookieHeader: input.facilitatorAuthCookie,
-        appBaseUrl: input.appBaseUrl,
-      });
-      evidence.cookieBindingMode = built.bindingMode;
-      evidence.appBaseUrlHost = built.appBaseUrlHost;
-      evidence.secure = built.secure;
-      evidence.cookieName = built.cookieName;
-      await facilitatorContext.addCookies([built.cookie]);
-      facilitator = {
-        ...facilitator,
-        reachedStage: advanceStage(
-          facilitator.reachedStage,
-          "AUTH_CONTEXT_CREATED",
-        ),
-      };
-    } catch (error) {
-      const diag = buildAuthFailureDiagnostics({
-        role: "facilitator",
-        failingOperation: "addCookies",
-        error,
-        cookieBindingMode: "URL_BOUND",
-        appBaseUrl: input.appBaseUrl,
-        secure: Boolean(evidence.secure),
-      });
-      Object.assign(evidence, diag);
-      evidence.prewarmError = diag.errorMessage;
-      return failPrewarm(
-        "AUTH_COOKIE_INSTALL_FAILED",
-        "facilitator",
-        "AUTH_CONTEXT_CREATED",
-      );
-    }
-
-    // Participant: join-token URL only — never install facilitator auth_session.
-    try {
-      prepareParticipantJoinContext({
-        participantRoomUrl: input.participantRoomUrl,
-      });
-      evidence.participantCookieInstalled = false;
-      participant = {
-        ...participant,
-        reachedStage: advanceStage(
-          participant.reachedStage,
-          "AUTH_CONTEXT_CREATED",
-        ),
-      };
-    } catch (error) {
-      const diag = buildAuthFailureDiagnostics({
-        role: "participant",
-        failingOperation: "prepareParticipantJoinContext",
-        error,
-        cookieBindingMode: "URL_BOUND",
-        appBaseUrl: input.appBaseUrl,
-        secure: Boolean(evidence.secure),
-      });
-      Object.assign(evidence, diag);
-      evidence.prewarmError = diag.errorMessage;
-      return failPrewarm(
-        "PARTICIPANT_CONTEXT_SETUP_FAILED",
-        "participant",
-        "AUTH_CONTEXT_CREATED",
-      );
-    }
-
     try {
       facilitatorPage = await facilitatorContext.newPage();
       participantPage = await participantContext.newPage();
@@ -357,6 +344,185 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       return failPrewarm(
         "BROWSER_PREWARM_FAILED",
         "both",
+        "BROWSER_LAUNCHED",
+      );
+    }
+
+    // Facilitator auth: canonical cookie first; UI login recovery otherwise.
+    let authStrategy: AuthStrategy = preferredStrategy;
+    if (
+      hasAuthSessionCookieHeader(input.facilitatorAuthCookie) &&
+      preferredStrategy === "CANONICAL_COOKIE"
+    ) {
+      const rawValue = parseCookieHeader(input.facilitatorAuthCookie!).value;
+      if (isRawIdMistakenForAuthSession(rawValue)) {
+        evidence.authNestedFailureCode = "AUTH_COOKIE_REJECTED";
+        evidence.prewarmError =
+          "auth_session value looks like a raw id, not a session token";
+        return failPrewarm(
+          "AUTH_COOKIE_REJECTED",
+          "facilitator",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+      try {
+        const built = buildUrlBoundAuthCookie({
+          cookieHeader: input.facilitatorAuthCookie!,
+          appBaseUrl: input.appBaseUrl,
+        });
+        evidence.cookieBindingMode = built.bindingMode;
+        evidence.appBaseUrlHost = built.appBaseUrlHost;
+        evidence.secure = built.secure;
+        evidence.cookieName = built.cookieName;
+        evidence.facilitatorAuthStrategy = "CANONICAL_COOKIE";
+        authStrategy = "CANONICAL_COOKIE";
+        await facilitatorContext.addCookies([built.cookie]);
+        facilitator = {
+          ...facilitator,
+          reachedStage: advanceStage(
+            facilitator.reachedStage,
+            "AUTH_CONTEXT_CREATED",
+          ),
+        };
+      } catch (error) {
+        const diag = buildAuthFailureDiagnostics({
+          role: "facilitator",
+          failingOperation: "addCookies",
+          error,
+          cookieBindingMode: "URL_BOUND",
+          appBaseUrl: input.appBaseUrl,
+          secure: Boolean(evidence.secure),
+        });
+        Object.assign(evidence, diag);
+        evidence.prewarmError = diag.errorMessage;
+        return failPrewarm(
+          "AUTH_COOKIE_INSTALL_FAILED",
+          "facilitator",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+    } else if (
+      input.facilitatorEmail &&
+      input.facilitatorPassword &&
+      (preferredStrategy === "UI_LOGIN" ||
+        preferredStrategy === "LOGIN_API" ||
+        !hasAuthSessionCookieHeader(input.facilitatorAuthCookie))
+    ) {
+      authStrategy = "UI_LOGIN";
+      evidence.facilitatorAuthStrategy = "UI_LOGIN";
+      const login = await installFacilitatorAuthViaUiLogin({
+        page: facilitatorPage,
+        appBaseUrl: input.appBaseUrl,
+        email: input.facilitatorEmail,
+        password: input.facilitatorPassword,
+        timeoutMs: input.timeoutMs,
+      });
+      if (!login.ok) {
+        evidence.authNestedFailureCode = "AUTH_COOKIE_REJECTED";
+        evidence.prewarmError = login.boundedError;
+        return failPrewarm(
+          "FACILITATOR_AUTH_FAILED",
+          "facilitator",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+      facilitator = {
+        ...facilitator,
+        reachedStage: advanceStage(
+          facilitator.reachedStage,
+          "AUTH_CONTEXT_CREATED",
+        ),
+      };
+    } else {
+      evidence.authNestedFailureCode = "AUTH_COOKIE_MISSING";
+      evidence.prewarmError =
+        "no facilitatorAuthCookie and no UI login credentials";
+      return failPrewarm(
+        "AUTH_COOKIE_MISSING",
+        "facilitator",
+        "AUTH_CONTEXT_CREATED",
+      );
+    }
+
+    // Participant: own auth_session + join-token invite URL (guest access closed).
+    // Never install the facilitator cookie into the participant context.
+    const joinToken = extractJoinTokenFromRoomUrl(input.participantRoomUrl);
+    if (!joinToken) {
+      evidence.prewarmError = "participant room URL missing joinToken";
+      return failPrewarm(
+        "PARTICIPANT_TOKEN_MISSING",
+        "participant",
+        "AUTH_CONTEXT_CREATED",
+      );
+    }
+    try {
+      prepareParticipantJoinContext({
+        participantRoomUrl: input.participantRoomUrl,
+      });
+      evidence.participantAuthStrategy = "JOIN_TOKEN";
+      if (!hasAuthSessionCookieHeader(input.participantAuthCookie)) {
+        evidence.prewarmError =
+          "participantAuthCookie missing (guest joinToken alone redirects to /login)";
+        return failPrewarm(
+          "PARTICIPANT_AUTH_ARTIFACT_MISSING",
+          "participant",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+      if (!input.participantUserId) {
+        evidence.prewarmError = "participantUserId missing from prewarm input";
+        return failPrewarm(
+          "PARTICIPANT_AUTH_ARTIFACT_MISSING",
+          "participant",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+      const partBuilt = buildParticipantAuthCookieInstall({
+        participantAuthCookie: input.participantAuthCookie!,
+        appBaseUrl: input.appBaseUrl,
+      });
+      await participantContext.addCookies([partBuilt.cookie]);
+      evidence.participantCookieInstalled = true;
+      const participantCookies = await participantContext.cookies();
+      const facCookieValue = hasAuthSessionCookieHeader(input.facilitatorAuthCookie)
+        ? parseCookieHeader(input.facilitatorAuthCookie!).value
+        : null;
+      const inherited =
+        Boolean(facCookieValue) &&
+        participantCookies.some(
+          (c) => c.name === "auth_session" && c.value === facCookieValue,
+        );
+      evidence.participantInheritedFacilitatorAuth = inherited;
+      if (inherited) {
+        evidence.prewarmError =
+          "participant context inherited facilitator auth_session";
+        return failPrewarm(
+          "PARTICIPANT_CONTEXT_SETUP_FAILED",
+          "participant",
+          "AUTH_CONTEXT_CREATED",
+        );
+      }
+      participant = {
+        ...participant,
+        reachedStage: advanceStage(
+          participant.reachedStage,
+          "AUTH_CONTEXT_CREATED",
+        ),
+      };
+    } catch (error) {
+      const diag = buildAuthFailureDiagnostics({
+        role: "participant",
+        failingOperation: "participant.addCookies",
+        error,
+        cookieBindingMode: "URL_BOUND",
+        appBaseUrl: input.appBaseUrl,
+        secure: Boolean(evidence.secure),
+      });
+      Object.assign(evidence, diag);
+      evidence.prewarmError = diag.errorMessage;
+      return failPrewarm(
+        "PARTICIPANT_CONTEXT_SETUP_FAILED",
+        "participant",
         "AUTH_CONTEXT_CREATED",
       );
     }
@@ -414,47 +580,58 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
     await installAccessGate(facilitatorPage, "facilitator");
     await installAccessGate(participantPage, "participant");
 
-    // Auth probe for facilitator (cookie) without joining conference.
-    const authProbeUrl = `${input.appBaseUrl.replace(/\/$/, "")}/api/sessions/${input.sessionId}/control-state`;
-    const authResp = await facilitatorContext.request.get(authProbeUrl, {
-      timeout: Math.min(input.timeoutMs, 15_000),
+    // Deterministic local auth verification on protected Session page.
+    const authVerify = await verifyFacilitatorAuthInContext({
+      context: facilitatorContext,
+      appBaseUrl: input.appBaseUrl,
+      sessionId: input.sessionId,
+      expectedUserId: input.facilitatorUserId,
+      expectedEmail: input.facilitatorEmail,
+      authenticationStrategy: authStrategy,
+      timeoutMs: input.timeoutMs,
+      sessionExists: input.sessionExists !== false,
     });
-    if (authResp.status() === 401 || authResp.status() === 403) {
-      return failPrewarm(
-        "FACILITATOR_AUTH_FAILED",
-        "facilitator",
-        "AUTH_ACCEPTED",
-      );
-    }
-    if (!authResp.ok()) {
-      // control-state may require joinToken — treat 400 with cookie present as soft pass
-      // if body indicates missing joinToken (session exists + cookie accepted enough to parse).
-      const body = await authResp.text().catch(() => "");
-      if (
-        authResp.status() === 400 &&
-        /joinToken|participantId/i.test(body)
-      ) {
-        facilitator = {
-          ...facilitator,
-          authAccepted: true,
-          reachedStage: advanceStage(facilitator.reachedStage, "AUTH_ACCEPTED"),
-        };
-      } else {
-        return failPrewarm(
-          "FACILITATOR_AUTH_FAILED",
-          "facilitator",
-          "AUTH_ACCEPTED",
-        );
-      }
-    } else {
-      facilitator = {
-        ...facilitator,
-        authAccepted: true,
-        reachedStage: advanceStage(facilitator.reachedStage, "AUTH_ACCEPTED"),
-      };
+    Object.assign(evidence, {
+      facilitatorAuthStrategy: authVerify.diagnostics.authenticationStrategy,
+      authNestedFailureCode: authVerify.diagnostics.nestedFailureCode,
+      finalPagePath: authVerify.diagnostics.finalPagePath,
+      finalHost: authVerify.diagnostics.finalHost,
+      redirectToLogin: authVerify.diagnostics.redirectToLogin,
+      authenticatedUserMatch: authVerify.diagnostics.authenticatedUserMatch,
+      sessionAccess: authVerify.diagnostics.sessionAccess,
+      authSessionCookiePresent: authVerify.diagnostics.authSessionCookiePresent,
+      authVerifyHttpStatus: authVerify.diagnostics.httpStatus,
+    });
+    if (!authVerify.ok) {
+      evidence.prewarmError = authVerify.diagnostics.boundedError;
+      const code = nestedToBrowserFailure(authVerify.nestedFailureCode);
+      return failPrewarm(code, "facilitator", "AUTH_ACCEPTED");
     }
 
-    // Navigate both rooms with access gated (prewarm stops before access).
+    facilitator = {
+      ...facilitator,
+      authAccepted: true,
+      pageUrlPath: authVerify.diagnostics.finalPagePath,
+      reachedStage: advanceStage(facilitator.reachedStage, "AUTH_ACCEPTED"),
+    };
+    evidence.phase = "FACILITATOR_AUTH_ACCEPTED";
+
+    let facilitatorAuthCookieHeader: string | null = null;
+    try {
+      const cookies = await facilitatorContext.cookies();
+      const auth = cookies.find((c) => c.name === "auth_session");
+      if (auth?.value) {
+        facilitatorAuthCookieHeader = `auth_session=${auth.value}`;
+      }
+    } catch {
+      facilitatorAuthCookieHeader = hasAuthSessionCookieHeader(
+        input.facilitatorAuthCookie,
+      )
+        ? input.facilitatorAuthCookie!
+        : null;
+    }
+
+    // Navigate rooms with access gated (prewarm stops before access/WebSDK).
     facilitator = {
       ...facilitator,
       reachedStage: advanceStage(
@@ -471,39 +648,113 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
     };
 
     try {
-      await Promise.all([
-        facilitatorPage.goto(input.facilitatorRoomUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: Math.min(input.timeoutMs, 30_000),
-        }),
-        participantPage.goto(input.participantRoomUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: Math.min(input.timeoutMs, 30_000),
-        }),
-      ]);
+      await facilitatorPage.goto(input.facilitatorRoomUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: Math.min(input.timeoutMs, 30_000),
+      });
     } catch (error) {
       evidence.prewarmError = redactBoundedErrorMessage(
         error instanceof Error ? error.message : String(error),
       );
-      evidence.failingOperation = "page.goto";
-      return failPrewarm("ROOM_PAGE_FAILED", "both", "ROOM_NAVIGATION_STARTED");
+      evidence.failingOperation = "facilitator.page.goto";
+      return failPrewarm(
+        "ROOM_PAGE_FAILED",
+        "facilitator",
+        "ROOM_NAVIGATION_STARTED",
+      );
+    }
+
+    // Canonical participant entry: join-token URL once with participant auth.
+    // App validates invite, lands on durable account-mode /room/{sessionId}.
+    try {
+      await participantPage.goto(input.participantRoomUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: Math.min(input.timeoutMs, 30_000),
+      });
+    } catch (error) {
+      evidence.prewarmError = redactBoundedErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+      evidence.failingOperation = "participant.page.goto";
+      return failPrewarm(
+        "PARTICIPANT_ROOM_NOT_LOADED",
+        "participant",
+        "ROOM_NAVIGATION_STARTED",
+      );
     }
 
     facilitator.pageUrlPath = sanitizePageUrl(facilitatorPage.url());
-    participant.pageUrlPath = sanitizePageUrl(participantPage.url());
+    const participantNav = classifyParticipantNavigation({
+      finalUrl: participantPage.url(),
+      appBaseUrl: input.appBaseUrl,
+      sessionId: input.sessionId,
+      joinTokenPresentInStartUrl: Boolean(joinToken),
+    });
+    participant.pageUrlPath = participantNav.finalPagePath;
+    evidence.participantFinalPagePath = participantNav.finalPagePath;
+    evidence.participantFinalHost = participantNav.finalHost;
+    evidence.participantRedirectToLogin = participantNav.redirectToLogin;
+    evidence.participantDurableRoomUrl = participantNav.durableAccountRoomUrl;
 
-    if (/\/login/i.test(facilitator.pageUrlPath)) {
+    if (/\/login/i.test(facilitator.pageUrlPath ?? "")) {
+      evidence.authNestedFailureCode = "AUTH_REDIRECTED_TO_LOGIN";
       return failPrewarm(
-        "FACILITATOR_AUTH_FAILED",
+        "AUTH_REDIRECTED_TO_LOGIN",
         "facilitator",
         "ROOM_PAGE_LOADED",
       );
     }
-    if (/\/login/i.test(participant.pageUrlPath)) {
+
+    if (!participantNav.ok) {
+      evidence.prewarmError = participantNav.boundedError;
       return failPrewarm(
-        "PARTICIPANT_AUTH_FAILED",
+        participantNav.failureCode ?? "PARTICIPANT_CONTEXT_NOT_ESTABLISHED",
         "participant",
         "ROOM_PAGE_LOADED",
+      );
+    }
+
+    // Prefer durable account URL for live resume (do not re-hit joinToken).
+    if (!/\/room\/[^/]+$/.test(new URL(participantPage.url()).pathname)) {
+      await participantPage
+        .goto(participantNav.durableAccountRoomUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: Math.min(input.timeoutMs, 20_000),
+        })
+        .catch(() => {});
+      participant.pageUrlPath = sanitizePageUrl(participantPage.url());
+    }
+
+    // Canonical participant auth verification before StartConference / live join.
+    const partAuthVerify = await verifyParticipantAuthInContext({
+      context: participantContext,
+      appBaseUrl: input.appBaseUrl,
+      sessionId: input.sessionId,
+      expectedParticipantUserId: input.participantUserId!,
+      expectedParticipantEmail: input.participantEmail,
+      facilitatorUserId: input.facilitatorUserId,
+      facilitatorAuthCookie: input.facilitatorAuthCookie,
+      timeoutMs: input.timeoutMs,
+      sessionExists: input.sessionExists !== false,
+    });
+    Object.assign(evidence, {
+      participantAuthVerified: partAuthVerify.ok,
+      participantFinalPagePath: partAuthVerify.diagnostics.finalPagePath,
+      participantFinalHost: partAuthVerify.diagnostics.finalHost,
+      participantRedirectToLogin: partAuthVerify.diagnostics.redirectToLogin,
+      participantAuthenticatedUserMatch:
+        partAuthVerify.diagnostics.authenticatedUserMatch,
+      participantSessionAccess: partAuthVerify.diagnostics.sessionAccess,
+      participantIsFacilitatorIdentity:
+        partAuthVerify.diagnostics.isFacilitatorIdentity,
+      participantAuthVerifyHttpStatus: partAuthVerify.diagnostics.httpStatus,
+    });
+    if (!partAuthVerify.ok) {
+      evidence.prewarmError = partAuthVerify.diagnostics.boundedError;
+      return failPrewarm(
+        partAuthVerify.failureCode ?? "PARTICIPANT_AUTH_FAILED",
+        "participant",
+        "AUTH_ACCEPTED",
       );
     }
 
@@ -519,9 +770,39 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       authAccepted: true,
       reachedStage: advanceStage(participant.reachedStage, "ROOM_PAGE_LOADED"),
     };
+    evidence.participantPreparation = "PARTICIPANT_CONTEXT_READY";
+    evidence.participantRoomLoaded = true;
+
+    // Prewarm-only: both contexts ready; stop before access/WebSDK.
+    if (input.prewarmOnly) {
+      evidence.phase = "BROWSER_PREWARM_PASS";
+      const browserPrewarmCompletedAt = new Date(nowMs()).toISOString();
+      persistBrowserContextArtifacts({
+        runId: input.runId,
+        stateRoot: input.stateRoot,
+        facilitator,
+        participant,
+        extra: evidence,
+      });
+      return {
+        ok: true,
+        failureCode: null,
+        browserPrewarmStartedAt,
+        browserPrewarmCompletedAt,
+        facilitator,
+        participant,
+        evidence,
+        facilitatorAuthCookieHeader,
+        close,
+        liveJoin: async () => {
+          throw new Error("prewarm-only mode; live join not available");
+        },
+      };
+    }
 
     const browserPrewarmCompletedAt = new Date(nowMs()).toISOString();
     evidence.phase = "prewarm_ready";
+    const participantLiveRoomUrl = participantNav.durableAccountRoomUrl;
 
     return {
       ok: true,
@@ -579,6 +860,95 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
           };
         }
 
+        const accessPathNeedle = `/api/sessions/${input.sessionId}/voximplant/access`;
+
+        type AccessProbe = {
+          requestObserved: boolean;
+          requestAt: string | null;
+          responseAt: string | null;
+          status: number | null;
+          aborted: boolean;
+          abortReason: string | null;
+          redirected: boolean;
+          redirectLocationPath: string | null;
+          json: AccessJson | null;
+        };
+
+        const installAccessObservers = (
+          page: import("@playwright/test").Page,
+        ): {
+          probe: AccessProbe;
+          responsePromise: Promise<import("@playwright/test").Response | null>;
+          dispose: () => void;
+        } => {
+          const probe: AccessProbe = {
+            requestObserved: false,
+            requestAt: null,
+            responseAt: null,
+            status: null,
+            aborted: false,
+            abortReason: null,
+            redirected: false,
+            redirectLocationPath: null,
+            json: null,
+          };
+          const onRequest = (req: import("@playwright/test").Request) => {
+            if (!req.url().includes(accessPathNeedle)) return;
+            probe.requestObserved = true;
+            probe.requestAt = new Date(nowMs()).toISOString();
+          };
+          const onRequestFailed = (req: import("@playwright/test").Request) => {
+            if (!req.url().includes(accessPathNeedle)) return;
+            probe.requestObserved = true;
+            probe.aborted = true;
+            probe.abortReason = redactBoundedErrorMessage(
+              req.failure()?.errorText ?? "requestfailed",
+            );
+            if (!probe.requestAt) {
+              probe.requestAt = new Date(nowMs()).toISOString();
+            }
+          };
+          page.on("request", onRequest);
+          page.on("requestfailed", onRequestFailed);
+          const responsePromise = page
+            .waitForResponse(
+              (resp) => resp.url().includes(accessPathNeedle),
+              { timeout: live.timeoutMs },
+            )
+            .then(async (resp) => {
+              probe.responseAt = new Date(nowMs()).toISOString();
+              probe.status = resp.status();
+              if (resp.status() >= 300 && resp.status() < 400) {
+                probe.redirected = true;
+                const loc = resp.headers()["location"];
+                if (loc) {
+                  try {
+                    probe.redirectLocationPath = sanitizePageUrl(
+                      new URL(loc, input.appBaseUrl).toString(),
+                    );
+                  } catch {
+                    probe.redirectLocationPath = "/[invalid-redirect]";
+                  }
+                }
+              }
+              probe.json = (await resp.json().catch(() => null)) as AccessJson | null;
+              return resp;
+            })
+            .catch(() => null);
+          return {
+            probe,
+            responsePromise,
+            dispose: () => {
+              page.off("request", onRequest);
+              page.off("requestfailed", onRequestFailed);
+            },
+          };
+        };
+
+        // Install observers BEFORE releasing access gates so fast responses are not missed.
+        const facObservers = installAccessObservers(facilitatorPage!);
+        const partObservers = installAccessObservers(participantPage!);
+
         // Release both access gates concurrently.
         releaseGates.facilitator?.();
         releaseGates.participant?.();
@@ -586,42 +956,138 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
         const runAccess = async (
           page: import("@playwright/test").Page,
           role: "facilitator" | "participant",
+          observers: ReturnType<typeof installAccessObservers>,
         ): Promise<string | null> => {
           let ctx =
             role === "facilitator" ? facilitator : participant;
-          ctx = {
-            ...ctx,
-            accessRequested: true,
-            accessRequestedAt: new Date(nowMs()).toISOString(),
-            reachedStage: advanceStage(ctx.reachedStage, "ACCESS_REQUEST_SENT"),
-          };
-          if (role === "facilitator") {
-            timing.facilitatorAccessRequestedAt = ctx.accessRequestedAt;
-            facilitator = ctx;
-          } else {
-            timing.participantAccessRequestedAt = ctx.accessRequestedAt;
-            participant = ctx;
+
+          // Resume durable room context — participant uses account-mode URL
+          // (no second joinToken navigation).
+          const targetUrl =
+            role === "facilitator"
+              ? input.facilitatorRoomUrl
+              : participantLiveRoomUrl;
+          const onRoom = /\/room\//i.test(page.url());
+          try {
+            if (onRoom) {
+              await page.reload({
+                waitUntil: "domcontentloaded",
+                timeout: live.timeoutMs,
+              });
+            } else {
+              await page.goto(targetUrl, {
+                waitUntil: "domcontentloaded",
+                timeout: live.timeoutMs,
+              });
+            }
+          } catch (error) {
+            observers.dispose();
+            const message = redactBoundedErrorMessage(
+              error instanceof Error ? error.message : String(error),
+            );
+            ctx = markFailed(
+              {
+                ...ctx,
+                pageUrlPath: sanitizePageUrl(page.url()),
+                access: {
+                  ...(ctx.access ?? emptyBrowserContextEvidence(role, input.sessionId).access!),
+                  requestObserved: observers.probe.requestObserved,
+                  requestAt: observers.probe.requestAt,
+                  responseAt: observers.probe.responseAt,
+                  abortReason: message,
+                },
+              },
+              observers.probe.requestObserved
+                ? "ACCESS_REQUEST_SENT"
+                : "ROOM_PAGE_LOADED",
+              role === "participant"
+                ? classifyParticipantAccessFailure({
+                    requestObserved: observers.probe.requestObserved,
+                    aborted: true,
+                    timedOut: false,
+                    redirected: false,
+                    httpStatus: null,
+                  })
+                : "ROOM_PAGE_FAILED",
+            );
+            if (role === "facilitator") facilitator = ctx;
+            else participant = ctx;
+            return null;
           }
 
-          const responsePromise = page.waitForResponse(
-            (resp) =>
-              resp
-                .url()
-                .includes(
-                  `/api/sessions/${input.sessionId}/voximplant/access`,
-                ),
-            { timeout: live.timeoutMs },
-          );
+          const response = await observers.responsePromise;
+          observers.dispose();
+          const probe = observers.probe;
 
-          // Reload to re-trigger access now that gate is open (page already loaded).
-          await page.reload({
-            waitUntil: "domcontentloaded",
-            timeout: live.timeoutMs,
-          });
+          // ACCESS_REQUEST_SENT only when a real request event was observed.
+          if (probe.requestObserved) {
+            ctx = {
+              ...ctx,
+              accessRequested: true,
+              accessRequestedAt: probe.requestAt,
+              reachedStage: advanceStage(ctx.reachedStage, "ACCESS_REQUEST_SENT"),
+            };
+            if (role === "facilitator") {
+              timing.facilitatorAccessRequestedAt = probe.requestAt;
+            } else {
+              timing.participantAccessRequestedAt = probe.requestAt;
+            }
+          } else {
+            ctx = markFailed(
+              {
+                ...ctx,
+                pageUrlPath: sanitizePageUrl(page.url()),
+                access: {
+                  ...(ctx.access ??
+                    emptyBrowserContextEvidence(role, input.sessionId).access!),
+                  requestObserved: false,
+                  requestAt: null,
+                  responseAt: null,
+                  abortReason: "no access request observed",
+                },
+              },
+              "ACCESS_REQUEST_SENT",
+              role === "participant"
+                ? "PARTICIPANT_ACCESS_NOT_REQUESTED"
+                : "ACCESS_ROUTE_FAILED",
+            );
+            if (role === "facilitator") facilitator = ctx;
+            else participant = ctx;
+            return null;
+          }
 
-          const response = await responsePromise;
-          const json = (await response.json().catch(() => null)) as AccessJson | null;
-          const status = response.status();
+          if (!response) {
+            ctx = markFailed(
+              {
+                ...ctx,
+                pageUrlPath: sanitizePageUrl(page.url()),
+                access: {
+                  ...(ctx.access ??
+                    emptyBrowserContextEvidence(role, input.sessionId).access!),
+                  requestObserved: true,
+                  requestAt: probe.requestAt,
+                  responseAt: probe.responseAt,
+                  abortReason: probe.abortReason ?? "response timeout",
+                },
+              },
+              "ACCESS_REQUEST_SENT",
+              role === "participant"
+                ? classifyParticipantAccessFailure({
+                    requestObserved: true,
+                    aborted: probe.aborted,
+                    timedOut: !probe.aborted,
+                    redirected: probe.redirected,
+                    httpStatus: probe.status,
+                  })
+                : "ACCESS_ROUTE_FAILED",
+            );
+            if (role === "facilitator") facilitator = ctx;
+            else participant = ctx;
+            return null;
+          }
+
+          const json = probe.json;
+          const status = probe.status ?? response.status();
           const name = json?.roomNameOrConferenceName ?? null;
           const pointer = readCurrentPointer(input.stateRoot);
           const state = readPocState(input.stateRoot);
@@ -642,7 +1108,7 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
             ...ctx,
             pageUrlPath: sanitizePageUrl(page.url()),
             access: {
-              requestPath: `/api/sessions/${input.sessionId}/voximplant/access`,
+              requestPath: accessPathNeedle,
               httpStatus: status,
               applicationErrorCode: json?.errorCode ?? json?.error ?? null,
               requestedSessionId: input.sessionId,
@@ -659,15 +1125,26 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
                   : runtime === "ACTIVE"
                     ? "ACTIVE"
                     : "UNKNOWN",
+              requestObserved: true,
+              requestAt: probe.requestAt,
+              responseAt: probe.responseAt,
+              abortReason: probe.abortReason,
+              redirectLocationPath: probe.redirectLocationPath,
             },
           };
 
           if (status !== 200) {
-            ctx = markFailed(
-              ctx,
-              "ACCESS_REQUEST_SUCCEEDED",
-              classifyAccessHttpStatus(status),
-            );
+            const accessFail =
+              role === "participant"
+                ? classifyParticipantAccessFailure({
+                    requestObserved: true,
+                    aborted: false,
+                    timedOut: false,
+                    redirected: probe.redirected,
+                    httpStatus: status,
+                  })
+                : classifyAccessHttpStatus(status);
+            ctx = markFailed(ctx, "ACCESS_REQUEST_SUCCEEDED", accessFail);
           } else {
             ctx = {
               ...ctx,
@@ -780,8 +1257,8 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
 
         try {
           const results = await Promise.allSettled([
-            runAccess(facilitatorPage!, "facilitator"),
-            runAccess(participantPage!, "participant"),
+            runAccess(facilitatorPage!, "facilitator", facObservers),
+            runAccess(participantPage!, "participant", partObservers),
           ]);
           if (results[0].status === "fulfilled") {
             facilitatorConferenceName = results[0].value;
@@ -1025,6 +1502,9 @@ export const playwrightBrowserJoin: BrowserJoinFn = async (input) => {
     facilitatorRoomUrl: input.facilitatorRoomUrl,
     participantRoomUrl: input.participantRoomUrl,
     facilitatorAuthCookie: input.facilitatorAuthCookie,
+    facilitatorUserId: "unknown-facilitator",
+    facilitatorAuthStrategy: "CANONICAL_COOKIE",
+    participantAuthCookie: input.participantAuthCookie,
     timeoutMs: input.timeoutMs,
     keepBrowser: input.keepBrowser,
     runId,

@@ -50,6 +50,8 @@
     "poc:vox:test-callback": "tsx scripts/poc/voximplant-server-stop/test-callback.ts",
     "poc:vox:join-plan": "tsx scripts/poc/voximplant-server-stop/join-plan.ts",
     "poc:vox:inspect-run": "tsx scripts/poc/voximplant-server-stop/inspect-run.ts",
+    "poc:vox:test-browser-prewarm": "tsx scripts/poc/voximplant-server-stop/test-browser-prewarm.ts",
+    "poc:vox:test-participant-access": "tsx scripts/poc/voximplant-server-stop/test-participant-access.ts",
     "test:poc:vox-server-stop": "node --import tsx --test \"lib/voximplant/poc/**/*.test.ts\""
   },
   "prisma": {

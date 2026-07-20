@@ -45,7 +45,32 @@ export type BrowserFailureCode =
   | "CONFERENCE_JOIN_TIMEOUT"
   | "MEDIA_PERMISSION_FAILED"
   | "FACILITATOR_AUTH_FAILED"
-  | "PARTICIPANT_AUTH_FAILED";
+  | "PARTICIPANT_AUTH_FAILED"
+  | "AUTH_COOKIE_MISSING"
+  | "AUTH_COOKIE_REJECTED"
+  | "AUTH_SESSION_NOT_FOUND"
+  | "AUTH_USER_MISMATCH"
+  | "AUTH_REDIRECTED_TO_LOGIN"
+  | "AUTH_PROTECTED_ROUTE_DENIED"
+  | "AUTH_VERIFICATION_HTTP_ERROR"
+  | "PARTICIPANT_REDIRECTED_TO_LOGIN"
+  | "PARTICIPANT_TOKEN_MISSING"
+  | "PARTICIPANT_TOKEN_INVALID"
+  | "PARTICIPANT_TOKEN_EXPIRED"
+  | "PARTICIPANT_TOKEN_ALREADY_CONSUMED"
+  | "PARTICIPANT_CONTEXT_NOT_ESTABLISHED"
+  | "PARTICIPANT_AUTH_ARTIFACT_MISSING"
+  | "PARTICIPANT_AUTH_COOKIE_REJECTED"
+  | "PARTICIPANT_AUTH_USER_MISMATCH"
+  | "PARTICIPANT_AUTH_SESSION_NOT_FOUND"
+  | "LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE"
+  | "PARTICIPANT_SESSION_ACCESS_DENIED"
+  | "PARTICIPANT_ROOM_NOT_LOADED"
+  | "PARTICIPANT_ACCESS_NOT_REQUESTED"
+  | "PARTICIPANT_ACCESS_REQUEST_ABORTED"
+  | "PARTICIPANT_ACCESS_RESPONSE_TIMEOUT"
+  | "PARTICIPANT_ACCESS_REDIRECTED"
+  | "PARTICIPANT_ACCESS_DENIED";
 
 export type BrowserRole = "facilitator" | "participant";
 
@@ -60,6 +85,12 @@ export type AccessSelectionEvidence = {
   selectionSource: "POC_STATE" | "DEFAULT_SESSION_NAME" | null;
   runtimeStatus: string | null;
   expiryDecision: "ACTIVE" | "EXPIRED" | "UNKNOWN" | null;
+  /** Set only when a real Playwright request event was observed. */
+  requestObserved: boolean;
+  requestAt: string | null;
+  responseAt: string | null;
+  abortReason: string | null;
+  redirectLocationPath: string | null;
 };
 
 export type BrowserContextEvidence = {
@@ -117,6 +148,11 @@ export function emptyBrowserContextEvidence(
       selectionSource: null,
       runtimeStatus: null,
       expiryDecision: null,
+      requestObserved: false,
+      requestAt: null,
+      responseAt: null,
+      abortReason: null,
+      redirectLocationPath: null,
     },
     pageUrlPath: null,
     consoleErrors: [],
@@ -177,6 +213,39 @@ export function classifyBrowserFailure(params: {
   }
   if (codes.includes("PARTICIPANT_CONTEXT_SETUP_FAILED")) {
     return "PARTICIPANT_CONTEXT_SETUP_FAILED";
+  }
+  for (const nested of [
+    "AUTH_COOKIE_MISSING",
+    "AUTH_COOKIE_REJECTED",
+    "AUTH_SESSION_NOT_FOUND",
+    "AUTH_USER_MISMATCH",
+    "AUTH_REDIRECTED_TO_LOGIN",
+    "AUTH_PROTECTED_ROUTE_DENIED",
+    "AUTH_VERIFICATION_HTTP_ERROR",
+  ] as const) {
+    if (codes.includes(nested)) return nested;
+  }
+  for (const nested of [
+    "PARTICIPANT_AUTH_ARTIFACT_MISSING",
+    "PARTICIPANT_AUTH_COOKIE_REJECTED",
+    "PARTICIPANT_AUTH_USER_MISMATCH",
+    "PARTICIPANT_AUTH_SESSION_NOT_FOUND",
+    "LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE",
+    "PARTICIPANT_REDIRECTED_TO_LOGIN",
+    "PARTICIPANT_TOKEN_MISSING",
+    "PARTICIPANT_TOKEN_INVALID",
+    "PARTICIPANT_TOKEN_EXPIRED",
+    "PARTICIPANT_TOKEN_ALREADY_CONSUMED",
+    "PARTICIPANT_CONTEXT_NOT_ESTABLISHED",
+    "PARTICIPANT_SESSION_ACCESS_DENIED",
+    "PARTICIPANT_ROOM_NOT_LOADED",
+    "PARTICIPANT_ACCESS_NOT_REQUESTED",
+    "PARTICIPANT_ACCESS_REQUEST_ABORTED",
+    "PARTICIPANT_ACCESS_RESPONSE_TIMEOUT",
+    "PARTICIPANT_ACCESS_REDIRECTED",
+    "PARTICIPANT_ACCESS_DENIED",
+  ] as const) {
+    if (codes.includes(nested)) return nested;
   }
   if (codes.includes("FACILITATOR_AUTH_FAILED")) return "FACILITATOR_AUTH_FAILED";
   if (codes.includes("PARTICIPANT_AUTH_FAILED")) return "PARTICIPANT_AUTH_FAILED";

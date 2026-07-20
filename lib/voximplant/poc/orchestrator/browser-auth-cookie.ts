@@ -104,7 +104,7 @@ export function assertUrlBoundCookieShape(
 export function prepareParticipantJoinContext(params: {
   participantRoomUrl: string;
 }): {
-  authStrategy: "JOIN_TOKEN_URL";
+  authStrategy: "JOIN_TOKEN";
   cookieInstalled: false;
   pagePath: string;
 } {
@@ -118,7 +118,7 @@ export function prepareParticipantJoinContext(params: {
     throw new Error("participant room URL missing joinToken");
   }
   return {
-    authStrategy: "JOIN_TOKEN_URL",
+    authStrategy: "JOIN_TOKEN",
     cookieInstalled: false,
     pagePath: parsed.pathname,
   };
