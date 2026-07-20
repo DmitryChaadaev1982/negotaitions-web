@@ -1,3 +1,8 @@
+import {
+  buildDefaultPocHealthUrl,
+  DEFAULT_POC_PUBLIC_BASE_URL,
+} from "@/lib/voximplant/poc/poc-health";
+
 import type { PocOrchestratorMode, PocOrchestratorOptions } from "./types";
 
 function hasFlag(argv: string[], name: string): boolean {
@@ -25,6 +30,19 @@ export function parsePocOrchestratorArgs(
       ? Math.max(1, Number(timeoutRaw))
       : null;
 
+  const appBaseUrl =
+    readArg(argv, "--app-base-url") ||
+    process.env.POC_APP_BASE_URL?.trim() ||
+    "http://localhost:3000";
+
+  // Prefer explicit public base (tunnel) when set; otherwise loopback app base
+  // so Node fetch is not blocked by local TLS/revocation issues.
+  const publicBaseUrl =
+    readArg(argv, "--public-base-url") ||
+    process.env.POC_PUBLIC_BASE_URL?.trim() ||
+    appBaseUrl ||
+    DEFAULT_POC_PUBLIC_BASE_URL;
+
   return {
     mode,
     dryRun: hasFlag(argv, "--dry-run"),
@@ -34,13 +52,10 @@ export function parsePocOrchestratorArgs(
     keepBrowser: hasFlag(argv, "--keep-browser"),
     skipLogFetch: hasFlag(argv, "--skip-log-fetch"),
     timeoutSeconds,
-    appBaseUrl:
-      readArg(argv, "--app-base-url") ||
-      process.env.POC_APP_BASE_URL?.trim() ||
-      "http://localhost:3000",
+    appBaseUrl,
     healthUrl:
       readArg(argv, "--health-url") ||
       process.env.POC_HEALTH_URL?.trim() ||
-      "https://local.negotaitions.ru/api/admin/health",
+      buildDefaultPocHealthUrl(publicBaseUrl),
   };
 }

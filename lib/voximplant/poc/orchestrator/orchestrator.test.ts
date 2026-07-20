@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,7 @@ import {
 } from "@/lib/voximplant/poc/poc-state";
 import {
   activatePocRun,
+  getPocRunPaths,
   readCurrentPointer,
   clearCurrentPointer,
 } from "@/lib/voximplant/poc/poc-run-store";
@@ -32,6 +33,11 @@ import {
 } from "@/lib/voximplant/poc/orchestrator/run-orchestrator";
 import {
   evaluateFullPass,
+  evaluateTransportPass,
+  formatLastReportSummary,
+  isDryRunExecution,
+  plannedPhasesForMode,
+  POC_DRY_RUN_BANNER,
   type PocOrchestratorOptions,
   type PocOrchestratorReport,
 } from "@/lib/voximplant/poc/orchestrator/types";
@@ -50,7 +56,7 @@ function baseOptions(
     skipLogFetch: true,
     timeoutSeconds: 30,
     appBaseUrl: "http://localhost:3000",
-    healthUrl: "http://localhost:3000/api/admin/health",
+    healthUrl: "http://localhost:3000/api/poc/voximplant/server-stop/health",
     stateRoot: mkdtempSync(join(tmpdir(), "poc-orch-")),
     ...overrides,
   };
@@ -184,37 +190,92 @@ function mockDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
   };
 }
 
-test("1. dry-run makes no DB/provider/browser call", async () => {
+test("1. dry-run makes no DB/provider/browser call and uses DRY_RUN_PASS", async () => {
   let db = 0;
   let provider = 0;
   let browser = 0;
-  const options = baseOptions({ dryRun: true, confirmLivePoc: false });
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL =
+    "postgres://poc_user:s3cret-password@localhost:5432/negotiations";
+  const stateRoot = mkdtempSync(join(tmpdir(), "poc-dry-"));
+  const options = baseOptions({
+    dryRun: true,
+    confirmLivePoc: false,
+    stateRoot,
+  });
   const plan = buildDryRunPlan(options);
   assert.equal(plan.providerCalls, false);
   assert.equal(plan.dbWrites, false);
-  assert.equal(plan.browser, false);
+  assert.equal(plan.browserExecution, false);
+  assert.equal(plan.localDatabaseTargetSanitized, "postgres://localhost:5432/negotiations");
+  assert.deepEqual(plan.plannedPhases, plannedPhasesForMode("full"));
 
-  const report = await runPocOrchestrator(
-    options,
-    mockDeps({
-      createSession: async () => {
-        db += 1;
-        throw new Error("should not create session");
-      },
-      startConference: async () => {
-        provider += 1;
-        throw new Error("should not start");
-      },
-      browserJoin: async () => {
-        browser += 1;
-        throw new Error("should not browse");
-      },
-    }),
-  );
-  assert.equal(report.result, "PASS");
-  assert.equal(db, 0);
-  assert.equal(provider, 0);
-  assert.equal(browser, 0);
+  try {
+    const report = await runPocOrchestrator(
+      options,
+      mockDeps({
+        createSession: async () => {
+          db += 1;
+          throw new Error("should not create session");
+        },
+        startConference: async () => {
+          provider += 1;
+          throw new Error("should not start");
+        },
+        browserJoin: async () => {
+          browser += 1;
+          throw new Error("should not browse");
+        },
+      }),
+    );
+
+    assert.equal(report.result, "DRY_RUN_PASS");
+    assert.notEqual(report.result, "PASS");
+    assert.equal(report.dryRun, true);
+    assert.equal(report.executionKind, "DRY_RUN");
+    assert.equal(report.providerCalls, false);
+    assert.equal(report.dbWrites, false);
+    assert.equal(report.browserExecution, false);
+    assert.equal(
+      report.localDatabaseTargetSanitized,
+      "postgres://localhost:5432/negotiations",
+    );
+    assert.deepEqual(report.plannedPhases, plannedPhasesForMode("full"));
+    assert.equal(report.callbackSelfTest, false);
+    assert.equal(report.transportAccepted, false);
+    assert.equal(report.commandAccepted, false);
+    assert.equal(report.providerTerminal, false);
+    assert.equal(report.artifactAvailable, false);
+    assert.equal(db, 0);
+    assert.equal(provider, 0);
+    assert.equal(browser, 0);
+
+    const saved = JSON.parse(
+      readFileSync(getPocRunPaths(report.runId, stateRoot).reportPath, "utf8"),
+    ) as PocOrchestratorReport & Record<string, unknown>;
+    assert.equal(saved.result, "DRY_RUN_PASS");
+    assert.equal(saved.dryRun, true);
+    assert.equal(saved.executionKind, "DRY_RUN");
+    assert.equal(
+      saved.localDatabaseTargetSanitized,
+      "postgres://localhost:5432/negotiations",
+    );
+    assert.equal(saved.providerCalls, false);
+    assert.equal(saved.dbWrites, false);
+    assert.equal(saved.browserExecution, false);
+    assert.deepEqual(saved.plannedPhases, plannedPhasesForMode("full"));
+    const savedText = JSON.stringify(saved);
+    assert.ok(!savedText.includes("s3cret-password"));
+    assert.ok(!savedText.includes("poc_user"));
+    assert.ok(!savedText.includes(process.env.DATABASE_URL!));
+
+    const lastReport = formatLastReportSummary(saved);
+    assert.equal(lastReport.banner, POC_DRY_RUN_BANNER);
+    assert.ok(isDryRunExecution(saved));
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
 });
 
 test("2. full mode refuses without both confirmations", async () => {
@@ -329,49 +390,82 @@ test("7. callback self-test failure prevents StartConference", async () => {
   assert.equal(report.result, "FAIL");
 });
 
-test("8. one StartConference call per run", async () => {
+test("8. one StartConference call per run and live transport PASS requires callback", async () => {
   let startCalls = 0;
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
   const stateRoot = mkdtempSync(join(tmpdir(), "poc-orch-"));
   process.env.VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET =
     process.env.VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET ||
     "control-secret-16chars!!!";
 
-  const report = await runPocOrchestrator(
-    baseOptions({ mode: "transport", stateRoot }),
-    mockDeps({
-      callbackSelfTest: async () => ({
-        passed: true,
-        code: "CALLBACK_SELF_TEST_PASSED",
-        details: {},
-      }),
-      startConference: async (params) => {
-        startCalls += 1;
-        return mockDeps().startConference!(params);
-      },
-      executePing: async () => ({
-        dryRun: false,
-        nonTerminal: false,
-        transport: {
-          dryRun: false,
-          controlUrlFingerprint: "fp",
-          requestHeaderKeys: [],
-          requestHeaders: {},
-          transportOutcome: "TRANSPORT_ACCEPTED" as const,
-          httpStatus: 200,
-          responseBodyPresent: false,
-          responseJsonParsed: false,
-          response: null,
-          commandConfirmed: false,
+  try {
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "transport", stateRoot }),
+      mockDeps({
+        callbackSelfTest: async () => ({
+          passed: true,
+          code: "CALLBACK_SELF_TEST_PASSED",
+          details: {},
+        }),
+        startConference: async (params) => {
+          startCalls += 1;
+          return mockDeps().startConference!(params);
         },
-        pingOutcome: "PING_COMMAND_CONFIRMED" as const,
-        callbackEvent: null,
-        runtimeStatus: "ACTIVE",
+        executePing: async () => ({
+          dryRun: false,
+          nonTerminal: false,
+          transport: {
+            dryRun: false,
+            controlUrlFingerprint: "fp",
+            requestHeaderKeys: [],
+            requestHeaders: {},
+            transportOutcome: "TRANSPORT_ACCEPTED" as const,
+            httpStatus: 200,
+            responseBodyPresent: false,
+            responseJsonParsed: false,
+            response: null,
+            commandConfirmed: false,
+          },
+          pingOutcome: "PING_COMMAND_CONFIRMED" as const,
+          callbackEvent: null,
+          runtimeStatus: "ACTIVE",
+        }),
       }),
-    }),
-  );
-  assert.equal(startCalls, 1);
-  assert.equal(report.startConferenceCallCount, 1);
-  assert.equal(report.result, "PASS");
+    );
+    assert.equal(startCalls, 1);
+    assert.equal(report.startConferenceCallCount, 1);
+    assert.equal(report.result, "PASS");
+    assert.equal(report.dryRun, false);
+    assert.equal(report.executionKind, "LIVE");
+    assert.equal(report.providerCalls, true);
+    assert.equal(report.dbWrites, false);
+    assert.equal(report.browserExecution, false);
+    assert.equal(
+      report.localDatabaseTargetSanitized,
+      "postgres://localhost:5432/negotiations",
+    );
+    assert.deepEqual(report.plannedPhases, plannedPhasesForMode("transport"));
+    assert.equal(report.commandAccepted, true);
+
+    const transportDraft = {
+      callbackSelfTest: true,
+      transportAccepted: true,
+      commandAccepted: false,
+      browserRelayUsed: false,
+      startConferenceCallCount: 1,
+    } as unknown as Omit<PocOrchestratorReport, "result">;
+    assert.equal(evaluateTransportPass(transportDraft), false);
+
+    const transportOk = {
+      ...transportDraft,
+      commandAccepted: true,
+    };
+    assert.equal(evaluateTransportPass(transportOk), true);
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
 });
 
 test("9. active run pointer is atomic", () => {
@@ -721,19 +815,42 @@ test("23. report PASS criteria are strict", () => {
   assert.equal(evaluateFullPass(almost), false);
 });
 
-test("24. failure report includes evidence paths", async () => {
+test("24. failure report includes evidence paths and sanitized DB target", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL =
+    "postgres://poc_user:s3cret-password@localhost:5432/negotiations";
   const stateRoot = mkdtempSync(join(tmpdir(), "poc-fail-ev-"));
-  const report = await runPocOrchestrator(
-    baseOptions({
-      mode: "full",
-      confirmLivePoc: false,
-      stateRoot,
-    }),
-    mockDeps(),
-  );
-  assert.equal(report.result, "FAIL");
-  assert.ok(report.remainingEvidencePaths.length > 0);
-  assert.ok(report.remainingEvidencePaths.some((p) => p.includes(stateRoot) || existsSync(p)));
+  try {
+    const report = await runPocOrchestrator(
+      baseOptions({
+        mode: "full",
+        confirmLivePoc: false,
+        stateRoot,
+      }),
+      mockDeps(),
+    );
+    assert.equal(report.result, "FAIL");
+    assert.equal(report.executionKind, "LIVE");
+    assert.equal(report.dryRun, false);
+    assert.equal(
+      report.localDatabaseTargetSanitized,
+      "postgres://localhost:5432/negotiations",
+    );
+    assert.deepEqual(report.plannedPhases, plannedPhasesForMode("full"));
+    assert.ok(report.remainingEvidencePaths.length > 0);
+    assert.ok(
+      report.remainingEvidencePaths.some(
+        (p) => p.includes(stateRoot) || existsSync(p),
+      ),
+    );
+    const savedText = JSON.stringify(report);
+    assert.ok(!savedText.includes("s3cret-password"));
+    assert.ok(!savedText.includes(process.env.DATABASE_URL!));
+    assert.equal(formatLastReportSummary(report as unknown as Record<string, unknown>).banner, null);
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
 });
 
 test("25. cleanup requires confirmation", () => {
@@ -760,4 +877,210 @@ test("26. normal application flow remains unchanged", () => {
     `negotiation-${sessionId}`,
   );
   clearCurrentPointer();
+});
+
+test("27. health success proceeds to signed callback self-test", async () => {
+  let healthCalls = 0;
+  let callbackPosts = 0;
+  const previousEnabled = process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED;
+  const previousSecret = process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET;
+  process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED = "true";
+  process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET =
+    "poc-callback-secret-16chars!!";
+  const stateRoot = mkdtempSync(join(tmpdir(), "poc-health-ok-"));
+  writePocState(
+    createEmptyPocState({
+      pocId: "poc-health-ok",
+      conferenceName: "neg-poc-server-stop-health-ok",
+    }),
+    stateRoot,
+  );
+  activatePocRun({ runId: "poc-health-ok", linkedSessionId: null, stateRoot });
+
+  const { getPocWorktreeDiagnostic } = await import(
+    "@/lib/voximplant/poc/poc-paths"
+  );
+  const { runCallbackSelfTest } = await import(
+    "@/lib/voximplant/poc/orchestrator/callback-self-test"
+  );
+  const { processPocCallback } = await import(
+    "@/lib/voximplant/poc/callback-handler"
+  );
+  const diag = getPocWorktreeDiagnostic();
+
+  try {
+    const result = await runCallbackSelfTest({
+      callbackUrl: "http://localhost:3000/api/poc/voximplant/server-stop/callback",
+      healthUrl: "http://localhost:3000/api/poc/voximplant/server-stop/health",
+      stateRoot,
+      timeoutMs: 5000,
+      fetchImpl: (async (input, init) => {
+        const url = String(input);
+        if (url.includes("/health")) {
+          healthCalls += 1;
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              service: "voximplant_server_stop_poc",
+              protocolVersion: 1,
+              callbackEnabled: true,
+              branchOrBuildId: diag.branchOrBuildId,
+              worktreeFingerprint: diag.worktreeFingerprint,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "X-Neg-Poc-Worktree-Fingerprint": diag.worktreeFingerprint,
+                "X-Neg-Poc-Build-Id": diag.branchOrBuildId,
+                "X-Neg-Poc-Callback-Enabled": "yes",
+              },
+            },
+          );
+        }
+        callbackPosts += 1;
+        const rawBody = String(init?.body ?? "");
+        const headers = new Headers(init?.headers as HeadersInit);
+        const processed = processPocCallback({
+          rawBody,
+          headers,
+          cwd: stateRoot,
+          env: {
+            VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED: "true",
+            VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET:
+              "poc-callback-secret-16chars!!",
+          },
+        });
+        if (!processed.ok) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              errorCode: processed.errorCode,
+              worktreeFingerprint: diag.worktreeFingerprint,
+            }),
+            { status: processed.status },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            errorCode: "CALLBACK_ACCEPTED",
+            worktreeFingerprint: diag.worktreeFingerprint,
+          }),
+          {
+            status: 200,
+            headers: {
+              "X-Neg-Poc-Worktree-Fingerprint": diag.worktreeFingerprint,
+            },
+          },
+        );
+      }) as typeof fetch,
+    });
+    assert.equal(healthCalls, 1);
+    assert.equal(callbackPosts, 1);
+    assert.equal(result.passed, true);
+    assert.equal(result.code, "CALLBACK_SELF_TEST_PASSED");
+  } finally {
+    if (previousEnabled === undefined) {
+      delete process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED;
+    } else {
+      process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED = previousEnabled;
+    }
+    if (previousSecret === undefined) {
+      delete process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET;
+    } else {
+      process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET = previousSecret;
+    }
+    clearCurrentPointer(stateRoot);
+  }
+});
+
+test("28. health failure fields persisted and no provider/DB/browser", async () => {
+  let startCalls = 0;
+  const report = await runPocOrchestrator(
+    baseOptions({ mode: "transport" }),
+    mockDeps({
+      callbackSelfTest: async () => ({
+        passed: false,
+        code: "LOCAL_HEALTH_FAILED",
+        details: {
+          healthFailureReason: "POC_HEALTH_WORKTREE_MISMATCH",
+        },
+        healthDiagnostics: {
+          healthUrlPath: "/api/poc/voximplant/server-stop/health",
+          healthHttpStatus: 200,
+          healthService: "voximplant_server_stop_poc",
+          healthProtocolVersion: 1,
+          healthCallbackEnabled: true,
+          healthWorktreeFingerprint: "aaaaaaaaaaaaaaaa",
+          expectedWorktreeFingerprint: "bbbbbbbbbbbbbbbb",
+          healthBuildId: "poc/voximplant-server-stop",
+          expectedBuildId: "poc/voximplant-server-stop",
+          healthFailureReason: "POC_HEALTH_WORKTREE_MISMATCH",
+        },
+      }),
+      startConference: async () => {
+        startCalls += 1;
+        throw new Error("should not start");
+      },
+    }),
+  );
+  assert.equal(startCalls, 0);
+  assert.equal(report.providerCalls, false);
+  assert.equal(report.dbWrites, false);
+  assert.equal(report.browserExecution, false);
+  assert.equal(report.failureCode, "LOCAL_HEALTH_FAILED");
+  assert.equal(report.healthFailureReason, "POC_HEALTH_WORKTREE_MISMATCH");
+  assert.equal(
+    report.healthUrlPath,
+    "/api/poc/voximplant/server-stop/health",
+  );
+  assert.equal(report.healthHttpStatus, 200);
+  assert.equal(report.healthWorktreeFingerprint, "aaaaaaaaaaaaaaaa");
+  assert.equal(report.expectedWorktreeFingerprint, "bbbbbbbbbbbbbbbb");
+  const summary = formatLastReportSummary(
+    report as unknown as Record<string, unknown>,
+  );
+  assert.equal(
+    summary.summary.failureCode,
+    "LOCAL_HEALTH_FAILED: POC_HEALTH_WORKTREE_MISMATCH",
+  );
+  const saved = JSON.stringify(report);
+  assert.ok(!saved.includes("CONTROL_SECRET"));
+  assert.ok(!saved.includes("mediaSessionAccess"));
+  assert.ok(!saved.includes("user:pass@"));
+});
+
+test("11. callback self-test failure still prevents StartConference", async () => {
+  let startCalls = 0;
+  const report = await runPocOrchestrator(
+    baseOptions({ mode: "transport" }),
+    mockDeps({
+      callbackSelfTest: async () => ({
+        passed: false,
+        code: "CALLBACK_SELF_TEST_PERSIST_FAILED",
+        details: {},
+        healthDiagnostics: {
+          healthUrlPath: "/api/poc/voximplant/server-stop/health",
+          healthHttpStatus: 200,
+          healthService: "voximplant_server_stop_poc",
+          healthProtocolVersion: 1,
+          healthCallbackEnabled: true,
+          healthWorktreeFingerprint: "ok",
+          expectedWorktreeFingerprint: "ok",
+          healthBuildId: "poc/voximplant-server-stop",
+          expectedBuildId: "poc/voximplant-server-stop",
+          healthFailureReason: null,
+        },
+      }),
+      startConference: async () => {
+        startCalls += 1;
+        throw new Error("should not start");
+      },
+    }),
+  );
+  assert.equal(startCalls, 0);
+  assert.equal(report.failureCode, "CALLBACK_SELF_TEST_PERSIST_FAILED");
+  assert.equal(report.startConferenceCallCount, 0);
+  assert.equal(report.providerCalls, false);
 });

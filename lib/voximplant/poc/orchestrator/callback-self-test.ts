@@ -7,6 +7,11 @@ import {
   isPocCallbackEnabled,
 } from "@/lib/voximplant/poc/callback-signature";
 import {
+  formatLocalHealthFailure,
+  probePocHealth,
+  type PocHealthDiagnostics,
+} from "@/lib/voximplant/poc/poc-health";
+import {
   classifyWorktreeMatch,
   fingerprintSecretPrefix,
   getPocWorktreeDiagnostic,
@@ -22,6 +27,7 @@ export type CallbackSelfTestResult = {
   passed: boolean;
   code: "CALLBACK_SELF_TEST_PASSED" | string;
   details: Record<string, unknown>;
+  healthDiagnostics?: PocHealthDiagnostics | null;
 };
 
 export async function runCallbackSelfTest(params: {
@@ -40,6 +46,7 @@ export async function runCallbackSelfTest(params: {
       passed: false,
       code: "POC_WORKTREE_MISMATCH",
       details: { classificationHint: diag.classificationHint },
+      healthDiagnostics: null,
     };
   }
 
@@ -48,6 +55,7 @@ export async function runCallbackSelfTest(params: {
       passed: false,
       code: "POC_CALLBACK_DISABLED",
       details: {},
+      healthDiagnostics: null,
     };
   }
 
@@ -59,6 +67,7 @@ export async function runCallbackSelfTest(params: {
       passed: false,
       code: "CALLBACK_SECRET_MISSING",
       details: {},
+      healthDiagnostics: null,
     };
   }
 
@@ -68,6 +77,7 @@ export async function runCallbackSelfTest(params: {
       passed: false,
       code: "POC_STATE_MISSING",
       details: {},
+      healthDiagnostics: null,
     };
   }
 
@@ -76,36 +86,27 @@ export async function runCallbackSelfTest(params: {
       passed: true,
       code: "CALLBACK_SELF_TEST_PASSED",
       details: { skippedHttp: true },
+      healthDiagnostics: null,
     };
   }
 
-  // Health check (local.negotaitions.ru or override).
-  try {
-    const healthController = new AbortController();
-    const healthTimer = setTimeout(
-      () => healthController.abort(),
-      Math.min(params.timeoutMs, 8_000),
-    );
-    const healthResp = await fetchImpl(params.healthUrl, {
-      method: "GET",
-      signal: healthController.signal,
-      cache: "no-store",
-    });
-    clearTimeout(healthTimer);
-    if (!healthResp.ok) {
-      return {
-        passed: false,
-        code: "LOCAL_HEALTH_FAILED",
-        details: { httpStatus: healthResp.status },
-      };
-    }
-  } catch (error) {
+  // Dedicated POC health (not app root / admin health / invalid callback POST).
+  const health = await probePocHealth({
+    healthUrl: params.healthUrl,
+    timeoutMs: params.timeoutMs,
+    fetchImpl,
+    expected: diag,
+  });
+  if (!health.passed) {
     return {
       passed: false,
       code: "LOCAL_HEALTH_FAILED",
       details: {
-        message: error instanceof Error ? error.message : String(error),
+        healthFailureReason: health.code,
+        displayFailure: formatLocalHealthFailure(health.code),
+        ...health.diagnostics,
       },
+      healthDiagnostics: health.diagnostics,
     };
   }
 
@@ -157,7 +158,9 @@ export async function runCallbackSelfTest(params: {
       code: "CALLBACK_SELF_TEST_HTTP_FAILED",
       details: {
         message: error instanceof Error ? error.message : String(error),
+        ...health.diagnostics,
       },
+      healthDiagnostics: health.diagnostics,
     };
   }
 
@@ -169,7 +172,12 @@ export async function runCallbackSelfTest(params: {
     return {
       passed: false,
       code: "CALLBACK_ROUTE_WRONG_WORKTREE",
-      details: { worktreeClass, routeFingerprint },
+      details: {
+        worktreeClass,
+        routeFingerprint,
+        ...health.diagnostics,
+      },
+      healthDiagnostics: health.diagnostics,
     };
   }
 
@@ -196,7 +204,9 @@ export async function runCallbackSelfTest(params: {
           .digest("hex")
           .slice(0, 12),
         callbackSecretSha256Prefix: fingerprintSecretPrefix(secret),
+        ...health.diagnostics,
       },
+      healthDiagnostics: health.diagnostics,
     };
   }
 
@@ -210,6 +220,8 @@ export async function runCallbackSelfTest(params: {
       httpStatus,
       operationId,
       worktreeFingerprint: diag.worktreeFingerprint,
+      ...health.diagnostics,
     },
+    healthDiagnostics: health.diagnostics,
   };
 }

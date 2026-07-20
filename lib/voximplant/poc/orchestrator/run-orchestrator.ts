@@ -56,16 +56,59 @@ import {
   runCallbackSelfTest,
   type CallbackSelfTestResult,
 } from "./callback-self-test";
+import type { PocHealthDiagnostics } from "@/lib/voximplant/poc/poc-health";
 import {
   DEFAULT_POC_PHASE_TIMEOUTS,
   evaluateFullPass,
   evaluateTransportPass,
+  isDryRunExecution,
+  plannedPhasesForMode,
+  POC_DRY_RUN_BANNER,
   type PocFailureStage,
   type PocOrchestratorOptions,
   type PocOrchestratorReport,
   type PocOrchestratorResult,
   type PocPhaseTimeouts,
 } from "./types";
+
+function applyHealthDiagnosticsToReport(
+  draft: Omit<PocOrchestratorReport, "result">,
+  diagnostics: PocHealthDiagnostics | null | undefined,
+  details: Record<string, unknown>,
+): void {
+  const source = diagnostics ?? null;
+  if (source) {
+    draft.healthUrlPath = source.healthUrlPath;
+    draft.healthHttpStatus = source.healthHttpStatus;
+    draft.healthService = source.healthService;
+    draft.healthProtocolVersion = source.healthProtocolVersion;
+    draft.healthCallbackEnabled = source.healthCallbackEnabled;
+    draft.healthWorktreeFingerprint = source.healthWorktreeFingerprint;
+    draft.expectedWorktreeFingerprint = source.expectedWorktreeFingerprint;
+    draft.healthBuildId = source.healthBuildId;
+    draft.expectedBuildId = source.expectedBuildId;
+    draft.healthFailureReason = source.healthFailureReason;
+    return;
+  }
+  if (typeof details.healthUrlPath === "string") {
+    draft.healthUrlPath = details.healthUrlPath;
+  }
+  if (
+    typeof details.healthHttpStatus === "number" ||
+    details.healthHttpStatus === null
+  ) {
+    draft.healthHttpStatus = details.healthHttpStatus as number | null;
+  }
+  if (typeof details.healthFailureReason === "string") {
+    draft.healthFailureReason = details.healthFailureReason;
+  }
+  if (typeof details.expectedWorktreeFingerprint === "string") {
+    draft.expectedWorktreeFingerprint = details.expectedWorktreeFingerprint;
+  }
+  if (typeof details.expectedBuildId === "string") {
+    draft.expectedBuildId = details.expectedBuildId;
+  }
+}
 
 export type OrchestratorDeps = {
   startConference?: typeof startConference;
@@ -136,14 +179,40 @@ async function waitForCallback(params: {
   return false;
 }
 
+function trySanitizeLocalDatabaseTarget(
+  databaseUrl: string | null | undefined = process.env.DATABASE_URL,
+): { sanitizedUrl: string | null; safe: boolean; error: string | null } {
+  try {
+    return {
+      sanitizedUrl: assertSafeLocalDatabaseTarget(databaseUrl).sanitizedUrl,
+      safe: true,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      sanitizedUrl: null,
+      safe: false,
+      error:
+        error instanceof LocalDbSafetyError
+          ? error.code
+          : error instanceof Error
+            ? error.message
+            : String(error),
+    };
+  }
+}
+
 function emptyReport(partial: Partial<PocOrchestratorReport> & {
   runId: string;
   mode: PocOrchestratorReport["mode"];
   startedAt: string;
 }): PocOrchestratorReport {
+  const dryRun = partial.dryRun ?? false;
   return {
     runId: partial.runId,
     mode: partial.mode,
+    dryRun,
+    executionKind: partial.executionKind ?? (dryRun ? "DRY_RUN" : "LIVE"),
     startedAt: partial.startedAt,
     finishedAt: partial.finishedAt ?? partial.startedAt,
     durationMs: partial.durationMs ?? 0,
@@ -154,6 +223,10 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
     conferenceName: partial.conferenceName ?? null,
     callSessionHistoryId: partial.callSessionHistoryId ?? null,
     controlUrlFingerprint: partial.controlUrlFingerprint ?? null,
+    providerCalls: partial.providerCalls ?? false,
+    dbWrites: partial.dbWrites ?? false,
+    browserExecution: partial.browserExecution ?? false,
+    plannedPhases: partial.plannedPhases ?? plannedPhasesForMode(partial.mode),
     callbackSelfTest: partial.callbackSelfTest ?? false,
     browserFacilitatorJoined: partial.browserFacilitatorJoined ?? false,
     browserParticipantJoined: partial.browserParticipantJoined ?? false,
@@ -173,6 +246,16 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
     result: partial.result ?? "FAIL",
     failureStage: partial.failureStage ?? null,
     failureCode: partial.failureCode ?? null,
+    healthUrlPath: partial.healthUrlPath ?? null,
+    healthHttpStatus: partial.healthHttpStatus ?? null,
+    healthService: partial.healthService ?? null,
+    healthProtocolVersion: partial.healthProtocolVersion ?? null,
+    healthCallbackEnabled: partial.healthCallbackEnabled ?? null,
+    healthWorktreeFingerprint: partial.healthWorktreeFingerprint ?? null,
+    expectedWorktreeFingerprint: partial.expectedWorktreeFingerprint ?? null,
+    healthBuildId: partial.healthBuildId ?? null,
+    expectedBuildId: partial.expectedBuildId ?? null,
+    healthFailureReason: partial.healthFailureReason ?? null,
     remainingEvidencePaths: partial.remainingEvidencePaths ?? [],
     startConferenceCallCount: partial.startConferenceCallCount ?? 0,
     cleanupManifest: partial.cleanupManifest ?? null,
@@ -182,6 +265,9 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
 function finalizeResult(
   draft: Omit<PocOrchestratorReport, "result">,
 ): PocOrchestratorResult {
+  if (draft.dryRun || draft.executionKind === "DRY_RUN") {
+    return "DRY_RUN_PASS";
+  }
   if (draft.failureCode === "TIMEOUT" || draft.failureStage === "timeout") {
     return "INCONCLUSIVE";
   }
@@ -193,62 +279,29 @@ function finalizeResult(
 
 export function buildDryRunPlan(options: PocOrchestratorOptions): Record<string, unknown> {
   const diag = getPocWorktreeDiagnostic();
-  let dbTarget: string | null = null;
-  let dbSafe = false;
-  let dbError: string | null = null;
-  try {
-    dbTarget = assertSafeLocalDatabaseTarget(process.env.DATABASE_URL).sanitizedUrl;
-    dbSafe = true;
-  } catch (error) {
-    dbError =
-      error instanceof LocalDbSafetyError
-        ? error.code
-        : error instanceof Error
-          ? error.message
-          : String(error);
-  }
+  const db = trySanitizeLocalDatabaseTarget(process.env.DATABASE_URL);
+  const plannedPhases = plannedPhasesForMode(options.mode);
 
   return {
     mode: options.mode,
     dryRun: true,
+    executionKind: "DRY_RUN",
     confirmLivePoc: options.confirmLivePoc,
     confirmLocalDbWrite: options.confirmLocalDbWrite,
     providerCalls: false,
     dbWrites: false,
+    browserExecution: false,
     browser: false,
     worktree: diag.classificationHint,
     branch: diag.branchOrBuildId,
-    localDatabaseTargetSanitized: dbTarget,
-    localDatabaseSafe: dbSafe,
-    localDatabaseError: dbError,
+    localDatabaseTargetSanitized: db.sanitizedUrl,
+    localDatabaseSafe: db.safe,
+    localDatabaseError: db.error,
     wouldRequireLiveConfirm: !options.confirmLivePoc,
     wouldRequireDbConfirm:
       options.mode === "full" && !options.confirmLocalDbWrite,
-    phases:
-      options.mode === "transport"
-        ? [
-            "env_validation",
-            "seed_run_state",
-            "callback_self_test",
-            "start_conference",
-            "ping",
-            "report",
-          ]
-        : [
-            "env_validation",
-            "local_db_safety",
-            "create_session",
-            "seed_run_state",
-            "callback_self_test",
-            "start_conference",
-            "browser_join",
-            "recording_start",
-            "server_stop",
-            "artifact",
-            "log_fetch",
-            "cleanup",
-            "report",
-          ],
+    plannedPhases,
+    phases: plannedPhases,
   };
 }
 
@@ -272,20 +325,28 @@ export async function runPocOrchestrator(
   let cleanupManifest: PocCleanupManifest | null = null;
   let browser: BrowserJoinResult | null = null;
   let state: VoximplantServerStopPocState | null = null;
+  const preflightDb = trySanitizeLocalDatabaseTarget(process.env.DATABASE_URL);
+  const plannedPhases = plannedPhasesForMode(options.mode);
 
   const reportDraft: Omit<PocOrchestratorReport, "result"> = {
     runId,
     mode: options.mode,
+    dryRun: options.dryRun,
+    executionKind: options.dryRun ? "DRY_RUN" : "LIVE",
     startedAt,
     finishedAt: startedAt,
     durationMs: 0,
     worktree: diag.classificationHint,
     branch: diag.branchOrBuildId,
-    localDatabaseTargetSanitized: null,
+    localDatabaseTargetSanitized: preflightDb.sanitizedUrl,
     sessionId: null,
     conferenceName: null,
     callSessionHistoryId: null,
     controlUrlFingerprint: null,
+    providerCalls: false,
+    dbWrites: false,
+    browserExecution: false,
+    plannedPhases,
     callbackSelfTest: false,
     browserFacilitatorJoined: false,
     browserParticipantJoined: false,
@@ -304,6 +365,16 @@ export async function runPocOrchestrator(
     cleanupStatus: "NOT_RUN",
     failureStage: null,
     failureCode: null,
+    healthUrlPath: null,
+    healthHttpStatus: null,
+    healthService: null,
+    healthProtocolVersion: null,
+    healthCallbackEnabled: null,
+    healthWorktreeFingerprint: null,
+    expectedWorktreeFingerprint: null,
+    healthBuildId: null,
+    expectedBuildId: null,
+    healthFailureReason: null,
     remainingEvidencePaths: [paths.runDir],
     startConferenceCallCount: 0,
     cleanupManifest: null,
@@ -314,6 +385,15 @@ export async function runPocOrchestrator(
     const merged = {
       ...reportDraft,
       ...extra,
+      dryRun: extra.dryRun ?? reportDraft.dryRun,
+      executionKind: extra.executionKind ?? reportDraft.executionKind,
+      localDatabaseTargetSanitized:
+        extra.localDatabaseTargetSanitized ??
+        reportDraft.localDatabaseTargetSanitized,
+      plannedPhases: extra.plannedPhases ?? reportDraft.plannedPhases,
+      providerCalls: extra.providerCalls ?? reportDraft.providerCalls,
+      dbWrites: extra.dbWrites ?? reportDraft.dbWrites,
+      browserExecution: extra.browserExecution ?? reportDraft.browserExecution,
       startConferenceCallCount,
       failureStage: extra.failureStage ?? failureStage,
       failureCode: extra.failureCode ?? failureCode,
@@ -328,9 +408,7 @@ export async function runPocOrchestrator(
         paths.logPath,
       ].filter((p) => existsSync(p) || p === paths.runDir),
     };
-    const result =
-      extra.result ??
-      (options.dryRun ? "PASS" : finalizeResult(merged));
+    const result = extra.result ?? finalizeResult(merged);
     const report = emptyReport({ ...merged, result });
     writeJsonArtifact(paths.reportPath, report);
     return report;
@@ -338,10 +416,18 @@ export async function runPocOrchestrator(
 
   if (options.dryRun) {
     const plan = buildDryRunPlan(options);
-    writeJsonArtifact(paths.reportPath, { runId, dryRun: true, plan });
     return finish({
-      result: "PASS",
-      cleanupStatus: "DRY_RUN",
+      result: "DRY_RUN_PASS",
+      dryRun: true,
+      executionKind: "DRY_RUN",
+      localDatabaseTargetSanitized:
+        (plan.localDatabaseTargetSanitized as string | null) ??
+        preflightDb.sanitizedUrl,
+      providerCalls: false,
+      dbWrites: false,
+      browserExecution: false,
+      plannedPhases: (plan.plannedPhases as string[]) ?? plannedPhases,
+      cleanupStatus: "NOT_RUN",
       logFetchStatus: "SKIPPED",
       failureStage: null,
       failureCode: null,
@@ -362,6 +448,9 @@ export async function runPocOrchestrator(
   }
 
   try {
+    // Persist sanitized preflight target for transport + full (+ failure paths).
+    reportDraft.localDatabaseTargetSanitized = preflightDb.sanitizedUrl;
+
     if (options.mode === "full") {
       try {
         const target = assertSafeLocalDatabaseTarget(process.env.DATABASE_URL);
@@ -386,6 +475,7 @@ export async function runPocOrchestrator(
       reportDraft.sessionId = sessionFixture.sessionId;
       reportDraft.localDatabaseTargetSanitized =
         sessionFixture.localDatabaseTargetSanitized;
+      reportDraft.dbWrites = true;
       reportDraft.cleanupManifest = cleanupManifest;
     }
 
@@ -414,6 +504,11 @@ export async function runPocOrchestrator(
       fetchImpl: deps.fetchImpl,
     });
     reportDraft.callbackSelfTest = selfTest.passed;
+    applyHealthDiagnosticsToReport(
+      reportDraft,
+      selfTest.healthDiagnostics,
+      selfTest.details,
+    );
     if (!selfTest.passed) {
       failureStage = "callback_self_test";
       failureCode = selfTest.code;
@@ -442,6 +537,7 @@ export async function runPocOrchestrator(
     });
     startConferenceCallCount += 1;
     reportDraft.startConferenceCallCount = startConferenceCallCount;
+    reportDraft.providerCalls = true;
 
     if (!startResult.parsed || !startResult.publicResult) {
       failureStage = "start_conference";
@@ -517,6 +613,7 @@ export async function runPocOrchestrator(
       keepBrowser: options.keepBrowser,
     });
 
+    reportDraft.browserExecution = true;
     reportDraft.browserFacilitatorJoined = browser.facilitatorJoined;
     reportDraft.browserParticipantJoined = browser.participantJoined;
     reportDraft.sameConferenceConfirmed = browser.sameConferenceConfirmed;
@@ -749,12 +846,36 @@ export function printHumanReport(
   report: PocOrchestratorReport,
   stateRoot?: string,
 ): void {
+  if (isDryRunExecution(report)) {
+    console.log(`[poc:vox:run] ${POC_DRY_RUN_BANNER}`);
+  }
+  const failureCodeDisplay =
+    report.failureCode === "LOCAL_HEALTH_FAILED" && report.healthFailureReason
+      ? `LOCAL_HEALTH_FAILED: ${report.healthFailureReason}`
+      : report.failureCode;
   console.log("[poc:vox:run] report", {
     runId: report.runId,
     mode: report.mode,
+    dryRun: report.dryRun,
+    executionKind: report.executionKind,
     result: report.result,
     failureStage: report.failureStage,
-    failureCode: report.failureCode,
+    failureCode: failureCodeDisplay,
+    healthFailureReason: report.healthFailureReason,
+    healthUrlPath: report.healthUrlPath,
+    healthHttpStatus: report.healthHttpStatus,
+    healthService: report.healthService,
+    healthProtocolVersion: report.healthProtocolVersion,
+    healthCallbackEnabled: report.healthCallbackEnabled,
+    healthWorktreeFingerprint: report.healthWorktreeFingerprint,
+    expectedWorktreeFingerprint: report.expectedWorktreeFingerprint,
+    healthBuildId: report.healthBuildId,
+    expectedBuildId: report.expectedBuildId,
+    localDatabaseTargetSanitized: report.localDatabaseTargetSanitized,
+    providerCalls: report.providerCalls,
+    dbWrites: report.dbWrites,
+    browserExecution: report.browserExecution,
+    plannedPhases: report.plannedPhases,
     sessionId: report.sessionId,
     conferenceName: report.conferenceName,
     callSessionHistoryId: report.callSessionHistoryId,

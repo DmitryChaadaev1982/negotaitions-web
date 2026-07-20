@@ -49,6 +49,27 @@ The access route reads the active run pointer on every POC access request and se
 | `--mode=transport --confirm-live-poc` | live | StartConference + ping | no | no | no |
 | `--mode=full --confirm-live-poc --confirm-local-db-write` | live + local DB | full E2E | temp entities | 2 contexts | server control URL |
 
+## Report execution kind and results
+
+Reports persist explicit fields (do not infer dry-run only from `cleanupStatus`):
+
+- `dryRun: boolean`
+- `executionKind: DRY_RUN | LIVE`
+- `providerCalls` / `dbWrites` / `browserExecution` (actual execution flags; all `false` for dry-run)
+- `plannedPhases` (planned work; not completed evidence)
+- `localDatabaseTargetSanitized` (from preflight; never raw `DATABASE_URL` / credentials)
+
+Result enum:
+
+| Result | Meaning |
+| --- | --- |
+| `DRY_RUN_PASS` | Planning-only dry-run validation succeeded |
+| `PASS` | Live transport/full success under strict evidence criteria |
+| `FAIL` | Live or confirmation failure |
+| `INCONCLUSIVE` | Timeout / inconclusive live evidence |
+
+`npm run poc:vox:last-report` prints `DRY RUN — NO PROVIDER / DB / BROWSER EXECUTION.` for dry-run reports.
+
 ## Safety confirmations
 
 - Live provider calls require `--confirm-live-poc`.
@@ -62,6 +83,8 @@ Bounded phase timeouts (callback self-test, StartConference, browser join, recor
 
 ## PASS criteria (full mode)
 
+Live `PASS` only (dry-run uses `DRY_RUN_PASS` and does not require live evidence):
+
 - callback self-test (`CALLBACK_SELF_TEST_PASSED`)
 - both WebSDK joins + same server-started conference
 - recording started through application flow
@@ -70,6 +93,8 @@ Bounded phase timeouts (callback self-test, StartConference, browser join, recor
 - no browser recording-control relay for stop
 - artifact evidence present  
 Log fetch may be `LOG_FETCH_UNAVAILABLE` without failing PASS.
+
+Transport live `PASS` still requires callback confirmation (`commandAccepted`) after transport acceptance.
 
 ## Cleanup
 
@@ -81,10 +106,23 @@ On failure: retain Session + run evidence; print `npm run poc:vox:cleanup -- …
 
 `lib/voximplant/poc/log-sanitize.ts` removes `accessURL` / `accessSecureURL`, signatures, Authorization, and header maps. History retrieval uses Management API `GetCallHistory` (`call_session_history_id`, `with_records`) when authorized.
 
+## Callback self-test preflight
+
+Live runs probe a dedicated flag-gated health endpoint before the signed synthetic callback:
+
+1. `GET /api/poc/voximplant/server-stop/health` → HTTP 200 with `ok`, `service=voximplant_server_stop_poc`, `protocolVersion=1`, `callbackEnabled=true`, matching worktree fingerprint + build id
+2. Signed synthetic `POST /api/poc/voximplant/server-stop/callback` → `CALLBACK_ACCEPTED`
+3. Event persisted in active run state, then synthetic evidence cleared → `callbackSelfTest=true`
+
+Health must not use the application root (auth 307) or `/api/admin/health`. Typed health failures (`POC_HEALTH_*`) are nested under outer `LOCAL_HEALTH_FAILED` in reports (`healthFailureReason`, `healthUrlPath`, fingerprints/build ids — never host credentials or raw bodies).
+
+Default health URL: `{POC_APP_BASE_URL|http://localhost:3000}/api/poc/voximplant/server-stop/health`. Override with `--health-url`, `POC_HEALTH_URL`, or `--public-base-url` / `POC_PUBLIC_BASE_URL` (e.g. `https://local.negotaitions.ru`) when the tunnel is reachable from Node.
+
 ## Scope / non-goals
 
 - Manual legacy scripts still available under `scripts/poc/voximplant-server-stop/` for troubleshooting
 - Scenario variant: `docs/voximplant/neg-conf.server-stop-poc.scenario.js`
+- POC health: `GET /api/poc/voximplant/server-stop/health` (flag-gated; not production admin health)
 - POC callback: `POST /api/poc/voximplant/server-stop/callback` (flag-gated)
 - No Prisma migration / no production room lifecycle integration
 - No automatic live provider calls from tests

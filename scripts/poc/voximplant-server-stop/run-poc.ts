@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const report = await runPocOrchestrator(options);
   printHumanReport(report, options.stateRoot);
 
-  if (report.result !== "PASS") {
+  if (report.result !== "PASS" && report.result !== "DRY_RUN_PASS") {
     console.log("[poc:vox:run] cleanup hint", {
       command: `npm run poc:vox:cleanup -- --run-id ${report.runId} --confirm-cleanup --confirm-local-db-write`,
       keepSession: options.keepSession,

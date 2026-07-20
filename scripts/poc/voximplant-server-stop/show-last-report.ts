@@ -14,6 +14,7 @@ import {
   getPocRunPaths,
   readCurrentPointer,
 } from "@/lib/voximplant/poc/poc-run-store";
+import { formatLastReportSummary } from "@/lib/voximplant/poc/orchestrator/types";
 import { loadPocEnvFiles } from "./load-env";
 
 function readArg(name: string): string | null {
@@ -61,16 +62,14 @@ function main(): void {
     string,
     unknown
   >;
+  const { banner, summary } = formatLastReportSummary(report);
+  if (banner) {
+    console.log(`[poc:vox:last-report] ${banner}`);
+  }
   console.log("[poc:vox:last-report]", {
     runId,
     reportPath: paths.reportPath,
-    result: report.result,
-    failureStage: report.failureStage,
-    failureCode: report.failureCode,
-    conferenceName: report.conferenceName,
-    callSessionHistoryId: report.callSessionHistoryId,
-    controlUrlFingerprint: report.controlUrlFingerprint,
-    remainingEvidencePaths: report.remainingEvidencePaths,
+    ...summary,
   });
   console.log(JSON.stringify(report, null, 2));
 }
