@@ -15,6 +15,13 @@ import { resolveRuntimeStatus } from "@/lib/voximplant/poc/poc-state";
 import { readCurrentPointer } from "@/lib/voximplant/poc/poc-run-store";
 import { readPocState } from "@/lib/voximplant/poc/poc-state";
 
+import {
+  buildAuthFailureDiagnostics,
+  buildUrlBoundAuthCookie,
+  parseCookieHeader,
+  prepareParticipantJoinContext,
+  redactBoundedErrorMessage,
+} from "./browser-auth-cookie";
 import { persistBrowserContextArtifacts } from "./browser-artifacts";
 import {
   advanceStage,
@@ -113,14 +120,6 @@ export type BrowserPrewarmFn = (
 /** @deprecated Prefer browserPrewarm + liveJoin. Kept for test mocks. */
 export type BrowserJoinFn = (input: BrowserJoinInput) => Promise<BrowserJoinResult>;
 
-function parseCookieHeader(cookieHeader: string): {
-  name: string;
-  value: string;
-} {
-  const [name, ...rest] = cookieHeader.split("=");
-  return { name: name ?? "auth_session", value: rest.join("=") };
-}
-
 function emptyTiming(): BrowserJoinTiming {
   return {
     browserPrewarmStartedAt: null,
@@ -173,7 +172,17 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       }
     })(),
     cookieName: parseCookieHeader(input.facilitatorAuthCookie).name,
-    cookieBoundToAppBaseUrl: true,
+    cookieBindingMode: "URL_BOUND",
+    secure: (() => {
+      try {
+        return new URL(input.appBaseUrl).protocol === "https:";
+      } catch {
+        return false;
+      }
+    })(),
+    facilitatorAuthStrategy: "AUTH_SESSION_COOKIE",
+    participantAuthStrategy: "JOIN_TOKEN_URL",
+    participantCookieInstalled: false,
   };
 
   const { chromium } = await import("@playwright/test");
@@ -271,34 +280,86 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       ignoreHTTPSErrors: true,
     });
 
-    const cookie = parseCookieHeader(input.facilitatorAuthCookie);
-    await facilitatorContext.addCookies([
-      {
-        name: cookie.name,
-        value: cookie.value,
-        url: input.appBaseUrl,
-        httpOnly: true,
-        sameSite: "Lax",
-        path: "/",
-      },
-    ]);
-    facilitator = {
-      ...facilitator,
-      reachedStage: advanceStage(
-        facilitator.reachedStage,
+    // Facilitator: authenticated auth_session via URL-bound cookie only.
+    try {
+      const built = buildUrlBoundAuthCookie({
+        cookieHeader: input.facilitatorAuthCookie,
+        appBaseUrl: input.appBaseUrl,
+      });
+      evidence.cookieBindingMode = built.bindingMode;
+      evidence.appBaseUrlHost = built.appBaseUrlHost;
+      evidence.secure = built.secure;
+      evidence.cookieName = built.cookieName;
+      await facilitatorContext.addCookies([built.cookie]);
+      facilitator = {
+        ...facilitator,
+        reachedStage: advanceStage(
+          facilitator.reachedStage,
+          "AUTH_CONTEXT_CREATED",
+        ),
+      };
+    } catch (error) {
+      const diag = buildAuthFailureDiagnostics({
+        role: "facilitator",
+        failingOperation: "addCookies",
+        error,
+        cookieBindingMode: "URL_BOUND",
+        appBaseUrl: input.appBaseUrl,
+        secure: Boolean(evidence.secure),
+      });
+      Object.assign(evidence, diag);
+      evidence.prewarmError = diag.errorMessage;
+      return failPrewarm(
+        "AUTH_COOKIE_INSTALL_FAILED",
+        "facilitator",
         "AUTH_CONTEXT_CREATED",
-      ),
-    };
-    participant = {
-      ...participant,
-      reachedStage: advanceStage(
-        participant.reachedStage,
-        "AUTH_CONTEXT_CREATED",
-      ),
-    };
+      );
+    }
 
-    facilitatorPage = await facilitatorContext.newPage();
-    participantPage = await participantContext.newPage();
+    // Participant: join-token URL only — never install facilitator auth_session.
+    try {
+      prepareParticipantJoinContext({
+        participantRoomUrl: input.participantRoomUrl,
+      });
+      evidence.participantCookieInstalled = false;
+      participant = {
+        ...participant,
+        reachedStage: advanceStage(
+          participant.reachedStage,
+          "AUTH_CONTEXT_CREATED",
+        ),
+      };
+    } catch (error) {
+      const diag = buildAuthFailureDiagnostics({
+        role: "participant",
+        failingOperation: "prepareParticipantJoinContext",
+        error,
+        cookieBindingMode: "URL_BOUND",
+        appBaseUrl: input.appBaseUrl,
+        secure: Boolean(evidence.secure),
+      });
+      Object.assign(evidence, diag);
+      evidence.prewarmError = diag.errorMessage;
+      return failPrewarm(
+        "PARTICIPANT_CONTEXT_SETUP_FAILED",
+        "participant",
+        "AUTH_CONTEXT_CREATED",
+      );
+    }
+
+    try {
+      facilitatorPage = await facilitatorContext.newPage();
+      participantPage = await participantContext.newPage();
+    } catch (error) {
+      evidence.prewarmError = redactBoundedErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+      return failPrewarm(
+        "BROWSER_PREWARM_FAILED",
+        "both",
+        "AUTH_CONTEXT_CREATED",
+      );
+    }
 
     const attachDiagnostics = (
       page: import("@playwright/test").Page,
@@ -409,16 +470,24 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       ),
     };
 
-    await Promise.all([
-      facilitatorPage.goto(input.facilitatorRoomUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: Math.min(input.timeoutMs, 30_000),
-      }),
-      participantPage.goto(input.participantRoomUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: Math.min(input.timeoutMs, 30_000),
-      }),
-    ]);
+    try {
+      await Promise.all([
+        facilitatorPage.goto(input.facilitatorRoomUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: Math.min(input.timeoutMs, 30_000),
+        }),
+        participantPage.goto(input.participantRoomUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: Math.min(input.timeoutMs, 30_000),
+        }),
+      ]);
+    } catch (error) {
+      evidence.prewarmError = redactBoundedErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+      evidence.failingOperation = "page.goto";
+      return failPrewarm("ROOM_PAGE_FAILED", "both", "ROOM_NAVIGATION_STARTED");
+    }
 
     facilitator.pageUrlPath = sanitizePageUrl(facilitatorPage.url());
     participant.pageUrlPath = sanitizePageUrl(participantPage.url());
@@ -926,9 +995,21 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
       },
     };
   } catch (error) {
-    evidence.prewarmError =
-      error instanceof Error ? error.message : String(error);
-    return failPrewarm("BROWSER_PREWARM_FAILED", "both", "BROWSER_LAUNCHED");
+    const message = redactBoundedErrorMessage(
+      error instanceof Error ? error.message : String(error),
+    );
+    evidence.prewarmError = message;
+    evidence.failingOperation = evidence.failingOperation ?? "prewarm";
+    evidence.errorName =
+      error instanceof Error ? error.name || "Error" : "Error";
+    evidence.errorMessage = message;
+    // Cookie install / participant setup have dedicated handlers above.
+    // Remaining launch/context failures stay on BROWSER_LAUNCHED.
+    const stage: BrowserStage =
+      facilitator.reachedStage === "BROWSER_NOT_LAUNCHED"
+        ? "BROWSER_NOT_LAUNCHED"
+        : "BROWSER_LAUNCHED";
+    return failPrewarm("BROWSER_PREWARM_FAILED", "both", stage);
   }
 };
 

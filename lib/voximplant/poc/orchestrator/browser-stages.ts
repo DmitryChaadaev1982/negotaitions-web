@@ -26,6 +26,8 @@ export type BrowserStage = (typeof BROWSER_STAGES)[number];
 export type BrowserFailureCode =
   | "BROWSER_JOIN_FAILED"
   | "BROWSER_PREWARM_FAILED"
+  | "AUTH_COOKIE_INSTALL_FAILED"
+  | "PARTICIPANT_CONTEXT_SETUP_FAILED"
   | "MEDIA_SESSION_EXPIRED_BEFORE_ACCESS"
   | "MEDIA_SESSION_EXPIRED_DURING_JOIN"
   | "ACCESS_SELECTED_DEFAULT_CONFERENCE"
@@ -170,6 +172,12 @@ export function classifyBrowserFailure(params: {
     params.participant.failureCode,
   ].filter(Boolean) as BrowserFailureCode[];
 
+  if (codes.includes("AUTH_COOKIE_INSTALL_FAILED")) {
+    return "AUTH_COOKIE_INSTALL_FAILED";
+  }
+  if (codes.includes("PARTICIPANT_CONTEXT_SETUP_FAILED")) {
+    return "PARTICIPANT_CONTEXT_SETUP_FAILED";
+  }
   if (codes.includes("FACILITATOR_AUTH_FAILED")) return "FACILITATOR_AUTH_FAILED";
   if (codes.includes("PARTICIPANT_AUTH_FAILED")) return "PARTICIPANT_AUTH_FAILED";
   if (codes.includes("BROWSER_AUTH_FAILED")) return "BROWSER_AUTH_FAILED";

@@ -307,6 +307,130 @@ test("2. no provider call if browser prewarm fails", async () => {
   }
 });
 
+test("2b. AUTH_COOKIE_INSTALL_FAILED blocks StartConference", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  try {
+    let startCalls = 0;
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "full" }),
+      baseDeps({
+        browserPrewarm: async () => ({
+          ok: false,
+          failureCode: "AUTH_COOKIE_INSTALL_FAILED",
+          browserPrewarmStartedAt: new Date().toISOString(),
+          browserPrewarmCompletedAt: new Date().toISOString(),
+          facilitator: {
+            ...emptyBrowserContextEvidence("facilitator", "s"),
+            reachedStage: "BROWSER_LAUNCHED",
+            firstFailedStage: "AUTH_CONTEXT_CREATED",
+            failureCode: "AUTH_COOKIE_INSTALL_FAILED",
+          },
+          participant: {
+            ...emptyBrowserContextEvidence("participant", "s"),
+            reachedStage: "BROWSER_LAUNCHED",
+          },
+          evidence: {
+            cookieBindingMode: "URL_BOUND",
+            appBaseUrlHost: "localhost:3000",
+            secure: false,
+            failingOperation: "addCookies",
+            role: "facilitator",
+          },
+          liveJoin: async () => {
+            throw new Error("should not live join");
+          },
+          close: async () => {},
+        }),
+        startConference: async () => {
+          startCalls += 1;
+          throw new Error("should not start");
+        },
+      }),
+    );
+    assert.equal(startCalls, 0);
+    assert.equal(report.providerCalls, false);
+    assert.equal(report.failureStage, "browser_prewarm");
+    assert.equal(report.failureCode, "AUTH_COOKIE_INSTALL_FAILED");
+    assert.equal(report.facilitatorFirstFailedStage, "AUTH_CONTEXT_CREATED");
+    assert.notEqual(report.failureCode, "BROWSER_LAUNCHED");
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
+});
+
+test("2c. successful prewarm reaches AUTH_CONTEXT_CREATED for both contexts", async () => {
+  const previousDb = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  try {
+    let capturedFacStage: string | null = null;
+    let capturedPartStage: string | null = null;
+    let participantCookieInstalled: unknown = null;
+    let startCalls = 0;
+    const report = await runPocOrchestrator(
+      baseOptions({ mode: "full" }),
+      baseDeps({
+        browserPrewarm: async () => {
+          const handle = {
+            ok: true as const,
+            failureCode: null,
+            browserPrewarmStartedAt: new Date().toISOString(),
+            browserPrewarmCompletedAt: new Date().toISOString(),
+            facilitator: {
+              ...emptyBrowserContextEvidence("facilitator", "s"),
+              reachedStage: "AUTH_CONTEXT_CREATED" as const,
+              authAccepted: true,
+              roomPageLoaded: true,
+            },
+            participant: {
+              ...emptyBrowserContextEvidence("participant", "s"),
+              reachedStage: "AUTH_CONTEXT_CREATED" as const,
+              authAccepted: true,
+              roomPageLoaded: true,
+            },
+            evidence: {
+              cookieBindingMode: "URL_BOUND",
+              participantCookieInstalled: false,
+              facilitatorAuthStrategy: "AUTH_SESSION_COOKIE",
+              participantAuthStrategy: "JOIN_TOKEN_URL",
+            },
+            liveJoin: async () => {
+              throw new Error("live join should not run in this test");
+            },
+            close: async () => {},
+          };
+          capturedFacStage = handle.facilitator.reachedStage;
+          capturedPartStage = handle.participant.reachedStage;
+          participantCookieInstalled =
+            handle.evidence.participantCookieInstalled;
+          return handle;
+        },
+        startConference: async () => {
+          startCalls += 1;
+          return {
+            dryRun: false,
+            missingPocRule: false,
+            request: { conference_name: "x", rule_id: "9175667" },
+            parsed: null,
+            publicResult: null,
+          };
+        },
+      }),
+    );
+    assert.equal(capturedFacStage, "AUTH_CONTEXT_CREATED");
+    assert.equal(capturedPartStage, "AUTH_CONTEXT_CREATED");
+    assert.equal(participantCookieInstalled, false);
+    assert.equal(startCalls, 1);
+    assert.equal(report.facilitatorBrowserStage, "AUTH_CONTEXT_CREATED");
+    assert.equal(report.participantBrowserStage, "AUTH_CONTEXT_CREATED");
+    assert.equal(report.failureStage, "start_conference");
+  } finally {
+    if (previousDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDb;
+  }
+});
+
 function markFacAuth() {
   return {
     ...emptyBrowserContextEvidence("facilitator", "s"),

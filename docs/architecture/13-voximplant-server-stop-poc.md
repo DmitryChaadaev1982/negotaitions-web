@@ -87,6 +87,18 @@ Full mode uses two browser phases so launch/auth do not consume the idle window:
 2. **StartConference** + activate run pointer.
 3. **browser_join** (live): release both access/joins concurrently under a short budget (~25s).
 
+Prewarm auth is role-split:
+
+- **Facilitator**: install `auth_session` with a Playwright **URL-bound** cookie (`url` + `httpOnly`/`sameSite`/`secure` from `appBaseUrl` protocol). Never pass `url` together with `domain`/`path`.
+- **Participant**: join-token room URL only — do not install the facilitator `auth_session` cookie.
+
+Typed prewarm auth failures (not collapsed to `BROWSER_LAUNCHED`):
+
+- `AUTH_COOKIE_INSTALL_FAILED` — facilitator cookie install
+- `PARTICIPANT_CONTEXT_SETUP_FAILED` — participant join-token context setup
+
+Sanitized diagnostics may include role, failing operation, error name, redacted bounded message, `cookieBindingMode` (`URL_BOUND` | `DOMAIN_BOUND`), `appBaseUrl` host, and `secure` — never cookie values, join tokens, or full tokenized URLs.
+
 Inspect a run: `npm run poc:vox:inspect-run -- --run-id <runId>` (sanitized phase timeline; no secrets/tokens/control URLs). Browser failures retain artifacts under `.agent/voximplant-server-stop/runs/<runId>/browser/{facilitator,participant}/`.
 
 ## PASS criteria (full mode)

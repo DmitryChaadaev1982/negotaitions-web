@@ -74,6 +74,35 @@ test("7/8. facilitator and participant auth failures are distinct", () => {
   );
 });
 
+test("cookie install and participant setup failures are distinct from BROWSER_LAUNCHED", () => {
+  assert.equal(
+    classifyBrowserFailure({
+      facilitator: markFailed(
+        emptyBrowserContextEvidence("facilitator", "s1"),
+        "AUTH_CONTEXT_CREATED",
+        "AUTH_COOKIE_INSTALL_FAILED",
+      ),
+      participant: emptyBrowserContextEvidence("participant", "s1"),
+      mediaSessionExpiredBeforeAccess: false,
+      mediaSessionExpiredDuringJoin: false,
+    }),
+    "AUTH_COOKIE_INSTALL_FAILED",
+  );
+  assert.equal(
+    classifyBrowserFailure({
+      facilitator: emptyBrowserContextEvidence("facilitator", "s1"),
+      participant: markFailed(
+        emptyBrowserContextEvidence("participant", "s1"),
+        "AUTH_CONTEXT_CREATED",
+        "PARTICIPANT_CONTEXT_SETUP_FAILED",
+      ),
+      mediaSessionExpiredBeforeAccess: false,
+      mediaSessionExpiredDuringJoin: false,
+    }),
+    "PARTICIPANT_CONTEXT_SETUP_FAILED",
+  );
+});
+
 test("10/11/12. media/sdk/call typed failures", () => {
   assert.equal(
     classifyBrowserFailure({
