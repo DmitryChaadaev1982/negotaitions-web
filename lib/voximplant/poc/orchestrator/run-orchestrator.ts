@@ -48,9 +48,11 @@ import {
 } from "@/lib/voximplant/poc/poc-state";
 
 import {
-  playwrightBrowserJoin,
+  playwrightBrowserPrewarm,
   type BrowserJoinFn,
   type BrowserJoinResult,
+  type BrowserPrewarmFn,
+  type BrowserPrewarmHandle,
 } from "./browser-join";
 import {
   runCallbackSelfTest,
@@ -117,6 +119,9 @@ export type OrchestratorDeps = {
   sendControl?: typeof sendPocControlCommand;
   executePing?: typeof executePocPing;
   getCallHistory?: typeof getCallHistoryForPoc;
+  /** Preferred: prewarm before StartConference, then liveJoin. */
+  browserPrewarm?: BrowserPrewarmFn;
+  /** Legacy single-shot join (tests may still mock this). */
   browserJoin?: BrowserJoinFn;
   callbackSelfTest?: (params: {
     callbackUrl: string;
@@ -256,6 +261,30 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
     healthBuildId: partial.healthBuildId ?? null,
     expectedBuildId: partial.expectedBuildId ?? null,
     healthFailureReason: partial.healthFailureReason ?? null,
+    browserPrewarmStartedAt: partial.browserPrewarmStartedAt ?? null,
+    browserPrewarmCompletedAt: partial.browserPrewarmCompletedAt ?? null,
+    startConferenceStartedAt: partial.startConferenceStartedAt ?? null,
+    startConferenceCompletedAt: partial.startConferenceCompletedAt ?? null,
+    activeRunPublishedAt: partial.activeRunPublishedAt ?? null,
+    facilitatorAccessRequestedAt: partial.facilitatorAccessRequestedAt ?? null,
+    participantAccessRequestedAt: partial.participantAccessRequestedAt ?? null,
+    facilitatorCallConnectedAt: partial.facilitatorCallConnectedAt ?? null,
+    participantCallConnectedAt: partial.participantCallConnectedAt ?? null,
+    startConferenceToFirstAccessMs:
+      partial.startConferenceToFirstAccessMs ?? null,
+    startConferenceToFirstJoinMs: partial.startConferenceToFirstJoinMs ?? null,
+    startConferenceToBothJoinedMs:
+      partial.startConferenceToBothJoinedMs ?? null,
+    facilitatorBrowserStage: partial.facilitatorBrowserStage ?? null,
+    participantBrowserStage: partial.participantBrowserStage ?? null,
+    facilitatorFirstFailedStage: partial.facilitatorFirstFailedStage ?? null,
+    participantFirstFailedStage: partial.participantFirstFailedStage ?? null,
+    facilitatorSelectedConferenceName:
+      partial.facilitatorSelectedConferenceName ?? null,
+    participantSelectedConferenceName:
+      partial.participantSelectedConferenceName ?? null,
+    facilitatorSelectionSource: partial.facilitatorSelectionSource ?? null,
+    participantSelectionSource: partial.participantSelectionSource ?? null,
     remainingEvidencePaths: partial.remainingEvidencePaths ?? [],
     startConferenceCallCount: partial.startConferenceCallCount ?? 0,
     cleanupManifest: partial.cleanupManifest ?? null,
@@ -324,6 +353,7 @@ export async function runPocOrchestrator(
   let sessionFixture: CreateVoxServerStopPocSessionResult | null = null;
   let cleanupManifest: PocCleanupManifest | null = null;
   let browser: BrowserJoinResult | null = null;
+  let prewarmHandle: BrowserPrewarmHandle | null = null;
   let state: VoximplantServerStopPocState | null = null;
   const preflightDb = trySanitizeLocalDatabaseTarget(process.env.DATABASE_URL);
   const plannedPhases = plannedPhasesForMode(options.mode);
@@ -375,6 +405,26 @@ export async function runPocOrchestrator(
     healthBuildId: null,
     expectedBuildId: null,
     healthFailureReason: null,
+    browserPrewarmStartedAt: null,
+    browserPrewarmCompletedAt: null,
+    startConferenceStartedAt: null,
+    startConferenceCompletedAt: null,
+    activeRunPublishedAt: null,
+    facilitatorAccessRequestedAt: null,
+    participantAccessRequestedAt: null,
+    facilitatorCallConnectedAt: null,
+    participantCallConnectedAt: null,
+    startConferenceToFirstAccessMs: null,
+    startConferenceToFirstJoinMs: null,
+    startConferenceToBothJoinedMs: null,
+    facilitatorBrowserStage: null,
+    participantBrowserStage: null,
+    facilitatorFirstFailedStage: null,
+    participantFirstFailedStage: null,
+    facilitatorSelectedConferenceName: null,
+    participantSelectedConferenceName: null,
+    facilitatorSelectionSource: null,
+    participantSelectionSource: null,
     remainingEvidencePaths: [paths.runDir],
     startConferenceCallCount: 0,
     cleanupManifest: null,
@@ -522,6 +572,47 @@ export async function runPocOrchestrator(
       sanitizePocManagementConfig(config),
     );
 
+    // Full mode: prewarm browsers BEFORE StartConference so the ~60s idle
+    // window is not consumed by launch/auth/navigation.
+    if (options.mode === "full") {
+      const prewarmFn = deps.browserPrewarm ?? playwrightBrowserPrewarm;
+      reportDraft.browserExecution = true;
+      prewarmHandle = await prewarmFn({
+        appBaseUrl: options.appBaseUrl,
+        sessionId: sessionFixture!.sessionId,
+        facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
+        participantRoomUrl: sessionFixture!.participantRoomUrl,
+        facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
+        timeoutMs: timeouts.browserPrewarmMs,
+        keepBrowser: options.keepBrowser,
+        runId,
+        stateRoot: options.stateRoot,
+        nowMs,
+      });
+      reportDraft.browserPrewarmStartedAt =
+        prewarmHandle.browserPrewarmStartedAt;
+      reportDraft.browserPrewarmCompletedAt =
+        prewarmHandle.browserPrewarmCompletedAt;
+      reportDraft.facilitatorBrowserStage =
+        prewarmHandle.facilitator.reachedStage;
+      reportDraft.participantBrowserStage =
+        prewarmHandle.participant.reachedStage;
+      reportDraft.facilitatorFirstFailedStage =
+        prewarmHandle.facilitator.firstFailedStage;
+      reportDraft.participantFirstFailedStage =
+        prewarmHandle.participant.firstFailedStage;
+
+      if (!prewarmHandle.ok) {
+        failureStage = "browser_prewarm";
+        failureCode =
+          prewarmHandle.failureCode ?? "BROWSER_PREWARM_FAILED";
+        await prewarmHandle.close();
+        return finish({ result: "FAIL" });
+      }
+    }
+
+    const startConferenceStartedAt = new Date(nowMs()).toISOString();
+    reportDraft.startConferenceStartedAt = startConferenceStartedAt;
     const start = deps.startConference ?? startConference;
     const startResult = await start({
       config,
@@ -538,10 +629,13 @@ export async function runPocOrchestrator(
     startConferenceCallCount += 1;
     reportDraft.startConferenceCallCount = startConferenceCallCount;
     reportDraft.providerCalls = true;
+    const startConferenceCompletedAt = new Date(nowMs()).toISOString();
+    reportDraft.startConferenceCompletedAt = startConferenceCompletedAt;
 
     if (!startResult.parsed || !startResult.publicResult) {
       failureStage = "start_conference";
       failureCode = "START_CONFERENCE_FAILED";
+      await prewarmHandle?.close();
       return finish({ result: "FAIL" });
     }
 
@@ -551,7 +645,7 @@ export async function runPocOrchestrator(
       mediaSessionAccessSecureUrl: startResult.parsed.mediaSessionAccessSecureUrl,
       ruleId: startResult.request.rule_id,
       applicationId: startResult.request.application_id ?? config.applicationId,
-      startedAt: new Date(nowMs()).toISOString(),
+      startedAt: startConferenceCompletedAt,
     });
     // Preserve linked session across apply (apply doesn't clear it).
     state = {
@@ -566,6 +660,8 @@ export async function runPocOrchestrator(
       linkedSessionId: state.linkedSessionId,
       stateRoot: options.stateRoot,
     });
+    const activeRunPublishedAt = new Date(nowMs()).toISOString();
+    reportDraft.activeRunPublishedAt = activeRunPublishedAt;
 
     reportDraft.callSessionHistoryId = state.callSessionHistoryId;
     reportDraft.controlUrlFingerprint = state.controlUrlFingerprint;
@@ -600,24 +696,79 @@ export async function runPocOrchestrator(
       return finish({ result: "PASS", cleanupStatus: "N/A_TRANSPORT" });
     }
 
-    // Full mode: browser join + recording + server stop.
-    const join = deps.browserJoin ?? playwrightBrowserJoin;
-    browser = await join({
-      appBaseUrl: options.appBaseUrl,
-      sessionId: sessionFixture!.sessionId,
-      expectedConferenceName: conferenceName,
-      facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
-      participantRoomUrl: sessionFixture!.participantRoomUrl,
-      facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
-      timeoutMs: timeouts.browserJoinMs,
-      keepBrowser: options.keepBrowser,
-    });
+    // Full mode LIVE join: release prewarmed browsers concurrently.
+    if (prewarmHandle) {
+      browser = await prewarmHandle.liveJoin({
+        expectedConferenceName: conferenceName,
+        expiresAt: state.expiresAt,
+        startConferenceStartedAt,
+        startConferenceCompletedAt,
+        activeRunPublishedAt,
+        timeoutMs: timeouts.browserJoinMs,
+      });
+    } else if (deps.browserJoin) {
+      // Test fallback: legacy single-shot join after StartConference.
+      browser = await deps.browserJoin({
+        appBaseUrl: options.appBaseUrl,
+        sessionId: sessionFixture!.sessionId,
+        expectedConferenceName: conferenceName,
+        facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
+        participantRoomUrl: sessionFixture!.participantRoomUrl,
+        facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
+        timeoutMs: timeouts.browserJoinMs,
+        keepBrowser: options.keepBrowser,
+        runId,
+        stateRoot: options.stateRoot,
+        expiresAt: state.expiresAt,
+        nowMs,
+      });
+      reportDraft.browserExecution = true;
+    } else {
+      failureStage = "browser_join";
+      failureCode = "BROWSER_JOIN_FAILED";
+      return finish({ result: "FAIL" });
+    }
 
-    reportDraft.browserExecution = true;
     reportDraft.browserFacilitatorJoined = browser.facilitatorJoined;
     reportDraft.browserParticipantJoined = browser.participantJoined;
     reportDraft.sameConferenceConfirmed = browser.sameConferenceConfirmed;
     reportDraft.browserRelayUsed = browser.browserRelayUsed;
+    reportDraft.browserPrewarmStartedAt =
+      browser.timing.browserPrewarmStartedAt ??
+      reportDraft.browserPrewarmStartedAt;
+    reportDraft.browserPrewarmCompletedAt =
+      browser.timing.browserPrewarmCompletedAt ??
+      reportDraft.browserPrewarmCompletedAt;
+    reportDraft.facilitatorAccessRequestedAt =
+      browser.timing.facilitatorAccessRequestedAt;
+    reportDraft.participantAccessRequestedAt =
+      browser.timing.participantAccessRequestedAt;
+    reportDraft.facilitatorCallConnectedAt =
+      browser.timing.facilitatorCallConnectedAt;
+    reportDraft.participantCallConnectedAt =
+      browser.timing.participantCallConnectedAt;
+    reportDraft.startConferenceToFirstAccessMs =
+      browser.timing.startConferenceToFirstAccessMs;
+    reportDraft.startConferenceToFirstJoinMs =
+      browser.timing.startConferenceToFirstJoinMs;
+    reportDraft.startConferenceToBothJoinedMs =
+      browser.timing.startConferenceToBothJoinedMs;
+    reportDraft.facilitatorBrowserStage = browser.facilitator.reachedStage;
+    reportDraft.participantBrowserStage = browser.participant.reachedStage;
+    reportDraft.facilitatorFirstFailedStage =
+      browser.facilitator.firstFailedStage;
+    reportDraft.participantFirstFailedStage =
+      browser.participant.firstFailedStage;
+    reportDraft.facilitatorSelectedConferenceName =
+      browser.facilitator.access?.selectedConferenceName ??
+      browser.facilitatorConferenceName;
+    reportDraft.participantSelectedConferenceName =
+      browser.participant.access?.selectedConferenceName ??
+      browser.participantConferenceName;
+    reportDraft.facilitatorSelectionSource =
+      browser.facilitator.access?.selectionSource ?? null;
+    reportDraft.participantSelectionSource =
+      browser.participant.access?.selectionSource ?? null;
 
     if (
       !browser.facilitatorJoined ||
@@ -625,7 +776,20 @@ export async function runPocOrchestrator(
       !browser.sameConferenceConfirmed
     ) {
       failureStage = "browser_join";
-      failureCode = "BROWSER_JOIN_FAILED";
+      failureCode = browser.failureCode ?? "BROWSER_JOIN_FAILED";
+      // Expired runs must not continue; do not reuse control URL later.
+      if (
+        failureCode === "MEDIA_SESSION_EXPIRED_BEFORE_ACCESS" ||
+        failureCode === "MEDIA_SESSION_EXPIRED_DURING_JOIN"
+      ) {
+        const latest = readPocState(options.stateRoot);
+        if (latest) {
+          writePocState(
+            { ...latest, runtimeStatus: "EXPIRED" },
+            options.stateRoot,
+          );
+        }
+      }
       await browser.close();
       return finish({ result: "FAIL" });
     }
@@ -829,14 +993,24 @@ export async function runPocOrchestrator(
     return finish({});
   } catch (error) {
     if (browser) await browser.close().catch(() => {});
-    failureStage = failureStage ?? "env_validation";
+    await prewarmHandle?.close().catch(() => {});
     if (error instanceof PocSafetyError) {
       failureCode = error.code;
+      failureStage = failureStage ?? "env_validation";
     } else if (error instanceof LocalDbSafetyError) {
       failureCode = error.code;
       failureStage = "local_db_safety";
     } else {
       failureCode = error instanceof Error ? error.message : String(error);
+      failureStage =
+        failureStage ??
+        (reportDraft.browserPrewarmCompletedAt
+          ? reportDraft.startConferenceCompletedAt
+            ? "browser_join"
+            : "start_conference"
+          : reportDraft.browserExecution
+            ? "browser_prewarm"
+            : "env_validation");
     }
     return finish({ result: "FAIL" });
   }

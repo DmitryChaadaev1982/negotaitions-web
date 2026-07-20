@@ -32,6 +32,9 @@ import {
   type OrchestratorDeps,
 } from "@/lib/voximplant/poc/orchestrator/run-orchestrator";
 import {
+  emptyBrowserContextEvidence,
+} from "@/lib/voximplant/poc/orchestrator/browser-stages";
+import {
   evaluateFullPass,
   evaluateTransportPass,
   formatLastReportSummary,
@@ -42,6 +45,56 @@ import {
   type PocOrchestratorReport,
 } from "@/lib/voximplant/poc/orchestrator/types";
 import type { PocCleanupManifest } from "@/lib/voximplant/poc/create-poc-session";
+import type { BrowserJoinResult } from "@/lib/voximplant/poc/orchestrator/browser-join";
+
+function mockJoinResult(
+  overrides: Partial<BrowserJoinResult> = {},
+): BrowserJoinResult {
+  const facilitator = emptyBrowserContextEvidence("facilitator", "session-x");
+  const participant = emptyBrowserContextEvidence("participant", "session-x");
+  return {
+    facilitatorJoined: true,
+    participantJoined: true,
+    sameConferenceConfirmed: true,
+    facilitatorConferenceName: "neg-poc-server-stop-x",
+    participantConferenceName: "neg-poc-server-stop-x",
+    browserRelayUsed: false,
+    failureCode: null,
+    facilitator: {
+      ...facilitator,
+      reachedStage: "JOIN_CONFIRMED",
+      joined: true,
+      authAccepted: true,
+      roomPageLoaded: true,
+      accessRequested: true,
+    },
+    participant: {
+      ...participant,
+      reachedStage: "JOIN_CONFIRMED",
+      joined: true,
+      authAccepted: true,
+      roomPageLoaded: true,
+      accessRequested: true,
+    },
+    timing: {
+      browserPrewarmStartedAt: "2026-07-20T16:00:00.000Z",
+      browserPrewarmCompletedAt: "2026-07-20T16:00:05.000Z",
+      startConferenceStartedAt: "2026-07-20T16:00:05.000Z",
+      startConferenceCompletedAt: "2026-07-20T16:00:06.000Z",
+      activeRunPublishedAt: "2026-07-20T16:00:06.100Z",
+      facilitatorAccessRequestedAt: "2026-07-20T16:00:06.200Z",
+      participantAccessRequestedAt: "2026-07-20T16:00:06.200Z",
+      facilitatorCallConnectedAt: "2026-07-20T16:00:07.000Z",
+      participantCallConnectedAt: "2026-07-20T16:00:07.000Z",
+      startConferenceToFirstAccessMs: 200,
+      startConferenceToFirstJoinMs: 1000,
+      startConferenceToBothJoinedMs: 1000,
+    },
+    evidence: {},
+    close: async () => {},
+    ...overrides,
+  };
+}
 
 function baseOptions(
   overrides: Partial<PocOrchestratorOptions> = {},
@@ -127,16 +180,28 @@ function mockDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     },
     fetchImpl: (async () =>
       new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch,
-    browserJoin: async () => ({
-      facilitatorJoined: true,
-      participantJoined: true,
-      sameConferenceConfirmed: true,
-      facilitatorConferenceName: "neg-poc-server-stop-x",
-      participantConferenceName: "neg-poc-server-stop-x",
-      browserRelayUsed: false,
+    browserPrewarm: async () => ({
+      ok: true,
+      failureCode: null,
+      browserPrewarmStartedAt: "2026-07-20T16:00:00.000Z",
+      browserPrewarmCompletedAt: "2026-07-20T16:00:05.000Z",
+      facilitator: {
+        ...emptyBrowserContextEvidence("facilitator", "session-x"),
+        reachedStage: "ROOM_PAGE_LOADED",
+        authAccepted: true,
+        roomPageLoaded: true,
+      },
+      participant: {
+        ...emptyBrowserContextEvidence("participant", "session-x"),
+        reachedStage: "ROOM_PAGE_LOADED",
+        authAccepted: true,
+        roomPageLoaded: true,
+      },
       evidence: {},
+      liveJoin: async () => mockJoinResult(),
       close: async () => {},
     }),
+    browserJoin: async () => mockJoinResult(),
     sendControl: async () => ({
       dryRun: false,
       controlUrlFingerprint: "fp",
@@ -221,6 +286,10 @@ test("1. dry-run makes no DB/provider/browser call and uses DRY_RUN_PASS", async
         startConference: async () => {
           provider += 1;
           throw new Error("should not start");
+        },
+        browserPrewarm: async () => {
+          browser += 1;
+          throw new Error("should not browse");
         },
         browserJoin: async () => {
           browser += 1;
@@ -580,29 +649,6 @@ test("12. expired run is not reused", () => {
 });
 
 test("13. two browser contexts receive same POC conference", async () => {
-  const names: string[] = [];
-  await runPocOrchestrator(
-    baseOptions({ mode: "full" }),
-    mockDeps({
-      fetchImpl: (async () => {
-        throw new Error("stop before provider");
-      }) as typeof fetch,
-      browserJoin: async (input) => {
-        names.push(input.expectedConferenceName, input.expectedConferenceName);
-        return {
-          facilitatorJoined: true,
-          participantJoined: true,
-          sameConferenceConfirmed: true,
-          facilitatorConferenceName: input.expectedConferenceName,
-          participantConferenceName: input.expectedConferenceName,
-          browserRelayUsed: false,
-          evidence: {},
-          close: async () => {},
-        };
-      },
-    }),
-  );
-  // Self-test fails before browser — assert contract via direct browserJoin mock unit:
   const join = mockDeps().browserJoin!;
   const result = await join({
     appBaseUrl: "http://localhost:3000",
@@ -614,7 +660,10 @@ test("13. two browser contexts receive same POC conference", async () => {
     timeoutMs: 1000,
   });
   assert.equal(result.sameConferenceConfirmed, true);
-  assert.equal(result.facilitatorConferenceName, result.participantConferenceName);
+  assert.equal(
+    result.facilitatorConferenceName,
+    result.participantConferenceName,
+  );
 });
 
 test("14. browser join timeout preserves evidence", async () => {

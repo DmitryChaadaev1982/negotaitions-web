@@ -49,6 +49,7 @@
     "poc:vox:clear-state": "tsx scripts/poc/voximplant-server-stop/inspect-result.ts --clear",
     "poc:vox:test-callback": "tsx scripts/poc/voximplant-server-stop/test-callback.ts",
     "poc:vox:join-plan": "tsx scripts/poc/voximplant-server-stop/join-plan.ts",
+    "poc:vox:inspect-run": "tsx scripts/poc/voximplant-server-stop/inspect-run.ts",
     "test:poc:vox-server-stop": "node --import tsx --test \"lib/voximplant/poc/**/*.test.ts\""
   },
   "prisma": {

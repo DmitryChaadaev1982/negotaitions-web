@@ -79,7 +79,15 @@ Result enum:
 
 ## Expected runtime
 
-Bounded phase timeouts (callback self-test, StartConference, browser join, recording start, command callback, terminal callback, artifact, log fetch). Idle media sessions without WebSDK participants still expire ~60s; full mode joins browsers before stop.
+Bounded phase timeouts (callback self-test, browser prewarm, StartConference, live browser join, recording start, command callback, terminal callback, artifact, log fetch). Idle media sessions without WebSDK participants still expire ~60s.
+
+Full mode uses two browser phases so launch/auth do not consume the idle window:
+
+1. **browser_prewarm** (before StartConference): launch contexts, fake media, auth cookies/join-token room shells; hold `/voximplant/access` until live.
+2. **StartConference** + activate run pointer.
+3. **browser_join** (live): release both access/joins concurrently under a short budget (~25s).
+
+Inspect a run: `npm run poc:vox:inspect-run -- --run-id <runId>` (sanitized phase timeline; no secrets/tokens/control URLs). Browser failures retain artifacts under `.agent/voximplant-server-stop/runs/<runId>/browser/{facilitator,participant}/`.
 
 ## PASS criteria (full mode)
 

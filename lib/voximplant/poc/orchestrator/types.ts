@@ -15,6 +15,7 @@ export type PocFailureStage =
   | "local_db_safety"
   | "session_create"
   | "callback_self_test"
+  | "browser_prewarm"
   | "start_conference"
   | "run_binding"
   | "browser_join"
@@ -28,6 +29,7 @@ export type PocFailureStage =
 
 export type PocPhaseTimeouts = {
   callbackSelfTestMs: number;
+  browserPrewarmMs: number;
   startConferenceMs: number;
   browserJoinMs: number;
   recordingStartMs: number;
@@ -39,8 +41,10 @@ export type PocPhaseTimeouts = {
 
 export const DEFAULT_POC_PHASE_TIMEOUTS: PocPhaseTimeouts = {
   callbackSelfTestMs: 15_000,
+  browserPrewarmMs: 45_000,
   startConferenceMs: 30_000,
-  browserJoinMs: 90_000,
+  /** Live join budget after StartConference (keep under idle ~60s window). */
+  browserJoinMs: 25_000,
   recordingStartMs: 60_000,
   commandCallbackMs: 20_000,
   terminalCallbackMs: 45_000,
@@ -121,6 +125,26 @@ export type PocOrchestratorReport = {
   expectedBuildId: string | null;
   /** Nested typed reason when failureCode is LOCAL_HEALTH_FAILED. */
   healthFailureReason: string | null;
+  browserPrewarmStartedAt: string | null;
+  browserPrewarmCompletedAt: string | null;
+  startConferenceStartedAt: string | null;
+  startConferenceCompletedAt: string | null;
+  activeRunPublishedAt: string | null;
+  facilitatorAccessRequestedAt: string | null;
+  participantAccessRequestedAt: string | null;
+  facilitatorCallConnectedAt: string | null;
+  participantCallConnectedAt: string | null;
+  startConferenceToFirstAccessMs: number | null;
+  startConferenceToFirstJoinMs: number | null;
+  startConferenceToBothJoinedMs: number | null;
+  facilitatorBrowserStage: string | null;
+  participantBrowserStage: string | null;
+  facilitatorFirstFailedStage: string | null;
+  participantFirstFailedStage: string | null;
+  facilitatorSelectedConferenceName: string | null;
+  participantSelectedConferenceName: string | null;
+  facilitatorSelectionSource: string | null;
+  participantSelectionSource: string | null;
   remainingEvidencePaths: string[];
   startConferenceCallCount: number;
   cleanupManifest: PocCleanupManifest | null;
@@ -142,6 +166,7 @@ export function plannedPhasesForMode(mode: PocOrchestratorMode): string[] {
         "create_session",
         "seed_run_state",
         "callback_self_test",
+        "browser_prewarm",
         "start_conference",
         "browser_join",
         "recording_start",
@@ -201,6 +226,14 @@ export function formatLastReportSummary(report: Record<string, unknown>): {
       conferenceName: report.conferenceName,
       callSessionHistoryId: report.callSessionHistoryId,
       controlUrlFingerprint: report.controlUrlFingerprint,
+      facilitatorBrowserStage: report.facilitatorBrowserStage ?? null,
+      participantBrowserStage: report.participantBrowserStage ?? null,
+      facilitatorFirstFailedStage: report.facilitatorFirstFailedStage ?? null,
+      participantFirstFailedStage: report.participantFirstFailedStage ?? null,
+      startConferenceToFirstAccessMs:
+        report.startConferenceToFirstAccessMs ?? null,
+      startConferenceToBothJoinedMs:
+        report.startConferenceToBothJoinedMs ?? null,
       remainingEvidencePaths: report.remainingEvidencePaths,
     },
   };
