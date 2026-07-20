@@ -45,7 +45,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/admin-diagnostics-env.spec.ts`
 
 - Voximplant server-stop POC (isolated; not production lifecycle)
-  - Code: `lib/voximplant/poc/**`, `scripts/poc/voximplant-server-stop/**`, `docs/voximplant/neg-conf.server-stop-poc.scenario.js`, `app/api/sessions/[sessionId]/voximplant/access/route.ts` (flag-gated conference name override only)
+  - Code: `lib/voximplant/poc/**`, `scripts/poc/voximplant-server-stop/**`, `docs/voximplant/neg-conf.server-stop-poc.scenario.js`, `app/api/poc/voximplant/server-stop/callback/route.ts` (flag-gated POC callback only), `app/api/sessions/[sessionId]/voximplant/access/route.ts` (flag-gated conference name override only)
   - Docs: `13-voximplant-server-stop-poc.md`, `docs/voximplant/server-stop-poc-manual-checkpoints.md`
   - Tests: `lib/voximplant/poc/**/*.test.ts` (`npm run test:poc:vox-server-stop`)
 

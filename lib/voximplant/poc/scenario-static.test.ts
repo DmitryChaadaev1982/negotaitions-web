@@ -32,14 +32,32 @@ test("POC scenario validates HMAC and rejects replay/unknown action", () => {
   assert.match(source, /expired_timestamp/);
 });
 
-test("POC scenario ping identity handshake constants are present", () => {
-  assert.match(source, /scenarioKind:\s*SCENARIO_KIND/);
-  assert.match(source, /protocolVersion:\s*PROTOCOL_VERSION/);
+test("POC scenario uses separate CALLBACK_SECRET for async callbacks", () => {
+  assert.match(source, /CALLBACK_SECRET/);
+  assert.match(
+    source,
+    /__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__/,
+  );
+  assert.match(source, /sendSignedPocCallback/);
+  assert.match(source, /command_accepted/);
+  assert.match(source, /recording_stopped/);
+  // Must not HMAC callbacks with CONTROL_SECRET.
+  assert.ok(!/hmacSha256Hex\(\s*body\s*,\s*CONTROL_SECRET\s*\)/.test(source));
+  assert.match(source, /hmacSha256Hex\(signingPayload,\s*CALLBACK_SECRET\)/);
+});
+
+test("POC scenario identity constants present for callback payload", () => {
   assert.match(source, /SCENARIO_KIND\s*=\s*"voximplant_server_stop_poc"/);
   assert.match(source, /PROTOCOL_VERSION\s*=\s*1/);
   assert.match(source, /SCENARIO_SOURCE_NAME\s*=\s*"neg-conf-server-stop-poc"/);
+  assert.match(source, /scenarioKind:\s*SCENARIO_KIND/);
+  assert.match(source, /protocolVersion:\s*PROTOCOL_VERSION/);
 });
 
 test("POC scenario keeps dedicated conference name prefix", () => {
   assert.match(source, /CONFERENCE_NAME_PREFIX_POC\s*=\s*"neg-poc-server-stop-"/);
+});
+
+test("POC scenario warns not to log raw Application.Started", () => {
+  assert.match(source, /Never log raw Application\.Started/);
 });

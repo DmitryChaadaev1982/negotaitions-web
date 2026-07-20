@@ -12,9 +12,16 @@
 // Paste into a dedicated POC scenario/rule in Voximplant Console for experiments.
 //
 // Required paste replacements:
-//   CONTROL_SECRET  ← VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET
-//   WEBHOOK_SECRET  ← VOXIMPLANT_RECORDING_WEBHOOK_SECRET (optional; for production webhook reuse)
-//   POC_CALLBACK_URL ← local callback receiver (optional)
+//   CONTROL_SECRET   ← VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET
+//                      (server → scenario command HMAC)
+//   CALLBACK_SECRET  ← VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET
+//                      (scenario → application callback HMAC; NEVER reuse CONTROL_SECRET)
+//   POC_CALLBACK_URL ← https://<host>/api/poc/voximplant/server-stop/callback
+//   WEBHOOK_SECRET   ← VOXIMPLANT_RECORDING_WEBHOOK_SECRET (optional; unused by default)
+//
+// Platform note (Checkpoint A evidence):
+//   AppEvents.HttpRequest HTTP 2xx does NOT reliably return an arbitrary JSON
+//   identity body. Confirmation is via signed asynchronous POC callback.
 //
 // Supported HTTP actions (allow-list): ping | get_recording_state | stop_recording
 
@@ -25,19 +32,21 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a1";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a2";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
-/** Stable identity for Checkpoint A ping handshake (must match lib/voximplant/poc/poc-safety.ts). */
+/** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
 var PROTOCOL_VERSION = 1;
 
 var CONTROL_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__";
+var CALLBACK_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__";
 var WEBHOOK_SECRET = "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__";
 var WEBHOOK_BASE_URL = "";
 var POC_CALLBACK_URL = "";
 
 var REPLAY_WINDOW_MS = 5 * 60 * 1000;
 var CONFERENCE_NAME_PREFIX_POC = "neg-poc-server-stop-";
+var callSessionHistoryId = null;
 
 var conference = null;
 var recorder = null;
@@ -255,15 +264,17 @@ function registryState() {
   return STATE_ABSENT;
 }
 
-function buildControlResponse(ok, action, operationId, state, errorCode) {
+/**
+ * Transport ack only. Do not rely on clients reading this body for identity —
+ * observed platform contract may return empty / non-JSON 2xx.
+ */
+function buildTransportAckBody(ok, action, operationId, state, errorCode) {
   return JSON.stringify({
     ok: Boolean(ok),
     action: action || null,
     operationId: operationId || null,
     state: state || null,
     errorCode: errorCode || null,
-    scenarioKind: SCENARIO_KIND,
-    protocolVersion: PROTOCOL_VERSION,
   });
 }
 
@@ -284,6 +295,82 @@ function respondHttp(e, status, body) {
     }
   } catch (err2) {
     log("Response fallback failed: " + safeToString(err2));
+  }
+}
+
+function createNonce() {
+  try {
+    return sha256Hex(safeNowIso() + ":" + String(Math.random())).slice(0, 32);
+  } catch (e) {
+    return String(Date.now()) + "a";
+  }
+}
+
+function buildCallbackPayload(eventType, action, operationId, recorderState, errorCode) {
+  return {
+    scenarioKind: SCENARIO_KIND,
+    protocolVersion: PROTOCOL_VERSION,
+    eventType: eventType,
+    action: action || null,
+    operationId: operationId || null,
+    conferenceName: expectedConferenceName || null,
+    callSessionHistoryId: callSessionHistoryId,
+    recorderState: recorderState || registryState(),
+    errorCode: errorCode || null,
+    timestamp: safeNowIso(),
+    nonce: createNonce(),
+  };
+}
+
+function sendSignedPocCallback(eventType, action, operationId, recorderState, errorCode) {
+  if (!POC_CALLBACK_URL) {
+    log("POC callback skipped: POC_CALLBACK_URL empty");
+    return;
+  }
+  if (!isSecretConfigured(CALLBACK_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__")) {
+    log("POC callback skipped: CALLBACK_SECRET not configured");
+    return;
+  }
+  if (typeof Net === "undefined" || !Net.httpRequest) {
+    log("POC callback skipped: Net.httpRequest unavailable");
+    return;
+  }
+
+  var payload = buildCallbackPayload(eventType, action, operationId, recorderState, errorCode);
+  var body = JSON.stringify(payload);
+  var bodyHash = sha256Hex(body);
+  var signingPayload =
+    "v1\n" +
+    String(payload.eventType) + "\n" +
+    String(payload.action || "") + "\n" +
+    String(payload.operationId || "") + "\n" +
+    String(payload.conferenceName || "") + "\n" +
+    String(payload.timestamp) + "\n" +
+    String(payload.nonce) + "\n" +
+    bodyHash;
+  var signature = hmacSha256Hex(signingPayload, CALLBACK_SECRET);
+
+  try {
+    Net.httpRequest(POC_CALLBACK_URL, function () {
+      log("POC callback attempted eventType=" + eventType + " operationId=" + safeToString(operationId));
+    }, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Neg-Poc-Callback-Version": "v1",
+        "X-Neg-Poc-Callback-Event-Type": String(payload.eventType),
+        "X-Neg-Poc-Callback-Action": String(payload.action || ""),
+        "X-Neg-Poc-Callback-Operation-Id": String(payload.operationId || ""),
+        "X-Neg-Poc-Callback-Conference-Name": String(payload.conferenceName || ""),
+        "X-Neg-Poc-Callback-Timestamp": String(payload.timestamp),
+        "X-Neg-Poc-Callback-Nonce": String(payload.nonce),
+        "X-Neg-Poc-Callback-Body-Hash": bodyHash,
+        "X-Neg-Poc-Callback-Signature": signature,
+      },
+      postData: body,
+    });
+  } catch (e) {
+    log("POC callback failed: " + safeToString(e));
   }
 }
 
@@ -440,43 +527,24 @@ function attachRecorderHandlers() {
 }
 
 function sendTerminalEvidence(operationId, ev) {
-  var recordingUrl = null;
+  // Provider-terminal evidence via signed async callback (CALLBACK_SECRET).
+  // Never include control URLs, secrets, participant info, or full provider request data.
   try {
-    if (ev && ev.url) recordingUrl = String(ev.url);
-  } catch (e) {
-    recordingUrl = null;
-  }
-
-  var body = JSON.stringify({
-    type: "server_stop_poc_stopped",
-    conferenceName: expectedConferenceName,
-    operationId: operationId,
-    recordingUrlPresent: Boolean(recordingUrl),
-    at: safeNowIso(),
-    build: SCENARIO_BUILD_ID,
-  });
-
-  // Dedicated POC callback (preferred for isolation).
-  if (POC_CALLBACK_URL && typeof Net !== "undefined" && Net.httpRequest) {
-    try {
-      var sig = hmacSha256Hex(body, CONTROL_SECRET);
-      Net.httpRequest(POC_CALLBACK_URL, function () {
-        log("POC callback attempted");
-      }, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Neg-Poc-Signature": sig,
-        },
-        postData: body,
-      });
-    } catch (e) {
-      log("POC callback failed: " + safeToString(e));
+    if (ev && ev.url) {
+      log("RecorderEvents.Stopped has recording URL present=true");
     }
+  } catch (e) {
+    // ignore
   }
+  sendSignedPocCallback(
+    "recording_stopped",
+    "stop_recording",
+    operationId,
+    STATE_STOP_COMPLETED,
+    null,
+  );
 
-  // Optional: reuse production webhook shape when configured + session-like name.
-  // Never include control URLs or secrets.
+  // Optional: reuse production webhook shape when configured — disabled by default.
   if (
     WEBHOOK_BASE_URL &&
     isSecretConfigured(WEBHOOK_SECRET, "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__") &&
@@ -574,19 +642,32 @@ function handleHttpRequest(e) {
     respondHttp(
       e,
       401,
-      buildControlResponse(false, verified.action || null, verified.operationId || null, registryState(), verified.errorCode),
+      buildTransportAckBody(false, verified.action || null, verified.operationId || null, registryState(), verified.errorCode),
     );
+    // Authenticated parse failed — still emit rejected callback when we have enough fields.
+    if (verified.operationId) {
+      sendSignedPocCallback(
+        "command_rejected",
+        verified.action || null,
+        verified.operationId,
+        registryState(),
+        verified.errorCode,
+      );
+    }
     return;
   }
 
   log("HttpRequest accepted action=" + verified.action + " operationId=" + verified.operationId);
 
+  // Transport ack first (body may be dropped by platform). Identity/command
+  // confirmation is the signed async callback below.
   if (verified.action === "ping") {
     respondHttp(
       e,
       200,
-      buildControlResponse(true, "ping", verified.operationId, registryState(), null),
+      buildTransportAckBody(true, "ping", verified.operationId, registryState(), null),
     );
+    sendSignedPocCallback("command_accepted", "ping", verified.operationId, registryState(), null);
     return;
   }
 
@@ -594,7 +675,14 @@ function handleHttpRequest(e) {
     respondHttp(
       e,
       200,
-      buildControlResponse(true, "get_recording_state", verified.operationId, registryState(), null),
+      buildTransportAckBody(true, "get_recording_state", verified.operationId, registryState(), null),
+    );
+    sendSignedPocCallback(
+      "command_accepted",
+      "get_recording_state",
+      verified.operationId,
+      registryState(),
+      null,
     );
     return;
   }
@@ -604,7 +692,7 @@ function handleHttpRequest(e) {
     respondHttp(
       e,
       stopResult.ok ? 200 : 409,
-      buildControlResponse(
+      buildTransportAckBody(
         stopResult.ok,
         stopResult.action,
         stopResult.operationId,
@@ -612,13 +700,37 @@ function handleHttpRequest(e) {
         stopResult.errorCode,
       ),
     );
+    if (stopResult.ok) {
+      sendSignedPocCallback(
+        "command_accepted",
+        "stop_recording",
+        stopResult.operationId,
+        stopResult.state,
+        stopResult.errorCode,
+      );
+    } else {
+      sendSignedPocCallback(
+        "command_rejected",
+        "stop_recording",
+        stopResult.operationId,
+        stopResult.state,
+        stopResult.errorCode,
+      );
+    }
     return;
   }
 
   respondHttp(
     e,
     400,
-    buildControlResponse(false, verified.action, verified.operationId, registryState(), "unknown_action"),
+    buildTransportAckBody(false, verified.action, verified.operationId, registryState(), "unknown_action"),
+  );
+  sendSignedPocCallback(
+    "command_rejected",
+    verified.action,
+    verified.operationId,
+    registryState(),
+    "unknown_action",
   );
 }
 
@@ -660,12 +772,16 @@ function handleIncomingCall(event) {
 
 function onAppStarted(e) {
   expectedConferenceName = parseCustomDataConferenceName();
+  // Never log raw Application.Started — it contains accessURL / accessSecureURL.
   log(
     "scenario build=" + SCENARIO_BUILD_ID +
       " source=" + SCENARIO_SOURCE_NAME +
       " conferenceName=" + safeToString(expectedConferenceName) +
       " controlSecretConfigured=" +
-      isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__"),
+      isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__") +
+      " callbackSecretConfigured=" +
+      isSecretConfigured(CALLBACK_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__") +
+      " callbackUrlConfigured=" + Boolean(POC_CALLBACK_URL),
   );
 
   try {

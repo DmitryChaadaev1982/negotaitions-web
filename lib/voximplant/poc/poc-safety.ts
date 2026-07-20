@@ -251,7 +251,7 @@ export function assertPocScenarioIdentity(identity: ScenarioIdentityFields): voi
     selectedPocRuleId: null,
     selectedPocRuleName: null,
     productionRuleFingerprint: null,
-    refusalReason: `Ping response is not the dedicated POC scenario (${reasons.join("; ")}). HTTP 200 alone is not sufficient.`,
+    refusalReason: `Callback/identity is not the dedicated POC scenario (${reasons.join("; ")}). HTTP 200 on the control URL alone is never sufficient; use signed async callback confirmation.`,
   });
 }
 

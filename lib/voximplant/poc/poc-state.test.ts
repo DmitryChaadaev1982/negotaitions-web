@@ -50,3 +50,39 @@ test("gitignore includes .agent/ for POC state", () => {
   const gitignore = readFileSync(join(process.cwd(), ".gitignore"), "utf8");
   assert.match(gitignore, /^\.agent\/$/m);
 });
+
+test("start conference sets ~60s idle expiry and ACTIVE runtimeStatus", () => {
+  const startedAt = "2026-07-20T12:00:00.000Z";
+  let state = createEmptyPocState({
+    pocId: "poc-ttl",
+    conferenceName: "neg-poc-server-stop-1",
+  });
+  state = applyStartConferenceToState(state, {
+    callSessionHistoryId: "111",
+    mediaSessionAccessUrl: "https://example.invalid/session/secret-url-token",
+    mediaSessionAccessSecureUrl: "https://example.invalid/session/secret-url-token",
+    ruleId: "9",
+    applicationId: "8",
+    startedAt,
+    idleTtlMs: 60_000,
+  });
+  assert.equal(state.runtimeStatus, "ACTIVE");
+  assert.equal(state.expiresAt, "2026-07-20T12:01:00.000Z");
+});
+
+test("public view exposes runtimeStatus without control URL", () => {
+  let state = createEmptyPocState({
+    pocId: "poc-pub",
+    conferenceName: "neg-poc-server-stop-1",
+  });
+  state = applyStartConferenceToState(state, {
+    callSessionHistoryId: "111",
+    mediaSessionAccessUrl: "https://example.invalid/session/secret-url-token",
+    mediaSessionAccessSecureUrl: "https://example.invalid/session/secret-url-token",
+    ruleId: "9",
+    applicationId: "8",
+  });
+  const view = toPublicPocStateView(state);
+  assert.ok(["ACTIVE", "EXPIRED", "UNKNOWN"].includes(view.runtimeStatus));
+  assert.ok(!JSON.stringify(view).includes("secret-url-token"));
+});

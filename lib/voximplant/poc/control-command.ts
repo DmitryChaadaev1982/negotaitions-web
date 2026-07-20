@@ -3,9 +3,13 @@ import {
   type PocControlAction,
 } from "@/lib/voximplant/poc/control-signature";
 import {
-  assertPocScenarioIdentity,
+  isHttpTransportAccepted,
+  type PocTransportOutcome,
+} from "@/lib/voximplant/poc/control-outcomes";
+import {
   POC_PROTOCOL_VERSION,
   POC_SCENARIO_KIND,
+  PocSafetyError,
 } from "@/lib/voximplant/poc/poc-safety";
 import { fingerprintControlUrl } from "@/lib/voximplant/poc/url-fingerprint";
 
@@ -28,8 +32,29 @@ export type SendPocControlCommandParams = {
   body?: Record<string, unknown>;
   fetchImpl?: typeof fetch;
   dryRun?: boolean;
-  /** When true (default for action=ping), verify dedicated POC scenario identity. */
-  requirePocScenarioIdentity?: boolean;
+  /** Abort / network timeout in ms. */
+  timeoutMs?: number;
+  /**
+   * When true, classify failures after a known-expired media session as
+   * MEDIA_SESSION_EXPIRED instead of TRANSPORT_REJECTED.
+   */
+  mediaSessionExpired?: boolean;
+};
+
+export type SendPocControlCommandResult = {
+  dryRun: boolean;
+  controlUrlFingerprint: string;
+  /** Header keys only in public logs — values may contain signatures. */
+  requestHeaderKeys: string[];
+  requestHeaders: Record<string, string>;
+  transportOutcome: PocTransportOutcome | null;
+  httpStatus: number | null;
+  responseBodyPresent: boolean;
+  responseJsonParsed: boolean;
+  /** Optional parsed body; never required for TRANSPORT_ACCEPTED. */
+  response: PocControlResponse | null;
+  /** True only when a matching async callback confirms command acceptance. */
+  commandConfirmed: boolean;
 };
 
 const DRY_RUN_PLACEHOLDER_SECRET = "poc-dry-run-placeholder-secret";
@@ -44,7 +69,6 @@ export function getPocControlSecret(
     "";
   if (secret && secret.length >= 16) return secret;
   if (options.allowDryRunPlaceholder) {
-    // Dry-run only: construct signed headers without requiring a live secret.
     return DRY_RUN_PLACEHOLDER_SECRET;
   }
   throw new Error(
@@ -86,27 +110,44 @@ export function parsePocControlResponse(payload: unknown): PocControlResponse {
 }
 
 /**
- * Verify ping (or other) response carries dedicated POC scenario identity.
- * A generic HTTP 200 without these fields is rejected.
+ * @deprecated Synchronous HTTP response-body identity is unsupported by the
+ * observed AppEvents.HttpRequest platform contract. Kept only for callback /
+ * identity field helpers — do not call on control-URL HTTP responses.
  */
 export function verifyPocControlScenarioIdentity(
   response: PocControlResponse,
 ): void {
-  assertPocScenarioIdentity({
-    scenarioKind: response.scenarioKind,
-    protocolVersion: response.protocolVersion,
+  const kindOk = response.scenarioKind === POC_SCENARIO_KIND;
+  const versionOk = response.protocolVersion === POC_PROTOCOL_VERSION;
+  if (kindOk && versionOk) return;
+  throw new PocSafetyError("UNEXPECTED_SCENARIO_IDENTITY", {
+    selectedPocRuleId: null,
+    selectedPocRuleName: null,
+    productionRuleFingerprint: null,
+    refusalReason:
+      "Callback/identity fields are not the dedicated POC scenario. HTTP 200 alone is never sufficient.",
   });
 }
 
+function classifyTransportFailure(params: {
+  mediaSessionExpired?: boolean;
+  timedOut?: boolean;
+}): PocTransportOutcome {
+  if (params.mediaSessionExpired) return "MEDIA_SESSION_EXPIRED";
+  if (params.timedOut) return "TRANSPORT_TIMEOUT";
+  return "TRANSPORT_REJECTED";
+}
+
+/**
+ * Send a signed control command.
+ *
+ * HTTP 2xx ⇒ TRANSPORT_ACCEPTED only.
+ * Empty / non-JSON 2xx bodies are valid and must not yield
+ * UNEXPECTED_SCENARIO_IDENTITY.
+ */
 export async function sendPocControlCommand(
   params: SendPocControlCommandParams,
-): Promise<{
-  dryRun: boolean;
-  controlUrlFingerprint: string;
-  requestHeaders: Record<string, string>;
-  response: PocControlResponse | null;
-  httpStatus: number | null;
-}> {
+): Promise<SendPocControlCommandResult> {
   const bodyObject = {
     action: params.action,
     conferenceName: params.conferenceName,
@@ -123,62 +164,117 @@ export async function sendPocControlCommand(
   });
 
   const controlUrlFingerprint = fingerprintControlUrl(params.controlUrl);
+  const requestHeaderKeys = Object.keys(signed.headers).sort();
 
   if (params.dryRun) {
     return {
       dryRun: true,
       controlUrlFingerprint,
-      requestHeaders: {
-        ...signed.headers,
-        // Keep signature present but do not imply a network call occurred.
-      },
+      requestHeaderKeys,
+      requestHeaders: signed.headers,
+      transportOutcome: null,
       response: null,
       httpStatus: null,
+      responseBodyPresent: false,
+      responseJsonParsed: false,
+      commandConfirmed: false,
+    };
+  }
+
+  if (params.mediaSessionExpired) {
+    return {
+      dryRun: false,
+      controlUrlFingerprint,
+      requestHeaderKeys,
+      requestHeaders: signed.headers,
+      transportOutcome: "MEDIA_SESSION_EXPIRED",
+      response: null,
+      httpStatus: null,
+      responseBodyPresent: false,
+      responseJsonParsed: false,
+      commandConfirmed: false,
     };
   }
 
   const fetchImpl = params.fetchImpl ?? fetch;
-  const response = await fetchImpl(params.controlUrl, {
-    method: "POST",
-    headers: signed.headers,
-    body,
-  });
+  const timeoutMs = params.timeoutMs ?? 15_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let parsed: PocControlResponse | null = null;
   try {
-    parsed = parsePocControlResponse(await response.json());
-  } catch {
-    parsed = {
-      ok: false,
-      action: params.action,
-      operationId: params.operationId,
-      state: null,
-      errorCode: "invalid_json_response",
-      scenarioKind: null,
-      protocolVersion: null,
+    const response = await fetchImpl(params.controlUrl, {
+      method: "POST",
+      headers: signed.headers,
+      body,
+      signal: controller.signal,
+    });
+
+    const rawText = await response.text();
+    const responseBodyPresent = rawText.trim().length > 0;
+    let parsed: PocControlResponse | null = null;
+    let responseJsonParsed = false;
+
+    if (responseBodyPresent) {
+      try {
+        parsed = parsePocControlResponse(JSON.parse(rawText));
+        responseJsonParsed = true;
+      } catch {
+        // Empty/non-JSON 2xx is valid transport behavior.
+        parsed = null;
+        responseJsonParsed = false;
+      }
+    }
+
+    const transportOutcome: PocTransportOutcome = isHttpTransportAccepted(
+      response.status,
+    )
+      ? "TRANSPORT_ACCEPTED"
+      : classifyTransportFailure({
+          mediaSessionExpired: params.mediaSessionExpired,
+        });
+
+    return {
+      dryRun: false,
+      controlUrlFingerprint,
+      requestHeaderKeys,
+      requestHeaders: signed.headers,
+      transportOutcome,
+      response: parsed,
+      httpStatus: response.status,
+      responseBodyPresent,
+      responseJsonParsed,
+      // HTTP alone never confirms command execution.
+      commandConfirmed: false,
     };
+  } catch (error) {
+    const timedOut =
+      (error instanceof Error && error.name === "AbortError") ||
+      (error instanceof Error && /timeout/i.test(error.message));
+    return {
+      dryRun: false,
+      controlUrlFingerprint,
+      requestHeaderKeys,
+      requestHeaders: signed.headers,
+      transportOutcome: classifyTransportFailure({
+        mediaSessionExpired: params.mediaSessionExpired,
+        timedOut,
+      }),
+      response: null,
+      httpStatus: null,
+      responseBodyPresent: false,
+      responseJsonParsed: false,
+      commandConfirmed: false,
+    };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const requireIdentity =
-    params.requirePocScenarioIdentity ?? params.action === "ping";
-  if (requireIdentity && parsed) {
-    verifyPocControlScenarioIdentity(parsed);
-  }
-
-  return {
-    dryRun: false,
-    controlUrlFingerprint,
-    requestHeaders: signed.headers,
-    response: parsed,
-    httpStatus: response.status,
-  };
 }
 
 export function buildDeterministicStopOperationId(conferenceName: string): string {
   return `poc-stop-${conferenceName}`;
 }
 
-/** Expected ping identity for docs/tests (must match scenario constants). */
+/** Expected ping identity for callback confirmation (must match scenario). */
 export const EXPECTED_POC_PING_IDENTITY = {
   scenarioKind: POC_SCENARIO_KIND,
   protocolVersion: POC_PROTOCOL_VERSION,
