@@ -1,4 +1,8 @@
 import {
+  mapCallbackErrorCode,
+  type PocCallbackResultCode,
+} from "@/lib/voximplant/poc/callback-result-codes";
+import {
   buildSignedCallbackRequest,
   getPocCallbackSecret,
   hashCallbackBody,
@@ -25,13 +29,14 @@ export type ProcessPocCallbackResult =
   | {
       ok: true;
       status: 200;
+      errorCode: "CALLBACK_ACCEPTED";
       event: PocCallbackEventRecord;
       disabled?: undefined;
     }
   | {
       ok: false;
       status: number;
-      errorCode: string;
+      errorCode: PocCallbackResultCode;
       disabled?: boolean;
     };
 
@@ -75,7 +80,9 @@ function parsePayload(raw: unknown): PocCallbackPayload | null {
     callSessionHistoryId:
       typeof obj.callSessionHistoryId === "string"
         ? obj.callSessionHistoryId
-        : null,
+        : typeof obj.callSessionHistoryId === "number"
+          ? String(obj.callSessionHistoryId)
+          : null,
     recorderState:
       typeof obj.recorderState === "string" ? obj.recorderState : null,
     errorCode: typeof obj.errorCode === "string" ? obj.errorCode : null,
@@ -91,6 +98,7 @@ export function processPocCallback(params: {
   rawBody: string;
   headers: Headers | Record<string, string | string[] | undefined>;
   env?: NodeJS.ProcessEnv;
+  /** Explicit state root (tests). Omit to use repository-root resolver. */
   cwd?: string;
   nowMs?: number;
   state?: VoximplantServerStopPocState | null;
@@ -101,7 +109,7 @@ export function processPocCallback(params: {
     return {
       ok: false,
       status: 404,
-      errorCode: "poc_callback_disabled",
+      errorCode: "POC_CALLBACK_DISABLED",
       disabled: true,
     };
   }
@@ -110,19 +118,19 @@ export function processPocCallback(params: {
   try {
     secret = getPocCallbackSecret(env);
   } catch {
-    return { ok: false, status: 503, errorCode: "callback_secret_not_configured" };
+    return { ok: false, status: 503, errorCode: "CALLBACK_SECRET_MISSING" };
   }
 
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(params.rawBody);
   } catch {
-    return { ok: false, status: 400, errorCode: "invalid_json" };
+    return { ok: false, status: 400, errorCode: "CALLBACK_PAYLOAD_INVALID" };
   }
 
   const payload = parsePayload(parsedJson);
   if (!payload) {
-    return { ok: false, status: 400, errorCode: "invalid_payload" };
+    return { ok: false, status: 400, errorCode: "CALLBACK_PAYLOAD_INVALID" };
   }
 
   try {
@@ -132,9 +140,9 @@ export function processPocCallback(params: {
     });
   } catch (error) {
     if (error instanceof PocSafetyError) {
-      return { ok: false, status: 400, errorCode: "unexpected_scenario_identity" };
+      return { ok: false, status: 400, errorCode: "CALLBACK_PAYLOAD_INVALID" };
     }
-    return { ok: false, status: 400, errorCode: "unexpected_scenario_identity" };
+    return { ok: false, status: 400, errorCode: "CALLBACK_PAYLOAD_INVALID" };
   }
 
   const version =
@@ -153,12 +161,10 @@ export function processPocCallback(params: {
     "X-Neg-Poc-Callback-Signature",
   );
 
-  const cwd = params.cwd ?? process.cwd();
-  const state = params.state ?? readPocState(cwd);
+  // Omit cwd → repository-root state path (shared with CLI).
+  const state = params.state ?? readPocState(params.cwd);
   if (!state) {
-    // Allow callback persistence bootstrap when state was cleared mid-session:
-    // still verify crypto, but require an existing POC state for evidence.
-    return { ok: false, status: 409, errorCode: "poc_state_missing" };
+    return { ok: false, status: 409, errorCode: "POC_STATE_MISSING" };
   }
 
   const seenNonces = new Set(state.seenCallbackNonces);
@@ -167,7 +173,7 @@ export function processPocCallback(params: {
     bodyHashHeader &&
     bodyHashHeader.trim().toLowerCase() !== expectedBodyHash
   ) {
-    return { ok: false, status: 401, errorCode: "body_hash_mismatch" };
+    return { ok: false, status: 401, errorCode: "INVALID_CALLBACK_SIGNATURE" };
   }
 
   const verified = verifyCallbackSignature({
@@ -186,7 +192,11 @@ export function processPocCallback(params: {
   });
 
   if (!verified.ok) {
-    return { ok: false, status: 401, errorCode: verified.errorCode };
+    return {
+      ok: false,
+      status: 401,
+      errorCode: mapCallbackErrorCode(verified.errorCode),
+    };
   }
 
   const event: PocCallbackEventRecord = {
@@ -216,10 +226,19 @@ export function processPocCallback(params: {
 
   const next = appendPocCallbackEvent(state, safeEvent, nonce);
   if (params.persist !== false) {
-    writePocState(next, cwd);
+    try {
+      writePocState(next, params.cwd);
+    } catch {
+      return { ok: false, status: 500, errorCode: "CALLBACK_STATE_WRITE_FAILED" };
+    }
   }
 
-  return { ok: true, status: 200, event: safeEvent };
+  return {
+    ok: true,
+    status: 200,
+    errorCode: "CALLBACK_ACCEPTED",
+    event: safeEvent,
+  };
 }
 
 /** Dry-run helper: construct a signed callback without network I/O. */

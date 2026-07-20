@@ -55,7 +55,7 @@ function signedRequest(overrides: Partial<ReturnType<typeof buildPocCallbackPayl
   return buildSignedCallbackRequest({ payload, secret: callbackSecret });
 }
 
-test("callback disabled returns 404", () => {
+test("callback disabled returns typed POC_CALLBACK_DISABLED", () => {
   const cwd = mkdtempSync(join(tmpdir(), "poc-cb-"));
   prepareState(cwd);
   const signed = signedRequest();
@@ -69,7 +69,46 @@ test("callback disabled returns 404", () => {
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.status, 404);
-    assert.equal(result.errorCode, "poc_callback_disabled");
+    assert.equal(result.errorCode, "POC_CALLBACK_DISABLED");
+  }
+});
+
+test("local callback self-test persists matching event", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "poc-cb-"));
+  prepareState(cwd);
+  const signed = signedRequest({ operationId: "op-selftest-persist" });
+  const result = processPocCallback({
+    rawBody: signed.body,
+    headers: signed.headers,
+    env: envForCallback(true),
+    cwd,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.errorCode, "CALLBACK_ACCEPTED");
+  const state = readPocState(cwd);
+  assert.ok(state);
+  assert.equal(state!.callbackEvents.length, 1);
+  assert.equal(state!.callbackEvents[0]!.operationId, "op-selftest-persist");
+});
+
+test("wrong callback secret rejected", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "poc-cb-"));
+  prepareState(cwd);
+  const signed = signedRequest();
+  const result = processPocCallback({
+    rawBody: signed.body,
+    headers: signed.headers,
+    env: {
+      VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED: "true",
+      VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET: "different-callback-secret!!",
+      VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET: controlSecret,
+    },
+    cwd,
+    persist: false,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.errorCode, "INVALID_CALLBACK_SIGNATURE");
   }
 });
 
@@ -104,7 +143,7 @@ test("7. wrong scenarioKind callback rejected", () => {
     persist: false,
   });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.errorCode, "unexpected_scenario_identity");
+  if (!result.ok) assert.equal(result.errorCode, "CALLBACK_PAYLOAD_INVALID");
 });
 
 test("8. wrong protocolVersion rejected", () => {
@@ -119,7 +158,7 @@ test("8. wrong protocolVersion rejected", () => {
     persist: false,
   });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.errorCode, "unexpected_scenario_identity");
+  if (!result.ok) assert.equal(result.errorCode, "CALLBACK_PAYLOAD_INVALID");
 });
 
 test("10. callback HMAC invalid rejected", () => {
@@ -138,7 +177,7 @@ test("10. callback HMAC invalid rejected", () => {
     persist: false,
   });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.errorCode, "invalid_signature");
+  if (!result.ok) assert.equal(result.errorCode, "INVALID_CALLBACK_SIGNATURE");
 });
 
 test("11. expired timestamp rejected", () => {
@@ -160,7 +199,7 @@ test("11. expired timestamp rejected", () => {
     persist: false,
   });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.errorCode, "expired_timestamp");
+  if (!result.ok) assert.equal(result.errorCode, "CALLBACK_TIMESTAMP_EXPIRED");
 });
 
 test("12. replayed nonce rejected", () => {
@@ -181,7 +220,7 @@ test("12. replayed nonce rejected", () => {
     cwd,
   });
   assert.equal(second.ok, false);
-  if (!second.ok) assert.equal(second.errorCode, "replayed_nonce");
+  if (!second.ok) assert.equal(second.errorCode, "CALLBACK_NONCE_REPLAYED");
 });
 
 test("13. callback event stored without secrets", () => {

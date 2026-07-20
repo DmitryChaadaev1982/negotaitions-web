@@ -60,5 +60,19 @@ test("callback route handler path rejects when flag disabled (no provider)", () 
   if (!result.ok) {
     assert.equal(result.status, 404);
     assert.equal(result.disabled, true);
+    assert.equal(result.errorCode, "POC_CALLBACK_DISABLED");
   }
+});
+
+test("access route uses POC conference resolver and exposes no capability URL", () => {
+  const routePath = join(
+    process.cwd(),
+    "app/api/sessions/[sessionId]/voximplant/access/route.ts",
+  );
+  const source = readFileSync(routePath, "utf8");
+  assert.match(source, /resolveVoximplantConferenceNameForAccess/);
+  assert.ok(!source.includes("mediaSessionAccessSecureUrl"));
+  assert.ok(!source.includes("media_session_access_secure_url"));
+  assert.ok(!source.includes("VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET"));
+  assert.ok(!source.includes("VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET"));
 });

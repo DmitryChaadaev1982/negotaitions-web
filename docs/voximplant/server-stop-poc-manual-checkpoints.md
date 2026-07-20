@@ -1,4 +1,9 @@
-# Server-stop POC — Manual Checkpoints (DO NOT AUTO-EXECUTE)
+# Server-stop POC — Manual Checkpoints (FALLBACK / DO NOT AUTO-EXECUTE)
+
+> **Preferred path:** use the bounded orchestrator  
+> `npm run poc:vox:run -- --confirm-live-poc` (transport/full/dry-run).  
+> This document remains as a **fallback troubleshooting procedure** when the
+> orchestrator cannot be used.
 
 ## Checkpoint A setup (required before any live StartConference)
 
@@ -34,30 +39,30 @@ Configure an **isolated** Voximplant rule/scenario pair. Do **not** replace or e
    ```bash
    VOXIMPLANT_SERVER_STOP_POC_CALLBACK_ENABLED=true
    VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET=<dedicated-callback-secret-min-16>
+   VOXIMPLANT_SERVER_STARTED_CONFERENCE_POC=true
    ```  
    Scenario paste:  
    ```text
    POC_CALLBACK_URL = "https://<your-reachable-host>/api/poc/voximplant/server-stop/callback"
    CALLBACK_SECRET  = "<same as VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET>"
    ```  
-   Start the Next.js app so the callback route can receive events. The route returns 404 unless the enable flag is true.
+   Start the Next.js app from **this POC worktree** so the callback route can receive events. The route returns 404 unless the enable flag is true.
 
-8. **Run dry-run first** (no provider call):  
+8. **No per-Session env editing / no restart for Session binding**  
+   The orchestrator (or manual `StartConference` + run pointer) binds `linkedSessionId` dynamically via `.agent/voximplant-server-stop/current.json`. Do **not** set `VOXIMPLANT_SERVER_STOP_POC_SESSION_ID`.
+
+9. **Run dry-run first** (no provider call):  
    ```bash
-   npm run poc:vox:start-conference -- --dry-run
-   npm run poc:vox:ping -- --dry-run
+   npm run poc:vox:run -- --dry-run
    ```
 
-9. **Run live StartConference only with explicit confirmation**:  
-   ```bash
-   npm run poc:vox:start-conference -- --confirm-live-poc
-   ```  
-   `--confirm-live-poc` confirms intent for a POC provider call only. It does **not** bypass rule validation, secret validation, production-rule protection, or conference-name prefix checks.
+10. **Preferred live commands:**  
+    ```bash
+    npm run poc:vox:run -- --mode=transport --confirm-live-poc
+    npm run poc:vox:run -- --mode=full --confirm-live-poc --confirm-local-db-write
+    ```
 
 Also set Management API auth as usual (`VOXIMPLANT_API_KEY_PATH` / `VOX_CI_CREDENTIALS` or API key vars).
-
-Optional WebSDK join for Checkpoint B only:  
-`VOXIMPLANT_SERVER_STARTED_CONFERENCE_POC=true` + `VOXIMPLANT_SERVER_STOP_POC_SESSION_ID=<local-session-id>`.
 
 ---
 
@@ -75,31 +80,30 @@ Optional WebSDK join for Checkpoint B only:
 
 Synchronous response-body identity (`scenarioKind` / `protocolVersion` in the control URL HTTP response) was a **false assumption**. Observed platform behavior: HTTP 200 without those fields is valid transport; clients must not classify it as `UNEXPECTED_SCENARIO_IDENTITY`.
 
-### Revised confirmation procedure
+### Revised confirmation procedure (manual fallback)
 
 1. Activate dedicated POC scenario + rule; configure callback URL + `CALLBACK_SECRET`; enable local callback flag; start POC app.
-2. Dry-run: `npm run poc:vox:start-conference -- --dry-run` then `npm run poc:vox:ping -- --dry-run`
-3. Live start: `npm run poc:vox:start-conference -- --confirm-live-poc`  
-   Confirm printed fields only: conference name (`neg-poc-server-stop-…`), media session id, URL fingerprint. Full control URL must never appear.  
+2. Dry-run: `npm run poc:vox:run -- --dry-run`
+3. Live transport: `npm run poc:vox:run -- --mode=transport --confirm-live-poc`  
+   Or legacy: `npm run poc:vox:start-conference -- --confirm-live-poc` then `npm run poc:vox:ping`
+4. Confirm printed fields only: conference name (`neg-poc-server-stop-…`), media session id, URL fingerprint. Full control URL must never appear.  
    **Never paste raw `Application.Started`** (contains `accessURL` / `accessSecureURL`).
-4. Immediately ensure callback receiver is running (session idle TTL ≈ 60s without WebSDK).
-5. Run: `npm run poc:vox:ping`  
-   - HTTP 2xx ⇒ `TRANSPORT_ACCEPTED` only  
-   - Success ⇒ `PING_COMMAND_CONFIRMED` when matching signed callback arrives (`scenarioKind=voximplant_server_stop_poc`, `protocolVersion=1`, `eventType=command_accepted`, `action=ping`, same `operationId`)  
-   - Optional: `--no-wait` for transport-only diagnostics (explicitly non-terminal)
-6. In Voximplant logs, search for: `HttpRequest accepted action=ping` and build id `server-stop-poc-2026-07-20-a2`.
+5. Local-only (no provider): `npm run poc:vox:test-callback -- --dry-run` then `npm run poc:vox:test-callback`.
+6. Join selection diagnostic: `npm run poc:vox:join-plan`.
 
 ---
 
-## Checkpoint B — real recorder stop (timing revised)
+## Checkpoint B — real recorder stop (FALLBACK troubleshooting)
 
-Idle media sessions without WebSDK participants terminate after ~**60 seconds**. Sequence:
+> Prefer: `npm run poc:vox:run -- --mode=full --confirm-live-poc --confirm-local-db-write`
+
+Idle media sessions without WebSDK participants terminate after ~**60 seconds**. Manual sequence if orchestrator is unavailable:
 
 1. Start server-created POC conference:  
    `npm run poc:vox:start-conference -- --confirm-live-poc`
-2. **Immediately** start POC app/runtime (callback enabled) so async evidence can be received before idle expiry.
-3. **Connect a WebSDK participant before idle scenario termination** (enable join override for one local Session: `VOXIMPLANT_SERVER_STARTED_CONFERENCE_POC=true` + linked session id / `poc-server-stop-*` prefix). Join the exact conference name (`neg-poc-server-stop-…` only).
-4. Confirm recording started (scenario auto-starts demo recorder on first participant).
+2. Ensure POC app/runtime is running (callback enabled) so async evidence can be received.
+3. Join WebSDK participants to the **active run** linked Session (flag on; dynamic `current.json` binding — no Session env edit).
+4. Confirm recording started (application negotiation start / recording-control start).
 5. Run: `npm run poc:vox:stop-recording`
 6. Verify evidence model:
    - HTTP 2xx → `transportAcceptedAt` (`TRANSPORT_ACCEPTED` only)
@@ -116,5 +120,8 @@ Do **not** treat HTTP 200 alone as Checkpoint B success. Do **not** reuse an exp
 ## Cleanup
 
 ```bash
+npm run poc:vox:cleanup -- --dry-run
+npm run poc:vox:cleanup -- --run-id <runId> --confirm-cleanup --confirm-local-db-write
+# legacy local state clear (does not delete DB entities):
 npm run poc:vox:clear-state
 ```

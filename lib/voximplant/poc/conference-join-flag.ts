@@ -1,5 +1,34 @@
 import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
-import { readPocState } from "@/lib/voximplant/poc/poc-state";
+import { POC_CONFERENCE_NAME_PREFIX } from "@/lib/voximplant/poc/poc-safety";
+import {
+  readPocState,
+  resolveRuntimeStatus,
+  type PocRuntimeStatus,
+} from "@/lib/voximplant/poc/poc-state";
+import { readCurrentPointer } from "@/lib/voximplant/poc/poc-run-store";
+
+export type PocConferenceSelectionSource =
+  | "POC_STATE"
+  | "DEFAULT_SESSION_NAME";
+
+export type PocJoinPlan = {
+  featureFlagEnabled: boolean;
+  /** @deprecated Static env session binding removed; always null. */
+  configuredPocSessionId: string | null;
+  requestedSessionId: string;
+  sessionIdMatch: boolean;
+  pocStateFound: boolean;
+  stateLinkedSessionId: string | null;
+  stateConferenceName: string | null;
+  runtimeStatus: PocRuntimeStatus | null;
+  expiresAt: string | null;
+  selectedConferenceName: string;
+  selectionSource: PocConferenceSelectionSource;
+  refusalOrFallbackReason: string | null;
+  /** When state matches but is expired: name that ACTIVE matching would select. */
+  wouldSelectIfActive: string | null;
+  activeRunId: string | null;
+};
 
 function readEnvBoolean(
   env: NodeJS.ProcessEnv,
@@ -23,22 +52,30 @@ export function isServerStartedConferencePocEnabled(
   return readEnvBoolean(env, "VOXIMPLANT_SERVER_STARTED_CONFERENCE_POC", false);
 }
 
+function isSafePocConferenceName(conferenceName: string): boolean {
+  return conferenceName.startsWith(POC_CONFERENCE_NAME_PREFIX);
+}
+
 /**
- * A Session is POC-eligible only when explicitly linked in local POC state
- * or when its id uses the reserved local POC prefix.
+ * A Session is POC-eligible only when explicitly linked in the active run
+ * state or when its id uses the reserved local POC prefix.
+ * Session binding is dynamic (run pointer / state) — not env.
  */
 export function isExplicitPocSession(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
-  cwd: string = process.cwd(),
+  stateRoot?: string,
 ): boolean {
+  void env;
   if (!sessionId) return false;
   if (sessionId.startsWith("poc-server-stop-")) return true;
 
-  const linked = env.VOXIMPLANT_SERVER_STOP_POC_SESSION_ID?.trim();
-  if (linked && linked === sessionId) return true;
+  const pointer = readCurrentPointer(stateRoot);
+  if (pointer?.linkedSessionId && pointer.linkedSessionId === sessionId) {
+    return true;
+  }
 
-  const state = readPocState(cwd);
+  const state = readPocState(stateRoot);
   if (state?.linkedSessionId && state.linkedSessionId === sessionId) {
     return true;
   }
@@ -46,25 +83,39 @@ export function isExplicitPocSession(
 }
 
 /**
- * When the POC flag is enabled and the Session is explicitly marked,
- * return the pre-started conference name from local POC state.
- * Otherwise return null (caller uses production naming).
+ * When the POC flag is enabled and the Session has matching ACTIVE POC state,
+ * return the pre-started conference name. Otherwise return null (caller uses
+ * production naming). Expired state never selects POC conference / control URL.
+ *
+ * Selection requires all of:
+ * - POC flag enabled
+ * - active run exists
+ * - requested Session ID equals active run linkedSessionId
+ * - runtime ACTIVE
+ * - conference name has safe prefix
+ * - run is not expired
  */
 export function tryResolvePocConferenceName(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
-  cwd: string = process.cwd(),
+  stateRoot?: string,
+  nowMs: number = Date.now(),
 ): string | null {
   if (!isServerStartedConferencePocEnabled(env)) return null;
-  if (!isExplicitPocSession(sessionId, env, cwd)) return null;
 
-  const override = env.VOXIMPLANT_SERVER_STOP_POC_CONFERENCE_NAME?.trim();
-  if (override) return override;
+  const pointer = readCurrentPointer(stateRoot);
+  if (!pointer?.linkedSessionId) return null;
+  if (pointer.linkedSessionId !== sessionId) return null;
 
-  const state = readPocState(cwd);
-  if (state?.conferenceName) return state.conferenceName;
+  const state = readPocState(stateRoot);
+  if (!state?.conferenceName) return null;
+  if (state.linkedSessionId !== sessionId) return null;
 
-  return null;
+  const runtimeStatus = resolveRuntimeStatus(state, nowMs);
+  if (runtimeStatus !== "ACTIVE") return null;
+  if (!isSafePocConferenceName(state.conferenceName)) return null;
+
+  return state.conferenceName;
 }
 
 /**
@@ -74,10 +125,120 @@ export function tryResolvePocConferenceName(
 export function resolveVoximplantConferenceNameForAccess(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
-  cwd: string = process.cwd(),
+  stateRoot?: string,
+  nowMs: number = Date.now(),
 ): string {
   return (
-    tryResolvePocConferenceName(sessionId, env, cwd) ??
+    tryResolvePocConferenceName(sessionId, env, stateRoot, nowMs) ??
     buildVoximplantConferenceName(sessionId)
   );
+}
+
+/**
+ * Sanitized join-plan diagnostic (no control URL, no secrets).
+ */
+export function planPocConferenceJoin(params: {
+  sessionId: string;
+  env?: NodeJS.ProcessEnv;
+  stateRoot?: string;
+  nowMs?: number;
+}): PocJoinPlan {
+  const env = params.env ?? process.env;
+  const nowMs = params.nowMs ?? Date.now();
+  const sessionId = params.sessionId;
+  const featureFlagEnabled = isServerStartedConferencePocEnabled(env);
+  const defaultName = buildVoximplantConferenceName(sessionId);
+  const pointer = readCurrentPointer(params.stateRoot);
+  const state = readPocState(params.stateRoot);
+  const stateLinkedSessionId =
+    state?.linkedSessionId ?? pointer?.linkedSessionId ?? null;
+  const sessionIdMatch = Boolean(
+    stateLinkedSessionId && stateLinkedSessionId === sessionId,
+  );
+
+  const base = {
+    featureFlagEnabled,
+    configuredPocSessionId: null as string | null,
+    requestedSessionId: sessionId,
+    sessionIdMatch,
+    pocStateFound: Boolean(state),
+    stateLinkedSessionId,
+    stateConferenceName: state?.conferenceName ?? null,
+    runtimeStatus: state ? resolveRuntimeStatus(state, nowMs) : null,
+    expiresAt: state?.expiresAt ?? null,
+    activeRunId: pointer?.runId ?? null,
+  };
+
+  if (!featureFlagEnabled) {
+    return {
+      ...base,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason: "FEATURE_FLAG_DISABLED",
+      wouldSelectIfActive: null,
+    };
+  }
+
+  if (!pointer) {
+    return {
+      ...base,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason: "ACTIVE_RUN_MISSING",
+      wouldSelectIfActive: null,
+    };
+  }
+
+  if (!sessionIdMatch) {
+    return {
+      ...base,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason: "SESSION_ID_MISMATCH",
+      wouldSelectIfActive: null,
+    };
+  }
+
+  if (!state?.conferenceName) {
+    return {
+      ...base,
+      pocStateFound: false,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason: "POC_STATE_MISSING",
+      wouldSelectIfActive: null,
+    };
+  }
+
+  if (!isSafePocConferenceName(state.conferenceName)) {
+    return {
+      ...base,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason: "UNSAFE_POC_CONFERENCE_NAME",
+      wouldSelectIfActive: null,
+    };
+  }
+
+  const runtimeStatus = resolveRuntimeStatus(state, nowMs);
+  if (runtimeStatus !== "ACTIVE") {
+    return {
+      ...base,
+      runtimeStatus,
+      selectedConferenceName: defaultName,
+      selectionSource: "DEFAULT_SESSION_NAME",
+      refusalOrFallbackReason:
+        "POC_STATE_EXPIRED_REQUIRES_FRESH_START_CONFERENCE",
+      wouldSelectIfActive: state.conferenceName,
+    };
+  }
+
+  return {
+    ...base,
+    runtimeStatus,
+    selectedConferenceName: state.conferenceName,
+    selectionSource: "POC_STATE",
+    refusalOrFallbackReason: null,
+    wouldSelectIfActive: state.conferenceName,
+  };
 }

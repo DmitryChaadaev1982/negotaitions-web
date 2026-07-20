@@ -1,17 +1,26 @@
 import {
-  chmodSync,
   existsSync,
-  mkdirSync,
   readFileSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
 
 import type { PocCallbackEventType } from "@/lib/voximplant/poc/callback-signature";
+import {
+  getPocStatePath as resolvePocStatePath,
+  POC_STATE_RELATIVE_PATH,
+} from "@/lib/voximplant/poc/poc-paths";
+import {
+  activatePocRun,
+  clearCurrentPointer,
+  ensurePocRunDir,
+  getPocLegacyStatePath,
+  readCurrentPointer,
+  resolveActiveRunPaths,
+  writeJsonArtifact,
+} from "@/lib/voximplant/poc/poc-run-store";
 import { fingerprintControlUrl } from "@/lib/voximplant/poc/url-fingerprint";
 
-export const POC_STATE_RELATIVE_PATH = ".agent/voximplant-server-stop-poc.json";
+export { POC_STATE_RELATIVE_PATH };
 
 /** Observed idle media-session lifetime without WebSDK participants (~60s). */
 export const POC_IDLE_MEDIA_SESSION_TTL_MS = 60_000;
@@ -77,8 +86,13 @@ export type VoximplantServerStopPocState = {
   seenCallbackNonces: string[];
 };
 
-export function getPocStatePath(cwd: string = process.cwd()): string {
-  return resolve(cwd, POC_STATE_RELATIVE_PATH);
+/**
+ * Absolute POC state path.
+ * Omit `stateRoot` to use the repository-root resolver (shared by route + CLI).
+ * Pass an explicit `stateRoot` for tests / isolated temp directories.
+ */
+export function getPocStatePath(stateRoot?: string): string {
+  return resolvePocStatePath(stateRoot);
 }
 
 function normalizeState(
@@ -114,45 +128,100 @@ function normalizeState(
   };
 }
 
-export function readPocState(cwd: string = process.cwd()): VoximplantServerStopPocState | null {
-  const path = getPocStatePath(cwd);
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<VoximplantServerStopPocState>;
-    return normalizeState(parsed);
-  } catch {
-    return null;
+export function readPocState(
+  stateRoot?: string,
+): VoximplantServerStopPocState | null {
+  const active = resolveActiveRunPaths(stateRoot);
+  const candidates = [
+    active?.statePath,
+    getPocStatePath(stateRoot),
+    getPocLegacyStatePath(stateRoot),
+  ].filter((value, index, all): value is string => {
+    return Boolean(value) && all.indexOf(value) === index;
+  });
+
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    try {
+      const parsed = JSON.parse(
+        readFileSync(path, "utf8"),
+      ) as Partial<VoximplantServerStopPocState>;
+      const normalized = normalizeState(parsed);
+      if (normalized) return normalized;
+    } catch {
+      // try next candidate
+    }
   }
+  return null;
 }
 
 export function writePocState(
   state: VoximplantServerStopPocState,
-  cwd: string = process.cwd(),
+  stateRoot?: string,
 ): string {
-  const path = getPocStatePath(cwd);
-  mkdirSync(dirname(path), { recursive: true });
+  const runId = state.pocId;
+  const paths = ensurePocRunDir(runId, stateRoot);
+  const pointer = readCurrentPointer(stateRoot);
+  if (!pointer || pointer.runId !== runId) {
+    activatePocRun({
+      runId,
+      linkedSessionId: state.linkedSessionId,
+      stateRoot,
+    });
+  } else if (
+    (pointer.linkedSessionId ?? null) !== (state.linkedSessionId ?? null)
+  ) {
+    activatePocRun({
+      runId,
+      linkedSessionId: state.linkedSessionId,
+      stateRoot,
+      activatedAt: pointer.activatedAt,
+    });
+  }
+
   const bounded: VoximplantServerStopPocState = {
     ...state,
     callbackEvents: state.callbackEvents.slice(-POC_CALLBACK_EVENT_LIMIT),
     seenCallbackNonces: state.seenCallbackNonces.slice(-POC_CALLBACK_NONCE_LIMIT),
   };
-  writeFileSync(path, `${JSON.stringify(bounded, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
+  writeJsonArtifact(paths.statePath, bounded);
+  writeJsonArtifact(paths.eventsPath, {
+    runId,
+    updatedAt: bounded.updatedAt,
+    callbackEvents: bounded.callbackEvents,
   });
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // Windows may ignore POSIX mode bits; best-effort only.
-  }
-  return path;
+  return paths.statePath;
 }
 
-export function clearPocState(cwd: string = process.cwd()): boolean {
-  const path = getPocStatePath(cwd);
-  if (!existsSync(path)) return false;
-  unlinkSync(path);
-  return true;
+export function clearPocState(stateRoot?: string): boolean {
+  const active = resolveActiveRunPaths(stateRoot);
+  let removed = false;
+  if (active && existsSync(active.statePath)) {
+    unlinkSync(active.statePath);
+    removed = true;
+  }
+  const legacy = getPocLegacyStatePath(stateRoot);
+  if (existsSync(legacy)) {
+    unlinkSync(legacy);
+    removed = true;
+  }
+  clearCurrentPointer(stateRoot);
+  return removed;
+}
+
+/** Remove synthetic self-test callback events while keeping real provider evidence. */
+export function clearSyntheticSelfTestCallbacks(
+  state: VoximplantServerStopPocState,
+  operationIdPrefix = "poc-callback-selftest-",
+): VoximplantServerStopPocState {
+  const callbackEvents = state.callbackEvents.filter(
+    (event) => !event.operationId?.startsWith(operationIdPrefix),
+  );
+  return {
+    ...state,
+    callbackEvents,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export function createEmptyPocState(params: {

@@ -61,3 +61,19 @@ test("POC scenario keeps dedicated conference name prefix", () => {
 test("POC scenario warns not to log raw Application.Started", () => {
   assert.match(source, /Never log raw Application\.Started/);
 });
+
+test("scenario callback-result logging redacts URL/signature/secret", () => {
+  assert.match(source, /CALLBACK_HTTP_ACCEPTED/);
+  assert.match(source, /CALLBACK_HTTP_REJECTED/);
+  assert.match(source, /CALLBACK_HTTP_TIMEOUT/);
+  assert.match(source, /logCallbackHttpResult/);
+  assert.match(source, /callbackSecretSha256Prefix/);
+  const fnStart = source.indexOf("function logCallbackHttpResult");
+  assert.ok(fnStart > 0);
+  const fnEnd = source.indexOf("function sendSignedPocCallback", fnStart);
+  const fnBody = source.slice(fnStart, fnEnd);
+  assert.ok(!fnBody.includes("POC_CALLBACK_URL"));
+  assert.ok(!fnBody.includes("CALLBACK_SECRET"));
+  assert.ok(!fnBody.includes("X-Neg-Poc-Callback-Signature"));
+  assert.ok(!fnBody.includes("postData"));
+});

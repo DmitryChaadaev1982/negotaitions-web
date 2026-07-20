@@ -65,10 +65,8 @@ export async function waitForMatchingPingCallback(params: {
 }): Promise<PocCallbackEventRecord | null> {
   const deadline = Date.now() + params.timeoutMs;
   const pollMs = params.pollMs ?? DEFAULT_PING_CALLBACK_POLL_MS;
-  const cwd = params.cwd ?? process.cwd();
-
   while (Date.now() <= deadline) {
-    const state = readPocState(cwd);
+    const state = readPocState(params.cwd);
     if (state) {
       const match = findMatchingCallbackEvent(state, {
         operationId: params.operationId,
@@ -113,7 +111,7 @@ function isConfirmingPingCallback(
 export async function executePocPing(
   params: ExecutePocPingParams,
 ): Promise<ExecutePocPingResult> {
-  const cwd = params.cwd ?? process.cwd();
+  const cwd = params.cwd;
   const state = params.state ?? readPocState(cwd);
   const nowMs = params.nowMs ?? Date.now();
 

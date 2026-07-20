@@ -32,7 +32,7 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a2";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a3";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
 /** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
@@ -322,6 +322,66 @@ function buildCallbackPayload(eventType, action, operationId, recorderState, err
   };
 }
 
+function extractCallbackResponseCode(result) {
+  try {
+    if (!result) return null;
+    if (typeof result.code === "number") return result.code;
+    if (typeof result.status === "number") return result.status;
+    if (result.response && typeof result.response.code === "number") return result.response.code;
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+function extractCallbackResponseErrorCode(result) {
+  try {
+    var text = null;
+    if (result && typeof result.text === "string") text = result.text;
+    else if (result && typeof result.data === "string") text = result.data;
+    else if (result && result.response && typeof result.response.text === "string") {
+      text = result.response.text;
+    }
+    if (!text) return null;
+    // Only parse short JSON for top-level errorCode/result — never log full body.
+    if (text.length > 2000) text = text.slice(0, 2000);
+    var parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.errorCode === "string") return parsed.errorCode;
+    if (typeof parsed.result === "string") return parsed.result;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function classifyCallbackHttpResult(httpStatus) {
+  if (httpStatus == null || !isFinite(httpStatus) || httpStatus === 0) {
+    return "CALLBACK_HTTP_TIMEOUT";
+  }
+  if (httpStatus >= 200 && httpStatus < 300) return "CALLBACK_HTTP_ACCEPTED";
+  return "CALLBACK_HTTP_REJECTED";
+}
+
+function logCallbackHttpResult(eventType, operationId, result) {
+  var httpStatus = extractCallbackResponseCode(result);
+  var responseErrorCode = extractCallbackResponseErrorCode(result);
+  var classification = classifyCallbackHttpResult(httpStatus);
+  // Sanitized only: no URL, headers, signature, secret, or full body.
+  log(
+    "POC callback httpResult eventType=" +
+      eventType +
+      " operationId=" +
+      safeToString(operationId) +
+      " httpStatus=" +
+      safeToString(httpStatus) +
+      " responseErrorCode=" +
+      safeToString(responseErrorCode) +
+      " classification=" +
+      classification,
+  );
+}
+
 function sendSignedPocCallback(eventType, action, operationId, recorderState, errorCode) {
   if (!POC_CALLBACK_URL) {
     log("POC callback skipped: POC_CALLBACK_URL empty");
@@ -351,8 +411,14 @@ function sendSignedPocCallback(eventType, action, operationId, recorderState, er
   var signature = hmacSha256Hex(signingPayload, CALLBACK_SECRET);
 
   try {
-    Net.httpRequest(POC_CALLBACK_URL, function () {
-      log("POC callback attempted eventType=" + eventType + " operationId=" + safeToString(operationId));
+    Net.httpRequest(POC_CALLBACK_URL, function (result) {
+      log(
+        "POC callback attempted eventType=" +
+          eventType +
+          " operationId=" +
+          safeToString(operationId),
+      );
+      logCallbackHttpResult(eventType, operationId, result);
     }, {
       method: "POST",
       headers: {
@@ -371,6 +437,13 @@ function sendSignedPocCallback(eventType, action, operationId, recorderState, er
     });
   } catch (e) {
     log("POC callback failed: " + safeToString(e));
+    log(
+      "POC callback httpResult eventType=" +
+        eventType +
+        " operationId=" +
+        safeToString(operationId) +
+        " httpStatus=null responseErrorCode=null classification=CALLBACK_HTTP_TIMEOUT",
+    );
   }
 }
 
@@ -781,7 +854,12 @@ function onAppStarted(e) {
       isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__") +
       " callbackSecretConfigured=" +
       isSecretConfigured(CALLBACK_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__") +
-      " callbackUrlConfigured=" + Boolean(POC_CALLBACK_URL),
+      " callbackUrlConfigured=" +
+      Boolean(POC_CALLBACK_URL) +
+      " callbackSecretSha256Prefix=" +
+      (isSecretConfigured(CALLBACK_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__")
+        ? sha256Hex(CALLBACK_SECRET).slice(0, 12)
+        : "none"),
   );
 
   try {

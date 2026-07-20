@@ -39,11 +39,16 @@
     "inspect:audio": "tsx scripts/inspect-audio-recording.ts",
     "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts",
     "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts",
+    "poc:vox:run": "tsx scripts/poc/voximplant-server-stop/run-poc.ts",
+    "poc:vox:last-report": "tsx scripts/poc/voximplant-server-stop/show-last-report.ts",
+    "poc:vox:cleanup": "tsx scripts/poc/voximplant-server-stop/cleanup-poc.ts",
     "poc:vox:start-conference": "tsx scripts/poc/voximplant-server-stop/start-conference.ts",
     "poc:vox:ping": "tsx scripts/poc/voximplant-server-stop/send-control-command.ts --action=ping",
     "poc:vox:stop-recording": "tsx scripts/poc/voximplant-server-stop/send-control-command.ts --action=stop_recording",
     "poc:vox:status": "tsx scripts/poc/voximplant-server-stop/inspect-result.ts",
     "poc:vox:clear-state": "tsx scripts/poc/voximplant-server-stop/inspect-result.ts --clear",
+    "poc:vox:test-callback": "tsx scripts/poc/voximplant-server-stop/test-callback.ts",
+    "poc:vox:join-plan": "tsx scripts/poc/voximplant-server-stop/join-plan.ts",
     "test:poc:vox-server-stop": "node --import tsx --test \"lib/voximplant/poc/**/*.test.ts\""
   },
   "prisma": {
