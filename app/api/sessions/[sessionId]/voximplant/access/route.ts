@@ -22,7 +22,7 @@ import {
   VoximplantIdentityDisabledError,
   VoximplantIdentityProvisioningPendingError,
 } from "@/lib/voximplant/identity";
-import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
+import { resolveVoximplantConferenceNameForAccess } from "@/lib/voximplant/poc/conference-join-flag";
 import {
   VoximplantManagementApiError,
   VoximplantManagementApiNotImplementedError,
@@ -98,7 +98,11 @@ function buildBrowserSafePayload(params: {
   return {
     provider: "voximplant" as const,
     sessionId: params.sessionId,
-    roomNameOrConferenceName: buildVoximplantConferenceName(params.sessionId),
+    // Default remains negotiation-{sessionId}. POC override is flag-gated and
+    // only applies to explicitly marked local POC Sessions.
+    roomNameOrConferenceName: resolveVoximplantConferenceNameForAccess(
+      params.sessionId,
+    ),
     user: {
       providerUsername: params.providerUsername,
       sdkUsername: params.sdkUsername,

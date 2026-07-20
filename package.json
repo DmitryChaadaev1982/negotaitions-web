@@ -38,7 +38,13 @@
     "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs",
     "inspect:audio": "tsx scripts/inspect-audio-recording.ts",
     "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts",
-    "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts"
+    "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts",
+    "poc:vox:start-conference": "tsx scripts/poc/voximplant-server-stop/start-conference.ts",
+    "poc:vox:ping": "tsx scripts/poc/voximplant-server-stop/send-control-command.ts --action=ping",
+    "poc:vox:stop-recording": "tsx scripts/poc/voximplant-server-stop/send-control-command.ts --action=stop_recording",
+    "poc:vox:status": "tsx scripts/poc/voximplant-server-stop/inspect-result.ts",
+    "poc:vox:clear-state": "tsx scripts/poc/voximplant-server-stop/inspect-result.ts --clear",
+    "test:poc:vox-server-stop": "node --import tsx --test \"lib/voximplant/poc/**/*.test.ts\""
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -73,3 +73,6 @@ voxengine-ci/
 
 # Local scenario sync state (non-sensitive, but machine-specific)
 .vox-scenario-build-id
+
+# Agent/local POC scratch (includes Voximplant server-stop control URLs)
+.agent/

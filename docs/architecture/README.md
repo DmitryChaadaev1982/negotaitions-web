@@ -17,6 +17,7 @@ This folder is the canonical architecture reference for the running NegotAItions
 11. `11-deployment-architecture.md`
 12. `12-external-systems.md`
 13. `code-map.md`
+14. `13-voximplant-server-stop-poc.md` (isolated POC; not production lifecycle)
 
 These files are the authoritative current-state architecture truth and must be kept aligned with code changes.
 

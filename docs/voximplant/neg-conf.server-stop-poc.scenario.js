@@ -1,0 +1,687 @@
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unused-vars */
+
+// ============================================================
+// SERVER-STOP POC SCENARIO VARIANT (MANUAL PASTE ONLY)
+// ============================================================
+//
+// Purpose: prove Next.js → StartConference → media_session_access_url →
+// AppEvents.HttpRequest → ConferenceRecorder.stop() → RecorderEvents.Stopped
+// → POC callback / existing webhook path.
+//
+// DO NOT auto-upload. DO NOT replace production neg-conf-main-room by default.
+// Paste into a dedicated POC scenario/rule in Voximplant Console for experiments.
+//
+// Required paste replacements:
+//   CONTROL_SECRET  ← VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET
+//   WEBHOOK_SECRET  ← VOXIMPLANT_RECORDING_WEBHOOK_SECRET (optional; for production webhook reuse)
+//   POC_CALLBACK_URL ← local callback receiver (optional)
+//
+// Supported HTTP actions (allow-list): ping | get_recording_state | stop_recording
+
+require(Modules.Conference);
+try {
+  require(Modules.Recorder);
+} catch (err) {
+  Logger.write("[server-stop-poc] Modules.Recorder require failed");
+}
+
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a1";
+var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
+/** Stable identity for Checkpoint A ping handshake (must match lib/voximplant/poc/poc-safety.ts). */
+var SCENARIO_KIND = "voximplant_server_stop_poc";
+var PROTOCOL_VERSION = 1;
+
+var CONTROL_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__";
+var WEBHOOK_SECRET = "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__";
+var WEBHOOK_BASE_URL = "";
+var POC_CALLBACK_URL = "";
+
+var REPLAY_WINDOW_MS = 5 * 60 * 1000;
+var CONFERENCE_NAME_PREFIX_POC = "neg-poc-server-stop-";
+
+var conference = null;
+var recorder = null;
+var expectedConferenceName = null;
+var participants = 0;
+var activeCallIds = {};
+
+// Recorder ownership registry (process-local; acceptable for isolated POC).
+var recorderRegistry = {
+  exists: false,
+  recordingStarted: false,
+  stopRequested: false,
+  stopCompleted: false,
+  lastOperationId: null,
+};
+
+var seenNonces = {};
+var operationResults = {};
+var pendingStopOperationId = null;
+
+var STATE_ABSENT = "absent";
+var STATE_EXISTS = "exists";
+var STATE_RECORDING_STARTED = "recording_started";
+var STATE_STOP_REQUESTED = "stop_requested";
+var STATE_STOP_COMPLETED = "stop_completed";
+
+function log(message) {
+  Logger.write("[server-stop-poc] " + message);
+}
+
+function safeToString(value) {
+  try {
+    if (value === null || value === undefined) return "null";
+    if (typeof value === "string") return value;
+    if (value && value.message) return String(value.message);
+    return String(value);
+  } catch (e) {
+    return "unprintable";
+  }
+}
+
+function safeNowIso() {
+  try {
+    return new Date().toISOString();
+  } catch (e) {
+    return String(Date.now());
+  }
+}
+
+function isSecretConfigured(secret, placeholder) {
+  if (!secret || typeof secret !== "string") return false;
+  var trimmed = secret.trim();
+  if (!trimmed) return false;
+  if (trimmed === placeholder) return false;
+  return trimmed.length >= 16;
+}
+
+// ── Pure JS SHA-256 + HMAC (same approach as main-room scenario) ─────────────
+
+function rotr(n, x) {
+  return (x >>> n) | (x << (32 - n));
+}
+
+function sha256Bytes(bytes) {
+  var K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  var H = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ];
+  var l = bytes.length;
+  var withOne = new Array(l + 1);
+  var i;
+  for (i = 0; i < l; i++) withOne[i] = bytes[i];
+  withOne[l] = 0x80;
+  var bitLen = l * 8;
+  var totalLen = withOne.length + 8;
+  var paddedLen = Math.ceil(totalLen / 64) * 64;
+  var padded = new Array(paddedLen);
+  for (i = 0; i < paddedLen; i++) padded[i] = 0;
+  for (i = 0; i < withOne.length; i++) padded[i] = withOne[i];
+  padded[paddedLen - 4] = (bitLen >>> 24) & 0xff;
+  padded[paddedLen - 3] = (bitLen >>> 16) & 0xff;
+  padded[paddedLen - 2] = (bitLen >>> 8) & 0xff;
+  padded[paddedLen - 1] = bitLen & 0xff;
+
+  for (var offset = 0; offset < paddedLen; offset += 64) {
+    var w = new Array(64);
+    for (i = 0; i < 16; i++) {
+      var j = offset + i * 4;
+      w[i] = ((padded[j] << 24) | (padded[j + 1] << 16) | (padded[j + 2] << 8) | padded[j + 3]) >>> 0;
+    }
+    for (i = 16; i < 64; i++) {
+      var s0 = (rotr(7, w[i - 15]) ^ rotr(18, w[i - 15]) ^ (w[i - 15] >>> 3)) >>> 0;
+      var s1 = (rotr(17, w[i - 2]) ^ rotr(19, w[i - 2]) ^ (w[i - 2] >>> 10)) >>> 0;
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (i = 0; i < 64; i++) {
+      var S1 = (rotr(6, e) ^ rotr(11, e) ^ rotr(25, e)) >>> 0;
+      var ch = ((e & f) ^ (~e & g)) >>> 0;
+      var temp1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+      var S0 = (rotr(2, a) ^ rotr(13, a) ^ rotr(22, a)) >>> 0;
+      var maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+      var temp2 = (S0 + maj) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0;
+      d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0;
+    H[1] = (H[1] + b) >>> 0;
+    H[2] = (H[2] + c) >>> 0;
+    H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0;
+    H[5] = (H[5] + f) >>> 0;
+    H[6] = (H[6] + g) >>> 0;
+    H[7] = (H[7] + h) >>> 0;
+  }
+  var out = [];
+  for (i = 0; i < 8; i++) {
+    out.push((H[i] >>> 24) & 0xff, (H[i] >>> 16) & 0xff, (H[i] >>> 8) & 0xff, H[i] & 0xff);
+  }
+  return out;
+}
+
+function utf8ToBytes(str) {
+  var out = [];
+  for (var i = 0; i < str.length; i++) {
+    var code = str.charCodeAt(i);
+    if (code < 0x80) out.push(code);
+    else if (code < 0x800) {
+      out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+    } else if (code < 0xd800 || code >= 0xe000) {
+      out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    } else {
+      i++;
+      var code2 = 0x10000 + (((code & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
+      out.push(
+        0xf0 | (code2 >> 18),
+        0x80 | ((code2 >> 12) & 0x3f),
+        0x80 | ((code2 >> 6) & 0x3f),
+        0x80 | (code2 & 0x3f),
+      );
+    }
+  }
+  return out;
+}
+
+function bytesToHex(bytes) {
+  var hex = "";
+  for (var i = 0; i < bytes.length; i++) {
+    var h = bytes[i].toString(16);
+    hex += h.length === 1 ? "0" + h : h;
+  }
+  return hex;
+}
+
+function hmacSha256Hex(message, secret) {
+  if (typeof crypto !== "undefined" && crypto && typeof crypto.createHmac === "function") {
+    return crypto.createHmac("sha256", secret).update(message).digest("hex");
+  }
+  var blockSize = 64;
+  var key = utf8ToBytes(secret);
+  if (key.length > blockSize) key = sha256Bytes(key);
+  while (key.length < blockSize) key.push(0);
+  var oKey = [];
+  var iKey = [];
+  for (var i = 0; i < blockSize; i++) {
+    oKey.push(key[i] ^ 0x5c);
+    iKey.push(key[i] ^ 0x36);
+  }
+  var inner = sha256Bytes(iKey.concat(utf8ToBytes(message)));
+  return bytesToHex(sha256Bytes(oKey.concat(inner)));
+}
+
+function sha256Hex(message) {
+  return bytesToHex(sha256Bytes(utf8ToBytes(message)));
+}
+
+function constantTimeEqualHex(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function getHeader(headers, name) {
+  if (!headers) return null;
+  var lower = name.toLowerCase();
+  if (typeof headers === "object") {
+    if (headers[name] !== undefined) return String(headers[name]);
+    if (headers[lower] !== undefined) return String(headers[lower]);
+    for (var key in headers) {
+      if (!Object.prototype.hasOwnProperty.call(headers, key)) continue;
+      if (String(key).toLowerCase() === lower) return String(headers[key]);
+    }
+  }
+  return null;
+}
+
+function registryState() {
+  if (recorderRegistry.stopCompleted) return STATE_STOP_COMPLETED;
+  if (recorderRegistry.stopRequested) return STATE_STOP_REQUESTED;
+  if (recorderRegistry.recordingStarted) return STATE_RECORDING_STARTED;
+  if (recorderRegistry.exists) return STATE_EXISTS;
+  return STATE_ABSENT;
+}
+
+function buildControlResponse(ok, action, operationId, state, errorCode) {
+  return JSON.stringify({
+    ok: Boolean(ok),
+    action: action || null,
+    operationId: operationId || null,
+    state: state || null,
+    errorCode: errorCode || null,
+    scenarioKind: SCENARIO_KIND,
+    protocolVersion: PROTOCOL_VERSION,
+  });
+}
+
+function respondHttp(e, status, body) {
+  try {
+    if (e && typeof e.Response === "function") {
+      e.Response(status, body, { "Content-Type": "application/json" });
+      return;
+    }
+  } catch (err) {
+    log("Response helper failed: " + safeToString(err));
+  }
+  try {
+    if (typeof e === "object") {
+      e.code = status;
+      e.headers = { "Content-Type": "application/json" };
+      e.text = body;
+    }
+  } catch (err2) {
+    log("Response fallback failed: " + safeToString(err2));
+  }
+}
+
+function parseCustomDataConferenceName() {
+  try {
+    if (typeof VoxEngine.customData === "function") {
+      var raw = VoxEngine.customData();
+      if (!raw) return null;
+      if (typeof raw === "string") {
+        var parsed = JSON.parse(raw);
+        if (parsed && parsed.conferenceName) return String(parsed.conferenceName);
+      }
+    }
+  } catch (e) {
+    log("customData parse failed");
+  }
+  return null;
+}
+
+function verifyControlRequest(e, bodyText) {
+  var method = (e && e.method) ? String(e.method).toUpperCase() : "GET";
+  if (method !== "POST") {
+    return { ok: false, errorCode: "method_not_allowed" };
+  }
+  if (!isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__")) {
+    return { ok: false, errorCode: "control_secret_not_configured" };
+  }
+
+  var headers = (e && e.headers) ? e.headers : {};
+  var version = getHeader(headers, "X-Neg-Poc-Version");
+  var action = getHeader(headers, "X-Neg-Poc-Action");
+  var conferenceName = getHeader(headers, "X-Neg-Poc-Conference-Name");
+  var operationId = getHeader(headers, "X-Neg-Poc-Operation-Id");
+  var timestamp = getHeader(headers, "X-Neg-Poc-Timestamp");
+  var nonce = getHeader(headers, "X-Neg-Poc-Nonce");
+  var bodyHash = getHeader(headers, "X-Neg-Poc-Body-Hash");
+  var signature = getHeader(headers, "X-Neg-Poc-Signature");
+
+  if (!action || (action !== "ping" && action !== "get_recording_state" && action !== "stop_recording")) {
+    return { ok: false, errorCode: "unknown_action", action: action };
+  }
+  if (!operationId) return { ok: false, errorCode: "missing_operation_id", action: action };
+  if (!conferenceName) return { ok: false, errorCode: "missing_conference_name", action: action };
+  if (!nonce) return { ok: false, errorCode: "missing_nonce", action: action };
+  if (!signature) return { ok: false, errorCode: "missing_signature", action: action };
+  if (version !== "v1") return { ok: false, errorCode: "unsupported_version", action: action };
+
+  if (expectedConferenceName && conferenceName !== expectedConferenceName) {
+    return { ok: false, errorCode: "wrong_conference", action: action, operationId: operationId };
+  }
+
+  var ts = Date.parse(timestamp || "");
+  if (!isFinite(ts)) return { ok: false, errorCode: "invalid_timestamp", action: action, operationId: operationId };
+  if (Math.abs(Date.now() - ts) > REPLAY_WINDOW_MS) {
+    return { ok: false, errorCode: "expired_timestamp", action: action, operationId: operationId };
+  }
+  if (seenNonces[nonce]) {
+    return { ok: false, errorCode: "replayed_nonce", action: action, operationId: operationId };
+  }
+
+  var expectedBodyHash = sha256Hex(bodyText || "");
+  if (!constantTimeEqualHex(expectedBodyHash, String(bodyHash || "").toLowerCase())) {
+    return { ok: false, errorCode: "body_hash_mismatch", action: action, operationId: operationId };
+  }
+
+  var payload =
+    "v1\n" +
+    action + "\n" +
+    conferenceName + "\n" +
+    operationId + "\n" +
+    timestamp + "\n" +
+    nonce + "\n" +
+    String(bodyHash || "").toLowerCase();
+  var expectedSig = hmacSha256Hex(payload, CONTROL_SECRET);
+  if (!constantTimeEqualHex(expectedSig, String(signature).toLowerCase())) {
+    return { ok: false, errorCode: "invalid_signature", action: action, operationId: operationId };
+  }
+
+  seenNonces[nonce] = true;
+  return {
+    ok: true,
+    action: action,
+    conferenceName: conferenceName,
+    operationId: operationId,
+  };
+}
+
+function ensureDemoRecorderIfNeeded() {
+  // For Checkpoint A (ping) recorder is not required.
+  // For Checkpoint B, recording should already be started by WebSDK recording_control
+  // or by an optional start via get/stop flow after participants join.
+  if (recorder) {
+    recorderRegistry.exists = true;
+    return true;
+  }
+  if (!conference || typeof VoxEngine.createRecorder !== "function") {
+    return false;
+  }
+  try {
+    recorder = VoxEngine.createRecorder({
+      video: false,
+      lossless: true,
+      name: "server-stop-poc-audio",
+      recordNamePrefix: "server-stop-poc/audio/",
+    });
+    if (!recorder) return false;
+    recorderRegistry.exists = true;
+    attachRecorderHandlers();
+    if (typeof conference.sendMediaTo === "function") {
+      conference.sendMediaTo(recorder);
+      recorderRegistry.recordingStarted = true;
+      log("demo recorder started for POC");
+      return true;
+    }
+  } catch (e) {
+    log("ensureDemoRecorder failed: " + safeToString(e));
+  }
+  return false;
+}
+
+function attachRecorderHandlers() {
+  if (!recorder) return;
+
+  try {
+    recorder.addEventListener(RecorderEvents.Started, function () {
+      recorderRegistry.exists = true;
+      recorderRegistry.recordingStarted = true;
+      log("RecorderEvents.Started");
+    });
+  } catch (e) {
+    log("attach Started failed: " + safeToString(e));
+  }
+
+  try {
+    recorder.addEventListener(RecorderEvents.Stopped, function (ev) {
+      recorderRegistry.stopCompleted = true;
+      recorderRegistry.stopRequested = false;
+      var operationId = pendingStopOperationId || recorderRegistry.lastOperationId;
+      log("RecorderEvents.Stopped operationId=" + safeToString(operationId));
+      if (operationId) {
+        operationResults[operationId] = {
+          ok: true,
+          action: "stop_recording",
+          operationId: operationId,
+          state: STATE_STOP_COMPLETED,
+          errorCode: null,
+        };
+      }
+      sendTerminalEvidence(operationId, ev);
+    });
+  } catch (e2) {
+    log("attach Stopped failed: " + safeToString(e2));
+  }
+}
+
+function sendTerminalEvidence(operationId, ev) {
+  var recordingUrl = null;
+  try {
+    if (ev && ev.url) recordingUrl = String(ev.url);
+  } catch (e) {
+    recordingUrl = null;
+  }
+
+  var body = JSON.stringify({
+    type: "server_stop_poc_stopped",
+    conferenceName: expectedConferenceName,
+    operationId: operationId,
+    recordingUrlPresent: Boolean(recordingUrl),
+    at: safeNowIso(),
+    build: SCENARIO_BUILD_ID,
+  });
+
+  // Dedicated POC callback (preferred for isolation).
+  if (POC_CALLBACK_URL && typeof Net !== "undefined" && Net.httpRequest) {
+    try {
+      var sig = hmacSha256Hex(body, CONTROL_SECRET);
+      Net.httpRequest(POC_CALLBACK_URL, function () {
+        log("POC callback attempted");
+      }, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Neg-Poc-Signature": sig,
+        },
+        postData: body,
+      });
+    } catch (e) {
+      log("POC callback failed: " + safeToString(e));
+    }
+  }
+
+  // Optional: reuse production webhook shape when configured + session-like name.
+  // Never include control URLs or secrets.
+  if (
+    WEBHOOK_BASE_URL &&
+    isSecretConfigured(WEBHOOK_SECRET, "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__") &&
+    typeof Net !== "undefined" &&
+    Net.httpRequest
+  ) {
+    log("production webhook reuse skipped in POC unless manually enabled in paste notes");
+  }
+}
+
+function handleStopRecording(operationId) {
+  if (operationResults[operationId]) {
+    var prior = operationResults[operationId];
+    return {
+      ok: prior.ok,
+      action: "stop_recording",
+      operationId: operationId,
+      state: prior.state,
+      errorCode: prior.errorCode,
+    };
+  }
+
+  if (recorderRegistry.stopCompleted) {
+    var already = {
+      ok: true,
+      action: "stop_recording",
+      operationId: operationId,
+      state: "already_stopped",
+      errorCode: "already_stopped",
+    };
+    operationResults[operationId] = already;
+    return already;
+  }
+
+  if (recorderRegistry.stopRequested) {
+    return {
+      ok: true,
+      action: "stop_recording",
+      operationId: recorderRegistry.lastOperationId || operationId,
+      state: STATE_STOP_REQUESTED,
+      errorCode: null,
+    };
+  }
+
+  if (!recorder || !recorderRegistry.recordingStarted) {
+    // Attempt to start a demo recorder only when conference media exists.
+    // Still fail closed if nothing to stop.
+    return {
+      ok: false,
+      action: "stop_recording",
+      operationId: operationId,
+      state: registryState(),
+      errorCode: "recording_not_active",
+    };
+  }
+
+  try {
+    pendingStopOperationId = operationId;
+    recorderRegistry.lastOperationId = operationId;
+    recorderRegistry.stopRequested = true;
+    recorder.stop();
+    var accepted = {
+      ok: true,
+      action: "stop_recording",
+      operationId: operationId,
+      state: STATE_STOP_REQUESTED,
+      errorCode: null,
+    };
+    operationResults[operationId] = accepted;
+    log("recorder.stop() invoked operationId=" + operationId);
+    return accepted;
+  } catch (e) {
+    return {
+      ok: false,
+      action: "stop_recording",
+      operationId: operationId,
+      state: registryState(),
+      errorCode: "stop_exception",
+    };
+  }
+}
+
+function handleHttpRequest(e) {
+  var bodyText = "";
+  try {
+    if (e && e.text !== undefined && e.text !== null) bodyText = String(e.text);
+    else if (e && e.content !== undefined && e.content !== null) bodyText = String(e.content);
+  } catch (err) {
+    bodyText = "";
+  }
+
+  var verified = verifyControlRequest(e, bodyText);
+  if (!verified.ok) {
+    log("HttpRequest rejected errorCode=" + verified.errorCode);
+    respondHttp(
+      e,
+      401,
+      buildControlResponse(false, verified.action || null, verified.operationId || null, registryState(), verified.errorCode),
+    );
+    return;
+  }
+
+  log("HttpRequest accepted action=" + verified.action + " operationId=" + verified.operationId);
+
+  if (verified.action === "ping") {
+    respondHttp(
+      e,
+      200,
+      buildControlResponse(true, "ping", verified.operationId, registryState(), null),
+    );
+    return;
+  }
+
+  if (verified.action === "get_recording_state") {
+    respondHttp(
+      e,
+      200,
+      buildControlResponse(true, "get_recording_state", verified.operationId, registryState(), null),
+    );
+    return;
+  }
+
+  if (verified.action === "stop_recording") {
+    var stopResult = handleStopRecording(verified.operationId);
+    respondHttp(
+      e,
+      stopResult.ok ? 200 : 409,
+      buildControlResponse(
+        stopResult.ok,
+        stopResult.action,
+        stopResult.operationId,
+        stopResult.state,
+        stopResult.errorCode,
+      ),
+    );
+    return;
+  }
+
+  respondHttp(
+    e,
+    400,
+    buildControlResponse(false, verified.action, verified.operationId, registryState(), "unknown_action"),
+  );
+}
+
+function handleIncomingCall(event) {
+  var call = event.call;
+  var callId = "unknown";
+  try {
+    callId = call.id();
+  } catch (e) {
+    callId = "unknown";
+  }
+  log("incoming call callId=" + callId);
+  try {
+    call.answer();
+  } catch (e2) {
+    log("answer failed");
+    return;
+  }
+  if (!activeCallIds[callId]) {
+    activeCallIds[callId] = true;
+    participants += 1;
+  }
+  try {
+    conference.add({
+      call: call,
+      mode: "FORWARD",
+      direction: "BOTH",
+      scheme: event.scheme,
+    });
+  } catch (e3) {
+    log("conference.add failed: " + safeToString(e3));
+  }
+
+  // Auto-start recorder once first participant is attached (Checkpoint B helper).
+  if (!recorderRegistry.recordingStarted) {
+    ensureDemoRecorderIfNeeded();
+  }
+}
+
+function onAppStarted(e) {
+  expectedConferenceName = parseCustomDataConferenceName();
+  log(
+    "scenario build=" + SCENARIO_BUILD_ID +
+      " source=" + SCENARIO_SOURCE_NAME +
+      " conferenceName=" + safeToString(expectedConferenceName) +
+      " controlSecretConfigured=" +
+      isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__"),
+  );
+
+  try {
+    conference = VoxEngine.createConference({ hd_audio: true });
+    log("createConference ok");
+  } catch (err) {
+    log("createConference failed: " + safeToString(err));
+  }
+
+  try {
+    VoxEngine.addEventListener(AppEvents.HttpRequest, handleHttpRequest);
+    log("AppEvents.HttpRequest handler registered");
+  } catch (err2) {
+    log("HttpRequest listener failed: " + safeToString(err2));
+  }
+}
+
+VoxEngine.addEventListener(AppEvents.Started, onAppStarted);
+VoxEngine.addEventListener(AppEvents.CallAlerting, handleIncomingCall);
