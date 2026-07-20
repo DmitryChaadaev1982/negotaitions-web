@@ -8,6 +8,7 @@ import {
 export const POC_CALLBACK_EVENT_TYPES = [
   "command_accepted",
   "command_rejected",
+  "recording_started",
   "recording_stopped",
   "scenario_terminating",
 ] as const;

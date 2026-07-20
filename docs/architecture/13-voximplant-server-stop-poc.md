@@ -94,6 +94,9 @@ Prewarm auth is role-split:
 - **Participant** (guest access closed): own `auth_session` / `UserSession` (never the facilitator cookie) + one navigation through the canonical join-token invite URL (`/room/{sessionId}?joinToken=…`). Join token is invite-claim only — not a guest identity and not exchanged into a cookie. The temporary fixture creates a distinct participant `User` + `UserSession` and returns `facilitatorAuth` / `participantAuth` separately. Live join resumes the durable account-mode context (does not re-hit joinToken). Access is account-cookie only (`apiRequireActiveUser` + `ensureAccountRoomParticipant`).
 - **Prewarm-only replay**: `npm run poc:vox:test-browser-prewarm -- --run-id <runId>` and `npm run poc:vox:test-participant-access -- --run-id <runId>` (provider-free access/POC_STATE check with temporary run pointer restore). Legacy runs lacking `participantAuthCookie` return `LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE` (no DB repair).
 - **Isolated local fixture mode**: `npm run poc:vox:test-participant-access -- --create-fixture --confirm-local-db-write` creates a temporary namespaced fixture, validates participant auth + POC_STATE access (no provider calls), then deletes only cleanup-manifest entities.
+- **Provider-free recording-start plan**: `npm run poc:vox:test-recording-start -- --create-fixture --confirm-local-db-write` exercises real facilitator authorization, connection lease, recording-control dispatch/relay claimability, and browser start-command validity — then stops before any WebSDK/provider send and cleans the fixture.
+- **Prewarm secrets**: `local/prewarm-auth.json` stores only sanitized metadata (user IDs, roles, fingerprints, configured booleans). Passwords, auth cookies, join tokens, and tokenized room URLs stay in process memory only. Fixture passwords are unique per run.
+- **Private control state**: raw `mediaSessionAccessUrl` / `mediaSessionAccessSecureUrl` live under `runs/<runId>/private/control-state.json` (mode `0o600`, never listed in `remainingEvidencePaths` / status / inspect). Ordinary `state.json` keeps fingerprints + `hasControlUrl` only.
 
 Typed prewarm auth failures (not collapsed to `BROWSER_LAUNCHED`):
 
@@ -113,7 +116,7 @@ Live `PASS` only (dry-run uses `DRY_RUN_PASS` and does not require live evidence
 
 - callback self-test (`CALLBACK_SELF_TEST_PASSED`)
 - both WebSDK joins + same server-started conference
-- recording started through application flow
+- recording started through application flow **with provider-level** `recording_started` evidence (HTTP/relay alone is insufficient)
 - `TRANSPORT_ACCEPTED` + `command_accepted` + `recording_stopped` / provider terminal
 - one effective stop (idempotent re-stop)
 - no browser recording-control relay for stop
@@ -122,11 +125,30 @@ Log fetch may be `LOG_FETCH_UNAVAILABLE` without failing PASS.
 
 Transport live `PASS` still requires callback confirmation (`commandAccepted`) after transport acceptance.
 
+### Recording-start evidence
+
+Sanitized `runs/<runId>/recording-start.json` (never cookies, join tokens, connection IDs, control/recording URLs, or auth headers):
+
+- request/response timestamps + HTTP status + application code
+- authorized / relay created / relay claimed / browser command sent
+- recorder created / provider started / app active
+- typed `recordingStartFailureReason` (e.g. `RECORDING_START_UNAUTHORIZED`, not a generic collapse when precise)
+
+Orchestrator start path: facilitator `joinToken` + cookie → `/recording-control` → scenarioMessage relay via facilitator browser → wait for signed `recording_started` callback correlated by `operationId` (= requestId) + conferenceName.
+
+POC scenario (`neg-conf.server-stop-poc.scenario.js`) listens for `CallEvents.MessageReceived` / `recording_control` `action=start`, creates `ConferenceRecorder`, `conference.sendMediaTo(recorder)`, and emits `recording_started` (server-stop HTTP protocol unchanged).
+
+## Runtime terminal states
+
+Typed `runtimeStatus`: `ACTIVE` | `COMPLETED` | `FAILED` | `INCONCLUSIVE` | `EXPIRED` | `UNKNOWN`.
+
+On any terminal orchestrator result (`PASS` / `FAIL` / `INCONCLUSIVE`): clear `current.json` if it points at the run, mark the run terminal, delete private control URLs (prevent control URL reuse / access-route selection), close browsers, retain sanitized evidence.
+
 ## Cleanup
 
 On full PASS (without `--keep-session`): close browsers, clear active pointer, delete only cleanup-manifest entities, retain report + sanitized logs, retain provider artifact.
 
-On failure: retain Session + run evidence; print `npm run poc:vox:cleanup -- …`. Cleanup always requires `--confirm-cleanup` and never deletes provider recordings automatically.
+On failure: retain Session + run evidence (run is `FAILED`, not `ACTIVE`); print `npm run poc:vox:cleanup -- …`. Cleanup always requires `--confirm-cleanup` and never deletes provider recordings automatically.
 
 ## Log redaction
 

@@ -153,7 +153,7 @@ export async function executePocPing(
     const transport = await sendPocControlCommand({
       controlUrl:
         params.controlUrl ??
-        getActiveControlUrl(state) ??
+        getActiveControlUrl(state, cwd) ??
         "https://example.invalid/session/expired",
       action: "ping",
       conferenceName: params.conferenceName ?? state.conferenceName,
@@ -172,7 +172,7 @@ export async function executePocPing(
     };
   }
 
-  const controlUrl = params.controlUrl ?? getActiveControlUrl(state);
+  const controlUrl = params.controlUrl ?? getActiveControlUrl(state, cwd);
   if (!controlUrl) {
     throw new Error("POC state has no control URL. Re-run start-conference.");
   }

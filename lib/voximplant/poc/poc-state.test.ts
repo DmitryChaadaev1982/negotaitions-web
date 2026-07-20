@@ -28,13 +28,17 @@ test("state file write/read and clear removes only POC state", () => {
     mediaSessionAccessSecureUrl: "https://example.invalid/session/secret-url-token",
     ruleId: "9",
     applicationId: "8",
+    stateRoot: cwd,
   });
   writePocState(state, cwd);
 
   const loaded = readPocState(cwd);
   assert.ok(loaded);
   assert.equal(loaded!.conferenceName, "neg-poc-server-stop-1");
-  assert.equal(loaded!.mediaSessionAccessSecureUrl, "https://example.invalid/session/secret-url-token");
+  // Public state must not retain raw capability URLs.
+  assert.equal(loaded!.mediaSessionAccessSecureUrl, null);
+  assert.equal(loaded!.mediaSessionAccessUrl, null);
+  assert.equal(loaded!.hasControlUrl, true);
 
   const publicView = toPublicPocStateView(loaded!);
   assert.ok(!JSON.stringify(publicView).includes("secret-url-token"));
@@ -68,6 +72,8 @@ test("start conference sets ~60s idle expiry and ACTIVE runtimeStatus", () => {
   });
   assert.equal(state.runtimeStatus, "ACTIVE");
   assert.equal(state.expiresAt, "2026-07-20T12:01:00.000Z");
+  assert.equal(state.mediaSessionAccessUrl, null);
+  assert.equal(state.hasControlUrl, true);
 });
 
 test("public view exposes runtimeStatus without control URL", () => {
@@ -83,6 +89,10 @@ test("public view exposes runtimeStatus without control URL", () => {
     applicationId: "8",
   });
   const view = toPublicPocStateView(state);
-  assert.ok(["ACTIVE", "EXPIRED", "UNKNOWN"].includes(view.runtimeStatus));
+  assert.ok(
+    ["ACTIVE", "EXPIRED", "UNKNOWN", "FAILED", "COMPLETED", "INCONCLUSIVE"].includes(
+      view.runtimeStatus,
+    ),
+  );
   assert.ok(!JSON.stringify(view).includes("secret-url-token"));
 });

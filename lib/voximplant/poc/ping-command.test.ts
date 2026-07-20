@@ -27,6 +27,7 @@ function writeActiveState(cwd: string) {
     applicationId: "1",
     startedAt: new Date().toISOString(),
     idleTtlMs: 60_000,
+    stateRoot: cwd,
   });
   writePocState(state, cwd);
   return state;
@@ -126,6 +127,7 @@ test("17. expired local session refuses before reuse", async () => {
     applicationId: "1",
     startedAt: new Date(Date.now() - 120_000).toISOString(),
     idleTtlMs: 60_000,
+    stateRoot: cwd,
   });
   writePocState(state, cwd);
 

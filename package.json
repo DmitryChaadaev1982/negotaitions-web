@@ -52,6 +52,7 @@
     "poc:vox:inspect-run": "tsx scripts/poc/voximplant-server-stop/inspect-run.ts",
     "poc:vox:test-browser-prewarm": "tsx scripts/poc/voximplant-server-stop/test-browser-prewarm.ts",
     "poc:vox:test-participant-access": "tsx scripts/poc/voximplant-server-stop/test-participant-access.ts",
+    "poc:vox:test-recording-start": "tsx scripts/poc/voximplant-server-stop/test-recording-start.ts",
     "test:poc:vox-server-stop": "node --import tsx --test \"lib/voximplant/poc/**/*.test.ts\""
   },
   "prisma": {

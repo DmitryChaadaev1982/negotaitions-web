@@ -38,6 +38,7 @@ function writeActivePocState(
     applicationId: "8",
     startedAt: new Date().toISOString(),
     idleTtlMs: 60_000,
+    stateRoot: cwd,
   });
   writePocState(state, cwd);
   return state;
@@ -96,7 +97,10 @@ test("expired state does not reuse POC conference / control URL path", () => {
     applicationId: "8",
     startedAt: "2026-07-20T09:33:18.790Z",
     idleTtlMs: 60_000,
+    stateRoot: cwd,
   });
+  // Persist ACTIVE first so the run pointer can resolve the state file.
+  writePocState(state, cwd);
   state = markPocStateExpired(state);
   writePocState(state, cwd);
 

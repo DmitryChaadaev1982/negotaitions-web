@@ -32,7 +32,7 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-a3";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-b1";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
 /** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
@@ -531,17 +531,38 @@ function verifyControlRequest(e, bodyText) {
   };
 }
 
-function ensureDemoRecorderIfNeeded() {
-  // For Checkpoint A (ping) recorder is not required.
-  // For Checkpoint B, recording should already be started by WebSDK recording_control
-  // or by an optional start via get/stop flow after participants join.
-  if (recorder) {
-    recorderRegistry.exists = true;
-    return true;
+var pendingStartRequestId = null;
+
+/**
+ * Browser-originated recording start (same shape as main-room recording_control).
+ * Idempotent one-recorder guard — does not alter server-stop HTTP control protocol.
+ */
+function startRecordingFromBrowser(requestId) {
+  if (recorder && recorderRegistry.recordingStarted) {
+    log("recording_control start ignored — recorder already active requestId=" + safeToString(requestId));
+    sendSignedPocCallback(
+      "recording_started",
+      "start",
+      requestId || pendingStartRequestId,
+      STATE_RECORDING_STARTED,
+      "already_started",
+    );
+    return { ok: true, errorCode: "already_started" };
   }
-  if (!conference || typeof VoxEngine.createRecorder !== "function") {
-    return false;
+  if (!conference) {
+    log("recording_control start failed — conference missing");
+    return { ok: false, errorCode: "conference_not_ready" };
   }
+  if (typeof VoxEngine.createRecorder !== "function") {
+    log("recording_control start failed — createRecorder unavailable");
+    return { ok: false, errorCode: "recorder_api_unavailable" };
+  }
+  if (typeof conference.sendMediaTo !== "function") {
+    log("recording_control start failed — sendMediaTo unavailable");
+    return { ok: false, errorCode: "conference_media_routing_unavailable" };
+  }
+
+  pendingStartRequestId = requestId || null;
   try {
     recorder = VoxEngine.createRecorder({
       video: false,
@@ -549,19 +570,74 @@ function ensureDemoRecorderIfNeeded() {
       name: "server-stop-poc-audio",
       recordNamePrefix: "server-stop-poc/audio/",
     });
-    if (!recorder) return false;
+    if (!recorder) {
+      log("recording_control start failed — recorder not created");
+      sendSignedPocCallback(
+        "command_rejected",
+        "start",
+        requestId,
+        registryState(),
+        "recorder_create_failed",
+      );
+      return { ok: false, errorCode: "recorder_create_failed" };
+    }
     recorderRegistry.exists = true;
     attachRecorderHandlers();
-    if (typeof conference.sendMediaTo === "function") {
-      conference.sendMediaTo(recorder);
-      recorderRegistry.recordingStarted = true;
-      log("demo recorder started for POC");
-      return true;
-    }
+    conference.sendMediaTo(recorder);
+    log("recording_control start — ConferenceRecorder created requestId=" + safeToString(requestId));
+    return { ok: true, errorCode: null };
   } catch (e) {
-    log("ensureDemoRecorder failed: " + safeToString(e));
+    log("recording_control start exception: " + safeToString(e));
+    sendSignedPocCallback(
+      "command_rejected",
+      "start",
+      requestId,
+      registryState(),
+      "start_recording_exception",
+    );
+    return { ok: false, errorCode: "start_recording_exception" };
   }
-  return false;
+}
+
+function parseRecordingControlPayload(raw) {
+  try {
+    var text = raw;
+    if (raw && typeof raw === "object") {
+      if (typeof raw.text === "string") text = raw.text;
+      else if (typeof raw.data === "string") text = raw.data;
+      else if (raw.message && typeof raw.message === "string") text = raw.message;
+      else text = null;
+    }
+    if (!text || typeof text !== "string") return null;
+    var parsed = JSON.parse(text);
+    // Nested { name, payload } envelope from some SDK versions.
+    if (parsed && parsed.payload && typeof parsed.payload === "string") {
+      parsed = JSON.parse(parsed.payload);
+    } else if (parsed && parsed.payload && typeof parsed.payload === "object") {
+      parsed = parsed.payload;
+    }
+    if (!parsed || parsed.type !== "recording_control") return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function handleRecordingControlMessage(msgEvent) {
+  var payload = parseRecordingControlPayload(msgEvent);
+  if (!payload) return;
+  log(
+    "recording_control received action=" +
+      safeToString(payload.action) +
+      " requestId=" +
+      safeToString(payload.requestId),
+  );
+  if (payload.action === "start") {
+    startRecordingFromBrowser(payload.requestId || null);
+    return;
+  }
+  // Stop remains server-control only for this POC (HTTP stop_recording).
+  log("recording_control non-start action ignored action=" + safeToString(payload.action));
 }
 
 function attachRecorderHandlers() {
@@ -572,6 +648,14 @@ function attachRecorderHandlers() {
       recorderRegistry.exists = true;
       recorderRegistry.recordingStarted = true;
       log("RecorderEvents.Started");
+      // Provider-level start evidence (no recording URL in callback).
+      sendSignedPocCallback(
+        "recording_started",
+        "start",
+        pendingStartRequestId || recorderRegistry.lastOperationId,
+        STATE_RECORDING_STARTED,
+        null,
+      );
     });
   } catch (e) {
     log("attach Started failed: " + safeToString(e));
@@ -837,9 +921,14 @@ function handleIncomingCall(event) {
     log("conference.add failed: " + safeToString(e3));
   }
 
-  // Auto-start recorder once first participant is attached (Checkpoint B helper).
-  if (!recorderRegistry.recordingStarted) {
-    ensureDemoRecorderIfNeeded();
+  // Browser-originated recording_control via CallEvents.MessageReceived.
+  try {
+    call.addEventListener(CallEvents.MessageReceived, function (msgEvent) {
+      handleRecordingControlMessage(msgEvent);
+    });
+    log("CallEvents.MessageReceived handler registered callId=" + callId);
+  } catch (e4) {
+    log("MessageReceived listener failed: " + safeToString(e4));
   }
 }
 

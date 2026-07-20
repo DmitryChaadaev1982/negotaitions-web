@@ -101,6 +101,19 @@ export type BrowserJoinResult = {
   participant: BrowserContextEvidence;
   timing: BrowserJoinTiming;
   evidence: Record<string, unknown>;
+  /**
+   * Live helper: start recording via facilitator UI (consent + start).
+   * Relays scenarioMessage through the real browser adapter / WebSDK.
+   */
+  startRecordingViaUi?: (timeoutMs: number) => Promise<{
+    started: boolean;
+    evidence: Record<string, unknown>;
+  }>;
+  /**
+   * Live helper: relay a pre-built scenario message via conference.sendMessage.
+   * Returns false when the SDK channel is unavailable.
+   */
+  relayScenarioMessage?: (scenarioMessage: unknown) => Promise<boolean>;
   close: () => Promise<void>;
 };
 
@@ -1464,6 +1477,39 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
             ...evidence,
             facilitatorAccessConference: facilitatorConferenceName,
             participantAccessConference: participantConferenceName,
+          },
+          startRecordingViaUi: async (timeoutMs: number) => {
+            if (!facilitatorPage) {
+              return {
+                started: false,
+                evidence: { error: "facilitator page unavailable" },
+              };
+            }
+            return startRecordingViaUi({ page: facilitatorPage, timeoutMs });
+          },
+          relayScenarioMessage: async (scenarioMessage: unknown) => {
+            if (!facilitatorPage) return false;
+            try {
+              return await facilitatorPage.evaluate((message) => {
+                const w = window as unknown as {
+                  __voxPocSendConferenceMessage?: (text: string) => boolean;
+                };
+                if (typeof w.__voxPocSendConferenceMessage === "function") {
+                  return w.__voxPocSendConferenceMessage(JSON.stringify(message));
+                }
+                // Fallback: dispatch a custom event the room page may listen for.
+                window.dispatchEvent(
+                  new CustomEvent("poc-vox-relay-scenario-message", {
+                    detail: message,
+                  }),
+                );
+                return Boolean(
+                  document.querySelector("[data-testid='vox-room-joined']"),
+                );
+              }, scenarioMessage);
+            } catch {
+              return false;
+            }
           },
           close: async () => {
             if (!input.keepBrowser) await close();

@@ -62,6 +62,18 @@ test("POC scenario warns not to log raw Application.Started", () => {
   assert.match(source, /Never log raw Application\.Started/);
 });
 
+test("POC scenario supports browser-originated recording_control start", () => {
+  assert.match(source, /CallEvents\.MessageReceived/);
+  assert.match(source, /handleRecordingControlMessage/);
+  assert.match(source, /startRecordingFromBrowser/);
+  assert.match(source, /recording_control/);
+  assert.match(source, /conference\.sendMediaTo/);
+  assert.match(source, /VoxEngine\.createRecorder/);
+  assert.match(source, /recording_started/);
+  // Auto-start on CallAlerting removed — browser message starts recording.
+  assert.ok(!source.includes("ensureDemoRecorderIfNeeded"));
+});
+
 test("scenario callback-result logging redacts URL/signature/secret", () => {
   assert.match(source, /CALLBACK_HTTP_ACCEPTED/);
   assert.match(source, /CALLBACK_HTTP_REJECTED/);

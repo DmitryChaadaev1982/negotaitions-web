@@ -54,6 +54,7 @@ test("access payload contains exact POC conference name for ACTIVE matching stat
     applicationId: null,
     startedAt: new Date().toISOString(),
     idleTtlMs: 60_000,
+    stateRoot: cwd,
   });
   writePocState(state, cwd);
 

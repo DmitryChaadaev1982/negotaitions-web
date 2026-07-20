@@ -9,10 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { Pool } from "pg";
 
-import {
-  POC_FACILITATOR_PASSWORD,
-  type PocCleanupManifest,
-} from "@/lib/voximplant/poc/create-poc-session";
+import type { PocCleanupManifest } from "@/lib/voximplant/poc/create-poc-session";
 import { assertSafeLocalDatabaseTarget } from "@/lib/voximplant/poc/local-db-safety";
 import { getPocRunPaths } from "@/lib/voximplant/poc/poc-run-store";
 
@@ -132,16 +129,36 @@ export async function runTestBrowserPrewarm(params: {
     fixture = {
       runId: params.runId,
       sessionId,
+      authStrategy: "UI_LOGIN",
       facilitatorUserId,
       facilitatorEmail: email,
-      facilitatorPassword: POC_FACILITATOR_PASSWORD,
-      // Empty cookie → UI_LOGIN recovery (no POC fixture writes).
+      facilitatorRole: "FACILITATOR",
+      facilitatorAuthConfigured: false,
+      facilitatorAuthCookieFingerprint: null,
+      facilitatorJoinTokenFingerprint: null,
+      facilitatorRoomUrlConfigured: true,
+      // Empty cookie/password → auth will fail closed unless legacy disk secrets exist.
       facilitatorAuthCookie: "",
+      facilitatorPassword: "",
       facilitatorJoinToken: tokens.facilitatorJoinToken,
       participantJoinToken: tokens.participantJoinToken,
       facilitatorRoomUrl: `${appBaseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(tokens.facilitatorJoinToken)}`,
       participantRoomUrl: `${appBaseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(tokens.participantJoinToken)}`,
       createdAt: new Date().toISOString(),
+    };
+  }
+
+  // Rebuild tokenized room URLs from DB when sanitized fixture omitted them.
+  if (!fixture.facilitatorRoomUrl || !fixture.participantRoomUrl) {
+    const tokens = await loadJoinTokensReadOnly({ sessionId, databaseUrl });
+    fixture = {
+      ...fixture,
+      facilitatorJoinToken:
+        fixture.facilitatorJoinToken || tokens.facilitatorJoinToken,
+      participantJoinToken:
+        fixture.participantJoinToken || tokens.participantJoinToken,
+      facilitatorRoomUrl: `${appBaseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(tokens.facilitatorJoinToken)}`,
+      participantRoomUrl: `${appBaseUrl}/room/${sessionId}?joinToken=${encodeURIComponent(tokens.participantJoinToken)}`,
     };
   }
 
@@ -152,8 +169,8 @@ export async function runTestBrowserPrewarm(params: {
   const prewarm = await playwrightBrowserPrewarm({
     appBaseUrl,
     sessionId: fixture.sessionId,
-    facilitatorRoomUrl: fixture.facilitatorRoomUrl,
-    participantRoomUrl: fixture.participantRoomUrl,
+    facilitatorRoomUrl: fixture.facilitatorRoomUrl!,
+    participantRoomUrl: fixture.participantRoomUrl!,
     facilitatorAuthCookie: hasCookie ? fixture.facilitatorAuthCookie : null,
     facilitatorUserId: fixture.facilitatorUserId,
     facilitatorEmail: fixture.facilitatorEmail,

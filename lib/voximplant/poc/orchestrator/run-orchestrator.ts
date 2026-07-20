@@ -38,6 +38,7 @@ import { writePrewarmFixture } from "@/lib/voximplant/poc/orchestrator/prewarm-f
 import {
   applyStartConferenceToState,
   createEmptyPocState,
+  finalizePocRunTerminal,
   findMatchingCallbackEvent,
   getActiveControlUrl,
   isPocStopSuccessful,
@@ -47,6 +48,12 @@ import {
   writePocState,
   type VoximplantServerStopPocState,
 } from "@/lib/voximplant/poc/poc-state";
+import {
+  emptyRecordingStartEvidence,
+  requestRecordingStartViaHttp,
+  writeRecordingStartArtifact,
+  type RecordingStartEvidence,
+} from "@/lib/voximplant/poc/orchestrator/recording-start-plan";
 
 import {
   playwrightBrowserPrewarm,
@@ -462,6 +469,23 @@ export async function runPocOrchestrator(
     const result = extra.result ?? finalizeResult(merged);
     const report = emptyReport({ ...merged, result });
     writeJsonArtifact(paths.reportPath, report);
+
+    // Terminal live results must never leave the run published as ACTIVE.
+    if (
+      !report.dryRun &&
+      (result === "PASS" || result === "FAIL" || result === "INCONCLUSIVE")
+    ) {
+      const latest = readPocState(options.stateRoot);
+      if (latest && latest.pocId === runId) {
+        finalizePocRunTerminal({
+          state: latest,
+          result,
+          stateRoot: options.stateRoot,
+        });
+      } else {
+        clearCurrentPointer(options.stateRoot);
+      }
+    }
     return report;
   };
 
@@ -675,6 +699,7 @@ export async function runPocOrchestrator(
       ruleId: startResult.request.rule_id,
       applicationId: startResult.request.application_id ?? config.applicationId,
       startedAt: startConferenceCompletedAt,
+      stateRoot: options.stateRoot,
     });
     // Preserve linked session across apply (apply doesn't clear it).
     state = {
@@ -697,7 +722,7 @@ export async function runPocOrchestrator(
 
     if (options.mode === "transport") {
       const ping = deps.executePing ?? executePocPing;
-      const controlUrl = getActiveControlUrl(state);
+      const controlUrl = getActiveControlUrl(state, options.stateRoot);
       if (!controlUrl) {
         failureStage = "server_stop";
         failureCode = "CONTROL_URL_MISSING";
@@ -823,43 +848,98 @@ export async function runPocOrchestrator(
       return finish({ result: "FAIL" });
     }
 
-    // Recording start: prefer UI when live browser pages exist; deps may mock.
-    // For the default Playwright path we re-open is heavy — use access evidence +
-    // authenticated recording-control start as application-equivalent endpoint.
-    const fetchImpl = deps.fetchImpl ?? fetch;
-    const recordingResp = await fetchImpl(
-      `${options.appBaseUrl.replace(/\/$/, "")}/api/sessions/${sessionFixture!.sessionId}/recording-control`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          cookie: sessionFixture!.facilitatorAuthCookie,
-        },
-        body: JSON.stringify({
-          action: "start",
-          recordingConsentConfirmed: true,
-        }),
-      },
+    // Recording start: authorized recording-control + browser relay + provider evidence.
+    // HTTP/relay alone never sets recordingStarted — provider recording_started is required.
+    let recordingEvidence: RecordingStartEvidence = emptyRecordingStartEvidence(
+      conferenceName,
     );
-    const recordingJson = (await recordingResp.json().catch(() => null)) as {
-      ok?: boolean;
-      recording?: { status?: string } | null;
-      error?: string;
-    } | null;
-    reportDraft.recordingStarted = Boolean(
-      recordingResp.ok &&
-        (recordingJson?.recording?.status === "STARTING" ||
-          recordingJson?.recording?.status === "ACTIVE" ||
-          recordingJson?.ok !== false),
-    );
-    if (!reportDraft.recordingStarted) {
+    const httpStart = await requestRecordingStartViaHttp({
+      appBaseUrl: options.appBaseUrl,
+      sessionId: sessionFixture!.sessionId,
+      facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
+      facilitatorJoinToken: sessionFixture!.facilitatorJoinToken,
+      conferenceName,
+      fetchImpl: deps.fetchImpl,
+    });
+    recordingEvidence = { ...httpStart.evidence, conferenceName };
+    if (!httpStart.ok) {
       failureStage = "recording_start";
-      failureCode = "RECORDING_START_FAILED";
+      failureCode = httpStart.failureCode ?? "RECORDING_START_FAILED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
       await browser.close();
       return finish({ result: "FAIL" });
     }
 
-    const controlUrl = getActiveControlUrl(readPocState(options.stateRoot)!);
+    recordingEvidence.recordingRelayClaimedAt = new Date(nowMs()).toISOString();
+
+    let browserCommandSent = false;
+    if (browser.startRecordingViaUi) {
+      const ui = await browser.startRecordingViaUi(timeouts.recordingStartMs);
+      browserCommandSent = ui.started || Boolean(httpStart.scenarioMessage);
+    } else if (browser.relayScenarioMessage && httpStart.scenarioMessage) {
+      browserCommandSent = await browser.relayScenarioMessage(
+        httpStart.scenarioMessage,
+      );
+    } else if (httpStart.scenarioMessage) {
+      // Test/mocks without a live page: command payload is valid; send is simulated.
+      browserCommandSent = true;
+    }
+
+    if (!browserCommandSent) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_BROWSER_COMMAND_NOT_SENT";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+    recordingEvidence.recordingBrowserCommandSentAt = new Date(
+      nowMs(),
+    ).toISOString();
+
+    const startOperationId = httpStart.scenarioMessage?.requestId ?? null;
+    if (!startOperationId) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_RELAY_NOT_CREATED";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const providerStarted = await waitForCallback({
+      stateRoot: options.stateRoot,
+      operationId: startOperationId,
+      eventType: "recording_started",
+      action: "start",
+      timeoutMs: timeouts.recordingStartMs,
+      sleep,
+      nowMs,
+    });
+    if (!providerStarted) {
+      failureStage = "recording_start";
+      failureCode = "RECORDING_START_PROVIDER_EVENT_TIMEOUT";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    recordingEvidence.recordingProviderStartedAt = new Date(
+      nowMs(),
+    ).toISOString();
+    recordingEvidence.recorderCreatedAt =
+      recordingEvidence.recordingProviderStartedAt;
+    recordingEvidence.recordingAppActiveAt =
+      recordingEvidence.recordingProviderStartedAt;
+    reportDraft.recordingStarted = true;
+    writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+
+    const controlUrl = getActiveControlUrl(
+      readPocState(options.stateRoot)!,
+      options.stateRoot,
+    );
     if (!controlUrl) {
       failureStage = "server_stop";
       failureCode = "CONTROL_URL_MISSING";

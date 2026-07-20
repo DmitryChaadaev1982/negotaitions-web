@@ -18,6 +18,11 @@ import {
   resolveActiveRunPaths,
   writeJsonArtifact,
 } from "@/lib/voximplant/poc/poc-run-store";
+import {
+  deletePrivateControlState,
+  getPrivateControlUrl,
+  writePrivateControlState,
+} from "@/lib/voximplant/poc/private-control-state";
 import { fingerprintControlUrl } from "@/lib/voximplant/poc/url-fingerprint";
 
 export { POC_STATE_RELATIVE_PATH };
@@ -28,7 +33,17 @@ export const POC_IDLE_MEDIA_SESSION_TTL_MS = 60_000;
 export const POC_CALLBACK_EVENT_LIMIT = 50;
 export const POC_CALLBACK_NONCE_LIMIT = 100;
 
-export type PocRuntimeStatus = "ACTIVE" | "EXPIRED" | "UNKNOWN";
+/** Typed terminal + active runtime statuses. Failed runs must not stay ACTIVE. */
+export type PocRuntimeStatus =
+  | "ACTIVE"
+  | "COMPLETED"
+  | "FAILED"
+  | "INCONCLUSIVE"
+  | "EXPIRED"
+  | "UNKNOWN";
+
+export const POC_TERMINAL_RUNTIME_STATUSES: ReadonlySet<PocRuntimeStatus> =
+  new Set(["COMPLETED", "FAILED", "INCONCLUSIVE", "EXPIRED"]);
 
 export type PocCommandResult = {
   action: string;
@@ -63,9 +78,16 @@ export type VoximplantServerStopPocState = {
   pocId: string;
   conferenceName: string;
   callSessionHistoryId: string | null;
+  /**
+   * @deprecated Raw URLs must live only in private control state.
+   * Public state.json keeps these null; use controlUrlFingerprint / hasControlUrl.
+   */
   mediaSessionAccessUrl: string | null;
+  /** @deprecated See mediaSessionAccessUrl. */
   mediaSessionAccessSecureUrl: string | null;
   controlUrlFingerprint: string | null;
+  /** True when private control URLs exist (public-safe boolean). */
+  hasControlUrl: boolean;
   ruleId: string | null;
   applicationId: string | null;
   linkedSessionId: string | null;
@@ -102,20 +124,42 @@ function normalizeState(
   if (typeof parsed.pocId !== "string" || typeof parsed.conferenceName !== "string") {
     return null;
   }
+  const legacyUrl =
+    parsed.mediaSessionAccessSecureUrl ?? parsed.mediaSessionAccessUrl ?? null;
+  const fingerprint =
+    parsed.controlUrlFingerprint ??
+    (typeof legacyUrl === "string" && legacyUrl
+      ? fingerprintControlUrl(legacyUrl)
+      : null);
+  const runtimeRaw = parsed.runtimeStatus;
+  const runtimeStatus: PocRuntimeStatus =
+    runtimeRaw === "ACTIVE" ||
+    runtimeRaw === "COMPLETED" ||
+    runtimeRaw === "FAILED" ||
+    runtimeRaw === "INCONCLUSIVE" ||
+    runtimeRaw === "EXPIRED" ||
+    runtimeRaw === "UNKNOWN"
+      ? runtimeRaw
+      : "UNKNOWN";
+
   return {
     pocId: parsed.pocId,
     conferenceName: parsed.conferenceName,
     callSessionHistoryId: parsed.callSessionHistoryId ?? null,
-    mediaSessionAccessUrl: parsed.mediaSessionAccessUrl ?? null,
-    mediaSessionAccessSecureUrl: parsed.mediaSessionAccessSecureUrl ?? null,
-    controlUrlFingerprint: parsed.controlUrlFingerprint ?? null,
+    // Never retain raw URLs in the public in-memory/public view model.
+    mediaSessionAccessUrl: null,
+    mediaSessionAccessSecureUrl: null,
+    controlUrlFingerprint: fingerprint,
+    hasControlUrl: Boolean(
+      parsed.hasControlUrl || fingerprint || legacyUrl,
+    ),
     ruleId: parsed.ruleId ?? null,
     applicationId: parsed.applicationId ?? null,
     linkedSessionId: parsed.linkedSessionId ?? null,
     createdAt: parsed.createdAt ?? new Date().toISOString(),
     updatedAt: parsed.updatedAt ?? new Date().toISOString(),
     expiresAt: parsed.expiresAt ?? null,
-    runtimeStatus: parsed.runtimeStatus ?? "UNKNOWN",
+    runtimeStatus,
     lastCommand: parsed.lastCommand ?? null,
     lastStoppedEvent: parsed.lastStoppedEvent ?? null,
     stopEvidence: parsed.stopEvidence ?? null,
@@ -162,25 +206,52 @@ export function writePocState(
   const runId = state.pocId;
   const paths = ensurePocRunDir(runId, stateRoot);
   const pointer = readCurrentPointer(stateRoot);
-  if (!pointer || pointer.runId !== runId) {
-    activatePocRun({
-      runId,
-      linkedSessionId: state.linkedSessionId,
+  // Terminal runs must never be re-published as the active pointer.
+  if (!POC_TERMINAL_RUNTIME_STATUSES.has(state.runtimeStatus)) {
+    if (!pointer || pointer.runId !== runId) {
+      activatePocRun({
+        runId,
+        linkedSessionId: state.linkedSessionId,
+        stateRoot,
+      });
+    } else if (
+      (pointer.linkedSessionId ?? null) !== (state.linkedSessionId ?? null)
+    ) {
+      activatePocRun({
+        runId,
+        linkedSessionId: state.linkedSessionId,
+        stateRoot,
+        activatedAt: pointer.activatedAt,
+      });
+    }
+  }
+
+  // Migrate any accidental raw URLs into private control state before write.
+  const rawSecure = state.mediaSessionAccessSecureUrl;
+  const rawPlain = state.mediaSessionAccessUrl;
+  if (rawSecure || rawPlain) {
+    writePrivateControlState(
+      {
+        runId,
+        mediaSessionAccessUrl: rawPlain,
+        mediaSessionAccessSecureUrl: rawSecure,
+        updatedAt: new Date().toISOString(),
+      },
       stateRoot,
-    });
-  } else if (
-    (pointer.linkedSessionId ?? null) !== (state.linkedSessionId ?? null)
-  ) {
-    activatePocRun({
-      runId,
-      linkedSessionId: state.linkedSessionId,
-      stateRoot,
-      activatedAt: pointer.activatedAt,
-    });
+    );
   }
 
   const bounded: VoximplantServerStopPocState = {
     ...state,
+    mediaSessionAccessUrl: null,
+    mediaSessionAccessSecureUrl: null,
+    hasControlUrl: Boolean(
+      state.hasControlUrl ||
+        state.controlUrlFingerprint ||
+        rawSecure ||
+        rawPlain ||
+        getPrivateControlUrl(runId, stateRoot),
+    ),
     callbackEvents: state.callbackEvents.slice(-POC_CALLBACK_EVENT_LIMIT),
     seenCallbackNonces: state.seenCallbackNonces.slice(-POC_CALLBACK_NONCE_LIMIT),
   };
@@ -237,6 +308,7 @@ export function createEmptyPocState(params: {
     mediaSessionAccessUrl: null,
     mediaSessionAccessSecureUrl: null,
     controlUrlFingerprint: null,
+    hasControlUrl: false,
     ruleId: null,
     applicationId: null,
     linkedSessionId: params.linkedSessionId ?? null,
@@ -262,6 +334,7 @@ export function applyStartConferenceToState(
     applicationId: string | null;
     startedAt?: string;
     idleTtlMs?: number;
+    stateRoot?: string;
   },
 ): VoximplantServerStopPocState {
   const controlUrl =
@@ -269,12 +342,27 @@ export function applyStartConferenceToState(
   const startedAt = params.startedAt ?? new Date().toISOString();
   const ttl = params.idleTtlMs ?? POC_IDLE_MEDIA_SESSION_TTL_MS;
   const expiresAt = new Date(Date.parse(startedAt) + ttl).toISOString();
+
+  if (controlUrl) {
+    writePrivateControlState(
+      {
+        runId: state.pocId,
+        mediaSessionAccessUrl: params.mediaSessionAccessUrl,
+        mediaSessionAccessSecureUrl: params.mediaSessionAccessSecureUrl,
+        updatedAt: startedAt,
+      },
+      params.stateRoot,
+    );
+  }
+
   return {
     ...state,
     callSessionHistoryId: params.callSessionHistoryId,
-    mediaSessionAccessUrl: params.mediaSessionAccessUrl,
-    mediaSessionAccessSecureUrl: params.mediaSessionAccessSecureUrl,
+    // Public state never stores raw capability URLs.
+    mediaSessionAccessUrl: null,
+    mediaSessionAccessSecureUrl: null,
     controlUrlFingerprint: controlUrl ? fingerprintControlUrl(controlUrl) : null,
+    hasControlUrl: Boolean(controlUrl),
     ruleId: params.ruleId,
     applicationId: params.applicationId,
     createdAt: startedAt,
@@ -291,7 +379,9 @@ export function resolveRuntimeStatus(
   state: VoximplantServerStopPocState,
   nowMs: number = Date.now(),
 ): PocRuntimeStatus {
-  if (state.runtimeStatus === "EXPIRED") return "EXPIRED";
+  if (POC_TERMINAL_RUNTIME_STATUSES.has(state.runtimeStatus)) {
+    return state.runtimeStatus;
+  }
 
   let expiresMs: number | null = null;
   if (state.expiresAt) {
@@ -309,7 +399,7 @@ export function resolveRuntimeStatus(
     return "EXPIRED";
   }
 
-  if (state.mediaSessionAccessSecureUrl || state.mediaSessionAccessUrl) {
+  if (state.hasControlUrl || state.controlUrlFingerprint) {
     return state.runtimeStatus === "UNKNOWN" ? "ACTIVE" : state.runtimeStatus;
   }
   return state.runtimeStatus;
@@ -321,8 +411,41 @@ export function markPocStateExpired(
   return {
     ...state,
     runtimeStatus: "EXPIRED",
+    hasControlUrl: false,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Mark a run terminal and clear control reuse. Clears current pointer when it
+ * points at this run. Deletes private control URLs.
+ */
+export function finalizePocRunTerminal(params: {
+  state: VoximplantServerStopPocState;
+  result: "PASS" | "FAIL" | "INCONCLUSIVE";
+  stateRoot?: string;
+}): VoximplantServerStopPocState {
+  const runtimeStatus: PocRuntimeStatus =
+    params.result === "PASS"
+      ? "COMPLETED"
+      : params.result === "INCONCLUSIVE"
+        ? "INCONCLUSIVE"
+        : "FAILED";
+  deletePrivateControlState(params.state.pocId, params.stateRoot);
+  const next: VoximplantServerStopPocState = {
+    ...params.state,
+    runtimeStatus,
+    hasControlUrl: false,
+    mediaSessionAccessUrl: null,
+    mediaSessionAccessSecureUrl: null,
+    updatedAt: new Date().toISOString(),
+  };
+  writePocState(next, params.stateRoot);
+  const pointer = readCurrentPointer(params.stateRoot);
+  if (pointer?.runId === params.state.pocId) {
+    clearCurrentPointer(params.stateRoot);
+  }
+  return next;
 }
 
 /**
@@ -361,6 +484,8 @@ export function appendPocCallbackEvent(
       providerTerminalAt: now,
     };
   }
+
+  // recording_started is provider-level start evidence (no URL fields stored).
 
   const lastStoppedEvent =
     event.eventType === "recording_stopped"
@@ -464,12 +589,20 @@ export function toPublicPocStateView(state: VoximplantServerStopPocState) {
       receivedAt: event.receivedAt,
       signatureVerified: event.signatureVerified,
     })),
-    hasControlUrl: Boolean(
-      state.mediaSessionAccessSecureUrl || state.mediaSessionAccessUrl,
-    ),
+    hasControlUrl: Boolean(state.hasControlUrl || state.controlUrlFingerprint),
   };
 }
 
-export function getActiveControlUrl(state: VoximplantServerStopPocState): string | null {
-  return state.mediaSessionAccessSecureUrl || state.mediaSessionAccessUrl || null;
+/**
+ * Resolve the active control URL from private control state only.
+ * Ordinary state.json never holds raw URLs.
+ */
+export function getActiveControlUrl(
+  state: VoximplantServerStopPocState,
+  stateRoot?: string,
+): string | null {
+  if (POC_TERMINAL_RUNTIME_STATUSES.has(resolveRuntimeStatus(state))) {
+    return null;
+  }
+  return getPrivateControlUrl(state.pocId, stateRoot);
 }

@@ -63,6 +63,8 @@ function sessionFixture(runId: string): CreateVoxServerStopPocSessionResult {
     participantAuthCookie: "auth_session=participant-token",
     facilitatorJoinToken: `fac-${runId}`,
     participantJoinToken: `part-${runId}`,
+    facilitatorParticipantId: `sp-fac-${runId}`,
+    participantParticipantId: `sp-part-${runId}`,
     facilitatorRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=fac`,
     participantRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=part`,
     participantAccountRoomUrl: `http://localhost:3000/room/session-${runId}`,

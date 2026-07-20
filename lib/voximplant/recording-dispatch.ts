@@ -55,7 +55,6 @@ import {
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { RoomRecordingState } from "@/lib/room-provider/types";
-import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import {
   createRecordingControlMessage,
   type RecordingControlAction,
@@ -64,6 +63,7 @@ import {
   type VoximplantRoomRole,
 } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
+import { resolveVoximplantConferenceNameForAccess } from "@/lib/voximplant/poc/conference-join-flag";
 import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url";
 
 /** Maps the recording-control route actions to the scenario message actions. */
@@ -164,7 +164,10 @@ export async function buildVoximplantRecordingDispatch(
   }
 
   const scenarioAction = mapActionToScenarioAction(action);
-  const conferenceName = buildVoximplantConferenceName(context.sessionId);
+  // Flag-gated POC override when active; otherwise negotiation-{sessionId}.
+  const conferenceName = resolveVoximplantConferenceNameForAccess(
+    context.sessionId,
+  );
   const webhookBaseUrl = await getVoximplantRecordingWebhookBaseUrl();
   const scenarioMessage = createRecordingControlMessage(scenarioAction, {
     requestId: context.requestId?.trim() || nanoid(12),

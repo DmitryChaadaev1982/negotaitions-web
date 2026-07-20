@@ -157,6 +157,8 @@ function mockDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
       participantAuthCookie: "auth_session=participant-token",
       facilitatorJoinToken: `fac-${runId}`,
       participantJoinToken: `part-${runId}`,
+      facilitatorParticipantId: `sp-fac-${runId}`,
+      participantParticipantId: `sp-part-${runId}`,
       facilitatorRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=fac`,
       participantRoomUrl: `http://localhost:3000/room/session-${runId}?joinToken=part`,
       participantAccountRoomUrl: `http://localhost:3000/room/session-${runId}`,
@@ -712,10 +714,11 @@ test("15. recording start failure prevents stop", async () => {
   process.env.VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET =
     "control-secret-16chars!!!";
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
+  const options = baseOptions({ mode: "full" });
 
   try {
     const report = await runPocOrchestrator(
-      baseOptions({ mode: "full" }),
+      options,
       mockDeps({
         callbackSelfTest: async () => ({
           passed: true,
@@ -740,7 +743,16 @@ test("15. recording start failure prevents stop", async () => {
     );
     assert.equal(stopCalls, 0);
     assert.equal(report.failureStage, "recording_start");
+    assert.equal(report.failureCode, "RECORDING_START_HTTP_ERROR");
     assert.equal(report.result, "FAIL");
+    assert.equal(readCurrentPointer(options.stateRoot), null);
+    const stateDisk = JSON.parse(
+      readFileSync(
+        getPocRunPaths(report.runId, options.stateRoot).statePath,
+        "utf8",
+      ),
+    ) as { runtimeStatus: string };
+    assert.equal(stateDisk.runtimeStatus, "FAILED");
   } finally {
     if (previousDb === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDb;

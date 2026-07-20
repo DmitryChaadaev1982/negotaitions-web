@@ -13,9 +13,18 @@ import {
   type SanitizedDatabaseTarget,
 } from "@/lib/voximplant/poc/local-db-safety";
 
-/** Shared POC fixture password (facilitator + participant; not production). */
+/**
+ * @deprecated Fixed password removed — fixtures generate unique per-run passwords.
+ * Kept only so legacy test imports compile; never reuse for new fixtures.
+ */
 export const POC_FACILITATOR_PASSWORD = "poc-vox-pass-1234";
+/** @deprecated See POC_FACILITATOR_PASSWORD. */
 export const POC_PARTICIPANT_PASSWORD = POC_FACILITATOR_PASSWORD;
+
+/** Generate a unique per-run local fixture password (process memory only). */
+export function generatePocFixturePassword(): string {
+  return `poc-vox-${randomBytes(12).toString("hex")}`;
+}
 
 export function namespaceForRunId(runId: string): string {
   return `poc-vox-server-stop-${runId}`;
@@ -74,6 +83,8 @@ export type CreateVoxServerStopPocSessionResult = {
   participantAuthCookie: string;
   facilitatorJoinToken: string;
   participantJoinToken: string;
+  facilitatorParticipantId: string;
+  participantParticipantId: string;
   facilitatorRoomUrl: string;
   participantRoomUrl: string;
   /** Durable account-mode room URL after join-token claim (no joinToken query). */
@@ -132,8 +143,8 @@ export async function createVoxServerStopPocSession(params: {
   try {
     await client.query("BEGIN");
 
-    const facilitatorPassword = POC_FACILITATOR_PASSWORD;
-    const participantPassword = POC_PARTICIPANT_PASSWORD;
+    const facilitatorPassword = generatePocFixturePassword();
+    const participantPassword = generatePocFixturePassword();
     const facilitatorPasswordHash = await hash(facilitatorPassword, 10);
     const participantPasswordHash = await hash(participantPassword, 10);
     const facilitatorUserId = pocId("user", params.runId);
@@ -369,6 +380,8 @@ export async function createVoxServerStopPocSession(params: {
       participantAuthCookie,
       facilitatorJoinToken,
       participantJoinToken,
+      facilitatorParticipantId,
+      participantParticipantId: participantId,
       facilitatorRoomUrl,
       participantRoomUrl,
       participantAccountRoomUrl,

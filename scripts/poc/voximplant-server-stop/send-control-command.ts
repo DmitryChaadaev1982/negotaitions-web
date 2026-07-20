@@ -150,7 +150,9 @@ async function main(): Promise<void> {
 
   const controlUrl = getActiveControlUrl(state);
   if (!controlUrl) {
-    throw new Error("POC state has no control URL. Re-run start-conference.");
+    throw new Error(
+      "POC state has no control URL (private control state missing or run terminal). Re-run start-conference.",
+    );
   }
 
   if (action === "ping") {
