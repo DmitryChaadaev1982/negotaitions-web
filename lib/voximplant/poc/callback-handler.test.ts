@@ -84,7 +84,7 @@ test("local callback self-test persists matching event", () => {
     cwd,
   });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.errorCode, "CALLBACK_ACCEPTED");
+  if (result.ok) assert.equal(result.errorCode, "CALLBACK_ACCEPTED_AND_PERSISTED");
   const state = readPocState(cwd);
   assert.ok(state);
   assert.equal(state!.callbackEvents.length, 1);

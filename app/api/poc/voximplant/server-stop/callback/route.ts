@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { processPocCallback } from "@/lib/voximplant/poc/callback-handler";
 import { isPocCallbackEnabled } from "@/lib/voximplant/poc/callback-signature";
 import {
+  POC_HEALTH_PROTOCOL_VERSION,
+  POC_HEALTH_SERVICE,
+} from "@/lib/voximplant/poc/poc-health";
+import {
   getPocWorktreeDiagnostic,
   getPocRepositoryRoot,
   getPocStatePath,
@@ -45,6 +49,7 @@ function diagnosticHeaders(): Record<string, string> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const buildId = "poc/voximplant-server-stop";
   const rawBody = await request.text();
   let parsedEventType: string | null = null;
   let parsedOperationId: string | null = null;
@@ -77,7 +82,18 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json(
       {
         ok: false,
+        accepted: false,
+        persisted: false,
         errorCode: result.errorCode,
+        stateScope: result.stateScope,
+        runId: result.runId,
+        eventType: parsedEventType,
+        operationId: parsedOperationId,
+        runtimeStatus: result.runtimeStatus,
+        providerSessionId: result.providerSessionId,
+        service: POC_HEALTH_SERVICE,
+        protocolVersion: POC_HEALTH_PROTOCOL_VERSION,
+        buildId,
         worktreeFingerprint: headers["X-Neg-Poc-Worktree-Fingerprint"],
         branchOrBuildId: headers["X-Neg-Poc-Build-Id"],
         callbackEnabled: isPocCallbackEnabled(),
@@ -89,15 +105,24 @@ export async function POST(request: Request): Promise<Response> {
   logPocCallbackEvent({
     operationId: result.event.operationId,
     eventType: result.event.eventType,
-    resultCode: "CALLBACK_ACCEPTED",
+    resultCode: "CALLBACK_ACCEPTED_AND_PERSISTED",
   });
 
   return NextResponse.json(
     {
       ok: true,
-      errorCode: "CALLBACK_ACCEPTED",
+      accepted: true,
+      persisted: true,
+      errorCode: "CALLBACK_ACCEPTED_AND_PERSISTED",
+      stateScope: result.stateScope,
+      runId: result.runId,
       eventType: result.event.eventType,
       operationId: result.event.operationId,
+      runtimeStatus: result.runtimeStatus,
+      providerSessionId: result.providerSessionId,
+      service: POC_HEALTH_SERVICE,
+      protocolVersion: POC_HEALTH_PROTOCOL_VERSION,
+      buildId,
       worktreeFingerprint: headers["X-Neg-Poc-Worktree-Fingerprint"],
       branchOrBuildId: headers["X-Neg-Poc-Build-Id"],
       callbackEnabled: true,

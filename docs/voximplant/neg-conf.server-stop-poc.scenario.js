@@ -35,7 +35,7 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-c1";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-c2";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
 /** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
@@ -355,16 +355,7 @@ function extractCallbackResponseCode(result) {
 
 function extractCallbackResponseErrorCode(result) {
   try {
-    var text = null;
-    if (result && typeof result.text === "string") text = result.text;
-    else if (result && typeof result.data === "string") text = result.data;
-    else if (result && result.response && typeof result.response.text === "string") {
-      text = result.response.text;
-    }
-    if (!text) return null;
-    // Only parse short JSON for top-level errorCode/result — never log full body.
-    if (text.length > 2000) text = text.slice(0, 2000);
-    var parsed = JSON.parse(text);
+    var parsed = extractCallbackResponseJson(result);
     if (!parsed || typeof parsed !== "object") return null;
     if (typeof parsed.errorCode === "string") return parsed.errorCode;
     if (typeof parsed.result === "string") return parsed.result;
@@ -374,18 +365,70 @@ function extractCallbackResponseErrorCode(result) {
   }
 }
 
-function classifyCallbackHttpResult(httpStatus) {
+function extractCallbackResponseJson(result) {
+  try {
+    var text = null;
+    if (result && typeof result.text === "string") text = result.text;
+    else if (result && typeof result.data === "string") text = result.data;
+    else if (result && result.response && typeof result.response.text === "string") {
+      text = result.response.text;
+    }
+    if (!text) return null;
+    if (text.length > 4000) text = text.slice(0, 4000);
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+function classifyCallbackHttpResult(eventType, operationId, expectedProviderSessionId, result) {
+  var httpStatus = extractCallbackResponseCode(result);
   if (httpStatus == null || !isFinite(httpStatus) || httpStatus === 0) {
     return "CALLBACK_HTTP_TIMEOUT";
   }
-  if (httpStatus >= 200 && httpStatus < 300) return "CALLBACK_HTTP_ACCEPTED";
-  return "CALLBACK_HTTP_REJECTED";
+  if (httpStatus < 200 || httpStatus >= 300) return "CALLBACK_HTTP_REJECTED";
+
+  var parsed = extractCallbackResponseJson(result);
+  if (!parsed || typeof parsed !== "object") {
+    return "CALLBACK_RESPONSE_NOT_JSON";
+  }
+  if (parsed.ok !== true || parsed.accepted !== true) {
+    return "CALLBACK_APPLICATION_REJECTED";
+  }
+  if (parsed.persisted !== true) {
+    return "CALLBACK_NOT_PERSISTED";
+  }
+  if (parsed.stateScope !== "RUN_SCOPED") {
+    return "CALLBACK_WRONG_STATE_SCOPE";
+  }
+  if (typeof parsed.operationId !== "string" || parsed.operationId !== operationId) {
+    return "CALLBACK_OPERATION_MISMATCH";
+  }
+  if (typeof parsed.eventType !== "string" || parsed.eventType !== eventType) {
+    return "CALLBACK_APPLICATION_REJECTED";
+  }
+  if (parsed.service !== SCENARIO_KIND || parsed.protocolVersion !== PROTOCOL_VERSION) {
+    return "CALLBACK_APPLICATION_REJECTED";
+  }
+  if (
+    eventType === "session_registered" &&
+    expectedProviderSessionId &&
+    parsed.providerSessionId !== expectedProviderSessionId
+  ) {
+    return "CALLBACK_PROVIDER_SESSION_MISMATCH";
+  }
+  return "CALLBACK_ACCEPTED_AND_PERSISTED";
 }
 
-function logCallbackHttpResult(eventType, operationId, result) {
+function logCallbackHttpResult(eventType, operationId, expectedProviderSessionId, result) {
   var httpStatus = extractCallbackResponseCode(result);
   var responseErrorCode = extractCallbackResponseErrorCode(result);
-  var classification = classifyCallbackHttpResult(httpStatus);
+  var classification = classifyCallbackHttpResult(
+    eventType,
+    operationId,
+    expectedProviderSessionId,
+    result,
+  );
   // Sanitized only: no URL, headers, signature, secret, or full body.
   log(
     "POC callback httpResult eventType=" +
@@ -444,7 +487,12 @@ function sendSignedPocCallback(eventType, action, operationId, recorderState, er
           " operationId=" +
           safeToString(operationId),
       );
-      logCallbackHttpResult(eventType, operationId, result);
+      logCallbackHttpResult(
+        eventType,
+        operationId,
+        payload.providerSessionId || payload.callSessionHistoryId || null,
+        result,
+      );
     }, {
       method: "POST",
       headers: {

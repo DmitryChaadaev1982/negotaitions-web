@@ -1030,7 +1030,10 @@ test("27. health success proceeds to signed callback self-test", async () => {
         return new Response(
           JSON.stringify({
             ok: true,
-            errorCode: "CALLBACK_ACCEPTED",
+            accepted: true,
+            persisted: true,
+            stateScope: "RUN_SCOPED",
+            errorCode: "CALLBACK_ACCEPTED_AND_PERSISTED",
             worktreeFingerprint: diag.worktreeFingerprint,
           }),
           {

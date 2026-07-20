@@ -12,7 +12,7 @@ export const POC_PROTOCOL_VERSION = 1;
 
 /** Dedicated POC scenario source / build (must match pasted scenario). */
 export const POC_SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
-export const POC_EXPECTED_SCENARIO_BUILD = "server-stop-poc-2026-07-20-c1";
+export const POC_EXPECTED_SCENARIO_BUILD = "server-stop-poc-2026-07-20-c2";
 
 /**
  * Known production / default room routing identities from repo docs.

@@ -9,6 +9,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 
 import {
   buildPocCallbackPayload,
@@ -25,12 +26,23 @@ import {
 } from "@/lib/voximplant/poc/poc-paths";
 import {
   findMatchingCallbackEvent,
-  readPocState,
 } from "@/lib/voximplant/poc/poc-state";
 import {
+  POC_CONFERENCE_NAME_PREFIX,
   POC_EXPECTED_SCENARIO_BUILD,
   POC_SCENARIO_SOURCE_NAME,
 } from "@/lib/voximplant/poc/poc-safety";
+import {
+  activatePocRun,
+  getPocRunPaths,
+  readCurrentPointer,
+} from "@/lib/voximplant/poc/poc-run-store";
+import {
+  createEmptyPocState,
+  readPocRunState,
+  seedWaitingForProviderSession,
+  writePocState,
+} from "@/lib/voximplant/poc/poc-state";
 import { loadPocEnvFiles } from "./load-env";
 
 function hasFlag(name: string): boolean {
@@ -48,7 +60,7 @@ function readArg(name: string): string | null {
 function resolveCallbackUrl(): string {
   // Local self-test targets the process on :3000 by default.
   // Tunnel/APP_URL hosts are for Voximplant → app, not for this CLI loopback.
-  const fromArg = readArg("--url");
+  const fromArg = readArg("--callback-url") ?? readArg("--url");
   if (fromArg) return fromArg;
   const fromEnv =
     process.env.VOXIMPLANT_SERVER_STOP_POC_CALLBACK_URL?.trim() ||
@@ -63,6 +75,28 @@ function sanitizeUrlHostPath(url: string): { host: string; path: string } {
     return { host: u.host, path: u.pathname };
   } catch {
     return { host: "invalid", path: "/api/poc/voximplant/server-stop/callback" };
+  }
+}
+
+function readRunEventsPathInfo(path: string, operationId: string): {
+  callbackEventCount: number;
+  operationIdFound: boolean;
+} {
+  if (!existsSync(path)) return { callbackEventCount: 0, operationIdFound: false };
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+      callbackEvents?: Array<{ operationId?: string | null }>;
+    };
+    const events = Array.isArray(parsed.callbackEvents) ? parsed.callbackEvents : [];
+    return {
+      callbackEventCount: events.length,
+      operationIdFound: events.some(
+        (event) =>
+          typeof event?.operationId === "string" && event.operationId === operationId,
+      ),
+    };
+  } catch {
+    return { callbackEventCount: 0, operationIdFound: false };
   }
 }
 
@@ -87,7 +121,55 @@ async function main(): Promise<void> {
   const expectedDiag = getPocWorktreeDiagnostic();
   const callbackUrl = resolveCallbackUrl();
   const { host, path } = sanitizeUrlHostPath(callbackUrl);
-  const state = readPocState();
+  const eventArg = readArg("--event") ?? "command_accepted";
+  const isSessionRegistered = eventArg === "session_registered";
+  const runIdArg = readArg("--run-id");
+  const previousPointer = readCurrentPointer(repoRoot);
+  let resolvedRunId: string | null = null;
+  let resolvedConferenceName: string | null = null;
+  let resolvedStatePath: string | null = null;
+  let resolvedEventsPath: string | null = null;
+  const resolvedStateScope: "RUN_SCOPED" | "LEGACY_GLOBAL_STATE" = "RUN_SCOPED";
+  let fixtureCreated = false;
+
+  if (runIdArg) {
+    const runPaths = getPocRunPaths(runIdArg, repoRoot);
+    const runState = readPocRunState(runIdArg, repoRoot);
+    if (!runState) {
+      console.log("[poc:vox:test-callback] result", {
+        CALLBACK_ROUTE_REACHED: false,
+        CALLBACK_SIGNATURE_ACCEPTED: false,
+        CALLBACK_EVENT_PERSISTED: false,
+        errorCode: "POC_CALLBACK_RUN_NOT_FOUND",
+        runId: runIdArg,
+      });
+      process.exitCode = 1;
+      return;
+    }
+    resolvedRunId = runIdArg;
+    resolvedConferenceName = runState.conferenceName;
+    resolvedStatePath = runPaths.statePath;
+    resolvedEventsPath = runPaths.eventsPath;
+  } else {
+    const fixtureRunId = `run-callback-fixture-${Date.now()}-${randomBytes(3).toString("hex")}`;
+    const conferenceName = `${POC_CONFERENCE_NAME_PREFIX}${fixtureRunId}`;
+    let fixture = createEmptyPocState({
+      pocId: fixtureRunId,
+      conferenceName,
+      linkedSessionId: null,
+    });
+    fixture = seedWaitingForProviderSession(fixture);
+    writePocState(fixture, repoRoot);
+    activatePocRun({ runId: fixtureRunId, linkedSessionId: null, stateRoot: repoRoot });
+    const runPaths = getPocRunPaths(fixtureRunId, repoRoot);
+    resolvedRunId = fixtureRunId;
+    resolvedConferenceName = conferenceName;
+    resolvedStatePath = runPaths.statePath;
+    resolvedEventsPath = runPaths.eventsPath;
+    fixtureCreated = true;
+  }
+
+  const state = resolvedRunId ? readPocRunState(resolvedRunId, repoRoot) : null;
   const operationId = `poc-callback-selftest-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
   console.log("[poc:vox:test-callback] config", {
@@ -97,6 +179,12 @@ async function main(): Promise<void> {
     callbackUrlHost: host,
     callbackUrlPath: path,
     statePath,
+    resolvedRunId,
+    resolvedConferenceName,
+    resolvedStateScope,
+    resolvedStatePath,
+    resolvedEventsPath,
+    legacyStateUsed: resolvedStateScope !== "RUN_SCOPED",
     // Path shown for local operators; not sent to Voximplant.
     repositoryRoot: repoRoot,
     worktreeFingerprint: expectedDiag.worktreeFingerprint,
@@ -139,9 +227,6 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-
-  const eventArg = readArg("--event") ?? "command_accepted";
-  const isSessionRegistered = eventArg === "session_registered";
   const providerSessionId =
     state.providerSessionId ??
     state.callSessionHistoryId ??
@@ -151,7 +236,7 @@ async function main(): Promise<void> {
         eventType: "session_registered",
         action: "register",
         operationId: `session-register-${providerSessionId}`,
-        conferenceName: state.conferenceName,
+        conferenceName: resolvedConferenceName,
         callSessionHistoryId: providerSessionId,
         providerSessionId,
         scenarioBuild: POC_EXPECTED_SCENARIO_BUILD,
@@ -170,7 +255,7 @@ async function main(): Promise<void> {
         eventType: "command_accepted",
         action: "ping",
         operationId,
-        conferenceName: state.conferenceName,
+        conferenceName: resolvedConferenceName,
         callSessionHistoryId: state.callSessionHistoryId,
         recorderState: "absent",
       });
@@ -207,7 +292,15 @@ async function main(): Promise<void> {
   let errorCode: string | null = null;
   let routeFingerprint: string | null = null;
   let routeBuildId: string | null = null;
-  let signatureAccepted = false;
+  let responseAccepted = false;
+  let responsePersisted = false;
+  let responseRuntimeStatus: string | null = null;
+  let responseStateScope: string | null = null;
+  let responseRunId: string | null = null;
+  let responseOperationId: string | null = null;
+  let responseEventType: string | null = null;
+  let responseProviderSessionId: string | null = null;
+  let responseOk = false;
 
   try {
     const response = await fetch(callbackUrl, {
@@ -221,17 +314,34 @@ async function main(): Promise<void> {
     routeBuildId = response.headers.get("X-Neg-Poc-Build-Id") || null;
     const json = (await response.json().catch(() => null)) as {
       ok?: boolean;
+      accepted?: boolean;
+      persisted?: boolean;
+      stateScope?: unknown;
+      runId?: unknown;
+      runtimeStatus?: unknown;
+      operationId?: unknown;
+      eventType?: unknown;
+      providerSessionId?: unknown;
       errorCode?: string;
       worktreeFingerprint?: string;
     } | null;
+    responseOk = json?.ok === true;
     errorCode = json?.errorCode ?? null;
+    responseAccepted = json?.accepted === true;
+    responsePersisted = json?.persisted === true;
+    responseStateScope =
+      typeof json?.stateScope === "string" ? json.stateScope : null;
+    responseRunId = typeof json?.runId === "string" ? json.runId : null;
+    responseRuntimeStatus =
+      typeof json?.runtimeStatus === "string" ? json.runtimeStatus : null;
+    responseOperationId =
+      typeof json?.operationId === "string" ? json.operationId : null;
+    responseEventType = typeof json?.eventType === "string" ? json.eventType : null;
+    responseProviderSessionId =
+      typeof json?.providerSessionId === "string" ? json.providerSessionId : null;
     if (!routeFingerprint && json?.worktreeFingerprint) {
       routeFingerprint = json.worktreeFingerprint;
     }
-    signatureAccepted =
-      response.ok &&
-      (errorCode === "CALLBACK_ACCEPTED" || errorCode == null) &&
-      json?.ok === true;
   } catch (error) {
     console.log("[poc:vox:test-callback] http error", {
       message: error instanceof Error ? error.message : String(error),
@@ -245,7 +355,12 @@ async function main(): Promise<void> {
     expectedFingerprint: expectedDiag.worktreeFingerprint,
   });
 
-  const after = readPocState();
+  const after =
+    responseRunId && responseRunId.trim()
+      ? readPocRunState(responseRunId, repoRoot)
+      : resolvedRunId
+        ? readPocRunState(resolvedRunId, repoRoot)
+        : null;
   const matched = after
     ? findMatchingCallbackEvent(after, {
         operationId: matchOperationId,
@@ -253,7 +368,17 @@ async function main(): Promise<void> {
         action: payload.action,
       })
     : null;
-  const persisted = Boolean(matched);
+  const persisted = Boolean(matched) && responsePersisted;
+  const operationIdFoundInState = Boolean(matched);
+  const eventsInfo = resolvedEventsPath
+    ? readRunEventsPathInfo(resolvedEventsPath, matchOperationId)
+    : { callbackEventCount: 0, operationIdFound: false };
+  const operationIdFoundInEvents = Boolean(
+    after?.callbackEvents.some((event) => event.operationId === matchOperationId) ||
+      eventsInfo.operationIdFound,
+  );
+  const legacyStateUsed =
+    resolvedStateScope !== "RUN_SCOPED" || responseStateScope === "LEGACY_GLOBAL_STATE";
 
   const routeReached = httpStatus > 0;
   console.log("[poc:vox:test-callback] http", {
@@ -262,12 +387,31 @@ async function main(): Promise<void> {
     routeWorktreeFingerprint: routeFingerprint,
     routeBranchOrBuildId: routeBuildId,
     worktreeClassification: worktreeClass,
-    signatureAccepted,
+    responseOk,
+    responseAccepted,
+    responsePersisted,
+    responseStateScope,
+    responseRunId,
+    responseRuntimeStatus,
+    responseOperationId,
+    responseEventType,
+    responseProviderSessionId,
   });
   console.log("[poc:vox:test-callback] result", {
     CALLBACK_ROUTE_REACHED: routeReached,
-    CALLBACK_SIGNATURE_ACCEPTED: signatureAccepted,
+    CALLBACK_SIGNATURE_ACCEPTED: responseAccepted,
     CALLBACK_EVENT_PERSISTED: persisted,
+    resolvedRunId,
+    resolvedConferenceName,
+    resolvedStateScope,
+    resolvedStatePath,
+    resolvedEventsPath,
+    legacyStateUsed,
+    responseAccepted,
+    responsePersisted,
+    responseRuntimeStatus,
+    operationIdFoundInState,
+    operationIdFoundInEvents,
     operationId: matchOperationId,
     eventType: payload.eventType,
     runtimeStatus: after?.runtimeStatus ?? null,
@@ -277,8 +421,31 @@ async function main(): Promise<void> {
     callbackEventCount: after?.callbackEvents.length ?? 0,
   });
 
-  if (!routeReached || !signatureAccepted || !persisted) {
+  const sessionRegistrationScopeOk =
+    !isSessionRegistered || resolvedStateScope === "RUN_SCOPED";
+  const sessionRegistrationPersistenceOk =
+    !isSessionRegistered || responsePersisted === true;
+
+  if (
+    !routeReached ||
+    !responseAccepted ||
+    !persisted ||
+    !operationIdFoundInState ||
+    !operationIdFoundInEvents ||
+    !sessionRegistrationScopeOk ||
+    !sessionRegistrationPersistenceOk ||
+    legacyStateUsed
+  ) {
     process.exitCode = 1;
+  }
+
+  if (fixtureCreated && previousPointer?.runId) {
+    activatePocRun({
+      runId: previousPointer.runId,
+      linkedSessionId: previousPointer.linkedSessionId,
+      activatedAt: previousPointer.activatedAt,
+      stateRoot: repoRoot,
+    });
   }
 }
 

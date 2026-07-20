@@ -50,9 +50,10 @@ test("POC scenario identity constants present for callback payload", () => {
   assert.match(source, /SCENARIO_KIND\s*=\s*"voximplant_server_stop_poc"/);
   assert.match(source, /PROTOCOL_VERSION\s*=\s*1/);
   assert.match(source, /SCENARIO_SOURCE_NAME\s*=\s*"neg-conf-server-stop-poc"/);
-  assert.match(source, /SCENARIO_BUILD_ID\s*=\s*"server-stop-poc-2026-07-20-c1"/);
+  assert.match(source, /SCENARIO_BUILD_ID\s*=\s*"server-stop-poc-2026-07-20-c2"/);
   assert.match(source, /scenarioKind:\s*SCENARIO_KIND/);
   assert.match(source, /protocolVersion:\s*PROTOCOL_VERSION/);
+  assert.ok(!source.includes("server-stop-poc-2026-07-20-c1"));
   assert.ok(!source.includes("server-stop-poc-2026-07-20-b1"));
   assert.ok(!source.includes("server-poc-webhook-fix-2026-07-04"));
 });
@@ -89,9 +90,15 @@ test("POC scenario supports browser-originated recording_control start", () => {
 });
 
 test("scenario callback-result logging redacts URL/signature/secret", () => {
-  assert.match(source, /CALLBACK_HTTP_ACCEPTED/);
   assert.match(source, /CALLBACK_HTTP_REJECTED/);
   assert.match(source, /CALLBACK_HTTP_TIMEOUT/);
+  assert.match(source, /CALLBACK_RESPONSE_NOT_JSON/);
+  assert.match(source, /CALLBACK_APPLICATION_REJECTED/);
+  assert.match(source, /CALLBACK_NOT_PERSISTED/);
+  assert.match(source, /CALLBACK_WRONG_STATE_SCOPE/);
+  assert.match(source, /CALLBACK_OPERATION_MISMATCH/);
+  assert.match(source, /CALLBACK_PROVIDER_SESSION_MISMATCH/);
+  assert.match(source, /CALLBACK_ACCEPTED_AND_PERSISTED/);
   assert.match(source, /logCallbackHttpResult/);
   assert.match(source, /callbackSecretSha256Prefix/);
   const fnStart = source.indexOf("function logCallbackHttpResult");

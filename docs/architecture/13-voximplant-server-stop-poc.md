@@ -125,7 +125,7 @@ Live `PASS` only (dry-run uses `DRY_RUN_PASS` and does not require live evidence
 
 - callback self-test (`CALLBACK_SELF_TEST_PASSED`)
 - both WebSDK joins + same browser-created POC conference
-- dedicated POC scenario registered (`session_registered`) with expected build `server-stop-poc-2026-07-20-c1`
+- dedicated POC scenario registered (`session_registered`) with expected build `server-stop-poc-2026-07-20-c2`
 - exactly one provider session identity across registration / browser / recording / stop / history
 - `startConferenceCallCount === 0`
 - recording started through application flow **with provider-level** `recording_started` evidence (HTTP/relay alone is insufficient)
@@ -171,8 +171,20 @@ On failure: retain Session + run evidence (run is `FAILED`, not `ACTIVE`); print
 Live runs probe a dedicated flag-gated health endpoint before the signed synthetic callback:
 
 1. `GET /api/poc/voximplant/server-stop/health` → HTTP 200 with `ok`, `service=voximplant_server_stop_poc`, `protocolVersion=1`, `callbackEnabled=true`, matching worktree fingerprint + build id
-2. Signed synthetic `POST /api/poc/voximplant/server-stop/callback` → `CALLBACK_ACCEPTED`
-3. Event persisted in active run state, then synthetic evidence cleared → `callbackSelfTest=true`
+2. Signed synthetic `POST /api/poc/voximplant/server-stop/callback` must return `ok=true`, `accepted=true`, `persisted=true`, `stateScope=RUN_SCOPED`, and `errorCode=CALLBACK_ACCEPTED_AND_PERSISTED`
+3. Event is verified in both run `state.json` and run `events.json`, then synthetic evidence is cleared → `callbackSelfTest=true`
+
+Callback run resolution is strict and conference-bound:
+
+- verify callback signature + replay window
+- parse exact `conferenceName`
+- pointer fast-path (`current.json`) only when conference matches exactly
+- fallback exact run lookup by retained run `state.json` conference name
+- reject zero matches (`POC_CALLBACK_RUN_NOT_FOUND`), multiple matches (`POC_CALLBACK_RUN_AMBIGUOUS`), and stale pointer mismatch (`POC_CALLBACK_CONFERENCE_MISMATCH`)
+- reject terminal run callbacks except explicit terminal-transition events (`POC_CALLBACK_RUN_TERMINAL`)
+- refuse legacy global state for browser-first callbacks (`POC_CALLBACK_LEGACY_STATE_REFUSED`)
+
+Legacy global file `.agent/voximplant-server-stop-poc.json` is retained as `LEGACY_GLOBAL_STATE` evidence only. Browser-first callback writes never target it.
 
 Health must not use the application root (auth 307) or `/api/admin/health`. Typed health failures (`POC_HEALTH_*`) are nested under outer `LOCAL_HEALTH_FAILED` in reports (`healthFailureReason`, `healthUrlPath`, fingerprints/build ids — never host credentials or raw bodies).
 

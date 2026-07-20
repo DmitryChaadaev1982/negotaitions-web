@@ -123,7 +123,9 @@ export async function runCallbackSelfTest(params: {
 
   let httpStatus = 0;
   let routeFingerprint: string | null = null;
-  let signatureAccepted = false;
+  let responseAccepted = false;
+  let responsePersisted = false;
+  let responseStateScope: string | null = null;
   let errorCode: string | null = null;
 
   try {
@@ -141,6 +143,9 @@ export async function runCallbackSelfTest(params: {
       response.headers.get("X-Neg-Poc-Worktree-Fingerprint") || null;
     const json = (await response.json().catch(() => null)) as {
       ok?: boolean;
+      accepted?: boolean;
+      persisted?: boolean;
+      stateScope?: unknown;
       errorCode?: string;
       worktreeFingerprint?: string;
     } | null;
@@ -148,10 +153,13 @@ export async function runCallbackSelfTest(params: {
     if (!routeFingerprint && json?.worktreeFingerprint) {
       routeFingerprint = json.worktreeFingerprint;
     }
-    signatureAccepted =
+    responseAccepted =
       response.ok &&
-      (errorCode === "CALLBACK_ACCEPTED" || errorCode == null) &&
+      (errorCode === "CALLBACK_ACCEPTED_AND_PERSISTED" || errorCode == null) &&
       json?.ok === true;
+    responsePersisted = json?.persisted === true;
+    responseStateScope =
+      typeof json?.stateScope === "string" ? json.stateScope : null;
   } catch (error) {
     return {
       passed: false,
@@ -190,14 +198,21 @@ export async function runCallbackSelfTest(params: {
       })
     : null;
 
-  if (!signatureAccepted || !matched) {
+  if (
+    !responseAccepted ||
+    !responsePersisted ||
+    responseStateScope !== "RUN_SCOPED" ||
+    !matched
+  ) {
     return {
       passed: false,
       code: "CALLBACK_SELF_TEST_PERSIST_FAILED",
       details: {
         httpStatus,
         errorCode,
-        signatureAccepted,
+        responseAccepted,
+        responsePersisted,
+        responseStateScope,
         persisted: Boolean(matched),
         bodySha256Prefix: createHash("sha256")
           .update(signed.body)

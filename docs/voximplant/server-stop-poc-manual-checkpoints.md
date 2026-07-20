@@ -18,7 +18,7 @@ Configure an **isolated** Voximplant rule/scenario pair. Do **not** replace or e
 3. **Exact Voximplant Console routing (full browser-first mode)**  
    - Rule name (suggested): `neg-poc-server-stop-rule`  
    - Pattern (destination / conference): `neg-poc-server-stop-*` (or regex `^neg-poc-server-stop-.*`)  
-   - Scenario: `neg-conf-server-stop-poc` only (build marker `server-stop-poc-2026-07-20-c1`)  
+   - Scenario: `neg-conf-server-stop-poc` only (build marker `server-stop-poc-2026-07-20-c2`)  
    - **Priority / order: above** `negotaitions-conference-rule` (and any other production conference rule) so POC names never fall through to `neg-conf`  
    - Do **not** edit `negotaitions-conference-rule` / production pattern  
    Ordinary `negotiation-{sessionId}` room traffic must not match the POC pattern.

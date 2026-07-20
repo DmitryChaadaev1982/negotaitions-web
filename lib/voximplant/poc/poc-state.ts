@@ -13,7 +13,9 @@ import {
   activatePocRun,
   clearCurrentPointer,
   ensurePocRunDir,
+  getPocRunPaths,
   getPocLegacyStatePath,
+  listPocRunIds,
   readCurrentPointer,
   resolveActiveRunPaths,
   writeJsonArtifact,
@@ -64,6 +66,7 @@ export type PocCallbackEventRecord = {
   eventType: PocCallbackEventType | string;
   action: string | null;
   operationId: string | null;
+  nonce?: string | null;
   conferenceName: string | null;
   callSessionHistoryId: string | null;
   recorderState: string | null;
@@ -131,6 +134,21 @@ export function getPocStatePath(stateRoot?: string): string {
   return resolvePocStatePath(stateRoot);
 }
 
+export type PocStatePersistenceErrorCode =
+  | "POC_PRIVATE_CONTROL_STATE_WRITE_FAILED"
+  | "POC_CALLBACK_RUN_STATE_WRITE_FAILED"
+  | "POC_CALLBACK_EVENTS_WRITE_FAILED";
+
+export class PocStatePersistenceError extends Error {
+  readonly code: PocStatePersistenceErrorCode;
+
+  constructor(code: PocStatePersistenceErrorCode, message: string) {
+    super(message);
+    this.name = "PocStatePersistenceError";
+    this.code = code;
+  }
+}
+
 function normalizeState(
   parsed: Partial<VoximplantServerStopPocState>,
 ): VoximplantServerStopPocState | null {
@@ -196,6 +214,18 @@ function normalizeState(
   };
 }
 
+function readPocStateFromPath(path: string): VoximplantServerStopPocState | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(
+      readFileSync(path, "utf8"),
+    ) as Partial<VoximplantServerStopPocState>;
+    return normalizeState(parsed);
+  } catch {
+    return null;
+  }
+}
+
 export function readPocState(
   stateRoot?: string,
 ): VoximplantServerStopPocState | null {
@@ -209,18 +239,30 @@ export function readPocState(
   });
 
   for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const parsed = JSON.parse(
-        readFileSync(path, "utf8"),
-      ) as Partial<VoximplantServerStopPocState>;
-      const normalized = normalizeState(parsed);
-      if (normalized) return normalized;
-    } catch {
-      // try next candidate
-    }
+    const loaded = readPocStateFromPath(path);
+    if (loaded) return loaded;
   }
   return null;
+}
+
+export function readPocRunState(
+  runId: string,
+  stateRoot?: string,
+): VoximplantServerStopPocState | null {
+  const statePath = getPocRunPaths(runId, stateRoot).statePath;
+  return readPocStateFromPath(statePath);
+}
+
+export function listPocRunStates(
+  stateRoot?: string,
+): VoximplantServerStopPocState[] {
+  const runIds = listPocRunIds(stateRoot);
+  const states: VoximplantServerStopPocState[] = [];
+  for (const runId of runIds) {
+    const state = readPocRunState(runId, stateRoot);
+    if (state) states.push(state);
+  }
+  return states;
 }
 
 export function writePocState(
@@ -254,15 +296,22 @@ export function writePocState(
   const rawSecure = state.mediaSessionAccessSecureUrl;
   const rawPlain = state.mediaSessionAccessUrl;
   if (rawSecure || rawPlain) {
-    writePrivateControlState(
-      {
-        runId,
-        mediaSessionAccessUrl: rawPlain,
-        mediaSessionAccessSecureUrl: rawSecure,
-        updatedAt: new Date().toISOString(),
-      },
-      stateRoot,
-    );
+    try {
+      writePrivateControlState(
+        {
+          runId,
+          mediaSessionAccessUrl: rawPlain,
+          mediaSessionAccessSecureUrl: rawSecure,
+          updatedAt: new Date().toISOString(),
+        },
+        stateRoot,
+      );
+    } catch (error) {
+      throw new PocStatePersistenceError(
+        "POC_PRIVATE_CONTROL_STATE_WRITE_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   const bounded: VoximplantServerStopPocState = {
@@ -279,12 +328,26 @@ export function writePocState(
     callbackEvents: state.callbackEvents.slice(-POC_CALLBACK_EVENT_LIMIT),
     seenCallbackNonces: state.seenCallbackNonces.slice(-POC_CALLBACK_NONCE_LIMIT),
   };
-  writeJsonArtifact(paths.statePath, bounded);
-  writeJsonArtifact(paths.eventsPath, {
-    runId,
-    updatedAt: bounded.updatedAt,
-    callbackEvents: bounded.callbackEvents,
-  });
+  try {
+    writeJsonArtifact(paths.statePath, bounded);
+  } catch (error) {
+    throw new PocStatePersistenceError(
+      "POC_CALLBACK_RUN_STATE_WRITE_FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  try {
+    writeJsonArtifact(paths.eventsPath, {
+      runId,
+      updatedAt: bounded.updatedAt,
+      callbackEvents: bounded.callbackEvents,
+    });
+  } catch (error) {
+    throw new PocStatePersistenceError(
+      "POC_CALLBACK_EVENTS_WRITE_FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   return paths.statePath;
 }
 
@@ -657,6 +720,7 @@ export function toPublicPocStateView(state: VoximplantServerStopPocState) {
       eventType: event.eventType,
       action: event.action,
       operationId: event.operationId,
+      nonce: event.nonce ?? null,
       conferenceName: event.conferenceName,
       callSessionHistoryId: event.callSessionHistoryId,
       recorderState: event.recorderState,

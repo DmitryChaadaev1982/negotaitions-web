@@ -23,6 +23,10 @@ test("callback route module is POC-gated and has no prisma", () => {
   );
   const source = readFileSync(routePath, "utf8");
   assert.match(source, /processPocCallback/);
+  assert.match(source, /accepted:\s*true/);
+  assert.match(source, /persisted:\s*true/);
+  assert.match(source, /stateScope/);
+  assert.match(source, /CALLBACK_ACCEPTED_AND_PERSISTED/);
   assert.ok(!source.includes("prisma"));
   assert.ok(!source.includes("@/lib/prisma"));
   assert.ok(!source.includes("Recording"));

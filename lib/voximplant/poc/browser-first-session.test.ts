@@ -231,7 +231,7 @@ test("8. second different session ID fails the run", () => {
   });
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.equal(result.errorCode, "POC_MULTIPLE_PROVIDER_SESSIONS_DETECTED");
+    assert.equal(result.errorCode, "POC_PROVIDER_SESSION_CONFLICT");
   }
   assert.equal(readPocState(cwd)!.runtimeStatus, "FAILED");
 });
