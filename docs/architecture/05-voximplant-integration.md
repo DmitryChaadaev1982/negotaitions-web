@@ -24,7 +24,9 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
   send boundaries:
   - relay claim/consume timestamps
   - browser context role/id
-  - active call lookup + connected-state validation
+  - explicit active conference-call ref capture (`activeConferenceCallRef`)
+  - call-reference source evidence (`EXPLICIT_ACTIVE_CALL_REF` preferred)
+  - conference-match + connected-state validation in POC relay path
   - `sendMessage` invoke/completion/error evidence
 - Vox scenario executes recording operation and posts status webhook back to app.
 

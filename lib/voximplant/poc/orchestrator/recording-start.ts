@@ -317,10 +317,15 @@ export async function runProviderFreeRecordingStartTest(params: {
     evidence.recordingBrowserContextRole = "FACILITATOR";
     evidence.recordingBrowserContextId = connectionId.slice(0, 24);
     evidence.recordingBrowserCallReferenceFound = true;
+    evidence.recordingBrowserCallReferenceSource = "EXPLICIT_ACTIVE_CALL_REF";
+    evidence.recordingBrowserCallConnected = true;
+    evidence.recordingBrowserCallIdSanitized = `[id:${connectionId.slice(0, 4)}]`;
     evidence.recordingBrowserCallId = `call-${connectionId.slice(0, 12)}`;
-    evidence.recordingBrowserCallState = "CONNECTED";
+    evidence.recordingBrowserCallState = "connected";
+    evidence.recordingBrowserConferenceName = conferenceName;
     evidence.recordingBrowserSendMessageInvokedAt = plus(5);
     evidence.recordingBrowserSendMessageCompletedAt = plus(8);
+    evidence.recordingBrowserSendMessageErrorCode = null;
     evidence.recordingBrowserCommandSentAt =
       evidence.recordingBrowserSendMessageCompletedAt;
     evidence.relayOwnerRole = "FACILITATOR";
@@ -330,7 +335,7 @@ export async function runProviderFreeRecordingStartTest(params: {
     evidence.relayConsumedAt = plus(8);
     lines.push("RECORDING_RELAY_CLAIMED");
     lines.push("BROWSER_CONTEXT_SELECTED");
-    lines.push("BROWSER_CALL_FOUND");
+    lines.push("BROWSER_CALL_REFERENCE_CAPTURED");
     lines.push("BROWSER_CALL_CONNECTED");
     lines.push("BROWSER_SEND_INVOKED");
     lines.push("BROWSER_SEND_COMPLETED");

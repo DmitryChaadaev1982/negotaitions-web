@@ -290,18 +290,35 @@ type UseVoximplantRoomResult = {
   sendConferenceMessage: (text: string) => boolean;
   sendConferenceMessageDetailed: (
     text: string,
+    options?: ConferenceMessageSendOptions,
   ) => Promise<ConferenceMessageSendResult>;
   /** True when conference.sendMessage() is available on the current SDK object. */
   sendMessageAvailable: boolean;
 };
 
+export type ConferenceCallReferenceSource =
+  | "EXPLICIT_ACTIVE_CALL_REF"
+  | "DOCUMENTED_CONFERENCE_API"
+  | "LEGACY_HEURISTIC"
+  | "NOT_FOUND";
+
+export type ConferenceMessageSendOptions = {
+  enforcePocRelay?: boolean;
+  relayContextRole?: string | null;
+  operationId?: string | null;
+  expectedConferenceName?: string | null;
+};
+
 export type ConferenceMessageSendResult = {
   callLookupMethod: string;
+  callReferenceSource: ConferenceCallReferenceSource;
   callReferenceFound: boolean;
   callId: string | null;
+  callIdSanitized: string | null;
   callState: string | null;
+  conferenceName: string | null;
   callConnected: boolean;
-  sendMethod: "call.sendMessage" | "conference.sendMessage" | null;
+  sendMethod: "call.sendMessage" | null;
   sendInvoked: boolean;
   sendCompleted: boolean;
   sendInvokedAt: string | null;
@@ -311,6 +328,8 @@ export type ConferenceMessageSendResult = {
     | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
     | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
     | "RECORDING_START_BROWSER_SEND_FAILED"
+    | "RECORDING_START_BROWSER_CALL_STALE"
+    | "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH"
     | null;
   sendErrorMessage: string | null;
 };
@@ -325,6 +344,7 @@ type RuntimeState = {
   /** VideoQuality enum value from the SDK used for new camera streams. */
   videoQuality: unknown;
   conference: VoxConference | null;
+  conferenceName: string;
   conferenceConnected: boolean;
   localAudioStream: VoxStream | null;
   localVideoStream: VoxStream | null;
@@ -556,11 +576,74 @@ function getAudioContextCtor(): typeof AudioContext | null {
 }
 
 type CallLookupResult = {
-  call: Record<string, unknown> | null;
+  call: CallLikeRecord | null;
   lookupMethod: string;
+  source: ConferenceCallReferenceSource;
   callId: string | null;
+  callIdSanitized: string | null;
   callState: string | null;
+  conferenceName: string | null;
+  generation: number | null;
+  connectedHint: boolean | null;
 };
+
+type CallLikeRecord = Record<string, unknown> & {
+  sendMessage?: (message: string) => unknown;
+};
+
+type CallStateWatchable = {
+  value: unknown;
+};
+
+export type ActiveConferenceCallRefEntry = {
+  call: CallLikeRecord;
+  conferenceName: string | null;
+  generation: number;
+  connected: boolean;
+  capturedAt: string;
+};
+
+export function createActiveConferenceCallTracker(
+  nowIso: () => string = () => new Date().toISOString(),
+) {
+  let current: ActiveConferenceCallRefEntry | null = null;
+
+  return {
+    getCurrent(): ActiveConferenceCallRefEntry | null {
+      return current;
+    },
+    capture(input: {
+      call: CallLikeRecord;
+      conferenceName: string | null;
+      generation: number;
+    }): ActiveConferenceCallRefEntry {
+      current = {
+        call: input.call,
+        conferenceName: input.conferenceName,
+        generation: input.generation,
+        connected: false,
+        capturedAt: nowIso(),
+      };
+      return current;
+    },
+    confirmConnected(call: CallLikeRecord, generation: number): void {
+      if (!current) return;
+      if (current.call !== call) return;
+      if (current.generation !== generation) return;
+      current = { ...current, connected: true };
+    },
+    clearIfMatches(call: CallLikeRecord, generation: number): boolean {
+      if (!current) return false;
+      if (current.call !== call) return false;
+      if (current.generation !== generation) return false;
+      current = null;
+      return true;
+    },
+    clear(): void {
+      current = null;
+    },
+  };
+}
 
 function readCallStringField(
   call: Record<string, unknown>,
@@ -589,6 +672,14 @@ function normalizeCallState(raw: string | null): string | null {
   return value.length > 0 ? value : null;
 }
 
+function sanitizeCallId(callId: string | null): string | null {
+  if (!callId) return null;
+  const value = callId.trim();
+  if (!value) return null;
+  if (value.length <= 8) return `[id:${value.length}]`;
+  return `[id:${value.length}:${value.slice(0, 4)}...${value.slice(-4)}]`;
+}
+
 function isConnectedCallState(raw: string | null): boolean | null {
   if (!raw) return null;
   const state = raw.toLowerCase();
@@ -613,36 +704,96 @@ function isConnectedCallState(raw: string | null): boolean | null {
   return null;
 }
 
-function resolveConferenceCallReference(conference: VoxConference): CallLookupResult {
-  const conf = conference as unknown as Record<string, unknown>;
+function readCallStateValue(call: CallLikeRecord): string | null {
+  const watchable = call.state as CallStateWatchable | undefined;
+  if (watchable && typeof watchable === "object" && "value" in watchable) {
+    const watchableState = watchable.value;
+    if (typeof watchableState === "string") return normalizeCallState(watchableState);
+  }
+  return normalizeCallState(
+    readCallStringField(call, "state", "state") ??
+      readCallStringField(call, "status", "status"),
+  );
+}
+
+function readCallConferenceName(call: CallLikeRecord): string | null {
+  const value = call.conferenceName;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return null;
+}
+
+export function resolveConferenceCallReference(input: {
+  conference: VoxConference;
+  activeEntry: ActiveConferenceCallRefEntry | null;
+}): CallLookupResult {
+  if (input.activeEntry) {
+    const call = input.activeEntry.call;
+    const callId =
+      readCallStringField(call, "id", "id") ??
+      readCallStringField(call, "callId", "callId");
+    const callState = readCallStateValue(call);
+    return {
+      call,
+      lookupMethod: "activeConferenceCallRef.current",
+      source: "EXPLICIT_ACTIVE_CALL_REF",
+      callId,
+      callIdSanitized: sanitizeCallId(callId),
+      callState,
+      conferenceName: input.activeEntry.conferenceName ?? readCallConferenceName(call),
+      generation: input.activeEntry.generation,
+      connectedHint: input.activeEntry.connected,
+    };
+  }
+
+  const conf = input.conference as unknown as CallLikeRecord;
+  if (typeof conf.sendMessage === "function") {
+    const callId =
+      readCallStringField(conf, "id", "id") ??
+      readCallStringField(conf, "callId", "callId");
+    return {
+      call: conf,
+      lookupMethod: "conference.sendMessage",
+      source: "DOCUMENTED_CONFERENCE_API",
+      callId,
+      callIdSanitized: sanitizeCallId(callId),
+      callState: readCallStateValue(conf),
+      conferenceName: readCallConferenceName(conf),
+      generation: null,
+      connectedHint: null,
+    };
+  }
+
+  const confRecord = input.conference as unknown as Record<string, unknown>;
   const candidates: Array<{ method: string; value: unknown }> = [
-    { method: "conference.call", value: conf.call },
-    { method: "conference._call", value: conf._call },
-    { method: "conference.__call", value: conf.__call },
-    { method: "conference.activeCall", value: conf.activeCall },
-    { method: "conference._activeCall", value: conf._activeCall },
-    { method: "conference.callSession", value: conf.callSession },
+    { method: "conference.call", value: confRecord.call },
+    { method: "conference._call", value: confRecord._call },
+    { method: "conference.__call", value: confRecord.__call },
+    { method: "conference.activeCall", value: confRecord.activeCall },
+    { method: "conference._activeCall", value: confRecord._activeCall },
+    { method: "conference.callSession", value: confRecord.callSession },
   ];
 
   for (const candidate of candidates) {
     if (!candidate.value || typeof candidate.value !== "object") continue;
-    const call = candidate.value as Record<string, unknown>;
+    const call = candidate.value as CallLikeRecord;
     const hasSend =
       typeof call.sendMessage === "function" ||
       typeof call["sendText"] === "function";
     const callId =
       readCallStringField(call, "id", "id") ??
       readCallStringField(call, "callId", "callId");
-    const callState = normalizeCallState(
-      readCallStringField(call, "state", "state") ??
-        readCallStringField(call, "status", "status"),
-    );
+    const callState = readCallStateValue(call);
     if (hasSend || callId || callState) {
       return {
         call,
         lookupMethod: candidate.method,
+        source: "LEGACY_HEURISTIC",
         callId,
+        callIdSanitized: sanitizeCallId(callId),
         callState,
+        conferenceName: readCallConferenceName(call),
+        generation: null,
+        connectedHint: null,
       };
     }
   }
@@ -650,8 +801,13 @@ function resolveConferenceCallReference(conference: VoxConference): CallLookupRe
   return {
     call: null,
     lookupMethod: "none",
+    source: "NOT_FOUND",
     callId: null,
+    callIdSanitized: null,
     callState: null,
+    conferenceName: null,
+    generation: null,
+    connectedHint: null,
   };
 }
 
@@ -699,6 +855,7 @@ export function useVoximplantRoom({
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
   const audioProcessingEnabledRef = useRef(true);
+  const activeConferenceCallTrackerRef = useRef(createActiveConferenceCallTracker());
 
   const invalidateGeneration = useCallback((reason: VoxLifecycleAbortReason) => {
     generationRef.current += 1;
@@ -1009,6 +1166,39 @@ export function useVoximplantRoom({
     }
   }, []);
 
+  const captureActiveConferenceCall = useCallback(
+    (conference: VoxConference, generation: number, currentConferenceName: string) => {
+      const call = conference as unknown as CallLikeRecord;
+      if (typeof call.sendMessage !== "function") return;
+      activeConferenceCallTrackerRef.current.capture({
+        call,
+        conferenceName: currentConferenceName,
+        generation,
+      });
+    },
+    [],
+  );
+
+  const confirmActiveConferenceCallConnected = useCallback(
+    (conference: VoxConference, generation: number) => {
+      activeConferenceCallTrackerRef.current.confirmConnected(
+        conference as unknown as CallLikeRecord,
+        generation,
+      );
+    },
+    [],
+  );
+
+  const clearActiveConferenceCallIfMatching = useCallback(
+    (conference: VoxConference, generation: number) => {
+      activeConferenceCallTrackerRef.current.clearIfMatches(
+        conference as unknown as CallLikeRecord,
+        generation,
+      );
+    },
+    [],
+  );
+
   /**
    * Send a text message to the VoxEngine scenario via conference.sendMessage().
    * Returns true on success, false when unavailable (not connected or SDK missing).
@@ -1028,13 +1218,19 @@ export function useVoximplantRoom({
   }, []);
 
   const sendConferenceMessageDetailed = useCallback(
-    async (text: string): Promise<ConferenceMessageSendResult> => {
+    async (
+      text: string,
+      options?: ConferenceMessageSendOptions,
+    ): Promise<ConferenceMessageSendResult> => {
       const rt = runtimeRef.current;
       const base: ConferenceMessageSendResult = {
         callLookupMethod: "none",
+        callReferenceSource: "NOT_FOUND",
         callReferenceFound: false,
         callId: null,
+        callIdSanitized: null,
         callState: null,
+        conferenceName: null,
         callConnected: false,
         sendMethod: null,
         sendInvoked: false,
@@ -1044,6 +1240,24 @@ export function useVoximplantRoom({
         sendErrorCode: null,
         sendErrorMessage: null,
       };
+
+      if (options?.enforcePocRelay) {
+        const relayRole = options.relayContextRole?.trim().toUpperCase() ?? "";
+        if (relayRole !== "FACILITATOR") {
+          return {
+            ...base,
+            sendErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+            sendErrorMessage: "relay_context_not_facilitator",
+          };
+        }
+        if (!options.operationId?.trim()) {
+          return {
+            ...base,
+            sendErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
+            sendErrorMessage: "relay_operation_id_missing",
+          };
+        }
+      }
 
       if (!rt?.conference) {
         return {
@@ -1061,15 +1275,21 @@ export function useVoximplantRoom({
       }
 
       const conf = rt.conference as VoxConference;
-      const callRef = resolveConferenceCallReference(conf);
+      const callRef = resolveConferenceCallReference({
+        conference: conf,
+        activeEntry: activeConferenceCallTrackerRef.current.getCurrent(),
+      });
       const callConnectedFromState = isConnectedCallState(callRef.callState);
-      const callConnected = callConnectedFromState ?? rt.conferenceConnected;
+      const callConnected = callConnectedFromState ?? callRef.connectedHint ?? rt.conferenceConnected;
       const withCall: ConferenceMessageSendResult = {
         ...base,
         callLookupMethod: callRef.lookupMethod,
+        callReferenceSource: callRef.source,
         callReferenceFound: Boolean(callRef.call),
         callId: callRef.callId,
+        callIdSanitized: callRef.callIdSanitized,
         callState: callRef.callState,
+        conferenceName: callRef.conferenceName ?? rt.conferenceName ?? null,
         callConnected,
       };
 
@@ -1080,6 +1300,28 @@ export function useVoximplantRoom({
           sendErrorMessage: "call_reference_missing",
         };
       }
+      if (
+        callRef.source === "EXPLICIT_ACTIVE_CALL_REF" &&
+        callRef.generation !== null &&
+        callRef.generation !== rt.generation
+      ) {
+        return {
+          ...withCall,
+          sendErrorCode: "RECORDING_START_BROWSER_CALL_STALE",
+          sendErrorMessage: "active_call_generation_mismatch",
+        };
+      }
+      if (options?.enforcePocRelay && options.expectedConferenceName?.trim()) {
+        const expectedConferenceName = options.expectedConferenceName.trim();
+        const actualConferenceName = withCall.conferenceName?.trim() ?? "";
+        if (actualConferenceName !== expectedConferenceName) {
+          return {
+            ...withCall,
+            sendErrorCode: "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH",
+            sendErrorMessage: "call_conference_mismatch",
+          };
+        }
+      }
       if (!callConnected) {
         return {
           ...withCall,
@@ -1089,37 +1331,24 @@ export function useVoximplantRoom({
       }
 
       const callSend = callRef.call.sendMessage;
-      const conferenceSend = conf.sendMessage;
-      const invoke =
-        typeof callSend === "function"
-          ? (callSend as (payload: string) => unknown).bind(callRef.call)
-          : typeof conferenceSend === "function"
-            ? (conferenceSend as (payload: string) => unknown).bind(conf)
-            : null;
-      const sendMethod: ConferenceMessageSendResult["sendMethod"] =
-        typeof callSend === "function"
-          ? "call.sendMessage"
-          : typeof conferenceSend === "function"
-            ? "conference.sendMessage"
-            : null;
-      if (!invoke || !sendMethod) {
+      if (typeof callSend !== "function") {
         return {
           ...withCall,
           sendMethod: null,
           sendErrorCode: "RECORDING_START_BROWSER_SEND_NOT_INVOKED",
-          sendErrorMessage: "send_method_unavailable",
+          sendErrorMessage: "call_send_message_unavailable",
         };
       }
 
       const sendInvokedAt = new Date().toISOString();
       try {
-        const maybeResult = invoke(text);
+        const maybeResult = (callSend as (payload: string) => unknown).call(callRef.call, text);
         if (maybeResult && typeof (maybeResult as Promise<unknown>).then === "function") {
           await maybeResult;
         }
         return {
           ...withCall,
-          sendMethod,
+          sendMethod: "call.sendMessage",
           sendInvoked: true,
           sendCompleted: true,
           sendInvokedAt,
@@ -1128,7 +1357,7 @@ export function useVoximplantRoom({
       } catch (error) {
         return {
           ...withCall,
-          sendMethod,
+          sendMethod: "call.sendMessage",
           sendInvoked: true,
           sendCompleted: false,
           sendInvokedAt,
@@ -1180,6 +1409,7 @@ export function useVoximplantRoom({
 
   const clearStateAfterCleanup = useCallback(() => {
     sdkUsernameRef.current = null;
+    activeConferenceCallTrackerRef.current.clear();
     if (!mountedRef.current) return;
     setJoined(false);
     setRemoteParticipants([]);
@@ -1292,6 +1522,10 @@ export function useVoximplantRoom({
 
         if (runtimeSnapshot.conference) {
           runtimeSnapshot.conferenceConnected = false;
+          clearActiveConferenceCallIfMatching(
+            runtimeSnapshot.conference,
+            runtimeSnapshot.generation,
+          );
           try { runtimeSnapshot.conference.hangup(); } catch { /* ignore */ }
           runtimeSnapshot.conference = null;
         }
@@ -1316,7 +1550,7 @@ export function useVoximplantRoom({
       cleanupPromiseRef.current = promise;
       return promise;
     },
-    [clearStateAfterCleanup, invalidateGeneration],
+    [clearActiveConferenceCallIfMatching, clearStateAfterCleanup, invalidateGeneration],
   );
 
   useEffect(() => {
@@ -1895,6 +2129,7 @@ export function useVoximplantRoom({
           streamModule,
           videoQuality,
           conference,
+          conferenceName: roomName,
           conferenceConnected: false,
           localAudioStream,
           localVideoStream,
@@ -1913,9 +2148,11 @@ export function useVoximplantRoom({
           endpointSyncIntervalId: null,
         };
         runtimeRef.current = runtimeState;
+        captureActiveConferenceCall(conference, joinGeneration, roomName);
 
         const onConnected = () => {
           runtimeState.conferenceConnected = true;
+          confirmActiveConferenceCallConnected(conference, joinGeneration);
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           setJoined(true);
           setStatus("Подключено к переговорной комнате.");
@@ -1928,6 +2165,7 @@ export function useVoximplantRoom({
         };
         const onDisconnected = (event: VoxConferenceEvent) => {
           runtimeState.conferenceConnected = false;
+          clearActiveConferenceCallIfMatching(conference, joinGeneration);
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           const reason = event.payload?.reason ?? "Отключено.";
           setJoined(false);
@@ -1975,6 +2213,7 @@ export function useVoximplantRoom({
         // Step 7 — join.
         await conference.join();
         runtimeState.conferenceConnected = true;
+        confirmActiveConferenceCallConnected(conference, joinGeneration);
         assertGenerationCurrent(joinGeneration);
 
         // Detect conference.sendMessage() availability for recording relay.
@@ -2058,6 +2297,9 @@ export function useVoximplantRoom({
     applyRemoteVideoStream,
     beginJoinGeneration,
     cleanup,
+    clearActiveConferenceCallIfMatching,
+    confirmActiveConferenceCallConnected,
+    captureActiveConferenceCall,
     disableInitialCamera,
     disableInitialMic,
     broadcastTakeoverClaimed,

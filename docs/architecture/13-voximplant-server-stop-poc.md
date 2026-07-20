@@ -156,7 +156,8 @@ Sanitized `runs/<runId>/recording-start.json` (never cookies, join tokens, conne
   - `recordingBrowserCommandClaimedAt`
   - `recordingBrowserCommandReceivedAt`
   - browser context role/id
-  - call reference/id/state evidence
+  - call reference evidence (`recordingBrowserCallReferenceFound`, `recordingBrowserCallReferenceSource`)
+  - call readiness evidence (`recordingBrowserCallConnected`, `recordingBrowserCallIdSanitized`, `recordingBrowserCallState`, `recordingBrowserConferenceName`)
   - send invoke/completion/error evidence
   - deterministic relay owner metadata (`relayOwnerRole`, owner ids, `relayClaimedAt`, `relayConsumedAt`)
 - provider stages:
@@ -167,6 +168,9 @@ Sanitized `runs/<runId>/recording-start.json` (never cookies, join tokens, conne
 - typed `recordingStartFailureReason` (e.g. `RECORDING_START_UNAUTHORIZED`, not a generic collapse when precise)
 
 Orchestrator start path: facilitator `joinToken` + cookie → `/recording-control` (with pre-created `operationId`) → scenarioMessage relay via facilitator browser → wait for signed `recording_command_received` → `recorder_created` → `recording_started` callbacks correlated by `operationId` + conferenceName.
+
+Provider-free fixture records browser relay stages in this order:
+`RECORDING_START_AUTHORIZED` → `RECORDING_RELAY_CREATED` → `RECORDING_RELAY_CLAIMED` → `BROWSER_CONTEXT_SELECTED` → `BROWSER_CALL_REFERENCE_CAPTURED` → `BROWSER_CALL_CONNECTED` → `BROWSER_SEND_INVOKED` → `BROWSER_SEND_COMPLETED` → `PROVIDER_COMMAND_RECEIVED` → `RECORDER_CREATED` → `RECORDING_STARTED` → `RECORDING_START_FIXTURE_PASS`.
 
 POC scenario (`neg-conf.server-stop-poc.scenario.js`) listens for `CallEvents.MessageReceived` / `recording_control` `action=start`, validates `operationId`, emits `recording_command_received` before recorder creation, captures `dialplanName` from `AppEvents.Started` as `providerRuleIdentity`, then creates `ConferenceRecorder`, calls `conference.sendMediaTo(recorder)`, and emits `recorder_created` + `recording_started` (server-stop HTTP protocol unchanged).
 

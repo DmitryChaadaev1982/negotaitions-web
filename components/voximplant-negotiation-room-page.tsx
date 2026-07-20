@@ -43,7 +43,10 @@ import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
-import type { ConferenceMessageSendResult } from "@/lib/voximplant/use-voximplant-room";
+import type {
+  ConferenceCallReferenceSource,
+  ConferenceMessageSendResult,
+} from "@/lib/voximplant/use-voximplant-room";
 import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
 import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
@@ -185,9 +188,19 @@ export type PocRelayRecordingStartResult = {
   recordingBrowserCommandReceivedAt: string | null;
   recordingBrowserContextRole: string | null;
   recordingBrowserContextId: string | null;
+  callReferenceFound: boolean;
+  callReferenceSource: ConferenceCallReferenceSource;
+  callConnected: boolean;
+  callIdSanitized: string | null;
+  callState: string | null;
+  conferenceName: string | null;
   recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallReferenceSource: ConferenceCallReferenceSource;
+  recordingBrowserCallConnected: boolean;
+  recordingBrowserCallIdSanitized: string | null;
   recordingBrowserCallId: string | null;
   recordingBrowserCallState: string | null;
+  recordingBrowserConferenceName: string | null;
   recordingBrowserSendMessageInvokedAt: string | null;
   recordingBrowserSendMessageCompletedAt: string | null;
   recordingBrowserSendMessageErrorCode: string | null;
@@ -204,6 +217,8 @@ export type PocRelayRecordingStartResult = {
     | "RECORDING_START_BROWSER_CONTEXT_MISMATCH"
     | "RECORDING_START_BROWSER_CALL_NOT_FOUND"
     | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+    | "RECORDING_START_BROWSER_CALL_STALE"
+    | "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH"
     | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
     | "RECORDING_START_BROWSER_SEND_FAILED"
     | null;
@@ -592,9 +607,19 @@ export default function VoximplantNegotiationRoomPage(
     (
       base: Omit<
         PocRelayRecordingStartResult,
+        | "callReferenceFound"
+        | "callReferenceSource"
+        | "callConnected"
+        | "callIdSanitized"
+        | "callState"
+        | "conferenceName"
         | "recordingBrowserCallReferenceFound"
+        | "recordingBrowserCallReferenceSource"
+        | "recordingBrowserCallConnected"
+        | "recordingBrowserCallIdSanitized"
         | "recordingBrowserCallId"
         | "recordingBrowserCallState"
+        | "recordingBrowserConferenceName"
         | "recordingBrowserSendMessageInvokedAt"
         | "recordingBrowserSendMessageCompletedAt"
         | "recordingBrowserSendMessageErrorCode"
@@ -609,6 +634,11 @@ export default function VoximplantNegotiationRoomPage(
           ? "RECORDING_START_BROWSER_CALL_NOT_FOUND"
           : sendResult.sendErrorCode === "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
             ? "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+            : sendResult.sendErrorCode === "RECORDING_START_BROWSER_CALL_STALE"
+              ? "RECORDING_START_BROWSER_CALL_STALE"
+              : sendResult.sendErrorCode ===
+                    "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH"
+                ? "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH"
             : sendResult.sendErrorCode ===
                   "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
               ? "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
@@ -625,9 +655,19 @@ export default function VoximplantNegotiationRoomPage(
       return {
         ...base,
         ok,
+        callReferenceFound: sendResult.callReferenceFound,
+        callReferenceSource: sendResult.callReferenceSource,
+        callConnected: sendResult.callConnected,
+        callIdSanitized: sendResult.callIdSanitized,
+        callState: sendResult.callState,
+        conferenceName: sendResult.conferenceName,
         recordingBrowserCallReferenceFound: sendResult.callReferenceFound,
+        recordingBrowserCallReferenceSource: sendResult.callReferenceSource,
+        recordingBrowserCallConnected: sendResult.callConnected,
+        recordingBrowserCallIdSanitized: sendResult.callIdSanitized,
         recordingBrowserCallId: sendResult.callId,
         recordingBrowserCallState: sendResult.callState,
+        recordingBrowserConferenceName: sendResult.conferenceName,
         recordingBrowserSendMessageInvokedAt: sendResult.sendInvokedAt,
         recordingBrowserSendMessageCompletedAt: sendResult.sendCompletedAt,
         recordingBrowserSendMessageErrorCode: callErrorCode,
@@ -649,27 +689,33 @@ export default function VoximplantNegotiationRoomPage(
       const contextRole = participantTypeRef.current ?? "UNKNOWN";
       const contextConnectionId = roomConnectionIdRef.current;
       const contextParticipantId = trackerParticipantIdRef.current;
-      const base: Omit<
-        PocRelayRecordingStartResult,
-        | "recordingBrowserCallReferenceFound"
-        | "recordingBrowserCallId"
-        | "recordingBrowserCallState"
-        | "recordingBrowserSendMessageInvokedAt"
-        | "recordingBrowserSendMessageCompletedAt"
-        | "recordingBrowserSendMessageErrorCode"
-        | "recordingBrowserCommandSentAt"
-        | "errorCode"
-        | "ok"
-      > = {
+      const base: Omit<PocRelayRecordingStartResult, "errorCode" | "ok"> = {
         recordingBrowserCommandClaimedAt: now,
         recordingBrowserCommandReceivedAt: now,
         recordingBrowserContextRole: String(contextRole),
         recordingBrowserContextId: contextConnectionId,
+        callReferenceFound: false,
+        callReferenceSource: "NOT_FOUND",
+        callConnected: false,
+        callIdSanitized: null,
+        callState: null,
+        conferenceName: null,
+        recordingBrowserCallReferenceFound: false,
+        recordingBrowserCallReferenceSource: "NOT_FOUND",
+        recordingBrowserCallConnected: false,
+        recordingBrowserCallIdSanitized: null,
+        recordingBrowserCallId: null,
+        recordingBrowserCallState: null,
+        recordingBrowserConferenceName: null,
+        recordingBrowserSendMessageInvokedAt: null,
+        recordingBrowserSendMessageCompletedAt: null,
+        recordingBrowserSendMessageErrorCode: null,
         relayOwnerRole: null,
         relayOwnerParticipantId: contextParticipantId,
         relayOwnerConnectionId: null,
         relayClaimedAt: now,
         relayConsumedAt: now,
+        recordingBrowserCommandSentAt: null,
         operationId: null,
       };
 
@@ -706,6 +752,8 @@ export default function VoximplantNegotiationRoomPage(
       const expectedOperationId =
         typeof payload?.operationId === "string" ? payload.operationId.trim() : "";
       const operationId = expectedOperationId || operationIdFromMessage || null;
+      const expectedSessionId =
+        typeof payload?.expectedSessionId === "string" ? payload.expectedSessionId.trim() : "";
       if (!operationId) {
         return {
           ...base,
@@ -736,6 +784,15 @@ export default function VoximplantNegotiationRoomPage(
           errorCode: "RECORDING_START_OPERATION_MISMATCH",
         };
       }
+      if (expectedSessionId && expectedSessionId !== props.sessionId) {
+        return {
+          ...base,
+          ok: false,
+          recordingBrowserSendMessageErrorCode: "RECORDING_START_OPERATION_MISMATCH",
+          operationId,
+          errorCode: "RECORDING_START_OPERATION_MISMATCH",
+        };
+      }
 
       if (scenarioMessage.sessionId && scenarioMessage.sessionId !== props.sessionId) {
         return {
@@ -754,12 +811,17 @@ export default function VoximplantNegotiationRoomPage(
       }
 
       const priorMeta = relayOperationMetaRef.current.get(operationId);
+      const expectedConferenceName =
+        typeof payload?.expectedConferenceName === "string" &&
+        payload.expectedConferenceName.trim()
+          ? payload.expectedConferenceName.trim()
+          : typeof scenarioMessage.conferenceName === "string" &&
+              scenarioMessage.conferenceName.trim()
+            ? scenarioMessage.conferenceName.trim()
+            : null;
       const nextMeta = {
         sessionId: props.sessionId,
-        conferenceName:
-          typeof scenarioMessage.conferenceName === "string"
-            ? scenarioMessage.conferenceName
-            : null,
+        conferenceName: expectedConferenceName,
       };
       if (
         priorMeta &&
@@ -861,6 +923,12 @@ export default function VoximplantNegotiationRoomPage(
       relayOperationMetaRef.current.set(operationId, nextMeta);
       const sendResult = await sendConferenceMessageDetailedRef.current(
         JSON.stringify(scenarioMessage as RecordingControlMessage),
+        {
+          enforcePocRelay: true,
+          relayContextRole: String(contextRole),
+          operationId,
+          expectedConferenceName,
+        },
       );
       const relayResult = projectRelayResult(
         {

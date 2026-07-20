@@ -1032,9 +1032,19 @@ export async function runPocOrchestrator(
             recordingBrowserCommandReceivedAt: new Date(nowMs()).toISOString(),
             recordingBrowserContextRole: null,
             recordingBrowserContextId: null,
+            callReferenceFound: relayRaw,
+            callReferenceSource: relayRaw ? "EXPLICIT_ACTIVE_CALL_REF" : "NOT_FOUND",
+            callConnected: relayRaw,
+            callIdSanitized: null,
+            callState: relayRaw ? "connected" : null,
+            conferenceName,
             recordingBrowserCallReferenceFound: relayRaw,
+            recordingBrowserCallReferenceSource: relayRaw ? "EXPLICIT_ACTIVE_CALL_REF" : "NOT_FOUND",
+            recordingBrowserCallConnected: relayRaw,
+            recordingBrowserCallIdSanitized: null,
             recordingBrowserCallId: null,
             recordingBrowserCallState: null,
+            recordingBrowserConferenceName: conferenceName,
             recordingBrowserSendMessageInvokedAt: relayRaw
               ? new Date(nowMs()).toISOString()
               : null,
@@ -1066,9 +1076,17 @@ export async function runPocOrchestrator(
       relayResult.recordingBrowserContextId;
     recordingEvidence.recordingBrowserCallReferenceFound =
       relayResult.recordingBrowserCallReferenceFound;
+    recordingEvidence.recordingBrowserCallReferenceSource =
+      relayResult.recordingBrowserCallReferenceSource;
+    recordingEvidence.recordingBrowserCallConnected =
+      relayResult.recordingBrowserCallConnected;
+    recordingEvidence.recordingBrowserCallIdSanitized =
+      relayResult.recordingBrowserCallIdSanitized;
     recordingEvidence.recordingBrowserCallId = relayResult.recordingBrowserCallId;
     recordingEvidence.recordingBrowserCallState =
       relayResult.recordingBrowserCallState;
+    recordingEvidence.recordingBrowserConferenceName =
+      relayResult.recordingBrowserConferenceName;
     recordingEvidence.recordingBrowserSendMessageInvokedAt =
       relayResult.recordingBrowserSendMessageInvokedAt;
     recordingEvidence.recordingBrowserSendMessageCompletedAt =

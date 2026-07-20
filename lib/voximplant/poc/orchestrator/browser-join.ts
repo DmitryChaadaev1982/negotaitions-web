@@ -114,9 +114,27 @@ export type BrowserRelayRecordingStartResult = {
   recordingBrowserCommandReceivedAt: string | null;
   recordingBrowserContextRole: string | null;
   recordingBrowserContextId: string | null;
+  callReferenceFound: boolean;
+  callReferenceSource:
+    | "EXPLICIT_ACTIVE_CALL_REF"
+    | "DOCUMENTED_CONFERENCE_API"
+    | "LEGACY_HEURISTIC"
+    | "NOT_FOUND";
+  callConnected: boolean;
+  callIdSanitized: string | null;
+  callState: string | null;
+  conferenceName: string | null;
   recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallReferenceSource:
+    | "EXPLICIT_ACTIVE_CALL_REF"
+    | "DOCUMENTED_CONFERENCE_API"
+    | "LEGACY_HEURISTIC"
+    | "NOT_FOUND";
+  recordingBrowserCallConnected: boolean;
+  recordingBrowserCallIdSanitized: string | null;
   recordingBrowserCallId: string | null;
   recordingBrowserCallState: string | null;
+  recordingBrowserConferenceName: string | null;
   recordingBrowserSendMessageInvokedAt: string | null;
   recordingBrowserSendMessageCompletedAt: string | null;
   recordingBrowserSendMessageErrorCode: string | null;
@@ -1547,9 +1565,19 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
                 recordingBrowserCommandReceivedAt: null,
                 recordingBrowserContextRole: null,
                 recordingBrowserContextId: null,
+                callReferenceFound: false,
+                callReferenceSource: "NOT_FOUND",
+                callConnected: false,
+                callIdSanitized: null,
+                callState: null,
+                conferenceName: null,
                 recordingBrowserCallReferenceFound: false,
+                recordingBrowserCallReferenceSource: "NOT_FOUND",
+                recordingBrowserCallConnected: false,
+                recordingBrowserCallIdSanitized: null,
                 recordingBrowserCallId: null,
                 recordingBrowserCallState: null,
+                recordingBrowserConferenceName: null,
                 recordingBrowserSendMessageInvokedAt: null,
                 recordingBrowserSendMessageCompletedAt: null,
                 recordingBrowserSendMessageErrorCode:
@@ -1587,9 +1615,19 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
                   recordingBrowserCommandReceivedAt: null,
                   recordingBrowserContextRole: null,
                   recordingBrowserContextId: null,
+                  callReferenceFound: false,
+                  callReferenceSource: "NOT_FOUND",
+                  callConnected: false,
+                  callIdSanitized: null,
+                  callState: null,
+                  conferenceName: null,
                   recordingBrowserCallReferenceFound: false,
+                  recordingBrowserCallReferenceSource: "NOT_FOUND",
+                  recordingBrowserCallConnected: false,
+                  recordingBrowserCallIdSanitized: null,
                   recordingBrowserCallId: null,
                   recordingBrowserCallState: null,
+                  recordingBrowserConferenceName: null,
                   recordingBrowserSendMessageInvokedAt: null,
                   recordingBrowserSendMessageCompletedAt: null,
                   recordingBrowserSendMessageErrorCode:
@@ -1611,9 +1649,19 @@ export const playwrightBrowserPrewarm: BrowserPrewarmFn = async (input) => {
                 recordingBrowserCommandReceivedAt: null,
                 recordingBrowserContextRole: null,
                 recordingBrowserContextId: null,
+                callReferenceFound: false,
+                callReferenceSource: "NOT_FOUND",
+                callConnected: false,
+                callIdSanitized: null,
+                callState: null,
+                conferenceName: null,
                 recordingBrowserCallReferenceFound: false,
+                recordingBrowserCallReferenceSource: "NOT_FOUND",
+                recordingBrowserCallConnected: false,
+                recordingBrowserCallIdSanitized: null,
                 recordingBrowserCallId: null,
                 recordingBrowserCallState: null,
+                recordingBrowserConferenceName: null,
                 recordingBrowserSendMessageInvokedAt: null,
                 recordingBrowserSendMessageCompletedAt: null,
                 recordingBrowserSendMessageErrorCode:

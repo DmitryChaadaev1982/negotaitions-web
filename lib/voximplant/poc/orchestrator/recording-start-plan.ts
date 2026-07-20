@@ -23,6 +23,8 @@ export type RecordingStartFailureCode =
   | "RECORDING_START_BROWSER_CONTEXT_MISMATCH"
   | "RECORDING_START_BROWSER_CALL_NOT_FOUND"
   | "RECORDING_START_BROWSER_CALL_NOT_CONNECTED"
+  | "RECORDING_START_BROWSER_CALL_STALE"
+  | "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH"
   | "RECORDING_START_BROWSER_SEND_NOT_INVOKED"
   | "RECORDING_START_BROWSER_SEND_FAILED"
   | "RECORDING_START_SCENARIO_REJECTED"
@@ -45,8 +47,16 @@ export type RecordingStartEvidence = {
   recordingBrowserContextRole: string | null;
   recordingBrowserContextId: string | null;
   recordingBrowserCallReferenceFound: boolean;
+  recordingBrowserCallReferenceSource:
+    | "EXPLICIT_ACTIVE_CALL_REF"
+    | "DOCUMENTED_CONFERENCE_API"
+    | "LEGACY_HEURISTIC"
+    | "NOT_FOUND";
+  recordingBrowserCallConnected: boolean;
+  recordingBrowserCallIdSanitized: string | null;
   recordingBrowserCallId: string | null;
   recordingBrowserCallState: string | null;
+  recordingBrowserConferenceName: string | null;
   recordingBrowserSendMessageInvokedAt: string | null;
   recordingBrowserSendMessageCompletedAt: string | null;
   recordingBrowserSendMessageErrorCode: string | null;
@@ -92,8 +102,12 @@ export function emptyRecordingStartEvidence(
     recordingBrowserContextRole: null,
     recordingBrowserContextId: null,
     recordingBrowserCallReferenceFound: false,
+    recordingBrowserCallReferenceSource: "NOT_FOUND",
+    recordingBrowserCallConnected: false,
+    recordingBrowserCallIdSanitized: null,
     recordingBrowserCallId: null,
     recordingBrowserCallState: null,
+    recordingBrowserConferenceName: null,
     recordingBrowserSendMessageInvokedAt: null,
     recordingBrowserSendMessageCompletedAt: null,
     recordingBrowserSendMessageErrorCode: null,
@@ -209,6 +223,12 @@ export function classifyRecordingStartFailure(params: {
   }
   if (params.browserCallConnected === false) {
     return "RECORDING_START_BROWSER_CALL_NOT_CONNECTED";
+  }
+  if (params.browserSendErrorCode === "RECORDING_START_BROWSER_CALL_STALE") {
+    return "RECORDING_START_BROWSER_CALL_STALE";
+  }
+  if (params.browserSendErrorCode === "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH") {
+    return "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH";
   }
   if (params.browserSendInvoked === false) {
     return "RECORDING_START_BROWSER_SEND_NOT_INVOKED";

@@ -304,6 +304,42 @@ test("10g. browser send completion failure is typed", () => {
   );
 });
 
+test("10h. browser stale-call failure is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: true,
+      browserSendCompleted: false,
+      browserSendErrorCode: "RECORDING_START_BROWSER_CALL_STALE",
+    }),
+    "RECORDING_START_BROWSER_CALL_STALE",
+  );
+});
+
+test("10i. browser conference-mismatch failure is typed", () => {
+  assert.equal(
+    classifyRecordingStartFailure({
+      requestSent: true,
+      httpStatus: 200,
+      scenarioMessagePresent: true,
+      browserCommandClaimed: true,
+      browserContextMatch: true,
+      browserCallFound: true,
+      browserCallConnected: true,
+      browserSendInvoked: true,
+      browserSendCompleted: false,
+      browserSendErrorCode: "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH",
+    }),
+    "RECORDING_START_BROWSER_CALL_CONFERENCE_MISMATCH",
+  );
+});
+
 test("11. provider-free recording test script makes zero provider calls", () => {
   const source = readFileSync(
     join(
@@ -524,6 +560,33 @@ test("23. facilitator-only relay ownership is enforced in browser consumer", () 
   assert.match(source, /contextRole !== "FACILITATOR"/);
   assert.match(source, /relayOwnerRef/);
   assert.match(source, /RECORDING_START_BROWSER_CONTEXT_MISMATCH/);
+  assert.match(source, /sendConferenceMessageDetailedRef\.current\(/);
+  assert.match(source, /enforcePocRelay: true/);
+  assert.match(source, /recordingBrowserCallReferenceSource/);
+  assert.match(source, /recordingBrowserCallConnected/);
+  assert.match(source, /recordingBrowserCallIdSanitized/);
+});
+
+test("24. provider-free fixture stages include call-reference capture", () => {
+  const source = readFileSync(
+    join(
+      process.cwd(),
+      "lib/voximplant/poc/orchestrator/recording-start.ts",
+    ),
+    "utf8",
+  );
+  assert.match(source, /RECORDING_START_AUTHORIZED/);
+  assert.match(source, /RECORDING_RELAY_CREATED/);
+  assert.match(source, /RECORDING_RELAY_CLAIMED/);
+  assert.match(source, /BROWSER_CONTEXT_SELECTED/);
+  assert.match(source, /BROWSER_CALL_REFERENCE_CAPTURED/);
+  assert.match(source, /BROWSER_CALL_CONNECTED/);
+  assert.match(source, /BROWSER_SEND_INVOKED/);
+  assert.match(source, /BROWSER_SEND_COMPLETED/);
+  assert.match(source, /PROVIDER_COMMAND_RECEIVED/);
+  assert.match(source, /RECORDER_CREATED/);
+  assert.match(source, /RECORDING_STARTED/);
+  assert.match(source, /RECORDING_START_FIXTURE_PASS/);
 });
 
 test("recording-start artifact never contains secrets", () => {
