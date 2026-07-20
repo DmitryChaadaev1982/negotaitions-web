@@ -4,9 +4,12 @@
 // SERVER-STOP POC SCENARIO VARIANT (MANUAL PASTE ONLY)
 // ============================================================
 //
-// Purpose: prove Next.js → StartConference → media_session_access_url →
-// AppEvents.HttpRequest → ConferenceRecorder.stop() → RecorderEvents.Stopped
-// → POC callback / existing webhook path.
+// Purpose (full mode, browser-first):
+//   WebSDK createConference → AppEvents.Started → session_registered
+//   (mediaSessionAccessSecureUrl) → browser recording_control start →
+//   ConferenceRecorder → server HTTP stop_recording → RecorderEvents.Stopped.
+// Transport mode may still use Management API StartConference for isolated
+// control-URL tests.
 //
 // DO NOT auto-upload. DO NOT replace production neg-conf-main-room by default.
 // Paste into a dedicated POC scenario/rule in Voximplant Console for experiments.
@@ -32,11 +35,13 @@ try {
   Logger.write("[server-stop-poc] Modules.Recorder require failed");
 }
 
-var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-b1";
+var SCENARIO_BUILD_ID = "server-stop-poc-2026-07-20-c1";
 var SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
 /** Stable identity for async callback confirmation (must match lib/voximplant/poc/poc-safety.ts). */
 var SCENARIO_KIND = "voximplant_server_stop_poc";
 var PROTOCOL_VERSION = 1;
+/** Optional: set when pasting if rule identity is known (never production rule names). */
+var ROUTING_RULE_IDENTITY = "";
 
 var CONTROL_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__";
 var CALLBACK_SECRET = "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CALLBACK_SECRET_HERE__";
@@ -47,6 +52,9 @@ var POC_CALLBACK_URL = "";
 var REPLAY_WINDOW_MS = 5 * 60 * 1000;
 var CONFERENCE_NAME_PREFIX_POC = "neg-poc-server-stop-";
 var callSessionHistoryId = null;
+var mediaSessionAccessSecureUrl = null;
+var mediaSessionAccessUrl = null;
+var sessionRegisteredSent = false;
 
 var conference = null;
 var recorder = null;
@@ -306,8 +314,8 @@ function createNonce() {
   }
 }
 
-function buildCallbackPayload(eventType, action, operationId, recorderState, errorCode) {
-  return {
+function buildCallbackPayload(eventType, action, operationId, recorderState, errorCode, extraFields) {
+  var payload = {
     scenarioKind: SCENARIO_KIND,
     protocolVersion: PROTOCOL_VERSION,
     eventType: eventType,
@@ -315,11 +323,22 @@ function buildCallbackPayload(eventType, action, operationId, recorderState, err
     operationId: operationId || null,
     conferenceName: expectedConferenceName || null,
     callSessionHistoryId: callSessionHistoryId,
+    providerSessionId: callSessionHistoryId,
     recorderState: recorderState || registryState(),
     errorCode: errorCode || null,
     timestamp: safeNowIso(),
     nonce: createNonce(),
+    scenarioBuild: SCENARIO_BUILD_ID,
+    scenarioSource: SCENARIO_SOURCE_NAME,
+    routingRuleIdentity: ROUTING_RULE_IDENTITY || null,
   };
+  if (extraFields && typeof extraFields === "object") {
+    var keys = Object.keys(extraFields);
+    for (var i = 0; i < keys.length; i++) {
+      payload[keys[i]] = extraFields[keys[i]];
+    }
+  }
+  return payload;
 }
 
 function extractCallbackResponseCode(result) {
@@ -382,7 +401,7 @@ function logCallbackHttpResult(eventType, operationId, result) {
   );
 }
 
-function sendSignedPocCallback(eventType, action, operationId, recorderState, errorCode) {
+function sendSignedPocCallback(eventType, action, operationId, recorderState, errorCode, extraFields) {
   if (!POC_CALLBACK_URL) {
     log("POC callback skipped: POC_CALLBACK_URL empty");
     return;
@@ -396,7 +415,14 @@ function sendSignedPocCallback(eventType, action, operationId, recorderState, er
     return;
   }
 
-  var payload = buildCallbackPayload(eventType, action, operationId, recorderState, errorCode);
+  var payload = buildCallbackPayload(
+    eventType,
+    action,
+    operationId,
+    recorderState,
+    errorCode,
+    extraFields,
+  );
   var body = JSON.stringify(payload);
   var bodyHash = sha256Hex(body);
   var signingPayload =
@@ -453,14 +479,122 @@ function parseCustomDataConferenceName() {
       var raw = VoxEngine.customData();
       if (!raw) return null;
       if (typeof raw === "string") {
-        var parsed = JSON.parse(raw);
-        if (parsed && parsed.conferenceName) return String(parsed.conferenceName);
+        if (raw.indexOf(CONFERENCE_NAME_PREFIX_POC) === 0) return raw;
+        try {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.conferenceName) return String(parsed.conferenceName);
+        } catch (e2) {
+          if (raw.indexOf(CONFERENCE_NAME_PREFIX_POC) === 0) return raw;
+        }
       }
     }
   } catch (e) {
     log("customData parse failed");
   }
   return null;
+}
+
+function extractProviderSessionId(startedEvent) {
+  try {
+    if (startedEvent && startedEvent.sessionId != null) {
+      return String(startedEvent.sessionId);
+    }
+  } catch (e1) {}
+  try {
+    if (typeof VoxEngine !== "undefined" && VoxEngine.sessionId != null) {
+      return String(VoxEngine.sessionId);
+    }
+  } catch (e2) {}
+  return null;
+}
+
+function extractMediaSessionUrls(startedEvent) {
+  var secure = null;
+  var plain = null;
+  try {
+    if (startedEvent && startedEvent.accessSecureURL) {
+      secure = String(startedEvent.accessSecureURL);
+    }
+  } catch (e1) {}
+  try {
+    if (startedEvent && startedEvent.accessURL) {
+      plain = String(startedEvent.accessURL);
+    }
+  } catch (e2) {}
+  return { secure: secure, plain: plain };
+}
+
+function extractCallDestination(event) {
+  try {
+    if (event && event.destination) return String(event.destination);
+  } catch (e1) {}
+  try {
+    if (event && event.call && typeof event.call.number === "function") {
+      return String(event.call.number());
+    }
+  } catch (e2) {}
+  try {
+    if (event && event.headers && event.headers["VI-Call-To"]) {
+      return String(event.headers["VI-Call-To"]);
+    }
+  } catch (e3) {}
+  return null;
+}
+
+/**
+ * Register this media session with the app (control URL private on server).
+ * Idempotent per provider session ID.
+ */
+function trySendSessionRegistered(reason) {
+  if (sessionRegisteredSent) {
+    log("session_registered skipped — already sent reason=" + safeToString(reason));
+    return;
+  }
+  if (!mediaSessionAccessSecureUrl && !mediaSessionAccessUrl) {
+    log("session_registered deferred — control URL missing reason=" + safeToString(reason));
+    return;
+  }
+  if (!expectedConferenceName) {
+    log("session_registered deferred — conferenceName missing reason=" + safeToString(reason));
+    return;
+  }
+  if (expectedConferenceName.indexOf(CONFERENCE_NAME_PREFIX_POC) !== 0) {
+    log(
+      "session_registered refused — unexpected conference prefix conferenceName=" +
+        safeToString(expectedConferenceName),
+    );
+    return;
+  }
+  if (!callSessionHistoryId) {
+    log("session_registered deferred — providerSessionId missing reason=" + safeToString(reason));
+    return;
+  }
+
+  sessionRegisteredSent = true;
+  var operationId = "session-register-" + String(callSessionHistoryId);
+  log(
+    "session_registered sending source=" +
+      SCENARIO_SOURCE_NAME +
+      " build=" +
+      SCENARIO_BUILD_ID +
+      " conferenceName=" +
+      safeToString(expectedConferenceName) +
+      " providerSessionId=" +
+      safeToString(callSessionHistoryId) +
+      " reason=" +
+      safeToString(reason),
+  );
+  sendSignedPocCallback(
+    "session_registered",
+    "register",
+    operationId,
+    registryState(),
+    null,
+    {
+      mediaSessionAccessSecureUrl: mediaSessionAccessSecureUrl,
+      mediaSessionAccessUrl: mediaSessionAccessUrl,
+    },
+  );
 }
 
 function verifyControlRequest(e, bodyText) {
@@ -538,6 +672,7 @@ var pendingStartRequestId = null;
  * Idempotent one-recorder guard — does not alter server-stop HTTP control protocol.
  */
 function startRecordingFromBrowser(requestId) {
+  log("recording_start_accepted requestId=" + safeToString(requestId));
   if (recorder && recorderRegistry.recordingStarted) {
     log("recording_control start ignored — recorder already active requestId=" + safeToString(requestId));
     sendSignedPocCallback(
@@ -581,10 +716,24 @@ function startRecordingFromBrowser(requestId) {
       );
       return { ok: false, errorCode: "recorder_create_failed" };
     }
+    log("recorder_created requestId=" + safeToString(requestId));
     recorderRegistry.exists = true;
     attachRecorderHandlers();
     conference.sendMediaTo(recorder);
-    log("recording_control start — ConferenceRecorder created requestId=" + safeToString(requestId));
+    log("recorder_media_attached requestId=" + safeToString(requestId));
+    // createRecorder + sendMediaTo is the provider recording-start boundary.
+    // RecorderEvents.Started (when available) also emits recording_started.
+    if (!recorderRegistry.recordingStarted) {
+      recorderRegistry.recordingStarted = true;
+      log("recording_started requestId=" + safeToString(requestId));
+      sendSignedPocCallback(
+        "recording_started",
+        "start",
+        requestId || pendingStartRequestId,
+        STATE_RECORDING_STARTED,
+        null,
+      );
+    }
     return { ok: true, errorCode: null };
   } catch (e) {
     log("recording_control start exception: " + safeToString(e));
@@ -627,6 +776,12 @@ function handleRecordingControlMessage(msgEvent) {
   var payload = parseRecordingControlPayload(msgEvent);
   if (!payload) return;
   log(
+    "scenario_message_received action=" +
+      safeToString(payload.action) +
+      " requestId=" +
+      safeToString(payload.requestId),
+  );
+  log(
     "recording_control received action=" +
       safeToString(payload.action) +
       " requestId=" +
@@ -646,6 +801,10 @@ function attachRecorderHandlers() {
   try {
     recorder.addEventListener(RecorderEvents.Started, function () {
       recorderRegistry.exists = true;
+      if (recorderRegistry.recordingStarted) {
+        log("RecorderEvents.Started (idempotent — already recorded)");
+        return;
+      }
       recorderRegistry.recordingStarted = true;
       log("RecorderEvents.Started");
       // Provider-level start evidence (no recording URL in callback).
@@ -899,7 +1058,18 @@ function handleIncomingCall(event) {
   } catch (e) {
     callId = "unknown";
   }
-  log("incoming call callId=" + callId);
+  if (!expectedConferenceName) {
+    expectedConferenceName = extractCallDestination(event);
+  }
+  log(
+    "incoming call callId=" +
+      callId +
+      " conferenceName=" +
+      safeToString(expectedConferenceName) +
+      " providerSessionId=" +
+      safeToString(callSessionHistoryId),
+  );
+  trySendSessionRegistered("CallAlerting");
   try {
     call.answer();
   } catch (e2) {
@@ -934,11 +1104,22 @@ function handleIncomingCall(event) {
 
 function onAppStarted(e) {
   expectedConferenceName = parseCustomDataConferenceName();
+  callSessionHistoryId = extractProviderSessionId(e);
+  var urls = extractMediaSessionUrls(e);
+  mediaSessionAccessSecureUrl = urls.secure;
+  mediaSessionAccessUrl = urls.plain;
   // Never log raw Application.Started — it contains accessURL / accessSecureURL.
   log(
-    "scenario build=" + SCENARIO_BUILD_ID +
-      " source=" + SCENARIO_SOURCE_NAME +
-      " conferenceName=" + safeToString(expectedConferenceName) +
+    "scenario loaded source=" +
+      SCENARIO_SOURCE_NAME +
+      " build=" +
+      SCENARIO_BUILD_ID +
+      " conferenceName=" +
+      safeToString(expectedConferenceName) +
+      " providerSessionId=" +
+      safeToString(callSessionHistoryId) +
+      " hasControlUrl=" +
+      Boolean(mediaSessionAccessSecureUrl || mediaSessionAccessUrl) +
       " controlSecretConfigured=" +
       isSecretConfigured(CONTROL_SECRET, "__PASTE_VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET_HERE__") +
       " callbackSecretConfigured=" +
@@ -964,6 +1145,8 @@ function onAppStarted(e) {
   } catch (err2) {
     log("HttpRequest listener failed: " + safeToString(err2));
   }
+
+  trySendSessionRegistered("AppEvents.Started");
 }
 
 VoxEngine.addEventListener(AppEvents.Started, onAppStarted);

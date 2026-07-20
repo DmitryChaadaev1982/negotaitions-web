@@ -15,12 +15,16 @@ Configure an **isolated** Voximplant rule/scenario pair. Do **not** replace or e
 2. **Dedicated POC routing rule** attached **only** to `neg-conf-server-stop-poc`  
    Do not point the production/default room rule at this scenario.
 
-3. **POC-only routing pattern**, for example:  
-   `^neg-poc-server-stop-.*`  
-   Ordinary `negotiation-{sessionId}` room traffic must not match this pattern.
+3. **Exact Voximplant Console routing (full browser-first mode)**  
+   - Rule name (suggested): `neg-poc-server-stop-rule`  
+   - Pattern (destination / conference): `neg-poc-server-stop-*` (or regex `^neg-poc-server-stop-.*`)  
+   - Scenario: `neg-conf-server-stop-poc` only (build marker `server-stop-poc-2026-07-20-c1`)  
+   - **Priority / order: above** `negotaitions-conference-rule` (and any other production conference rule) so POC names never fall through to `neg-conf`  
+   - Do **not** edit `negotaitions-conference-rule` / production pattern  
+   Ordinary `negotiation-{sessionId}` room traffic must not match the POC pattern.
 
 4. **The POC rule must not be the production room rule**  
-   Known production rule names include `negotaitions-negotiation-room-rule` (and legacy `negotaitions-conference-rule`). The live command refuses if the configured POC rule id/name matches production configuration.
+   Known production rule names include `negotaitions-negotiation-room-rule` (and legacy `negotaitions-conference-rule`). The live command refuses if the configured POC rule id/name matches production configuration. Full mode also refuses `session_registered` callbacks that report production rule/scenario/build.
 
 5. **Configure the exact POC rule ID locally** (required for live calls):  
    - `VOXIMPLANT_SERVER_STOP_POC_RULE_ID=<dedicated-poc-rule-id>`  

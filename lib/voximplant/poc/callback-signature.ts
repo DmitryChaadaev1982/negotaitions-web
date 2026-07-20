@@ -6,6 +6,7 @@ import {
 } from "@/lib/voximplant/poc/poc-safety";
 
 export const POC_CALLBACK_EVENT_TYPES = [
+  "session_registered",
   "command_accepted",
   "command_rejected",
   "recording_started",
@@ -26,10 +27,18 @@ export type PocCallbackPayload = {
   operationId: string | null;
   conferenceName: string | null;
   callSessionHistoryId: string | null;
+  /** Alias for callSessionHistoryId when scenario sends providerSessionId. */
+  providerSessionId?: string | null;
   recorderState: string | null;
   errorCode: string | null;
   timestamp: string;
   nonce: string;
+  scenarioBuild?: string | null;
+  scenarioSource?: string | null;
+  routingRuleIdentity?: string | null;
+  /** Private capability URL — never persisted to public state/events. */
+  mediaSessionAccessSecureUrl?: string | null;
+  mediaSessionAccessUrl?: string | null;
 };
 
 export type PocCallbackSignedFields = {
@@ -186,10 +195,16 @@ export function buildPocCallbackPayload(params: {
   operationId?: string | null;
   conferenceName?: string | null;
   callSessionHistoryId?: string | null;
+  providerSessionId?: string | null;
   recorderState?: string | null;
   errorCode?: string | null;
   timestamp?: string;
   nonce?: string;
+  scenarioBuild?: string | null;
+  scenarioSource?: string | null;
+  routingRuleIdentity?: string | null;
+  mediaSessionAccessSecureUrl?: string | null;
+  mediaSessionAccessUrl?: string | null;
 }): PocCallbackPayload {
   return {
     scenarioKind: POC_SCENARIO_KIND,
@@ -199,10 +214,16 @@ export function buildPocCallbackPayload(params: {
     operationId: params.operationId ?? null,
     conferenceName: params.conferenceName ?? null,
     callSessionHistoryId: params.callSessionHistoryId ?? null,
+    providerSessionId: params.providerSessionId ?? params.callSessionHistoryId ?? null,
     recorderState: params.recorderState ?? null,
     errorCode: params.errorCode ?? null,
     timestamp: params.timestamp ?? new Date().toISOString(),
     nonce: params.nonce ?? createCallbackNonce(),
+    scenarioBuild: params.scenarioBuild ?? null,
+    scenarioSource: params.scenarioSource ?? null,
+    routingRuleIdentity: params.routingRuleIdentity ?? null,
+    mediaSessionAccessSecureUrl: params.mediaSessionAccessSecureUrl ?? null,
+    mediaSessionAccessUrl: params.mediaSessionAccessUrl ?? null,
   };
 }
 

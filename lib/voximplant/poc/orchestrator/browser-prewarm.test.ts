@@ -11,6 +11,12 @@ import {
   type OrchestratorDeps,
 } from "@/lib/voximplant/poc/orchestrator/run-orchestrator";
 import type { PocOrchestratorOptions } from "@/lib/voximplant/poc/orchestrator/types";
+import { readPocState, writePocState } from "@/lib/voximplant/poc/poc-state";
+import { applySessionRegisteredToState } from "@/lib/voximplant/poc/session-registration";
+import {
+  POC_EXPECTED_SCENARIO_BUILD,
+  POC_SCENARIO_SOURCE_NAME,
+} from "@/lib/voximplant/poc/poc-safety";
 
 function baseOptions(
   overrides: Partial<PocOrchestratorOptions> = {},
@@ -114,7 +120,7 @@ function baseDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
       code: "CALLBACK_SELF_TEST_PASSED",
       details: {},
     }),
-    browserPrewarm: async () => {
+    browserPrewarm: async (prewarmParams) => {
       prewarmCalls += 1;
       deps.prewarmCalls = prewarmCalls;
       order.push("prewarm");
@@ -140,6 +146,25 @@ function baseDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
           liveJoinCalls += 1;
           deps.liveJoinCalls = liveJoinCalls;
           order.push("liveJoin");
+          const current = readPocState(prewarmParams.stateRoot);
+          if (current) {
+            const applied = applySessionRegisteredToState(
+              current,
+              {
+                conferenceName: params.expectedConferenceName,
+                callSessionHistoryId: "hist-1",
+                providerSessionId: "hist-1",
+                scenarioBuild: POC_EXPECTED_SCENARIO_BUILD,
+                scenarioSource: POC_SCENARIO_SOURCE_NAME,
+                routingRuleIdentity: "neg-poc-server-stop-rule",
+                mediaSessionAccessSecureUrl:
+                  "https://example.invalid/session/ctrl",
+                mediaSessionAccessUrl: "https://example.invalid/session/ctrl",
+              },
+              { stateRoot: prewarmParams.stateRoot },
+            );
+            if (applied.ok) writePocState(applied.state, prewarmParams.stateRoot);
+          }
           const fac = emptyBrowserContextEvidence(
             "facilitator",
             "session",
@@ -279,7 +304,7 @@ function baseDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
   return deps;
 }
 
-test("1. browsers are prewarmed before StartConference", async () => {
+test("1. browsers are prewarmed before live join (no StartConference in full mode)", async () => {
   const previousDb = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
   process.env.VOXIMPLANT_SERVER_STOP_POC_CONTROL_SECRET =
@@ -287,10 +312,11 @@ test("1. browsers are prewarmed before StartConference", async () => {
     "control-secret-16chars!!!";
   try {
     const deps = baseDeps();
-    await runPocOrchestrator(baseOptions({ mode: "full" }), deps);
+    const report = await runPocOrchestrator(baseOptions({ mode: "full" }), deps);
     const order = (deps as { order: string[] }).order;
-    assert.ok(order.indexOf("prewarm") < order.indexOf("startConference"));
-    assert.ok(order.indexOf("startConference") < order.indexOf("liveJoin"));
+    assert.ok(order.indexOf("prewarm") < order.indexOf("liveJoin"));
+    assert.equal(order.includes("startConference"), false);
+    assert.equal(report.startConferenceCallCount, 0);
   } finally {
     if (previousDb === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDb;
@@ -599,10 +625,15 @@ test("2c. successful prewarm reaches AUTH_CONTEXT_CREATED for both contexts", as
     assert.equal(capturedFacStage, "AUTH_CONTEXT_CREATED");
     assert.equal(capturedPartStage, "AUTH_CONTEXT_CREATED");
     assert.equal(participantCookieInstalled, false);
-    assert.equal(startCalls, 1);
+    assert.equal(startCalls, 0);
     assert.equal(report.facilitatorBrowserStage, "AUTH_CONTEXT_CREATED");
     assert.equal(report.participantBrowserStage, "AUTH_CONTEXT_CREATED");
-    assert.equal(report.failureStage, "start_conference");
+    // Prewarm ok but liveJoin intentionally throws / not run — join release fails.
+    assert.ok(
+      report.failureStage === "browser_join_release" ||
+        report.failureStage === "provider_session_registration" ||
+        report.failureStage === "recording_start",
+    );
   } finally {
     if (previousDb === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDb;
@@ -617,11 +648,12 @@ function markFacAuth() {
   };
 }
 
-test("3. StartConference occurs only after both auth contexts are ready", async () => {
+test("3. live join occurs only after both auth contexts are ready (no StartConference)", async () => {
   const previousDb = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
   try {
     let sawReady = false;
+    let startCalls = 0;
     const deps = baseDeps({
       browserPrewarm: async () => {
         sawReady = true;
@@ -643,44 +675,48 @@ test("3. StartConference occurs only after both auth contexts are ready", async 
             reachedStage: "ROOM_PAGE_LOADED",
           },
           evidence: {},
-          liveJoin: async () => ({
-            facilitatorJoined: false,
-            participantJoined: false,
-            sameConferenceConfirmed: false,
-            facilitatorConferenceName: null,
-            participantConferenceName: null,
-            browserRelayUsed: false,
-            failureCode: "CONFERENCE_JOIN_TIMEOUT",
-            facilitator: markJoinTimeout("facilitator"),
-            participant: markJoinTimeout("participant"),
-            timing: {
-              browserPrewarmStartedAt: null,
-              browserPrewarmCompletedAt: null,
-              startConferenceStartedAt: null,
-              startConferenceCompletedAt: null,
-              activeRunPublishedAt: null,
-              facilitatorAccessRequestedAt: null,
-              participantAccessRequestedAt: null,
-              facilitatorCallConnectedAt: null,
-              participantCallConnectedAt: null,
-              startConferenceToFirstAccessMs: null,
-              startConferenceToFirstJoinMs: null,
-              startConferenceToBothJoinedMs: null,
-            },
-            evidence: {},
-            close: async () => {},
-          }),
+          liveJoin: async () => {
+            assert.equal(sawReady, true);
+            return {
+              facilitatorJoined: false,
+              participantJoined: false,
+              sameConferenceConfirmed: false,
+              facilitatorConferenceName: null,
+              participantConferenceName: null,
+              browserRelayUsed: false,
+              failureCode: "CONFERENCE_JOIN_TIMEOUT",
+              facilitator: markJoinTimeout("facilitator"),
+              participant: markJoinTimeout("participant"),
+              timing: {
+                browserPrewarmStartedAt: null,
+                browserPrewarmCompletedAt: null,
+                startConferenceStartedAt: null,
+                startConferenceCompletedAt: null,
+                activeRunPublishedAt: null,
+                facilitatorAccessRequestedAt: null,
+                participantAccessRequestedAt: null,
+                facilitatorCallConnectedAt: null,
+                participantCallConnectedAt: null,
+                startConferenceToFirstAccessMs: null,
+                startConferenceToFirstJoinMs: null,
+                startConferenceToBothJoinedMs: null,
+              },
+              evidence: {},
+              close: async () => {},
+            };
+          },
           close: async () => {},
         };
       },
-      startConference: async (params) => {
-        assert.equal(sawReady, true);
-        return baseDeps().startConference!(params);
+      startConference: async () => {
+        startCalls += 1;
+        throw new Error("full mode must not StartConference");
       },
     });
     const report = await runPocOrchestrator(baseOptions(), deps);
-    assert.equal(report.startConferenceCallCount, 1);
-    assert.equal(report.failureStage, "browser_join");
+    assert.equal(report.startConferenceCallCount, 0);
+    assert.equal(startCalls, 0);
+    assert.equal(report.failureStage, "browser_join_release");
     assert.equal(sawReady, true);
   } finally {
     if (previousDb === undefined) delete process.env.DATABASE_URL;
@@ -688,14 +724,15 @@ test("3. StartConference occurs only after both auth contexts are ready", async 
   }
 });
 
-test("4/5. live join released once after StartConference with exact POC conference", async () => {
+test("4/5. live join released once with exact POC conference (no StartConference)", async () => {
   const previousDb = process.env.DATABASE_URL;
   process.env.DATABASE_URL = "postgres://localhost:5432/negotiations";
   try {
     const deps = baseDeps();
     const report = await runPocOrchestrator(baseOptions(), deps);
     assert.equal((deps as { liveJoinCalls: number }).liveJoinCalls, 1);
-    assert.equal((deps as { startCalls: number }).startCalls, 1);
+    assert.equal((deps as { startCalls: number }).startCalls, 0);
+    assert.equal(report.startConferenceCallCount, 0);
     assert.ok(report.conferenceName?.startsWith("neg-poc-server-stop-"));
     assert.equal(
       report.facilitatorSelectedConferenceName,

@@ -4,6 +4,8 @@
  * Usage:
  *   npm run poc:vox:test-callback -- --dry-run
  *   npm run poc:vox:test-callback
+ *   npm run poc:vox:test-callback -- --event=session_registered
+ *   npm run poc:vox:test-callback -- --event=session_registered --dry-run
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -25,6 +27,10 @@ import {
   findMatchingCallbackEvent,
   readPocState,
 } from "@/lib/voximplant/poc/poc-state";
+import {
+  POC_EXPECTED_SCENARIO_BUILD,
+  POC_SCENARIO_SOURCE_NAME,
+} from "@/lib/voximplant/poc/poc-safety";
 import { loadPocEnvFiles } from "./load-env";
 
 function hasFlag(name: string): boolean {
@@ -134,22 +140,51 @@ async function main(): Promise<void> {
     return;
   }
 
-  const payload = buildPocCallbackPayload({
-    eventType: "command_accepted",
-    action: "ping",
-    operationId,
-    conferenceName: state.conferenceName,
-    callSessionHistoryId: state.callSessionHistoryId,
-    recorderState: "absent",
-  });
+  const eventArg = readArg("--event") ?? "command_accepted";
+  const isSessionRegistered = eventArg === "session_registered";
+  const providerSessionId =
+    state.providerSessionId ??
+    state.callSessionHistoryId ??
+    `local-replay-${Date.now()}`;
+  const payload = isSessionRegistered
+    ? buildPocCallbackPayload({
+        eventType: "session_registered",
+        action: "register",
+        operationId: `session-register-${providerSessionId}`,
+        conferenceName: state.conferenceName,
+        callSessionHistoryId: providerSessionId,
+        providerSessionId,
+        scenarioBuild: POC_EXPECTED_SCENARIO_BUILD,
+        scenarioSource: POC_SCENARIO_SOURCE_NAME,
+        routingRuleIdentity:
+          process.env.VOXIMPLANT_SERVER_STOP_POC_RULE_NAME?.trim() ||
+          "neg-poc-server-stop-rule",
+        // Local replay only — never a real provider control URL.
+        mediaSessionAccessSecureUrl:
+          "https://example.invalid/poc-local-replay/session",
+        mediaSessionAccessUrl:
+          "https://example.invalid/poc-local-replay/session",
+        recorderState: "absent",
+      })
+    : buildPocCallbackPayload({
+        eventType: "command_accepted",
+        action: "ping",
+        operationId,
+        conferenceName: state.conferenceName,
+        callSessionHistoryId: state.callSessionHistoryId,
+        recorderState: "absent",
+      });
   const signed = buildSignedCallbackRequest({ payload, secret });
+  const matchOperationId = payload.operationId ?? operationId;
 
   if (dryRun) {
     console.log("[poc:vox:test-callback] dry-run request", {
-      operationId,
+      operationId: matchOperationId,
       eventType: payload.eventType,
       action: payload.action,
       conferenceName: payload.conferenceName,
+      scenarioBuild: payload.scenarioBuild ?? null,
+      hasControlUrlInBody: Boolean(payload.mediaSessionAccessSecureUrl),
       bodyLength: signed.body.length,
       headerKeys: Object.keys(signed.headers).sort(),
       signaturePresent: Boolean(signed.signature),
@@ -213,9 +248,9 @@ async function main(): Promise<void> {
   const after = readPocState();
   const matched = after
     ? findMatchingCallbackEvent(after, {
-        operationId,
-        eventType: "command_accepted",
-        action: "ping",
+        operationId: matchOperationId,
+        eventType: payload.eventType,
+        action: payload.action,
       })
     : null;
   const persisted = Boolean(matched);
@@ -233,7 +268,12 @@ async function main(): Promise<void> {
     CALLBACK_ROUTE_REACHED: routeReached,
     CALLBACK_SIGNATURE_ACCEPTED: signatureAccepted,
     CALLBACK_EVENT_PERSISTED: persisted,
-    operationId,
+    operationId: matchOperationId,
+    eventType: payload.eventType,
+    runtimeStatus: after?.runtimeStatus ?? null,
+    providerSessionId: after?.providerSessionId ?? null,
+    hasControlUrl: after?.hasControlUrl ?? false,
+    controlUrlFingerprint: after?.controlUrlFingerprint ?? null,
     callbackEventCount: after?.callbackEvents.length ?? 0,
   });
 

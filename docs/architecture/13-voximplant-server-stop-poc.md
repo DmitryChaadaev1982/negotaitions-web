@@ -1,6 +1,6 @@
 # 13 — Voximplant server-stop POC (isolated)
 
-Isolated proof of concept for server-controlled conference recording stop via Management API `StartConference` + media session HTTP control. Not integrated into `completeSessionCanonical()` / production room lifecycle.
+Isolated proof of concept for server-controlled conference recording stop. **Full mode is browser-first**: WebSDK creates one POC conference session; the dedicated scenario registers its media-session control URL via signed `session_registered`. Management API `StartConference` remains **transport mode only**. Not integrated into `completeSessionCanonical()` / production room lifecycle.
 
 ## One-command workflow
 
@@ -39,7 +39,7 @@ Helpers: `lib/voximplant/poc/**` and `lib/voximplant/poc/orchestrator/**`.
 - `.agent/voximplant-server-stop/runs/<runId>/voximplant.log.sanitized.txt`
 - `.agent/voximplant-server-stop/current.json` (atomic active-run pointer)
 
-The access route reads the active run pointer on every POC access request and selects the POC conference only when flag + linked Session + ACTIVE runtime + safe conference prefix all match. Otherwise `negotiation-{sessionId}` is preserved.
+The access route reads the active run pointer on every POC access request and selects the POC conference only when flag + linked Session + (`WAITING_FOR_PROVIDER_SESSION` or `ACTIVE`) + safe conference prefix all match. Otherwise `negotiation-{sessionId}` is preserved. Control URL operations require `ACTIVE` after `session_registered`.
 
 ## Modes
 
@@ -47,7 +47,11 @@ The access route reads the active run pointer on every POC access request and se
 | --- | --- | --- | --- | --- | --- |
 | `--dry-run` | none | no | no | no | no |
 | `--mode=transport --confirm-live-poc` | live | StartConference + ping | no | no | no |
-| `--mode=full --confirm-live-poc --confirm-local-db-write` | live + local DB | full E2E | temp entities | 2 contexts | server control URL |
+| `--mode=full --confirm-live-poc --confirm-local-db-write` | live + local DB | browser-created session + register + record + stop | temp entities | 2 contexts | server control URL from `session_registered` |
+
+Full-mode planned phases: `env_validation` → `local_db_safety` → `create_session` → `seed_waiting_run` → `callback_self_test` → `browser_prewarm` → `browser_join_release` → `provider_session_registration` → `browser_join_confirmation` → `recording_start` → `server_stop` → `artifact` → `log_fetch` → `cleanup` → `report`.
+
+`startConferenceCallCount` must remain `0` in full mode.
 
 ## Report execution kind and results
 
@@ -79,18 +83,23 @@ Result enum:
 
 ## Expected runtime
 
-Bounded phase timeouts (callback self-test, browser prewarm, StartConference, live browser join, recording start, command callback, terminal callback, artifact, log fetch). Idle media sessions without WebSDK participants still expire ~60s.
+Bounded phase timeouts (callback self-test, browser prewarm, provider session registration, live browser join, recording start, command callback, terminal callback, artifact, log fetch). Transport-mode idle StartConference sessions without WebSDK participants still expire ~60s.
 
-Full mode uses two browser phases so launch/auth do not consume the idle window:
+Full mode (browser-first) sequence:
 
-1. **browser_prewarm** (before StartConference): launch contexts, fake media, auth cookies/join-token room shells; hold `/voximplant/access` until live.
-2. **StartConference** + activate run pointer.
-3. **browser_join** (live): release both access/joins concurrently under a short budget (~25s).
+1. Seed run as `WAITING_FOR_PROVIDER_SESSION` and activate run pointer (access route may select POC conference name).
+2. **browser_prewarm**: launch contexts, fake media, auth cookies/join-token room shells; hold `/voximplant/access` until live.
+3. **browser_join_release**: release both access/joins; WebSDK `createConference` creates **one** provider media session.
+4. Dedicated POC scenario `AppEvents.Started` → signed **`session_registered`** (control URL private) → run becomes `ACTIVE`.
+5. **browser_join_confirmation**: both joins + same conference name + single registered provider session identity.
+6. Recording start (app HTTP + browser relay) → server stop via registered control URL.
+
+Typed refusals when the browser lands on the wrong scenario/rule/build: `POC_BROWSER_ROUTED_TO_PRODUCTION_RULE`, `POC_UNEXPECTED_SCENARIO`, `POC_UNEXPECTED_SCENARIO_BUILD`, `POC_PROVIDER_SESSION_ID_MISMATCH`, `POC_MULTIPLE_PROVIDER_SESSIONS_DETECTED`.
 
 Prewarm auth is role-split:
 
 - **Facilitator**: install canonical `auth_session=<rawSessionToken>` (same contract as `lib/auth` / E2E `createUserSession`) via a Playwright **URL-bound** cookie (`url` + `httpOnly`/`sameSite`/`secure` from `appBaseUrl` protocol). Never pass `url` together with `domain`/`path`. Never put `User.id` / `UserSession.id` into the cookie.
-- **Facilitator verification** (required before `AUTH_ACCEPTED` / StartConference): GET protected `/sessions/{sessionId}` — must not redirect to `/login`, host must remain `appBaseUrl`, temporary Session must be accessible. Nested typed reasons: `AUTH_COOKIE_MISSING`, `AUTH_COOKIE_REJECTED`, `AUTH_SESSION_NOT_FOUND`, `AUTH_USER_MISMATCH`, `AUTH_REDIRECTED_TO_LOGIN`, `AUTH_PROTECTED_ROUTE_DENIED`, `AUTH_VERIFICATION_HTTP_ERROR` (outer `FACILITATOR_AUTH_FAILED` when unclassified).
+- **Facilitator verification** (required before `AUTH_ACCEPTED` / join release): GET protected `/sessions/{sessionId}` — must not redirect to `/login`, host must remain `appBaseUrl`, temporary Session must be accessible. Nested typed reasons: `AUTH_COOKIE_MISSING`, `AUTH_COOKIE_REJECTED`, `AUTH_SESSION_NOT_FOUND`, `AUTH_USER_MISMATCH`, `AUTH_REDIRECTED_TO_LOGIN`, `AUTH_PROTECTED_ROUTE_DENIED`, `AUTH_VERIFICATION_HTTP_ERROR` (outer `FACILITATOR_AUTH_FAILED` when unclassified).
 - **Participant** (guest access closed): own `auth_session` / `UserSession` (never the facilitator cookie) + one navigation through the canonical join-token invite URL (`/room/{sessionId}?joinToken=…`). Join token is invite-claim only — not a guest identity and not exchanged into a cookie. The temporary fixture creates a distinct participant `User` + `UserSession` and returns `facilitatorAuth` / `participantAuth` separately. Live join resumes the durable account-mode context (does not re-hit joinToken). Access is account-cookie only (`apiRequireActiveUser` + `ensureAccountRoomParticipant`).
 - **Prewarm-only replay**: `npm run poc:vox:test-browser-prewarm -- --run-id <runId>` and `npm run poc:vox:test-participant-access -- --run-id <runId>` (provider-free access/POC_STATE check with temporary run pointer restore). Legacy runs lacking `participantAuthCookie` return `LEGACY_RUN_PARTICIPANT_FIXTURE_INCOMPLETE` (no DB repair).
 - **Isolated local fixture mode**: `npm run poc:vox:test-participant-access -- --create-fixture --confirm-local-db-write` creates a temporary namespaced fixture, validates participant auth + POC_STATE access (no provider calls), then deletes only cleanup-manifest entities.
@@ -115,7 +124,10 @@ Inspect a run: `npm run poc:vox:inspect-run -- --run-id <runId>` (sanitized phas
 Live `PASS` only (dry-run uses `DRY_RUN_PASS` and does not require live evidence):
 
 - callback self-test (`CALLBACK_SELF_TEST_PASSED`)
-- both WebSDK joins + same server-started conference
+- both WebSDK joins + same browser-created POC conference
+- dedicated POC scenario registered (`session_registered`) with expected build `server-stop-poc-2026-07-20-c1`
+- exactly one provider session identity across registration / browser / recording / stop / history
+- `startConferenceCallCount === 0`
 - recording started through application flow **with provider-level** `recording_started` evidence (HTTP/relay alone is insufficient)
 - `TRANSPORT_ACCEPTED` + `command_accepted` + `recording_stopped` / provider terminal
 - one effective stop (idempotent re-stop)
@@ -140,7 +152,7 @@ POC scenario (`neg-conf.server-stop-poc.scenario.js`) listens for `CallEvents.Me
 
 ## Runtime terminal states
 
-Typed `runtimeStatus`: `ACTIVE` | `COMPLETED` | `FAILED` | `INCONCLUSIVE` | `EXPIRED` | `UNKNOWN`.
+Typed `runtimeStatus`: `WAITING_FOR_PROVIDER_SESSION` | `ACTIVE` | `COMPLETED` | `FAILED` | `INCONCLUSIVE` | `EXPIRED` | `UNKNOWN`.
 
 On any terminal orchestrator result (`PASS` / `FAIL` / `INCONCLUSIVE`): clear `current.json` if it points at the run, mark the run terminal, delete private control URLs (prevent control URL reuse / access-route selection), close browsers, retain sanitized evidence.
 

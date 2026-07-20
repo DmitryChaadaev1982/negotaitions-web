@@ -35,6 +35,7 @@ export const POC_CALLBACK_NONCE_LIMIT = 100;
 
 /** Typed terminal + active runtime statuses. Failed runs must not stay ACTIVE. */
 export type PocRuntimeStatus =
+  | "WAITING_FOR_PROVIDER_SESSION"
   | "ACTIVE"
   | "COMPLETED"
   | "FAILED"
@@ -44,6 +45,10 @@ export type PocRuntimeStatus =
 
 export const POC_TERMINAL_RUNTIME_STATUSES: ReadonlySet<PocRuntimeStatus> =
   new Set(["COMPLETED", "FAILED", "INCONCLUSIVE", "EXPIRED"]);
+
+/** Statuses that allow access-route POC conference name selection. */
+export const POC_ACCESS_ELIGIBLE_RUNTIME_STATUSES: ReadonlySet<PocRuntimeStatus> =
+  new Set(["WAITING_FOR_PROVIDER_SESSION", "ACTIVE"]);
 
 export type PocCommandResult = {
   action: string;
@@ -93,9 +98,18 @@ export type VoximplantServerStopPocState = {
   linkedSessionId: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Local estimate of idle media-session expiry (StartConference + ~60s). */
+  /** Local estimate of idle media-session expiry (StartConference transport path). */
   expiresAt: string | null;
   runtimeStatus: PocRuntimeStatus;
+  /** When session_registered activated the run (ISO). */
+  providerSessionRegisteredAt: string | null;
+  /** Canonical provider media-session identity (callSessionHistoryId). */
+  providerSessionId: string | null;
+  providerScenarioBuild: string | null;
+  providerRuleIdentity: string | null;
+  browserConferenceName: string | null;
+  providerConferenceName: string | null;
+  singleProviderSessionConfirmed: boolean;
   lastCommand: PocCommandResult | null;
   lastStoppedEvent: {
     at: string;
@@ -133,6 +147,7 @@ function normalizeState(
       : null);
   const runtimeRaw = parsed.runtimeStatus;
   const runtimeStatus: PocRuntimeStatus =
+    runtimeRaw === "WAITING_FOR_PROVIDER_SESSION" ||
     runtimeRaw === "ACTIVE" ||
     runtimeRaw === "COMPLETED" ||
     runtimeRaw === "FAILED" ||
@@ -160,6 +175,15 @@ function normalizeState(
     updatedAt: parsed.updatedAt ?? new Date().toISOString(),
     expiresAt: parsed.expiresAt ?? null,
     runtimeStatus,
+    providerSessionRegisteredAt: parsed.providerSessionRegisteredAt ?? null,
+    providerSessionId:
+      parsed.providerSessionId ?? parsed.callSessionHistoryId ?? null,
+    providerScenarioBuild: parsed.providerScenarioBuild ?? null,
+    providerRuleIdentity: parsed.providerRuleIdentity ?? parsed.ruleId ?? null,
+    browserConferenceName: parsed.browserConferenceName ?? null,
+    providerConferenceName: parsed.providerConferenceName ?? null,
+    singleProviderSessionConfirmed:
+      parsed.singleProviderSessionConfirmed === true,
     lastCommand: parsed.lastCommand ?? null,
     lastStoppedEvent: parsed.lastStoppedEvent ?? null,
     stopEvidence: parsed.stopEvidence ?? null,
@@ -299,6 +323,7 @@ export function createEmptyPocState(params: {
   pocId: string;
   conferenceName: string;
   linkedSessionId?: string | null;
+  runtimeStatus?: PocRuntimeStatus;
 }): VoximplantServerStopPocState {
   const now = new Date().toISOString();
   return {
@@ -315,12 +340,38 @@ export function createEmptyPocState(params: {
     createdAt: now,
     updatedAt: now,
     expiresAt: null,
-    runtimeStatus: "UNKNOWN",
+    runtimeStatus: params.runtimeStatus ?? "UNKNOWN",
+    providerSessionRegisteredAt: null,
+    providerSessionId: null,
+    providerScenarioBuild: null,
+    providerRuleIdentity: null,
+    browserConferenceName: params.conferenceName,
+    providerConferenceName: null,
+    singleProviderSessionConfirmed: false,
     lastCommand: null,
     lastStoppedEvent: null,
     stopEvidence: null,
     callbackEvents: [],
     seenCallbackNonces: [],
+  };
+}
+
+/** Seed full-mode run before browsers create the provider session. */
+export function seedWaitingForProviderSession(
+  state: VoximplantServerStopPocState,
+): VoximplantServerStopPocState {
+  const now = new Date().toISOString();
+  return {
+    ...state,
+    runtimeStatus: "WAITING_FOR_PROVIDER_SESSION",
+    browserConferenceName: state.conferenceName,
+    providerConferenceName: null,
+    providerSessionId: null,
+    providerSessionRegisteredAt: null,
+    singleProviderSessionConfirmed: false,
+    hasControlUrl: false,
+    controlUrlFingerprint: null,
+    updatedAt: now,
   };
 }
 
@@ -358,6 +409,12 @@ export function applyStartConferenceToState(
   return {
     ...state,
     callSessionHistoryId: params.callSessionHistoryId,
+    providerSessionId: params.callSessionHistoryId,
+    providerSessionRegisteredAt: startedAt,
+    providerRuleIdentity: params.ruleId,
+    providerConferenceName: state.conferenceName,
+    browserConferenceName: state.browserConferenceName ?? state.conferenceName,
+    singleProviderSessionConfirmed: Boolean(params.callSessionHistoryId),
     // Public state never stores raw capability URLs.
     mediaSessionAccessUrl: null,
     mediaSessionAccessSecureUrl: null,
@@ -383,12 +440,22 @@ export function resolveRuntimeStatus(
     return state.runtimeStatus;
   }
 
+  // Waiting for browser-created session: no idle StartConference TTL.
+  if (state.runtimeStatus === "WAITING_FOR_PROVIDER_SESSION") {
+    return "WAITING_FOR_PROVIDER_SESSION";
+  }
+
   let expiresMs: number | null = null;
   if (state.expiresAt) {
     const parsed = Date.parse(state.expiresAt);
     if (Number.isFinite(parsed)) expiresMs = parsed;
-  } else if (state.createdAt) {
-    // Legacy state without expiresAt: apply observed ~60s idle TTL from createdAt.
+  } else if (
+    state.runtimeStatus === "ACTIVE" &&
+    state.hasControlUrl &&
+    state.createdAt &&
+    !state.providerSessionRegisteredAt
+  ) {
+    // Legacy StartConference path without expiresAt: ~60s idle TTL.
     const createdMs = Date.parse(state.createdAt);
     if (Number.isFinite(createdMs)) {
       expiresMs = createdMs + POC_IDLE_MEDIA_SESSION_TTL_MS;
@@ -573,6 +640,14 @@ export function toPublicPocStateView(state: VoximplantServerStopPocState) {
     updatedAt: state.updatedAt,
     expiresAt: state.expiresAt,
     runtimeStatus,
+    providerSessionRegisteredAt: state.providerSessionRegisteredAt,
+    providerSessionId: state.providerSessionId,
+    providerScenarioBuild: state.providerScenarioBuild,
+    providerRuleIdentity: state.providerRuleIdentity,
+    browserConferenceName: state.browserConferenceName,
+    providerConferenceName: state.providerConferenceName,
+    singleProviderSessionConfirmed: state.singleProviderSessionConfirmed,
+    registeredAt: state.providerSessionRegisteredAt,
     lastCommand: state.lastCommand,
     lastStoppedEvent: state.lastStoppedEvent,
     stopEvidence: state.stopEvidence,
@@ -596,12 +671,20 @@ export function toPublicPocStateView(state: VoximplantServerStopPocState) {
 /**
  * Resolve the active control URL from private control state only.
  * Ordinary state.json never holds raw URLs.
+ * Requires ACTIVE registered session (not WAITING / terminal).
  */
 export function getActiveControlUrl(
   state: VoximplantServerStopPocState,
   stateRoot?: string,
 ): string | null {
-  if (POC_TERMINAL_RUNTIME_STATUSES.has(resolveRuntimeStatus(state))) {
+  const runtime = resolveRuntimeStatus(state);
+  if (POC_TERMINAL_RUNTIME_STATUSES.has(runtime)) {
+    return null;
+  }
+  if (runtime !== "ACTIVE") {
+    return null;
+  }
+  if (!state.providerSessionId && !state.callSessionHistoryId) {
     return null;
   }
   return getPrivateControlUrl(state.pocId, stateRoot);

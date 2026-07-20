@@ -20,6 +20,11 @@ import {
   writePocState,
   readPocState,
 } from "@/lib/voximplant/poc/poc-state";
+import { applySessionRegisteredToState } from "@/lib/voximplant/poc/session-registration";
+import {
+  POC_EXPECTED_SCENARIO_BUILD,
+  POC_SCENARIO_SOURCE_NAME,
+} from "@/lib/voximplant/poc/poc-safety";
 import {
   activatePocRun,
   getPocRunPaths,
@@ -49,6 +54,7 @@ import type { BrowserJoinResult } from "@/lib/voximplant/poc/orchestrator/browse
 
 function mockJoinResult(
   overrides: Partial<BrowserJoinResult> = {},
+  conferenceName = "neg-poc-server-stop-x",
 ): BrowserJoinResult {
   const facilitator = emptyBrowserContextEvidence("facilitator", "session-x");
   const participant = emptyBrowserContextEvidence("participant", "session-x");
@@ -56,8 +62,8 @@ function mockJoinResult(
     facilitatorJoined: true,
     participantJoined: true,
     sameConferenceConfirmed: true,
-    facilitatorConferenceName: "neg-poc-server-stop-x",
-    participantConferenceName: "neg-poc-server-stop-x",
+    facilitatorConferenceName: conferenceName,
+    participantConferenceName: conferenceName,
     browserRelayUsed: false,
     failureCode: null,
     facilitator: {
@@ -206,7 +212,7 @@ function mockDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     },
     fetchImpl: (async () =>
       new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch,
-    browserPrewarm: async () => ({
+    browserPrewarm: async (params) => ({
       ok: true,
       failureCode: null,
       browserPrewarmStartedAt: "2026-07-20T16:00:00.000Z",
@@ -224,10 +230,35 @@ function mockDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
         roomPageLoaded: true,
       },
       evidence: {},
-      liveJoin: async () => mockJoinResult(),
+      liveJoin: async (live) => {
+        // Simulate dedicated POC scenario session_registered callback.
+        const current = readPocState(params.stateRoot);
+        if (current) {
+          const applied = applySessionRegisteredToState(
+            current,
+            {
+              conferenceName: live.expectedConferenceName,
+              callSessionHistoryId: "hist-browser-1",
+              providerSessionId: "hist-browser-1",
+              scenarioBuild: POC_EXPECTED_SCENARIO_BUILD,
+              scenarioSource: POC_SCENARIO_SOURCE_NAME,
+              routingRuleIdentity: "neg-poc-server-stop-rule",
+              mediaSessionAccessSecureUrl:
+                "https://example.invalid/session/ctrl",
+              mediaSessionAccessUrl: "https://example.invalid/session/ctrl",
+            },
+            { stateRoot: params.stateRoot },
+          );
+          if (applied.ok) {
+            writePocState(applied.state, params.stateRoot);
+          }
+        }
+        return mockJoinResult({}, live.expectedConferenceName);
+      },
       close: async () => {},
     }),
-    browserJoin: async () => mockJoinResult(),
+    browserJoin: async (params) =>
+      mockJoinResult({}, params.expectedConferenceName),
     sendControl: async () => ({
       dryRun: false,
       controlUrlFingerprint: "fp",
@@ -764,91 +795,63 @@ test("15. recording start failure prevents stop", async () => {
   }
 });
 
-test("16. transport accepted is non-terminal", () => {
-  assert.notEqual("TRANSPORT_ACCEPTED", "PROVIDER_TERMINAL");
-  const draft = {
+function fullPassDraft(
+  overrides: Partial<PocOrchestratorReport> = {},
+): Omit<PocOrchestratorReport, "result"> {
+  return {
     callbackSelfTest: true,
     browserFacilitatorJoined: true,
     browserParticipantJoined: true,
     sameConferenceConfirmed: true,
+    singleProviderSessionConfirmed: true,
+    startConferenceCallCount: 0,
+    registeredProviderSessionId: "hist-1",
+    browserProviderSessionId: "hist-1",
+    recordingProviderSessionId: "hist-1",
+    stopProviderSessionId: "hist-1",
+    historyProviderSessionId: "hist-1",
     recordingStarted: true,
     transportAccepted: true,
     commandAccepted: true,
-    providerTerminal: false,
+    providerTerminal: true,
     stopIdempotent: true,
     browserRelayUsed: false,
     artifactAvailable: true,
+    ...overrides,
   } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), false);
+}
+
+test("16. transport accepted is non-terminal", () => {
+  assert.notEqual("TRANSPORT_ACCEPTED", "PROVIDER_TERMINAL");
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ providerTerminal: false })),
+    false,
+  );
 });
 
 test("17. command callback is non-terminal", () => {
-  const draft = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: false,
-    stopIdempotent: true,
-    browserRelayUsed: false,
-    artifactAvailable: true,
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), false);
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ providerTerminal: false })),
+    false,
+  );
 });
 
 test("18. recording_stopped is terminal", () => {
-  const draft = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: true,
-    stopIdempotent: true,
-    browserRelayUsed: false,
-    artifactAvailable: true,
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), true);
+  assert.equal(evaluateFullPass(fullPassDraft()), true);
 });
 
 test("19. repeated stop is idempotent", () => {
-  // Covered by stopIdempotent report field requirement in PASS criteria.
-  const draft = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: true,
-    stopIdempotent: false,
-    browserRelayUsed: false,
-    artifactAvailable: true,
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), false);
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ stopIdempotent: false })),
+    false,
+  );
 });
 
 test("20. browser relay use fails the POC", () => {
-  const draft = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: true,
-    stopIdempotent: true,
-    browserRelayUsed: true,
-    artifactAvailable: true,
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), false);
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ browserRelayUsed: true })),
+    false,
+  );
 });
 
 test("21. provider log sanitizer removes capability URLs/signatures", () => {
@@ -865,39 +868,17 @@ test("21. provider log sanitizer removes capability URLs/signatures", () => {
 });
 
 test("22. log fetch unavailable is reported but not fatal", () => {
-  // PASS criteria do not require log fetch success.
-  const draft = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: true,
-    stopIdempotent: true,
-    browserRelayUsed: false,
-    artifactAvailable: true,
-    logFetchStatus: "LOG_FETCH_UNAVAILABLE",
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(draft), true);
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ logFetchStatus: "LOG_FETCH_UNAVAILABLE" })),
+    true,
+  );
 });
 
 test("23. report PASS criteria are strict", () => {
-  const almost = {
-    callbackSelfTest: true,
-    browserFacilitatorJoined: true,
-    browserParticipantJoined: true,
-    sameConferenceConfirmed: true,
-    recordingStarted: true,
-    transportAccepted: true,
-    commandAccepted: true,
-    providerTerminal: true,
-    stopIdempotent: true,
-    browserRelayUsed: false,
-    artifactAvailable: false,
-  } as unknown as Omit<PocOrchestratorReport, "result">;
-  assert.equal(evaluateFullPass(almost), false);
+  assert.equal(
+    evaluateFullPass(fullPassDraft({ artifactAvailable: false })),
+    false,
+  );
 });
 
 test("24. failure report includes evidence paths and sanitized DB target", async () => {

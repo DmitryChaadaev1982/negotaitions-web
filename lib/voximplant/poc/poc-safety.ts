@@ -10,6 +10,10 @@ export const POC_CONFERENCE_NAME_PREFIX = "neg-poc-server-stop-";
 export const POC_SCENARIO_KIND = "voximplant_server_stop_poc";
 export const POC_PROTOCOL_VERSION = 1;
 
+/** Dedicated POC scenario source / build (must match pasted scenario). */
+export const POC_SCENARIO_SOURCE_NAME = "neg-conf-server-stop-poc";
+export const POC_EXPECTED_SCENARIO_BUILD = "server-stop-poc-2026-07-20-c1";
+
 /**
  * Known production / default room routing identities from repo docs.
  * Used as a hard deny-list in addition to live env production config.
@@ -24,12 +28,22 @@ export const KNOWN_PRODUCTION_SCENARIO_NAMES = [
   "neg-conf",
 ] as const;
 
+/** Production scenario build marker observed on the failed dual-session run. */
+export const KNOWN_PRODUCTION_SCENARIO_BUILDS = [
+  "server-poc-webhook-fix-2026-07-04",
+] as const;
+
 export type PocSafetyErrorCode =
   | "POC_RULE_ID_REQUIRED"
   | "POC_RULE_MATCHES_PRODUCTION"
   | "LIVE_POC_CONFIRMATION_REQUIRED"
   | "INVALID_POC_CONFERENCE_NAME"
-  | "UNEXPECTED_SCENARIO_IDENTITY";
+  | "UNEXPECTED_SCENARIO_IDENTITY"
+  | "POC_BROWSER_ROUTED_TO_PRODUCTION_RULE"
+  | "POC_UNEXPECTED_SCENARIO"
+  | "POC_UNEXPECTED_SCENARIO_BUILD"
+  | "POC_PROVIDER_SESSION_ID_MISMATCH"
+  | "POC_MULTIPLE_PROVIDER_SESSIONS_DETECTED";
 
 export type PocSafetySanitizedDetails = {
   selectedPocRuleId: string | null;
@@ -253,6 +267,87 @@ export function assertPocScenarioIdentity(identity: ScenarioIdentityFields): voi
     productionRuleFingerprint: null,
     refusalReason: `Callback/identity is not the dedicated POC scenario (${reasons.join("; ")}). HTTP 200 on the control URL alone is never sufficient; use signed async callback confirmation.`,
   });
+}
+
+/** Refuse production routing-rule identity reported by a provider session. */
+export function assertPocProviderRuleIdentity(ruleIdentity: string | null | undefined): void {
+  const raw = ruleIdentity?.trim() || "";
+  if (!raw) return;
+  if (
+    KNOWN_PRODUCTION_RULE_NAMES.some(
+      (name) => normalizeIdentity(name) === normalizeIdentity(raw),
+    )
+  ) {
+    throw new PocSafetyError("POC_BROWSER_ROUTED_TO_PRODUCTION_RULE", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: raw,
+      productionRuleFingerprint: maskRuleIdentifier(raw),
+      refusalReason: `Provider session reported production routing rule "${raw}".`,
+    });
+  }
+}
+
+/** Refuse unexpected scenario source name (e.g. production neg-conf). */
+export function assertPocProviderScenarioSource(
+  scenarioSource: string | null | undefined,
+): void {
+  const raw = scenarioSource?.trim() || "";
+  if (!raw) return;
+  if (
+    KNOWN_PRODUCTION_SCENARIO_NAMES.some(
+      (name) => normalizeIdentity(name) === normalizeIdentity(raw),
+    )
+  ) {
+    throw new PocSafetyError("POC_UNEXPECTED_SCENARIO", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: null,
+      productionRuleFingerprint: maskRuleIdentifier(raw),
+      refusalReason: `Provider session reported production scenario "${raw}".`,
+    });
+  }
+  if (normalizeIdentity(raw) !== normalizeIdentity(POC_SCENARIO_SOURCE_NAME)) {
+    throw new PocSafetyError("POC_UNEXPECTED_SCENARIO", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: null,
+      productionRuleFingerprint: maskRuleIdentifier(raw),
+      refusalReason: `Provider session scenario source "${raw}" is not ${POC_SCENARIO_SOURCE_NAME}.`,
+    });
+  }
+}
+
+/** Refuse unexpected / production scenario build markers. */
+export function assertPocProviderScenarioBuild(
+  scenarioBuild: string | null | undefined,
+): void {
+  const raw = scenarioBuild?.trim() || "";
+  if (!raw) {
+    throw new PocSafetyError("POC_UNEXPECTED_SCENARIO_BUILD", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: null,
+      productionRuleFingerprint: null,
+      refusalReason: "Provider session did not report scenarioBuild.",
+    });
+  }
+  if (
+    KNOWN_PRODUCTION_SCENARIO_BUILDS.some(
+      (build) => normalizeIdentity(build) === normalizeIdentity(raw),
+    )
+  ) {
+    throw new PocSafetyError("POC_UNEXPECTED_SCENARIO_BUILD", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: null,
+      productionRuleFingerprint: maskRuleIdentifier(raw),
+      refusalReason: `Provider session reported production scenario build "${raw}".`,
+    });
+  }
+  if (raw !== POC_EXPECTED_SCENARIO_BUILD) {
+    throw new PocSafetyError("POC_UNEXPECTED_SCENARIO_BUILD", {
+      selectedPocRuleId: null,
+      selectedPocRuleName: null,
+      productionRuleFingerprint: maskRuleIdentifier(raw),
+      refusalReason: `Provider session scenarioBuild "${raw}" is not ${POC_EXPECTED_SCENARIO_BUILD}.`,
+    });
+  }
 }
 
 /** Format a safety refusal for CLI without dumping request/response objects. */

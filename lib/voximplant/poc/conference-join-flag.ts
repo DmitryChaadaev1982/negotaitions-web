@@ -1,6 +1,7 @@
 import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import { POC_CONFERENCE_NAME_PREFIX } from "@/lib/voximplant/poc/poc-safety";
 import {
+  POC_ACCESS_ELIGIBLE_RUNTIME_STATUSES,
   readPocState,
   resolveRuntimeStatus,
   type PocRuntimeStatus,
@@ -83,17 +84,17 @@ export function isExplicitPocSession(
 }
 
 /**
- * When the POC flag is enabled and the Session has matching ACTIVE POC state,
- * return the pre-started conference name. Otherwise return null (caller uses
- * production naming). Expired state never selects POC conference / control URL.
+ * When the POC flag is enabled and the Session has matching POC state,
+ * return the browser-first POC conference name. Otherwise return null
+ * (caller uses production naming). Terminal/expired state never selects.
  *
  * Selection requires all of:
  * - POC flag enabled
  * - active run exists
  * - requested Session ID equals active run linkedSessionId
- * - runtime ACTIVE
+ * - runtime WAITING_FOR_PROVIDER_SESSION or ACTIVE
  * - conference name has safe prefix
- * - run is not expired
+ * - run is not terminal/expired
  */
 export function tryResolvePocConferenceName(
   sessionId: string,
@@ -112,7 +113,7 @@ export function tryResolvePocConferenceName(
   if (state.linkedSessionId !== sessionId) return null;
 
   const runtimeStatus = resolveRuntimeStatus(state, nowMs);
-  if (runtimeStatus !== "ACTIVE") return null;
+  if (!POC_ACCESS_ELIGIBLE_RUNTIME_STATUSES.has(runtimeStatus)) return null;
   if (!isSafePocConferenceName(state.conferenceName)) return null;
 
   return state.conferenceName;
@@ -221,14 +222,16 @@ export function planPocConferenceJoin(params: {
   }
 
   const runtimeStatus = resolveRuntimeStatus(state, nowMs);
-  if (runtimeStatus !== "ACTIVE") {
+  if (!POC_ACCESS_ELIGIBLE_RUNTIME_STATUSES.has(runtimeStatus)) {
     return {
       ...base,
       runtimeStatus,
       selectedConferenceName: defaultName,
       selectionSource: "DEFAULT_SESSION_NAME",
       refusalOrFallbackReason:
-        "POC_STATE_EXPIRED_REQUIRES_FRESH_START_CONFERENCE",
+        runtimeStatus === "EXPIRED"
+          ? "POC_STATE_EXPIRED_REQUIRES_FRESH_PROVIDER_SESSION"
+          : "POC_STATE_NOT_WAITING_OR_ACTIVE",
       wouldSelectIfActive: state.conferenceName,
     };
   }

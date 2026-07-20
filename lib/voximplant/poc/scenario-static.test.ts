@@ -50,8 +50,22 @@ test("POC scenario identity constants present for callback payload", () => {
   assert.match(source, /SCENARIO_KIND\s*=\s*"voximplant_server_stop_poc"/);
   assert.match(source, /PROTOCOL_VERSION\s*=\s*1/);
   assert.match(source, /SCENARIO_SOURCE_NAME\s*=\s*"neg-conf-server-stop-poc"/);
+  assert.match(source, /SCENARIO_BUILD_ID\s*=\s*"server-stop-poc-2026-07-20-c1"/);
   assert.match(source, /scenarioKind:\s*SCENARIO_KIND/);
   assert.match(source, /protocolVersion:\s*PROTOCOL_VERSION/);
+  assert.ok(!source.includes("server-stop-poc-2026-07-20-b1"));
+  assert.ok(!source.includes("server-poc-webhook-fix-2026-07-04"));
+});
+
+test("POC scenario sends session_registered with control URL fields", () => {
+  assert.match(source, /session_registered/);
+  assert.match(source, /trySendSessionRegistered/);
+  assert.match(source, /mediaSessionAccessSecureUrl/);
+  assert.match(source, /extractMediaSessionUrls/);
+  assert.match(source, /scenario_message_received/);
+  assert.match(source, /recording_start_accepted/);
+  assert.match(source, /recorder_created/);
+  assert.match(source, /recorder_media_attached/);
 });
 
 test("POC scenario keeps dedicated conference name prefix", () => {

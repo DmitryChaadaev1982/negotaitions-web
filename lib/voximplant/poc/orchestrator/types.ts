@@ -17,8 +17,11 @@ export type PocFailureStage =
   | "callback_self_test"
   | "browser_prewarm"
   | "start_conference"
+  | "browser_join_release"
+  | "provider_session_registration"
   | "run_binding"
   | "browser_join"
+  | "browser_join_confirmation"
   | "recording_start"
   | "server_stop"
   | "artifact"
@@ -32,6 +35,7 @@ export type PocPhaseTimeouts = {
   browserPrewarmMs: number;
   startConferenceMs: number;
   browserJoinMs: number;
+  providerSessionRegistrationMs: number;
   recordingStartMs: number;
   commandCallbackMs: number;
   terminalCallbackMs: number;
@@ -42,9 +46,11 @@ export type PocPhaseTimeouts = {
 export const DEFAULT_POC_PHASE_TIMEOUTS: PocPhaseTimeouts = {
   callbackSelfTestMs: 15_000,
   browserPrewarmMs: 45_000,
+  /** Transport-mode StartConference only. */
   startConferenceMs: 30_000,
-  /** Live join budget after StartConference (keep under idle ~60s window). */
-  browserJoinMs: 25_000,
+  /** Live join budget after browsers are released. */
+  browserJoinMs: 45_000,
+  providerSessionRegistrationMs: 45_000,
   recordingStartMs: 60_000,
   commandCallbackMs: 20_000,
   terminalCallbackMs: 45_000,
@@ -86,6 +92,14 @@ export type PocOrchestratorReport = {
   conferenceName: string | null;
   callSessionHistoryId: string | null;
   controlUrlFingerprint: string | null;
+  registeredProviderSessionId: string | null;
+  browserProviderSessionId: string | null;
+  recordingProviderSessionId: string | null;
+  stopProviderSessionId: string | null;
+  historyProviderSessionId: string | null;
+  providerScenarioBuild: string | null;
+  providerRuleIdentity: string | null;
+  singleProviderSessionConfirmed: boolean;
   /** Whether any live provider HTTP call was made. */
   providerCalls: boolean;
   /** Whether any local DB write was performed. */
@@ -164,11 +178,12 @@ export function plannedPhasesForMode(mode: PocOrchestratorMode): string[] {
         "env_validation",
         "local_db_safety",
         "create_session",
-        "seed_run_state",
+        "seed_waiting_run",
         "callback_self_test",
         "browser_prewarm",
-        "start_conference",
-        "browser_join",
+        "browser_join_release",
+        "provider_session_registration",
+        "browser_join_confirmation",
         "recording_start",
         "server_stop",
         "artifact",
@@ -240,11 +255,25 @@ export function formatLastReportSummary(report: Record<string, unknown>): {
 }
 
 export function evaluateFullPass(report: Omit<PocOrchestratorReport, "result">): boolean {
+  const sessionIds = [
+    report.registeredProviderSessionId,
+    report.browserProviderSessionId,
+    report.recordingProviderSessionId,
+    report.stopProviderSessionId,
+    report.historyProviderSessionId,
+  ].filter((v): v is string => typeof v === "string" && v.length > 0);
+  const sessionIdsMatch =
+    sessionIds.length > 0 &&
+    sessionIds.every((id) => id === sessionIds[0]);
+
   return (
     report.callbackSelfTest &&
     report.browserFacilitatorJoined &&
     report.browserParticipantJoined &&
     report.sameConferenceConfirmed &&
+    report.singleProviderSessionConfirmed &&
+    report.startConferenceCallCount === 0 &&
+    sessionIdsMatch &&
     report.recordingStarted &&
     report.transportAccepted &&
     report.commandAccepted &&

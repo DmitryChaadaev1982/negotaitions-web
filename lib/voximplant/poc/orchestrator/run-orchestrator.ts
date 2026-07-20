@@ -44,10 +44,18 @@ import {
   isPocStopSuccessful,
   readPocState,
   recordStopTransportAccepted,
+  seedWaitingForProviderSession,
   toPublicPocStateView,
   writePocState,
   type VoximplantServerStopPocState,
 } from "@/lib/voximplant/poc/poc-state";
+import {
+  correlateProviderSessionIds,
+  isProviderSessionRegistered,
+} from "@/lib/voximplant/poc/session-registration";
+import {
+  POC_EXPECTED_SCENARIO_BUILD,
+} from "@/lib/voximplant/poc/poc-safety";
 import {
   emptyRecordingStartEvidence,
   requestRecordingStartViaHttp,
@@ -192,6 +200,28 @@ async function waitForCallback(params: {
   return false;
 }
 
+async function waitForProviderSessionRegistration(params: {
+  stateRoot?: string;
+  timeoutMs: number;
+  pollMs?: number;
+  sleep: (ms: number) => Promise<void>;
+  nowMs: () => number;
+}): Promise<VoximplantServerStopPocState | null> {
+  const deadline = params.nowMs() + params.timeoutMs;
+  const poll = params.pollMs ?? 250;
+  while (params.nowMs() < deadline) {
+    const state = readPocState(params.stateRoot);
+    if (state && isProviderSessionRegistered(state)) {
+      return state;
+    }
+    if (state?.runtimeStatus === "FAILED") {
+      return state;
+    }
+    await params.sleep(poll);
+  }
+  return readPocState(params.stateRoot);
+}
+
 function trySanitizeLocalDatabaseTarget(
   databaseUrl: string | null | undefined = process.env.DATABASE_URL,
 ): { sanitizedUrl: string | null; safe: boolean; error: string | null } {
@@ -236,6 +266,15 @@ function emptyReport(partial: Partial<PocOrchestratorReport> & {
     conferenceName: partial.conferenceName ?? null,
     callSessionHistoryId: partial.callSessionHistoryId ?? null,
     controlUrlFingerprint: partial.controlUrlFingerprint ?? null,
+    registeredProviderSessionId: partial.registeredProviderSessionId ?? null,
+    browserProviderSessionId: partial.browserProviderSessionId ?? null,
+    recordingProviderSessionId: partial.recordingProviderSessionId ?? null,
+    stopProviderSessionId: partial.stopProviderSessionId ?? null,
+    historyProviderSessionId: partial.historyProviderSessionId ?? null,
+    providerScenarioBuild: partial.providerScenarioBuild ?? null,
+    providerRuleIdentity: partial.providerRuleIdentity ?? null,
+    singleProviderSessionConfirmed:
+      partial.singleProviderSessionConfirmed ?? false,
     providerCalls: partial.providerCalls ?? false,
     dbWrites: partial.dbWrites ?? false,
     browserExecution: partial.browserExecution ?? false,
@@ -381,6 +420,14 @@ export async function runPocOrchestrator(
     conferenceName: null,
     callSessionHistoryId: null,
     controlUrlFingerprint: null,
+    registeredProviderSessionId: null,
+    browserProviderSessionId: null,
+    recordingProviderSessionId: null,
+    stopProviderSessionId: null,
+    historyProviderSessionId: null,
+    providerScenarioBuild: null,
+    providerRuleIdentity: null,
+    singleProviderSessionConfirmed: false,
     providerCalls: false,
     dbWrites: false,
     browserExecution: false,
@@ -582,13 +629,20 @@ export async function runPocOrchestrator(
       pocId: runId,
       conferenceName,
       linkedSessionId: sessionFixture?.sessionId ?? null,
+      runtimeStatus:
+        options.mode === "full" ? "WAITING_FOR_PROVIDER_SESSION" : "UNKNOWN",
     });
+    if (options.mode === "full") {
+      state = seedWaitingForProviderSession(state);
+    }
     writePocState(state, options.stateRoot);
     activatePocRun({
       runId,
       linkedSessionId: sessionFixture?.sessionId ?? null,
       stateRoot: options.stateRoot,
     });
+    const activeRunPublishedAt = new Date(nowMs()).toISOString();
+    reportDraft.activeRunPublishedAt = activeRunPublishedAt;
 
     const callbackUrl = `${options.appBaseUrl.replace(/\/$/, "")}/api/poc/voximplant/server-stop/callback`;
     const selfTestFn = deps.callbackSelfTest ?? runCallbackSelfTest;
@@ -618,109 +672,65 @@ export async function runPocOrchestrator(
       sanitizePocManagementConfig(config),
     );
 
-    // Full mode: prewarm browsers BEFORE StartConference so the ~60s idle
-    // window is not consumed by launch/auth/navigation.
-    if (options.mode === "full") {
-      const prewarmFn = deps.browserPrewarm ?? playwrightBrowserPrewarm;
-      reportDraft.browserExecution = true;
-      prewarmHandle = await prewarmFn({
-        appBaseUrl: options.appBaseUrl,
-        sessionId: sessionFixture!.sessionId,
-        facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
-        participantRoomUrl: sessionFixture!.participantRoomUrl,
-        facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
-        facilitatorUserId: sessionFixture!.facilitatorUserId,
-        facilitatorEmail: sessionFixture!.facilitatorEmail,
-        facilitatorPassword: sessionFixture!.facilitatorPassword,
-        facilitatorAuthStrategy: "CANONICAL_COOKIE",
-        participantAuthCookie: sessionFixture!.participantAuthCookie,
-        participantUserId: sessionFixture!.participantUserId,
-        participantEmail: sessionFixture!.participantEmail,
-        timeoutMs: timeouts.browserPrewarmMs,
-        keepBrowser: options.keepBrowser,
-        runId,
-        stateRoot: options.stateRoot,
-        nowMs,
+    // Transport mode: isolated StartConference + ping (not used in full mode).
+    if (options.mode === "transport") {
+      const startConferenceStartedAt = new Date(nowMs()).toISOString();
+      reportDraft.startConferenceStartedAt = startConferenceStartedAt;
+      const start = deps.startConference ?? startConference;
+      const startResult = await start({
+        config,
+        conferenceName,
+        scriptCustomData: JSON.stringify({
+          pocId: runId,
+          conferenceName,
+          purpose: "voximplant-server-stop-poc",
+          linkedSessionId: sessionFixture?.sessionId ?? null,
+        }),
+        confirmLivePoc: options.confirmLivePoc,
+        fetchImpl: deps.fetchImpl,
       });
-      reportDraft.browserPrewarmStartedAt =
-        prewarmHandle.browserPrewarmStartedAt;
-      reportDraft.browserPrewarmCompletedAt =
-        prewarmHandle.browserPrewarmCompletedAt;
-      reportDraft.facilitatorBrowserStage =
-        prewarmHandle.facilitator.reachedStage;
-      reportDraft.participantBrowserStage =
-        prewarmHandle.participant.reachedStage;
-      reportDraft.facilitatorFirstFailedStage =
-        prewarmHandle.facilitator.firstFailedStage;
-      reportDraft.participantFirstFailedStage =
-        prewarmHandle.participant.firstFailedStage;
+      startConferenceCallCount += 1;
+      reportDraft.startConferenceCallCount = startConferenceCallCount;
+      reportDraft.providerCalls = true;
+      const startConferenceCompletedAt = new Date(nowMs()).toISOString();
+      reportDraft.startConferenceCompletedAt = startConferenceCompletedAt;
 
-      if (!prewarmHandle.ok) {
-        failureStage = "browser_prewarm";
-        failureCode =
-          prewarmHandle.failureCode ?? "BROWSER_PREWARM_FAILED";
-        await prewarmHandle.close();
+      if (!startResult.parsed || !startResult.publicResult) {
+        failureStage = "start_conference";
+        failureCode = "START_CONFERENCE_FAILED";
         return finish({ result: "FAIL" });
       }
-    }
 
-    const startConferenceStartedAt = new Date(nowMs()).toISOString();
-    reportDraft.startConferenceStartedAt = startConferenceStartedAt;
-    const start = deps.startConference ?? startConference;
-    const startResult = await start({
-      config,
-      conferenceName,
-      scriptCustomData: JSON.stringify({
-        pocId: runId,
-        conferenceName,
-        purpose: "voximplant-server-stop-poc",
-        linkedSessionId: sessionFixture?.sessionId ?? null,
-      }),
-      confirmLivePoc: options.confirmLivePoc,
-      fetchImpl: deps.fetchImpl,
-    });
-    startConferenceCallCount += 1;
-    reportDraft.startConferenceCallCount = startConferenceCallCount;
-    reportDraft.providerCalls = true;
-    const startConferenceCompletedAt = new Date(nowMs()).toISOString();
-    reportDraft.startConferenceCompletedAt = startConferenceCompletedAt;
+      state = applyStartConferenceToState(state, {
+        callSessionHistoryId: startResult.parsed.callSessionHistoryId,
+        mediaSessionAccessUrl: startResult.parsed.mediaSessionAccessUrl,
+        mediaSessionAccessSecureUrl:
+          startResult.parsed.mediaSessionAccessSecureUrl,
+        ruleId: startResult.request.rule_id,
+        applicationId:
+          startResult.request.application_id ?? config.applicationId,
+        startedAt: startConferenceCompletedAt,
+        stateRoot: options.stateRoot,
+      });
+      state = {
+        ...state,
+        linkedSessionId: sessionFixture?.sessionId ?? state.linkedSessionId,
+        callbackEvents: [],
+        seenCallbackNonces: [],
+      };
+      writePocState(state, options.stateRoot);
+      activatePocRun({
+        runId,
+        linkedSessionId: state.linkedSessionId,
+        stateRoot: options.stateRoot,
+      });
 
-    if (!startResult.parsed || !startResult.publicResult) {
-      failureStage = "start_conference";
-      failureCode = "START_CONFERENCE_FAILED";
-      await prewarmHandle?.close();
-      return finish({ result: "FAIL" });
-    }
+      reportDraft.callSessionHistoryId = state.callSessionHistoryId;
+      reportDraft.controlUrlFingerprint = state.controlUrlFingerprint;
+      reportDraft.registeredProviderSessionId = state.providerSessionId;
+      reportDraft.singleProviderSessionConfirmed =
+        state.singleProviderSessionConfirmed;
 
-    state = applyStartConferenceToState(state, {
-      callSessionHistoryId: startResult.parsed.callSessionHistoryId,
-      mediaSessionAccessUrl: startResult.parsed.mediaSessionAccessUrl,
-      mediaSessionAccessSecureUrl: startResult.parsed.mediaSessionAccessSecureUrl,
-      ruleId: startResult.request.rule_id,
-      applicationId: startResult.request.application_id ?? config.applicationId,
-      startedAt: startConferenceCompletedAt,
-      stateRoot: options.stateRoot,
-    });
-    // Preserve linked session across apply (apply doesn't clear it).
-    state = {
-      ...state,
-      linkedSessionId: sessionFixture?.sessionId ?? state.linkedSessionId,
-      callbackEvents: [],
-      seenCallbackNonces: [],
-    };
-    writePocState(state, options.stateRoot);
-    activatePocRun({
-      runId,
-      linkedSessionId: state.linkedSessionId,
-      stateRoot: options.stateRoot,
-    });
-    const activeRunPublishedAt = new Date(nowMs()).toISOString();
-    reportDraft.activeRunPublishedAt = activeRunPublishedAt;
-
-    reportDraft.callSessionHistoryId = state.callSessionHistoryId;
-    reportDraft.controlUrlFingerprint = state.controlUrlFingerprint;
-
-    if (options.mode === "transport") {
       const ping = deps.executePing ?? executePocPing;
       const controlUrl = getActiveControlUrl(state, options.stateRoot);
       if (!controlUrl) {
@@ -750,18 +760,63 @@ export async function runPocOrchestrator(
       return finish({ result: "PASS", cleanupStatus: "N/A_TRANSPORT" });
     }
 
+    // Full mode: browser-first — no StartConference.
+    // Prewarm → release joins → wait session_registered → confirm identity.
+    const prewarmFn = deps.browserPrewarm ?? playwrightBrowserPrewarm;
+    reportDraft.browserExecution = true;
+    reportDraft.startConferenceCallCount = 0;
+    prewarmHandle = await prewarmFn({
+      appBaseUrl: options.appBaseUrl,
+      sessionId: sessionFixture!.sessionId,
+      facilitatorRoomUrl: sessionFixture!.facilitatorRoomUrl,
+      participantRoomUrl: sessionFixture!.participantRoomUrl,
+      facilitatorAuthCookie: sessionFixture!.facilitatorAuthCookie,
+      facilitatorUserId: sessionFixture!.facilitatorUserId,
+      facilitatorEmail: sessionFixture!.facilitatorEmail,
+      facilitatorPassword: sessionFixture!.facilitatorPassword,
+      facilitatorAuthStrategy: "CANONICAL_COOKIE",
+      participantAuthCookie: sessionFixture!.participantAuthCookie,
+      participantUserId: sessionFixture!.participantUserId,
+      participantEmail: sessionFixture!.participantEmail,
+      timeoutMs: timeouts.browserPrewarmMs,
+      keepBrowser: options.keepBrowser,
+      runId,
+      stateRoot: options.stateRoot,
+      nowMs,
+    });
+    reportDraft.browserPrewarmStartedAt =
+      prewarmHandle.browserPrewarmStartedAt;
+    reportDraft.browserPrewarmCompletedAt =
+      prewarmHandle.browserPrewarmCompletedAt;
+    reportDraft.facilitatorBrowserStage =
+      prewarmHandle.facilitator.reachedStage;
+    reportDraft.participantBrowserStage =
+      prewarmHandle.participant.reachedStage;
+    reportDraft.facilitatorFirstFailedStage =
+      prewarmHandle.facilitator.firstFailedStage;
+    reportDraft.participantFirstFailedStage =
+      prewarmHandle.participant.firstFailedStage;
+
+    if (!prewarmHandle.ok) {
+      failureStage = "browser_prewarm";
+      failureCode = prewarmHandle.failureCode ?? "BROWSER_PREWARM_FAILED";
+      await prewarmHandle.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const browserJoinReleaseAt = new Date(nowMs()).toISOString();
     // Full mode LIVE join: release prewarmed browsers concurrently.
+    // WebSDK createConference creates the canonical provider session.
     if (prewarmHandle) {
       browser = await prewarmHandle.liveJoin({
         expectedConferenceName: conferenceName,
-        expiresAt: state.expiresAt,
-        startConferenceStartedAt,
-        startConferenceCompletedAt,
+        expiresAt: null,
+        startConferenceStartedAt: browserJoinReleaseAt,
+        startConferenceCompletedAt: browserJoinReleaseAt,
         activeRunPublishedAt,
         timeoutMs: timeouts.browserJoinMs,
       });
     } else if (deps.browserJoin) {
-      // Test fallback: legacy single-shot join after StartConference.
       browser = await deps.browserJoin({
         appBaseUrl: options.appBaseUrl,
         sessionId: sessionFixture!.sessionId,
@@ -773,19 +828,18 @@ export async function runPocOrchestrator(
         keepBrowser: options.keepBrowser,
         runId,
         stateRoot: options.stateRoot,
-        expiresAt: state.expiresAt,
+        expiresAt: null,
         nowMs,
       });
       reportDraft.browserExecution = true;
     } else {
-      failureStage = "browser_join";
+      failureStage = "browser_join_release";
       failureCode = "BROWSER_JOIN_FAILED";
       return finish({ result: "FAIL" });
     }
 
     reportDraft.browserFacilitatorJoined = browser.facilitatorJoined;
     reportDraft.browserParticipantJoined = browser.participantJoined;
-    reportDraft.sameConferenceConfirmed = browser.sameConferenceConfirmed;
     reportDraft.browserRelayUsed = browser.browserRelayUsed;
     reportDraft.browserPrewarmStartedAt =
       browser.timing.browserPrewarmStartedAt ??
@@ -824,14 +878,9 @@ export async function runPocOrchestrator(
     reportDraft.participantSelectionSource =
       browser.participant.access?.selectionSource ?? null;
 
-    if (
-      !browser.facilitatorJoined ||
-      !browser.participantJoined ||
-      !browser.sameConferenceConfirmed
-    ) {
-      failureStage = "browser_join";
+    if (!browser.facilitatorJoined || !browser.participantJoined) {
+      failureStage = "browser_join_release";
       failureCode = browser.failureCode ?? "BROWSER_JOIN_FAILED";
-      // Expired runs must not continue; do not reuse control URL later.
       if (
         failureCode === "MEDIA_SESSION_EXPIRED_BEFORE_ACCESS" ||
         failureCode === "MEDIA_SESSION_EXPIRED_DURING_JOIN"
@@ -844,6 +893,62 @@ export async function runPocOrchestrator(
           );
         }
       }
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    // Provider session registration from dedicated POC scenario callback.
+    state =
+      (await waitForProviderSessionRegistration({
+        stateRoot: options.stateRoot,
+        timeoutMs: timeouts.providerSessionRegistrationMs,
+        sleep,
+        nowMs,
+      })) ?? readPocState(options.stateRoot);
+
+    if (!state || !isProviderSessionRegistered(state)) {
+      failureStage = "provider_session_registration";
+      failureCode =
+        state?.runtimeStatus === "FAILED"
+          ? "POC_MULTIPLE_PROVIDER_SESSIONS_DETECTED"
+          : "POC_PROVIDER_SESSION_REGISTRATION_TIMEOUT";
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    reportDraft.providerCalls = true;
+    reportDraft.callSessionHistoryId = state.callSessionHistoryId;
+    reportDraft.controlUrlFingerprint = state.controlUrlFingerprint;
+    reportDraft.registeredProviderSessionId = state.providerSessionId;
+    reportDraft.browserProviderSessionId = state.providerSessionId;
+    reportDraft.providerScenarioBuild = state.providerScenarioBuild;
+    reportDraft.providerRuleIdentity = state.providerRuleIdentity;
+    reportDraft.singleProviderSessionConfirmed =
+      state.singleProviderSessionConfirmed;
+
+    if (state.providerScenarioBuild !== POC_EXPECTED_SCENARIO_BUILD) {
+      failureStage = "provider_session_registration";
+      failureCode = "POC_UNEXPECTED_SCENARIO_BUILD";
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    // Join confirmation requires browser joins + registered provider session.
+    const accessConferenceOk =
+      browser.facilitatorConferenceName === conferenceName &&
+      browser.participantConferenceName === conferenceName;
+    const sameConferenceConfirmed =
+      accessConferenceOk &&
+      state.singleProviderSessionConfirmed &&
+      state.providerConferenceName === conferenceName &&
+      state.providerSessionId != null;
+    reportDraft.sameConferenceConfirmed = sameConferenceConfirmed;
+
+    if (!sameConferenceConfirmed) {
+      failureStage = "browser_join_confirmation";
+      failureCode = accessConferenceOk
+        ? "POC_PROVIDER_SESSION_ID_MISMATCH"
+        : browser.failureCode ?? "BROWSER_JOIN_FAILED";
       await browser.close();
       return finish({ result: "FAIL" });
     }
@@ -934,18 +1039,53 @@ export async function runPocOrchestrator(
     recordingEvidence.recordingAppActiveAt =
       recordingEvidence.recordingProviderStartedAt;
     reportDraft.recordingStarted = true;
+
+    const registeredAfterStart = readPocState(options.stateRoot);
+    const recordingCallback = registeredAfterStart
+      ? findMatchingCallbackEvent(registeredAfterStart, {
+          operationId: startOperationId,
+          eventType: "recording_started",
+          action: "start",
+        })
+      : null;
+    reportDraft.recordingProviderSessionId =
+      recordingCallback?.callSessionHistoryId ??
+      registeredAfterStart?.providerSessionId ??
+      null;
+    if (
+      reportDraft.registeredProviderSessionId &&
+      reportDraft.recordingProviderSessionId &&
+      reportDraft.recordingProviderSessionId !==
+        reportDraft.registeredProviderSessionId
+    ) {
+      failureStage = "recording_start";
+      failureCode = "POC_PROVIDER_SESSION_ID_MISMATCH";
+      recordingEvidence.recordingStartFailureReason = failureCode;
+      writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
     writeRecordingStartArtifact(runId, recordingEvidence, options.stateRoot);
 
-    const controlUrl = getActiveControlUrl(
-      readPocState(options.stateRoot)!,
-      options.stateRoot,
-    );
+    const stopState = readPocState(options.stateRoot)!;
+    if (
+      !stopState.providerSessionId ||
+      stopState.providerSessionId !== reportDraft.registeredProviderSessionId
+    ) {
+      failureStage = "server_stop";
+      failureCode = "POC_PROVIDER_SESSION_ID_MISMATCH";
+      await browser.close();
+      return finish({ result: "FAIL" });
+    }
+
+    const controlUrl = getActiveControlUrl(stopState, options.stateRoot);
     if (!controlUrl) {
       failureStage = "server_stop";
       failureCode = "CONTROL_URL_MISSING";
       await browser.close();
       return finish({ result: "FAIL" });
     }
+    reportDraft.stopProviderSessionId = stopState.providerSessionId;
 
     const operationId = buildDeterministicStopOperationId(conferenceName);
     const sendControl = deps.sendControl ?? sendPocControlCommand;
@@ -1055,6 +1195,7 @@ export async function runPocOrchestrator(
         fetchImpl: deps.fetchImpl,
       });
       reportDraft.logFetchStatus = history.status;
+      reportDraft.historyProviderSessionId = history.callSessionHistoryId;
       if (history.sanitizedLogText) {
         writeTextArtifact(paths.logPath, history.sanitizedLogText);
       }
@@ -1072,6 +1213,22 @@ export async function runPocOrchestrator(
       }
     } else {
       reportDraft.logFetchStatus = "SKIPPED";
+      reportDraft.historyProviderSessionId =
+        afterIdempotent.callSessionHistoryId;
+    }
+
+    const correlation = correlateProviderSessionIds({
+      registeredProviderSessionId: reportDraft.registeredProviderSessionId,
+      browserProviderSessionId: reportDraft.browserProviderSessionId,
+      recordingProviderSessionId: reportDraft.recordingProviderSessionId,
+      stopProviderSessionId: reportDraft.stopProviderSessionId,
+      historyProviderSessionId: reportDraft.historyProviderSessionId,
+    });
+    if (!correlation.ok) {
+      failureStage = "artifact";
+      failureCode = correlation.code ?? "POC_PROVIDER_SESSION_ID_MISMATCH";
+      await browser.close();
+      return finish({ result: "FAIL" });
     }
 
     if (!reportDraft.artifactAvailable) {
@@ -1114,9 +1271,9 @@ export async function runPocOrchestrator(
       failureStage =
         failureStage ??
         (reportDraft.browserPrewarmCompletedAt
-          ? reportDraft.startConferenceCompletedAt
-            ? "browser_join"
-            : "start_conference"
+          ? reportDraft.registeredProviderSessionId
+            ? "browser_join_confirmation"
+            : "provider_session_registration"
           : reportDraft.browserExecution
             ? "browser_prewarm"
             : "env_validation");

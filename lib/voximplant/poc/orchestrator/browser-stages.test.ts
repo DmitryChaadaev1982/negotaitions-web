@@ -213,12 +213,15 @@ test("20. production/default flow remains unchanged", () => {
   );
 });
 
-test("planned phases include browser_prewarm before start_conference", () => {
+test("planned phases include browser_prewarm before browser_join_release (no StartConference)", () => {
   const phases = plannedPhasesForMode("full");
   const prewarmIdx = phases.indexOf("browser_prewarm");
-  const startIdx = phases.indexOf("start_conference");
+  const releaseIdx = phases.indexOf("browser_join_release");
+  const registerIdx = phases.indexOf("provider_session_registration");
   assert.ok(prewarmIdx >= 0);
-  assert.ok(startIdx > prewarmIdx);
+  assert.ok(releaseIdx > prewarmIdx);
+  assert.ok(registerIdx > releaseIdx);
+  assert.equal(phases.includes("start_conference"), false);
   const plan = buildDryRunPlan({
     mode: "full",
     dryRun: true,

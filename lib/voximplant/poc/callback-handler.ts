@@ -24,6 +24,7 @@ import {
   type PocCallbackEventRecord,
   type VoximplantServerStopPocState,
 } from "@/lib/voximplant/poc/poc-state";
+import { applySessionRegisteredToState } from "@/lib/voximplant/poc/session-registration";
 
 export type ProcessPocCallbackResult =
   | {
@@ -69,6 +70,19 @@ function parsePayload(raw: unknown): PocCallbackPayload | null {
         ? Number(obj.protocolVersion)
         : NaN;
 
+  const callSessionHistoryId =
+    typeof obj.callSessionHistoryId === "string"
+      ? obj.callSessionHistoryId
+      : typeof obj.callSessionHistoryId === "number"
+        ? String(obj.callSessionHistoryId)
+        : null;
+  const providerSessionId =
+    typeof obj.providerSessionId === "string"
+      ? obj.providerSessionId
+      : typeof obj.providerSessionId === "number"
+        ? String(obj.providerSessionId)
+        : null;
+
   return {
     scenarioKind: typeof obj.scenarioKind === "string" ? obj.scenarioKind : "",
     protocolVersion: Number.isFinite(protocolVersion) ? protocolVersion : NaN,
@@ -77,17 +91,31 @@ function parsePayload(raw: unknown): PocCallbackPayload | null {
     operationId: typeof obj.operationId === "string" ? obj.operationId : null,
     conferenceName:
       typeof obj.conferenceName === "string" ? obj.conferenceName : null,
-    callSessionHistoryId:
-      typeof obj.callSessionHistoryId === "string"
-        ? obj.callSessionHistoryId
-        : typeof obj.callSessionHistoryId === "number"
-          ? String(obj.callSessionHistoryId)
-          : null,
+    callSessionHistoryId,
+    providerSessionId,
     recorderState:
       typeof obj.recorderState === "string" ? obj.recorderState : null,
     errorCode: typeof obj.errorCode === "string" ? obj.errorCode : null,
     timestamp: typeof obj.timestamp === "string" ? obj.timestamp : "",
     nonce: typeof obj.nonce === "string" ? obj.nonce : "",
+    scenarioBuild:
+      typeof obj.scenarioBuild === "string" ? obj.scenarioBuild : null,
+    scenarioSource:
+      typeof obj.scenarioSource === "string" ? obj.scenarioSource : null,
+    routingRuleIdentity:
+      typeof obj.routingRuleIdentity === "string"
+        ? obj.routingRuleIdentity
+        : typeof obj.ruleIdentity === "string"
+          ? obj.ruleIdentity
+          : null,
+    mediaSessionAccessSecureUrl:
+      typeof obj.mediaSessionAccessSecureUrl === "string"
+        ? obj.mediaSessionAccessSecureUrl
+        : null,
+    mediaSessionAccessUrl:
+      typeof obj.mediaSessionAccessUrl === "string"
+        ? obj.mediaSessionAccessUrl
+        : null,
   };
 }
 
@@ -199,32 +227,63 @@ export function processPocCallback(params: {
     };
   }
 
-  const event: PocCallbackEventRecord = {
+  const receivedAt = new Date(params.nowMs ?? Date.now()).toISOString();
+  const providerSessionId =
+    payload.providerSessionId ?? payload.callSessionHistoryId;
+
+  // Ensure persisted records never include secrets / control URLs.
+  const safeEvent: PocCallbackEventRecord = {
     eventType: payload.eventType,
     action: payload.action,
     operationId: payload.operationId,
     conferenceName: payload.conferenceName,
-    callSessionHistoryId: payload.callSessionHistoryId,
+    callSessionHistoryId: providerSessionId,
     recorderState: payload.recorderState,
     errorCode: payload.errorCode,
-    receivedAt: new Date(params.nowMs ?? Date.now()).toISOString(),
+    receivedAt,
     signatureVerified: true,
   };
 
-  // Ensure persisted records never include secrets / control URLs.
-  const safeEvent: PocCallbackEventRecord = {
-    eventType: event.eventType,
-    action: event.action,
-    operationId: event.operationId,
-    conferenceName: event.conferenceName,
-    callSessionHistoryId: event.callSessionHistoryId,
-    recorderState: event.recorderState,
-    errorCode: event.errorCode,
-    receivedAt: event.receivedAt,
-    signatureVerified: true,
-  };
+  let nextState = state;
+  if (payload.eventType === "session_registered") {
+    const applied = applySessionRegisteredToState(
+      state,
+      {
+        conferenceName: payload.conferenceName,
+        callSessionHistoryId: payload.callSessionHistoryId ?? null,
+        providerSessionId,
+        scenarioBuild: payload.scenarioBuild ?? null,
+        scenarioSource: payload.scenarioSource ?? null,
+        routingRuleIdentity: payload.routingRuleIdentity ?? null,
+        mediaSessionAccessSecureUrl: payload.mediaSessionAccessSecureUrl ?? null,
+        mediaSessionAccessUrl: payload.mediaSessionAccessUrl ?? null,
+        registeredAt: receivedAt,
+      },
+      { stateRoot: params.cwd },
+    );
+    if (!applied.ok) {
+      if (params.persist !== false) {
+        try {
+          writePocState(applied.state, params.cwd);
+        } catch {
+          return {
+            ok: false,
+            status: 500,
+            errorCode: "CALLBACK_STATE_WRITE_FAILED",
+          };
+        }
+      }
+      const mapped = mapCallbackErrorCode(applied.code);
+      return {
+        ok: false,
+        status: 409,
+        errorCode: mapped,
+      };
+    }
+    nextState = applied.state;
+  }
 
-  const next = appendPocCallbackEvent(state, safeEvent, nonce);
+  const next = appendPocCallbackEvent(nextState, safeEvent, nonce);
   if (params.persist !== false) {
     try {
       writePocState(next, params.cwd);
