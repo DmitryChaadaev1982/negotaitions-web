@@ -29,6 +29,12 @@ function printSelection(result) {
 async function main() {
   const result = await runStage310Focused(process.argv.slice(2));
   printSelection(result);
+  if (result.stdout?.trim()) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr?.trim()) {
+    process.stderr.write(result.stderr);
+  }
   if (result.dryRun) {
     console.log("Dry run completed.");
     return;

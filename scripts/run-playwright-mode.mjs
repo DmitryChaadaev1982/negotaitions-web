@@ -20,6 +20,13 @@ async function main() {
     return;
   }
 
+  if (result.stdout?.trim()) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr?.trim()) {
+    process.stderr.write(result.stderr);
+  }
+
   if ((result.exitCode ?? 0) !== 0) {
     process.exitCode = result.exitCode;
   }

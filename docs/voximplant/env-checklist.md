@@ -27,8 +27,34 @@ Do not put real secrets into docs.
 - `VOXIMPLANT_RECORDING_AUDIO_MODE=lossless` (recommended baseline)
 - `VOXIMPLANT_RECORDING_PAUSE_ENABLED=false` (current Stage 3 POC)
 - `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` (required)
+- `VOXIMPLANT_RECORDING_CONTROL_SECRET` (required, min 16 chars; dedicated RC2 command signing secret)
 - `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL` (public HTTPS base URL)
 - `VOXIMPLANT_RECORDING_STORAGE` (if used by scenario/runtime)
+
+## Voximplant server-side stop
+
+- `VOXIMPLANT_SERVER_STOP_MODE=disabled|prefer_server_with_relay_fallback|prefer_server_no_relay_fallback`
+- `VOXIMPLANT_SERVER_STOP_CONTROL_SECRET` (required when mode is not `disabled`)
+- `VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET` (required when mode is not `disabled`)
+- `VOXIMPLANT_SERVER_STOP_CONTROL_TIMEOUT_MS` (default `5000`)
+- `VOXIMPLANT_SERVER_STOP_CALLBACK_REPLAY_WINDOW_SECONDS` (default `300`)
+- `VOXIMPLANT_SERVER_STOP_TERMINAL_TIMEOUT_SECONDS` (default `90`)
+
+Scenario-side placeholders/manual values must be aligned:
+
+- `RECORDING_CONTROL_SECRET` (primary)
+- `VOXIMPLANT_RECORDING_CONTROL_SECRET` (compatibility alias)
+- `SERVER_STOP_CONTROL_SECRET`
+- `SERVER_STOP_CALLBACK_SECRET`
+
+RC2 operational constraint:
+
+- The shared main-room Voximplant scenario currently requires the same protocol-secret values in local and production application environments for:
+  - `VOXIMPLANT_RECORDING_CONTROL_SECRET`
+  - `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`
+  - `VOXIMPLANT_SERVER_STOP_CONTROL_SECRET`
+  - `VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET`
+- Separate per-environment secrets require keyId/key-ring support; RC2 does not implement that capability yet.
 
 ## Storage (S3-compatible / Yandex Object Storage)
 

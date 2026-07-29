@@ -33,6 +33,12 @@ test.afterAll(async () => {
   await cleanupE2eData();
 });
 
+test.afterEach(async ({ request }) => {
+  await request.post("/api/test/mock-external-service", {
+    data: { error: null },
+  });
+});
+
 async function seedCookieConsent(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
     localStorage.setItem(
@@ -87,20 +93,49 @@ async function loginToPageWithSessionCookie(
 async function createEventSession(request: import("@playwright/test").APIRequestContext) {
   const negotiationCase = await createE2eCase();
   const event = await createE2eEvent({ withParticipants: true });
+  const seededParticipants = await getEventParticipants(event.id);
+  const dmitry = participantByName(seededParticipants, "Dmitry");
+  const igor = participantByName(seededParticipants, "Igor");
+  const alex = participantByName(seededParticipants, "Alex");
+  const serg = participantByName(seededParticipants, "Serg");
+  const [dmitryUser, igorUser, alexUser, sergUser] = await Promise.all([
+    createActiveUser(),
+    createActiveUser(),
+    createActiveUser(),
+    createActiveUser(),
+  ]);
+  await Promise.all([
+    query(`UPDATE "EventParticipant" SET "userId" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+      dmitry.id,
+      dmitryUser.id,
+    ]),
+    query(`UPDATE "EventParticipant" SET "userId" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+      igor.id,
+      igorUser.id,
+    ]),
+    query(`UPDATE "EventParticipant" SET "userId" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+      alex.id,
+      alexUser.id,
+    ]),
+    query(`UPDATE "EventParticipant" SET "userId" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+      serg.id,
+      sergUser.id,
+    ]),
+  ]);
   const participants = await getEventParticipants(event.id);
-  const dmitry = participantByName(participants, "Dmitry");
-  const igor = participantByName(participants, "Igor");
-  const alex = participantByName(participants, "Alex");
-  const serg = participantByName(participants, "Serg");
+  const dmitryWithUser = participantByName(participants, "Dmitry");
+  const igorWithUser = participantByName(participants, "Igor");
+  const alexWithUser = participantByName(participants, "Alex");
+  const sergWithUser = participantByName(participants, "Serg");
   const [buyerRole, sellerRole] = negotiationCase.roles;
 
   const assignmentDraft = {
-    facilitatorEventParticipantId: dmitry.id,
+    facilitatorEventParticipantId: dmitryWithUser.id,
     roleAssignments: {
-      [buyerRole.id]: igor.id,
-      [sellerRole.id]: alex.id,
+      [buyerRole.id]: igorWithUser.id,
+      [sellerRole.id]: alexWithUser.id,
     },
-    observerEventParticipantIds: [serg.id],
+    observerEventParticipantIds: [sergWithUser.id],
     preparationDurationMinutes: 5,
     negotiationDurationMinutes: 15,
   };

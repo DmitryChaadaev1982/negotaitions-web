@@ -6,10 +6,15 @@ import {
   type SessionParticipant,
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { resolveVoxRelayFailure } from "@/lib/recording-stop-delivery-policy";
-import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dispatch";
-import type { RecordingControlMessage, VoximplantRoomRole } from "@/lib/voximplant/scenario-messages";
 import {
+  isTerminalStopRetryErrorClass,
+  resolveVoxRelayFailure,
+} from "@/lib/recording-stop-delivery-policy";
+import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dispatch";
+import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
+import { getVoximplantServerStopConfig } from "@/lib/voximplant/server-stop-config";
+import {
+  isBrowserStopRelayEnabledForMode,
   isRelayEligibleParticipantType,
   isRelayStoppableRecordingStatus,
   isRelayTerminalRecordingStatus,
@@ -19,10 +24,19 @@ import {
 type StopOperationState = "PENDING" | "DELIVERING" | "DELIVERED" | "FAILED";
 type RelayOutcome = "ACKNOWLEDGED" | "SEND_FAILED" | "TIMEOUT" | "UNAVAILABLE";
 
-function toVoxRole(participantType: ParticipantType): VoximplantRoomRole {
+function isRelayFallbackErrorClass(value: string | null) {
+  if (!value) return false;
+  if (isTerminalStopRetryErrorClass(value)) return false;
+  return (
+    value.startsWith("VOXIMPLANT_SERVER_CONTROL_") ||
+    value === "VOXIMPLANT_BROWSER_RELAY_REQUIRED"
+  );
+}
+
+function toSignedControllerRole(participantType: ParticipantType): string {
   if (participantType === ParticipantType.FACILITATOR) return "facilitator";
   if (participantType === ParticipantType.OBSERVER) return "observer";
-  if (participantType === ParticipantType.PARTICIPANT) return "participant_a";
+  if (participantType === ParticipantType.PARTICIPANT) return "participant";
   return "unknown";
 }
 
@@ -60,6 +74,7 @@ export type ClaimedStopRelay = {
   operationId: string;
   requestId: string;
   scenarioMessage: RecordingControlMessage;
+  scenarioMessageText: string;
 };
 
 async function readRelayCandidate(sessionId: string): Promise<RelayCandidate | null> {
@@ -97,6 +112,12 @@ async function readRelayCandidate(sessionId: string): Promise<RelayCandidate | n
   if (operation.state === "DELIVERED") {
     return null;
   }
+  if (operation.state !== "FAILED") {
+    return null;
+  }
+  if (!isRelayFallbackErrorClass(operation.lastErrorClass)) {
+    return null;
+  }
 
   return {
     operationRowId: operation.id,
@@ -128,6 +149,10 @@ export async function getStopRelayHintForSession(params: {
   if (!session || !isRelayWindowOpen(session)) {
     return null;
   }
+  const serverStopConfig = getVoximplantServerStopConfig();
+  if (!isBrowserStopRelayEnabledForMode(serverStopConfig.mode)) {
+    return null;
+  }
 
   const candidate = await readRelayCandidate(params.sessionId);
   if (!candidate) {
@@ -145,7 +170,7 @@ export async function getStopRelayHintForSession(params: {
 export async function claimStopRelayDispatch(params: {
   sessionId: string;
   operationId: string;
-  participant: Pick<SessionParticipant, "id" | "type">;
+  participant: Pick<SessionParticipant, "id" | "type" | "userId">;
 }): Promise<ClaimedStopRelay | null> {
   if (!isRelayEligibleParticipantType(params.participant.type)) {
     return null;
@@ -163,6 +188,10 @@ export async function claimStopRelayDispatch(params: {
   if (!session || !isRelayWindowOpen(session)) {
     return null;
   }
+  const serverStopConfig = getVoximplantServerStopConfig();
+  if (!isBrowserStopRelayEnabledForMode(serverStopConfig.mode)) {
+    return null;
+  }
 
   const candidate = await prisma.sessionRecordingStopOperation.findUnique({
     where: { operationId: params.operationId },
@@ -171,6 +200,7 @@ export async function claimStopRelayDispatch(params: {
       operationId: true,
       sessionId: true,
       state: true,
+      lastErrorClass: true,
       attemptCount: true,
       recordingId: true,
       recording: {
@@ -197,11 +227,18 @@ export async function claimStopRelayDispatch(params: {
   if (candidate.state === "DELIVERED") {
     return null;
   }
+  if (candidate.state !== "FAILED") {
+    return null;
+  }
+  if (!isRelayFallbackErrorClass(candidate.lastErrorClass)) {
+    return null;
+  }
 
   const claim = await prisma.sessionRecordingStopOperation.updateMany({
     where: {
       id: candidate.id,
-      state: { in: ["PENDING", "FAILED"] },
+      state: "FAILED",
+      lastErrorClass: candidate.lastErrorClass,
     },
     data: {
       state: "DELIVERING",
@@ -222,7 +259,10 @@ export async function claimStopRelayDispatch(params: {
   const dispatch = await buildVoximplantRecordingDispatch("stop", {
     sessionId: params.sessionId,
     participantId: params.participant.id,
-    role: toVoxRole(params.participant.type),
+    controllerUserId:
+      params.participant.userId ?? `session_participant:${params.participant.id}`,
+    controllerRole: toSignedControllerRole(params.participant.type),
+    canControlRecording: true,
     requestId: candidate.operationId,
   });
 
@@ -237,6 +277,7 @@ export async function claimStopRelayDispatch(params: {
     operationId: candidate.operationId,
     requestId: candidate.operationId,
     scenarioMessage: dispatch.scenarioMessage,
+    scenarioMessageText: dispatch.scenarioMessageText,
   };
 }
 
@@ -289,12 +330,13 @@ export async function reportStopRelayOutcome(params: {
     await prisma.sessionRecordingStopOperation.update({
       where: { id: operation.id },
       data: {
-        state: "DELIVERED",
-        deliveredAt: new Date(),
+        state: "DELIVERING",
+        deliveredAt: null,
         failedAt: null,
         lastError: null,
         lastErrorClass: null,
         nextRetryAt: null,
+        lastAttemptAt: new Date(),
         lastDeliveryTransport: "voximplant_browser_relay_ack",
       },
     });

@@ -63,28 +63,32 @@ export function extractWorktreeFromCommandLine(commandLine) {
 }
 
 export function withTimeout(promise, timeoutMs, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      const timer = setTimeout(() => {
-        clearTimeout(timer);
-        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    }),
-  ]);
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
 }
 
 export async function runCommand(command, args, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
+  const useWindowsCmdShell =
+    process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
 
   return withTimeout(
     new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         cwd,
         env,
-        shell: false,
+        shell: useWindowsCmdShell,
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -270,7 +274,53 @@ export async function detectPort3000Owner(deps = {}) {
 
     const rawOwner = owner.stdout.trim();
     if (owner.code !== 0 && !rawOwner) {
-      return { status: "unknown", pid: null, processName: null, commandLine: null };
+      const fallback = await runner(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          "netstat -ano -p tcp | Select-String ':3000' | Select-Object -First 1 | ForEach-Object { $_.Line }",
+        ],
+        { allowFailure: true },
+      );
+      const line = fallback.stdout.trim();
+      if (!line) {
+        return { status: "free", pid: null, processName: null, commandLine: null };
+      }
+      const pidMatch = line.match(/(\d+)\s*$/);
+      const fallbackPid = pidMatch ? Number(pidMatch[1]) : null;
+      if (!fallbackPid || !Number.isFinite(fallbackPid)) {
+        return { status: "occupied", pid: null, processName: null, commandLine: null };
+      }
+      const processInfoFallback = await runner(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Get-CimInstance Win32_Process -Filter "ProcessId = ${fallbackPid}" | Select-Object ProcessId,Name,CommandLine,ExecutablePath | ConvertTo-Json -Compress`,
+        ],
+        { allowFailure: true },
+      );
+      let processNameFallback = null;
+      let commandLineFallback = null;
+      let executablePathFallback = null;
+      try {
+        const parsedProcess = JSON.parse(processInfoFallback.stdout.trim() || "{}");
+        processNameFallback = parsedProcess?.Name ?? null;
+        commandLineFallback = parsedProcess?.CommandLine ?? null;
+        executablePathFallback = parsedProcess?.ExecutablePath ?? null;
+      } catch {
+        processNameFallback = null;
+        commandLineFallback = null;
+        executablePathFallback = null;
+      }
+      return {
+        status: "occupied",
+        pid: fallbackPid,
+        processName: processNameFallback,
+        commandLine: commandLineFallback,
+        executablePath: executablePathFallback,
+      };
     }
     if (!rawOwner) {
       return { status: "free", pid: null, processName: null, commandLine: null };

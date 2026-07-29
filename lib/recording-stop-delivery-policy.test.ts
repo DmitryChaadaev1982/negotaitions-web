@@ -2,8 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isTerminalStopRetryErrorClass,
   resolveStartingNotReadyFailure,
+  resolveServerControlMissingRegistrationFailure,
+  resolveServerControlTransportFailure,
   resolveVoxRelayFailure,
+  SERVER_CONTROL_MISSING_REGISTRATION_MAX_ATTEMPTS,
+  SERVER_CONTROL_TRANSPORT_MAX_ATTEMPTS,
   scheduleStopRetry,
   STARTING_NOT_READY_MAX_ATTEMPTS,
   VOX_BROWSER_RELAY_MAX_ATTEMPTS,
@@ -46,4 +51,79 @@ test("resolveStartingNotReadyFailure becomes terminal after max attempts", () =>
   assert.equal(terminal.terminal, true);
   assert.equal(terminal.nextRetryAt, null);
   assert.equal(terminal.lastError, "recordingStartingNotReadyTerminal");
+});
+
+test("resolveServerControlMissingRegistrationFailure schedules retry", () => {
+  const result = resolveServerControlMissingRegistrationFailure(2);
+  assert.equal(result.terminal, false);
+  assert.equal(result.lastErrorClass, "VOXIMPLANT_SERVER_CONTROL_REGISTRATION_MISSING");
+  assert.equal(result.lastError, "voximplantServerControlRegistrationMissing");
+  assert.ok(result.nextRetryAt instanceof Date);
+});
+
+test("resolveServerControlMissingRegistrationFailure becomes terminal after max attempts", () => {
+  const terminal = resolveServerControlMissingRegistrationFailure(
+    SERVER_CONTROL_MISSING_REGISTRATION_MAX_ATTEMPTS,
+  );
+  assert.equal(terminal.terminal, true);
+  assert.equal(
+    terminal.lastErrorClass,
+    "VOXIMPLANT_SERVER_CONTROL_REGISTRATION_MISSING_TERMINAL",
+  );
+  assert.equal(
+    terminal.lastError,
+    "voximplantServerControlRegistrationMissingTerminal",
+  );
+  assert.equal(terminal.nextRetryAt, null);
+  assert.equal(
+    isTerminalStopRetryErrorClass(terminal.lastErrorClass),
+    true,
+  );
+});
+
+test("resolveServerControlTransportFailure maps transport classes", () => {
+  const timeout = resolveServerControlTransportFailure(2, "TRANSPORT_TIMEOUT");
+  assert.equal(
+    timeout.lastErrorClass,
+    "VOXIMPLANT_SERVER_CONTROL_TRANSPORT_TIMEOUT",
+  );
+
+  const network = resolveServerControlTransportFailure(
+    2,
+    "TRANSPORT_NETWORK_FAILED",
+  );
+  assert.equal(
+    network.lastErrorClass,
+    "VOXIMPLANT_SERVER_CONTROL_TRANSPORT_NETWORK_FAILED",
+  );
+
+  const appRejected = resolveServerControlTransportFailure(
+    2,
+    "TRANSPORT_APPLICATION_REJECTED",
+  );
+  assert.equal(
+    appRejected.lastErrorClass,
+    "VOXIMPLANT_SERVER_CONTROL_TRANSPORT_APPLICATION_REJECTED",
+  );
+});
+
+test("resolveServerControlTransportFailure becomes terminal after max attempts", () => {
+  const terminal = resolveServerControlTransportFailure(
+    SERVER_CONTROL_TRANSPORT_MAX_ATTEMPTS,
+    "TRANSPORT_TIMEOUT",
+  );
+  assert.equal(terminal.terminal, true);
+  assert.equal(
+    terminal.lastErrorClass,
+    "VOXIMPLANT_SERVER_CONTROL_TRANSPORT_TIMEOUT_TERMINAL",
+  );
+  assert.equal(
+    terminal.lastError,
+    "voximplantServerControlTransportTimeoutTerminal",
+  );
+  assert.equal(terminal.nextRetryAt, null);
+  assert.equal(
+    isTerminalStopRetryErrorClass(terminal.lastErrorClass),
+    true,
+  );
 });

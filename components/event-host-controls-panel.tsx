@@ -6,6 +6,7 @@ import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { CompleteSessionButton } from "@/components/complete-session-button";
 import { EventCaseLibrary } from "@/components/event-case-library";
+import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import {
   GradientButton,
   SecondaryButton,
@@ -29,6 +30,7 @@ import {
 } from "@/lib/event-role-ui-state";
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
+import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { getRecordingDisplayPresentation } from "@/lib/recording-display-state";
 
@@ -472,19 +474,36 @@ export function EventHostControlsPanel({
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {session.roomUrl && session.isActive ? (
-                        <SecondaryButton
-                          type="button"
-                          data-testid="open-session-room-button"
-                          className="px-2 py-1 text-xs"
-                          onClick={() => {
-                            window.location.href = session.roomUrl!;
-                          }}
-                        >
-                          {t("events.openRoom")}
-                        </SecondaryButton>
-                      ) : null}
-                      {session.materialsUrl ? (
+                      {(() => {
+                        const primaryAction = resolveEventSessionPrimaryAction({
+                          roomAccessDecision: session.roomAccessDecision,
+                          roomHref: session.roomUrl,
+                          materialsHref: session.materialsUrl,
+                          redirectHref: session.roomAccessRedirectTo,
+                        });
+                        return primaryAction ? (
+                          <EventSessionRoomButton
+                            roomAccessDecision={session.roomAccessDecision}
+                            roomHref={session.roomUrl}
+                            materialsHref={session.materialsUrl}
+                            redirectHref={session.roomAccessRedirectTo}
+                            compact
+                            testId="open-session-room-button"
+                          />
+                        ) : null;
+                      })()}
+                      {session.materialsUrl &&
+                      (() => {
+                        const primaryAction = resolveEventSessionPrimaryAction({
+                          roomAccessDecision: session.roomAccessDecision,
+                          roomHref: session.roomUrl,
+                          materialsHref: session.materialsUrl,
+                          redirectHref: session.roomAccessRedirectTo,
+                        });
+                        return !primaryAction ||
+                          primaryAction.kind === "OPEN_ROOM" ||
+                          primaryAction.kind === "RETURN_TO_DEBRIEF";
+                      })() ? (
                         <SecondaryButton
                           type="button"
                           data-testid="open-session-materials-button"

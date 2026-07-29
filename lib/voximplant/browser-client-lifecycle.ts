@@ -5,6 +5,7 @@ type VoxLifecycleStore = {
 };
 
 const STORE_KEY = "__negotaitionsVoxLifecycleStore";
+const IDLE_STABILITY_CHECKS = 2;
 
 function getStore(): VoxLifecycleStore {
   const globalScope = globalThis as typeof globalThis & {
@@ -17,9 +18,19 @@ function getStore(): VoxLifecycleStore {
 }
 
 export async function waitForVoxClientIdle(): Promise<void> {
-  const pending = getStore().disconnectPromise;
-  if (pending) {
-    await pending;
+  const store = getStore();
+  let stableChecks = 0;
+
+  while (stableChecks < IDLE_STABILITY_CHECKS) {
+    const pending = store.disconnectPromise;
+    if (pending) {
+      stableChecks = 0;
+      await pending;
+      continue;
+    }
+
+    stableChecks += 1;
+    await Promise.resolve();
   }
 }
 
@@ -29,10 +40,11 @@ export function registerVoxClientDisconnect(disconnectTask: Promise<unknown>): P
     () => undefined,
     () => undefined,
   );
-  store.disconnectPromise = wrapped.finally(() => {
-    if (store.disconnectPromise === wrapped) {
+  const tracked = wrapped.finally(() => {
+    if (store.disconnectPromise === tracked) {
       store.disconnectPromise = null;
     }
   });
-  return store.disconnectPromise;
+  store.disconnectPromise = tracked;
+  return tracked;
 }

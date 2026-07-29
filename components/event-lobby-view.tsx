@@ -11,6 +11,8 @@ import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { EventLobbyVoximplantRoom } from "@/components/event-lobby-voximplant-room";
 import { EventCompletionDangerZone } from "@/components/event-completion-danger-zone";
+import { EventPresenceIndicator } from "@/components/event-presence-indicator";
+import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
 import {
@@ -26,7 +28,7 @@ import {
 } from "@/components/ui/form-styles";
 import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
-import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
+import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
@@ -646,14 +648,6 @@ export function EventLobbyView({
         (session) => session.id === currentAssignment.assignedSessionId,
       )
     : null;
-  const sessionRoomActive =
-    currentAssignment?.assignedSessionId
-      ? Boolean(assignedSession?.isActive) ||
-        isSessionActiveForRoom({
-          negotiationState: assignedSession?.negotiationState ?? "PREPARATION",
-          closedByEventAt: assignedSession?.closedByEventAt ?? null,
-        })
-      : false;
   const participantHistoricalSessions = state.currentParticipant
     ? state.sessions.filter((session) =>
         session.participants.some(
@@ -894,6 +888,9 @@ export function EventLobbyView({
               {t("events.participantsInLobby")}
             </summary>
             <div className="border-t border-slate-700/30 px-4 py-3 space-y-2">
+              <p className="text-[11px] text-slate-500">
+                {t("events.presenceLegend")}
+              </p>
               {state.participants.length === 0 ? (
                 <p className="text-sm text-slate-400">{t("events.noParticipantsYet")}</p>
               ) : (
@@ -915,13 +912,19 @@ export function EventLobbyView({
                           {t("events.activeSession")}: {participant.activeAssignmentLabel}
                         </span>
                       ) : null}
-                      <span className="mt-1 block text-xs font-normal text-slate-400">
-                        {participant.presenceStatus === "online"
-                          ? t("events.onlineWithLocation", {
-                              location: participantLocationLabel(participant, t),
-                            })
-                          : t("rejoin.offline")}
+                      <span className="mt-1 block">
+                        <EventPresenceIndicator
+                          status={participant.eventPresenceStatus}
+                          compact
+                        />
                       </span>
+                      {participant.eventPresenceStatus === "ONLINE" ? (
+                        <span className="mt-1 block text-xs font-normal text-slate-400">
+                          {t("events.onlineWithLocation", {
+                            location: participantLocationLabel(participant, t),
+                          })}
+                        </span>
+                      ) : null}
                     </span>
                     <div className="flex flex-col items-end gap-1">
                       <Badge variant="default" className="text-[10px]">
@@ -1005,30 +1008,71 @@ export function EventLobbyView({
                     ? ` · ${currentAssignment.assignedRoleName}`
                     : ""}
                 </p>
-                {sessionRoomActive && currentAssignment.assignedSessionId ? (
-                  <>
-                    <GradientButtonLink
-                      href={currentAssignment.roomUrl ?? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)}
-                      data-testid="go-to-session-room-button"
-                    >
-                      {t("events.goToNegotiationRoom")}
-                    </GradientButtonLink>
-                    <SecondaryButtonLink
-                      href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
-                      className="w-full text-center"
-                      data-testid="open-session-materials-button"
-                    >
-                      {t("events.sessionMaterials")}
-                    </SecondaryButtonLink>
-                  </>
-                ) : (
-                  <GradientButtonLink
-                    href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
-                    data-testid="open-session-materials-button"
-                  >
-                    {t("events.openSessionMaterials")}
-                  </GradientButtonLink>
-                )}
+                {(() => {
+                  const primaryAction = resolveEventSessionPrimaryAction({
+                    roomAccessDecision: assignedSession?.roomAccessDecision ?? null,
+                    roomHref:
+                      currentAssignment.roomUrl ??
+                      (currentAssignment.assignedSessionId
+                        ? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)
+                        : null),
+                    materialsHref:
+                      currentAssignment.materialsUrl ??
+                      (currentAssignment.assignedSessionId
+                        ? buildAccountSessionMaterialsPath(
+                            currentAssignment.assignedSessionId,
+                          )
+                        : null),
+                    redirectHref: assignedSession?.roomAccessRedirectTo ?? null,
+                  });
+                  const showSecondaryMaterials =
+                    Boolean(currentAssignment.materialsUrl) &&
+                    (!primaryAction ||
+                      primaryAction.kind === "OPEN_ROOM" ||
+                      primaryAction.kind === "RETURN_TO_DEBRIEF");
+
+                  return (
+                    <>
+                      {primaryAction ? (
+                        <EventSessionRoomButton
+                          roomAccessDecision={assignedSession?.roomAccessDecision ?? null}
+                          roomHref={
+                            currentAssignment.roomUrl ??
+                            (currentAssignment.assignedSessionId
+                              ? buildAccountSessionRoomPath(
+                                  currentAssignment.assignedSessionId,
+                                )
+                              : null)
+                          }
+                          materialsHref={
+                            currentAssignment.materialsUrl ??
+                            (currentAssignment.assignedSessionId
+                              ? buildAccountSessionMaterialsPath(
+                                  currentAssignment.assignedSessionId,
+                                )
+                              : null)
+                          }
+                          redirectHref={assignedSession?.roomAccessRedirectTo ?? null}
+                          testId="go-to-session-room-button"
+                        />
+                      ) : null}
+                      {showSecondaryMaterials ? (
+                        <SecondaryButtonLink
+                          href={
+                            currentAssignment.materialsUrl ??
+                            buildAccountSessionMaterialsPath(
+                              currentAssignment.assignedSessionId,
+                            )
+                          }
+                          className="w-full text-center"
+                          data-testid="open-session-materials-button"
+                        >
+                          {t("events.sessionMaterials")}
+                        </SecondaryButtonLink>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </GlassCardContent>
             </GlassCard>
           ) : null}
@@ -1113,15 +1157,26 @@ export function EventLobbyView({
                               : t("events.finishedSession")}
                           </p>
                         </div>
-                        {session.isActive && participantLink?.roomUrl ? (
-                          <SecondaryButtonLink
-                            href={participantLink.roomUrl}
-                            data-testid="go-to-session-room-button"
-                          >
-                            {t("events.openRoom")}
-                          </SecondaryButtonLink>
+                        {participantLink ? (
+                          <EventSessionRoomButton
+                            roomAccessDecision={session.roomAccessDecision}
+                            roomHref={participantLink.roomUrl}
+                            materialsHref={participantLink.materialsUrl}
+                            redirectHref={session.roomAccessRedirectTo}
+                          />
                         ) : null}
-                        {participantLink?.materialsUrl ? (
+                        {participantLink?.materialsUrl &&
+                        (() => {
+                          const primaryAction = resolveEventSessionPrimaryAction({
+                            roomAccessDecision: session.roomAccessDecision,
+                            roomHref: participantLink.roomUrl,
+                            materialsHref: participantLink.materialsUrl,
+                            redirectHref: session.roomAccessRedirectTo,
+                          });
+                          return !primaryAction ||
+                            primaryAction.kind === "OPEN_ROOM" ||
+                            primaryAction.kind === "RETURN_TO_DEBRIEF";
+                        })() ? (
                           <SecondaryButtonLink
                             href={participantLink.materialsUrl}
                             data-testid="open-session-materials-button"

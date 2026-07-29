@@ -26,7 +26,12 @@ import { resolveConnectionStatusForLobby } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { getEventMediaStatusMap } from "@/lib/voximplant/media-status-store";
-import { canCreateLateObserverParticipant } from "@/lib/session-room-access";
+import {
+  canCreateLateObserverParticipant,
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+  type RoomAccessDecisionOutput,
+} from "@/lib/session-room-access";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
 import { getCanonicalActiveSessionPresenceByUser } from "@/lib/session-active-presence";
 
@@ -42,6 +47,11 @@ export type EventStateParticipant = {
   joinedAt: string | null;
   lastSeenAt: string | null;
   connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
+  eventPresenceStatus:
+    | "INVITED_NEVER_CONNECTED"
+    | "ONLINE"
+    | "RECENTLY_DISCONNECTED"
+    | "OFFLINE";
   presenceStatus: "online" | "offline";
   currentLocation:
     | { kind: "offline" }
@@ -77,6 +87,9 @@ export type EventStateSession = {
   facilitatorName: string | null;
   isActive: boolean;
   isFinished: boolean;
+  canEnterRoom: boolean;
+  roomAccessDecision: RoomAccessDecisionOutput | null;
+  roomAccessRedirectTo: string | null;
   roomUrl: string | null;
   materialsUrl: string | null;
   canJoinAsObserver: boolean;
@@ -164,6 +177,12 @@ type BuildEventStateInput = {
 };
 
 type DerivedEventParticipantPresence = {
+  eventPresenceStatus:
+    | "INVITED_NEVER_CONNECTED"
+    | "ONLINE"
+    | "RECENTLY_DISCONNECTED"
+    | "OFFLINE";
+  connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
   presenceStatus: "online" | "offline";
   currentLocation:
     | { kind: "offline" }
@@ -235,6 +254,8 @@ function deriveEventParticipantPresence(params: {
     const activeSession = params.activeSessionByUserId.get(userId);
     if (activeSession) {
       return {
+        eventPresenceStatus: "ONLINE",
+        connectionStatus: "ONLINE",
         presenceStatus: "online",
         currentLocation: {
           kind: "session",
@@ -248,12 +269,32 @@ function deriveEventParticipantPresence(params: {
   const lobbyStatus = resolveConnectionStatusForLobby(params.participant.lastSeenAt);
   if (lobbyStatus === "ONLINE") {
     return {
+      eventPresenceStatus: "ONLINE",
+      connectionStatus: "ONLINE",
       presenceStatus: "online",
       currentLocation: { kind: "lobby" },
     };
   }
+  if (lobbyStatus === "RECENTLY_DISCONNECTED") {
+    return {
+      eventPresenceStatus: "RECENTLY_DISCONNECTED",
+      connectionStatus: "RECENTLY_DISCONNECTED",
+      presenceStatus: "offline",
+      currentLocation: { kind: "offline" },
+    };
+  }
+  if (!params.participant.joinedAt && !params.participant.lastSeenAt) {
+    return {
+      eventPresenceStatus: "INVITED_NEVER_CONNECTED",
+      connectionStatus: "OFFLINE",
+      presenceStatus: "offline",
+      currentLocation: { kind: "offline" },
+    };
+  }
 
   return {
+    eventPresenceStatus: "OFFLINE",
+    connectionStatus: "OFFLINE",
     presenceStatus: "offline",
     currentLocation: { kind: "offline" },
   };
@@ -643,7 +684,8 @@ function mapEventParticipant({
     wantsToFacilitate: participant.wantsToFacilitate,
     joinedAt: participant.joinedAt?.toISOString() ?? null,
     lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
-    connectionStatus: resolveConnectionStatusForLobby(participant.lastSeenAt),
+    connectionStatus: derivedPresence.connectionStatus,
+    eventPresenceStatus: derivedPresence.eventPresenceStatus,
     presenceStatus: derivedPresence.presenceStatus,
     currentLocation: derivedPresence.currentLocation,
     assignedSessionId: activeAssignment?.sessionId ?? null,
@@ -725,6 +767,36 @@ function mapEventSession({
   const linkParticipant = isHost ? facilitator ?? session.participants[0] : currentParticipant;
   const isActive = isSessionActiveForAssignment(session);
   const isFinished = !isActive;
+  const roomAccessDecision =
+    isHost || Boolean(currentParticipant)
+      ? decideSessionRoomAccess({
+          user: {
+            isAuthenticated: true,
+            isAuthorizedMember: true,
+          },
+          session: {
+            sessionId: session.id,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+            deletedAt: session.deletedAt,
+            closeReason: session.closeReason,
+            closedByEventAt: session.closedByEventAt,
+            eventId: session.eventId,
+            eventStatus,
+          },
+          redirect: {
+            sessionId: session.id,
+            eventId: session.eventId,
+            eventStatus,
+            participantJoinToken:
+              currentParticipant?.joinToken ?? linkParticipant?.joinToken ?? null,
+            preferEventResultsForEventOwner: isHost,
+          },
+        })
+      : null;
+  const canEnterRoom = Boolean(
+    roomAccessDecision && isRoomAccessAllowed(roomAccessDecision.output),
+  );
   const canOpenMaterials = Boolean(isHost || currentParticipant);
   const userAlreadyAssignedToSession = currentParticipantId
     ? session.participants.some(
@@ -806,8 +878,11 @@ function mapEventSession({
     facilitatorName: facilitator?.displayName ?? null,
     isActive,
     isFinished,
+    canEnterRoom,
+    roomAccessDecision: roomAccessDecision?.output ?? null,
+    roomAccessRedirectTo: roomAccessDecision?.redirectTo ?? null,
     roomUrl:
-      isActive && linkParticipant
+      canEnterRoom && linkParticipant
         ? accountMode
           ? buildAccountSessionRoomPath(session.id)
           : buildSessionRoomPath(session.id, linkParticipant.joinToken)
@@ -845,7 +920,7 @@ function mapEventSession({
         participantType: participant.type,
         roleName: participant.sessionRole?.name ?? null,
         roomUrl:
-          isActive && canSeeLink
+          canEnterRoom && canSeeLink
             ? accountMode
               ? buildAccountSessionRoomPath(session.id)
               : buildSessionRoomPath(session.id, participant.joinToken)

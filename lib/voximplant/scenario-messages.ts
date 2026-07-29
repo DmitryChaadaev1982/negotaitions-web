@@ -30,17 +30,29 @@ export type VoximplantRoomRole =
   | "observer"
   | "unknown";
 
-export type RecordingControlMessage = {
-  type: "recording_control";
+export const RECORDING_CONTROL_PROTOCOL_VERSION = "rc2-hmac-sha256-v1";
+
+export type RecordingControlSignedClaims = {
+  protocolVersion: typeof RECORDING_CONTROL_PROTOCOL_VERSION;
+  issuedAt: number;
+  expiresAt: number;
+  nonce: string;
   action: RecordingControlAction;
   requestId: string;
-  sessionId?: string;
-  /** Canonical conference name (negotiation-{sessionId}) for scenario-side parsing. */
-  conferenceName?: string;
-  /** Public HTTPS app base URL for VoxEngine recording-status webhooks (no secret). */
-  webhookBaseUrl?: string;
-  participantId?: string;
-  role?: VoximplantRoomRole;
+  sessionId: string;
+  conferenceName: string;
+  participantId: string;
+  controllerUserId: string;
+  controllerRole: string;
+  canControlRecording: boolean;
+  webhookBaseUrl: string;
+};
+
+export type RecordingControlMessage = {
+  type: "recording_control";
+  protocolVersion: typeof RECORDING_CONTROL_PROTOCOL_VERSION;
+  claims: RecordingControlSignedClaims;
+  signature: string;
 };
 
 export type RecordingStatusMessage = {
@@ -80,14 +92,6 @@ const RECORDING_STATUSES: ReadonlySet<RecordingStatus> = new Set([
   "not_recording",
 ]);
 
-const ROOM_ROLES: ReadonlySet<VoximplantRoomRole> = new Set([
-  "participant_a",
-  "participant_b",
-  "facilitator",
-  "observer",
-  "unknown",
-]);
-
 type PlainObject = Record<string, unknown>;
 
 function isPlainObject(value: unknown): value is PlainObject {
@@ -122,8 +126,8 @@ function isRecordingStatus(value: unknown): value is RecordingStatus {
   return typeof value === "string" && RECORDING_STATUSES.has(value as RecordingStatus);
 }
 
-function isVoximplantRoomRole(value: unknown): value is VoximplantRoomRole {
-  return typeof value === "string" && ROOM_ROLES.has(value as VoximplantRoomRole);
+function isFinitePositiveInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && Math.trunc(value) === value;
 }
 
 export function isRecordingControlMessage(
@@ -135,25 +139,54 @@ export function isRecordingControlMessage(
   if (value.type !== "recording_control") {
     return false;
   }
-  if (!isRecordingControlAction(value.action)) {
+  if (value.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
     return false;
   }
-  if (typeof value.requestId !== "string" || !value.requestId.trim()) {
+  if (typeof value.signature !== "string" || !value.signature.trim()) {
     return false;
   }
-  if (value.sessionId !== undefined && typeof value.sessionId !== "string") {
+
+  const claims = value.claims;
+  if (!isPlainObject(claims)) {
     return false;
   }
-  if (value.conferenceName !== undefined && typeof value.conferenceName !== "string") {
+  if (claims.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
     return false;
   }
-  if (value.webhookBaseUrl !== undefined && typeof value.webhookBaseUrl !== "string") {
+  if (!isFinitePositiveInteger(claims.issuedAt)) {
     return false;
   }
-  if (value.participantId !== undefined && typeof value.participantId !== "string") {
+  if (!isFinitePositiveInteger(claims.expiresAt)) {
     return false;
   }
-  if (value.role !== undefined && !isVoximplantRoomRole(value.role)) {
+  if (typeof claims.nonce !== "string" || !claims.nonce.trim()) {
+    return false;
+  }
+  if (!isRecordingControlAction(claims.action)) {
+    return false;
+  }
+  if (typeof claims.requestId !== "string" || !claims.requestId.trim()) {
+    return false;
+  }
+  if (typeof claims.sessionId !== "string" || !claims.sessionId.trim()) {
+    return false;
+  }
+  if (typeof claims.conferenceName !== "string" || !claims.conferenceName.trim()) {
+    return false;
+  }
+  if (typeof claims.participantId !== "string" || !claims.participantId.trim()) {
+    return false;
+  }
+  if (typeof claims.controllerUserId !== "string" || !claims.controllerUserId.trim()) {
+    return false;
+  }
+  if (typeof claims.controllerRole !== "string" || !claims.controllerRole.trim()) {
+    return false;
+  }
+  if (typeof claims.canControlRecording !== "boolean") {
+    return false;
+  }
+  if (typeof claims.webhookBaseUrl !== "string" || !claims.webhookBaseUrl.trim()) {
     return false;
   }
   return true;
@@ -202,27 +235,18 @@ export function parseScenarioMessage(
 }
 
 type RecordingControlMessageOptions = {
-  requestId: string;
-  sessionId?: string;
-  conferenceName?: string;
-  webhookBaseUrl?: string;
-  participantId?: string;
-  role?: VoximplantRoomRole;
+  claims: RecordingControlSignedClaims;
+  signature: string;
 };
 
 export function createRecordingControlMessage(
-  action: RecordingControlAction,
   options: RecordingControlMessageOptions,
 ): RecordingControlMessage {
   return {
     type: "recording_control",
-    action,
-    requestId: options.requestId,
-    sessionId: options.sessionId,
-    conferenceName: options.conferenceName,
-    webhookBaseUrl: options.webhookBaseUrl,
-    participantId: options.participantId,
-    role: options.role,
+    protocolVersion: RECORDING_CONTROL_PROTOCOL_VERSION,
+    claims: options.claims,
+    signature: options.signature,
   };
 }
 

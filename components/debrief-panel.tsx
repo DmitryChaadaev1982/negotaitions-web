@@ -2,6 +2,7 @@
 
 import { SessionPostProcessingPanel } from "@/components/session-post-processing-panel";
 import type { RoomAuthToken } from "@/lib/room-auth";
+import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type DebriefPanelProps = {
@@ -9,6 +10,7 @@ type DebriefPanelProps = {
   roomAuth: RoomAuthToken;
   participantType: "FACILITATOR" | "PARTICIPANT" | "OBSERVER";
   eventLobbyUrl: string | null | undefined;
+  sidebarData: RoomSidebarData;
 };
 
 export function DebriefPanel({
@@ -16,6 +18,7 @@ export function DebriefPanel({
   roomAuth,
   participantType,
   eventLobbyUrl,
+  sidebarData,
 }: DebriefPanelProps) {
   const { t } = useI18n();
 
@@ -38,8 +41,13 @@ export function DebriefPanel({
         roomAuth={roomAuth}
         variant="sidebar"
         participantType={participantType}
-        showNavigation={participantType === "FACILITATOR"}
+        showNavigation
         eventLobbyUrl={eventLobbyUrl}
+        fallbackContext={{
+          participantType: sidebarData.participantType,
+          publicContext: sidebarData.publicContext,
+          caseRole: sidebarData.caseRole,
+        }}
       />
     </div>
   );

@@ -1,5 +1,3 @@
-import "server-only";
-
 /**
  * Architecture: docs/architecture/05-voximplant-integration.md
  * Architecture: docs/architecture/06-recording-transcription-pipeline.md
@@ -53,27 +51,18 @@ import {
   RecordingStatus as DbRecordingStatus,
   RecordingType,
 } from "@/app/generated/prisma/client";
+import { getVoximplantRecordingControlSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import type { RoomRecordingState } from "@/lib/room-provider/types";
-import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import {
-  createRecordingControlMessage,
-  type RecordingControlAction,
   type RecordingControlMessage,
   type RecordingStatus,
-  type VoximplantRoomRole,
 } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
 import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url";
-
-/** Maps the recording-control route actions to the scenario message actions. */
-function mapActionToScenarioAction(
-  action: "start" | "stop" | "refresh",
-): RecordingControlAction {
-  if (action === "start") return "start";
-  if (action === "stop") return "stop";
-  return "status";
-}
+import {
+  buildSignedRecordingDispatchPayload,
+} from "@/lib/voximplant/recording-dispatch-contract";
 
 /**
  * Maps a Voximplant scenario RecordingStatus to the common recording status model
@@ -115,6 +104,8 @@ export type VoximplantRecordingDispatchResult = {
    * this response.
    */
   scenarioMessage: RecordingControlMessage;
+  /** Exact pre-serialized command relay text for conference.sendMessage(). */
+  scenarioMessageText: string;
   /**
    * Voximplant recording config from the environment (audio mode, audio-only flag).
    * The scenario uses this to initialize recording parameters.
@@ -147,9 +138,19 @@ export async function buildVoximplantRecordingDispatch(
   action: "start" | "stop" | "refresh",
   context: {
     sessionId: string;
-    participantId?: string;
-    role?: VoximplantRoomRole;
+    participantId: string;
+    controllerUserId: string;
+    controllerRole: string;
+    canControlRecording: boolean;
     requestId?: string;
+  },
+  options?: {
+    webhookBaseUrl?: string;
+    signingSecret?: string;
+    issuedAt?: number;
+    expiresAt?: number;
+    nonce?: string;
+    ttlSeconds?: number;
   },
 ): Promise<VoximplantRecordingDispatchResult> {
   let config;
@@ -163,16 +164,27 @@ export async function buildVoximplantRecordingDispatch(
       "Voximplant recording config is incomplete. Recording command queued but may not execute.";
   }
 
-  const scenarioAction = mapActionToScenarioAction(action);
-  const conferenceName = buildVoximplantConferenceName(context.sessionId);
-  const webhookBaseUrl = await getVoximplantRecordingWebhookBaseUrl();
-  const scenarioMessage = createRecordingControlMessage(scenarioAction, {
-    requestId: context.requestId?.trim() || nanoid(12),
+  const webhookBaseUrlRaw =
+    options?.webhookBaseUrl ?? (await getVoximplantRecordingWebhookBaseUrl());
+  if (!webhookBaseUrlRaw) {
+    throw new Error(
+      "Missing effective Voximplant webhook base URL. Configure an allowlisted HTTPS origin.",
+    );
+  }
+  const signedDispatch = buildSignedRecordingDispatchPayload({
+    action,
     sessionId: context.sessionId,
-    conferenceName,
-    ...(webhookBaseUrl ? { webhookBaseUrl } : {}),
     participantId: context.participantId,
-    role: context.role,
+    controllerUserId: context.controllerUserId,
+    controllerRole: context.controllerRole,
+    canControlRecording: context.canControlRecording,
+    webhookBaseUrlRaw,
+    signingSecret: options?.signingSecret ?? getVoximplantRecordingControlSecret(),
+    requestId: context.requestId?.trim() || nanoid(12),
+    issuedAt: options?.issuedAt,
+    expiresAt: options?.expiresAt,
+    nonce: options?.nonce,
+    ttlSeconds: options?.ttlSeconds,
   });
 
   const recordingConfig = {
@@ -181,19 +193,13 @@ export async function buildVoximplantRecordingDispatch(
     pauseEnabled: config.recording.pauseEnabled,
   };
 
-  const recordingStatusPending =
-    action === "start"
-      ? "STARTING"
-      : action === "stop"
-        ? "STOPPING"
-        : "NOT_STARTED";
-
   return {
     ok: true,
-    scenarioMessage,
+    scenarioMessage: signedDispatch.scenarioMessage,
+    scenarioMessageText: signedDispatch.scenarioMessageText,
     recordingConfig,
     warning,
-    recordingStatusPending,
+    recordingStatusPending: signedDispatch.recordingStatusPending,
   };
 }
 

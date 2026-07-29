@@ -20,6 +20,17 @@ export type SessionRosterEntry = {
   micEnabled?: boolean | null;
   cameraEnabled?: boolean | null;
   mediaStatusUpdatedAt?: string | null;
+  /**
+   * Authoritative session logical presence derived from SessionRoomConnection.
+   * - true: has an active lease
+   * - false: no active lease for this user
+   * - null/undefined: not applicable or not enough identity data
+   */
+  isLogicallyPresent?: boolean | null;
+  /** Last known inactive reason when isLogicallyPresent === false. */
+  logicalDisconnectReason?: string | null;
+  /** Current active connectionId when isLogicallyPresent === true. */
+  logicalConnectionId?: string | null;
   /** Phase 6.11B: DB sessionRoleId — null = unassigned. Only set for PARTICIPANT type. */
   sessionRoleId?: string | null;
 };

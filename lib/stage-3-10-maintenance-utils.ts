@@ -33,3 +33,40 @@ export function deriveBackfillLifecycle(input: {
 
   return RoomLifecycle.CLOSED;
 }
+
+const RELAY_DELIVERING_TRANSPORTS = [
+  "voximplant_browser_relay_claim",
+  "voximplant_browser_relay_ack",
+  "maintenance_worker_relay_claim_timeout_probe",
+] as const;
+
+type RelayDeliveringCandidate = {
+  state: string;
+  lastDeliveryTransport: string | null;
+  transportAcceptedAt: Date | null;
+  commandAcceptedAt: Date | null;
+  providerTerminalAt: Date | null;
+  lastAttemptAt: Date | null;
+};
+
+export function isRelayDeliveringTimeoutCandidate(
+  candidate: RelayDeliveringCandidate,
+  terminalTimeoutCutoff: Date,
+) {
+  return (
+    candidate.state === "DELIVERING" &&
+    candidate.transportAcceptedAt === null &&
+    candidate.commandAcceptedAt === null &&
+    candidate.providerTerminalAt === null &&
+    candidate.lastAttemptAt !== null &&
+    candidate.lastAttemptAt <= terminalTimeoutCutoff &&
+    RELAY_DELIVERING_TRANSPORTS.includes(
+      (candidate.lastDeliveryTransport ?? "") as
+        | "voximplant_browser_relay_claim"
+        | "voximplant_browser_relay_ack"
+        | "maintenance_worker_relay_claim_timeout_probe",
+    )
+  );
+}
+
+export { RELAY_DELIVERING_TRANSPORTS };

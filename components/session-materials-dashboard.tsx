@@ -18,9 +18,9 @@ import {
   type SessionMaterialsTranscriptSnapshot,
 } from "@/lib/session-materials-processing";
 import {
-  NegotiationAnalysisOutputSchema,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
+import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ type MaterialsStatusAiAnalysis = {
   executiveSummary: string | null;
   overallScore: number | null;
   analysisFromOlderTranscript?: boolean;
-  analysisJson: NegotiationAnalysisOutput | null;
+  analysisJson: unknown;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
@@ -932,7 +932,7 @@ export function AiAnalysisReport({
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 3500;
+const DEFAULT_POLL_INTERVAL_MS = 3500;
 
 export function SessionMaterialsDashboard({
   sessionId,
@@ -997,7 +997,7 @@ export function SessionMaterialsDashboard({
   const shouldCurrentlyPoll =
     (liveData
       ? liveData.processing.shouldPoll
-      : shouldPollFromSnapshot(liveSnapshot)) ||
+      : canPoll) ||
     transcriptionBusy ||
     rerunBusy ||
     enhancementBusy ||
@@ -1007,6 +1007,7 @@ export function SessionMaterialsDashboard({
     forcePollingActive;
 
   const isPolling = canPoll && shouldCurrentlyPoll;
+  const pollIntervalMs = liveData?.processing.nextPollMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   const autoTranscribeEnabled = liveData?.processing?.autoTranscribeEnabled ?? false;
   const canStartTranscription = liveData?.transcription?.canStart ?? false;
@@ -1044,16 +1045,47 @@ export function SessionMaterialsDashboard({
   const transcriptReady = liveTranscriptionStage === "ready";
 
   const analysisData = liveData?.aiAnalysis ?? null;
-  const parsedAnalysis = canViewAiAnalysis
-    ? NegotiationAnalysisOutputSchema.safeParse(analysisData?.analysisJson)
+  const aiRenderState = resolveAiAnalysisRenderState({
+    recordingStage: liveRecordingStage,
+    transcriptionStage: liveTranscriptionStage,
+    aiStage: liveAiAnalysisStage,
+    canViewAiAnalysis,
+    analysisJson: analysisData?.analysisJson ?? null,
+  });
+  const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const aiRenderValidationError = aiRenderState.showInvalidResultError
+    ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
-  const analysisJson: NegotiationAnalysisOutput | null = parsedAnalysis?.success
-    ? parsedAnalysis.data
-    : null;
-  const aiRenderValidationError =
-    parsedAnalysis && !parsedAnalysis.success
-      ? "AI analysis result is invalid. Please rerun analysis."
-      : null;
+  const aiStatusMessageKey: TranslationKey | null = (() => {
+    switch (aiRenderState.stage) {
+      case "WAITING_FOR_RECORDING":
+        return "sessionMaterials.waitingForRecording";
+      case "WAITING_FOR_TRANSCRIPT":
+        return "sessionMaterials.waitingForTranscript";
+      case "TRANSCRIPT_PROCESSING":
+        return transcriptionStatusKeys[liveTranscriptionStage];
+      case "ANALYSIS_NOT_STARTED":
+        return "sessionMaterials.transcriptReadyForAnalysis";
+      case "ANALYSIS_IN_PROGRESS":
+        return "sessionMaterials.aiAnalysisInProgress";
+      case "ANALYSIS_FAILED":
+        return "sessionMaterials.aiAnalysisFailed";
+      case "ANALYSIS_READY_WITHOUT_RESULT":
+        return "sessionMaterials.aiAnalysisReady";
+      case "ANALYSIS_INVALID":
+        return "sessionMaterials.aiAnalysisReady";
+      case "ANALYSIS_READY":
+        return null;
+      default:
+        return "sessionMaterials.waitingForTranscript";
+    }
+  })();
+  const aiStatusCardKey =
+    aiStatusMessageKey ?? aiAnalysisStatusKeys[liveAiAnalysisStage];
+  const aiStatusCardTone =
+    aiRenderState.stage === "TRANSCRIPT_PROCESSING"
+      ? transcriptionStatusTone[liveTranscriptionStage]
+      : aiAnalysisStatusTone[liveAiAnalysisStage];
 
   const fetchStatus = useCallback(async () => {
     if (!sessionId || !joinToken) return;
@@ -1097,9 +1129,9 @@ export function SessionMaterialsDashboard({
     if (!canPoll || !shouldCurrentlyPoll) return;
     const intervalId = setInterval(() => {
       void fetchStatus();
-    }, POLL_INTERVAL_MS);
+    }, pollIntervalMs);
     return () => clearInterval(intervalId);
-  }, [canPoll, shouldCurrentlyPoll, fetchStatus]);
+  }, [canPoll, shouldCurrentlyPoll, fetchStatus, pollIntervalMs]);
 
   useEffect(() => {
     if (!canPoll) return;
@@ -1363,8 +1395,8 @@ export function SessionMaterialsDashboard({
             <ProcessingStatusCard
               testId="ai-analysis-status-card"
               title={t("sessionMaterials.aiAnalysis")}
-              statusLabel={t(aiAnalysisStatusKeys[liveAiAnalysisStage])}
-              toneClassName={aiAnalysisStatusTone[liveAiAnalysisStage]}
+              statusLabel={t(aiStatusCardKey)}
+              toneClassName={aiStatusCardTone}
               updatedAt={
                 analysisData?.completedAt ?? analysisData?.startedAt ?? null
               }
@@ -1651,9 +1683,9 @@ export function SessionMaterialsDashboard({
           ) : null}
 
           {/* Status message */}
-          {!participantPlaceholder && liveAiAnalysisStage !== "ready" ? (
+          {!participantPlaceholder && aiStatusMessageKey ? (
             <p className="text-sm text-slate-400" data-testid="ai-analysis-status-message">
-              {t(aiAnalysisStatusKeys[liveAiAnalysisStage])}
+              {t(aiStatusMessageKey)}
             </p>
           ) : null}
 
@@ -1661,6 +1693,13 @@ export function SessionMaterialsDashboard({
           {aiAnalysisError || aiRenderValidationError ? (
             <p className="text-sm text-amber-400" data-testid="ai-analysis-error">
               {aiAnalysisError ?? aiRenderValidationError}
+            </p>
+          ) : null}
+          {!aiAnalysisError &&
+          liveAiAnalysisStage === "failed" &&
+          analysisData?.errorMessage ? (
+            <p className="text-sm text-rose-400" data-testid="ai-analysis-failure">
+              {analysisData.errorMessage}
             </p>
           ) : null}
 
@@ -1788,28 +1827,4 @@ function buildLiveSnapshot(
       data.transcription?.completedAt ?? data.transcription?.startedAt ?? null,
     recordingError: data.recording?.errorMessage ?? null,
   };
-}
-
-function shouldPollFromSnapshot(
-  snapshot: SessionMaterialsProcessingSnapshot,
-): boolean {
-  const activeRecording = new Set<ProcessingRecordingStatus>([
-    "in_progress",
-    "finalizing",
-    "processing",
-  ]);
-  const activeTranscription = new Set<ProcessingTranscriptionStatus>([
-    "queued",
-    "downloading",
-    "compressing",
-    "transcribing",
-    "enhancing",
-  ]);
-  const activeAi = new Set<ProcessingAiAnalysisStatus>(["queued", "analyzing"]);
-  return (
-    activeRecording.has(snapshot.recording) ||
-    activeTranscription.has(snapshot.transcription) ||
-    activeAi.has(snapshot.aiAnalysis) ||
-    (snapshot.recording === "ready" && snapshot.transcription === "not_started")
-  );
 }

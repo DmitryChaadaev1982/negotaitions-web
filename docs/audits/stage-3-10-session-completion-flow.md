@@ -1,6 +1,7 @@
 # Stage 3.10 — Session Completion Flow Audit (Finalized Product Decisions)
 
-This remains a docs-only, read-only audit bundle. No runtime behavior was changed in this stage.
+This document is the release audit for the implemented Stage 3.10 runtime,
+migration, scenario, tests, and operational behavior.
 
 This update finalizes target product decisions for:
 
@@ -50,6 +51,17 @@ Detailed artifacts are in:
 - `docs/audits/stage-3-10-session-completion-flow/implementation-prompt.md`
 
 Sanitization constraints were applied to avoid committing PII, secrets, or raw provider payloads.
+
+## Stage 3.10 Server-stop Production Delta
+
+This audit baseline now maps to production server-side Vox stop rollout:
+
+- Durable stop operation model is unchanged (`PENDING`, `DELIVERING`, `DELIVERED`, `FAILED` only).
+- Intermediate provider evidence is now persisted in additive timestamp/evidence columns instead of introducing new operation states.
+- Server callback replay protection uses hashed nonces (`VoximplantCallbackNonce`) with bounded expiry cleanup.
+- Session-private control URL is moved to server-only `SessionVoximplantControlChannel` and is never emitted by public DTO routes.
+- `DELIVERED` on the normal server path requires terminal provider callback evidence, not just control transport acceptance.
+- `OPEN -> DEBRIEF_OPEN` transition ownership remains with canonical completion and does not wait on async provider callbacks.
 
 ## Stage 3.10 Consolidated follow-up (observer/presence/polling)
 
@@ -101,7 +113,8 @@ Presence timing semantics:
 
 - Explicit leave marks `disconnectedAt` immediately and should be visible in list stats in about 3-5 seconds (poll interval + request latency).
 - Passive close/network loss is not an explicit leave: row remains counted until lease expiry.
-- Lease TTL/grace remains unchanged at 120 seconds in this stage.
+- Lease validity window remains 120 seconds (`PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS`) before an abrupt disconnect is considered invalid.
+- After definitive invalidation (`disconnectedAt` for explicit leave, `expiresAt` for expiry), empty-room reconciliation uses `DEBRIEF_AUTO_CLOSE_GRACE_MS` (default 30000 ms) before canonical closure/completion.
 
 Session/lobby overlap semantics:
 
@@ -133,3 +146,23 @@ Errors intentionally never suppressed by this filter:
 - conference join failures.
 - `IceRestartAction` / reinvite rejected failures.
 - unknown non-matching `TypeError` and application errors outside WebSDK logger callback.
+
+## Final Manual Canary Evidence
+
+Manual M1-M7 validation completed successfully before final release
+preparation:
+
+- M1: facilitator canonical finish.
+- M2: administrative finish without facilitator browser.
+- M3: complete one Session from Event lobby.
+- M4: complete Event with active recording.
+- M5: explicit leave, logical presence, rejoin without duplication, active
+  recording preservation, and live recorder ReInvite sanitization.
+- M6: `CLOSED` Session stale tabs, direct-room access, and redirects.
+- M7: recording, transcription, enhancement, speaker mapping, AI analysis,
+  publication, and participant materials.
+
+The remaining known provider issue is upstream emission of an unbacked recorder
+ReInvite cause. The installed sanitizer is the mitigation and remains required
+until the WebSDK/provider behavior is fixed and the recorder-rejoin canary
+passes without it.

@@ -21,7 +21,6 @@ import { getOptionalCurrentUser, type AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { generateJoinToken } from "@/lib/join-token";
 import { prisma } from "@/lib/prisma";
-import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
 import {
   canCreateLateObserverParticipant,
@@ -125,33 +124,6 @@ async function findEventParticipantIdForUser(params: {
   return eventParticipant?.id ?? null;
 }
 
-async function resolveEffectiveTypeForSessionParticipant(params: {
-  sessionId: string;
-  sessionFacilitatorId: string | null;
-  participantId: string;
-  participantType: ParticipantType;
-}) {
-  if (params.participantType !== ParticipantType.FACILITATOR) {
-    return params.participantType;
-  }
-
-  const participants = await prisma.sessionParticipant.findMany({
-    where: { sessionId: params.sessionId },
-    select: {
-      id: true,
-      type: true,
-      userId: true,
-      createdAt: true,
-    },
-  });
-
-  return resolveSessionParticipantType(
-    { id: params.participantId, type: params.participantType },
-    participants,
-    params.sessionFacilitatorId,
-  );
-}
-
 /**
  * Account room entry point: resolve the current user's own SessionParticipant.
  *
@@ -192,27 +164,6 @@ export async function ensureAccountRoomParticipant(
       }
     }
 
-    const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-      sessionId,
-      sessionFacilitatorId: existing.session.facilitatorId ?? null,
-      participantId: existing.id,
-      participantType: existing.type,
-    });
-
-    if (
-      existing.type === ParticipantType.FACILITATOR &&
-      effectiveType !== existing.type
-    ) {
-      const updated = await prisma.sessionParticipant.update({
-        where: { id: existing.id },
-        data: { type: effectiveType },
-        include: roomParticipantInclude,
-      });
-      return {
-        kind: "participant",
-        participant: updated as unknown as RoomParticipantResult,
-      };
-    }
     return {
       kind: "participant",
       participant: existing as unknown as RoomParticipantResult,
@@ -376,9 +327,7 @@ export async function ensureAccountRoomParticipant(
           }
 
           const shouldEnterAsFacilitator =
-            sessionForCreation.facilitatorId === user.id ||
-            sessionForCreation.event?.hostUserId === user.id ||
-            sessionForCreation.event?.facilitatorUserId === user.id;
+            sessionForCreation.facilitatorId === user.id;
           // Non-facilitators join as observers by default; facilitator can later promote
           // them to participant roles from the role management panel.
           const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "OBSERVER";
@@ -523,16 +472,9 @@ async function resolveByJoinToken(
     return null;
   }
 
-  const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-    sessionId,
-    sessionFacilitatorId: participant.session.facilitatorId ?? null,
-    participantId: participant.id,
-    participantType: participant.type,
-  });
-
   return {
     ...participant,
-    type: effectiveType,
+    type: participant.type,
   } as RoomParticipantResult;
 }
 
@@ -579,16 +521,9 @@ async function resolveByParticipantId(
   }
 
   // Cast to the same return type as getSessionParticipantByJoinToken
-  const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-    sessionId,
-    sessionFacilitatorId: participant.session.facilitatorId ?? null,
-    participantId: participant.id,
-    participantType: participant.type,
-  });
-
   return {
     ...participant,
-    type: effectiveType,
+    type: participant.type,
   } as unknown as RoomParticipantResult;
 }
 

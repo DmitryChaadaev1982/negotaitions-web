@@ -4,6 +4,7 @@ import {
   RecordingStatus,
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
+import type { VoximplantServerStopMode } from "@/lib/env";
 
 const RELAY_ELIGIBLE_PARTICIPANT_TYPES = new Set<ParticipantType>([
   ParticipantType.FACILITATOR,
@@ -23,6 +24,15 @@ const RELAY_TERMINAL_RECORDING_STATUSES = new Set<RecordingStatus>([
   RecordingStatus.COMPLETED,
   RecordingStatus.FAILED,
 ]);
+
+export function isBrowserStopRelayEnabledForMode(
+  mode: VoximplantServerStopMode,
+): boolean {
+  return (
+    mode === "disabled" ||
+    mode === "prefer_server_with_relay_fallback"
+  );
+}
 
 export function isRelayEligibleParticipantType(participantType: ParticipantType) {
   return RELAY_ELIGIBLE_PARTICIPANT_TYPES.has(participantType);

@@ -203,10 +203,14 @@ export default function VoximplantVideoLayout({
               : visual.zone === "observer"
                 ? t("room.observer")
                 : t("room.unknownRole");
+      const isLogicallyAbsent = entry.isLogicallyPresent === false;
       const mediaModel = normalizeParticipantPresenceMedia({
         displayName: entry.displayName,
         displayRole: roleLabel,
-        connectedSignal: isLocal ? joined : Boolean(matchedRemote),
+        // Logical room presence (SessionRoomConnection) is authoritative for who
+        // is currently in the room; provider endpoint media remains authoritative
+        // for actual A/V streams of those present users.
+        connectedSignal: isLocal ? joined : Boolean(matchedRemote) && !isLogicallyAbsent,
         allowConnectedWithoutMediaTile: true,
         lastSeenAt: entry.lastSeenAt ?? null,
         videoStream: participant.stream,

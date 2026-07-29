@@ -5,8 +5,8 @@
 - Implementation complete: yes
 - Locally validated: yes
 - Migration rehearsal: complete (local disposable DB)
-- Provider canary: pending manual execution
-- Multi-browser canary: pending manual execution
+- Provider canary: complete (M1-M7 PASS)
+- Multi-browser canary: complete (M1-M7 PASS)
 - Production deployment: pending
 
 ## Implemented in current branch
@@ -50,43 +50,40 @@
 
 - Exactly one logical stop operation per recording is enforced by unique `recordingId` in `SessionRecordingStopOperation`.
 - LiveKit stop delivery is server-authoritative and retryable via persisted operation state.
-- Voximplant stop intent is durable and retryable server-side, but delivery still depends on browser relay in current architecture.
-- Retry policy is bounded; unsupported browser-dependent flow now transitions to terminal operator-attention class `VOXIMPLANT_BROWSER_RELAY_REQUIRED_TERMINAL`.
+- Voximplant terminal stop is server-canonical in either `prefer_server_*` mode
+  through the durable private control channel.
+- Browser relay is bounded fallback only in
+  `prefer_server_with_relay_fallback`; `disabled` preserves the legacy path.
+- Retry policy is bounded and terminal success requires provider callback
+  evidence rather than control-transport acceptance alone.
 - Webhook/provider completion remains authoritative for terminal recording finalization.
 
 ## A7/A8/A9 status in this checkpoint
 
-- **A7 accepted architecture (bounded risk)**
+- **A7 server-side stop architecture**
   - Canonical FINISH/Event completion persists one durable `SessionRecordingStopOperation`.
-  - Any eligible connected room client (facilitator, participant, observer) may relay the server-authorized stop operation by server-issued `operationId/requestId`.
-  - Duplicate client relays converge on one operation and webhook finalization.
+  - The scenario registers a server-private control URL and sends signed
+    command-accepted/terminal callbacks.
+  - Server delivery is canonical; eligible room clients may relay only an
+    already-authorized fallback operation in the configured fallback mode.
   - Scenario adds shutdown hardening (`ConferenceEvents.Stopped`, `AppEvents.Terminating`) without changing conference startup architecture.
-  - Provider auto-termination remains fallback when no client can relay.
-  - **Status:** accepted for Stage 3.10 Checkpoint A (`A7`), with explicit residual risk.
+  - **Status:** implemented and verified by deterministic tests plus M1-M7.
 - **A8 bounded backfill and verification**: implemented rerunnable batch backfill + verification counters in maintenance command.
 - **A9 restart/concurrency/rollback validation**: code-level protections and focused tests added; full deployment rollback rehearsal remains pending environment-level checkpoint review.
 
-## Residual risks (accepted in A7)
+## Residual risks
 
-1. All clients can disappear before seeing FINISHED/event close and before relay claim.
-2. Clients can remain connected but fail relay transport (`sendMessage` unavailable, timing out, transient network/client failures).
-3. Provider session termination can lag behind expected timing, extending recording window.
-4. Debrief speech may still be captured until relay succeeds or provider session terminates.
-5. Webhook delivery/finalization can be delayed.
-6. Shutdown-handler webhook delivery is best effort under forced provider termination.
-
-## Escalation conditions for deferred server-owned Vox control
-
-- recurring debrief over-recording outside accepted window;
-- repeated materially delayed stop finalization;
-- privacy-boundary incidents tied to delayed stop;
-- frequent event/session completion without relay-capable clients;
-- observable provider cost growth from delayed termination;
-- missing webhook past operational timeout threshold.
+1. Provider registration/control transport or terminal callback can be delayed;
+   retries and configured fallback mode bound the application response.
+2. Provider shutdown webhook delivery remains best effort during forced
+   termination.
+3. Voximplant currently emits an unbacked recorder ReInvite cause; the
+   pre-registration sanitizer mitigates the WebSDK fault.
 
 ## Deferred backlog item (explicit)
 
-- Implement true server-owned, no-browser VoxEngine stop transport for active conferences (without WebSDK client relay), including durable command ingress and runtime verification.
+- Define long-horizon empty `OPEN` Session / empty Event lifecycle in hours or
+  bounded by Event lifetime. The short `DEBRIEF_OPEN` grace must not be reused.
 
 ## Leave trigger inventory (correctness evidence)
 
@@ -234,4 +231,5 @@ Checkpoint status note:
 
 - Stage 3.10 foundation/A7 is implemented and validated with deterministic non-provider automation.
 - Checkpoint C administrative completion and management UI automation is complete in this branch.
-- Remaining manual scope is limited to provider/multi-device canaries and belongs to environment-dependent validation, not Checkpoint C product correctness.
+- Provider and multi-device M1-M7 canaries are complete; production rollout and
+  production canary evidence remain pending.

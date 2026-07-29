@@ -9,12 +9,19 @@ import { RecordingTranscriptionSection } from "@/components/recording-transcript
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
 import { getTranscriptionSectionRefreshKey } from "@/lib/transcription/transcription-section-key";
+import type {
+  ProcessingAiAnalysisStatus,
+  ProcessingRecordingStatus,
+  ProcessingTranscriptionStatus,
+} from "@/lib/session-materials-processing";
 import type { RoomAuthToken } from "@/lib/room-auth";
+import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
   NegotiationAnalysisOutputSchema,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
+import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
 
 // sharedAnalysisJson stored for participants has roleObjectivesAnalysis stripped.
 // Allow that field to be absent so the parse succeeds for participant view.
@@ -66,9 +73,11 @@ type MaterialsStatusResponse = {
     canRunTranscription: boolean;
     canRunAiAnalysis: boolean;
     canShareAiAnalysis: boolean;
+    canOpenMaterials?: boolean;
   };
   processing: {
     shouldPoll: boolean;
+    nextPollMs?: number | null;
     autoTranscribeEnabled: boolean;
   };
 };
@@ -84,9 +93,10 @@ type SessionPostProcessingPanelProps = {
   /** Show navigation links (materials, event lobby) — used in debrief sidebar */
   showNavigation?: boolean;
   eventLobbyUrl?: string | null;
+  fallbackContext?: Pick<RoomSidebarData, "participantType" | "publicContext" | "caseRole">;
 };
 
-const POLL_INTERVAL_MS = 4000;
+const DEFAULT_POLL_INTERVAL_MS = 4000;
 
 const recordingStageKeys: Record<string, TranslationKey> = {
   not_available: "sessionMaterials.recordingNotAvailable",
@@ -183,6 +193,7 @@ export function SessionPostProcessingPanel({
   participantType = "FACILITATOR",
   showNavigation = false,
   eventLobbyUrl,
+  fallbackContext,
 }: SessionPostProcessingPanelProps) {
   const { t } = useI18n();
   const isFacilitator = participantType === "FACILITATOR";
@@ -257,21 +268,18 @@ export function SessionPostProcessingPanel({
 
   useEffect(() => {
     const shouldPollStatus =
-      statusData?.processing.shouldPoll ||
-      forcePollingActive ||
-      (isFacilitator &&
-        !readOnly &&
-        (statusData?.transcription?.speakerMappingRequired ?? false));
+      Boolean(statusData?.processing.shouldPoll) || forcePollingActive;
     if (!shouldPollStatus) return;
-    const id = setInterval(() => void fetchStatus(), POLL_INTERVAL_MS);
+    const id = setInterval(
+      () => void fetchStatus(),
+      statusData?.processing.nextPollMs ?? DEFAULT_POLL_INTERVAL_MS,
+    );
     return () => clearInterval(id);
   }, [
     fetchStatus,
     forcePollingActive,
-    isFacilitator,
-    readOnly,
+    statusData?.processing.nextPollMs,
     statusData?.processing.shouldPoll,
-    statusData?.transcription?.speakerMappingRequired,
   ]);
 
   const autoTranscribeEnabled =
@@ -304,17 +312,23 @@ export function SessionPostProcessingPanel({
   const canShareAi = isFacilitator && !readOnly && ai?.canShare;
   const aiShared = ai?.isSharedWithSession ?? false;
   const isFacilitatorView = ai?.visibility != null;
+  const canOpenMaterials = statusData?.permissions?.canOpenMaterials ?? true;
 
-  // Facilitators get the full analysisJson (validated strictly).
-  // Participants get sharedAnalysisJson which lacks roleObjectivesAnalysis — use
-  // the partial schema so the parse succeeds even without that blocked field.
-  const parsedAnalysis = canViewAi
-    ? (isFacilitatorView
-        ? NegotiationAnalysisOutputSchema.safeParse(ai?.analysisJson)
-        : ParticipantAnalysisSchema.safeParse(ai?.analysisJson))
-    : null;
-  const analysisJson: NegotiationAnalysisOutput | null = parsedAnalysis?.success
-    ? (parsedAnalysis.data as NegotiationAnalysisOutput)
+  const aiRenderState = resolveAiAnalysisRenderState({
+    recordingStage: (recording?.processingStage ??
+      "not_available") as ProcessingRecordingStatus,
+    transcriptionStage: (transcript?.processingStage ??
+      "waiting_for_recording") as ProcessingTranscriptionStatus,
+    aiStage: (ai?.processingStage ?? "waiting_for_transcript") as ProcessingAiAnalysisStatus,
+    canViewAiAnalysis: canViewAi,
+    analysisJson: ai?.analysisJson ?? null,
+    parseAnalysisJson: isFacilitatorView
+      ? (value) => NegotiationAnalysisOutputSchema.safeParse(value)
+      : (value) => ParticipantAnalysisSchema.safeParse(value),
+  });
+  const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const aiRenderValidationError = aiRenderState.showInvalidResultError
+    ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
 
   const handleStartTranscription = useCallback(async () => {
@@ -517,6 +531,32 @@ export function SessionPostProcessingPanel({
   const aiActive = ["queued", "analyzing"].includes(aiStage);
   const transcriptionDone = transcriptionStage === "ready";
   const aiDone = aiStage === "ready";
+  const aiStatusMessageKey: TranslationKey | null = (() => {
+    switch (aiRenderState.stage) {
+      case "WAITING_FOR_RECORDING":
+        return "sessionMaterials.waitingForRecording";
+      case "WAITING_FOR_TRANSCRIPT":
+        return "sessionMaterials.waitingForTranscript";
+      case "TRANSCRIPT_PROCESSING":
+        return (
+          transcriptionStageKeys[transcriptionStage] ??
+          "sessionMaterials.transcriptionInProgress"
+        );
+      case "ANALYSIS_NOT_STARTED":
+        return "sessionMaterials.transcriptReadyForAnalysis";
+      case "ANALYSIS_IN_PROGRESS":
+        return "sessionMaterials.aiAnalysisInProgress";
+      case "ANALYSIS_FAILED":
+        return "sessionMaterials.aiAnalysisFailed";
+      case "ANALYSIS_READY_WITHOUT_RESULT":
+      case "ANALYSIS_INVALID":
+        return "sessionMaterials.aiAnalysisReady";
+      case "ANALYSIS_READY":
+        return null;
+      default:
+        return "sessionMaterials.waitingForTranscript";
+    }
+  })();
   const transcriptionSectionRefreshKey = getTranscriptionSectionRefreshKey({
     sessionId,
     transcriptId: transcript?.id ?? null,
@@ -955,17 +995,17 @@ export function SessionPostProcessingPanel({
 
   const navigationLinks = showNavigation || (!isFacilitator && isSidebar) ? (
     <div className={`flex flex-wrap gap-2 ${isSidebar ? "flex-col" : ""}`}>
-      {isFacilitator || canViewAi ? (
+      {canOpenMaterials ? (
         <GradientButtonLink
           href={materialsPath}
+          target={isSidebar ? "_blank" : undefined}
+          rel={isSidebar ? "noopener noreferrer" : undefined}
           className={isSidebar ? "w-full justify-center" : undefined}
           data-testid={
             isSidebar ? "debrief-open-materials-button" : "post-processing-open-materials-button"
           }
         >
-          {isFacilitator
-            ? t("room.openSessionMaterials")
-            : t("room.viewSharedAiAnalysis")}
+          {t("room.viewMaterials")}
         </GradientButtonLink>
       ) : null}
       {eventLobbyUrl && isFacilitator ? (
@@ -983,6 +1023,49 @@ export function SessionPostProcessingPanel({
         </p>
       ) : null}
     </div>
+  ) : null;
+
+  const showDebriefFallback = Boolean(
+    isSidebar && !isFacilitator && fallbackContext,
+  );
+  const shouldDisplayFallbackInsteadOfAi = showDebriefFallback && (!canViewAi || !analysisJson);
+  const debriefFallbackContent = shouldDisplayFallbackInsteadOfAi ? (
+    <Card data-testid="debrief-fallback-content">
+      <CardHeader>
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("join.publicContext")}
+        </h2>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm text-slate-300">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-500">
+            {t("join.caseDescription")}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-slate-300">
+            {fallbackContext?.publicContext.description}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-500">
+            {t("join.publicInstructions")}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-slate-300">
+            {fallbackContext?.publicContext.publicInstructions}
+          </p>
+        </div>
+        {fallbackContext?.participantType === "PARTICIPANT" &&
+        fallbackContext.caseRole ? (
+          <div className="rounded-lg border border-violet-500/30 bg-violet-950/20 p-3">
+            <p className="text-xs uppercase tracking-wide text-violet-300">
+              {t("join.yourRoleTitle", { name: fallbackContext.caseRole.name })}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-violet-100">
+              {fallbackContext.caseRole.privateInstructions}
+            </p>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   ) : null;
 
   const aiContent = showAiSection ? (
@@ -1004,14 +1087,18 @@ export function SessionPostProcessingPanel({
           <p className="text-sm text-slate-400">{t("sessionMaterials.aiAnalysisNotSharedYet")}</p>
         ) : null}
 
-        {!canViewAi && isFacilitator && ai?.processingStage !== "ready" ? (
+        {!ai?.participantPlaceholder && aiStatusMessageKey ? (
           <p className="text-sm text-slate-400">
-            {t(aiStageKeys[ai?.processingStage ?? "waiting_for_transcript"])}
+            {t(aiStatusMessageKey)}
           </p>
         ) : null}
 
         {ai?.processingStage === "failed" && ai.errorMessage ? (
           <p className="text-sm text-rose-400">{ai.errorMessage}</p>
+        ) : null}
+
+        {aiRenderValidationError ? (
+          <p className="text-sm text-rose-400">{aiRenderValidationError}</p>
         ) : null}
 
         {canViewAi && analysisJson ? (
@@ -1047,61 +1134,61 @@ export function SessionPostProcessingPanel({
       <div className="space-y-4" data-testid="session-post-processing-panel">
         {sidebarStepsBar}
         {showTranscriptionSection ? (
-          transcriptionActive ? (
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-4 text-center">
-              <p className="text-xs text-cyan-300">
-                {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.transcriptionInProgress")}
+          <div className="rounded-xl border border-slate-700/40 bg-slate-900/30">
+            <div className="flex items-center justify-between px-3 py-2">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                {t("sessions.recordingAndTranscription")}
               </p>
-              {canStopTranscription ? (
-                <div className="mt-3 flex justify-center">
-                  <SecondaryButton
-                    disabled={stopTranscriptionBusy}
-                    onClick={() => void handleStopTranscription()}
-                    data-testid="post-processing-stop-transcription-button"
-                    className="text-xs"
-                  >
-                    {stopTranscriptionBusy
-                      ? t("common.loading")
-                      : t("sessionMaterials.stopTranscription")}
-                  </SecondaryButton>
-                </div>
-              ) : null}
+              <button
+                type="button"
+                onClick={() => setTranscriptCollapsed((v) => !v)}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                {transcriptCollapsed ? t("sessions.expandTranscript") : t("sessions.collapseTranscript")}
+              </button>
             </div>
-          ) : (
-            <div className="rounded-xl border border-slate-700/40 bg-slate-900/30">
-              <div className="flex items-center justify-between px-3 py-2">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  {t("sessions.recordingAndTranscription")}
+            {transcriptionActive ? (
+              <div className="border-t border-cyan-500/20 bg-cyan-950/10 px-3 py-2 text-center">
+                <p className="text-xs text-cyan-300">
+                  {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.transcriptionInProgress")}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setTranscriptCollapsed((v) => !v)}
-                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  {transcriptCollapsed ? t("sessions.expandTranscript") : t("sessions.collapseTranscript")}
-                </button>
+                {canStopTranscription ? (
+                  <div className="mt-2 flex justify-center">
+                    <SecondaryButton
+                      disabled={stopTranscriptionBusy}
+                      onClick={() => void handleStopTranscription()}
+                      data-testid="post-processing-stop-transcription-button"
+                      className="text-xs"
+                    >
+                      {stopTranscriptionBusy
+                        ? t("common.loading")
+                        : t("sessionMaterials.stopTranscription")}
+                    </SecondaryButton>
+                  </div>
+                ) : null}
               </div>
-              {!transcriptCollapsed ? (
-                <div className="px-3 pb-3">
-                  <RecordingTranscriptionSection
-                    key={transcriptionSectionRefreshKey}
-                    sessionId={sessionId}
-                    roomAuth={roomAuth}
-                    // Auto-start is orchestrated by this panel via /materials/transcribe.
-                    // Keep child section auto-start disabled to prevent duplicate starts.
-                    autoTranscribeEnabled={false}
-                    embedded
-                    compact
-                    hideRerunControls
-                    isLocked={rerunBusy}
-                    onProcessingChange={() => void fetchStatus()}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )
+            ) : null}
+            {!transcriptCollapsed ? (
+              <div className="px-3 pb-3 pt-2">
+                <RecordingTranscriptionSection
+                  key={transcriptionSectionRefreshKey}
+                  sessionId={sessionId}
+                  roomAuth={roomAuth}
+                  // Auto-start is orchestrated by this panel via /materials/transcribe.
+                  // Keep child section auto-start disabled to prevent duplicate starts.
+                  autoTranscribeEnabled={false}
+                  embedded
+                  compact
+                  hideRerunControls
+                  isLocked={rerunBusy}
+                  onProcessingChange={() => void fetchStatus()}
+                />
+              </div>
+            ) : null}
+          </div>
         ) : null}
-        {aiContent}
+        {debriefFallbackContent}
+        {shouldDisplayFallbackInsteadOfAi ? null : aiContent}
         {navigationLinks}
       </div>
       </>
@@ -1129,18 +1216,24 @@ export function SessionPostProcessingPanel({
       </Card>
 
       {showTranscriptionSection ? (
-        transcriptionActive ? (
-          <Card id="transcription-section">
-            <CardHeader>
+        <Card id="transcription-section">
+          <CardHeader>
+            <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-slate-50">
                 {t("sessions.recordingAndTranscription")}
               </h2>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col items-center gap-3 py-8 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-cyan-500/30 bg-cyan-950/30">
-                  <span className="animate-spin text-lg text-cyan-400">⟳</span>
-                </div>
+              <button
+                type="button"
+                onClick={() => setTranscriptCollapsed((v) => !v)}
+                className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-1 rounded hover:bg-slate-700/40"
+              >
+                {transcriptCollapsed ? t("sessions.expandTranscript") : t("sessions.collapseTranscript")}
+              </button>
+            </div>
+          </CardHeader>
+          {transcriptionActive ? (
+            <CardContent className="border-t border-cyan-500/20 bg-cyan-950/10">
+              <div className="flex flex-col items-center gap-3 py-2 text-center">
                 <p className="text-sm text-cyan-300">
                   {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.transcriptionInProgress")}
                 </p>
@@ -1160,44 +1253,28 @@ export function SessionPostProcessingPanel({
                 ) : null}
               </div>
             </CardContent>
-          </Card>
-        ) : (
-          <Card id="transcription-section">
-            <CardHeader>
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-base font-semibold text-slate-50">
-                  {t("sessions.recordingAndTranscription")}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setTranscriptCollapsed((v) => !v)}
-                  className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-1 rounded hover:bg-slate-700/40"
-                >
-                  {transcriptCollapsed ? t("sessions.expandTranscript") : t("sessions.collapseTranscript")}
-                </button>
-              </div>
-            </CardHeader>
-            {!transcriptCollapsed ? (
-              <CardContent>
-                <RecordingTranscriptionSection
-                  key={transcriptionSectionRefreshKey}
-                  sessionId={sessionId}
-                  roomAuth={roomAuth}
-                  // Auto-start is orchestrated by this panel via /materials/transcribe.
-                  // Keep child section auto-start disabled to prevent duplicate starts.
-                  autoTranscribeEnabled={false}
-                  embedded
-                  hideRerunControls
-                  isLocked={rerunBusy}
-                  onProcessingChange={() => void fetchStatus()}
-                />
-              </CardContent>
-            ) : null}
-          </Card>
-        )
+          ) : null}
+          {!transcriptCollapsed ? (
+            <CardContent>
+              <RecordingTranscriptionSection
+                key={transcriptionSectionRefreshKey}
+                sessionId={sessionId}
+                roomAuth={roomAuth}
+                // Auto-start is orchestrated by this panel via /materials/transcribe.
+                // Keep child section auto-start disabled to prevent duplicate starts.
+                autoTranscribeEnabled={false}
+                embedded
+                hideRerunControls
+                isLocked={rerunBusy}
+                onProcessingChange={() => void fetchStatus()}
+              />
+            </CardContent>
+          ) : null}
+        </Card>
       ) : null}
 
-      {aiContent}
+      {debriefFallbackContent}
+      {shouldDisplayFallbackInsteadOfAi ? null : aiContent}
 
       {ai?.processingStage === "failed" ? (
         <p className="text-xs text-slate-500">

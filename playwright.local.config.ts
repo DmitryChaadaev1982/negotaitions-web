@@ -76,6 +76,9 @@ export default defineConfig({
           LIVEKIT_URL: "wss://mock-livekit.invalid",
           LIVEKIT_API_KEY: "mock-livekit-key",
           LIVEKIT_API_SECRET: "mock-livekit-secret",
+          // Keep focused/local E2E deterministic regardless of developer .env.
+          VOXIMPLANT_SERVER_STOP_MODE:
+            process.env.PLAYWRIGHT_VOXIMPLANT_SERVER_STOP_MODE?.trim() || "disabled",
           // Disabled by default in tests to prevent unintended OpenAI charges
           // and to keep tests deterministic. Enable per-test-run when needed.
           AUTO_TRANSCRIBE_AFTER_RECORDING: "false",

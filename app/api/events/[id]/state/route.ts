@@ -9,6 +9,7 @@ import {
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { buildEventState } from "@/lib/event-state";
+import { triggerStage310ExpiryReconciliation } from "@/lib/stage-3-10-maintenance-trigger";
 import { eventAccessQuerySchema } from "@/lib/validations/event";
 
 type RouteContext = {
@@ -96,6 +97,7 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
   }
+  await triggerStage310ExpiryReconciliation();
 
   const state = await buildEventState({
     event: access.event,

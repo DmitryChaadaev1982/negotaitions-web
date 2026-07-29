@@ -8,6 +8,7 @@ import {
 } from "@/app/generated/prisma/client";
 import {
   deriveBackfillLifecycle,
+  isRelayDeliveringTimeoutCandidate,
   nextRetryAtFromAttempt,
 } from "@/lib/stage-3-10-maintenance-utils";
 
@@ -55,4 +56,62 @@ test("deriveBackfillLifecycle keeps completed events CLOSED", () => {
     eventStatus: TrainingEventStatus.COMPLETED,
   });
   assert.equal(lifecycle, RoomLifecycle.CLOSED);
+});
+
+test("relay delivering timeout candidate detects stale browser relay claim", () => {
+  const cutoff = new Date("2026-07-21T09:00:00.000Z");
+  const stale = isRelayDeliveringTimeoutCandidate(
+    {
+      state: "DELIVERING",
+      lastDeliveryTransport: "voximplant_browser_relay_claim",
+      transportAcceptedAt: null,
+      commandAcceptedAt: null,
+      providerTerminalAt: null,
+      lastAttemptAt: new Date("2026-07-21T08:59:59.000Z"),
+    },
+    cutoff,
+  );
+  assert.equal(stale, true);
+});
+
+test("relay delivering timeout candidate ignores active or accepted deliveries", () => {
+  const cutoff = new Date("2026-07-21T09:00:00.000Z");
+  const withTransportAccepted = isRelayDeliveringTimeoutCandidate(
+    {
+      state: "DELIVERING",
+      lastDeliveryTransport: "voximplant_browser_relay_claim",
+      transportAcceptedAt: new Date("2026-07-21T08:59:00.000Z"),
+      commandAcceptedAt: null,
+      providerTerminalAt: null,
+      lastAttemptAt: new Date("2026-07-21T08:58:00.000Z"),
+    },
+    cutoff,
+  );
+  assert.equal(withTransportAccepted, false);
+
+  const recentRelayClaim = isRelayDeliveringTimeoutCandidate(
+    {
+      state: "DELIVERING",
+      lastDeliveryTransport: "voximplant_browser_relay_claim",
+      transportAcceptedAt: null,
+      commandAcceptedAt: null,
+      providerTerminalAt: null,
+      lastAttemptAt: new Date("2026-07-21T09:00:01.000Z"),
+    },
+    cutoff,
+  );
+  assert.equal(recentRelayClaim, false);
+
+  const staleRelayAck = isRelayDeliveringTimeoutCandidate(
+    {
+      state: "DELIVERING",
+      lastDeliveryTransport: "voximplant_browser_relay_ack",
+      transportAcceptedAt: null,
+      commandAcceptedAt: null,
+      providerTerminalAt: null,
+      lastAttemptAt: new Date("2026-07-21T08:58:00.000Z"),
+    },
+    cutoff,
+  );
+  assert.equal(staleRelayAck, true);
 });

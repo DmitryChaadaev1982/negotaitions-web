@@ -22,6 +22,11 @@ import {
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import { createWebSdkLogFilterAdapter } from "@/lib/voximplant/websdk-log-filter";
+import {
+  createDroppedCauseReporter,
+  installVoxReInviteSchemeSanitizer,
+  type VoxConnectionSeam,
+} from "@/lib/voximplant/reinvite-scheme-sanitizer";
 import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -573,6 +578,7 @@ export function useVoximplantRoom({
       emitError: (...args) => console.error(...args),
     }),
   );
+  const droppedCauseReporterRef = useRef(createDroppedCauseReporter());
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
   const audioProcessingEnabledRef = useRef(true);
@@ -1008,7 +1014,7 @@ export function useVoximplantRoom({
         runtimeRef.current = null;
       }
 
-      const promise = (async () => {
+      const promise = registerVoxClientDisconnect((async () => {
         if (!runtimeBelongsToExpected) {
           return;
         }
@@ -1068,12 +1074,12 @@ export function useVoximplantRoom({
         runtimeSnapshot.localAudioStream = null;
         runtimeSnapshot.localVideoStream = null;
 
-        await registerVoxClientDisconnect(runtimeSnapshot.core.client.disconnect());
+        await runtimeSnapshot.core.client.disconnect().catch(() => undefined);
         clearStateAfterCleanup();
         if (!options?.preserveStatus && mountedRef.current) {
           setStatus("Отключено.");
         }
-      })().finally(() => {
+      })()).finally(() => {
         cleanupPromiseRef.current = null;
       });
 
@@ -1488,13 +1494,20 @@ export function useVoximplantRoom({
         setConferenceName(roomName);
         assertGenerationCurrent(joinGeneration);
 
+        // Re-check global idle barrier in case a previous page teardown
+        // registered its disconnect promise during access handshake.
+        setStatus("Проверка завершения предыдущего подключения...");
+        await waitForVoxClientIdle();
+        assertGenerationCurrent(joinGeneration);
+
         // Step 2 — load SDK modules.
         setStatus("Инициализация Voximplant SDK...");
-        const [{ Core, LogLevel }, conferenceModule, streamModulePackage] = await Promise.all([
-          import("@voximplant/websdk"),
-          import("@voximplant/websdk/modules/conference-manager"),
-          import("@voximplant/websdk/modules/stream"),
-        ]);
+        const [{ Core, LogLevel, connectionToken }, conferenceModule, streamModulePackage] =
+          await Promise.all([
+            import("@voximplant/websdk"),
+            import("@voximplant/websdk/modules/conference-manager"),
+            import("@voximplant/websdk/modules/stream"),
+          ]);
         assertGenerationCurrent(joinGeneration);
 
         const core = Core.init({
@@ -1510,6 +1523,15 @@ export function useVoximplantRoom({
             },
           },
         }) as unknown as VoxCore;
+
+        // Must run before the conference module registers its own handleReInvite
+        // subscriber, so unresolvable conf-info causes are removed from the shared
+        // message before the SDK dereferences scheme.endpoints[cause.id].mids.
+        installVoxReInviteSchemeSanitizer({
+          connection: core.getModule(connectionToken) as VoxConnectionSeam | undefined,
+          onDropped: droppedCauseReporterRef.current,
+        });
+
         try {
           if (!core.getModule(streamModulePackage.streamToken)) {
             core.registerModules([streamModulePackage.StreamLoader()]);

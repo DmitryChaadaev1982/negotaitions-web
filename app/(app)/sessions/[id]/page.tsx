@@ -118,6 +118,7 @@ export default async function SessionDetailPage({
           id: participant.id,
           displayName: participant.displayName,
           type: participant.type,
+          userId: participant.userId,
           caseRoleName: participant.sessionRole?.name ?? null,
           // Phase 6.11B: expose sessionRoleId for role management panel.
           sessionRoleId: participant.sessionRoleId,

@@ -3,10 +3,10 @@
 ## Status
 
 - Implementation: complete
-- Local validation: complete
+- Local validation: complete (final release-preparation matrix)
 - Migration rehearsal: complete (local disposable DB)
-- Provider canary: pending (manual)
-- Multi-browser canary: pending (manual)
+- Provider canary: complete (manual M1-M7)
+- Multi-browser canary: complete (manual M1-M7)
 - Production deployment: pending
 
 ## Compatibility Decision
@@ -29,8 +29,13 @@
 9. Run first bounded backfill batch.
 10. Verify lifecycle counters + invalid combinations.
 11. Continue bounded backfill batches to completion.
-12. Deploy Vox scenario manually (paste workflow), keep prior version ready.
-13. Run disposable provider canary.
+12. Deploy the exact tested Vox scenario manually (paste workflow), keep prior
+    version ready, and verify marker
+    `main-room-server-stop-2026-07-28-rc6` plus SHA-256
+    `D9324A97E7CEC42DDC2515AF04F467ABFF9364BB01CEB37FF04623149DE6AAE5`.
+13. Run a disposable provider canary while server-stop mode remains
+    `disabled`, then enable the approved `prefer_server_*` mode, restart, and
+    run the terminal-stop canary.
 14. Copy systemd maintenance unit files, `daemon-reload`, keep timer disabled.
 15. Run one-shot maintenance manually.
 16. Inspect journal and command JSON.

@@ -24,6 +24,7 @@ import {
   isRoomAccessAllowed,
 } from "@/lib/session-room-access";
 import { getStopRelayHintForSession } from "@/lib/session-recording-stop-relay";
+import { triggerStage310ExpiryReconciliation } from "@/lib/stage-3-10-maintenance-trigger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,6 +139,7 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
   }
+  await triggerStage310ExpiryReconciliation();
 
   const now = new Date();
   let session = participant.session;

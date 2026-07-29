@@ -12,8 +12,11 @@ const UNIT_CANDIDATES = [
   "lib/session-active-presence.test.ts",
   "lib/recording-display-state.test.ts",
   "lib/recording-stop-delivery-policy.test.ts",
+  "lib/env.voximplant-server-stop.test.ts",
   "lib/session-recording-stop-relay.test.ts",
   "lib/stage-3-10-maintenance.test.ts",
+  "lib/voximplant/server-stop-callback-signature.test.ts",
+  "lib/voximplant/server-stop-client.test.ts",
   "lib/session-role-ui-state.test.ts",
   "lib/event-role-ui-state.test.ts",
   "lib/session-control-recording-policy.test.ts",
@@ -183,6 +186,8 @@ export async function runStage310Focused(argv, deps = {}) {
       dryRun: false,
       phase: "unit",
       exitCode: unitResult.code,
+      stdout: unitResult.stdout,
+      stderr: unitResult.stderr,
       ...selection,
     };
   }
@@ -207,6 +212,8 @@ export async function runStage310Focused(argv, deps = {}) {
     dryRun: false,
     phase: "e2e",
     exitCode: e2eResult.code,
+    stdout: `${unitResult.stdout ?? ""}${e2eResult.stdout ?? ""}`,
+    stderr: `${unitResult.stderr ?? ""}${e2eResult.stderr ?? ""}`,
     ...selection,
   };
 }

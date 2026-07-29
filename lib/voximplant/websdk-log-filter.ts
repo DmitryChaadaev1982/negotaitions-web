@@ -25,6 +25,12 @@ function toCombinedMessage(props: WebSdkLogProps): string {
 function classifyBenignSignature(message: string): BenignSignature | null {
   const lower = message.toLowerCase();
 
+  // Not actually a race: the SDK dereferences scheme.endpoints[cause.id] for a
+  // cause id the same message never defines, which abandons the whole ReInvite.
+  // lib/voximplant/reinvite-scheme-sanitizer.ts removes those causes before the
+  // SDK sees them, so this signature must not appear at runtime any more. It is
+  // still classified here only to keep a single deduplicated console line if the
+  // sanitizer is ever bypassed.
   const hasMidsError =
     lower.includes("cannot read properties of undefined") &&
     lower.includes("reading 'mids'");
@@ -76,7 +82,7 @@ export function createWebSdkLogFilterAdapter(
       if (signature) {
         if (!seenSignatures.has(signature)) {
           seenSignatures.add(signature);
-          emitWarn(`[Voximplant SDK benign race suppressed] ${signature}`);
+          emitWarn(`[Voximplant SDK log downgraded once] ${signature}`);
         }
         return;
       }

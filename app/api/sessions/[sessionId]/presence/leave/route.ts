@@ -38,6 +38,7 @@ export async function POST(request: Request, context: RouteContext) {
       disconnected: false,
       alreadyFinalized: true,
       roomClosed: false,
+      finalState: "NOT_FOUND",
     });
   }
 
@@ -59,5 +60,6 @@ export async function POST(request: Request, context: RouteContext) {
     disconnected: result.disconnected,
     alreadyFinalized: result.alreadyFinalized,
     roomClosed: result.roomClosed,
+    finalState: result.finalState,
   });
 }

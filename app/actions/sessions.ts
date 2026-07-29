@@ -22,6 +22,7 @@ import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
 import { updateParticipantPresence } from "@/lib/participant-presence";
 import { prisma } from "@/lib/prisma";
+import { reassignSessionFacilitator } from "@/lib/session-facilitator";
 import { resolvePrepStatus } from "@/lib/session-display-status";
 import { mapCaseRolesToSessionRoleCreate } from "@/lib/session-role";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
@@ -31,6 +32,7 @@ import {
   addParticipantSchema,
   assignParticipantRoleSchema,
   createSessionSchema,
+  reassignSessionFacilitatorSchema,
   saveParticipantNotesSchema,
   updateSessionDurationSchema,
 } from "@/lib/validations/session";
@@ -937,6 +939,74 @@ export async function assignParticipantRole(
       errors: {
         form: [
           error instanceof Error ? error.message : "roleAssignmentFailed",
+        ],
+      },
+    };
+  }
+}
+
+export type ReassignSessionFacilitatorState = {
+  errors?: ActionErrors;
+  success?: boolean;
+};
+
+export async function reassignFacilitator(
+  _prevState: ReassignSessionFacilitatorState,
+  formData: FormData,
+): Promise<ReassignSessionFacilitatorState> {
+  const user = await requireActiveUser();
+  const parsed = reassignSessionFacilitatorSchema.safeParse({
+    sessionId: String(formData.get("sessionId") ?? "").trim(),
+    nextFacilitatorParticipantId: String(
+      formData.get("nextFacilitatorParticipantId") ?? "",
+    ).trim(),
+    previousFacilitatorType:
+      String(formData.get("previousFacilitatorType") ?? "").trim().toUpperCase(),
+    previousFacilitatorSessionRoleId:
+      String(formData.get("previousFacilitatorSessionRoleId") ?? "").trim() || null,
+  });
+  if (!parsed.success) {
+    return { errors: { form: ["facilitatorReassignmentInvalid"] } };
+  }
+
+  try {
+    const session = await getFacilitatorSession(parsed.data.sessionId, user);
+    const reassignment = await reassignSessionFacilitator({
+      sessionId: session.id,
+      nextFacilitatorParticipantId: parsed.data.nextFacilitatorParticipantId,
+      previousFacilitatorType: parsed.data.previousFacilitatorType,
+      previousFacilitatorSessionRoleId:
+        parsed.data.previousFacilitatorType === "PARTICIPANT"
+          ? parsed.data.previousFacilitatorSessionRoleId
+          : null,
+    });
+    if (!reassignment.ok) {
+      const errorCode =
+        reassignment.error === "sessionNotFound"
+          ? "sessionNotFound"
+          : reassignment.error === "participantNotFound"
+            ? "facilitatorInvalid"
+            : reassignment.error === "participantMustBeAccountBound"
+              ? "facilitatorMustBeActive"
+              : reassignment.error === "invalidPreviousFacilitatorRole"
+                ? "roleAssignmentInvalidParticipant"
+                : reassignment.error === "previousFacilitatorRoleConflict"
+                  ? "roleAssignmentConflict"
+                  : reassignment.error === "previousFacilitatorRoleNotAssignable"
+                    ? "roleAssignmentConflict"
+                    : "roleAssignmentInvalidParticipant";
+      return { errors: { form: [errorCode] } };
+    }
+
+    await syncSessionPrepStatus(session.id);
+    revalidatePath(`/sessions/${session.id}`);
+    revalidatePath(`/sessions/${session.id}/materials`);
+    return { success: true };
+  } catch (error) {
+    return {
+      errors: {
+        form: [
+          error instanceof Error ? error.message : "facilitatorReassignmentFailed",
         ],
       },
     };

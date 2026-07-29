@@ -5,6 +5,8 @@ import { useActionState, useMemo, useState } from "react";
 import {
   assignParticipantRole,
   type AssignParticipantRoleState,
+  reassignFacilitator,
+  type ReassignSessionFacilitatorState,
 } from "@/app/actions/sessions";
 import {
   alertErrorClassName,
@@ -34,6 +36,7 @@ type ParticipantRoleEntry = {
   id: string;
   displayName: string;
   type: string;
+  userId?: string | null;
   currentRoleId: string | null;
   currentRoleName: string | null;
   joinedAt: string | null;
@@ -58,6 +61,7 @@ type SessionRoleManagementPanelProps = {
 };
 
 const initialState: AssignParticipantRoleState = {};
+const initialFacilitatorState: ReassignSessionFacilitatorState = {};
 
 type JoinStatus = "NOT_JOINED" | "JOINED" | "INACTIVE" | "DISCONNECTED";
 
@@ -135,6 +139,37 @@ export function SessionRoleManagementPanel({
     },
     initialState,
   );
+  const [facilitatorState, facilitatorFormAction, facilitatorPending] =
+    useActionState(
+      async (
+        prevState: ReassignSessionFacilitatorState,
+        formData: FormData,
+      ): Promise<ReassignSessionFacilitatorState> => {
+        const result = await reassignFacilitator(prevState, formData);
+        return result;
+      },
+      initialFacilitatorState,
+    );
+
+  const facilitatorCandidates = useMemo(
+    () => participants.filter((participant) => Boolean(participant.userId)),
+    [participants],
+  );
+  const currentFacilitator = useMemo(
+    () =>
+      participants.find((participant) => participant.type === "FACILITATOR") ??
+      null,
+    [participants],
+  );
+  const [nextFacilitatorSelectionOverride, setNextFacilitatorSelectionOverride] =
+    useState<string | null>(null);
+  const nextFacilitatorParticipantId =
+    nextFacilitatorSelectionOverride ?? currentFacilitator?.id ?? "";
+  const [previousFacilitatorType, setPreviousFacilitatorType] = useState<
+    "PARTICIPANT" | "OBSERVER"
+  >("OBSERVER");
+  const [previousFacilitatorSessionRoleId, setPreviousFacilitatorSessionRoleId] =
+    useState<string>("");
 
   const hasUnsavedLocalChanges = useMemo(() => {
     const participantIds = new Set<string>([
@@ -246,7 +281,17 @@ export function SessionRoleManagementPanel({
           {state.errors.form.map((message) => tv(message)).join(", ")}
         </div>
       ) : null}
+      {facilitatorState.errors?.form ? (
+        <div className={alertErrorClassName}>
+          {facilitatorState.errors.form.map((message) => tv(message)).join(", ")}
+        </div>
+      ) : null}
       {state.success ? (
+        <div className={alertSuccessClassName}>
+          {t("sessions.roleAssignmentUpdated")}
+        </div>
+      ) : null}
+      {facilitatorState.success ? (
         <div className={alertSuccessClassName}>
           {t("sessions.roleAssignmentUpdated")}
         </div>
@@ -292,6 +337,114 @@ export function SessionRoleManagementPanel({
             {t("sessions.newParticipantsObserverOrUnassigned")}
           </p>
         </div>
+      ) : null}
+
+      {currentFacilitator && facilitatorCandidates.length > 0 ? (
+        <form
+          action={facilitatorFormAction}
+          className={
+            isCompact
+              ? "space-y-2 rounded-lg border border-slate-700/40 bg-slate-900/30 p-3"
+              : "space-y-3 rounded-lg border border-slate-700/40 bg-slate-900/30 p-4"
+          }
+        >
+          <input type="hidden" name="sessionId" value={sessionId} />
+          <input
+            type="hidden"
+            name="previousFacilitatorSessionRoleId"
+            value={previousFacilitatorSessionRoleId}
+          />
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            {t("events.assignFacilitator")}
+          </p>
+          <select
+            name="nextFacilitatorParticipantId"
+            value={nextFacilitatorParticipantId}
+            onChange={(event) => {
+              setNextFacilitatorSelectionOverride(event.target.value);
+              setPreviousFacilitatorType("OBSERVER");
+              setPreviousFacilitatorSessionRoleId("");
+            }}
+            className={inputClassName(false)}
+            data-testid="reassign-facilitator-select"
+          >
+            {facilitatorCandidates.map((participant) => (
+              <option key={participant.id} value={participant.id}>
+                {participant.displayName}
+              </option>
+            ))}
+          </select>
+
+          {nextFacilitatorParticipantId &&
+          nextFacilitatorParticipantId !== currentFacilitator.id ? (
+            <>
+              <select
+                name="previousFacilitatorType"
+                value={previousFacilitatorType}
+                onChange={(event) => {
+                  const nextType =
+                    event.target.value === "PARTICIPANT"
+                      ? "PARTICIPANT"
+                      : "OBSERVER";
+                  setPreviousFacilitatorType(nextType);
+                  if (nextType === "OBSERVER") {
+                    setPreviousFacilitatorSessionRoleId("");
+                  }
+                }}
+                className={inputClassName(false)}
+                data-testid="previous-facilitator-type-select"
+              >
+                <option value="OBSERVER">{t("participantType.OBSERVER")}</option>
+                <option value="PARTICIPANT">{t("participantType.PARTICIPANT")}</option>
+              </select>
+              {previousFacilitatorType === "PARTICIPANT" ? (
+                <select
+                  value={previousFacilitatorSessionRoleId}
+                  onChange={(event) =>
+                    setPreviousFacilitatorSessionRoleId(event.target.value)
+                  }
+                  className={inputClassName(false)}
+                  data-testid="previous-facilitator-role-select"
+                >
+                  <option value="">{t("sessions.roleUnassigned")}</option>
+                  {derivePanelRoleOptionAvailability({
+                    participantId: currentFacilitator.id,
+                    participants: participantDraftSource,
+                    draft: effectiveDraft,
+                    roles: availableRoles,
+                  }).map((roleOption) => (
+                    <option
+                      key={roleOption.id}
+                      value={roleOption.id}
+                      disabled={roleOption.disabled}
+                    >
+                      {roleOption.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </>
+          ) : (
+            <input
+              type="hidden"
+              name="previousFacilitatorType"
+              value="OBSERVER"
+            />
+          )}
+
+          <GradientButton
+            type="submit"
+            disabled={
+              facilitatorPending ||
+              !nextFacilitatorParticipantId ||
+              nextFacilitatorParticipantId === currentFacilitator.id
+            }
+            className={isCompact ? "w-full" : undefined}
+            data-testid="reassign-facilitator-button"
+          >
+            {facilitatorPending ? t("common.saving") : t("events.assignFacilitator")}
+          </GradientButton>
+        </form>
       ) : null}
 
       <form action={formAction} className={isCompact ? "space-y-2.5" : "space-y-3"}>

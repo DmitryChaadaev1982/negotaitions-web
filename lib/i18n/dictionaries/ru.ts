@@ -299,7 +299,7 @@ export const ru: Dictionary = {
     recordingStatusReady: "Запись готова",
     recordingStatusInProgress: "Запись",
     recordingStatusFailed: "Ошибка записи",
-    openDebrief: "Открыть комнату",
+    openDebrief: "Вернуться к разбору",
     editSession: "Редактировать сессию",
     editSessionTitle: "Редактировать сессию",
     editSessionPageDescription: "Измените видимость и список приглашённых.",
@@ -429,7 +429,7 @@ export const ru: Dictionary = {
     voximplantWebhookSavedOverride: "Сохранённый override",
     voximplantWebhookSavedOverrideInactive:
       "Сохранённый override (неактивен — override отключён)",
-    voximplantWebhookEffectiveUrl: "Эффективный URL (scenarioMessage.webhookBaseUrl)",
+    voximplantWebhookEffectiveUrl: "Эффективный URL (scenarioMessage.claims.webhookBaseUrl)",
     voximplantWebhookInputLabel: "Публичный HTTPS базовый URL",
     voximplantWebhookSaveOverride: "Сохранить override",
     voximplantWebhookResetOverride: "Сбросить к env",
@@ -801,16 +801,17 @@ export const ru: Dictionary = {
     qualityEnhancementFailedWarning:
       "Улучшение качества транскрипта не удалось. Используется базовый транскрипт с говорящими.",
     aiAnalysis: "AI-разбор",
-    waitingForTranscript: "Ожидаем транскрипт.",
+    waitingForTranscript: "Ожидаем готовности транскрипта.",
     transcriptReadyForAnalysis: "Транскрипт готов. Можно запустить AI-разбор.",
     runAiAnalysis: "Запустить AI-разбор",
     retryAiAnalysis: "Повторить AI-разбор",
     rerunAiAnalysis: "Повторить AI-разбор",
-    aiAnalysisQueued: "AI-разбор в очереди.",
-    aiAnalysisAnalyzing: "Идёт AI-разбор.",
-    aiAnalysisInProgress: "Идёт AI-разбор.",
+    aiAnalysisQueued: "AI-разбор выполняется.",
+    aiAnalysisAnalyzing: "AI-разбор выполняется.",
+    aiAnalysisInProgress: "AI-разбор выполняется.",
     aiAnalysisReady: "AI-разбор готов.",
     aiAnalysisFailed: "Ошибка AI-разбора.",
+    aiAnalysisInvalidResult: "Результат AI-разбора некорректен. Запустите анализ повторно.",
     aiAnalysisAfterTranscription:
       "AI-разбор будет доступен после транскрибации.",
     aiAnalysisParticipantPlaceholder:
@@ -894,7 +895,7 @@ export const ru: Dictionary = {
     sharedReportVisible: "Этот общий отчёт виден участникам сессии.",
     facilitatorReportVisible: "Этот отчёт виден только фасилитатору/организатору.",
     aiAnalysisNotSharedYet: "AI-разбор пока не опубликован фасилитатором.",
-    viewSharedReport: "Посмотреть общий AI-разбор",
+    viewMaterials: "Просмотреть материалы",
     canShareHint:
       "Опубликуйте безопасную версию этого анализа для участников сессии.",
   },
@@ -1011,6 +1012,10 @@ export const ru: Dictionary = {
     unableToJoinRoom: "Не удалось войти в видеокомнату.",
     unableToLoadSessionPanel: "Не удалось загрузить панель сессии.",
     unableToLoadNegotiationState: "Не удалось загрузить состояние переговоров.",
+    unableToPersistLeave:
+      "Не удалось подтвердить выход из комнаты. Повторите попытку.",
+    leavePersistenceTimedOut:
+      "Время ожидания запроса выхода истекло. Проверьте сеть и повторите попытку.",
     joinLinkMismatch: "Эта ссылка не соответствует комнате сессии.",
     missingJoinLink: "Отсутствует ссылка для входа",
     missingJoinLinkDescription:
@@ -1077,7 +1082,7 @@ export const ru: Dictionary = {
     sharedDebriefReport: "Общий отчёт для разбора",
     facilitatorOnlyReportHint: "Этот отчёт виден только фасилитатору/организатору.",
     sharedReportHint: "Этот общий отчёт виден участникам сессии.",
-    viewSharedAiAnalysis: "Посмотреть общий AI-разбор",
+    viewMaterials: "Просмотреть материалы",
     analysisShared: "Анализ опубликован",
     analysisFacilitatorOnly: "Анализ доступен только фасилитатору",
     speakerMapping: "Сопоставление говорящих",
@@ -1173,11 +1178,19 @@ export const ru: Dictionary = {
     activeSession: "Активная сессия",
     activeSessions: "Активные сессии",
     onlineWithLocation: "Онлайн · {location}",
+    presenceOnline: "Онлайн",
+    presenceRecentlyDisconnected: "Недавно отключился",
+    presenceOffline: "Офлайн",
+    presenceInvitedNeverConnected: "Приглашён, не подключался",
+    presenceLegend:
+      "Статус присутствия: зелёный — онлайн, жёлтый — недавно отключился, красный — офлайн, серый — приглашён и ещё не подключался.",
     participantLocationLobby: "В лобби",
     participantLocationSession: "В сессии: {title}",
     finishedSession: "Завершённая сессия",
     openRoom: "Открыть комнату",
+    returnToDebrief: "Вернуться к разбору",
     openMaterials: "Открыть материалы",
+    openResults: "Открыть результаты",
     copyRoomLinks: "Скопировать ссылки комнаты",
     participantAlreadyAssigned: "Участник уже назначен",
     participantAlreadyAssignedName:

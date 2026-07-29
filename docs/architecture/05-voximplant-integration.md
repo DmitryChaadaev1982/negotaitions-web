@@ -81,9 +81,61 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 
 ## Operational Constraints
 
-- Current design relies on active browser relay for some recording transitions.
+- Recording start remains browser-relayed. Terminal recording stop is
+  server-canonical when a server-stop mode is enabled; browser stop relay is
+  fallback only in `prefer_server_with_relay_fallback` and remains the legacy
+  path only when mode is `disabled`.
 - Scenario webhook base URL is resolved from env/runtime override logic.
 - Keep scenario changes in dedicated Vox docs/scripts; application docs only describe current app-side contract.
+
+## Stage 3.10 Server-side Stop
+
+- Browser-side recording start remains unchanged and still uses `recording_control` relay.
+- Canonical completion (`completeSessionCanonical`) now keeps one durable `SessionRecordingStopOperation` and attempts server-side Vox stop first when enabled.
+- Server-side control channel is stored in server-only `SessionVoximplantControlChannel` (`sessionId` + `providerSessionId` unique) with private URL fingerprint logging only.
+- Stop transport/result evidence stays additive on `SessionRecordingStopOperation` (`transportAcceptedAt`, `commandAcceptedAt`, `providerTerminalAt`, provider failure fields) without new operation state strings.
+- Feature modes are controlled by `VOXIMPLANT_SERVER_STOP_MODE`: `disabled`, `prefer_server_with_relay_fallback`, `prefer_server_no_relay_fallback`.
+- Provider terminal callback evidence is required for normal server path promotion to `DELIVERED`; transport 2xx alone is non-terminal.
+- Browser relay remains bounded fallback only for `prefer_server_with_relay_fallback` mode; disabled mode preserves existing behavior.
+
+## ReInvite Conference Scheme Sanitizer
+
+Every conference membership change reaches the browser as a WebSDK
+`handleReInvite` message carrying `scheme.reinviteCauses` plus a
+`scheme.endpoints` record. `@voximplant/websdk@5.1.0` resolves
+`scheme.endpoints[cause.id].mids` with no guard for `vi/conf-info-added` and
+`vi/conf-info-updated`, although its own `vi/conf-info-removed` branch tolerates
+a cause id that has no `endpoints` entry, and its `ReInviteScheme` type models
+only `type: "call"` endpoints.
+
+The VoxEngine audio recorder we attach for session recording is a conference
+endpoint of `type: "recorder"`. Once it is fully established the provider
+announces it as a `vi/conf-info-added` cause but omits it from the WebSDK
+`endpoints` record. The SDK then throws
+`TypeError: Cannot read properties of undefined (reading 'mids')` before it
+reaches `reInviteQueue.add(...)`, so the SDP offer is never applied and no
+`AcceptReInvite` is returned. The affected client keeps no working remote media
+for the rest of the call. This is deterministic, not a race: the cause and the
+record it fails to resolve arrive in one message.
+
+- `lib/voximplant/reinvite-scheme-sanitizer.ts` subscribes to `handleReInvite`
+  through the exported `connectionToken` seam and drops only unresolvable
+  `added`/`updated` causes. `endpoints`, `politeIndex`, `sdp`, `headers` and all
+  `removed` causes are left untouched.
+- Every `Core.init` site must install the sanitizer **before**
+  `registerModules([ConferenceLoader()])`, because WebSDK message subscribers run
+  in registration order and the sanitizer has to be first.
+  `lib/voximplant/reinvite-scheme-sanitizer.test.ts` enforces that ordering.
+- The recorder therefore never becomes a WebSDK endpoint and never reaches the
+  participant roster, which is the intended presentation.
+- Known residual provider issue: Voximplant upstream emits an unbacked recorder
+  `vi/conf-info-added` cause. The sanitizer mitigates that provider/WebSDK
+  mismatch without changing call endpoints or SDP.
+- Removal condition: drop the module only after the installed WebSDK guards
+  `endpoints[cause.id]` (or Voximplant stops emitting the unbacked recorder
+  cause) and the recorder-rejoin canary passes without sanitization. The test
+  harness executes the shipped SDK source and fails when it changes shape,
+  which surfaces that on upgrade.
 
 ## Source Notes
 
@@ -94,4 +146,6 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - `lib/client/stale-connection.ts`
 - `lib/voximplant/use-voximplant-room.ts`
 - `lib/voximplant/recording-dispatch.ts`
+- `lib/voximplant/reinvite-scheme-sanitizer.ts`
+- `lib/voximplant/websdk-log-filter.ts`
 - `docs/voximplant/*.md`

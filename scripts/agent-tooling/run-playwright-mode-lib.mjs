@@ -103,10 +103,11 @@ export async function preparePlaywrightMode(mode, deps = {}) {
 export async function runPlaywrightInMode(argv, deps = {}) {
   const parsed = parsePlaywrightModeCli(argv);
   const prepared = await preparePlaywrightMode(parsed.mode, deps);
+  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
   const commandArgs = ["playwright", "test", "--config", LOCAL_CONFIG, ...parsed.passthrough];
   if (deps.dryRun || process.env.PLAYWRIGHT_WRAPPER_DRY_RUN === "1") {
     return {
-      command: "npx",
+      command: npxCommand,
       args: commandArgs,
       environment: prepared.environment,
       skippedExecution: true,
@@ -115,7 +116,7 @@ export async function runPlaywrightInMode(argv, deps = {}) {
   }
 
   const runner = deps.runCommand ?? runCommand;
-  const result = await runner("npx", commandArgs, {
+  const result = await runner(npxCommand, commandArgs, {
     cwd: deps.cwd ?? process.cwd(),
     env: {
       ...process.env,
@@ -126,11 +127,13 @@ export async function runPlaywrightInMode(argv, deps = {}) {
   });
 
   return {
-    command: "npx",
+    command: npxCommand,
     args: commandArgs,
     environment: prepared.environment,
     skippedExecution: false,
     mode: prepared.mode,
     exitCode: result.code,
+    stdout: result.stdout,
+    stderr: result.stderr,
   };
 }

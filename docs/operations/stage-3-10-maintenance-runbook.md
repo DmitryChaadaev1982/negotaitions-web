@@ -5,6 +5,7 @@
 This runbook documents local/server operations for Stage 3.10 maintenance tasks:
 
 - stale room-connection expiry;
+- debrief auto-close reconciliation with grace window;
 - recording-stop retry delivery worker;
 - bounded roomLifecycle backfill and verification.
 
@@ -17,6 +18,7 @@ Use:
 - `npm run maintenance:stage310 -- --task all --dry-run`
 - `npm run maintenance:stage310 -- --task expiry --limit 500`
 - `npm run maintenance:stage310 -- --task recording-stop --limit 200`
+- `npm run maintenance:stage310 -- --task nonce-cleanup`
 - `npm run maintenance:stage310 -- --task backfill --batch-size 500 --cursor-after-id <id>`
 - `npm run maintenance:stage310 -- --task verify-backfill`
 
@@ -61,20 +63,42 @@ The app can be rolled back without dropping Stage 3.10 additive schema objects.
 - `--dry-run` mode performs inspection only, without writes.
 - Timer can be disabled independently from application service.
 - Concurrent worker runs are tolerated by DB-level claim/update guards; stop-operation and connection-expiry claims are idempotent.
+- Empty-room reconciliation uses two gates:
+  - lease validity (explicit leave or expired lease reconciliation; lease TTL is 120000 ms);
+  - `DEBRIEF_AUTO_CLOSE_GRACE_MS` (default 30000 ms) after the last definitive disconnect signal.
+- Reconnect during the grace window keeps the session active; completion/closure happens only with zero valid connections.
 - For local test validation, ensure non-production DB is migrated before Stage 3.10 suites:
   - `npx prisma migrate status`
   - `npx prisma migrate deploy` (non-production only)
   - `npx prisma generate && npx prisma validate`
 
-## Current Voximplant Limitation
+## Server-stop Sweep Policy
 
-`SessionRecordingStopOperation` retries are server-owned, but Voximplant stop delivery still requires browser relay (`scenarioMessage`) in the current architecture. The worker preserves durable intent and retries with backoff, then marks terminal operator-attention class `VOXIMPLANT_BROWSER_RELAY_REQUIRED_TERMINAL` after bounded attempts.
+`recording-stop` task now handles:
+
+- due `PENDING` and `FAILED` operations;
+- timed-out `DELIVERING` operations where server transport was accepted but provider terminal callback is still missing;
+- no-op behavior for already `DELIVERED` operations.
+
+Mode-specific behavior:
+
+- `disabled`: legacy browser relay path unchanged.
+- `prefer_server_with_relay_fallback`: server stop first, bounded browser fallback only when registration/transport fails.
+- `prefer_server_no_relay_fallback`: server stop only; failures stay server-owned retryable records.
+
+`nonce-cleanup` removes expired `VoximplantCallbackNonce` rows only (hashed nonces, no raw nonce persistence).
 
 ## Stage 3.10 A7 operational policy
 
-- Browser relay is the primary stop transport for Voximplant in current architecture.
-- Any eligible connected room client may claim and transport an already authorized stop operation.
-- Server retries are bounded and do not run indefinitely for browser-dependent delivery.
+- Server-side Voximplant control is the canonical terminal stop transport when
+  either `prefer_server_*` mode is configured.
+- Browser relay is permitted only as bounded fallback in
+  `prefer_server_with_relay_fallback`, or as the legacy path while mode is
+  `disabled`.
+- Any eligible connected room client may claim and transport an already
+  authorized fallback stop operation; it cannot originate a new stop request.
+- Server retries are bounded and terminal success still requires provider
+  callback evidence.
 - Terminal relay-required diagnostics remain operational signals, not blockers for session/event completion/materials access.
 - If a valid client reconnects during debrief (`DEBRIEF_OPEN`), the same existing operation may be claimed and relayed again (no new operation row).
 - Webhook/provider reconciliation can still mark operation delivered after prior relay timeout/failure diagnostics.
