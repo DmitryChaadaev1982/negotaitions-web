@@ -63,9 +63,9 @@ Stage 5.4.2 adds a runtime admin override for the Voximplant recording webhook b
 - env default: `VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL` (for example `https://negotaitions.ru`);
 - DB-backed override key: `voximplant.recording.webhookBaseUrlOverride` (`AppSetting` table);
 - admin UI on `/admin` (section «Webhook URL записи Voximplant»)
-- `recording-control` includes `scenarioMessage.webhookBaseUrl` from the effective value;
-- VoxEngine scenario may use `message.webhookBaseUrl` when `ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE=true`;
-- webhook secret remains server/scenario-side only — never in browser or `scenarioMessage`.
+- `recording-control` returns signed `scenarioMessageText` with an allowlisted callback origin claim;
+- VoxEngine scenario verifies HMAC claims and binds callback origin per provider session;
+- webhook and control secrets remain server/scenario-side only — never in browser.
 
 ### Local tunnel flow (Stage 5.4.2)
 
@@ -75,8 +75,8 @@ Stage 5.4.2 adds a runtime admin override for the Voximplant recording webhook b
 3. Copy the HTTPS URL (for example `https://abc.trycloudflare.com`)
 4. Open `/admin` (Административная диагностика) as an admin user
 5. Paste the tunnel URL and click **Save override**
-6. Start Voximplant room recording — `recording-control` returns `scenarioMessage.webhookBaseUrl` with the effective URL
-7. Browser relays `scenarioMessage` unchanged to the conference
+6. Start Voximplant room recording — `recording-control` returns signed `scenarioMessageText`
+7. Browser relays the opaque `scenarioMessageText` unchanged to the conference
 8. VoxEngine sends recording-status webhooks to the tunnel URL
 9. Confirm `Recording.status` and `Recording.fileKey` update on the server
 
@@ -122,30 +122,30 @@ Do **not** use `ng-session-{sessionId}` or `VoxEngine.applicationName()` for ses
 1. Facilitator clicks "Начать запись" (Start recording) in the room.
 2. Browser shows the shared recording consent modal; user must confirm explicitly.
 3. Browser calls `POST /api/sessions/{sessionId}/recording-control` with `{ action: "start", recordingConsentConfirmed: true, participantId/joinToken }`.
-4. Server validates facilitator permission, builds a typed `RecordingControlMessage` with `sessionId`, `conferenceName`, and `requestId`, and returns it in `{ scenarioMessage }`.
-5. Browser relays `JSON.stringify(scenarioMessage)` unchanged to the Voximplant conference via `conference.sendMessage()`.
-6. VoxEngine scenario resolves `sessionId` from the message (not from `applicationName`), validates authorization, and calls `VoxEngine.createRecorder(...)` with audio-only options.
+4. Server validates facilitator permission, signs canonical claims (action, requestId, sessionId, conferenceName, participant/controller identity, callback origin), and returns opaque `{ scenarioMessageText }`.
+5. Browser relays `scenarioMessageText` directly to the Voximplant conference via `conference.sendMessage()`.
+6. VoxEngine scenario verifies schema/HMAC/time/nonce/origin, binds provider-session claims, then executes recording actions.
 7. When `RecorderEvents.Started` fires, the scenario sends a `recording_status` message back to the browser AND sends a signed webhook to the server.
 8. Stop recording follows the same relay flow with `action: "stop"`.
 
-### Stage 3.10 bounded-risk stop transport (A7 accepted)
+### Stage 3.10 production server-side stop
 
-Canonical stop transport for Voximplant in Stage 3.10:
+Canonical stop transport for Voximplant in Stage 3.10 production path:
 
-1. Server canonical FINISH/Event completion persists one durable `SessionRecordingStopOperation`.
-2. `control-state` exposes a server-issued relay hint (`operationId`/`requestId`) only for eligible connected room participants.
-3. Any eligible connected client (facilitator, participant, observer) may claim relay once via `recording-control` (`action: "relay_stop"`).
-4. Browser relays only the server-issued `scenarioMessage` (client does not invent session/request/provider payload fields).
-5. Client reports bounded relay outcome (`ACKNOWLEDGED` / `TIMEOUT` / `SEND_FAILED`) via `recording-control` (`action: "relay_stop_report"`).
-6. Duplicate relays are concurrency-safe and converge on one durable operation + authoritative webhook finalization.
+1. Canonical FINISH/Event completion persists one durable `SessionRecordingStopOperation`.
+2. Server-first stop delivery reads server-only `SessionVoximplantControlChannel`.
+3. Server sends signed control POST to private provider control URL (`voximplant_server_control` transport).
+4. HTTP 2xx is treated as transport acceptance only (`transportAcceptedAt`), not terminal success.
+5. Provider sends signed callbacks to:
+   - `POST /api/sessions/{sessionId}/voximplant/server-stop-callback`
+   - events: `provider_session_registered`, `recording_stop_command_accepted`, `recording_stopped`, `recording_stop_failed`
+6. Operation reaches `DELIVERED` only after terminal provider callback evidence.
 
-Important constraints:
+Mode behavior:
 
-- No `StartConference` / `media_session_access_url` server-owned control channel is introduced.
-- No scenario polling channel is introduced.
-- Existing conference startup architecture (Web SDK join) is unchanged.
-- Provider/session auto-termination remains fallback when no relay-capable browser is connected.
-- Webhook reconciliation remains authoritative for final recording completion.
+- `disabled`: existing browser relay semantics preserved.
+- `prefer_server_with_relay_fallback`: server first, bounded browser relay fallback on missing registration or explicit server transport failure.
+- `prefer_server_no_relay_fallback`: server only; no browser fallback.
 
 Stage 3.10 validation references:
 
@@ -156,17 +156,13 @@ Stage 3.10 validation references:
 
 ### Scenario message fields (recording_control)
 
-Server-built `scenarioMessage` includes:
+Server-built recording control payload is signed and serialized as `scenarioMessageText`.
+The signed claims include:
 
-| Field | Purpose |
-|---|---|
-| `type` | `"recording_control"` |
-| `action` | `"start"` \| `"stop"` \| `"status"` |
-| `requestId` | Correlation id (nanoid) |
-| `sessionId` | Application session id (from URL/route; not used alone for webhook auth) |
-| `conferenceName` | Canonical `negotiation-{sessionId}` for scenario-side parsing |
-| `webhookBaseUrl` | Optional public HTTPS app base URL for VoxEngine recording-status webhooks (Stage 5.4.2; no secret) |
-| `participantId` | Optional facilitator participant id |
+- `protocolVersion`, `issuedAt`, `expiresAt`, `nonce`
+- `action`, `requestId`, `sessionId`, `conferenceName`
+- `participantId`, `controllerUserId`, `controllerRole`, `canControlRecording`
+- `webhookBaseUrl` (exact allowlisted origin only)
 | `role` | Optional VoxRoomRole hint (untrusted; scenario auth is separate) |
 
 Scenario sessionId resolution order:
@@ -218,6 +214,38 @@ Set these as VoxEngine application environment variables in the Voximplant Conso
 |---|---|
 | `WEBHOOK_BASE_URL` | Public URL of your Next.js app (e.g. `https://yourapp.example.com`) |
 | `WEBHOOK_SECRET` | Same value as `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` on the server (alias: `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`) |
+
+### Server-side stop environment variables
+
+Server:
+
+- `VOXIMPLANT_SERVER_STOP_MODE=disabled|prefer_server_with_relay_fallback|prefer_server_no_relay_fallback`
+- `VOXIMPLANT_SERVER_STOP_CONTROL_SECRET`
+- `VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET`
+- `VOXIMPLANT_SERVER_STOP_CONTROL_TIMEOUT_MS`
+- `VOXIMPLANT_SERVER_STOP_CALLBACK_REPLAY_WINDOW_SECONDS`
+- `VOXIMPLANT_SERVER_STOP_TERMINAL_TIMEOUT_SECONDS`
+
+Scenario (manual Console variables / source placeholders):
+
+- `SERVER_STOP_CONTROL_SECRET` (same value as server `VOXIMPLANT_SERVER_STOP_CONTROL_SECRET`)
+- `SERVER_STOP_CALLBACK_SECRET` (same value as server `VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET`)
+
+RC2 shared-secret topology (current operational requirement):
+
+- One shared Voximplant main-room scenario currently serves both local and production application environments.
+- Because RC2 signing uses a single active key per protocol (no keyId/key-ring support), local and production app environments must currently use the same values for:
+  - `VOXIMPLANT_RECORDING_CONTROL_SECRET`
+  - `VOXIMPLANT_RECORDING_WEBHOOK_SECRET`
+  - `VOXIMPLANT_SERVER_STOP_CONTROL_SECRET`
+  - `VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET`
+- Separate per-environment protocol secrets require keyId/key-ring support and are not implemented in RC2.
+
+Security rules:
+
+- never log or return raw secret values;
+- never expose private control URL in public DTOs;
+- log control URL fingerprint only.
 
 ### Status mapping
 
@@ -330,8 +358,8 @@ resolvedSessionId = resolveSessionId(payload);
 - Browser `sendMessage` availability depends on the Voximplant WebSDK version; if unavailable, a UI error is shown and recording is blocked.
 - VoxEngine `crypto.createHmac()` availability depends on VoxEngine runtime version — if unavailable, webhooks are silently skipped and recording still works (server won't receive status updates in that case).
 - No automatic retry for failed webhooks — transient network errors may cause missed status updates (recording still works on Voximplant side).
-- No proven server-only stop transport is wired in current startup architecture; canonical stop intent is durable on server, but command ingress still depends on browser relay to scenario.
-- Stage 3.10 A7 accepts this bounded residual risk temporarily; true no-browser server-owned stop transport is deferred backlog.
+- Server-side stop transport is now available via private control channel + signed callback flow; browser relay remains bounded fallback only in `prefer_server_with_relay_fallback`.
+- Rollback remains configuration-based via `VOXIMPLANT_SERVER_STOP_MODE=disabled` without schema rollback.
 - Remote drift verification and provider auto-termination timing remain manual provider canaries (not CI).
 - No visible pause/resume recording UI (pause/resume may exist internally in scenario only).
 - Remote active speaker mapping deferred to Stage 5.5+.

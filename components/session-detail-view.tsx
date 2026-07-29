@@ -76,6 +76,7 @@ type SessionDetailViewProps = {
       id: string;
       displayName: string;
       type: string;
+      userId?: string | null;
       caseRoleName: string | null;
       /** Phase 6.11B: DB role id; null = unassigned. */
       sessionRoleId?: string | null;
@@ -214,6 +215,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
       id: p.id,
       displayName: p.displayName,
       type: p.type,
+      userId: p.userId ?? null,
       currentRoleId: p.sessionRoleId ?? null,
       currentRoleName: p.caseRoleName,
       joinedAt: p.joinedAt,

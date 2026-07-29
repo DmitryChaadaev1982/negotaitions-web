@@ -15,11 +15,11 @@ import {
   getYandexTranscriptEnhancementFallbackModel,
 } from "@/lib/env";
 
-test("TRANSCRIPT_ENHANCEMENT_MODE defaults to single", () => {
+test("TRANSCRIPT_ENHANCEMENT_MODE defaults to chunked", () => {
   const previous = process.env.TRANSCRIPT_ENHANCEMENT_MODE;
   delete process.env.TRANSCRIPT_ENHANCEMENT_MODE;
   try {
-    assert.equal(getTranscriptEnhancementMode(), "single");
+    assert.equal(getTranscriptEnhancementMode(), "chunked");
   } finally {
     if (previous === undefined) {
       delete process.env.TRANSCRIPT_ENHANCEMENT_MODE;
@@ -43,11 +43,11 @@ test("TRANSCRIPT_ENHANCEMENT_MODE supports chunked", () => {
   }
 });
 
-test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE defaults to legacy", () => {
+test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE defaults to json_schema", () => {
   const previous = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
   delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
   try {
-    assert.equal(getTranscriptEnhancementOutputMode(), "legacy");
+    assert.equal(getTranscriptEnhancementOutputMode(), "json_schema");
   } finally {
     if (previous === undefined) {
       delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
@@ -73,11 +73,11 @@ test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE accepts legacy and json_schema", () => 
   }
 });
 
-test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE invalid value falls back to legacy", () => {
+test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE invalid value falls back to json_schema", () => {
   const previous = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;
   process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE = "bad-value";
   try {
-    assert.equal(getTranscriptEnhancementOutputMode(), "legacy");
+    assert.equal(getTranscriptEnhancementOutputMode(), "json_schema");
   } finally {
     if (previous === undefined) {
       delete process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE;

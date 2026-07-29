@@ -1,10 +1,12 @@
 import type {
   EventParticipant,
   ParticipantType,
+  RoomLifecycle,
   SessionParticipant,
   TrainingEvent,
 } from "@/app/generated/prisma/client";
 import {
+  buildAccountObserverSessionMaterialsPath,
   buildAccountSessionMaterialsPath,
   buildAccountSessionRoomPath,
   buildSessionMaterialsPath,
@@ -24,6 +26,14 @@ import { resolveConnectionStatusForLobby } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { getEventMediaStatusMap } from "@/lib/voximplant/media-status-store";
+import {
+  canCreateLateObserverParticipant,
+  decideSessionRoomAccess,
+  isRoomAccessAllowed,
+  type RoomAccessDecisionOutput,
+} from "@/lib/session-room-access";
+import { getRecordingDisplayState } from "@/lib/recording-display-state";
+import { getCanonicalActiveSessionPresenceByUser } from "@/lib/session-active-presence";
 
 export type EventStateParticipant = {
   id: string;
@@ -37,6 +47,16 @@ export type EventStateParticipant = {
   joinedAt: string | null;
   lastSeenAt: string | null;
   connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
+  eventPresenceStatus:
+    | "INVITED_NEVER_CONNECTED"
+    | "ONLINE"
+    | "RECENTLY_DISCONNECTED"
+    | "OFFLINE";
+  presenceStatus: "online" | "offline";
+  currentLocation:
+    | { kind: "offline" }
+    | { kind: "lobby" }
+    | { kind: "session"; sessionId: string; sessionTitle: string };
   assignedSessionId: string | null;
   assignedSessionParticipantId: string | null;
   assignedType: string | null;
@@ -67,10 +87,21 @@ export type EventStateSession = {
   facilitatorName: string | null;
   isActive: boolean;
   isFinished: boolean;
+  canEnterRoom: boolean;
+  roomAccessDecision: RoomAccessDecisionOutput | null;
+  roomAccessRedirectTo: string | null;
   roomUrl: string | null;
   materialsUrl: string | null;
+  canJoinAsObserver: boolean;
+  observerJoinUrl: string | null;
+  canViewObserverMaterials: boolean;
+  observerMaterialsUrl: string | null;
+  sessionDisplayState: "joinable" | "materials-only" | "unavailable";
   createdAt: string;
   recordingStatus: string | null;
+  recordingStopOperationState: string | null;
+  recordingDisplayState: "active" | "paused" | "stopping" | "completed" | "failed" | "none";
+  roomLifecycle: RoomLifecycle | null;
   closeReason: string | null;
   closedByEventAt: string | null;
   participants: Array<{
@@ -140,8 +171,23 @@ type BuildEventStateInput = {
   isAdmin?: boolean;
   currentParticipant: EventParticipant | null;
   accountMode?: boolean;
+  canJoinEventSessionsAsObserver?: boolean;
   /** ID of the authenticated user making this request. Used to resolve case library when event has no hostUserId. */
   userId?: string | null;
+};
+
+type DerivedEventParticipantPresence = {
+  eventPresenceStatus:
+    | "INVITED_NEVER_CONNECTED"
+    | "ONLINE"
+    | "RECENTLY_DISCONNECTED"
+    | "OFFLINE";
+  connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
+  presenceStatus: "online" | "offline";
+  currentLocation:
+    | { kind: "offline" }
+    | { kind: "lobby" }
+    | { kind: "session"; sessionId: string; sessionTitle: string };
 };
 
 function participantIdentityKey(participant: EventParticipant): string {
@@ -196,6 +242,64 @@ function getAssignmentDurationDefaults(
   };
 }
 
+function deriveEventParticipantPresence(params: {
+  participant: EventParticipant;
+  activeSessionByUserId: Map<
+    string,
+    { sessionId: string; sessionTitle: string; updatedAtMs: number }
+  >;
+}): DerivedEventParticipantPresence {
+  const userId = params.participant.userId ?? null;
+  if (userId) {
+    const activeSession = params.activeSessionByUserId.get(userId);
+    if (activeSession) {
+      return {
+        eventPresenceStatus: "ONLINE",
+        connectionStatus: "ONLINE",
+        presenceStatus: "online",
+        currentLocation: {
+          kind: "session",
+          sessionId: activeSession.sessionId,
+          sessionTitle: activeSession.sessionTitle,
+        },
+      };
+    }
+  }
+
+  const lobbyStatus = resolveConnectionStatusForLobby(params.participant.lastSeenAt);
+  if (lobbyStatus === "ONLINE") {
+    return {
+      eventPresenceStatus: "ONLINE",
+      connectionStatus: "ONLINE",
+      presenceStatus: "online",
+      currentLocation: { kind: "lobby" },
+    };
+  }
+  if (lobbyStatus === "RECENTLY_DISCONNECTED") {
+    return {
+      eventPresenceStatus: "RECENTLY_DISCONNECTED",
+      connectionStatus: "RECENTLY_DISCONNECTED",
+      presenceStatus: "offline",
+      currentLocation: { kind: "offline" },
+    };
+  }
+  if (!params.participant.joinedAt && !params.participant.lastSeenAt) {
+    return {
+      eventPresenceStatus: "INVITED_NEVER_CONNECTED",
+      connectionStatus: "OFFLINE",
+      presenceStatus: "offline",
+      currentLocation: { kind: "offline" },
+    };
+  }
+
+  return {
+    eventPresenceStatus: "OFFLINE",
+    connectionStatus: "OFFLINE",
+    presenceStatus: "offline",
+    currentLocation: { kind: "offline" },
+  };
+}
+
 export async function buildEventState(
   input: BuildEventStateInput,
 ): Promise<EventStateResponse> {
@@ -207,7 +311,7 @@ export async function buildEventState(
       ? caseVisibilityWhereForUser(ownerUserId)
       : { visibility: "PUBLIC" as const };
 
-  const [participants, cases, selectedCaseRecord, createdSession, linkedSessions, sessionParticipantAssignments] =
+  const [participants, cases, selectedCaseRecord, createdSession, linkedSessions, sessionParticipantAssignments, eventRoomConnections] =
     await Promise.all([
       prisma.eventParticipant.findMany({
         where: { eventId: input.event.id },
@@ -251,6 +355,7 @@ export async function buildEventState(
         orderBy: [{ sequenceNumber: "asc" }, { createdAt: "asc" }],
         select: {
           id: true,
+          eventId: true,
           title: true,
           roomLabel: true,
           sequenceNumber: true,
@@ -265,8 +370,16 @@ export async function buildEventState(
           closedByEventAt: true,
           deletedAt: true,
           recording: {
-            select: { status: true },
+            select: {
+              status: true,
+              stopOperation: {
+                select: {
+                  state: true,
+                },
+              },
+            },
           },
+          roomLifecycle: true,
           participants: {
             orderBy: { createdAt: "asc" },
             include: {
@@ -297,6 +410,30 @@ export async function buildEventState(
           },
         },
         orderBy: { createdAt: "desc" },
+      }),
+      prisma.sessionRoomConnection.findMany({
+        where: {
+          session: {
+            eventId: input.event.id,
+            deletedAt: null,
+          },
+        },
+        select: {
+          sessionId: true,
+          userId: true,
+          updatedAt: true,
+          expiresAt: true,
+          disconnectedAt: true,
+          supersededAt: true,
+          revokedAt: true,
+          session: {
+            select: {
+              id: true,
+              title: true,
+              roomLabel: true,
+            },
+          },
+        },
       }),
     ]);
   const userIds = Array.from(
@@ -381,6 +518,29 @@ export async function buildEventState(
     ? (participantIdToCanonicalId.get(input.currentParticipant.id) ??
       input.currentParticipant.id)
     : null;
+  const canonicalSessionPresenceByUserId = getCanonicalActiveSessionPresenceByUser(
+    eventRoomConnections.map((connection) => ({
+      userId: connection.userId,
+      sessionId: connection.sessionId,
+      sessionTitle: connection.session.roomLabel ?? connection.session.title,
+      disconnectedAt: connection.disconnectedAt,
+      supersededAt: connection.supersededAt,
+      revokedAt: connection.revokedAt,
+      expiresAt: connection.expiresAt,
+      updatedAt: connection.updatedAt,
+    })),
+  );
+  const activeSessionByUserId = new Map<
+    string,
+    { sessionId: string; sessionTitle: string; updatedAtMs: number }
+  >();
+  for (const [userId, connection] of canonicalSessionPresenceByUserId) {
+    activeSessionByUserId.set(userId, {
+      sessionId: connection.sessionId,
+      sessionTitle: connection.sessionTitle,
+      updatedAtMs: connection.updatedAt.getTime(),
+    });
+  }
   const mappedParticipants = canonicalParticipants.map((participant) =>
     mapEventParticipant({
       participant,
@@ -393,6 +553,10 @@ export async function buildEventState(
         ? (voximplantUsernameByUserId.get(participant.userId) ?? null)
         : null,
       mediaStatus: mediaStatusByParticipantId[participant.id] ?? null,
+      derivedPresence: deriveEventParticipantPresence({
+        participant,
+        activeSessionByUserId,
+      }),
     }),
   );
   const sessions = linkedSessions.map((session) =>
@@ -401,6 +565,8 @@ export async function buildEventState(
       isHost: input.isHost,
       currentParticipantId,
       accountMode: Boolean(input.accountMode),
+      canJoinEventSessionsAsObserver: Boolean(input.canJoinEventSessionsAsObserver),
+      eventStatus: input.event.status,
     }),
   );
 
@@ -477,6 +643,7 @@ function mapEventParticipant({
   accountMode,
   voximplantProviderUsername,
   mediaStatus,
+  derivedPresence,
 }: {
   participant: EventParticipant;
   activeAssignment:
@@ -499,6 +666,7 @@ function mapEventParticipant({
     cameraEnabled: boolean;
     updatedAt: string;
   } | null;
+  derivedPresence: DerivedEventParticipantPresence;
 }): EventStateParticipant {
   const canSeeJoinToken = !accountMode && (isHost || participant.id === currentParticipantId);
   const assignmentLabel = activeAssignment?.session.roomLabel
@@ -516,7 +684,10 @@ function mapEventParticipant({
     wantsToFacilitate: participant.wantsToFacilitate,
     joinedAt: participant.joinedAt?.toISOString() ?? null,
     lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
-    connectionStatus: resolveConnectionStatusForLobby(participant.lastSeenAt),
+    connectionStatus: derivedPresence.connectionStatus,
+    eventPresenceStatus: derivedPresence.eventPresenceStatus,
+    presenceStatus: derivedPresence.presenceStatus,
+    currentLocation: derivedPresence.currentLocation,
     assignedSessionId: activeAssignment?.sessionId ?? null,
     assignedSessionParticipantId: activeAssignment?.id ?? null,
     assignedType: activeAssignment?.type ?? null,
@@ -547,9 +718,12 @@ function mapEventSession({
   isHost,
   currentParticipantId,
   accountMode,
+  canJoinEventSessionsAsObserver,
+  eventStatus,
 }: {
   session: {
     id: string;
+    eventId: string | null;
     title: string;
     roomLabel: string | null;
     sequenceNumber: number | null;
@@ -563,7 +737,13 @@ function mapEventSession({
     closeReason: string | null;
     closedByEventAt: Date | null;
     deletedAt: Date | null;
-    recording: { status: string } | null;
+    recording:
+      | {
+          status: string;
+          stopOperation: { state: string } | null;
+        }
+      | null;
+    roomLifecycle: RoomLifecycle | null;
     participants: Array<
       SessionParticipant & {
         sessionRole: { name: string } | null;
@@ -573,6 +753,8 @@ function mapEventSession({
   isHost: boolean;
   currentParticipantId: string | null;
   accountMode: boolean;
+  canJoinEventSessionsAsObserver: boolean;
+  eventStatus: TrainingEvent["status"];
 }): EventStateSession {
   const facilitator = session.participants.find(
     (participant) => participant.type === "FACILITATOR",
@@ -585,7 +767,96 @@ function mapEventSession({
   const linkParticipant = isHost ? facilitator ?? session.participants[0] : currentParticipant;
   const isActive = isSessionActiveForAssignment(session);
   const isFinished = !isActive;
+  const roomAccessDecision =
+    isHost || Boolean(currentParticipant)
+      ? decideSessionRoomAccess({
+          user: {
+            isAuthenticated: true,
+            isAuthorizedMember: true,
+          },
+          session: {
+            sessionId: session.id,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+            deletedAt: session.deletedAt,
+            closeReason: session.closeReason,
+            closedByEventAt: session.closedByEventAt,
+            eventId: session.eventId,
+            eventStatus,
+          },
+          redirect: {
+            sessionId: session.id,
+            eventId: session.eventId,
+            eventStatus,
+            participantJoinToken:
+              currentParticipant?.joinToken ?? linkParticipant?.joinToken ?? null,
+            preferEventResultsForEventOwner: isHost,
+          },
+        })
+      : null;
+  const canEnterRoom = Boolean(
+    roomAccessDecision && isRoomAccessAllowed(roomAccessDecision.output),
+  );
   const canOpenMaterials = Boolean(isHost || currentParticipant);
+  const userAlreadyAssignedToSession = currentParticipantId
+    ? session.participants.some(
+        (participant) => participant.eventParticipantId === currentParticipantId,
+      )
+    : false;
+  const observerAccessDecision =
+    accountMode &&
+    canJoinEventSessionsAsObserver &&
+    Boolean(currentParticipantId) &&
+    !userAlreadyAssignedToSession
+      ? canCreateLateObserverParticipant({
+          event: {
+            status: eventStatus,
+          },
+          user: {
+            isAuthenticated: true,
+            isAuthorizedMember: true,
+          },
+          session: {
+            sessionId: session.id,
+            eventId: session.eventId,
+            status: session.status,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+            deletedAt: session.deletedAt,
+            closeReason: session.closeReason,
+            closedByEventAt: session.closedByEventAt,
+            eventStatus,
+          },
+          existingSessionParticipant: false,
+        })
+      : null;
+  const canJoinAsObserver = Boolean(observerAccessDecision?.allowed);
+  const observerJoinUrl = canJoinAsObserver ? buildAccountSessionRoomPath(session.id) : null;
+  const canViewObserverMaterials =
+    accountMode &&
+    canJoinEventSessionsAsObserver &&
+    Boolean(currentParticipantId) &&
+    !userAlreadyAssignedToSession &&
+    !canJoinAsObserver &&
+    (session.status === "COMPLETED" ||
+      session.negotiationState === "FINISHED" ||
+      session.roomLifecycle === "DEBRIEF_OPEN" ||
+      session.roomLifecycle === "CLOSED");
+  const observerMaterialsUrl = canViewObserverMaterials
+    ? buildAccountObserverSessionMaterialsPath(session.id)
+    : null;
+  const sessionDisplayState = canJoinAsObserver
+    ? "joinable"
+    : canViewObserverMaterials
+      ? "materials-only"
+      : "unavailable";
+  const recordingDisplayState = getRecordingDisplayState({
+    recordingStatus: session.recording?.status ?? null,
+    stopOperationState: session.recording?.stopOperation?.state ?? null,
+    sessionStatus: session.status,
+    negotiationState: session.negotiationState,
+    roomLifecycle: session.roomLifecycle,
+  });
 
   return {
     id: session.id,
@@ -607,8 +878,11 @@ function mapEventSession({
     facilitatorName: facilitator?.displayName ?? null,
     isActive,
     isFinished,
+    canEnterRoom,
+    roomAccessDecision: roomAccessDecision?.output ?? null,
+    roomAccessRedirectTo: roomAccessDecision?.redirectTo ?? null,
     roomUrl:
-      isActive && linkParticipant
+      canEnterRoom && linkParticipant
         ? accountMode
           ? buildAccountSessionRoomPath(session.id)
           : buildSessionRoomPath(session.id, linkParticipant.joinToken)
@@ -624,8 +898,16 @@ function mapEventSession({
             : buildSessionMaterialsPath(currentParticipant.joinToken)
           : null
       : null,
+    canJoinAsObserver,
+    observerJoinUrl,
+    canViewObserverMaterials,
+    observerMaterialsUrl,
+    sessionDisplayState,
     createdAt: session.createdAt.toISOString(),
     recordingStatus: session.recording?.status ?? null,
+    recordingStopOperationState: session.recording?.stopOperation?.state ?? null,
+    recordingDisplayState,
+    roomLifecycle: session.roomLifecycle,
     closeReason: session.closeReason,
     closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
     participants: session.participants.map((participant) => {
@@ -638,7 +920,7 @@ function mapEventSession({
         participantType: participant.type,
         roleName: participant.sessionRole?.name ?? null,
         roomUrl:
-          isActive && canSeeLink
+          canEnterRoom && canSeeLink
             ? accountMode
               ? buildAccountSessionRoomPath(session.id)
               : buildSessionRoomPath(session.id, participant.joinToken)

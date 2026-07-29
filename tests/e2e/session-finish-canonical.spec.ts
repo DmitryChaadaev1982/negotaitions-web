@@ -536,6 +536,57 @@ test.describe("Canonical session finish", () => {
     }
   });
 
+  test("event lobby state keeps room entry in DEBRIEF_OPEN for authorized users", async ({
+    request,
+  }) => {
+    const fixture = await createEventLinkedSessionFixture();
+    const eventHostCookie = await createUserSession(fixture.users.eventHostUserId);
+    const eventFacilitatorOwnerCookie = await createUserSession(
+      fixture.users.eventFacilitatorOwnerUserId,
+    );
+    const participantCookie = await createUserSession(fixture.users.eventParticipantUserId);
+    const observerCookie = await createUserSession(fixture.users.sessionObserverUserId);
+
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState" = 'FINISHED',
+           "status" = 'READY',
+           "roomLifecycle" = 'DEBRIEF_OPEN',
+           "closedByEventAt" = NULL,
+           "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+
+    type EventStatePayload = {
+      sessions: Array<{
+        id: string;
+        roomLifecycle: string | null;
+        canEnterRoom: boolean;
+        roomAccessDecision: string | null;
+        roomUrl: string | null;
+      }>;
+    };
+
+    for (const actor of [
+      { cookie: eventHostCookie },
+      { cookie: eventFacilitatorOwnerCookie },
+      { cookie: participantCookie },
+      { cookie: observerCookie },
+    ]) {
+      const response = await request.get(`/api/events/${fixture.eventId}/state`, {
+        headers: cookieHeader(actor.cookie),
+      });
+      expect(response.ok()).toBeTruthy();
+      const payload = (await response.json()) as EventStatePayload;
+      const session = payload.sessions.find((item) => item.id === fixture.sessionId);
+      expect(session?.roomLifecycle).toBe("DEBRIEF_OPEN");
+      expect(session?.roomAccessDecision).toBe("ALLOW_DEBRIEF");
+      expect(session?.canEnterRoom).toBe(true);
+      expect(session?.roomUrl).toContain(`/room/${fixture.sessionId}`);
+    }
+  });
+
   test("host-token cannot complete standalone sessions", async ({ request }) => {
     const fixture = await createSessionFixture();
     const event = await createE2eEvent({ title: `Host token standalone deny ${Date.now()}` });

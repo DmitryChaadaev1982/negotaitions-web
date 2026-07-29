@@ -44,6 +44,20 @@ test.afterAll(async () => {
   await cleanupE2eData();
 });
 
+async function seedCookieConsent(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "negotaitions.cookieConsent.v1",
+      JSON.stringify({
+        necessary: true,
+        analytics: true,
+        marketing: true,
+        timestamp: Date.now(),
+      }),
+    );
+  });
+}
+
 test("management UI shows canonical complete flow and preserves sibling/event state", async ({
   page,
 }) => {
@@ -150,6 +164,7 @@ test("management UI shows canonical complete flow and preserves sibling/event st
   );
 
   await loginWithSessionCookie(page, adminSessionToken);
+  await seedCookieConsent(page);
 
   await page.goto("/sessions");
   const targetRow = page.getByTestId("session-row").filter({ hasText: "ST310 Target Session" }).first();
@@ -157,11 +172,34 @@ test("management UI shows canonical complete flow and preserves sibling/event st
   const mappedRow = page.getByTestId("session-row").filter({ hasText: "ST310 Mapping Session" }).first();
 
   await expect(targetRow.getByTestId("complete-session-button")).toBeVisible();
-  await expect(targetRow.getByRole("button", { name: /delete/i })).toBeVisible();
+  await expect(targetRow.getByTestId("delete-session-button")).toBeVisible();
   await expect(targetRow.getByRole("link", { name: /Open materials|Открыть материалы/i })).toBeVisible();
   await expect(targetRow.getByTestId("sessions-analysis-shared-badge")).toHaveCount(1);
   await expect(mappedRow.getByTestId("sessions-analysis-shared-badge")).toHaveCount(1);
   await expect(mappedRow.getByTestId("sessions-speaker-mapping-required-badge")).toBeVisible();
+  await expect(targetRow.getByTestId("complete-session-button")).toHaveClass(/complete-session-trigger-danger/);
+
+  const actionOrder = await targetRow
+    .locator(
+      '[data-testid="open-event-lobby-button"], [data-testid="open-room-button"], [data-testid="open-materials-button"], [data-testid="manage-session-button"], [data-testid="complete-session-button"], [data-testid="delete-session-button"]',
+    )
+    .evaluateAll((elements) => elements.map((element) => element.getAttribute("data-testid")));
+  expect(actionOrder).toEqual([
+    "open-event-lobby-button",
+    "open-room-button",
+    "open-materials-button",
+    "manage-session-button",
+    "complete-session-button",
+    "delete-session-button",
+  ]);
+
+  await page.goto(`/sessions/${targetSessionId}`);
+  const detailCompleteButton = page.getByTestId("complete-session-button").first();
+  await expect(detailCompleteButton).toBeVisible();
+  await expect(detailCompleteButton).toHaveClass(/complete-session-trigger-danger/);
+  await expect(page.getByTestId("delete-session-button").first()).toBeVisible();
+  await page.goto("/sessions");
+  await expect(targetRow).toBeVisible();
 
   const completeButton = targetRow.getByTestId("complete-session-button");
   await completeButton.click();

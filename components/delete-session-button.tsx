@@ -10,12 +10,14 @@ type DeleteSessionButtonProps = {
   sessionId: string;
   variant?: "link" | "button";
   className?: string;
+  testId?: string;
 };
 
 export function DeleteSessionButton({
   sessionId,
   variant = "link",
   className,
+  testId = "delete-session-button",
 }: DeleteSessionButtonProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -33,6 +35,7 @@ export function DeleteSessionButton({
         <button
           type="button"
           onClick={() => setOpen(true)}
+          data-testid={testId}
           className={
             className ??
             "text-sm font-medium text-rose-400 hover:text-rose-300"
@@ -44,6 +47,7 @@ export function DeleteSessionButton({
         <button
           type="button"
           onClick={() => setOpen(true)}
+          data-testid={testId}
           className={
             className ??
             "inline-flex items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/10 px-5 py-2.5 text-sm font-semibold text-rose-300 transition-all duration-200 hover:border-rose-400/50 hover:bg-rose-500/20 hover:text-rose-200"

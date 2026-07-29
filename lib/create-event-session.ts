@@ -8,7 +8,6 @@ import {
   ACTIVE_SESSION_ASSIGNMENT_SESSION_WHERE,
 } from "@/lib/event-active-assignment";
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
-import { getDemoFacilitator } from "@/lib/demo-user";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
@@ -157,6 +156,9 @@ export async function createSessionFromEvent(
   if (!facilitatorParticipant) {
     return { ok: false, error: "facilitatorInvalid" };
   }
+  if (!facilitatorParticipant.userId) {
+    return { ok: false, error: "facilitatorInvalid" };
+  }
 
   const assignedRolePlayerIds = new Set<string>();
   const roleAssignments: Array<{
@@ -282,12 +284,7 @@ export async function createSessionFromEvent(
   }
 
   const sessionTitle = `${event.title} — ${negotiationCase.title}`;
-  const fallbackFacilitator = await getDemoFacilitator();
-  const sessionFacilitatorId =
-    event.facilitatorUserId ??
-    event.hostUserId ??
-    options?.requesterUserId ??
-    fallbackFacilitator.id;
+  const sessionFacilitatorId = facilitatorParticipant.userId;
 
   const session = await prisma.$transaction(async (tx) => {
     const sequence = await tx.session.aggregate({

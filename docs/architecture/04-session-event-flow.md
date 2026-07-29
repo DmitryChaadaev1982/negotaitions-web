@@ -18,6 +18,68 @@
 5. Assigned users move from lobby to room.
 6. Session completion can return users to lobby or materials.
 
+## Room Lifecycle Semantics (Stage 3.10)
+
+- `OPEN`: negotiation-room admission is allowed by the canonical
+  `roomAccessDecision`. Zero occupancy never completes or closes an `OPEN`
+  Session automatically.
+- `DEBRIEF_OPEN`: negotiation is finished, recording stop has already been
+  requested by canonical completion, and existing participants may use the
+  debrief/materials flow. This is the only lifecycle state eligible for
+  empty-room auto-close, after `DEBRIEF_AUTO_CLOSE_GRACE_MS`.
+- `CLOSED`: room admission is denied and the backend supplies the canonical
+  Event-lobby or materials redirect.
+- Closing an empty `DEBRIEF_OPEN` room is a lifecycle-only transition. It does
+  not create or request a second provider recording stop.
+
+Long-horizon cleanup for an empty `OPEN` Session or empty Event is separate
+backlog work. Any future policy must be measured in hours or bounded by Event
+lifetime; it must not reuse the short debrief grace.
+
+## Leave And Presence Semantics
+
+- Explicit leave is persisted before provider teardown and before navigation.
+  If persistence fails or times out, the UI keeps the user in place and exposes
+  the failure instead of silently treating the leave as complete.
+- Refresh, tab close, browser crash, and network loss are passive disconnects.
+  They remain lease-based and do not use the explicit-leave endpoint.
+- Rejoin/same-user takeover supersedes the older lease; logical presence and
+  Event `In Sessions` counts deduplicate the user.
+
+## Canonical Room Actions
+
+- Participant and observer actions are derived from `roomAccessDecision`: enter
+  or rejoin an active room, return to debrief, or view materials.
+- Facilitator actions use the same access decision for room/debrief/materials
+  destination; administrative finish remains a separate authority-checked
+  action.
+- Materials-destination buttons are labelled generically (`View materials` /
+  `Просмотреть материалы`) because recording, transcript, enhancement, speaker
+  mapping, and publication state may be available independently of AI analysis.
+
+## Facilitator Authority Model
+
+- `Session.facilitatorId` is the canonical facilitator owner identity.
+- Event owner (`TrainingEvent.hostUserId`) keeps administrative event/session rights but does not auto-promote to session facilitator on room entry.
+- Facilitator reassignment is explicit and centralized through session role-management actions, not through implicit participant upsert paths.
+- Reassignment updates `Session.facilitatorId` and participant capabilities deterministically; it does not rely on runtime read-time type demotion.
+
+## Event Presence DTO
+
+- Event participant presence is derived event-wide (lobby + canonical room connections), not lobby-only.
+- Canonical statuses:
+  - `INVITED_NEVER_CONNECTED`
+  - `ONLINE`
+  - `RECENTLY_DISCONNECTED`
+  - `OFFLINE`
+- UI traffic-light presentation maps directly to this DTO and must not be used as a lease/access authority.
+
+## Stale-Tab Completion Redirect
+
+- Room pages continue canonical control-state polling even after local stale/superseded connection detection.
+- Global room/event closure redirect decisions (`ROOM_CLOSED`, `EVENT_CLOSED`) take precedence over stale-tab banner rendering.
+- Redirect targets come from backend `redirectTo` decisions to avoid role/client divergence and loop-prone client heuristics.
+
 ## State Authorities
 
 - Session/event source of truth: database state.

@@ -216,9 +216,12 @@ Then check Voximplant server logs for:
 
 The build ID must match the value printed during `vox:scenario:prepare`.
 
-For Stage 3.10 A7 manual rollout, expected marker in repository artifact:
+For the final Stage 3.10 server-stop rollout, the exact tested repository
+artifact is:
 
-`SCENARIO_BUILD_ID = "server-poc-webhook-fix-2026-07-13-a7"`
+- `SCENARIO_BUILD_ID = "main-room-server-stop-2026-07-28-rc6"`
+- SHA-256:
+  `D9324A97E7CEC42DDC2515AF04F467ABFF9364BB01CEB37FF04623149DE6AAE5`
 
 If runtime logs show a different build marker, deployed scenario drift is present until manually reconciled.
 
@@ -249,10 +252,15 @@ shows the expected build ID in the **"1b. Scenario Sync"** section and provides 
 - `.vox-scenario-build-id` is gitignored and contains only the build ID string.
 - The `voxengine-ci/` staging directory is gitignored. It contains the scenario source
   (which is also in `docs/voximplant/`) plus generated config — no credentials.
-- The `WEBHOOK_SECRET` hardcoded in the scenario source is already in `docs/voximplant/`
-  which is committed. This is a known limitation: VoxEngine scenarios cannot use runtime
-  env injection in all versions. Rotate the secret in `.env.local` and in the scenario
-  file together.
+- RC6 stores secret values in Voximplant Application Secrets and reads them at runtime
+  through `VoxEngine.getSecretValue` as the primary source. No secret values are embedded
+  into or substituted into the committed scenario source. Application Secret names:
+  - `WEBHOOK_SECRET`
+  - `RECORDING_CONTROL_SECRET`
+  - `SERVER_STOP_CONTROL_SECRET`
+  - `SERVER_STOP_CALLBACK_SECRET`
+- `process.env` compatibility is limited to the controlled local test/CI fallback and is
+  consulted only when VoxEngine Secret Storage is unavailable.
 
 ---
 

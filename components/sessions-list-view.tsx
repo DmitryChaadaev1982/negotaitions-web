@@ -36,12 +36,11 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import {
-  applySessionOverviewStats,
   isSessionActiveForPresence,
-  type SessionOverviewStats,
 } from "@/lib/session-overview-shared";
-import { PRESENCE_OVERVIEW_POLL_INTERVAL_MS } from "@/lib/presence";
 import { useI18n } from "@/lib/i18n/useI18n";
+
+const SESSIONS_OVERVIEW_POLL_INTERVAL_MS = 3_000;
 
 type SessionRow = {
   id: string;
@@ -245,9 +244,8 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [sessionStats, setSessionStats] = useState<SessionOverviewStats[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>(initialSessions);
-  const sessionsWithStats = applySessionOverviewStats(sessions, sessionStats);
+  const sessionsWithStats = sessions;
   const query = searchParams.get("q")?.trim() ?? "";
   const statusFilter = parseSessionStatusFilter(searchParams.get("status"));
   const aiFilter = parseSessionAiFilter(searchParams.get("ai"));
@@ -273,38 +271,53 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    let currentController: AbortController | null = null;
 
-    const refreshStats = async () => {
+    const refreshSessions = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      currentController?.abort();
+      const controller = new AbortController();
+      currentController = controller;
       try {
-        const response = await fetch("/api/sessions/overview", {
+        const response = await fetch("/api/sessions/list", {
           cache: "no-store",
+          signal: controller.signal,
         });
-
-        if (!response.ok || cancelled) {
-          return;
-        }
-
-        const data = (await response.json()) as {
-          sessions: SessionOverviewStats[];
-        };
-
-        setSessionStats(data.sessions);
+        if (!response.ok || cancelled) return;
+        const data = (await response.json()) as { sessions: SessionRow[] };
+        setSessions(data.sessions);
       } catch {
-        // Ignore transient network errors; the next poll will retry.
+        // Ignore transient polling errors.
+      } finally {
+        inFlight = false;
       }
     };
 
-    void refreshStats();
-
+    void refreshSessions();
     const intervalId = window.setInterval(() => {
-      if (!cancelled) {
-        void refreshStats();
+      if (document.visibilityState === "visible") {
+        void refreshSessions();
       }
-    }, PRESENCE_OVERVIEW_POLL_INTERVAL_MS);
+    }, SESSIONS_OVERVIEW_POLL_INTERVAL_MS);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSessions();
+      }
+    };
+    const handleFocus = () => {
+      void refreshSessions();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
 
     return () => {
       cancelled = true;
+      currentController?.abort();
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 
@@ -649,6 +662,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           href={session.roomUrl}
                           variant="primary"
                           className="h-6 px-1.5 text-[10px]"
+                          data-testid="open-room-button"
                         >
                           {t("dashboard.openRoom")}
                         </ListActionLink>
@@ -657,15 +671,27 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                         href={session.materialsUrl}
                         variant="secondary"
                         className="h-6 px-1.5 text-[10px]"
+                        data-testid="open-materials-button"
                       >
                         {t("dashboard.openMaterials")}
                       </ListActionLink>
                       {session.canManage ? (
                         <>
+                          <ListActionLink
+                            href={`/sessions/${session.id}`}
+                            variant="secondary"
+                            className="h-6 px-1.5 text-[10px]"
+                            data-testid="manage-session-button"
+                          >
+                            {t("common.manage")}
+                          </ListActionLink>
                           {session.status !== "FINISHED" ? (
                             <CompleteSessionButton
                               sessionId={session.id}
-                              className={getListActionButtonClassName("secondary", "h-6 px-1.5 text-[10px]")}
+                              className={getListActionButtonClassName(
+                                "dangerOutline",
+                                "h-6 px-1.5 text-[10px]",
+                              )}
                               onCompleted={() => {
                                 setSessions((current) =>
                                   current.map((item) =>
@@ -681,15 +707,9 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                               }}
                             />
                           ) : null}
-                          <ListActionLink
-                            href={`/sessions/${session.id}`}
-                            variant="secondary"
-                            className="h-6 px-1.5 text-[10px]"
-                          >
-                            {t("common.manage")}
-                          </ListActionLink>
                           <DeleteSessionButton
                             sessionId={session.id}
+                            testId="delete-session-button"
                             className={getListActionButtonClassName("danger", "h-6 px-1.5 text-[10px]")}
                           />
                         </>

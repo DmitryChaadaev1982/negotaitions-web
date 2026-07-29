@@ -7,6 +7,7 @@ import {
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
 import {
+  canCreateLateObserverParticipant,
   decideSessionRoomAccess,
   resolveSessionClosedRedirectPath,
 } from "@/lib/session-room-access";
@@ -120,5 +121,93 @@ describe("resolveSessionClosedRedirectPath", () => {
       preferEventResultsForEventOwner: true,
     });
     assert.equal(path, "/events/event-1/lobby");
+  });
+});
+
+describe("canCreateLateObserverParticipant", () => {
+  const base = {
+    event: {
+      status: TrainingEventStatus.SESSION_CREATED,
+    },
+    user: {
+      isAuthenticated: true,
+      isAuthorizedMember: true,
+    },
+    session: {
+      sessionId: "session-1",
+      eventId: "event-1",
+      status: "READY",
+      negotiationState: NegotiationState.RUNNING,
+      roomLifecycle: RoomLifecycle.OPEN,
+      deletedAt: null,
+      closeReason: null,
+      closedByEventAt: null,
+      eventStatus: TrainingEventStatus.SESSION_CREATED,
+    },
+    existingSessionParticipant: false,
+  } as const;
+
+  it("allows first observer creation only for OPEN rooms", () => {
+    const decision = canCreateLateObserverParticipant(base);
+    assert.equal(decision.allowed, true);
+  });
+
+  it("allows first observer creation for legacy active null lifecycle", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      session: {
+        ...base.session,
+        roomLifecycle: null,
+        negotiationState: NegotiationState.PREPARATION,
+      },
+    });
+    assert.equal(decision.allowed, true);
+  });
+
+  it("denies DEBRIEF_OPEN first observer creation", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      session: {
+        ...base.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+      },
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "NEGOTIATION_FINISHED");
+  });
+
+  it("denies first observer creation for closed rooms", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      session: {
+        ...base.session,
+        roomLifecycle: RoomLifecycle.CLOSED,
+      },
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "ROOM_POLICY_DENIED");
+  });
+
+  it("denies first observer creation for completed events", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      event: { status: TrainingEventStatus.COMPLETED },
+      session: {
+        ...base.session,
+        eventStatus: TrainingEventStatus.COMPLETED,
+      },
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "EVENT_COMPLETED");
+  });
+
+  it("denies when the user already has a session participant", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      existingSessionParticipant: true,
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "EXISTING_SESSION_PARTICIPANT");
   });
 });

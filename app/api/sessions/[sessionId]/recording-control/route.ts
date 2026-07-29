@@ -28,6 +28,7 @@ import {
   getStopRelayHintForSession,
   reportStopRelayOutcome,
 } from "@/lib/session-recording-stop-relay";
+import { buildRecordingControllerClaims } from "@/lib/voximplant/recording-control-route-contract";
 
 export const runtime = "nodejs";
 
@@ -210,6 +211,7 @@ export async function POST(request: Request, context: RouteContext) {
         participant: {
           id: participant.id,
           type: participant.type,
+          userId: participant.userId ?? null,
         },
       });
 
@@ -228,6 +230,7 @@ export async function POST(request: Request, context: RouteContext) {
           operationId: claim.operationId,
           requestId: claim.requestId,
           scenarioMessage: claim.scenarioMessage,
+          scenarioMessageText: claim.scenarioMessageText,
         },
         recording,
       });
@@ -254,7 +257,11 @@ export async function POST(request: Request, context: RouteContext) {
     return handleVoximplantRecording(
       parsed.data.action,
       sessionId,
-      participant.id,
+      buildRecordingControllerClaims({
+        participantId: participant.id,
+        participantType: participant.type,
+        userId: participant.userId ?? null,
+      }),
     );
   }
 
@@ -302,7 +309,12 @@ export async function POST(request: Request, context: RouteContext) {
 async function handleVoximplantRecording(
   action: "start" | "stop" | "refresh",
   sessionId: string,
-  participantId: string,
+  controller: {
+    participantId: string;
+    controllerUserId: string;
+    controllerRole: string;
+    canControlRecording: boolean;
+  },
 ) {
   console.log(
     `[recording-control] provider=voximplant action=${action} sessionId=${sessionId}`,
@@ -318,7 +330,7 @@ async function handleVoximplantRecording(
       provider: "voximplant",
       action,
       sessionId,
-      participantIdPresent: Boolean(participantId),
+      participantIdPresent: Boolean(controller.participantId),
     },
   });
 
@@ -345,7 +357,10 @@ async function handleVoximplantRecording(
     const [dispatch, webhookResolution] = await Promise.all([
       buildVoximplantRecordingDispatch(action, {
         sessionId,
-        participantId,
+        participantId: controller.participantId,
+        controllerUserId: controller.controllerUserId,
+        controllerRole: controller.controllerRole,
+        canControlRecording: controller.canControlRecording,
       }),
       resolveVoximplantRecordingWebhookUrlFromDb(),
     ]);
@@ -357,15 +372,15 @@ async function handleVoximplantRecording(
       step: `recording-control:${action}:scenarioMessage`,
       message: `scenarioMessage built for action=${action}`,
       data: {
-        action: dispatch.scenarioMessage.action,
-        sessionId: dispatch.scenarioMessage.sessionId,
-        conferenceName: dispatch.scenarioMessage.conferenceName,
-        webhookBaseUrl: dispatch.scenarioMessage.webhookBaseUrl ?? null,
+        action: dispatch.scenarioMessage.claims.action,
+        sessionId: dispatch.scenarioMessage.claims.sessionId,
+        conferenceName: dispatch.scenarioMessage.claims.conferenceName,
+        webhookBaseUrl: dispatch.scenarioMessage.claims.webhookBaseUrl,
         webhookBaseUrlSource: webhookResolution.effectiveSource,
         overrideEnabled: webhookResolution.overrideEnabled,
         savedOverridePresent: webhookResolution.savedOverridePresent,
         envWebhookBaseUrlPresent: Boolean(webhookResolution.envWebhookBaseUrl),
-        requestId: dispatch.scenarioMessage.requestId,
+        requestId: dispatch.scenarioMessage.claims.requestId,
       },
     });
 
@@ -396,6 +411,7 @@ async function handleVoximplantRecording(
       provider: "voximplant" as const,
       warning: dispatch.warning,
       scenarioMessage: dispatch.scenarioMessage,
+      scenarioMessageText: dispatch.scenarioMessageText,
       recordingConfig: dispatch.recordingConfig,
       recording: {
         id: persisted.id,

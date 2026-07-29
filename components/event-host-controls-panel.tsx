@@ -6,6 +6,7 @@ import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { CompleteSessionButton } from "@/components/complete-session-button";
 import { EventCaseLibrary } from "@/components/event-case-library";
+import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import {
   GradientButton,
   SecondaryButton,
@@ -29,16 +30,14 @@ import {
 } from "@/lib/event-role-ui-state";
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
+import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { getRecordingDisplayPresentation } from "@/lib/recording-display-state";
 
 type EventHostControlsPanelProps = {
   state: EventStateResponse;
   draft: EventAssignmentDraft;
   isCreatingSession: boolean;
-  showCompleteDialog: boolean;
-  isCompletingEvent: boolean;
-  onShowCompleteDialog: (open: boolean) => void;
-  onCompleteEvent: () => void;
   onUpdateHost: (payload: Record<string, unknown>) => Promise<void>;
   onCreateSession: (overrides?: {
     roomLabel?: string;
@@ -48,14 +47,51 @@ type EventHostControlsPanelProps = {
   hostToken?: string;
 };
 
+type EventSessionBadgeState = "active" | "completed" | "preparation" | "debrief";
+
+function resolveEventSessionBadgeState(
+  session: EventStateResponse["sessions"][number],
+): EventSessionBadgeState {
+  if (session.roomLifecycle === "DEBRIEF_OPEN") {
+    return "debrief";
+  }
+
+  if (
+    session.negotiationState === "FINISHED" ||
+    session.status === "COMPLETED" ||
+    session.closedByEventAt
+  ) {
+    return "completed";
+  }
+
+  if (
+    session.negotiationState === "RUNNING" ||
+    session.negotiationState === "PAUSED" ||
+    session.negotiationState === "PREPARATION_RUNNING"
+  ) {
+    return "active";
+  }
+
+  return "preparation";
+}
+
+function eventSessionBadgeClassName(state: EventSessionBadgeState) {
+  if (state === "active") {
+    return "border-cyan-500/35 bg-cyan-500/12 text-cyan-200";
+  }
+  if (state === "completed") {
+    return "border-emerald-500/35 bg-emerald-500/12 text-emerald-200";
+  }
+  if (state === "debrief") {
+    return "border-violet-500/35 bg-violet-500/12 text-violet-200";
+  }
+  return "border-slate-500/35 bg-slate-500/12 text-slate-300";
+}
+
 export function EventHostControlsPanel({
   state,
   draft,
   isCreatingSession,
-  showCompleteDialog,
-  isCompletingEvent,
-  onShowCompleteDialog,
-  onCompleteEvent,
   onUpdateHost,
   onCreateSession,
   createSessionError,
@@ -84,6 +120,7 @@ export function EventHostControlsPanel({
       }),
     [assignmentParticipants, draft, selectedCase?.roles],
   );
+  const [draftState, setDraftState] = useState(normalizedDraft);
 
   const roleSlotSummary = useMemo(
     () =>
@@ -94,9 +131,9 @@ export function EventHostControlsPanel({
           displayName: participant.displayName,
           activeAssignmentLabel: participant.activeAssignmentLabel,
         })),
-        roleAssignments: normalizedDraft.roleAssignments,
+        roleAssignments: draftState.roleAssignments,
       }),
-    [assignmentParticipants, normalizedDraft.roleAssignments, selectedCase?.roles],
+    [assignmentParticipants, draftState.roleAssignments, selectedCase?.roles],
   );
   const facilitatorOptions = useMemo(
     () =>
@@ -106,9 +143,9 @@ export function EventHostControlsPanel({
           displayName: participant.displayName,
           activeAssignmentLabel: participant.activeAssignmentLabel,
         })),
-        roleAssignments: normalizedDraft.roleAssignments,
+        roleAssignments: draftState.roleAssignments,
       }),
-    [assignmentParticipants, normalizedDraft.roleAssignments],
+    [assignmentParticipants, draftState.roleAssignments],
   );
   const observerOptions = useMemo(
     () =>
@@ -118,13 +155,13 @@ export function EventHostControlsPanel({
           displayName: participant.displayName,
           activeAssignmentLabel: participant.activeAssignmentLabel,
         })),
-        facilitatorEventParticipantId: normalizedDraft.facilitatorEventParticipantId,
-        roleAssignments: normalizedDraft.roleAssignments,
+        facilitatorEventParticipantId: draftState.facilitatorEventParticipantId,
+        roleAssignments: draftState.roleAssignments,
       }),
     [
       assignmentParticipants,
-      normalizedDraft.facilitatorEventParticipantId,
-      normalizedDraft.roleAssignments,
+      draftState.facilitatorEventParticipantId,
+      draftState.roleAssignments,
     ],
   );
   const remainingObserverEligibleIds = useMemo(
@@ -135,40 +172,41 @@ export function EventHostControlsPanel({
           displayName: participant.displayName,
           activeAssignmentLabel: participant.activeAssignmentLabel,
         })),
-        facilitatorEventParticipantId: normalizedDraft.facilitatorEventParticipantId,
-        roleAssignments: normalizedDraft.roleAssignments,
+        facilitatorEventParticipantId: draftState.facilitatorEventParticipantId,
+        roleAssignments: draftState.roleAssignments,
       }),
     [
       assignmentParticipants,
-      normalizedDraft.facilitatorEventParticipantId,
-      normalizedDraft.roleAssignments,
+      draftState.facilitatorEventParticipantId,
+      draftState.roleAssignments,
     ],
   );
   const observerSelectionSet = useMemo(
-    () => new Set(normalizedDraft.observerEventParticipantIds),
-    [normalizedDraft.observerEventParticipantIds],
+    () => new Set(draftState.observerEventParticipantIds),
+    [draftState.observerEventParticipantIds],
   );
 
   const saveDraft = useCallback(
     (next: Partial<EventAssignmentDraft>) => {
       const merged: EventAssignmentDraft = {
-        ...normalizedDraft,
+        ...draftState,
         ...next,
       };
+      setDraftState(merged);
       void onUpdateHost({ assignmentDraft: merged });
     },
-    [normalizedDraft, onUpdateHost],
+    [draftState, onUpdateHost],
   );
 
   const commitRoomLabelDraft = useCallback(() => {
     if (!isEditingRoomLabel) {
       return;
     }
-    if (roomLabelDraft !== normalizedDraft.roomLabel) {
+    if (roomLabelDraft !== draftState.roomLabel) {
       saveDraft({ roomLabel: roomLabelDraft });
     }
     setIsEditingRoomLabel(false);
-  }, [isEditingRoomLabel, normalizedDraft.roomLabel, roomLabelDraft, saveDraft]);
+  }, [draftState.roomLabel, isEditingRoomLabel, roomLabelDraft, saveDraft]);
 
   // Bug 3 fix: create must use the room name currently visible in the input,
   // not the last persisted `draft.roomLabel` (which is saved asynchronously on
@@ -177,22 +215,22 @@ export function EventHostControlsPanel({
   // race against the async draft save.
   const handleCreateSession = useCallback(() => {
     const latestRoomLabel = (
-      isEditingRoomLabel ? roomLabelDraft : normalizedDraft.roomLabel
+      isEditingRoomLabel ? roomLabelDraft : draftState.roomLabel
     ).trim();
-    if (isEditingRoomLabel && roomLabelDraft !== normalizedDraft.roomLabel) {
+    if (isEditingRoomLabel && roomLabelDraft !== draftState.roomLabel) {
       saveDraft({ roomLabel: roomLabelDraft });
       setIsEditingRoomLabel(false);
     }
     onCreateSession({
       roomLabel: latestRoomLabel || undefined,
       assignmentDraft: {
-        ...normalizedDraft,
+        ...draftState,
         roomLabel: latestRoomLabel,
       },
     });
   }, [
+    draftState,
     isEditingRoomLabel,
-    normalizedDraft,
     onCreateSession,
     roomLabelDraft,
     saveDraft,
@@ -211,6 +249,9 @@ export function EventHostControlsPanel({
         ...(isDifferentCase ? { assignmentDraft: freshDraft } : {}),
       });
 
+      if (isDifferentCase) {
+        setDraftState(freshDraft);
+      }
       setLibraryMode(false);
       setShowSessionSetup(false);
     },
@@ -244,82 +285,83 @@ export function EventHostControlsPanel({
   );
 
   return (
-    <div data-testid="host-controls-panel">
-    <GlassCard elevated>
-      <GlassCardHeader>
-        <h3 className="text-sm font-semibold text-slate-50">{t("events.hostControls")}</h3>
-      </GlassCardHeader>
-      <GlassCardContent className="space-y-4">
-        {showLibrary ? (
-          <EventCaseLibrary
-            cases={state.availableCases}
-            selectedCaseId={selectedCase?.id ?? null}
-            onUseCase={(negotiationCase) => void handleUseCase(negotiationCase)}
-          />
-        ) : null}
+    <div data-testid="host-controls-panel" className="space-y-4">
+      <GlassCard elevated data-testid="event-settings-section">
+        <GlassCardHeader>
+          <h3 className="text-sm font-semibold text-slate-50">{t("events.eventSettings")}</h3>
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-4">
+          {showLibrary ? (
+            <EventCaseLibrary
+              cases={state.availableCases}
+              selectedCaseId={selectedCase?.id ?? null}
+              onUseCase={(negotiationCase) => void handleUseCase(negotiationCase)}
+            />
+          ) : null}
 
-        {selectedCase && !showLibrary ? (
-          <div className="space-y-3" data-testid="selected-case-section">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {t("events.selectedCase")}
-            </p>
-            <div className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-slate-100">{selectedCase.title}</p>
-                <CaseLanguageBadge caseLanguage={selectedCase.caseLanguage} />
-              </div>
-              <div className="mt-2">
-                <DifficultyBadge difficulty={selectedCase.difficulty} />
-              </div>
-              <p className="mt-2 text-xs text-slate-400">
-                {t("common.preparationDurationValue", {
-                  minutes: selectedCase.defaultPreparationDurationMinutes,
-                })}
+          {selectedCase && !showLibrary ? (
+            <div className="space-y-3" data-testid="selected-case-section">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                {t("events.selectedCase")}
               </p>
-              <p className="text-xs text-slate-400">
-                {t("common.negotiationDurationValue", {
-                  minutes: selectedCase.defaultDurationMinutes,
-                })}
-              </p>
-              <div className="mt-2">
-                <p className="text-xs font-medium text-slate-400">{t("cases.roles")}</p>
-                <p className="mt-1 text-xs text-slate-300">
-                  {selectedCase.roleNames.join(", ")}
+              <div className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-slate-100">{selectedCase.title}</p>
+                  <CaseLanguageBadge caseLanguage={selectedCase.caseLanguage} />
+                </div>
+                <div className="mt-2">
+                  <DifficultyBadge difficulty={selectedCase.difficulty} />
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  {t("common.preparationDurationValue", {
+                    minutes: selectedCase.defaultPreparationDurationMinutes,
+                  })}
                 </p>
-              </div>
-              <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-slate-400">
-                {selectedCase.businessContext}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <SecondaryButton
-                  type="button"
-                  data-testid="change-case-button"
-                  className="px-2 py-1 text-xs"
-                  onClick={() => {
-                    setLibraryMode(true);
-                    setShowSessionSetup(false);
-                  }}
-                >
-                  {t("events.changeCase")}
-                </SecondaryButton>
-                <SecondaryButton
-                  type="button"
-                  data-testid="configure-session-button"
-                  className="px-2 py-1 text-xs"
-                  onClick={openSessionSetup}
-                >
-                  {t("events.configureSession")}
-                </SecondaryButton>
+                <p className="text-xs text-slate-400">
+                  {t("common.negotiationDurationValue", {
+                    minutes: selectedCase.defaultDurationMinutes,
+                  })}
+                </p>
+                <div className="mt-2">
+                  <p className="text-xs font-medium text-slate-400">{t("cases.roles")}</p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    {selectedCase.roleNames.join(", ")}
+                  </p>
+                </div>
+                <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-slate-400">
+                  {selectedCase.businessContext}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <SecondaryButton
+                    type="button"
+                    data-testid="change-case-button"
+                    className="px-2 py-1 text-xs"
+                    onClick={() => {
+                      setLibraryMode(true);
+                      setShowSessionSetup(false);
+                    }}
+                  >
+                    {t("events.changeCase")}
+                  </SecondaryButton>
+                  <SecondaryButton
+                    type="button"
+                    data-testid="configure-session-button"
+                    className="px-2 py-1 text-xs"
+                    onClick={openSessionSetup}
+                  >
+                    {t("events.configureSession")}
+                  </SecondaryButton>
+                </div>
               </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </GlassCardContent>
+      </GlassCard>
 
-        <div className="space-y-3" data-testid="sessions-board">
+      <GlassCard elevated data-testid="session-board-section">
+        <GlassCardHeader>
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {t("events.sessionsBoard")}
-            </p>
+            <h3 className="text-sm font-semibold text-slate-50">{t("events.sessionsBoard")}</h3>
             {selectedCase ? (
               <SecondaryButton
                 type="button"
@@ -331,120 +373,177 @@ export function EventHostControlsPanel({
               </SecondaryButton>
             ) : null}
           </div>
-          {copyMessage ? (
-            <p className="text-xs text-emerald-400">{copyMessage}</p>
-          ) : null}
-          {state.sessions.length === 0 ? (
-            <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
-          ) : (
-            <div className="space-y-2">
-              {state.sessions.map((session) => (
-                <div
-                  key={session.id}
-                  data-testid="event-session-card"
-                  className="space-y-3 rounded-xl border border-slate-600/30 bg-slate-900/50 px-3 py-3"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-50">
-                        {session.roomLabel ?? session.title}
-                      </p>
-                      <p className="text-xs text-slate-400">{session.caseTitle}</p>
-                    </div>
-                    <span className="rounded-full border border-slate-600/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-                      {session.isActive
-                        ? t("events.activeSession")
-                        : t("events.finishedSession")}
-                    </span>
-                  </div>
-                  <div className="grid gap-1 text-xs text-slate-400">
-                    <p>
-                      {t("events.assignFacilitator")}:{" "}
-                      <span className="text-slate-200">
-                        {session.facilitatorName ?? t("common.notYet")}
-                      </span>
-                    </p>
-                    <p>
-                      {t("sessions.participants")}: {session.participantCount} ·{" "}
-                      {t("sessions.observers")}: {session.observerCount}
-                    </p>
-                    <p>
-                      {t("common.preparationDurationValue", {
-                        minutes: Math.round(session.preparationDuration / 60),
-                      })}
-                      {" · "}
-                      {t("common.negotiationDurationValue", {
-                        minutes: Math.round(session.negotiationDuration / 60),
-                      })}
-                    </p>
-                    {session.recordingStatus === "RECORDING" ? (
-                      <p className="text-rose-300">{t("recording.recordingInProgress")}</p>
-                    ) : session.recordingStatus ? (
-                      <p>{t("recording.recordingStatus")}: {session.recordingStatus}</p>
-                    ) : null}
-                    <div className="mt-1 space-y-1">
-                      {session.participants.map((participant) => (
-                        <p key={participant.id}>
-                          {participant.displayName} ·{" "}
-                          {t(`participantType.${participant.participantType}`)}
-                          {participant.roleName ? ` · ${participant.roleName}` : ""}
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-4">
+          <div className="space-y-3" data-testid="sessions-board">
+            {copyMessage ? (
+              <p className="text-xs text-emerald-400">{copyMessage}</p>
+            ) : null}
+            {state.sessions.length === 0 ? (
+              <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
+            ) : (
+              <div className="space-y-2">
+                {state.sessions.map((session) => (
+                  <div
+                    key={session.id}
+                    data-testid="event-session-card"
+                    className="space-y-3 rounded-xl border border-slate-600/30 bg-slate-900/50 px-3 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-50">
+                          {session.roomLabel ?? session.title}
                         </p>
-                      ))}
+                        <p className="text-xs text-slate-400">{session.caseTitle}</p>
+                      </div>
+                      {(() => {
+                        const badgeState = resolveEventSessionBadgeState(session);
+                        const badgeLabel =
+                          badgeState === "completed"
+                            ? t("events.completedSessionStatus")
+                            : badgeState === "debrief"
+                              ? t("room.debrief")
+                              : t(
+                                  `status.${session.negotiationState}` as
+                                    | "status.PREPARATION"
+                                    | "status.PREPARATION_RUNNING"
+                                    | "status.PREPARATION_PAUSED"
+                                    | "status.READY_TO_START"
+                                    | "status.RUNNING"
+                                    | "status.PAUSED"
+                                    | "status.FINISHED",
+                                );
+
+                        return (
+                          <span
+                            data-testid="event-session-status-badge"
+                            data-session-state={badgeState}
+                            data-room-lifecycle={session.roomLifecycle}
+                            data-session-negotiation-state={session.negotiationState}
+                            className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${eventSessionBadgeClassName(
+                              badgeState,
+                            )}`}
+                          >
+                            {badgeLabel}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <div className="grid gap-1 text-xs text-slate-400">
+                      <p>
+                        {t("events.assignFacilitator")}:{" "}
+                        <span className="text-slate-200">
+                          {session.facilitatorName ?? t("common.notYet")}
+                        </span>
+                      </p>
+                      <p>
+                        {t("sessions.participants")}: {session.participantCount} ·{" "}
+                        {t("sessions.observers")}: {session.observerCount}
+                      </p>
+                      <p>
+                        {t("common.preparationDurationValue", {
+                          minutes: Math.round(session.preparationDuration / 60),
+                        })}
+                        {" · "}
+                        {t("common.negotiationDurationValue", {
+                          minutes: Math.round(session.negotiationDuration / 60),
+                        })}
+                      </p>
+                      {(() => {
+                        const recordingPresentation = getRecordingDisplayPresentation(
+                          session.recordingDisplayState,
+                        );
+                        return (
+                          <p
+                            data-recording-state={recordingPresentation.state}
+                            className={recordingPresentation.className}
+                          >
+                            {t("recording.recordingStatus")}:{" "}
+                            {t(recordingPresentation.labelKey)}
+                          </p>
+                        );
+                      })()}
+                      <div className="mt-1 space-y-1">
+                        {session.participants.map((participant) => (
+                          <p key={participant.id}>
+                            {participant.displayName} ·{" "}
+                            {t(`participantType.${participant.participantType}`)}
+                            {participant.roleName ? ` · ${participant.roleName}` : ""}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(() => {
+                        const primaryAction = resolveEventSessionPrimaryAction({
+                          roomAccessDecision: session.roomAccessDecision,
+                          roomHref: session.roomUrl,
+                          materialsHref: session.materialsUrl,
+                          redirectHref: session.roomAccessRedirectTo,
+                        });
+                        return primaryAction ? (
+                          <EventSessionRoomButton
+                            roomAccessDecision={session.roomAccessDecision}
+                            roomHref={session.roomUrl}
+                            materialsHref={session.materialsUrl}
+                            redirectHref={session.roomAccessRedirectTo}
+                            compact
+                            testId="open-session-room-button"
+                          />
+                        ) : null;
+                      })()}
+                      {session.materialsUrl &&
+                      (() => {
+                        const primaryAction = resolveEventSessionPrimaryAction({
+                          roomAccessDecision: session.roomAccessDecision,
+                          roomHref: session.roomUrl,
+                          materialsHref: session.materialsUrl,
+                          redirectHref: session.roomAccessRedirectTo,
+                        });
+                        return !primaryAction ||
+                          primaryAction.kind === "OPEN_ROOM" ||
+                          primaryAction.kind === "RETURN_TO_DEBRIEF";
+                      })() ? (
+                        <SecondaryButton
+                          type="button"
+                          data-testid="open-session-materials-button"
+                          className="px-2 py-1 text-xs"
+                          onClick={() => {
+                            window.location.href = session.materialsUrl!;
+                          }}
+                        >
+                          {t("events.openMaterials")}
+                        </SecondaryButton>
+                      ) : null}
+                      <SecondaryButton
+                        type="button"
+                        data-testid="copy-room-links-button"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => void copyRoomLinks(session.id)}
+                      >
+                        {t("events.copyRoomLinks")}
+                      </SecondaryButton>
+                      {session.isActive ? (
+                        <CompleteSessionButton
+                          sessionId={session.id}
+                          variant="button"
+                          testId="finish-session-button"
+                          className="px-2 py-1 text-xs"
+                          requestPayload={hostToken ? { hostToken } : undefined}
+                          onCompleted={() => {
+                            void onUpdateHost({});
+                          }}
+                        />
+                      ) : null}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {session.roomUrl && session.isActive ? (
-                      <SecondaryButton
-                        type="button"
-                        data-testid="open-session-room-button"
-                        className="px-2 py-1 text-xs"
-                        onClick={() => {
-                          window.location.href = session.roomUrl!;
-                        }}
-                      >
-                        {t("events.openRoom")}
-                      </SecondaryButton>
-                    ) : null}
-                    {session.materialsUrl ? (
-                      <SecondaryButton
-                        type="button"
-                        data-testid="open-session-materials-button"
-                        className="px-2 py-1 text-xs"
-                        onClick={() => {
-                          window.location.href = session.materialsUrl!;
-                        }}
-                      >
-                        {t("events.openMaterials")}
-                      </SecondaryButton>
-                    ) : null}
-                    <SecondaryButton
-                      type="button"
-                      data-testid="copy-room-links-button"
-                      className="px-2 py-1 text-xs"
-                      onClick={() => void copyRoomLinks(session.id)}
-                    >
-                      {t("events.copyRoomLinks")}
-                    </SecondaryButton>
-                    {session.isActive ? (
-                      <CompleteSessionButton
-                        sessionId={session.id}
-                        testId="finish-session-button"
-                        className="rounded-lg px-2 py-1 text-xs"
-                        requestPayload={hostToken ? { hostToken } : undefined}
-                        onCompleted={() => {
-                          void onUpdateHost({});
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-        {selectedCase && showSessionSetup ? (
-          <div className="space-y-4 border-t border-slate-600/30 pt-4" data-testid="session-setup-section">
+          {selectedCase && showSessionSetup ? (
+            <div className="space-y-4 border-t border-slate-600/30 pt-4" data-testid="session-setup-section">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
               {t("events.newSession")}
             </p>
@@ -465,9 +564,9 @@ export function EventHostControlsPanel({
                 type="text"
                 className={inputClassName(false)}
                 placeholder={t("events.roomNamePlaceholder")}
-                value={isEditingRoomLabel ? roomLabelDraft : normalizedDraft.roomLabel}
+                value={isEditingRoomLabel ? roomLabelDraft : draftState.roomLabel}
                 onFocus={() => {
-                  setRoomLabelDraft(normalizedDraft.roomLabel);
+                  setRoomLabelDraft(draftState.roomLabel);
                   setIsEditingRoomLabel(true);
                 }}
                 onBlur={commitRoomLabelDraft}
@@ -485,7 +584,7 @@ export function EventHostControlsPanel({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    setRoomLabelDraft(normalizedDraft.roomLabel);
+                    setRoomLabelDraft(draftState.roomLabel);
                     setIsEditingRoomLabel(false);
                     event.currentTarget.blur();
                   }
@@ -501,7 +600,7 @@ export function EventHostControlsPanel({
                 min={0}
                 max={60}
                 className={inputClassName(false)}
-                value={normalizedDraft.preparationDurationMinutes}
+                value={draftState.preparationDurationMinutes}
                 onChange={(event) => {
                   const minutes = Number(event.target.value);
                   if (!Number.isFinite(minutes)) return;
@@ -518,7 +617,7 @@ export function EventHostControlsPanel({
                 min={1}
                 max={180}
                 className={inputClassName(false)}
-                value={normalizedDraft.negotiationDurationMinutes}
+                value={draftState.negotiationDurationMinutes}
                 onChange={(event) => {
                   const minutes = Number(event.target.value);
                   if (!Number.isFinite(minutes)) return;
@@ -532,13 +631,13 @@ export function EventHostControlsPanel({
               <select
                 data-testid="assign-facilitator-control"
                 className={inputClassName(false)}
-                value={normalizedDraft.facilitatorEventParticipantId ?? ""}
+                value={draftState.facilitatorEventParticipantId ?? ""}
                 onChange={(event) => {
                   const facilitatorEventParticipantId = event.target.value || null;
                   saveDraft({
                     facilitatorEventParticipantId,
                     observerEventParticipantIds:
-                      normalizedDraft.observerEventParticipantIds.filter(
+                      draftState.observerEventParticipantIds.filter(
                         (participantId) => participantId !== facilitatorEventParticipantId,
                       ),
                   });
@@ -582,10 +681,10 @@ export function EventHostControlsPanel({
                   <select
                     data-testid="assign-role-control"
                     className={inputClassName(false)}
-                    value={normalizedDraft.roleAssignments[role.id] ?? ""}
+                    value={draftState.roleAssignments[role.id] ?? ""}
                     onChange={(event) => {
                       const roleAssignments = {
-                        ...normalizedDraft.roleAssignments,
+                        ...draftState.roleAssignments,
                       };
                       if (event.target.value) {
                         roleAssignments[role.id] = event.target.value;
@@ -598,7 +697,7 @@ export function EventHostControlsPanel({
                       saveDraft({
                         roleAssignments,
                         observerEventParticipantIds:
-                          normalizedDraft.observerEventParticipantIds.filter(
+                          draftState.observerEventParticipantIds.filter(
                             (participantId) => !assignedRolePlayerIds.has(participantId),
                           ),
                       });
@@ -613,8 +712,8 @@ export function EventHostControlsPanel({
                         activeAssignmentLabel: participant.activeAssignmentLabel,
                       })),
                       facilitatorEventParticipantId:
-                        normalizedDraft.facilitatorEventParticipantId,
-                      roleAssignments: normalizedDraft.roleAssignments,
+                        draftState.facilitatorEventParticipantId,
+                      roleAssignments: draftState.roleAssignments,
                     }).map((participant) => (
                       <option
                         key={participant.id}
@@ -664,10 +763,10 @@ export function EventHostControlsPanel({
                         onChange={(event) => {
                           const ids = event.target.checked
                             ? [
-                                ...normalizedDraft.observerEventParticipantIds,
+                                ...draftState.observerEventParticipantIds,
                                 participant.id,
                               ]
-                            : normalizedDraft.observerEventParticipantIds.filter(
+                            : draftState.observerEventParticipantIds.filter(
                                 (id) => id !== participant.id,
                               );
                           saveDraft({
@@ -693,7 +792,7 @@ export function EventHostControlsPanel({
                     saveDraft({
                       observerEventParticipantIds: Array.from(
                         new Set([
-                          ...normalizedDraft.observerEventParticipantIds,
+                          ...draftState.observerEventParticipantIds,
                           ...remainingObserverEligibleIds,
                         ]),
                       ),
@@ -720,60 +819,16 @@ export function EventHostControlsPanel({
                 onClick={() => {
                   setShowSessionSetup(false);
                   setIsEditingRoomLabel(false);
-                  setRoomLabelDraft(normalizedDraft.roomLabel);
+                  setRoomLabelDraft(draftState.roomLabel);
                 }}
               >
                 {t("common.cancel")}
               </SecondaryButton>
             </div>
-          </div>
-        ) : null}
-
-        <div className="border-t border-slate-600/30 pt-4">
-          <button
-            type="button"
-            data-testid="complete-event-button"
-            className="w-full rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20"
-            onClick={() => onShowCompleteDialog(true)}
-          >
-            {t("events.completeEvent")}
-          </button>
-        </div>
-      </GlassCardContent>
-
-      {showCompleteDialog ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-600/40 bg-slate-900 p-6 shadow-xl">
-            <h3 className="text-lg font-bold text-slate-50">
-              {t("events.completeEventTitle")}
-            </h3>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
-              {t("events.completeEventWarning")}
-            </p>
-            <div className="mt-6 flex justify-end gap-3">
-              <SecondaryButton
-                type="button"
-                onClick={() => onShowCompleteDialog(false)}
-                disabled={isCompletingEvent}
-              >
-                {t("common.cancel")}
-              </SecondaryButton>
-              <button
-                type="button"
-                data-testid="confirm-complete-event-button"
-                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
-                disabled={isCompletingEvent}
-                onClick={onCompleteEvent}
-              >
-                {isCompletingEvent
-                  ? t("common.loading")
-                  : t("events.completeEventConfirm")}
-              </button>
             </div>
-          </div>
-        </div>
-      ) : null}
-    </GlassCard>
+          ) : null}
+        </GlassCardContent>
+      </GlassCard>
     </div>
   );
 }

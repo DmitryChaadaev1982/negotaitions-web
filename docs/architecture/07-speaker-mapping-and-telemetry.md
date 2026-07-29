@@ -38,6 +38,13 @@ Map diarized transcript speakers (for example `speaker_1`) to actual session par
 
 - `app/api/sessions/[sessionId]/speaker-mapping/route.ts`.
 - `app/api/sessions/[sessionId]/manual-speaker-attribution/route.ts`.
+- `app/api/sessions/[sessionId]/materials/status/route.ts` (canonical readiness + polling contract).
+
+## Readiness And Refresh Contract
+
+- Transcript/mapping readiness is derived server-side in materials status DTO; clients should poll using `processing.shouldPoll` and stop when terminal.
+- Facilitator mapping controls enable only from canonical backend readiness fields (no client-only guessing).
+- Enhancement fallback/partial/failed states are exposed explicitly; UI must retain truthful status while preserving raw transcript availability.
 
 ## Source Notes
 

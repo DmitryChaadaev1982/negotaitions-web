@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createDroppedCauseReporter,
+  installVoxReInviteSchemeSanitizer,
+  type VoxConnectionSeam,
+} from "@/lib/voximplant/reinvite-scheme-sanitizer";
 
 type RoleOption = {
   id: "participant_a" | "participant_b" | "facilitator";
@@ -291,6 +296,7 @@ export default function VoximplantTestClient({
   const remoteVideoHostRef = useRef<HTMLDivElement | null>(null);
   const hiddenAudioHostRef = useRef<HTMLDivElement | null>(null);
   const sdkRef = useRef<SdkState | null>(null);
+  const droppedCauseReporterRef = useRef(createDroppedCauseReporter());
   // Ref-based joining guard prevents double-join race during async handshake
   const isJoiningRef = useRef(false);
   // Timeout for recording command replies — cleared when scenario responds
@@ -705,7 +711,7 @@ export default function VoximplantTestClient({
     setConnectedNode("");
     setStatus("Initializing Voximplant SDK...");
 
-    const [{ Core, ConnectionNode }, conferenceModule, streamModulePackage] =
+    const [{ Core, ConnectionNode, connectionToken }, conferenceModule, streamModulePackage] =
       await Promise.all([
         import("@voximplant/websdk"),
         import("@voximplant/websdk/modules/conference-manager"),
@@ -718,6 +724,14 @@ export default function VoximplantTestClient({
     }
 
     const core = Core.init({}) as unknown as VoxCore;
+
+    // Must run before the conference module registers its own handleReInvite
+    // subscriber; see lib/voximplant/reinvite-scheme-sanitizer.ts.
+    installVoxReInviteSchemeSanitizer({
+      connection: core.getModule(connectionToken) as VoxConnectionSeam | undefined,
+      onDropped: droppedCauseReporterRef.current,
+    });
+
     try {
       if (!core.getModule(streamModulePackage.streamToken)) {
         core.registerModules([streamModulePackage.StreamLoader()]);

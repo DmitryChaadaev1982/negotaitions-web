@@ -41,12 +41,19 @@ import {
 import type { RoomRecordingState, ShellSessionCloseState } from "@/lib/room-provider/types";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
+import { resolveScenarioMessageTextForRelay } from "@/lib/voximplant/recording-control-relay";
+import { shouldSkipStartRelayForStatus } from "@/lib/voximplant/recording-start-guard";
 import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
 import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
 import { shouldEnableLocalMicTelemetryForRole } from "@/lib/telemetry/audio-activity-role-gates";
 import type { ParticipantType } from "@/app/generated/prisma/enums";
 import { useClientConnectionId } from "@/lib/client/connection-id";
+import {
+  persistExplicitRoomLeave,
+  type ExplicitLeaveFailure,
+} from "@/lib/client/explicit-room-leave";
+import { runExplicitLeaveSequence } from "@/lib/client/explicit-room-leave-sequence";
 import {
   getRoomClosureRedirectFromConflict,
   isStaleConnectionResponse,
@@ -149,11 +156,13 @@ function VoximplantLeaveButton({
 type RecordingControlResponse = {
   ok: boolean;
   provider?: string;
+  scenarioMessageText?: string;
   scenarioMessage?: RecordingControlMessage;
   stopRelay?: {
     operationId: string;
     requestId: string;
-    scenarioMessage: RecordingControlMessage;
+    scenarioMessageText: string;
+    scenarioMessage?: RecordingControlMessage;
   };
   recording?: { status: string; errorMessage: string | null } | null;
   warning?: string;
@@ -198,7 +207,10 @@ export default function VoximplantNegotiationRoomPage(
 
   const roomConnectionId = useClientConnectionId(`room-${props.sessionId}`);
   const [staleConnection, setStaleConnection] = useState(false);
+  const staleConnectionRef = useRef(false);
   const activateStaleConnection = useCallback(() => {
+    if (staleConnectionRef.current) return;
+    staleConnectionRef.current = true;
     setStaleConnection(true);
   }, []);
 
@@ -267,6 +279,7 @@ export default function VoximplantNegotiationRoomPage(
       setBusinessError(null);
 
       try {
+        if (staleConnectionRef.current) return;
         const [sidebarResult, controlResult] = await Promise.all([
           fetch(
             `/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined, claimLease: true })}`,
@@ -287,6 +300,13 @@ export default function VoximplantNegotiationRoomPage(
           window.location.replace(redirectTarget);
           return;
         }
+        if (
+          (await isStaleConnectionResponse(sidebarResult)) ||
+          (await isStaleConnectionResponse(controlResult))
+        ) {
+          activateStaleConnection();
+          return;
+        }
 
         type ControlPayload = ControlState &
           ShellSessionCloseState & {
@@ -303,10 +323,6 @@ export default function VoximplantNegotiationRoomPage(
           | { error?: string };
 
         if (!sidebarResult.ok) {
-          if (sidebarResult.status === 409) {
-            activateStaleConnection();
-            return;
-          }
           throw new Error(
             "error" in sidebarPayload && sidebarPayload.error
               ? sidebarPayload.error
@@ -314,10 +330,6 @@ export default function VoximplantNegotiationRoomPage(
           );
         }
         if (!controlResult.ok) {
-          if (controlResult.status === 409) {
-            activateStaleConnection();
-            return;
-          }
           throw new Error(
             "error" in controlPayload && controlPayload.error
               ? controlPayload.error
@@ -360,22 +372,29 @@ export default function VoximplantNegotiationRoomPage(
 
   // Polling (mirrors VideoRoomPage — 1-second interval)
   useEffect(() => {
-    if (!roomConnectionId || staleConnection || businessLoading || businessError) return;
+    if (!roomConnectionId || businessLoading || businessError) return;
 
     const intervalId = window.setInterval(async () => {
       touchRecoveryContext();
 
       try {
-        const [controlResponse, sidebarResponse] = await Promise.all([
-          fetch(
-            `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
-            { cache: "no-store" },
-          ),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`, {
-            cache: "no-store",
-          }),
-        ]);
+        const controlResponse = await fetch(
+          `/api/sessions/${props.sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
+          { cache: "no-store" },
+        );
+        const sidebarResponse = staleConnectionRef.current
+          ? null
+          : await fetch(
+              `/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
+              {
+                cache: "no-store",
+              },
+            );
 
+        if (await isStaleConnectionResponse(controlResponse)) {
+          activateStaleConnection();
+          return;
+        }
         if (controlResponse.ok) {
           type ControlPayload = ControlState &
             ShellSessionCloseState & {
@@ -402,10 +421,14 @@ export default function VoximplantNegotiationRoomPage(
           activateStaleConnection();
         }
 
-        if (sidebarResponse.ok) {
+        if (sidebarResponse && (await isStaleConnectionResponse(sidebarResponse))) {
+          activateStaleConnection();
+          return;
+        }
+        if (sidebarResponse?.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
-        } else if (sidebarResponse.status === 409) {
+        } else if (sidebarResponse && sidebarResponse.status === 409) {
           const redirectTarget =
             await getRoomClosureRedirectFromConflict(sidebarResponse);
           if (redirectTarget) {
@@ -427,7 +450,6 @@ export default function VoximplantNegotiationRoomPage(
     roomAuth,
     props.sessionId,
     roomConnectionId,
-    staleConnection,
   ]);
 
   // ── Identity resolution ────────────────────────────────────────────────────
@@ -459,6 +481,8 @@ export default function VoximplantNegotiationRoomPage(
   // handles actual recording and later sends a status webhook.
 
   const [recordingRelayError, setRecordingRelayError] = useState<string | null>(null);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+  const [isExplicitLeavePending, setIsExplicitLeavePending] = useState(false);
   const explicitLeaveInFlightRef = useRef(false);
   const relayInFlightOperationsRef = useRef<Set<string>>(new Set());
 
@@ -503,10 +527,11 @@ export default function VoximplantNegotiationRoomPage(
 
   const relayVoximplantRecording = useCallback(
     async (action: "start" | "stop", consentGiven = false) => {
+      if (staleConnectionRef.current) return;
       if (action === "start") {
         // Guard: skip duplicate start if DB/UI already shows recording active.
         const status = recordingState?.status;
-        if (status === "STARTING" || status === "RECORDING") {
+        if (shouldSkipStartRelayForStatus(status)) {
           console.log("[VoxRecording] start skipped — already", status);
           postRecordingDebug("relayVoximplantRecording:start:skipped", `start skipped — already ${status}`, { status });
           return;
@@ -562,13 +587,17 @@ export default function VoximplantNegotiationRoomPage(
         );
 
         const payload = (await response.json().catch(() => ({}))) as RecordingControlResponse;
+        if (payload.code === "STALE_CONNECTION" || staleConnectionRef.current) {
+          activateStaleConnection();
+          return;
+        }
 
-        console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.action, "recording.status:", payload.recording?.status);
+        console.log(`[VoxRecording] /recording-control ${action} response — provider:`, payload.provider, "scenarioMessage.action:", payload.scenarioMessage?.claims?.action, "recording.status:", payload.recording?.status);
 
         if (!response.ok) {
           if (response.status === 409) {
             if (payload.code === "STALE_CONNECTION") {
-              setStaleConnection(true);
+              activateStaleConnection();
               return;
             }
             if (
@@ -599,8 +628,8 @@ export default function VoximplantNegotiationRoomPage(
           {
             provider: payload.provider ?? null,
             recordingStatus: payload.recording?.status ?? null,
-            scenarioMessageAction: payload.scenarioMessage?.action ?? null,
-            webhookBaseUrl: payload.scenarioMessage?.webhookBaseUrl ?? null,
+            scenarioMessageAction: payload.scenarioMessage?.claims?.action ?? null,
+            webhookBaseUrl: payload.scenarioMessage?.claims?.webhookBaseUrl ?? null,
           },
           "success",
         );
@@ -611,8 +640,12 @@ export default function VoximplantNegotiationRoomPage(
         }
 
         // Relay the typed scenario message to the Voximplant conference.
-        if (payload.scenarioMessage) {
-          const relayed = sendConferenceMessage(JSON.stringify(payload.scenarioMessage));
+        const scenarioMessageText = resolveScenarioMessageTextForRelay({
+          scenarioMessageText: payload.scenarioMessageText,
+          scenarioMessage: payload.scenarioMessage,
+        });
+        if (scenarioMessageText) {
+          const relayed = sendConferenceMessage(scenarioMessageText);
           console.log(`[VoxRecording] sendConferenceMessage ${action}:`, relayed ? "success" : "failed — conference not ready");
           postRecordingDebug(
             `sendConferenceMessage:${action}`,
@@ -651,6 +684,7 @@ export default function VoximplantNegotiationRoomPage(
       }
     },
     [
+      activateStaleConnection,
       joined,
       sendMessageAvailable,
       roomAuth,
@@ -669,8 +703,45 @@ export default function VoximplantNegotiationRoomPage(
     });
   }, []);
 
+  const markCurrentParticipantLogicallyAbsent = useCallback(() => {
+    setSidebar((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        roster: current.roster.map((entry) =>
+          entry.id === current.currentParticipantId
+            ? {
+                ...entry,
+                isLogicallyPresent: false,
+                logicalDisconnectReason: "EXPLICIT_LEAVE",
+                logicalConnectionId: null,
+              }
+            : entry,
+        ),
+      };
+    });
+  }, []);
+
+  const leaveFailureMessage = useCallback(
+    (failure: ExplicitLeaveFailure) => {
+      switch (failure.reason) {
+        case "timeout":
+          return t("room.leavePersistenceTimedOut");
+        case "stale_connection":
+          return t("room.thisTabIsStale");
+        case "http_error":
+        case "network":
+        case "not_persisted":
+        default:
+          return t("room.unableToPersistLeave");
+      }
+    },
+    [t],
+  );
+
   const attemptAuthorizedStopRelay = useCallback(
     async (reason: string) => {
+      if (staleConnectionRef.current) return;
       const hint = recordingStopRelayHint;
       if (!hint || !roomConnectionId || !joined || !sendMessageAvailable) {
         return;
@@ -698,13 +769,15 @@ export default function VoximplantNegotiationRoomPage(
         );
 
         const claimPayload = (await claimResponse.json().catch(() => ({}))) as RecordingControlResponse;
-        if (!claimResponse.ok || !claimPayload.stopRelay?.scenarioMessage) {
+        if (claimPayload.code === "STALE_CONNECTION" || staleConnectionRef.current) {
+          activateStaleConnection();
+          return;
+        }
+        if (!claimResponse.ok || !claimPayload.stopRelay?.scenarioMessageText) {
           return;
         }
 
-        const relayed = sendConferenceMessage(
-          JSON.stringify(claimPayload.stopRelay.scenarioMessage),
-        );
+        const relayed = sendConferenceMessage(claimPayload.stopRelay.scenarioMessageText);
         if (!relayed) {
           void fetch(`/api/sessions/${encodeURIComponent(props.sessionId)}/recording-control`, {
             method: "POST",
@@ -757,6 +830,7 @@ export default function VoximplantNegotiationRoomPage(
       }
     },
     [
+      activateStaleConnection,
       joined,
       postRecordingDebug,
       props.sessionId,
@@ -810,11 +884,13 @@ export default function VoximplantNegotiationRoomPage(
   }, [attemptAuthorizedStopRelay, postRecordingDebug]);
 
   // ── Leave ─────────────────────────────────────────────────────────────────
-  const handleLeave = useCallback(async () => {
-    if (explicitLeaveInFlightRef.current || !roomConnectionId) {
+  const performLeaveAndNavigate = useCallback(async (targetUrl: string) => {
+    if (explicitLeaveInFlightRef.current) {
       return;
     }
     explicitLeaveInFlightRef.current = true;
+    setIsExplicitLeavePending(true);
+    setLeaveError(null);
     try {
       const shouldAttemptRelayBeforeLeave =
         Boolean(recordingStopRelayHint) &&
@@ -826,33 +902,89 @@ export default function VoximplantNegotiationRoomPage(
         ]);
       }
 
-      await fetch(`/api/sessions/${props.sessionId}/presence/leave`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          roomAuthBody(roomAuth, { connectionId: roomConnectionId ?? undefined }),
-        ),
-        keepalive: true,
+      const connectionIdForLeave = roomConnectionId?.trim() ?? "";
+      if (!connectionIdForLeave) {
+        setLeaveError(t("room.unableToPersistLeave"));
+        return;
+      }
+
+      const currentRosterEntry = sidebar?.roster.find(
+        (entry) => entry.id === sidebar.currentParticipantId,
+      );
+      const logicalConnectionId = currentRosterEntry?.logicalConnectionId ?? null;
+      if (logicalConnectionId && logicalConnectionId !== connectionIdForLeave) {
+        activateStaleConnection();
+        setLeaveError(t("room.thisTabIsStale"));
+        return;
+      }
+
+      const sequence = await runExplicitLeaveSequence({
+        persistLeave: () =>
+          persistExplicitRoomLeave({
+            sessionId: props.sessionId,
+            body: roomAuthBody(roomAuth, { connectionId: connectionIdForLeave }),
+            timeoutMs: 3000,
+          }),
+        markLocalInactive: markCurrentParticipantLogicallyAbsent,
+        disconnectProvider: async () => {
+          markSessionLeftFlag(props.sessionId);
+          await leave();
+        },
+        navigate: () => {
+          router.push(targetUrl);
+        },
       });
-    } catch {
-      // Best-effort explicit leave. Expiry sweep still guarantees eventual cleanup.
+
+      if (!sequence.ok) {
+        if (sequence.leave.reason === "stale_connection") {
+          activateStaleConnection();
+        }
+        setLeaveError(leaveFailureMessage(sequence.leave));
+        return;
+      }
+
+      if (sequence.providerDisconnectError) {
+        console.warn(
+          `[room-leave] provider disconnect failed after persisted leave: ${sequence.providerDisconnectError}`,
+        );
+      }
+    } catch (error) {
+      setLeaveError(t("room.unableToPersistLeave"));
+      console.warn("[room-leave] unexpected explicit leave error", error);
+    } finally {
+      explicitLeaveInFlightRef.current = false;
+      setIsExplicitLeavePending(false);
     }
-    markSessionLeftFlag(props.sessionId);
-    await leave();
-    router.push(materialsUrl);
   }, [
     attemptAuthorizedStopRelay,
+    activateStaleConnection,
     controlState,
+    leaveFailureMessage,
     leave,
-    materialsUrl,
+    markCurrentParticipantLogicallyAbsent,
     props.sessionId,
     recordingStopRelayHint,
     roomAuth,
     roomConnectionId,
     router,
+    sidebar,
     sessionCloseState,
+    t,
     waitMs,
   ]);
+
+  const handleLeave = useCallback(async () => {
+    await performLeaveAndNavigate(materialsUrl);
+  }, [materialsUrl, performLeaveAndNavigate]);
+
+  const handleReturnToEventLobby = useCallback(async () => {
+    const lobbyUrl = sidebar?.event?.lobbyUrl;
+    if (!lobbyUrl) {
+      await handleLeave();
+      return;
+    }
+    await performLeaveAndNavigate(lobbyUrl);
+  }, [handleLeave, performLeaveAndNavigate, sidebar?.event?.lobbyUrl]);
 
   useEffect(() => {
     clearSessionLeftFlag(props.sessionId);
@@ -1016,6 +1148,7 @@ export default function VoximplantNegotiationRoomPage(
         sidebar={sidebar}
         controlState={controlState}
         recordingState={recordingState}
+        recordingStopOperationState={recordingStopRelayHint?.operationState ?? null}
         sessionCloseState={sessionCloseState}
         participantType={effectiveParticipantType ?? "OBSERVER"}
         participantTypeLabel={participantTypeLabel}
@@ -1037,6 +1170,11 @@ export default function VoximplantNegotiationRoomPage(
         onInvalidToken={handleInvalidToken}
         onStaleConnection={handleStaleConnection}
         onLeave={() => void handleLeave()}
+        onReturnToEventLobby={
+          sidebar.event?.lobbyUrl
+            ? () => void handleReturnToEventLobby()
+            : null
+        }
         // ── Voximplant-specific slots ────────────────────────────────────────
         audioRenderer={null}
         micEnforcement={null}
@@ -1062,7 +1200,16 @@ export default function VoximplantNegotiationRoomPage(
             />
           ) : null
         }
-        providerBanner={null}
+        providerBanner={
+          leaveError ? (
+            <div
+              className="shrink-0 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
+              data-testid="room-explicit-leave-error"
+            >
+              {leaveError}
+            </div>
+          ) : null
+        }
         recordingControls={
           recordingRelayError && effectiveParticipantType === "FACILITATOR" ? (
             <p
@@ -1113,7 +1260,7 @@ export default function VoximplantNegotiationRoomPage(
         }
         leaveButton={
           <VoximplantLeaveButton
-            isLeaving={isLeaving}
+            isLeaving={isLeaving || isExplicitLeavePending}
             onLeave={() => void handleLeave()}
           />
         }

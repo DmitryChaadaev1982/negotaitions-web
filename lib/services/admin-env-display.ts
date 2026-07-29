@@ -86,6 +86,7 @@ export function getAdminEnvironmentDisplayGroups(): AdminEnvDisplayGroup[] {
         toDisplayItem("VOXIMPLANT_RECORDING_AUDIO_MODE", false),
         toDisplayItem("VOXIMPLANT_RECORDING_STORAGE", false),
         toDisplayItem("VOXIMPLANT_RECORDING_WEBHOOK_SECRET", true),
+        toDisplayItem("VOXIMPLANT_RECORDING_CONTROL_SECRET", true),
         toDisplayItem("VOXIMPLANT_RECORDING_WEBHOOK_BASE_URL", false),
         toDisplayItem("VOXIMPLANT_RECORDING_WEBHOOK_OVERRIDE_ENABLED", false),
       ],

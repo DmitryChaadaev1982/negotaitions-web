@@ -24,6 +24,18 @@ import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
+import { getRecordingDisplayState } from "@/lib/recording-display-state";
+import {
+  ACTIVE_AI_STATUSES,
+  ACTIVE_TRANSCRIPT_STATUSES,
+  computeShouldPoll,
+  isStaleStartingRecording,
+  resolveMaterialsNextPollMs,
+  isRecordingReadyForTranscription,
+  resolveTranscriptProcessingStage,
+  STALE_RECORDING_STARTING_FAILURE_CODE,
+  STALE_RECORDING_STARTING_TIMEOUT_SECONDS,
+} from "@/lib/materials-status-readiness";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,29 +44,11 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
-const ACTIVE_RECORDING_STATUSES = new Set<RecordingStatus>([
-  RecordingStatus.STARTING,
-  RecordingStatus.RECORDING,
-  RecordingStatus.PROCESSING,
-]);
-
-const ACTIVE_TRANSCRIPT_STATUSES = new Set<TranscriptStatus>([
-  TranscriptStatus.QUEUED,
-  TranscriptStatus.DOWNLOADING_RECORDING,
-  TranscriptStatus.COMPRESSING_AUDIO,
-  TranscriptStatus.TRANSCRIBING,
-]);
-
-const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
-  AiAnalysisStatus.QUEUED,
-  AiAnalysisStatus.ANALYZING,
-]);
-
 function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function resolveTranscriptEnhancementStatus(
+export function resolveTranscriptEnhancementStatus(
   processingMetadata: unknown,
 ):
   | "NOT_AVAILABLE"
@@ -79,80 +73,34 @@ function resolveTranscriptEnhancementStatus(
   return "NOT_AVAILABLE";
 }
 
-function resolveRecordingProcessingStage(status: RecordingStatus): string {
-  switch (status) {
-    case RecordingStatus.NOT_STARTED:
-      return "not_available";
-    case RecordingStatus.STARTING:
-    case RecordingStatus.RECORDING:
-    case RecordingStatus.PAUSED:
-      return "in_progress";
-    case RecordingStatus.STOPPED:
-      return "finalizing";
-    case RecordingStatus.PROCESSING:
-      return "processing";
-    case RecordingStatus.COMPLETED:
-      return "ready";
-    case RecordingStatus.FAILED:
-      return "failed";
-    default:
-      return "not_available";
-  }
-}
+function resolveRecordingProcessingStage(input: {
+  recordingStatus: RecordingStatus | null;
+  stopOperationState: string | null;
+  sessionStatus: string;
+  negotiationState: string;
+  roomLifecycle: string | null;
+}) {
+  const displayState = getRecordingDisplayState({
+    recordingStatus: input.recordingStatus,
+    stopOperationState: input.stopOperationState,
+    sessionStatus: input.sessionStatus,
+    negotiationState: input.negotiationState,
+    roomLifecycle: input.roomLifecycle,
+  });
 
-function isRecordingReadyForTranscription(
-  status: RecordingStatus | null,
-  hasFileKey: boolean,
-): boolean {
-  if (!status || !hasFileKey) {
-    return false;
+  if (displayState === "active" || displayState === "paused") {
+    return "in_progress";
   }
-  return status === RecordingStatus.COMPLETED || status === RecordingStatus.STOPPED;
-}
-
-function resolveTranscriptProcessingStage(
-  transcriptStatus: TranscriptStatus | null,
-  recordingStatus: RecordingStatus | null,
-  recordingHasFileKey: boolean,
-  transcriptHasText: boolean,
-  enhancementStatus: ReturnType<typeof resolveTranscriptEnhancementStatus>,
-): string {
-  if (enhancementStatus === "IN_PROGRESS") {
-    return "enhancing";
+  if (displayState === "stopping") {
+    return "finalizing";
   }
-  if (transcriptStatus === TranscriptStatus.COMPLETED) {
-    return transcriptHasText ? "ready" : "not_started";
+  if (displayState === "completed") {
+    return "ready";
   }
-  if (transcriptStatus === TranscriptStatus.FAILED) {
+  if (displayState === "failed") {
     return "failed";
   }
-  if (transcriptStatus === TranscriptStatus.QUEUED) {
-    return "queued";
-  }
-  if (transcriptStatus === TranscriptStatus.DOWNLOADING_RECORDING) {
-    return "downloading";
-  }
-  if (transcriptStatus === TranscriptStatus.COMPRESSING_AUDIO) {
-    return "compressing";
-  }
-  if (transcriptStatus === TranscriptStatus.TRANSCRIBING) {
-    return "transcribing";
-  }
-
-  if (
-    !recordingStatus ||
-    recordingStatus === RecordingStatus.NOT_STARTED ||
-    (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
-      !ACTIVE_RECORDING_STATUSES.has(recordingStatus))
-  ) {
-    return "waiting_for_recording";
-  }
-
-  if (!isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey)) {
-    return "waiting_for_recording";
-  }
-
-  return "not_started";
+  return "not_available";
 }
 
 function resolveAiAnalysisProcessingStage(
@@ -185,60 +133,6 @@ function sanitizeTranscriptErrorMessage(message: string | null): string | null {
   return message.replace(MANUAL_TRANSCRIPTION_STOP_SENTINEL, "").trim();
 }
 
-function computeShouldPoll(
-  recordingStatus: RecordingStatus | null,
-  recordingHasFileKey: boolean,
-  transcriptStatus: TranscriptStatus | null,
-  transcriptEnhancementInProgress: boolean,
-  aiStatus: AiAnalysisStatus | null,
-  isParticipantOrObserver = false,
-  transcriptHasText = false,
-  hasRunningTranscription = false,
-  autoTranscribeEnabled = false,
-  sessionIsFinished = false,
-  isSharedWithSession = false,
-  speakerMappingRequired = false,
-): boolean {
-  if (
-    recordingStatus &&
-    (ACTIVE_RECORDING_STATUSES.has(recordingStatus) ||
-      (recordingStatus === RecordingStatus.STOPPED && !recordingHasFileKey))
-  ) {
-    return true;
-  }
-  // Only poll waiting-for-auto-transcription when auto-transcription is enabled.
-  // When disabled, the recording-ready state is stable and no auto-job will start.
-  if (
-    autoTranscribeEnabled &&
-    isRecordingReadyForTranscription(recordingStatus, recordingHasFileKey) &&
-    !transcriptHasText &&
-    !hasRunningTranscription &&
-    transcriptStatus !== TranscriptStatus.FAILED
-  ) {
-    return true;
-  }
-  if (transcriptStatus && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus)) {
-    return true;
-  }
-  if (transcriptEnhancementInProgress) {
-    return true;
-  }
-  if (aiStatus && ACTIVE_AI_STATUSES.has(aiStatus)) {
-    return true;
-  }
-  if (!isParticipantOrObserver && speakerMappingRequired) {
-    return true;
-  }
-  // Participants/observers on a finished session need to poll to detect:
-  // - when facilitator starts and completes analysis (aiStatus null → QUEUED → COMPLETED)
-  // - when facilitator shares/unshares the completed analysis
-  // Stop polling only once analysis is confirmed shared (stable state).
-  if (isParticipantOrObserver && sessionIsFinished && !isSharedWithSession) {
-    return true;
-  }
-  return false;
-}
-
 export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(request.url);
@@ -257,6 +151,20 @@ export async function GET(request: Request, context: RouteContext) {
 
   const isFacilitator = participant.type === ParticipantType.FACILITATOR;
   const isObserver = participant.type === ParticipantType.OBSERVER;
+  const isEventHostOwner = Boolean(
+    participant.userId &&
+      participant.session.eventId &&
+      (
+        await prisma.eventParticipant.findFirst({
+          where: {
+            eventId: participant.session.eventId,
+            userId: participant.userId,
+            isHost: true,
+          },
+          select: { id: true },
+        })
+      )?.id,
+  );
 
   const session = await prisma.session.findFirst({
     where: { id: sessionId, deletedAt: null },
@@ -272,6 +180,11 @@ export async function GET(request: Request, context: RouteContext) {
           endedAt: true,
           errorMessage: true,
           egressId: true,
+          stopOperation: {
+            select: {
+              state: true,
+            },
+          },
         },
       },
       transcript: {
@@ -332,7 +245,55 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  const recording = session.recording;
+  let recording = session.recording;
+  if (
+    recording &&
+    isStaleStartingRecording({
+      status: recording.status,
+      startedAt: recording.startedAt,
+      egressId: recording.egressId,
+    })
+  ) {
+    const reconciledAt = new Date();
+    const staleCutoff = new Date(
+      reconciledAt.getTime() -
+        STALE_RECORDING_STARTING_TIMEOUT_SECONDS * 1000,
+    );
+    const reconciled = await prisma.recording.updateMany({
+      where: {
+        id: recording.id,
+        status: RecordingStatus.STARTING,
+        egressId: null,
+        startedAt: { lte: staleCutoff },
+      },
+      data: {
+        status: RecordingStatus.FAILED,
+        endedAt: recording.endedAt ?? reconciledAt,
+        errorMessage: STALE_RECORDING_STARTING_FAILURE_CODE,
+      },
+    });
+    if (reconciled.count > 0) {
+      recording = {
+        ...recording,
+        status: RecordingStatus.FAILED,
+        endedAt: recording.endedAt ?? reconciledAt,
+        errorMessage: STALE_RECORDING_STARTING_FAILURE_CODE,
+      };
+      appendRecordingDebugEvent({
+        sessionId,
+        source: "materials-status",
+        level: "warn",
+        step: "materials-status:starting-timeout-reconciled",
+        message:
+          "stale STARTING reconciled to FAILED after timeout threshold",
+        data: {
+          recordingId: recording.id,
+          timeoutSeconds: STALE_RECORDING_STARTING_TIMEOUT_SECONDS,
+          failureCode: STALE_RECORDING_STARTING_FAILURE_CODE,
+        },
+      });
+    }
+  }
   const transcript = session.transcript;
   const aiAnalysis = session.aiAnalysis;
 
@@ -459,6 +420,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   // Facilitator sees full analysis; participants see shared version if published
   const canViewAiAnalysis = isFacilitator || isSharedWithSession;
+  const canOpenMaterials = isObserver
+    ? isEventHostOwner || canViewTranscript || canViewAiAnalysis
+    : true;
 
   let downloadUrl: string | null = null;
   if (
@@ -476,7 +440,13 @@ export async function GET(request: Request, context: RouteContext) {
             fileKeyNormalization?.containsRawUrl ||
             fileKeyNormalization?.containsEncodedUrl)
         ? "failed"
-        : resolveRecordingProcessingStage(recordingStatus)
+        : resolveRecordingProcessingStage({
+            recordingStatus,
+            stopOperationState: recording?.stopOperation?.state ?? null,
+            sessionStatus: session.status,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+          })
     : "not_available";
 
   const transcriptStage = resolveTranscriptProcessingStage(
@@ -627,6 +597,7 @@ export async function GET(request: Request, context: RouteContext) {
       canViewAiAnalysis,
       canRunAiAnalysis,
       canShareAiAnalysis,
+      canOpenMaterials,
     },
     recording: recording
       ? {
@@ -736,7 +707,7 @@ export async function GET(request: Request, context: RouteContext) {
     aiAnalysis: aiAnalysisResponse,
     processing: {
       shouldPoll,
-      nextPollMs: shouldPoll ? 3500 : null,
+      nextPollMs: resolveMaterialsNextPollMs(recordingStatus, shouldPoll),
       currentStage,
       message: shouldPoll ? "updating" : null,
       autoTranscribeEnabled: autoTranscribeAfterRecording,

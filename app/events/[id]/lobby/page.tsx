@@ -31,9 +31,6 @@ export default async function EventLobbyPage({
   if (!event) {
     redirect("/events");
   }
-  if (event.status === "COMPLETED") {
-    redirect(user ? "/events" : "/");
-  }
 
   if (!hostToken && !participantToken && !user) {
     // Redirect unauthenticated users to login so they can return here after signing in.

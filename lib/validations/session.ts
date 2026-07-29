@@ -77,6 +77,13 @@ export const assignParticipantRoleSchema = z.object({
   ).min(1),
 });
 
+export const reassignSessionFacilitatorSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  nextFacilitatorParticipantId: z.string().trim().min(1),
+  previousFacilitatorType: z.enum(["PARTICIPANT", "OBSERVER"]),
+  previousFacilitatorSessionRoleId: z.string().trim().min(1).nullable(),
+});
+
 export const saveParticipantNotesSchema = z.object({
   joinToken: z.string().trim().min(1, "invalidJoinLink"),
   notes: z.string(),
@@ -86,3 +93,4 @@ export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type AddParticipantInput = z.infer<typeof addParticipantSchema>;
 export type AddAccountParticipantInput = z.infer<typeof addAccountParticipantSchema>;
 export type AssignParticipantRoleInput = z.infer<typeof assignParticipantRoleSchema>;
+export type ReassignSessionFacilitatorInput = z.infer<typeof reassignSessionFacilitatorSchema>;

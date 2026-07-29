@@ -18,8 +18,8 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 - `ST310-PRESENCE-003` (`AUTOMATED`, `P0`) Facilitator leave without finish does not finish session. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit facilitator leave does not finish`.
 - `ST310-PRESENCE-004` (`AUTOMATED`, `P1`) Leave finalizes only current connection. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit leave only one connection`.
 - `ST310-PRESENCE-005` (`AUTOMATED`, `P1`) Duplicate leave is idempotent. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `duplicate leave idempotent`.
-- `ST310-PRESENCE-006` (`AUTOMATED`, `P1`) Network loss handled by expiry path. Coverage: `Integration` via `lib/stage-3-10-maintenance.test.ts` :: `expiry maintenance behavior`.
-- `ST310-PRESENCE-007` (`AUTOMATED`, `P1`) Reconnect within grace keeps session active. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `leave racing reconnect`.
+- `ST310-PRESENCE-006` (`AUTOMATED`, `P1`) Network loss handled by expiry path. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `expired OPEN connections do not auto-complete session`.
+- `ST310-PRESENCE-007` (`AUTOMATED`, `P1`) Reconnect within grace keeps session active and cancels pending empty-room completion. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `reconnect before grace prevents empty-room completion after old deadline`.
 - `ST310-PRESENCE-008` (`AUTOMATED`, `P0`) Newest tab supersedes old tab. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `newest same-login replaces previous`.
 - `ST310-PRESENCE-009` (`AUTOMATED`, `P0`) Old tab cannot execute controls. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `stale facilitator cannot execute`.
 - `ST310-PRESENCE-010` (`AUTOMATED`, `P0`) Old tab cannot disconnect replacement. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `stale cannot override replacement`.
@@ -27,10 +27,10 @@ This catalog is generated from `docs/testing/stage-3-10-session-lifecycle-tracea
 
 ## ROOM
 
-- `ST310-ROOM-001` (`AUTOMATED`, `P0`) Final leave from debrief closes room. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit leave closes last debrief`.
-- `ST310-ROOM-002` (`AUTOMATED`, `P1`) Final leave from open does not auto-close room. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit leave does not close OPEN`.
-- `ST310-ROOM-003` (`AUTOMATED`, `P1`) Expiry closes abandoned debrief. Coverage: `Integration` via `lib/stage-3-10-maintenance.test.ts` :: `derive/maintenance closure`.
-- `ST310-ROOM-004` (`AUTOMATED`, `P1`) Expiry does not close OPEN sessions. Coverage: `Integration` via `lib/stage-3-10-maintenance.test.ts` :: `open not auto-closed`.
+- `ST310-ROOM-001` (`AUTOMATED`, `P0`) Final leave from debrief closes room. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit leave starts debrief grace and closes after grace elapses`.
+- `ST310-ROOM-002` (`AUTOMATED`, `P1`) Final leave from open does not close immediately or start the short debrief grace. Coverage: `Browser E2E` via `tests/e2e/voximplant-room-presence.spec.ts` :: `explicit leave does not close OPEN and stale tab cannot disconnect replacement`.
+- `ST310-ROOM-003` (`AUTOMATED`, `P1`) Expiry closes abandoned debrief after the established grace. Coverage: `Unit` via `lib/session-room-occupancy.test.ts` :: `debrief closes once grace elapses with zero active connections`.
+- `ST310-ROOM-004` (`AUTOMATED`, `P1`) Empty OPEN sessions remain OPEN and create no recording-stop operation. Coverage: `Unit + Browser E2E` via `lib/session-room-occupancy.test.ts` :: `OPEN lifecycle is never auto-closed by the debrief guard`; `tests/e2e/voximplant-room-presence.spec.ts` :: `expired OPEN connections do not auto-complete session`.
 
 ## NAV
 

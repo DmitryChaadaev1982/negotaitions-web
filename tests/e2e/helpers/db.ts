@@ -556,12 +556,13 @@ export async function getRoomConnectionByConnectionId(connectionId: string) {
       role: string;
       expiresAt: string;
       disconnectedAt: string | null;
+      disconnectedReason: string | null;
       supersededAt: string | null;
       revokedAt: string | null;
       supersededByConnectionId: string | null;
     }>(
       `SELECT "id", "sessionId", "userId", "connectionId", "leaseVersion", "role",
-              "expiresAt", "disconnectedAt", "supersededAt", "revokedAt", "supersededByConnectionId"
+              "expiresAt", "disconnectedAt", "disconnectedReason", "supersededAt", "revokedAt", "supersededByConnectionId"
        FROM "SessionRoomConnection"
        WHERE "connectionId" = $1`,
       [connectionId],

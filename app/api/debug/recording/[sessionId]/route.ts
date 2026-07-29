@@ -229,7 +229,10 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       const dispatch = await buildVoximplantRecordingDispatch(smokeAction, {
         sessionId,
-        participantId,
+        participantId: participantId ?? "debug_smoke_participant",
+        controllerUserId: `debug_smoke:${participantId ?? "anonymous"}`,
+        controllerRole: "facilitator",
+        canControlRecording: true,
       });
 
       const persisted =
@@ -250,6 +253,7 @@ export async function POST(request: Request, context: RouteContext) {
         ok: dispatch.ok,
         provider: "voximplant",
         scenarioMessage: dispatch.scenarioMessage,
+        scenarioMessageText: dispatch.scenarioMessageText,
         recordingConfig: dispatch.recordingConfig,
         recording: {
           id: persisted.id,

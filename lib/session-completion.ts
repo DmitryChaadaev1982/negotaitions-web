@@ -16,12 +16,21 @@ import {
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
 import { closeAllOpenPauseIntervals } from "@/lib/session-pause-intervals";
 import {
+  TERMINAL_STOP_RETRY_ERROR_CLASSES,
   resolveStartingNotReadyFailure,
+  resolveServerControlMissingRegistrationFailure,
+  resolveServerControlTransportFailure,
   resolveVoxRelayFailure,
   scheduleStopRetry,
 } from "@/lib/recording-stop-delivery-policy";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dispatch";
+import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
+import {
+  getVoximplantServerStopConfig,
+  type VoximplantServerStopConfig,
+} from "@/lib/voximplant/server-stop-config";
+import { sendVoximplantServerStopCommand } from "@/lib/voximplant/server-stop-client";
 
 export type SessionFinishMode =
   | "ROOM_FACILITATOR_FINISH"
@@ -180,10 +189,19 @@ async function deliverRecordingStopOperation(params: {
   const claim = await prisma.sessionRecordingStopOperation.updateMany({
     where: {
       id: params.operationRowId,
-      state: {
-        in: ["PENDING", "FAILED"],
-      },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+      OR: [
+        {
+          state: "PENDING",
+          OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+        },
+        {
+          state: "FAILED",
+          lastErrorClass: {
+            notIn: TERMINAL_STOP_RETRY_ERROR_CLASSES as unknown as string[],
+          },
+          OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+        },
+      ],
     },
     data: {
       state: "DELIVERING",
@@ -244,15 +262,27 @@ async function deliverRecordingStopOperation(params: {
     !operation.recording.egressId
   ) {
     const retry = resolveStartingNotReadyFailure(operation.attemptCount);
-    await prisma.sessionRecordingStopOperation.update({
-      where: { id: operation.id },
-      data: {
-        state: "FAILED",
-        failedAt: new Date(),
-        lastErrorClass: retry.lastErrorClass,
-        lastError: retry.lastError,
-        nextRetryAt: retry.nextRetryAt,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.sessionRecordingStopOperation.update({
+        where: { id: operation.id },
+        data: {
+          state: "FAILED",
+          failedAt: new Date(),
+          lastErrorClass: retry.lastErrorClass,
+          lastError: retry.lastError,
+          nextRetryAt: retry.nextRetryAt,
+        },
+      });
+      if (retry.terminal) {
+        await tx.recording.update({
+          where: { id: operation.recording.id },
+          data: {
+            status: RecordingStatus.FAILED,
+            endedAt: operation.recording.endedAt ?? new Date(),
+            errorMessage: "recordingStartingNotReadyTerminal",
+          },
+        });
+      }
     });
     return {
       state: "FAILED",
@@ -298,6 +328,199 @@ async function deliverRecordingStopOperation(params: {
     };
   }
 
+  async function buildBrowserRelayFallback() {
+    const facilitator = await prisma.sessionParticipant.findFirst({
+      where: {
+        sessionId: params.sessionId,
+        type: ParticipantType.FACILITATOR,
+      },
+      select: {
+        id: true,
+        userId: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const dispatch = await buildVoximplantRecordingDispatch("stop", {
+      sessionId: params.sessionId,
+      participantId: facilitator?.id ?? "server_stop_fallback",
+      controllerUserId:
+        facilitator?.userId ?? `session_participant:${facilitator?.id ?? "server_stop_fallback"}`,
+      controllerRole: "facilitator",
+      canControlRecording: true,
+    });
+    return dispatch;
+  }
+
+  let serverStopConfig: VoximplantServerStopConfig;
+  try {
+    serverStopConfig = getVoximplantServerStopConfig();
+  } catch (error) {
+    const nextRetryAt = scheduleStopRetry(operation.attemptCount);
+    const warning =
+      error instanceof Error
+        ? error.message
+        : "Voximplant server stop configuration is unavailable.";
+    await prisma.sessionRecordingStopOperation.update({
+      where: { id: operation.id },
+      data: {
+        state: "FAILED",
+        failedAt: new Date(),
+        lastErrorClass: "VOXIMPLANT_SERVER_CONTROL_CONFIG_UNAVAILABLE",
+        lastError: warning,
+        nextRetryAt,
+        lastDeliveryTransport: "voximplant_server_control",
+      },
+    });
+    return {
+      state: "FAILED",
+      warning,
+      fallbackScenarioMessage: null,
+    };
+  }
+  if (serverStopConfig.mode !== "disabled") {
+    const expectedConferenceName = buildVoximplantConferenceName(params.sessionId);
+    const controlChannel = await prisma.sessionVoximplantControlChannel.findUnique({
+      where: { sessionId: params.sessionId },
+      select: {
+        conferenceName: true,
+        providerSessionId: true,
+        controlUrl: true,
+        controlUrlFingerprint: true,
+      },
+    });
+    const hasValidControlChannel = Boolean(
+      controlChannel &&
+        controlChannel.conferenceName === expectedConferenceName,
+    );
+    const relayFallbackAllowed =
+      serverStopConfig.mode === "prefer_server_with_relay_fallback";
+
+    if (!hasValidControlChannel) {
+      const retry = resolveServerControlMissingRegistrationFailure(
+        operation.attemptCount,
+      );
+      if (relayFallbackAllowed) {
+        const dispatch = await buildBrowserRelayFallback();
+        await prisma.sessionRecordingStopOperation.update({
+          where: { id: operation.id },
+          data: {
+            state: "FAILED",
+            fallbackPayload: dispatch.scenarioMessage,
+            failedAt: new Date(),
+            lastErrorClass: retry.lastErrorClass,
+            lastError: retry.lastError,
+            nextRetryAt: retry.nextRetryAt,
+            lastDeliveryTransport: "voximplant_browser_relay",
+          },
+        });
+        return {
+          state: "FAILED",
+          warning: retry.lastError,
+          fallbackScenarioMessage: dispatch.scenarioMessage,
+        };
+      }
+
+      await prisma.sessionRecordingStopOperation.update({
+        where: { id: operation.id },
+        data: {
+          state: "FAILED",
+          failedAt: new Date(),
+          lastErrorClass: retry.lastErrorClass,
+          lastError: retry.lastError,
+          nextRetryAt: retry.nextRetryAt,
+          lastDeliveryTransport: "voximplant_server_control",
+        },
+      });
+      return {
+        state: "FAILED",
+        warning: retry.lastError,
+        fallbackScenarioMessage: null,
+      };
+    }
+    const activeControlChannel = controlChannel!;
+
+    const transport = await sendVoximplantServerStopCommand({
+      controlUrl: activeControlChannel.controlUrl,
+      controlUrlFingerprint: activeControlChannel.controlUrlFingerprint,
+      controlSecret: serverStopConfig.controlSecret!,
+      timeoutMs: serverStopConfig.controlTimeoutMs,
+      operationId: operation.operationId,
+      sessionId: params.sessionId,
+      conferenceName: activeControlChannel.conferenceName,
+      providerSessionId: activeControlChannel.providerSessionId,
+    });
+
+    if (transport.code === "TRANSPORT_ACCEPTED") {
+      await prisma.sessionRecordingStopOperation.update({
+        where: { id: operation.id },
+        data: {
+          state: "DELIVERING",
+          transportAcceptedAt: new Date(),
+          providerSessionIdAtCommand: activeControlChannel.providerSessionId,
+          providerConferenceNameAtCommand: activeControlChannel.conferenceName,
+          failedAt: null,
+          lastError: null,
+          lastErrorClass: null,
+          nextRetryAt: new Date(
+            Date.now() + serverStopConfig.terminalTimeoutSeconds * 1000,
+          ),
+          lastDeliveryTransport: "voximplant_server_control",
+        },
+      });
+      return {
+        state: "DELIVERING",
+        warning:
+          transport.scenarioResponse && !transport.scenarioResponse.accepted
+            ? transport.scenarioResponse.reason ??
+              "Voximplant control transport accepted but command is pending provider confirmation."
+            : null,
+        fallbackScenarioMessage: null,
+      };
+    }
+
+    const retry = resolveServerControlTransportFailure(
+      operation.attemptCount,
+      transport.code,
+    );
+    if (relayFallbackAllowed) {
+      const dispatch = await buildBrowserRelayFallback();
+      await prisma.sessionRecordingStopOperation.update({
+        where: { id: operation.id },
+        data: {
+          state: "FAILED",
+          fallbackPayload: dispatch.scenarioMessage,
+          failedAt: new Date(),
+          lastErrorClass: retry.lastErrorClass,
+          lastError: transport.warning ?? retry.lastError,
+          nextRetryAt: retry.nextRetryAt,
+          lastDeliveryTransport: "voximplant_browser_relay",
+        },
+      });
+      return {
+        state: "FAILED",
+        warning: transport.warning ?? retry.lastError,
+        fallbackScenarioMessage: dispatch.scenarioMessage,
+      };
+    }
+
+    await prisma.sessionRecordingStopOperation.update({
+      where: { id: operation.id },
+      data: {
+        state: "FAILED",
+        failedAt: new Date(),
+        lastErrorClass: retry.lastErrorClass,
+        lastError: transport.warning ?? retry.lastError,
+        nextRetryAt: retry.nextRetryAt,
+        lastDeliveryTransport: "voximplant_server_control",
+      },
+    });
+    return {
+      state: "FAILED",
+      warning: transport.warning ?? retry.lastError,
+      fallbackScenarioMessage: null,
+    };
+  }
+
   const facilitator = await prisma.sessionParticipant.findFirst({
     where: {
       sessionId: params.sessionId,
@@ -305,13 +528,17 @@ async function deliverRecordingStopOperation(params: {
     },
     select: {
       id: true,
+      userId: true,
     },
     orderBy: { createdAt: "asc" },
   });
   const dispatch = await buildVoximplantRecordingDispatch("stop", {
     sessionId: params.sessionId,
-    participantId: facilitator?.id,
-    role: "facilitator",
+    participantId: facilitator?.id ?? "browser_relay_fallback",
+    controllerUserId:
+      facilitator?.userId ?? `session_participant:${facilitator?.id ?? "browser_relay_fallback"}`,
+    controllerRole: "facilitator",
+    canControlRecording: true,
   });
   const retry = resolveVoxRelayFailure(operation.attemptCount);
 

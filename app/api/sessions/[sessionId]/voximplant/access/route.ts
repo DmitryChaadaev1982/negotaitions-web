@@ -6,7 +6,6 @@ import { canAccessSession, getCurrentUserSessionAccess } from "@/lib/access-cont
 import { apiRequireActiveUser } from "@/lib/auth/api-guards";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import { prisma } from "@/lib/prisma";
-import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import {
   decideSessionRoomAccess,
   isRoomAccessAllowed,
@@ -142,8 +141,29 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const participant = await ensureAccountRoomParticipant(sessionId, user);
-  if (!participant || participant.userId !== user.id) {
+  const participantResult = await ensureAccountRoomParticipant(sessionId, user);
+  if (participantResult.kind === "denied") {
+    return NextResponse.json(
+      {
+        error:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED"
+            ? "roomClosed"
+            : "Forbidden.",
+        code:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED"
+            ? "ROOM_CLOSED"
+            : "VOXIMPLANT_GUEST_DEFERRED",
+        redirectTo: participantResult.redirectTo,
+        denialReason: participantResult.reason,
+      },
+      {
+        status:
+          participantResult.code === "LATE_OBSERVER_CREATION_DENIED" ? 409 : 403,
+      },
+    );
+  }
+  const participant = participantResult.participant;
+  if (participant.userId !== user.id) {
     return NextResponse.json(
       {
         error: "Guest Voximplant access is not supported yet. Use authenticated account access.",
@@ -292,27 +312,6 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Participant not found." }, { status: 404 });
   }
 
-  const allSessionParticipants = await prisma.sessionParticipant.findMany({
-    where: { sessionId },
-    select: {
-      id: true,
-      type: true,
-      userId: true,
-      createdAt: true,
-    },
-  });
-
-  const sessionOwner = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: { facilitatorId: true },
-  });
-
-  const effectiveType = resolveSessionParticipantType(
-    { id: participantWithRole.id, type: participantWithRole.type },
-    allSessionParticipants,
-    sessionOwner?.facilitatorId ?? null,
-  );
-
   let voximplantConfig;
   try {
     voximplantConfig = getVoximplantConfig({
@@ -329,7 +328,7 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const role = resolveParticipantRole(
-    effectiveType,
+    participantWithRole.type,
     participantWithRole.sessionRole?.name ?? null,
   );
 

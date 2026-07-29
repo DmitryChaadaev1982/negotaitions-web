@@ -41,6 +41,16 @@ Produce structured post-session coaching output from transcript/materials and ex
 - Participant/observer: shared/sanitized analysis only when published.
 - Sharing state controls materials access for observer-facing debrief behavior.
 
+## Debrief Right-Panel State Machine
+
+- In `DEBRIEF_OPEN`, participant/observer panel never renders empty:
+  - if published personalized/shared analysis exists and validates, show AI report;
+  - otherwise show permitted fallback context from room sidebar payload.
+- Participant fallback includes own role private instructions.
+- Observer fallback excludes participant private instructions.
+- Materials action is independent from "leave room" and remains available in debrief (new-tab open in sidebar mode).
+- Processing/partial/failed AI states are surfaced without hiding fallback context.
+
 ## Source Notes
 
 - `lib/ai/negotiation-analysis.ts`

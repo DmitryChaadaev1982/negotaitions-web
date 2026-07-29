@@ -48,6 +48,10 @@ export type PauseProcessingMode =
 
 export type TranscriptEnhancementMode = "single" | "chunked";
 export type TranscriptEnhancementOutputMode = "legacy" | "json_schema";
+export type VoximplantServerStopMode =
+  | "disabled"
+  | "prefer_server_with_relay_fallback"
+  | "prefer_server_no_relay_fallback";
 
 export function getVideoProvider(): VideoProvider {
   const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
@@ -193,30 +197,30 @@ export function getYandexTranscriptEnhancementMaxOutputTokens(): number {
 
 export function getTranscriptEnhancementMode(): TranscriptEnhancementMode {
   const raw = process.env.TRANSCRIPT_ENHANCEMENT_MODE?.trim().toLowerCase();
-  if (!raw || raw === "single") {
-    return "single";
-  }
-  if (raw === "chunked") {
+  if (!raw || raw === "chunked") {
     return "chunked";
   }
+  if (raw === "single") {
+    return "single";
+  }
   console.warn(
-    `[env] Invalid TRANSCRIPT_ENHANCEMENT_MODE="${raw}". Falling back to default mode "single".`,
+    `[env] Invalid TRANSCRIPT_ENHANCEMENT_MODE="${raw}". Falling back to default mode "chunked".`,
   );
-  return "single";
+  return "chunked";
 }
 
 export function getTranscriptEnhancementOutputMode(): TranscriptEnhancementOutputMode {
   const raw = process.env.TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE?.trim().toLowerCase();
-  if (!raw || raw === "legacy") {
-    return "legacy";
-  }
-  if (raw === "json_schema") {
+  if (!raw || raw === "json_schema") {
     return "json_schema";
   }
+  if (raw === "legacy") {
+    return "legacy";
+  }
   console.warn(
-    `[env] Invalid TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="${raw}". Falling back to default mode "legacy".`,
+    `[env] Invalid TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="${raw}". Falling back to default mode "json_schema".`,
   );
-  return "legacy";
+  return "json_schema";
 }
 
 export function getTranscriptEnhancementChunkMaxSegments(): number {
@@ -247,6 +251,14 @@ export function getTranscriptEnhancementMaxRetries(): number {
   return Math.min(3, Math.round(raw));
 }
 
+export function getDebriefAutoCloseGraceMs(): number {
+  const raw = Number(process.env.DEBRIEF_AUTO_CLOSE_GRACE_MS ?? "30000");
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 30000;
+  }
+  return Math.max(5000, Math.round(raw));
+}
+
 /**
  * Server-side only. Returns the VOXIMPLANT_RECORDING_WEBHOOK_SECRET used to
  * validate HMAC-SHA256 signatures on incoming VoxEngine recording-status webhooks.
@@ -254,6 +266,25 @@ export function getTranscriptEnhancementMaxRetries(): number {
  */
 export function getVoximplantRecordingWebhookSecret(): string | null {
   return process.env.VOXIMPLANT_RECORDING_WEBHOOK_SECRET?.trim() || null;
+}
+
+/**
+ * Shared secret used to sign browser-relayed recording_control commands.
+ * Fails closed when absent/invalid.
+ */
+export function getVoximplantRecordingControlSecret(): string {
+  const secret = process.env.VOXIMPLANT_RECORDING_CONTROL_SECRET?.trim() || "";
+  if (!secret) {
+    throw new Error(
+      "Missing required VOXIMPLANT_RECORDING_CONTROL_SECRET for recording control signing.",
+    );
+  }
+  if (secret.length < 16) {
+    throw new Error(
+      "Invalid VOXIMPLANT_RECORDING_CONTROL_SECRET. Expected at least 16 characters.",
+    );
+  }
+  return secret;
 }
 
 /**
@@ -268,4 +299,99 @@ export function getVoximplantRecordingWebhookBaseUrlFromEnv(): string | null {
 export function getVoximplantAudioProcessingProfile(): VoximplantAudioProcessingProfile {
   const raw = process.env.VOXIMPLANT_AUDIO_PROCESSING_PROFILE?.trim().toLowerCase();
   return raw === "raw_diagnostic" ? "raw_diagnostic" : "speech";
+}
+
+const VOXIMPLANT_SERVER_STOP_MODES = new Set<VoximplantServerStopMode>([
+  "disabled",
+  "prefer_server_with_relay_fallback",
+  "prefer_server_no_relay_fallback",
+]);
+
+function parsePositiveIntegerEnv(
+  key: string,
+  defaultValue: number,
+  minimumValue: number,
+): number {
+  const raw = process.env[key]?.trim();
+  if (!raw) {
+    return defaultValue;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < minimumValue) {
+    throw new Error(
+      `Invalid ${key}="${raw}". Expected integer >= ${minimumValue}.`,
+    );
+  }
+  return Math.round(parsed);
+}
+
+export function getVoximplantServerStopMode(): VoximplantServerStopMode {
+  const raw = process.env.VOXIMPLANT_SERVER_STOP_MODE?.trim().toLowerCase();
+  if (!raw) {
+    return "disabled";
+  }
+  if (VOXIMPLANT_SERVER_STOP_MODES.has(raw as VoximplantServerStopMode)) {
+    return raw as VoximplantServerStopMode;
+  }
+  throw new Error(
+    `Invalid VOXIMPLANT_SERVER_STOP_MODE="${raw}". Allowed: disabled, prefer_server_with_relay_fallback, prefer_server_no_relay_fallback.`,
+  );
+}
+
+export function isVoximplantServerStopEnabled(
+  mode: VoximplantServerStopMode = getVoximplantServerStopMode(),
+) {
+  return mode !== "disabled";
+}
+
+function getRequiredServerStopSecret(
+  key: "VOXIMPLANT_SERVER_STOP_CONTROL_SECRET" | "VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET",
+  mode: VoximplantServerStopMode,
+) {
+  const value = process.env[key]?.trim() || null;
+  if (!isVoximplantServerStopEnabled(mode)) {
+    return value;
+  }
+  if (!value) {
+    throw new Error(
+      `Missing required ${key}. Configure it when VOXIMPLANT_SERVER_STOP_MODE is enabled.`,
+    );
+  }
+  return value;
+}
+
+export function getVoximplantServerStopControlSecret(
+  mode: VoximplantServerStopMode = getVoximplantServerStopMode(),
+): string | null {
+  return getRequiredServerStopSecret("VOXIMPLANT_SERVER_STOP_CONTROL_SECRET", mode);
+}
+
+export function getVoximplantServerStopCallbackSecret(
+  mode: VoximplantServerStopMode = getVoximplantServerStopMode(),
+): string | null {
+  return getRequiredServerStopSecret("VOXIMPLANT_SERVER_STOP_CALLBACK_SECRET", mode);
+}
+
+export function getVoximplantServerStopControlTimeoutMs() {
+  return parsePositiveIntegerEnv(
+    "VOXIMPLANT_SERVER_STOP_CONTROL_TIMEOUT_MS",
+    5000,
+    100,
+  );
+}
+
+export function getVoximplantServerStopCallbackReplayWindowSeconds() {
+  return parsePositiveIntegerEnv(
+    "VOXIMPLANT_SERVER_STOP_CALLBACK_REPLAY_WINDOW_SECONDS",
+    300,
+    30,
+  );
+}
+
+export function getVoximplantServerStopTerminalTimeoutSeconds() {
+  return parsePositiveIntegerEnv(
+    "VOXIMPLANT_SERVER_STOP_TERMINAL_TIMEOUT_SECONDS",
+    90,
+    10,
+  );
 }

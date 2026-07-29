@@ -96,8 +96,9 @@
 ## Transcript Enhancement Modes (Stage 3.9E Phase 1)
 
 - Enhancement runtime mode is controlled by `TRANSCRIPT_ENHANCEMENT_MODE`:
-  - `single` (default, rollback-safe): existing one-request enhancement flow.
+  - `single`: one-request enhancement flow.
   - `chunked`: bounded chunk enhancement with deterministic merge and per-chunk fallback.
+- Local default is `chunked` unless explicitly overridden for rollback diagnostics.
 - Chunked mode uses ordered `TranscriptSegment` input and keeps canonical fields unchanged:
   - segment identity (`orderIndex` / ID),
   - start/end timestamps,
@@ -147,8 +148,9 @@
 ## Transcript Enhancement Structured Output (Stage 3.9E JSON Schema)
 
 - Output mode is now independently controlled by `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE`:
-  - `legacy` (default): prompt-generated JSON path.
+  - `legacy`: prompt-generated JSON path.
   - `json_schema`: Responses API provider-enforced schema via `text.format`.
+- Local default is `json_schema` for deterministic schema enforcement.
 - In `json_schema` mode, each chunk sends a dynamic strict schema:
   - root object with required `segments`;
   - `segments` is an object keyed by exact chunk target indexes (`"12"`, `"13"`, ...);

@@ -13,9 +13,15 @@ import {
   installVoxRuntimeErrorSuppressor,
   isAlreadyExistsStreamError,
   isRecoverableVoxMediaError,
+  isRecoverableVoxSignallingError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
+import {
+  createDroppedCauseReporter,
+  installVoxReInviteSchemeSanitizer,
+  type VoxConnectionSeam,
+} from "@/lib/voximplant/reinvite-scheme-sanitizer";
 import type { EventStateParticipant } from "@/lib/event-state";
 import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
 
@@ -383,7 +389,9 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
 }: EventLobbyVoximplantRoomProps) {
   const { t } = useI18n();
   const runtimeRef = useRef<RuntimeState | null>(null);
+  const cleanupPromiseRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
+  const droppedCauseReporterRef = useRef(createDroppedCauseReporter());
 
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -480,57 +488,69 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   }, [clearSpeakerMeter]);
 
   const cleanup = useCallback(async () => {
+    if (cleanupPromiseRef.current) {
+      return cleanupPromiseRef.current;
+    }
     const runtime = runtimeRef.current;
     if (!runtime) return;
-
-    for (const audio of runtime.remoteAudioElements.values()) {
-      audio.pause();
-      audio.srcObject = null;
-    }
-    runtime.remoteAudioElements.clear();
-    if (runtime.endpointSyncIntervalId !== null) {
-      window.clearInterval(runtime.endpointSyncIntervalId);
-      runtime.endpointSyncIntervalId = null;
-    }
-    for (const cleanup of speakerMeterCleanupByTrackRef.current.values()) {
-      cleanup();
-    }
-    speakerMeterCleanupByTrackRef.current.clear();
-    speakerLevelByTrackRef.current.clear();
-    setActiveSpeakerId(null);
-    for (const timerId of micUnknownTimerByParticipantRef.current.values()) {
-      window.clearTimeout(timerId);
-    }
-    micUnknownTimerByParticipantRef.current.clear();
-
-    for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
-      endpoint.removeEventListener("RemoteMediaAdded", onAdded);
-      endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
-    }
-    runtime.endpointSubscriptions.clear();
-
-    if (runtime.conference && runtime.conferenceListeners) {
-      runtime.conference.removeEventListener("Connected", runtime.conferenceListeners.onConnected);
-      runtime.conference.removeEventListener("Failed", runtime.conferenceListeners.onFailed);
-      runtime.conference.removeEventListener("Disconnected", runtime.conferenceListeners.onDisconnected);
-      runtime.conference.removeEventListener("EndpointAdded", runtime.conferenceListeners.onEndpointAdded);
-      runtime.conference.removeEventListener("EndpointRemoved", runtime.conferenceListeners.onEndpointRemoved);
-    }
-
-    if (runtime.conference) {
-      try {
-        runtime.conference.hangup();
-      } catch {}
-    }
-
-    stopVoxStreamTracks(runtime.localAudioStream);
-    stopVoxStreamTracks(runtime.localVideoStream);
-    runtime.localAudioStream?.close?.();
-    runtime.localVideoStream?.close?.();
-
-    await registerVoxClientDisconnect(runtime.core.client.disconnect());
-
     runtimeRef.current = null;
+
+    const trackedCleanup = registerVoxClientDisconnect(
+      (async () => {
+        for (const audio of runtime.remoteAudioElements.values()) {
+          audio.pause();
+          audio.srcObject = null;
+        }
+        runtime.remoteAudioElements.clear();
+        if (runtime.endpointSyncIntervalId !== null) {
+          window.clearInterval(runtime.endpointSyncIntervalId);
+          runtime.endpointSyncIntervalId = null;
+        }
+        for (const cleanup of speakerMeterCleanupByTrackRef.current.values()) {
+          cleanup();
+        }
+        speakerMeterCleanupByTrackRef.current.clear();
+        speakerLevelByTrackRef.current.clear();
+        setActiveSpeakerId(null);
+        for (const timerId of micUnknownTimerByParticipantRef.current.values()) {
+          window.clearTimeout(timerId);
+        }
+        micUnknownTimerByParticipantRef.current.clear();
+
+        for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
+          endpoint.removeEventListener("RemoteMediaAdded", onAdded);
+          endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
+        }
+        runtime.endpointSubscriptions.clear();
+
+        if (runtime.conference && runtime.conferenceListeners) {
+          runtime.conference.removeEventListener("Connected", runtime.conferenceListeners.onConnected);
+          runtime.conference.removeEventListener("Failed", runtime.conferenceListeners.onFailed);
+          runtime.conference.removeEventListener("Disconnected", runtime.conferenceListeners.onDisconnected);
+          runtime.conference.removeEventListener("EndpointAdded", runtime.conferenceListeners.onEndpointAdded);
+          runtime.conference.removeEventListener("EndpointRemoved", runtime.conferenceListeners.onEndpointRemoved);
+        }
+
+        if (runtime.conference) {
+          try {
+            runtime.conference.hangup();
+          } catch {}
+        }
+
+        stopVoxStreamTracks(runtime.localAudioStream);
+        stopVoxStreamTracks(runtime.localVideoStream);
+        runtime.localAudioStream?.close?.();
+        runtime.localVideoStream?.close?.();
+        await runtime.core.client.disconnect().catch(() => undefined);
+      })(),
+    ).finally(() => {
+      if (cleanupPromiseRef.current === trackedCleanup) {
+        cleanupPromiseRef.current = null;
+      }
+    });
+
+    cleanupPromiseRef.current = trackedCleanup;
+    return trackedCleanup;
   }, []);
 
   useEffect(() => {
@@ -594,13 +614,23 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           throw new Error("Unexpected Vox lobby access payload.");
         }
 
-        const [{ Core }, conferenceModule, streamModulePackage] = await Promise.all([
-          import("@voximplant/websdk"),
-          import("@voximplant/websdk/modules/conference-manager"),
-          import("@voximplant/websdk/modules/stream"),
-        ]);
+        const [{ Core, connectionToken }, conferenceModule, streamModulePackage] =
+          await Promise.all([
+            import("@voximplant/websdk"),
+            import("@voximplant/websdk/modules/conference-manager"),
+            import("@voximplant/websdk/modules/stream"),
+          ]);
         if (cancelled || !mountedRef.current) return;
         const core = Core.init({}) as unknown as VoxCore;
+
+        // Must run before the conference module registers its own handleReInvite
+        // subscriber. Core.init is a singleton, so whichever surface initializes
+        // the SDK first owns this guard for the whole page.
+        installVoxReInviteSchemeSanitizer({
+          connection: core.getModule(connectionToken) as VoxConnectionSeam | undefined,
+          onDropped: droppedCauseReporterRef.current,
+        });
+
         try {
           if (!core.getModule(streamModulePackage.streamToken)) {
             core.registerModules([streamModulePackage.StreamLoader()]);
@@ -614,6 +644,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           conferenceModule.conferenceToken,
         ) as VoxConferenceManager;
         const streamModule = core.getModule(streamModulePackage.streamToken) as VoxStreamModule;
+
+        setStatus(t("events.voxLobbyWaitingForPreviousDisconnect"));
+        await waitForVoxClientIdle();
+        if (cancelled || !mountedRef.current) return;
 
         await core.client.connect({});
         if (cancelled || !mountedRef.current) return;
@@ -921,7 +955,11 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         }
       } catch (joinError) {
         const details = toErrorMessage(joinError);
-        console.error("[EventLobbyVox] connect failed:", joinError);
+        if (isRecoverableVoxSignallingError(joinError)) {
+          console.warn("[EventLobbyVox] transient signalling failure:", details);
+        } else {
+          console.error("[EventLobbyVox] connect failed:", joinError);
+        }
         setError(t("events.voxLobbyUnableToConnect"));
         setErrorDetails(details);
         setStatus(t("events.voxLobbyUnableToConnect"));

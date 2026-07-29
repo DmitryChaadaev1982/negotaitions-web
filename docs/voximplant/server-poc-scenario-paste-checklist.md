@@ -1,4 +1,4 @@
-# Server POC — VoxEngine Scenario Paste Checklist
+# Stage 3.10 — VoxEngine Main-Room Scenario Paste Checklist
 
 Use this checklist when deploying the recording webhook scenario to Voximplant Console for the production server POC at `https://negotaitions.ru`.
 
@@ -17,18 +17,20 @@ Do **not** upload via CI for this manual paste workflow unless you intentionally
 
 ---
 
-## 2. Required manual replacement (secret)
+## 2. Required Console environment
 
-Before saving in Voximplant Console, find this line near the top of the scenario:
+Do not paste secret values into the source. Configure these application/scenario
+environment variable names in Voximplant Console:
 
-```javascript
-var WEBHOOK_SECRET = "__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__";
-```
+- `VOXIMPLANT_RECORDING_WEBHOOK_SECRET` (compatibility alias:
+  `WEBHOOK_SECRET`)
+- `RECORDING_CONTROL_SECRET` (compatibility alias:
+  `VOXIMPLANT_RECORDING_CONTROL_SECRET`)
+- `SERVER_STOP_CONTROL_SECRET`
+- `SERVER_STOP_CALLBACK_SECRET`
 
-Replace `__PASTE_VOXIMPLANT_RECORDING_WEBHOOK_SECRET_HERE__` with the value of **`VOXIMPLANT_RECORDING_WEBHOOK_SECRET`** from the server `.env.production` file.
-
-- Do **not** paste the secret into git, docs, chat, or this checklist.
-- Do **not** commit the scenario file after replacing the secret.
+- Do **not** paste values into git, docs, chat, or this checklist.
+- Verify only configured/missing diagnostics; never capture values.
 - The scenario logs `WEBHOOK_SECRET_configured=true/false` and `WEBHOOK_SECRET_length=<n>` — never the secret itself.
 
 `WEBHOOK_BASE_URL` defaults to `https://negotaitions.ru` and does not need changing for server POC.
@@ -59,7 +61,7 @@ In Voximplant Console → Scenarios → Logs, search for:
 
 | Search string | Expected meaning |
 |---------------|------------------|
-| `server-poc-webhook-fix-2026-07-13-a7` | Correct Stage 3.10 A7 build is running |
+| `main-room-server-stop-2026-07-28-rc6` | Exact tested Stage 3.10 build is running |
 | `webhook config` | Startup config summary (base URL, secret configured, HMAC provider) |
 | `recording_control received` | Browser sent start/stop commands |
 | `Recorder.Stopped handler entered` | Recording finished in VoxEngine |
@@ -68,7 +70,8 @@ In Voximplant Console → Scenarios → Logs, search for:
 | `scenario shutdown stop requested reason=ConferenceEvents.Stopped` | Shutdown hardening triggered on conference stop |
 | `scenario shutdown stop requested reason=AppEvents.Terminating` | Shutdown hardening triggered on app termination |
 
-If you see `webhook skipped: WEBHOOK_SECRET not configured`, the secret placeholder was not replaced.
+If you see `webhook skipped: WEBHOOK_SECRET not configured`, the Console
+environment is missing the webhook secret.
 
 If you see `webhook skipped: missing effectiveWebhookBaseUrl`, check `WEBHOOK_BASE_URL` or browser `webhookBaseUrl`.
 
@@ -105,7 +108,10 @@ After a successful webhook:
 
 ## 7. Local tunnel testing (optional)
 
-`ALLOW_WEBHOOK_BASE_URL_FROM_MESSAGE = true` is preserved. When testing against a local tunnel, the browser may send `webhookBaseUrl` in `recording_control` messages to override the default. Server POC does **not** require this — the default `https://negotaitions.ru` is sufficient.
+The exact tested RC6 scenario rejects message-level callback-origin override for
+bound recording-control sessions. Local tunnel work requires an explicitly
+reviewed non-production configuration; do not edit or redeploy the production
+scenario for local testing.
 
 ---
 

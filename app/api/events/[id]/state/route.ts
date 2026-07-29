@@ -9,6 +9,7 @@ import {
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
 import { buildEventState } from "@/lib/event-state";
+import { triggerStage310ExpiryReconciliation } from "@/lib/stage-3-10-maintenance-trigger";
 import { eventAccessQuerySchema } from "@/lib/validations/event";
 
 type RouteContext = {
@@ -48,7 +49,20 @@ export async function GET(request: Request, context: RouteContext) {
   // but no EventParticipant row yet, auto-create one so their identity is correct.
   // Never represent them as host/first participant.
   let { currentParticipant } = access;
-  if (!currentParticipant && user && (isAdmin(user) || user.status === "ACTIVE")) {
+  const hasDirectMembership = Boolean(
+    user &&
+      (access.isEventOwner ||
+        access.hasUserParticipant ||
+        access.hasEmailInvite ||
+        currentParticipant?.userId === user.id ||
+        currentParticipant),
+  );
+  if (
+    !currentParticipant &&
+    hasDirectMembership &&
+    user &&
+    (isAdmin(user) || user.status === "ACTIVE")
+  ) {
     currentParticipant = await ensureUserEventParticipant(eventId, user);
   }
 
@@ -83,6 +97,7 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
   }
+  await triggerStage310ExpiryReconciliation();
 
   const state = await buildEventState({
     event: access.event,
@@ -91,6 +106,7 @@ export async function GET(request: Request, context: RouteContext) {
     isAdmin: access.isAdmin,
     currentParticipant,
     accountMode: Boolean(user),
+    canJoinEventSessionsAsObserver: hasDirectMembership,
     userId: user?.id ?? null,
   });
 

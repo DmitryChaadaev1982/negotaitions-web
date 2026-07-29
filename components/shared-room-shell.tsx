@@ -100,6 +100,7 @@ function RoomSidebar({
           id: entry.id,
           displayName: entry.displayName,
           type: entry.participantType as string,
+          userId: entry.userId,
           currentRoleId: entry.sessionRoleId ?? null,
           currentRoleName: entry.caseRoleName,
           joinedAt: entry.joinedAt,
@@ -276,6 +277,7 @@ function SessionClosedOverlay({
   eventLobbyUrl,
   eventCompleted,
   onLeave,
+  onReturnToEventLobby,
 }: {
   materialsUrl: string;
   closeMessageKey: NonNullable<ShellSessionCloseState["closeMessageKey"]>;
@@ -283,6 +285,7 @@ function SessionClosedOverlay({
   eventLobbyUrl?: string | null;
   eventCompleted?: boolean;
   onLeave: () => void;
+  onReturnToEventLobby?: (() => void | Promise<void>) | null;
 }) {
   const { t } = useI18n();
   const hadRecording =
@@ -304,14 +307,28 @@ function SessionClosedOverlay({
         ) : null}
         <div className="flex flex-wrap justify-center gap-3 pt-2">
           {eventLobbyUrl ? (
-            <GradientButtonLink
-              href={eventLobbyUrl}
-              data-testid="return-to-event-lobby-button"
-              className={eventCompleted ? "pointer-events-none opacity-60" : undefined}
-              aria-disabled={eventCompleted}
-            >
-              {t("events.returnToEventLobby")}
-            </GradientButtonLink>
+            onReturnToEventLobby ? (
+              <button
+                type="button"
+                className={`btn-secondary rounded-lg px-4 py-2 text-sm font-semibold ${
+                  eventCompleted ? "pointer-events-none opacity-60" : ""
+                }`}
+                data-testid="return-to-event-lobby-button"
+                aria-disabled={eventCompleted}
+                onClick={() => void onReturnToEventLobby()}
+              >
+                {t("events.returnToEventLobby")}
+              </button>
+            ) : (
+              <GradientButtonLink
+                href={eventLobbyUrl}
+                data-testid="return-to-event-lobby-button"
+                className={eventCompleted ? "pointer-events-none opacity-60" : undefined}
+                aria-disabled={eventCompleted}
+              >
+                {t("events.returnToEventLobby")}
+              </GradientButtonLink>
+            )
           ) : null}
           <GradientButtonLink
             href={materialsUrl}
@@ -345,6 +362,8 @@ export type SharedRoomShellProps = {
   controlState: ControlState;
   /** Recording status from the recording-control API. */
   recordingState: RoomRecordingState;
+  /** Durable stop-operation state for recording (if available). */
+  recordingStopOperationState?: string | null;
   /** Session closed/debrief state. */
   sessionCloseState: ShellSessionCloseState;
 
@@ -366,7 +385,8 @@ export type SharedRoomShellProps = {
   onNegotiationStarted?: () => void;
   /**
    * Called after FINISH negotiation action succeeds.
-   * Voximplant room page uses this to trigger automatic recording stop relay.
+   * Voximplant room page uses this to consume an authorized stop-relay hint
+   * only when the configured server-stop mode permits browser transport.
    */
   onNegotiationFinished?: () => void;
   /** Called when the presence heartbeat detects an invalid token. */
@@ -379,6 +399,12 @@ export type SharedRoomShellProps = {
   staleConnection?: boolean;
   /** Navigate away after leaving (for SessionClosedOverlay). */
   onLeave: () => void;
+  /**
+   * Optional room-specific lobby transition handler.
+   * When provided, the header/overlay lobby button uses this callback instead
+   * of immediate navigation to allow explicit leave + safe provider teardown.
+   */
+  onReturnToEventLobby?: (() => void | Promise<void>) | null;
 
   // ── Provider-specific slots ──────────────────────────────────────────────
 
@@ -475,6 +501,7 @@ export function SharedRoomShell({
   sidebar,
   controlState,
   recordingState,
+  recordingStopOperationState = null,
   sessionCloseState,
   participantType,
   participantTypeLabel,
@@ -488,6 +515,7 @@ export function SharedRoomShell({
   connectionId,
   staleConnection = false,
   onLeave,
+  onReturnToEventLobby = null,
   leaveButton,
   controlBar,
   mediaArea,
@@ -506,6 +534,8 @@ export function SharedRoomShell({
   const isDebriefMode =
     sessionCloseState.isClosed &&
     sessionCloseState.closeMessageKey === "join.sessionFinishedMessage";
+  const showDebriefModeNotice =
+    isDebriefMode && sidebar.event?.status !== "COMPLETED";
 
   // Event-closed or other closures → blocking overlay
   const isEventClosed = sessionCloseState.isClosed && !isDebriefMode;
@@ -522,6 +552,7 @@ export function SharedRoomShell({
         sessionId={sessionId}
         roomAuth={roomAuth}
         connectionId={connectionId}
+        enabled={!staleConnection}
         onInvalidToken={onInvalidToken}
         onStaleConnection={onStaleConnection}
       />
@@ -535,6 +566,7 @@ export function SharedRoomShell({
           eventLobbyUrl={sidebar.event?.lobbyUrl}
           eventCompleted={sidebar.event?.status === "COMPLETED"}
           onLeave={onLeave}
+          onReturnToEventLobby={onReturnToEventLobby}
         />
       ) : null}
 
@@ -579,6 +611,7 @@ export function SharedRoomShell({
             ) : (
               <RecordingIndicator
                 status={recordingState?.status}
+                stopOperationState={recordingStopOperationState}
                 negotiationState={controlState.negotiationState}
                 participantType={participantType}
                 isFacilitator={controlState.canControl}
@@ -598,15 +631,28 @@ export function SharedRoomShell({
             {t("events.backToSessionsCompact")}
           </SecondaryButtonLink>
           {sidebar.event?.lobbyUrl ? (
-            <SecondaryButtonLink
-              href={sidebar.event.lobbyUrl}
-              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
-              aria-label={t("events.backToLobbyCompact")}
-              title={t("events.backToLobbyCompact")}
-              data-testid="back-to-event-lobby-button"
-            >
-              {t("events.backToLobbyCompact")}
-            </SecondaryButtonLink>
+            onReturnToEventLobby ? (
+              <button
+                type="button"
+                className="btn-secondary hidden rounded-lg px-3 py-1.5 text-xs font-semibold sm:inline-flex"
+                aria-label={t("events.backToLobbyCompact")}
+                title={t("events.backToLobbyCompact")}
+                data-testid="back-to-event-lobby-button"
+                onClick={() => void onReturnToEventLobby()}
+              >
+                {t("events.backToLobbyCompact")}
+              </button>
+            ) : (
+              <SecondaryButtonLink
+                href={sidebar.event.lobbyUrl}
+                className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+                aria-label={t("events.backToLobbyCompact")}
+                title={t("events.backToLobbyCompact")}
+                data-testid="back-to-event-lobby-button"
+              >
+                {t("events.backToLobbyCompact")}
+              </SecondaryButtonLink>
+            )
           ) : null}
           {!isDebriefMode ? (
             <GradientButtonLink
@@ -631,6 +677,14 @@ export function SharedRoomShell({
 
         {/* Left column: video + controls */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {showDebriefModeNotice ? (
+            <div
+              className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+              data-testid="debrief-mode-notice"
+            >
+              {t("room.debriefModeNotice")}
+            </div>
+          ) : null}
           {staleConnection ? (
             <div
               className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
@@ -693,6 +747,7 @@ export function SharedRoomShell({
               roomAuth={roomAuth}
               participantType={participantType}
               eventLobbyUrl={sidebar.event?.lobbyUrl}
+              sidebarData={sidebar}
             />
           ) : (
             <RoomSidebar

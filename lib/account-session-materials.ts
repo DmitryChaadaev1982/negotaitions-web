@@ -79,6 +79,7 @@ export type AccountMaterialsData = {
   }>;
   recording: {
     status: string;
+    stopOperationState: string | null;
     fileUrl: string | null;
     updatedAt: string;
     errorMessage: string | null;
@@ -158,6 +159,11 @@ export async function getAccountMaterialsData(
       recording: {
         select: {
           status: true,
+          stopOperation: {
+            select: {
+              state: true,
+            },
+          },
           fileUrl: true,
           updatedAt: true,
           errorMessage: true,
@@ -272,6 +278,7 @@ export async function getAccountMaterialsData(
     recording: sessionData.recording
       ? {
           status: sessionData.recording.status,
+          stopOperationState: sessionData.recording.stopOperation?.state ?? null,
           fileUrl: sessionData.recording.fileUrl,
           updatedAt: sessionData.recording.updatedAt.toISOString(),
           errorMessage: sessionData.recording.errorMessage,

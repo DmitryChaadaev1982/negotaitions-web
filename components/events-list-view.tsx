@@ -31,11 +31,10 @@ import {
 } from "@/app/actions/events";
 
 import {
-  applyEventOverviewStats,
   isEventActiveForPresence,
-  type EventOverviewStats,
 } from "@/lib/event-overview-shared";
-import { PRESENCE_OVERVIEW_POLL_INTERVAL_MS } from "@/lib/presence";
+import { replaceEventListWithPollResponse } from "@/lib/events-list-polling";
+const EVENTS_OVERVIEW_POLL_INTERVAL_MS = 3_000;
 
 type EventRow = {
   id: string;
@@ -178,6 +177,16 @@ function EventActivitySummary({ event }: { event: EventRow }) {
       testId: "event-participants-in-lobby",
     },
     {
+      label: t("events.activityInSessions"),
+      value: active ? event.participantsInActiveSessions : "—",
+      testId: "event-participants-in-active-sessions",
+    },
+    {
+      label: t("events.activityTotal"),
+      value: event.totalSessionParticipantCount,
+      testId: "event-total-assigned-participants",
+    },
+    {
       label: t("events.activitySessions"),
       value: event.totalSessions,
       testId: "event-total-sessions",
@@ -191,16 +200,6 @@ function EventActivitySummary({ event }: { event: EventRow }) {
       label: t("events.finishedSession"),
       value: event.finishedSessions,
       testId: "event-finished-sessions",
-    },
-    {
-      label: t("events.activityInSessions"),
-      value: active ? event.participantsInActiveSessions : "—",
-      testId: "event-participants-in-active-sessions",
-    },
-    {
-      label: t("events.activityTotal"),
-      value: event.totalSessionParticipantCount,
-      testId: "event-total-assigned-participants",
     },
   ];
 
@@ -299,6 +298,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
       ) : null}
       {canCompleteEvent(event) ? (
         <form
+          data-testid="event-complete-list-action"
           action={completeTrainingEventFromList}
           onSubmit={(submitEvent) => {
             if (
@@ -313,7 +313,7 @@ function EventRowActions({ event, copyId, onCopyLink }: {
           <input type="hidden" name="eventId" value={event.id} />
           <ListActionButton
             type="submit"
-            variant="secondary"
+            variant="dangerOutline"
             title={t("events.completeEvent")}
             aria-label={t("events.completeEvent")}
             data-testid="complete-event-button"
@@ -345,12 +345,8 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [eventStats, setEventStats] = useState<EventOverviewStats[]>([]);
+  const [events, setEvents] = useState<EventRow[]>(initialEvents);
   const [copyId, setCopyId] = useState<string | null>(null);
-  const events = useMemo(
-    () => applyEventOverviewStats(initialEvents, eventStats),
-    [eventStats, initialEvents],
-  );
   const query = searchParams.get("q")?.trim() ?? "";
   const statusFilter = parseEventStatusFilter(searchParams.get("status"));
   const visibilityFilter = parseEventVisibilityFilter(searchParams.get("visibility"));
@@ -375,38 +371,53 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    let currentController: AbortController | null = null;
 
-    const refreshStats = async () => {
+    const refreshEvents = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      currentController?.abort();
+      const controller = new AbortController();
+      currentController = controller;
       try {
-        const response = await fetch("/api/events/overview", {
+        const response = await fetch("/api/events/list", {
           cache: "no-store",
+          signal: controller.signal,
         });
-
-        if (!response.ok || cancelled) {
-          return;
-        }
-
-        const data = (await response.json()) as {
-          events: EventOverviewStats[];
-        };
-
-        setEventStats(data.events);
+        if (!response.ok || cancelled) return;
+        const data = (await response.json()) as { events: EventRow[] };
+        setEvents((current) => replaceEventListWithPollResponse(current, data.events));
       } catch {
-        // Ignore transient network errors; the next poll will retry.
+        // Ignore transient polling errors.
+      } finally {
+        inFlight = false;
       }
     };
 
-    void refreshStats();
-
+    void refreshEvents();
     const intervalId = window.setInterval(() => {
-      if (!cancelled) {
-        void refreshStats();
+      if (document.visibilityState === "visible") {
+        void refreshEvents();
       }
-    }, PRESENCE_OVERVIEW_POLL_INTERVAL_MS);
+    }, EVENTS_OVERVIEW_POLL_INTERVAL_MS);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshEvents();
+      }
+    };
+    const handleFocus = () => {
+      void refreshEvents();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
 
     return () => {
       cancelled = true;
+      currentController?.abort();
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 

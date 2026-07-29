@@ -21,13 +21,34 @@ import { getOptionalCurrentUser, type AuthUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { generateJoinToken } from "@/lib/join-token";
 import { prisma } from "@/lib/prisma";
-import { resolveSessionParticipantType } from "@/lib/session-facilitator";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import {
+  canCreateLateObserverParticipant,
+  type LateObserverCreationDenyReason,
+} from "@/lib/session-room-access";
 import { sessionVisibilityWhere } from "@/lib/visibility";
 
-export type RoomParticipantResult = Awaited<
-  ReturnType<typeof getSessionParticipantByJoinToken>
+export type RoomParticipantResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionParticipantByJoinToken>>
 >;
+
+export type EnsureAccountRoomParticipantDeniedCode =
+  | "INACTIVE_USER"
+  | "SESSION_NOT_FOUND"
+  | "EVENT_MEMBERSHIP_REQUIRED"
+  | "LATE_OBSERVER_CREATION_DENIED";
+
+export type EnsureAccountRoomParticipantResult =
+  | {
+      kind: "participant";
+      participant: RoomParticipantResult;
+    }
+  | {
+      kind: "denied";
+      code: EnsureAccountRoomParticipantDeniedCode;
+      reason: LateObserverCreationDenyReason | null;
+      redirectTo: string | null;
+    };
 
 const roomParticipantInclude = {
   session: {
@@ -88,31 +109,19 @@ async function findParticipantForAccount(sessionId: string, userId: string) {
   });
 }
 
-async function resolveEffectiveTypeForSessionParticipant(params: {
-  sessionId: string;
-  sessionFacilitatorId: string | null;
-  participantId: string;
-  participantType: ParticipantType;
+async function findEventParticipantIdForUser(params: {
+  eventId: string;
+  userId: string;
 }) {
-  if (params.participantType !== ParticipantType.FACILITATOR) {
-    return params.participantType;
-  }
-
-  const participants = await prisma.sessionParticipant.findMany({
-    where: { sessionId: params.sessionId },
-    select: {
-      id: true,
-      type: true,
-      userId: true,
-      createdAt: true,
+  const eventParticipant = await prisma.eventParticipant.findFirst({
+    where: {
+      eventId: params.eventId,
+      userId: params.userId,
     },
+    select: { id: true },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
-
-  return resolveSessionParticipantType(
-    { id: params.participantId, type: params.participantType },
-    participants,
-    params.sessionFacilitatorId,
-  );
+  return eventParticipant?.id ?? null;
 }
 
 /**
@@ -125,32 +134,40 @@ async function resolveEffectiveTypeForSessionParticipant(params: {
 export async function ensureAccountRoomParticipant(
   sessionId: string,
   user: AuthUser,
-): Promise<RoomParticipantResult | null> {
+): Promise<EnsureAccountRoomParticipantResult> {
   if (!isActiveAccountUser(user)) {
-    return null;
+    return {
+      kind: "denied",
+      code: "INACTIVE_USER",
+      reason: null,
+      redirectTo: null,
+    };
   }
 
   const existing = await findParticipantForAccount(sessionId, user.id);
   if (existing) {
-    const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-      sessionId,
-      sessionFacilitatorId: existing.session.facilitatorId ?? null,
-      participantId: existing.id,
-      participantType: existing.type,
-    });
-
-    if (
-      existing.type === ParticipantType.FACILITATOR &&
-      effectiveType !== existing.type
-    ) {
-      const updated = await prisma.sessionParticipant.update({
-        where: { id: existing.id },
-        data: { type: effectiveType },
-        include: roomParticipantInclude,
+    if (!existing.eventParticipantId && existing.session.eventId) {
+      const linkedEventParticipantId = await findEventParticipantIdForUser({
+        eventId: existing.session.eventId,
+        userId: user.id,
       });
-      return updated as unknown as RoomParticipantResult;
+      if (linkedEventParticipantId) {
+        const linkedParticipant = await prisma.sessionParticipant.update({
+          where: { id: existing.id },
+          data: { eventParticipantId: linkedEventParticipantId },
+          include: roomParticipantInclude,
+        });
+        return {
+          kind: "participant",
+          participant: linkedParticipant as unknown as RoomParticipantResult,
+        };
+      }
     }
-    return existing as unknown as RoomParticipantResult;
+
+    return {
+      kind: "participant",
+      participant: existing as unknown as RoomParticipantResult,
+    };
   }
 
   const adminUser = isAdmin(user);
@@ -164,32 +181,22 @@ export async function ensureAccountRoomParticipant(
     },
     select: {
       id: true,
-      facilitatorId: true,
-      event: {
-        select: {
-          hostUserId: true,
-          facilitatorUserId: true,
-        },
-      },
+      eventId: true,
     },
   });
 
   if (!session) {
-    return null;
+    return {
+      kind: "denied",
+      code: "SESSION_NOT_FOUND",
+      reason: null,
+      redirectTo: null,
+    };
   }
-
-  const shouldEnterAsFacilitator =
-    session.facilitatorId === user.id ||
-    session.event?.hostUserId === user.id ||
-    session.event?.facilitatorUserId === user.id;
-  // Non-facilitators join as observers by default; facilitator can later promote
-  // them to participant roles from the role management panel.
-  const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "OBSERVER";
-  const displayName = displayNameForUser(user);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const participant = await prisma.$transaction(
+      const participantOrDenied = await prisma.$transaction(
         async (tx) => {
           const existingInTransaction = await tx.sessionParticipant.findFirst({
             where: { sessionId, userId: user.id },
@@ -198,13 +205,139 @@ export async function ensureAccountRoomParticipant(
           });
 
           if (existingInTransaction) {
-            return existingInTransaction;
+            if (
+              !existingInTransaction.eventParticipantId &&
+              existingInTransaction.session.eventId
+            ) {
+              const linkedEventParticipant = await tx.eventParticipant.findFirst({
+                where: {
+                  eventId: existingInTransaction.session.eventId,
+                  userId: user.id,
+                },
+                select: { id: true },
+                orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+              });
+              if (linkedEventParticipant) {
+                const linkedParticipant = await tx.sessionParticipant.update({
+                  where: { id: existingInTransaction.id },
+                  data: { eventParticipantId: linkedEventParticipant.id },
+                  include: roomParticipantInclude,
+                });
+                return {
+                  kind: "participant" as const,
+                  participant: linkedParticipant as unknown as RoomParticipantResult,
+                };
+              }
+            }
+            return {
+              kind: "participant" as const,
+              participant: existingInTransaction as unknown as RoomParticipantResult,
+            };
           }
 
-          return tx.sessionParticipant.create({
+          const sessionForCreation = await tx.session.findUnique({
+            where: { id: sessionId },
+            select: {
+              id: true,
+              eventId: true,
+              facilitatorId: true,
+              status: true,
+              negotiationState: true,
+              roomLifecycle: true,
+              deletedAt: true,
+              closeReason: true,
+              closedByEventAt: true,
+              event: {
+                select: {
+                  status: true,
+                  hostUserId: true,
+                  facilitatorUserId: true,
+                },
+              },
+            },
+          });
+
+          if (!sessionForCreation) {
+            return {
+              kind: "denied" as const,
+              code: "SESSION_NOT_FOUND" as const,
+              reason: null,
+              redirectTo: null,
+            };
+          }
+
+          const linkedEventParticipant = sessionForCreation.eventId
+            ? await tx.eventParticipant.findFirst({
+                where: {
+                  eventId: sessionForCreation.eventId,
+                  userId: user.id,
+                },
+                select: { id: true },
+                orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+              })
+            : null;
+
+          const isEventOwner =
+            sessionForCreation.facilitatorId === user.id ||
+            sessionForCreation.event?.hostUserId === user.id ||
+            sessionForCreation.event?.facilitatorUserId === user.id;
+          const isAuthorizedEventMember = Boolean(
+            adminUser || isEventOwner || linkedEventParticipant,
+          );
+
+          if (sessionForCreation.eventId && !isAuthorizedEventMember) {
+            return {
+              kind: "denied" as const,
+              code: "EVENT_MEMBERSHIP_REQUIRED" as const,
+              reason: null,
+              redirectTo: null,
+            };
+          }
+
+          const lateObserverDecision = canCreateLateObserverParticipant({
+            event: {
+              status: sessionForCreation.event?.status ?? null,
+            },
+            user: {
+              isAuthenticated: true,
+              isAuthorizedMember: sessionForCreation.eventId
+                ? isAuthorizedEventMember
+                : true,
+            },
+            session: {
+              sessionId,
+              eventId: sessionForCreation.eventId,
+              status: sessionForCreation.status,
+              negotiationState: sessionForCreation.negotiationState,
+              roomLifecycle: sessionForCreation.roomLifecycle,
+              deletedAt: sessionForCreation.deletedAt,
+              closeReason: sessionForCreation.closeReason,
+              closedByEventAt: sessionForCreation.closedByEventAt,
+              eventStatus: sessionForCreation.event?.status ?? null,
+            },
+            existingSessionParticipant: false,
+          });
+          if (!lateObserverDecision.allowed) {
+            return {
+              kind: "denied" as const,
+              code: "LATE_OBSERVER_CREATION_DENIED" as const,
+              reason: lateObserverDecision.reason,
+              redirectTo: lateObserverDecision.accessDecision?.redirectTo ?? null,
+            };
+          }
+
+          const shouldEnterAsFacilitator =
+            sessionForCreation.facilitatorId === user.id;
+          // Non-facilitators join as observers by default; facilitator can later promote
+          // them to participant roles from the role management panel.
+          const participantType = shouldEnterAsFacilitator ? "FACILITATOR" : "OBSERVER";
+          const displayName = displayNameForUser(user);
+
+          const createdParticipant = await tx.sessionParticipant.create({
             data: {
               sessionId,
               userId: user.id,
+              eventParticipantId: linkedEventParticipant?.id ?? null,
               displayName,
               type: participantType,
               joinToken: generateJoinToken(),
@@ -213,11 +346,15 @@ export async function ensureAccountRoomParticipant(
             },
             include: roomParticipantInclude,
           });
+          return {
+            kind: "participant" as const,
+            participant: createdParticipant as unknown as RoomParticipantResult,
+          };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
 
-      return participant as unknown as RoomParticipantResult;
+      return participantOrDenied;
     } catch (error) {
       if (isSerializableConflict(error) && attempt === 0) {
         continue;
@@ -226,10 +363,22 @@ export async function ensureAccountRoomParticipant(
     }
   }
 
-  return findParticipantForAccount(
+  const fallback = await findParticipantForAccount(
     sessionId,
     user.id,
-  ) as Promise<RoomParticipantResult | null>;
+  );
+  if (!fallback) {
+    return {
+      kind: "denied",
+      code: "SESSION_NOT_FOUND",
+      reason: null,
+      redirectTo: null,
+    };
+  }
+  return {
+    kind: "participant",
+    participant: fallback as unknown as RoomParticipantResult,
+  };
 }
 
 /**
@@ -323,16 +472,9 @@ async function resolveByJoinToken(
     return null;
   }
 
-  const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-    sessionId,
-    sessionFacilitatorId: participant.session.facilitatorId ?? null,
-    participantId: participant.id,
-    participantType: participant.type,
-  });
-
   return {
     ...participant,
-    type: effectiveType,
+    type: participant.type,
   } as RoomParticipantResult;
 }
 
@@ -379,16 +521,9 @@ async function resolveByParticipantId(
   }
 
   // Cast to the same return type as getSessionParticipantByJoinToken
-  const effectiveType = await resolveEffectiveTypeForSessionParticipant({
-    sessionId,
-    sessionFacilitatorId: participant.session.facilitatorId ?? null,
-    participantId: participant.id,
-    participantType: participant.type,
-  });
-
   return {
     ...participant,
-    type: effectiveType,
+    type: participant.type,
   } as unknown as RoomParticipantResult;
 }
 

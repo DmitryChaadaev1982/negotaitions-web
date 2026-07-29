@@ -1,4 +1,6 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
+import { prisma } from "@/lib/prisma";
+import { isAssignableCaseRole } from "@/lib/case-roles";
 
 type FacilitatorCandidate = {
   id: string;
@@ -59,19 +61,184 @@ export function resolveSessionParticipantType(
   participants: FacilitatorCandidate[],
   sessionFacilitatorUserId: string | null,
 ): ParticipantType {
-  if (participant.type !== ParticipantType.FACILITATOR) {
-    return participant.type;
-  }
+  void participants;
+  void sessionFacilitatorUserId;
+  // Never silently rewrite facilitator rows at read time.
+  // Facilitator changes must go through the explicit reassignment service.
+  return participant.type;
+}
 
-  const canonicalFacilitatorId = resolveCanonicalFacilitatorParticipantId(
-    participants,
-    sessionFacilitatorUserId,
-  );
-  if (!canonicalFacilitatorId) {
-    return participant.type;
-  }
+export type FacilitatorFallbackType = "PARTICIPANT" | "OBSERVER";
 
-  return participant.id === canonicalFacilitatorId
-    ? ParticipantType.FACILITATOR
-    : ParticipantType.OBSERVER;
+export type ReassignSessionFacilitatorParams = {
+  sessionId: string;
+  nextFacilitatorParticipantId: string;
+  previousFacilitatorType: FacilitatorFallbackType;
+  previousFacilitatorSessionRoleId?: string | null;
+};
+
+export type ReassignSessionFacilitatorResult =
+  | {
+      ok: true;
+      changed: boolean;
+      facilitatorParticipantId: string;
+      facilitatorUserId: string;
+      previousFacilitatorParticipantId: string | null;
+    }
+  | {
+      ok: false;
+      error:
+        | "sessionNotFound"
+        | "participantNotFound"
+        | "participantMustBeAccountBound"
+        | "ambiguousFacilitatorState"
+        | "invalidPreviousFacilitatorRole"
+        | "previousFacilitatorRoleConflict"
+        | "previousFacilitatorRoleNotAssignable";
+    };
+
+export async function reassignSessionFacilitator(
+  params: ReassignSessionFacilitatorParams,
+): Promise<ReassignSessionFacilitatorResult> {
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.session.findUnique({
+      where: { id: params.sessionId },
+      select: { id: true, facilitatorId: true, deletedAt: true },
+    });
+    if (!session || session.deletedAt) {
+      return { ok: false, error: "sessionNotFound" };
+    }
+
+    const participants = await tx.sessionParticipant.findMany({
+      where: { sessionId: params.sessionId },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        sessionRoleId: true,
+        createdAt: true,
+      },
+    });
+
+    const nextFacilitator = participants.find(
+      (participant) => participant.id === params.nextFacilitatorParticipantId,
+    );
+    if (!nextFacilitator) {
+      return { ok: false, error: "participantNotFound" };
+    }
+    if (!nextFacilitator.userId) {
+      return { ok: false, error: "participantMustBeAccountBound" };
+    }
+
+    const canonicalFacilitatorParticipantId =
+      resolveCanonicalFacilitatorParticipantId(
+        participants,
+        session.facilitatorId,
+      );
+    const canonicalFacilitator = canonicalFacilitatorParticipantId
+      ? participants.find(
+          (participant) => participant.id === canonicalFacilitatorParticipantId,
+        ) ?? null
+      : null;
+
+    const additionalFacilitators = participants.filter(
+      (participant) =>
+        participant.type === ParticipantType.FACILITATOR &&
+        participant.id !== nextFacilitator.id &&
+        participant.id !== canonicalFacilitator?.id,
+    );
+    if (additionalFacilitators.length > 0) {
+      return { ok: false, error: "ambiguousFacilitatorState" };
+    }
+
+    const sameFacilitator =
+      canonicalFacilitator?.id === nextFacilitator.id &&
+      session.facilitatorId === nextFacilitator.userId;
+    if (sameFacilitator) {
+      return {
+        ok: true,
+        changed: false,
+        facilitatorParticipantId: nextFacilitator.id,
+        facilitatorUserId: nextFacilitator.userId,
+        previousFacilitatorParticipantId: canonicalFacilitator?.id ?? null,
+      };
+    }
+
+    if (params.previousFacilitatorType === "OBSERVER") {
+      if (params.previousFacilitatorSessionRoleId) {
+        return { ok: false, error: "invalidPreviousFacilitatorRole" };
+      }
+    } else if (params.previousFacilitatorSessionRoleId) {
+      const selectedRole = await tx.sessionRole.findFirst({
+        where: {
+          id: params.previousFacilitatorSessionRoleId,
+          sessionId: params.sessionId,
+        },
+        select: { id: true, name: true },
+      });
+      if (!selectedRole) {
+        return { ok: false, error: "invalidPreviousFacilitatorRole" };
+      }
+      if (!isAssignableCaseRole(selectedRole.name)) {
+        return { ok: false, error: "previousFacilitatorRoleNotAssignable" };
+      }
+      const conflictingParticipant = await tx.sessionParticipant.findFirst({
+        where: {
+          sessionId: params.sessionId,
+          type: ParticipantType.PARTICIPANT,
+          sessionRoleId: selectedRole.id,
+          id: {
+            notIn: [
+              canonicalFacilitator?.id ?? "",
+              nextFacilitator.id,
+            ],
+          },
+        },
+        select: { id: true },
+      });
+      if (conflictingParticipant) {
+        return { ok: false, error: "previousFacilitatorRoleConflict" };
+      }
+    }
+
+    await tx.session.update({
+      where: { id: params.sessionId },
+      data: { facilitatorId: nextFacilitator.userId },
+    });
+
+    await tx.sessionParticipant.update({
+      where: { id: nextFacilitator.id },
+      data: {
+        type: ParticipantType.FACILITATOR,
+        sessionRoleId: null,
+      },
+    });
+
+    if (
+      canonicalFacilitator &&
+      canonicalFacilitator.id !== nextFacilitator.id
+    ) {
+      await tx.sessionParticipant.update({
+        where: { id: canonicalFacilitator.id },
+        data:
+          params.previousFacilitatorType === "PARTICIPANT"
+            ? {
+                type: ParticipantType.PARTICIPANT,
+                sessionRoleId: params.previousFacilitatorSessionRoleId ?? null,
+              }
+            : {
+                type: ParticipantType.OBSERVER,
+                sessionRoleId: null,
+              },
+      });
+    }
+
+    return {
+      ok: true,
+      changed: true,
+      facilitatorParticipantId: nextFacilitator.id,
+      facilitatorUserId: nextFacilitator.userId,
+      previousFacilitatorParticipantId: canonicalFacilitator?.id ?? null,
+    };
+  });
 }

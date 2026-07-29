@@ -8,6 +8,7 @@ import {
 } from "@/lib/event-overview-shared";
 import { normalizeUserEmail } from "@/lib/invite-email";
 import { prisma } from "@/lib/prisma";
+import { derivePresenceBuckets } from "@/lib/event-presence-buckets";
 import { eventVisibilityWhere } from "@/lib/visibility";
 
 export type { EventOverviewStats, TrainingEventListItem } from "@/lib/event-overview-shared";
@@ -38,66 +39,6 @@ function isFinishedSession(session: {
     session.negotiationState === NegotiationState.FINISHED ||
     session.status === "COMPLETED"
   );
-}
-
-function countUniqueSessionParticipants(
-  sessions: Array<{
-    participants: Array<{
-      id: string;
-      eventParticipantId: string | null;
-    }>;
-  }>,
-) {
-  const participated = new Set<string>();
-
-  for (const session of sessions) {
-    for (const participant of session.participants) {
-      participated.add(participant.eventParticipantId ?? participant.id);
-    }
-  }
-
-  return participated.size;
-}
-
-function countParticipantsInLobby(
-  participants: Array<{ id: string }>,
-  sessions: Array<{
-    closedByEventAt: Date | null;
-    negotiationState: NegotiationState;
-    status: string;
-    participants: Array<{ eventParticipantId: string | null }>;
-  }>,
-) {
-  const activeAssignmentIds = new Set<string>();
-
-  for (const session of sessions.filter(isActiveSession)) {
-    for (const participant of session.participants) {
-      if (participant.eventParticipantId) {
-        activeAssignmentIds.add(participant.eventParticipantId);
-      }
-    }
-  }
-
-  return participants.filter((participant) => !activeAssignmentIds.has(participant.id)).length;
-}
-
-function countActiveSessionParticipants(
-  sessions: Array<{
-    closedByEventAt: Date | null;
-    negotiationState: NegotiationState;
-    status: string;
-    participants: Array<{ eventParticipantId: string | null; id: string }>;
-  }>,
-) {
-  const activeParticipantIds = new Set<string>();
-
-  for (const session of sessions.filter(isActiveSession)) {
-    for (const participant of session.participants) {
-      activeParticipantIds.add(participant.eventParticipantId ?? participant.id);
-    }
-  }
-
-  return activeParticipantIds.size;
 }
 
 function latestActivityIso(dates: Array<Date | null | undefined>) {
@@ -145,6 +86,7 @@ export async function getEventsForUser(
       participants: {
         select: {
           id: true,
+          userId: true,
           // participantToken intentionally omitted — do not expose in list data.
           isHost: true,
           lastSeenAt: true,
@@ -155,6 +97,7 @@ export async function getEventsForUser(
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
+          title: true,
           closedByEventAt: true,
           negotiationState: true,
           status: true,
@@ -174,6 +117,17 @@ export async function getEventsForUser(
               lastSeenAt: true,
             },
           },
+          roomConnections: {
+            select: {
+              userId: true,
+              sessionId: true,
+              disconnectedAt: true,
+              supersededAt: true,
+              revokedAt: true,
+              expiresAt: true,
+              updatedAt: true,
+            },
+          },
         },
       },
     },
@@ -183,12 +137,17 @@ export async function getEventsForUser(
     const presenceActive = isEventActiveForPresence(event.status);
     const activeSessions = event.sessions.filter(isActiveSession).length;
     const finishedSessions = event.sessions.filter(isFinishedSession).length;
-    const participantsInLobby = countParticipantsInLobby(
-      event.participants,
-      event.sessions,
-    );
-    const participantsInActiveSessions = countActiveSessionParticipants(event.sessions);
-    const uniqueParticipantsWithSessions = countUniqueSessionParticipants(event.sessions);
+    const presence = derivePresenceBuckets({
+      participants: event.participants,
+      sessionConnections: event.sessions.flatMap((session) =>
+        session.roomConnections.map((connection) => ({
+          ...connection,
+          sessionTitle: session.title,
+        })),
+      ),
+    });
+    const participantsInLobby = presence.lobbyCount;
+    const participantsInActiveSessions = presence.inSessionCount;
     const recordingsCount = event.sessions.filter((session) => session.recording).length;
     const transcriptsCount = event.sessions.filter((session) => session.transcript).length;
     const latestActivityAt = latestActivityIso([
@@ -232,14 +191,14 @@ export async function getEventsForUser(
       participantsInActiveSessions: presenceActive
         ? participantsInActiveSessions
         : 0,
-      uniqueParticipantsWithSessions,
+      uniqueParticipantsWithSessions: presence.totalParticipantsCount,
       recordingsCount,
       transcriptsCount,
       latestActivityAt,
       activeSessionParticipantCount: presenceActive
         ? participantsInActiveSessions
         : 0,
-      totalSessionParticipantCount: uniqueParticipantsWithSessions,
+      totalSessionParticipantCount: presence.totalParticipantsCount,
     };
   });
 }

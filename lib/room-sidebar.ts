@@ -3,7 +3,7 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import { getEventLobbyUrl } from "@/lib/config";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { prisma } from "@/lib/prisma";
-import { resolveSessionParticipantType } from "@/lib/session-facilitator";
+import { summarizeLogicalPresenceByUser } from "@/lib/session-room-logical-presence";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import { getSessionMediaStatusMap } from "@/lib/voximplant/media-status-store";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -115,23 +115,30 @@ async function buildRoomSidebarData(
     }
   }
 
-  const normalizedTypeByParticipantId = new Map<string, ParticipantType>();
-  for (const sessionParticipant of participant.session.participants) {
-    normalizedTypeByParticipantId.set(
-      sessionParticipant.id,
-      resolveSessionParticipantType(
-        {
-          id: sessionParticipant.id,
-          type: sessionParticipant.type,
-        },
-        participant.session.participants,
-        participant.session.facilitatorId ?? null,
-      ),
-    );
-  }
+  const logicalPresenceByUserId =
+    userIds.length > 0
+      ? summarizeLogicalPresenceByUser(
+          await prisma.sessionRoomConnection.findMany({
+            where: {
+              sessionId: participant.sessionId,
+              userId: { in: userIds },
+            },
+            select: {
+              userId: true,
+              connectionId: true,
+              leaseVersion: true,
+              disconnectedAt: true,
+              disconnectedReason: true,
+              supersededAt: true,
+              revokedAt: true,
+              expiresAt: true,
+              updatedAt: true,
+            },
+          }),
+        )
+      : new Map();
 
-  const currentParticipantEffectiveType =
-    normalizedTypeByParticipantId.get(participant.id) ?? participant.type;
+  const currentParticipantEffectiveType = participant.type;
   const mediaStatusByParticipantId = await getSessionMediaStatusMap(participant.sessionId);
 
   const facilitatorBriefings =
@@ -149,6 +156,19 @@ async function buildRoomSidebarData(
       : [];
 
   const roster = participant.session.participants.map((sessionParticipant) => ({
+    ...(sessionParticipant.userId
+      ? (() => {
+          const logicalPresence = logicalPresenceByUserId.get(sessionParticipant.userId) ?? null;
+          if (!logicalPresence) {
+            return {};
+          }
+          return {
+            isLogicallyPresent: logicalPresence.isActive,
+            logicalDisconnectReason: logicalPresence.inactiveReason,
+            logicalConnectionId: logicalPresence.activeConnectionId,
+          };
+        })()
+      : {}),
     ...(mediaStatusByParticipantId[sessionParticipant.id]
       ? {
           micEnabled: mediaStatusByParticipantId[sessionParticipant.id]?.micEnabled ?? null,
@@ -159,9 +179,7 @@ async function buildRoomSidebarData(
       : {}),
     id: sessionParticipant.id,
     displayName: sessionParticipant.displayName,
-    participantType:
-      normalizedTypeByParticipantId.get(sessionParticipant.id) ??
-      sessionParticipant.type,
+    participantType: sessionParticipant.type,
     caseRoleName: sessionParticipant.sessionRole?.name ?? null,
     userId: sessionParticipant.userId ?? null,
     voximplantProviderUsername: sessionParticipant.userId
@@ -171,10 +189,9 @@ async function buildRoomSidebarData(
     lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
     // Phase 6.11B: expose sessionRoleId only; no private briefing data.
     sessionRoleId:
-      (normalizedTypeByParticipantId.get(sessionParticipant.id) ??
-        sessionParticipant.type) === ParticipantType.PARTICIPANT
-      ? (sessionParticipant.sessionRoleId ?? null)
-      : undefined,
+      sessionParticipant.type === ParticipantType.PARTICIPANT
+        ? (sessionParticipant.sessionRoleId ?? null)
+        : undefined,
   }));
 
   // Phase 6.11B: for facilitators, include assignable session roles for role management panel.

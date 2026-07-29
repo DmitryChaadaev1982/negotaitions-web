@@ -2,6 +2,7 @@ import { loadEnvConfig } from "@next/env";
 import { parseArgs } from "node:util";
 
 import {
+  runVoximplantCallbackNonceCleanup,
   runRecordingStopDeliverySweep,
   runRoomLifecycleBackfill,
   runSessionConnectionExpirySweep,
@@ -10,7 +11,13 @@ import {
 
 loadEnvConfig(process.cwd());
 
-type TaskName = "all" | "expiry" | "recording-stop" | "backfill" | "verify-backfill";
+type TaskName =
+  | "all"
+  | "expiry"
+  | "recording-stop"
+  | "nonce-cleanup"
+  | "backfill"
+  | "verify-backfill";
 
 type CliValues = {
   task?: TaskName;
@@ -50,7 +57,16 @@ async function main() {
   const batchSize = parseNumber(args["batch-size"], 500);
   const cursorAfterId = args["cursor-after-id"]?.trim() || null;
 
-  if (!["all", "expiry", "recording-stop", "backfill", "verify-backfill"].includes(task)) {
+  if (
+    ![
+      "all",
+      "expiry",
+      "recording-stop",
+      "nonce-cleanup",
+      "backfill",
+      "verify-backfill",
+    ].includes(task)
+  ) {
     throw new Error(`Unsupported --task value: ${task}`);
   }
 
@@ -65,6 +81,9 @@ async function main() {
   }
   if (task === "all" || task === "recording-stop") {
     output.recordingStop = await runRecordingStopDeliverySweep({ dryRun, limit });
+  }
+  if (task === "all" || task === "nonce-cleanup") {
+    output.nonceCleanup = await runVoximplantCallbackNonceCleanup({ dryRun });
   }
   if (task === "all" || task === "backfill") {
     output.backfill = await runRoomLifecycleBackfill({

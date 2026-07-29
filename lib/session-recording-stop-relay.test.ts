@@ -8,6 +8,7 @@ import {
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
 import {
+  isBrowserStopRelayEnabledForMode,
   isRelayEligibleParticipantType,
   isRelayStoppableRecordingStatus,
   isRelayTerminalRecordingStatus,
@@ -21,6 +22,18 @@ test("relay eligibility allows facilitator, participant, observer", () => {
   assert.equal(isRelayEligibleParticipantType(ParticipantType.FACILITATOR), true);
   assert.equal(isRelayEligibleParticipantType(ParticipantType.PARTICIPANT), true);
   assert.equal(isRelayEligibleParticipantType(ParticipantType.OBSERVER), true);
+});
+
+test("browser stop relay follows configured server-stop mode", () => {
+  assert.equal(isBrowserStopRelayEnabledForMode("disabled"), true);
+  assert.equal(
+    isBrowserStopRelayEnabledForMode("prefer_server_with_relay_fallback"),
+    true,
+  );
+  assert.equal(
+    isBrowserStopRelayEnabledForMode("prefer_server_no_relay_fallback"),
+    false,
+  );
 });
 
 test("relay stoppable statuses include starting policy", () => {

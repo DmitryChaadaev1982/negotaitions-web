@@ -3,8 +3,8 @@ import "server-only";
 import { Prisma, ParticipantType } from "@/app/generated/prisma/client";
 import { PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
+import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
-import { closeDebriefRoomIfEmpty } from "@/lib/session-room-occupancy";
 
 type ClaimResult = {
   activeConnectionId: string;
@@ -19,10 +19,19 @@ type ValidateResult = {
   version: number;
 };
 
+export type SessionRoomConnectionFinalState =
+  | "DISCONNECTED"
+  | "SUPERSEDED"
+  | "REVOKED"
+  | "EXPIRED"
+  | "ACTIVE"
+  | "NOT_FOUND";
+
 type DisconnectResult = {
   disconnected: boolean;
   alreadyFinalized: boolean;
   roomClosed: boolean;
+  finalState: SessionRoomConnectionFinalState;
 };
 
 const LEASE_EXPIRY_GRACE_MS = PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS;
@@ -76,6 +85,25 @@ function isUniqueConstraintError(error: unknown) {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
   );
+}
+
+function deriveConnectionFinalState(
+  row:
+    | {
+        disconnectedAt: Date | null;
+        supersededAt: Date | null;
+        revokedAt: Date | null;
+        expiresAt: Date;
+      }
+    | null,
+  now: Date,
+): SessionRoomConnectionFinalState {
+  if (!row) return "NOT_FOUND";
+  if (row.disconnectedAt) return "DISCONNECTED";
+  if (row.supersededAt) return "SUPERSEDED";
+  if (row.revokedAt) return "REVOKED";
+  if (row.expiresAt <= now) return "EXPIRED";
+  return "ACTIVE";
 }
 
 export function activeHumanSessionConnectionWhere(params: {
@@ -398,21 +426,96 @@ export async function disconnectSessionRoomConnectionLease(params: {
     },
   });
 
-  const roomClosure = await closeDebriefRoomIfEmpty(params.sessionId);
+  const targetConnection = await prisma.sessionRoomConnection.findFirst({
+    where: {
+      sessionId: params.sessionId,
+      userId: params.userId,
+      connectionId: params.connectionId,
+    },
+    select: {
+      disconnectedAt: true,
+      supersededAt: true,
+      revokedAt: true,
+      expiresAt: true,
+    },
+  });
+  const finalState = deriveConnectionFinalState(targetConnection, now);
+
+  const reconciliation = await reconcileSessionAfterOccupancyChange({
+    sessionId: params.sessionId,
+  });
   const logPayload = {
     area: "room_occupancy",
     event: updated.count > 0 ? "connection_disconnected" : "connection_disconnect_skipped",
     sessionId: params.sessionId,
     connectionId: params.connectionId,
-    roomClosed: roomClosure.closed,
-    roomClosureReason: roomClosure.reason,
-    activeConnectionCount: roomClosure.activeConnectionCount,
+    roomClosed: reconciliation.roomClosed,
+    roomClosureReason: reconciliation.roomClosureReason,
+    roomClosureActiveConnectionCount:
+      reconciliation.roomClosureActiveConnectionCount,
+    sessionCompleted: reconciliation.sessionCompleted,
+    sessionAlreadyCompleted: reconciliation.alreadyCompleted,
+    completionReason: reconciliation.completionReason,
+    graceRemainingMs: reconciliation.graceRemainingMs,
+    activeConnectionCount: reconciliation.activeConnectionCount,
   };
   console.log(JSON.stringify(logPayload));
 
   return {
     disconnected: updated.count > 0,
     alreadyFinalized: updated.count === 0,
-    roomClosed: roomClosure.closed,
+    roomClosed: reconciliation.roomClosed,
+    finalState,
+  };
+}
+
+export async function disconnectSessionRoomConnectionLeaseByConnectionId(params: {
+  sessionId: string;
+  connectionId: string;
+  reason?: string;
+}): Promise<DisconnectResult> {
+  const now = new Date();
+  const reason = params.reason ?? "EXPLICIT_LEAVE";
+
+  const updated = await prisma.sessionRoomConnection.updateMany({
+    where: {
+      sessionId: params.sessionId,
+      connectionId: params.connectionId,
+      disconnectedAt: null,
+      supersededAt: null,
+      revokedAt: null,
+      expiresAt: {
+        gt: now,
+      },
+    },
+    data: {
+      disconnectedAt: now,
+      disconnectedReason: reason,
+    },
+  });
+
+  const targetConnection = await prisma.sessionRoomConnection.findFirst({
+    where: {
+      sessionId: params.sessionId,
+      connectionId: params.connectionId,
+    },
+    select: {
+      disconnectedAt: true,
+      supersededAt: true,
+      revokedAt: true,
+      expiresAt: true,
+    },
+  });
+  const finalState = deriveConnectionFinalState(targetConnection, now);
+
+  const reconciliation = await reconcileSessionAfterOccupancyChange({
+    sessionId: params.sessionId,
+  });
+
+  return {
+    disconnected: updated.count > 0,
+    alreadyFinalized: updated.count === 0,
+    roomClosed: reconciliation.roomClosed,
+    finalState,
   };
 }

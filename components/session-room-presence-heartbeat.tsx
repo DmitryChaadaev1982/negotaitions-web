@@ -10,19 +10,50 @@ type SessionRoomPresenceHeartbeatProps = {
   sessionId: string;
   roomAuth: RoomAuthToken;
   connectionId?: string;
+  enabled?: boolean;
   onInvalidToken?: () => void;
   onStaleConnection?: () => void;
 };
+
+export function createHeartbeatStaleGate(onStaleConnection?: () => void) {
+  let stale = false;
+  return {
+    isStale() {
+      return stale;
+    },
+    markStale() {
+      if (stale) return false;
+      stale = true;
+      onStaleConnection?.();
+      return true;
+    },
+  };
+}
 
 export function SessionRoomPresenceHeartbeat({
   sessionId,
   roomAuth,
   connectionId,
+  enabled = true,
   onInvalidToken,
   onStaleConnection,
 }: SessionRoomPresenceHeartbeatProps) {
   useEffect(() => {
+    if (!enabled) return;
+
     let cancelled = false;
+    const staleGate = createHeartbeatStaleGate(onStaleConnection);
+    let intervalId: number | null = null;
+    let handleVisibilityChange: () => void = () => undefined;
+
+    const stopLoop = () => {
+      cancelled = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
 
     const heartbeatUrl = `/api/sessions/${sessionId}/heartbeat`;
 
@@ -40,7 +71,9 @@ export function SessionRoomPresenceHeartbeat({
           return;
         }
         if (response.status === 409 && !cancelled) {
-          onStaleConnection?.();
+          if (staleGate.markStale()) {
+            stopLoop();
+          }
         }
       } catch {
         // Ignore transient network errors; the next heartbeat will retry.
@@ -49,14 +82,14 @@ export function SessionRoomPresenceHeartbeat({
 
     void sendHeartbeat();
 
-    const intervalId = window.setInterval(() => {
-      if (!cancelled) {
+    intervalId = window.setInterval(() => {
+      if (!cancelled && !staleGate.isStale()) {
         void sendHeartbeat();
       }
     }, PRESENCE_HEARTBEAT_INTERVAL_MS);
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible" && !cancelled) {
+    handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !cancelled && !staleGate.isStale()) {
         void sendHeartbeat();
       }
     };
@@ -64,11 +97,9 @@ export function SessionRoomPresenceHeartbeat({
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stopLoop();
     };
-  }, [connectionId, roomAuth, onInvalidToken, onStaleConnection, sessionId]);
+  }, [connectionId, enabled, roomAuth, onInvalidToken, onStaleConnection, sessionId]);
 
   return null;
 }

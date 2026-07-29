@@ -36,6 +36,12 @@ import {
   getRoomClosureRedirectFromConflict,
   isStaleConnectionResponse,
 } from "@/lib/client/stale-connection";
+import {
+  persistExplicitRoomLeave,
+  type ExplicitLeaveFailure,
+  type ExplicitLeaveResult,
+} from "@/lib/client/explicit-room-leave";
+import { runExplicitLeaveSequence } from "@/lib/client/explicit-room-leave-sequence";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -80,17 +86,25 @@ function LeaveRoomButton({
 }: {
   sessionId: string;
   materialsUrl: string;
-  onExplicitLeave: () => Promise<void>;
+  onExplicitLeave: () => Promise<ExplicitLeaveResult>;
 }) {
   const router = useRouter();
   const room = useRoomContext();
   const { t } = useI18n();
 
   const handleLeave = useCallback(async () => {
-    await onExplicitLeave();
-    void room.disconnect();
-    markSessionLeftFlag(sessionId);
-    router.push(materialsUrl);
+    await runExplicitLeaveSequence({
+      persistLeave: onExplicitLeave,
+      markLocalInactive: () => {
+        markSessionLeftFlag(sessionId);
+      },
+      disconnectProvider: async () => {
+        await room.disconnect();
+      },
+      navigate: () => {
+        router.push(materialsUrl);
+      },
+    });
   }, [materialsUrl, onExplicitLeave, room, router, sessionId]);
 
   return (
@@ -139,30 +153,72 @@ function ConnectedRoom({
   staleConnection: boolean;
 }) {
   const router = useRouter();
+  const { t } = useI18n();
   const leaveInFlightRef = useRef(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
 
-  const performExplicitLeave = useCallback(async () => {
+  const leaveFailureMessage = useCallback(
+    (failure: ExplicitLeaveFailure) => {
+      if (failure.reason === "timeout") {
+        return t("room.leavePersistenceTimedOut");
+      }
+      if (failure.reason === "stale_connection") {
+        return t("room.thisTabIsStale");
+      }
+      return t("room.unableToPersistLeave");
+    },
+    [t],
+  );
+
+  const persistExplicitLeave = useCallback(async (): Promise<ExplicitLeaveResult> => {
     if (leaveInFlightRef.current || !roomConnectionId) {
-      return;
+      const failure: ExplicitLeaveFailure = {
+        ok: false,
+        reason: "not_persisted",
+        statusCode: null,
+        finalState: "UNKNOWN",
+        error: null,
+      };
+      setLeaveError(leaveFailureMessage(failure));
+      return failure;
     }
     leaveInFlightRef.current = true;
+    setLeaveError(null);
     try {
-      await fetch(`/api/sessions/${sessionId}/presence/leave`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(roomAuthBody(roomAuth, { connectionId: roomConnectionId })),
-        keepalive: true,
+      const result = await persistExplicitRoomLeave({
+        sessionId,
+        body: roomAuthBody(roomAuth, { connectionId: roomConnectionId }),
+        timeoutMs: 3000,
       });
-    } catch {
-      // Best-effort explicit leave. Expiry sweep still guarantees eventual cleanup.
+      if (!result.ok) {
+        setLeaveError(leaveFailureMessage(result));
+      }
+      return result;
+    } finally {
+      leaveInFlightRef.current = false;
     }
-  }, [roomAuth, roomConnectionId, sessionId]);
+  }, [
+    leaveFailureMessage,
+    roomAuth,
+    roomConnectionId,
+    sessionId,
+  ]);
 
   const handleLeave = useCallback(async () => {
-    await performExplicitLeave();
-    markSessionLeftFlag(sessionId);
-    router.push(materialsUrl);
-  }, [materialsUrl, performExplicitLeave, router, sessionId]);
+    await runExplicitLeaveSequence({
+      persistLeave: persistExplicitLeave,
+      markLocalInactive: () => {
+        markSessionLeftFlag(sessionId);
+      },
+      disconnectProvider: async () => {
+        // Navigation unmounts LiveKitRoom and tears down the provider only
+        // after the persisted leave has succeeded.
+      },
+      navigate: () => {
+        router.push(materialsUrl);
+      },
+    });
+  }, [materialsUrl, persistExplicitLeave, router, sessionId]);
 
   const handleManualRejoin = useCallback(() => {
     router.push("/rejoin");
@@ -183,6 +239,14 @@ function ConnectedRoom({
       className="flex h-dvh flex-col overflow-hidden bg-slate-950"
       data-testid="session-room-page"
     >
+      {leaveError ? (
+        <div
+          className="border-b border-rose-500/30 bg-rose-950/70 px-4 py-2 text-center text-sm text-rose-200"
+          data-testid="room-leave-error"
+        >
+          {leaveError}
+        </div>
+      ) : null}
       <SharedRoomShell
         sessionId={sessionId}
         roomAuth={roomAuth}
@@ -229,7 +293,7 @@ function ConnectedRoom({
           <LeaveRoomButton
             sessionId={sessionId}
             materialsUrl={materialsUrl}
-            onExplicitLeave={performExplicitLeave}
+            onExplicitLeave={persistExplicitLeave}
           />
         }
         // LiveKit has no media warnings via this channel (managed by LiveKit components)
@@ -421,7 +485,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
   }, [activateStaleConnection, roomAuth, sessionId, roomConnectionId, t]);
 
   useEffect(() => {
-    if (!roomConnectionId || staleConnection || isLoading || error) {
+    if (!roomConnectionId || isLoading || error) {
       return;
     }
 
@@ -429,15 +493,18 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       touchRecoveryContext();
 
       try {
-        const [controlResponse, sidebarResponse] = await Promise.all([
-          fetch(
-            `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
-            { cache: "no-store" },
-          ),
-          fetch(`/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`, {
-            cache: "no-store",
-          }),
-        ]);
+        const controlResponse = await fetch(
+          `/api/sessions/${sessionId}/control-state?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
+          { cache: "no-store" },
+        );
+        const sidebarResponse = staleConnection
+          ? null
+          : await fetch(
+              `/api/livekit/sidebar?${roomAuthQuery(roomAuth, { connectionId: roomConnectionId ?? undefined })}`,
+              {
+                cache: "no-store",
+              },
+            );
 
         if (controlResponse.ok) {
           const nextState = (await controlResponse.json()) as RoomControlPayload;
@@ -459,12 +526,12 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
           }
         }
 
-        if (sidebarResponse.ok) {
+        if (sidebarResponse?.ok) {
           const nextSidebar = (await sidebarResponse.json()) as RoomSidebarData;
           setSidebar(nextSidebar);
-        } else if (await isStaleConnectionResponse(sidebarResponse)) {
+        } else if (sidebarResponse && (await isStaleConnectionResponse(sidebarResponse))) {
           activateStaleConnection();
-        } else {
+        } else if (sidebarResponse) {
           const redirectTarget =
             await getRoomClosureRedirectFromConflict(sidebarResponse);
           if (redirectTarget) {

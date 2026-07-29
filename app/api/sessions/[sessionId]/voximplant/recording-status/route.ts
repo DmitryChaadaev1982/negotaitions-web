@@ -140,6 +140,9 @@ async function reconcileStopOperationsAfterRecordingUpdate(
       state: {
         in: ["PENDING", "DELIVERING", "FAILED"],
       },
+      // Server-control path requires dedicated provider-terminal callback evidence.
+      // Recording-status webhooks remain a supporting signal for legacy/browser relay.
+      providerSessionIdAtCommand: null,
     },
     data: {
       state: "DELIVERED",
@@ -347,7 +350,7 @@ export async function POST(request: Request, context: RouteContext) {
                 : undefined,
           errorMessage:
             targetStatus === RecordingStatus.FAILED
-              ? (payload.message ?? payload.errorCode ?? "Recording failed.")
+              ? (payload.errorCode ?? payload.message ?? "Recording failed.")
               : undefined,
         },
         select: { id: true, status: true },
@@ -414,7 +417,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     if (targetStatus === RecordingStatus.FAILED) {
-      updateData.errorMessage = payload.message ?? payload.errorCode ?? "Recording failed.";
+      updateData.errorMessage = payload.errorCode ?? payload.message ?? "Recording failed.";
     }
 
     await prisma.recording.update({

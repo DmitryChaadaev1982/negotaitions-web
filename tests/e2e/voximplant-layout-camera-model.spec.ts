@@ -97,7 +97,8 @@ test.describe("Vox roster-first layout model", () => {
   test("assigned but disconnected users are excluded from active video tiles", () => {
     const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
     expect(source).toContain("mediaModel.shouldRenderActiveTile");
-    expect(source).toContain("connectedSignal: isLocal ? joined : Boolean(matchedRemote)");
+    expect(source).toContain("const isLogicallyAbsent = entry.isLogicallyPresent === false");
+    expect(source).toContain("connectedSignal: isLocal ? joined : Boolean(matchedRemote) && !isLogicallyAbsent");
   });
 
   test("room tiles keep name and case role without duplicated role/status subtitle text", () => {

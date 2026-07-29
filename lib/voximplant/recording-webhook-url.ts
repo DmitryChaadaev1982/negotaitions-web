@@ -51,7 +51,7 @@ export async function resolveVoximplantRecordingWebhookUrlFromDb(): Promise<Voxi
   return resolveVoximplantRecordingWebhookUrl({ savedOverrideRaw });
 }
 
-/** Effective webhook base URL for scenarioMessage.webhookBaseUrl and webhooks. */
+/** Effective webhook base URL for scenarioMessage.claims.webhookBaseUrl and webhooks. */
 export async function getVoximplantRecordingWebhookBaseUrl(): Promise<string | null> {
   const resolution = await resolveVoximplantRecordingWebhookUrlFromDb();
   return resolution.effectiveWebhookBaseUrl;

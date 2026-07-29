@@ -7,10 +7,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
-import { ConnectionStatusBadge } from "@/components/connection-status-badge";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { EventLobbyVoximplantRoom } from "@/components/event-lobby-voximplant-room";
+import { EventCompletionDangerZone } from "@/components/event-completion-danger-zone";
+import { EventPresenceIndicator } from "@/components/event-presence-indicator";
+import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
 import {
@@ -26,9 +28,9 @@ import {
 } from "@/components/ui/form-styles";
 import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
-import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
+import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
-import { useI18n } from "@/lib/i18n/useI18n";
+import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
 
@@ -67,6 +69,21 @@ function deviceWarningLabel(
     return t("events.microphoneUnavailable");
   }
   return null;
+}
+
+function participantLocationLabel(
+  participant: EventStateResponse["participants"][number],
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+) {
+  if (participant.currentLocation.kind === "session") {
+    return t("events.participantLocationSession", {
+      title: participant.currentLocation.sessionTitle,
+    });
+  }
+  if (participant.currentLocation.kind === "lobby") {
+    return t("events.participantLocationLobby");
+  }
+  return t("rejoin.offline");
 }
 
 export function EventLobbyView({
@@ -602,48 +619,6 @@ export function EventLobbyView({
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#020617] px-4">
         <p className="text-sm text-slate-400">{t("common.loading")}…</p>
-        {state?.isEventOwner ? (
-          <button
-            type="button"
-            data-testid="complete-event-button"
-            className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20"
-            onClick={() => setShowCompleteDialog(true)}
-          >
-            {t("events.completeEvent")}
-          </button>
-        ) : null}
-        {showCompleteDialog ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-            <div className="w-full max-w-md rounded-2xl border border-slate-600/40 bg-slate-900 p-6 shadow-xl">
-              <h3 className="text-lg font-bold text-slate-50">
-                {t("events.completeEventTitle")}
-              </h3>
-              <p className="mt-3 text-sm leading-6 text-slate-400">
-                {t("events.completeEventWarning")}
-              </p>
-              <div className="mt-6 flex justify-end gap-3">
-                <SecondaryButton
-                  type="button"
-                  onClick={() => setShowCompleteDialog(false)}
-                  disabled={isCompletingEvent}
-                >
-                  {t("common.cancel")}
-                </SecondaryButton>
-                <button
-                  type="button"
-                  data-testid="confirm-complete-event-button"
-                  className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
-                  disabled={isCompletingEvent}
-                  onClick={() => void completeEvent()}
-                >
-                  {isCompletingEvent
-                    ? t("common.loading")
-                    : t("events.completeEventConfirm")}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
     );
   }
@@ -673,14 +648,6 @@ export function EventLobbyView({
         (session) => session.id === currentAssignment.assignedSessionId,
       )
     : null;
-  const sessionRoomActive =
-    currentAssignment?.assignedSessionId
-      ? Boolean(assignedSession?.isActive) ||
-        isSessionActiveForRoom({
-          negotiationState: assignedSession?.negotiationState ?? "PREPARATION",
-          closedByEventAt: assignedSession?.closedByEventAt ?? null,
-        })
-      : false;
   const participantHistoricalSessions = state.currentParticipant
     ? state.sessions.filter((session) =>
         session.participants.some(
@@ -689,6 +656,32 @@ export function EventLobbyView({
         ),
       )
     : [];
+  const showOwnerHostManagement = isEventOwner && !staleConnection;
+  const mySessionsInEvent =
+    !showOwnerHostManagement && state.currentParticipant
+      ? participantHistoricalSessions
+      : [];
+  const mySessionIdSet = new Set(mySessionsInEvent.map((session) => session.id));
+  const observerActiveSessions =
+    !showOwnerHostManagement &&
+    state.currentParticipant &&
+    !currentAssignment?.assignedSessionId
+      ? state.sessions.filter(
+          (session) =>
+            !mySessionIdSet.has(session.id) &&
+            session.sessionDisplayState === "joinable",
+        )
+      : [];
+  const observerMaterialsOnlySessions =
+    !showOwnerHostManagement &&
+    state.currentParticipant &&
+    !currentAssignment?.assignedSessionId
+      ? state.sessions.filter(
+          (session) =>
+            !mySessionIdSet.has(session.id) &&
+            session.sessionDisplayState === "materials-only",
+        )
+      : [];
   const staleLobbyMessage = t("events.lobbyTakeoverDisconnected");
 
   if (isEventCompleted) {
@@ -696,6 +689,7 @@ export function EventLobbyView({
       <EventCompletedOverlay
         state={state}
         hostToken={hostAccessToken}
+        participantTokenProvided={Boolean(participantAccessToken)}
         completeMessage={completeMessage}
         completeWarnings={completeWarnings}
       />
@@ -894,6 +888,9 @@ export function EventLobbyView({
               {t("events.participantsInLobby")}
             </summary>
             <div className="border-t border-slate-700/30 px-4 py-3 space-y-2">
+              <p className="text-[11px] text-slate-500">
+                {t("events.presenceLegend")}
+              </p>
               {state.participants.length === 0 ? (
                 <p className="text-sm text-slate-400">{t("events.noParticipantsYet")}</p>
               ) : (
@@ -915,12 +912,21 @@ export function EventLobbyView({
                           {t("events.activeSession")}: {participant.activeAssignmentLabel}
                         </span>
                       ) : null}
+                      <span className="mt-1 block">
+                        <EventPresenceIndicator
+                          status={participant.eventPresenceStatus}
+                          compact
+                        />
+                      </span>
+                      {participant.eventPresenceStatus === "ONLINE" ? (
+                        <span className="mt-1 block text-xs font-normal text-slate-400">
+                          {t("events.onlineWithLocation", {
+                            location: participantLocationLabel(participant, t),
+                          })}
+                        </span>
+                      ) : null}
                     </span>
                     <div className="flex flex-col items-end gap-1">
-                      <ConnectionStatusBadge
-                        lastSeenAt={participant.lastSeenAt}
-                        showLastSeen={isHost}
-                      />
                       <Badge variant="default" className="text-[10px]">
                         {participant.preference === "PLAY"
                           ? t("events.wantToPlay")
@@ -973,16 +979,12 @@ export function EventLobbyView({
             </details>
           ) : null}
 
-          {isEventOwner && !staleConnection ? (
+          {showOwnerHostManagement ? (
             <EventHostControlsPanel
               state={state}
               draft={draft}
               hostToken={hostAccessToken}
               isCreatingSession={isCreatingSession}
-              showCompleteDialog={showCompleteDialog}
-              isCompletingEvent={isCompletingEvent}
-              onShowCompleteDialog={setShowCompleteDialog}
-              onCompleteEvent={() => void completeEvent()}
               onUpdateHost={updateHost}
               onCreateSession={(overrides) => void createSession(overrides)}
               createSessionError={createSessionError}
@@ -1006,42 +1008,134 @@ export function EventLobbyView({
                     ? ` · ${currentAssignment.assignedRoleName}`
                     : ""}
                 </p>
-                {sessionRoomActive && currentAssignment.assignedSessionId ? (
-                  <>
-                    <GradientButtonLink
-                      href={currentAssignment.roomUrl ?? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)}
-                      data-testid="go-to-session-room-button"
-                    >
-                      {t("events.goToNegotiationRoom")}
-                    </GradientButtonLink>
-                    <SecondaryButtonLink
-                      href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
-                      className="w-full text-center"
-                      data-testid="open-session-materials-button"
-                    >
-                      {t("events.sessionMaterials")}
-                    </SecondaryButtonLink>
-                  </>
-                ) : (
-                  <GradientButtonLink
-                    href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
-                    data-testid="open-session-materials-button"
-                  >
-                    {t("events.openSessionMaterials")}
-                  </GradientButtonLink>
-                )}
+                {(() => {
+                  const primaryAction = resolveEventSessionPrimaryAction({
+                    roomAccessDecision: assignedSession?.roomAccessDecision ?? null,
+                    roomHref:
+                      currentAssignment.roomUrl ??
+                      (currentAssignment.assignedSessionId
+                        ? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)
+                        : null),
+                    materialsHref:
+                      currentAssignment.materialsUrl ??
+                      (currentAssignment.assignedSessionId
+                        ? buildAccountSessionMaterialsPath(
+                            currentAssignment.assignedSessionId,
+                          )
+                        : null),
+                    redirectHref: assignedSession?.roomAccessRedirectTo ?? null,
+                  });
+                  const showSecondaryMaterials =
+                    Boolean(currentAssignment.materialsUrl) &&
+                    (!primaryAction ||
+                      primaryAction.kind === "OPEN_ROOM" ||
+                      primaryAction.kind === "RETURN_TO_DEBRIEF");
+
+                  return (
+                    <>
+                      {primaryAction ? (
+                        <EventSessionRoomButton
+                          roomAccessDecision={assignedSession?.roomAccessDecision ?? null}
+                          roomHref={
+                            currentAssignment.roomUrl ??
+                            (currentAssignment.assignedSessionId
+                              ? buildAccountSessionRoomPath(
+                                  currentAssignment.assignedSessionId,
+                                )
+                              : null)
+                          }
+                          materialsHref={
+                            currentAssignment.materialsUrl ??
+                            (currentAssignment.assignedSessionId
+                              ? buildAccountSessionMaterialsPath(
+                                  currentAssignment.assignedSessionId,
+                                )
+                              : null)
+                          }
+                          redirectHref={assignedSession?.roomAccessRedirectTo ?? null}
+                          testId="go-to-session-room-button"
+                        />
+                      ) : null}
+                      {showSecondaryMaterials ? (
+                        <SecondaryButtonLink
+                          href={
+                            currentAssignment.materialsUrl ??
+                            buildAccountSessionMaterialsPath(
+                              currentAssignment.assignedSessionId,
+                            )
+                          }
+                          className="w-full text-center"
+                          data-testid="open-session-materials-button"
+                        >
+                          {t("events.sessionMaterials")}
+                        </SecondaryButtonLink>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </GlassCardContent>
             </GlassCard>
           ) : null}
 
-          {participantHistoricalSessions.length > 0 ? (
+          {observerActiveSessions.length > 0 ? (
+            <GlassCard data-testid="joinable-event-session-list">
+              <GlassCardContent className="space-y-3">
+                <p className="text-sm font-semibold text-slate-100">
+                  {t("events.activeSessions")}
+                </p>
+                <div className="space-y-2">
+                  {observerActiveSessions.map((session) => (
+                    <article
+                      key={session.id}
+                      className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                      data-testid="joinable-event-session-card"
+                      data-session-access-state={session.sessionDisplayState}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-100">
+                            {session.roomLabel ?? session.title}
+                          </p>
+                          <p className="text-xs text-slate-400">{session.caseTitle}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {session.sessionDisplayState === "materials-only"
+                              ? t("events.completedSessionStatus")
+                              : t(
+                                  `status.${session.negotiationState}` as
+                                    | "status.PREPARATION"
+                                    | "status.PREPARATION_RUNNING"
+                                    | "status.PREPARATION_PAUSED"
+                                    | "status.READY_TO_START"
+                                    | "status.RUNNING"
+                                    | "status.PAUSED"
+                                    | "status.FINISHED",
+                                )}
+                          </p>
+                        </div>
+                        {session.observerJoinUrl ? (
+                          <SecondaryButtonLink
+                            href={session.observerJoinUrl}
+                            data-testid="join-session-as-observer"
+                          >
+                            {t("events.joinAsObserver")}
+                          </SecondaryButtonLink>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
+
+          {mySessionsInEvent.length > 0 && !showOwnerHostManagement ? (
             <GlassCard data-testid="my-sessions-in-event-section">
               <GlassCardContent className="space-y-3">
                 <p className="text-sm font-semibold text-slate-100">
                   {isEventOwner ? t("events.sessionsInThisEvent") : t("events.mySessionsInThisEvent")}
                 </p>
                 <div className="space-y-2">
-                  {participantHistoricalSessions.map((session) => {
+                  {mySessionsInEvent.map((session) => {
                     const participantLink = session.participants.find(
                       (participant) =>
                         participant.eventParticipantId ===
@@ -1063,15 +1157,26 @@ export function EventLobbyView({
                               : t("events.finishedSession")}
                           </p>
                         </div>
-                        {session.isActive && participantLink?.roomUrl ? (
-                          <SecondaryButtonLink
-                            href={participantLink.roomUrl}
-                            data-testid="go-to-session-room-button"
-                          >
-                            {t("events.openRoom")}
-                          </SecondaryButtonLink>
+                        {participantLink ? (
+                          <EventSessionRoomButton
+                            roomAccessDecision={session.roomAccessDecision}
+                            roomHref={participantLink.roomUrl}
+                            materialsHref={participantLink.materialsUrl}
+                            redirectHref={session.roomAccessRedirectTo}
+                          />
                         ) : null}
-                        {participantLink?.materialsUrl ? (
+                        {participantLink?.materialsUrl &&
+                        (() => {
+                          const primaryAction = resolveEventSessionPrimaryAction({
+                            roomAccessDecision: session.roomAccessDecision,
+                            roomHref: participantLink.roomUrl,
+                            materialsHref: participantLink.materialsUrl,
+                            redirectHref: session.roomAccessRedirectTo,
+                          });
+                          return !primaryAction ||
+                            primaryAction.kind === "OPEN_ROOM" ||
+                            primaryAction.kind === "RETURN_TO_DEBRIEF";
+                        })() ? (
                           <SecondaryButtonLink
                             href={participantLink.materialsUrl}
                             data-testid="open-session-materials-button"
@@ -1087,14 +1192,60 @@ export function EventLobbyView({
             </GlassCard>
           ) : null}
 
+          {observerMaterialsOnlySessions.length > 0 ? (
+            <GlassCard data-testid="sessions-without-my-participation-section">
+              <GlassCardContent className="space-y-3">
+                <p className="text-sm font-semibold text-slate-100">
+                  {t("events.sessionsWithoutMyParticipation")}
+                </p>
+                <div className="space-y-2">
+                  {observerMaterialsOnlySessions.map((session) => (
+                    <article
+                      key={session.id}
+                      className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-100">
+                            {session.roomLabel ?? session.title}
+                          </p>
+                          <p className="text-xs text-slate-400">{session.caseTitle}</p>
+                        </div>
+                        {session.observerMaterialsUrl ? (
+                          <SecondaryButtonLink
+                            href={session.observerMaterialsUrl}
+                            data-testid="open-observer-session-materials"
+                          >
+                            {t("events.openMaterialsAction")}
+                          </SecondaryButtonLink>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
+
           {state.sessions.length > 0 &&
           !currentAssignment?.assignedSessionId &&
-          participantHistoricalSessions.length === 0 ? (
+          mySessionsInEvent.length === 0 &&
+          observerActiveSessions.length === 0 &&
+          observerMaterialsOnlySessions.length === 0 ? (
             <GlassCard>
               <GlassCardContent>
                 <p className="text-sm text-slate-400">{t("events.waitingForAssignment")}</p>
               </GlassCardContent>
             </GlassCard>
+          ) : null}
+
+          {showOwnerHostManagement ? (
+            <EventCompletionDangerZone
+              showCompleteDialog={showCompleteDialog}
+              isCompletingEvent={isCompletingEvent}
+              onShowCompleteDialog={setShowCompleteDialog}
+              onCompleteEvent={() => void completeEvent()}
+            />
           ) : null}
         </aside>
       </div>
@@ -1105,87 +1256,161 @@ export function EventLobbyView({
 function EventCompletedOverlay({
   state,
   hostToken,
+  participantTokenProvided,
   completeMessage,
   completeWarnings,
 }: {
   state: EventStateResponse;
   hostToken?: string;
+  participantTokenProvided: boolean;
   completeMessage: string | null;
   completeWarnings: string[];
 }) {
   const { t } = useI18n();
+  const isOwnerView = Boolean(hostToken || state.isEventOwner);
+  const isTokenOnlyParticipant = !isOwnerView && participantTokenProvided;
 
-  const currentAssignment = state.currentParticipant
-    ? state.participants.find((participant) => participant.id === state.currentParticipant?.id)
-    : null;
-  const latestParticipantSession = state.currentParticipant
+  const ownerAccessibleSessions = state.sessions
+    .filter((session) => Boolean(session.materialsUrl))
+    .map((session) => ({
+      id: session.id,
+      title: session.roomLabel ?? session.title,
+      caseTitle: session.caseTitle,
+      negotiationState: session.negotiationState,
+      materialsUrl: session.materialsUrl!,
+    }));
+
+  const participantAccessibleSessions = state.currentParticipant
     ? state.sessions
-        .filter((session) =>
-          session.participants.some(
+        .map((session) => {
+          const participantSessionLink = session.participants.find(
             (participant) =>
-              participant.eventParticipantId === state.currentParticipant?.id,
-          ),
-        )
-        .at(-1)
-    : hostToken
-      ? state.sessions.at(-1)
-      : null;
-  const latestParticipantMaterialsUrl = latestParticipantSession?.participants.find(
-    (participant) =>
-      participant.eventParticipantId === state.currentParticipant?.id,
-  )?.materialsUrl;
+              participant.eventParticipantId === state.currentParticipant?.id &&
+              Boolean(participant.materialsUrl),
+          );
+          if (!participantSessionLink?.materialsUrl) {
+            return null;
+          }
+          return {
+            id: session.id,
+            title: session.roomLabel ?? session.title,
+            caseTitle: session.caseTitle,
+            negotiationState: session.negotiationState,
+            materialsUrl: participantSessionLink.materialsUrl,
+          };
+        })
+        .filter((session): session is NonNullable<typeof session> => Boolean(session))
+    : [];
+
+  const accessibleSessions = isOwnerView
+    ? ownerAccessibleSessions
+    : participantAccessibleSessions;
+  const showBackToEvents = isOwnerView || !isTokenOnlyParticipant;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#020617] px-4 py-12 text-center">
-      <BrandLogo size="lg" href={hostToken ? "/events" : undefined} />
-      <div className="max-w-lg space-y-3">
-        <h1 className="text-2xl font-bold text-slate-50">
-          {t("events.eventCompletedTitle")}
-        </h1>
-        {state.event.completionReason ? (
-          <p className="text-sm text-slate-400">{state.event.completionReason}</p>
-        ) : null}
-        {completeMessage ? (
-          <p className="text-sm text-emerald-400">{completeMessage}</p>
-        ) : null}
+    <div
+      className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#020617] px-4 py-8 sm:py-12"
+      data-testid="event-completed-overlay"
+    >
+      <div className="w-full max-w-4xl rounded-2xl border border-slate-700/40 bg-slate-900/40 p-5 sm:p-6">
+        <div className="flex justify-center">
+          <BrandLogo size="lg" href={showBackToEvents ? "/events" : undefined} />
+        </div>
+
+        <div className="mx-auto mt-5 max-w-2xl space-y-2 text-center">
+          <h1 className="text-2xl font-bold text-slate-50">{t("events.eventCompletedTitle")}</h1>
+          <p className="text-sm text-slate-400">{t("events.eventCompletedSubtitle")}</p>
+          {state.event.completionReason ? (
+            <p className="text-sm text-slate-400">{state.event.completionReason}</p>
+          ) : null}
+          {completeMessage ? (
+            <p className="text-sm text-emerald-400">{completeMessage}</p>
+          ) : null}
+        </div>
+
         {completeWarnings.length > 0 ? (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-200">
+          <div className="mx-auto mt-4 max-w-2xl rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-200">
             <p className="font-medium">{t("events.eventCompletionWarning")}</p>
             <p className="mt-1">{t("events.recordingStopWarning")}</p>
           </div>
         ) : null}
+
+        <section className="mx-auto mt-6 max-w-3xl" data-testid="completed-event-session-list-section">
+          <p className="text-sm font-semibold text-slate-100">{t("events.eventSessionsSectionTitle")}</p>
+          <p className="mt-1 text-xs text-slate-400">{t("events.sessionMaterialsSectionSubtitle")}</p>
+
+          {accessibleSessions.length > 0 ? (
+            <div
+              className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2"
+              data-testid="completed-event-session-list"
+            >
+              {accessibleSessions.map((session) => {
+                const isUnexpectedState = session.negotiationState !== "FINISHED";
+                const sessionStatusLabel = isUnexpectedState
+                  ? t(
+                      `status.${session.negotiationState}` as
+                        | "status.PREPARATION"
+                        | "status.PREPARATION_RUNNING"
+                        | "status.PREPARATION_PAUSED"
+                        | "status.READY_TO_START"
+                        | "status.RUNNING"
+                        | "status.PAUSED"
+                        | "status.FINISHED",
+                    )
+                  : t("events.completedSessionStatus");
+
+                return (
+                  <article
+                    key={session.id}
+                    className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-700/35 bg-slate-900/60 p-4"
+                    data-testid="completed-event-session-card"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-50">{session.title}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-400">{session.caseTitle}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        data-testid="event-session-status-badge"
+                        data-session-state={isUnexpectedState ? session.negotiationState : "completed"}
+                        className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                          isUnexpectedState
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                        }`}
+                      >
+                        {sessionStatusLabel}
+                      </span>
+                    </div>
+                    <GradientButtonLink
+                      href={session.materialsUrl}
+                      className="w-full"
+                      data-testid="completed-event-session-materials-link"
+                    >
+                      {t("events.openMaterialsAction")}
+                    </GradientButtonLink>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              className="mt-3 rounded-xl border border-slate-700/35 bg-slate-900/55 p-4 text-sm text-slate-300"
+              data-testid="completed-event-session-empty-state"
+            >
+              {t("events.noAccessibleSessionsForCompletedEvent")}
+            </div>
+          )}
+        </section>
+
+        <div className="mt-6 flex flex-wrap justify-center gap-3 border-t border-slate-700/40 pt-5">
+          {showBackToEvents ? (
+            <SecondaryButtonLink href="/events">{t("events.backToEvents")}</SecondaryButtonLink>
+          ) : null}
+          <GradientButtonLink href="/">{t("common.goToHome")}</GradientButtonLink>
+        </div>
       </div>
-      <div className="flex flex-wrap justify-center gap-3">
-        {hostToken || state.isEventOwner ? (
-          <GradientButtonLink href="/events">{t("events.backToEvents")}</GradientButtonLink>
-        ) : null}
-        {currentAssignment?.assignedSessionId ? (
-          <GradientButtonLink
-            href={currentAssignment.materialsUrl ?? buildAccountSessionMaterialsPath(currentAssignment.assignedSessionId)}
-          >
-            {t("events.openSessionMaterials")}
-          </GradientButtonLink>
-        ) : latestParticipantMaterialsUrl ? (
-          <GradientButtonLink href={latestParticipantMaterialsUrl}>
-            {t("events.openSessionMaterials")}
-          </GradientButtonLink>
-        ) : null}
-        {(hostToken || state.isEventOwner) && latestParticipantSession ? (
-          <SecondaryButtonLink href={`/sessions/${latestParticipantSession.id}`}>
-            {t("events.materials")}
-          </SecondaryButtonLink>
-        ) : state.createdSession && !currentAssignment?.joinToken ? (
-          <SecondaryButton
-            type="button"
-            onClick={() => {
-              window.location.href = `/sessions/${state.createdSession!.id}`;
-            }}
-          >
-            {state.createdSession.title}
-          </SecondaryButton>
-        ) : null}
-        <GradientButtonLink href="/">{t("common.goToHome")}</GradientButtonLink>
-      </div>
+
       <LanguageSwitcher />
     </div>
   );
