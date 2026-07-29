@@ -732,7 +732,7 @@ export async function verifyRoomLifecycleBackfill(): Promise<BackfillVerificatio
               AND src."disconnectedAt" IS NULL
               AND src."supersededAt" IS NULL
               AND src."revokedAt" IS NULL
-              AND src."expiresAt" > NOW()
+              AND src."expiresAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
           )
       `,
       prisma.session.count({

@@ -12,6 +12,7 @@ import { getControlUpdateData, SESSION_CONTROL_SELECT } from "@/lib/negotiation-
 import { prisma } from "@/lib/prisma";
 import {
   countActiveSessionRoomConnections,
+  decideFinishRoomLifecycle,
 } from "@/lib/session-room-occupancy";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
 import { closeAllOpenPauseIntervals } from "@/lib/session-pause-intervals";
@@ -616,24 +617,15 @@ export async function completeSessionCanonical(params: {
       eventStatus: existingSession.event?.status ?? null,
     });
 
-    const desiredLifecycle: RoomLifecycle | null = (() => {
-      if (effectiveLifecycle === RoomLifecycle.CLOSED || hardClose) {
-        return RoomLifecycle.CLOSED;
-      }
-      return null;
-    })();
-
-    let nextLifecycle: RoomLifecycle;
-    if (desiredLifecycle) {
-      nextLifecycle = desiredLifecycle;
-    } else {
-      const activeCount = await countActiveSessionRoomConnections(
-        params.sessionId,
-        tx,
-      );
-      nextLifecycle =
-        activeCount > 0 ? RoomLifecycle.DEBRIEF_OPEN : RoomLifecycle.CLOSED;
-    }
+    const activeConnectionCount =
+      effectiveLifecycle === RoomLifecycle.CLOSED || hardClose
+        ? 0
+        : await countActiveSessionRoomConnections(params.sessionId, tx, now);
+    const nextLifecycle = decideFinishRoomLifecycle({
+      effectiveLifecycle,
+      hardClose,
+      activeConnectionCount,
+    });
 
     const finishUpdateData =
       alreadyFinished
@@ -665,6 +657,25 @@ export async function completeSessionCanonical(params: {
         closedByEventAt: true,
       },
     });
+
+    console.info(
+      JSON.stringify({
+        area: "session_completion",
+        event: "canonical_session_finish_decision",
+        sessionId: params.sessionId,
+        mode: params.mode,
+        hardClose,
+        alreadyFinished,
+        originalNegotiationState: existingSession.negotiationState,
+        originalRoomLifecycle: existingSession.roomLifecycle,
+        effectiveLifecycle,
+        activeConnectionCount,
+        nextLifecycle,
+        resultingNegotiationState: session.negotiationState,
+        resultingRoomLifecycle: session.roomLifecycle,
+        decisionClock: now.toISOString(),
+      }),
+    );
 
     const stopIntentResult = await claimRecordingStopIntent({
       tx,

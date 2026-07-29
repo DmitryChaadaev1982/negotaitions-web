@@ -54,7 +54,11 @@ export async function reconcileSessionAfterOccupancyChange(params: {
     };
   }
 
-  const activeConnectionCount = await countActiveSessionRoomConnections(session.id);
+  const activeConnectionCount = await countActiveSessionRoomConnections(
+    session.id,
+    prisma,
+    now,
+  );
   const lastInvalidatedAt = await getLastInvalidatedSessionRoomConnectionAt(session.id);
   const debriefEligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: session.roomLifecycle,
