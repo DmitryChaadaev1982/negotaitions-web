@@ -1,43 +1,29 @@
-# Test results
+# Test results — pre-deployment gate
 
-Server mode for Playwright (when run): **managed** (`run-playwright-mode.mjs --mode=managed`).
+Server mode: **managed** (`run-playwright-mode.mjs --mode=managed`).
 
-## Focused unit + dual-TZ (executed)
+Branch: `fix/stage-3-10-production-debrief-hotfix`  
+Hotfix commit: `f94257bf643e3c23f411f389bc3e7d4d9c20c03e`
 
-```
-node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \
-  lib/session-room-occupancy.test.ts \
-  lib/sql-utc-wall-clock.test.ts \
-  lib/sql-utc-wall-clock.pg.test.ts \
-  lib/session-room-lifecycle.test.ts \
-  lib/session-room-access.test.ts
-```
+## Mandatory commands
 
-Result: **32 pass / 0 fail** (includes UTC + Europe/Moscow pg probes).
+| Command | Exit | Passed | Failed | Skipped | Report path |
+|---|---:|---:|---:|---:|---|
+| `npm run validate:deploy` (retry after lightningcss native fix) | **0** | unit **584**; e2e list **615**; build OK | **0** | **0** | `docs/audits/stage-3-10-production-debrief-hotfix/validation-runs/validate-deploy-retry.log` |
+| `npm run test:e2e:smoke` | **0** | **12** | **0** | **0** | `.../validation-runs/e2e-smoke.log` |
+| `npm run test:e2e:smoke:browser` | **0** | **5** | **0** | **0** | `.../validation-runs/e2e-smoke-browser.log` |
+| `npm run test:stage310` | **0** | unit **102** + e2e **30** | **0** | **0** | `.../validation-runs/test-stage310.log` |
 
-## validate:fast
+### Notes
 
-Previously completed successfully after E2E_DATABASE_URL was available (lint + prisma + unit 578 pass + e2e list). Re-run after helper change recommended before deploy.
+- First `validate:deploy` attempt exited **1** solely due to missing `lightningcss.win32-x64-msvc.node` in this worktree `node_modules` (local install hygiene). Not a product defect. After `npm install lightningcss --no-save`, build and full `validate:deploy` passed.
+- No focused/dual-TZ suite re-run outside `test:stage310` (already included there).
+- Skips: none reported by node:test or Playwright summaries above.
 
-## Still to run before deploy (same managed mode)
+## Non-blocking follow-up
 
-```
-npm run validate:deploy
-npm run test:e2e:smoke
-npm run test:e2e:smoke:browser
-npm run test:stage310
-```
+- True concurrent FINISH / auto-timer race harness: **deferred**. Existing Stage 3.10 suites (including finish idempotency + presence) did not fail; track as follow-up, not a deploy blocker for this timezone hotfix.
 
-Focused e2e (managed):
+## Previously confirmed (not re-run standalone)
 
-```
-node scripts/run-playwright-mode.mjs --mode=managed -- \
-  tests/e2e/session-finish-canonical.spec.ts \
-  tests/e2e/voximplant-room-presence.spec.ts \
-  --project=chromium
-```
-
-## Skipped / pending
-
-- Full browser debrief navigation canary is production manual (see canary plan)
-- validate:deploy / smoke suites interrupted earlier in session — must complete before merge to deploy branch
+Focused lifecycle + dual-TZ: 32/32 PASS (earlier in investigation).

@@ -43,8 +43,16 @@ Classification legend:
 | telemetry / sorting updatedAt | Prisma `@updatedAt` (**D**); raw `updatedAt=NOW()` in app was occupancy close (**A**, fixed) |
 | cleanup / expiry sweep | Prisma `lte: now` (**D**) |
 
+## Class B detail (deployment relevance)
+
+| Item | Hits FINISH → DEBRIEF_OPEN? | Hits lease expiry / grace / recording-stop deadlines? | Deploy blocker? | Why |
+|---|---|---|---|---|
+| DB `DEFAULT CURRENT_TIMESTAMP` on `createdAt` (many tables) | **No** | **No** for lease expiry (`expiresAt` set by Prisma JS Date), grace (JS Date math), recording-stop retries (JS Date / ms) | **No** | Only affects rows created via SQL defaults under session TZ. Incident path compared Prisma-written `expiresAt` to `NOW()`, which is fixed. Do not widen hotfix to all defaults without proof. |
+| E2E fixtures using `NOW()` / `updatedAt = NOW()` | **No** (not production) | Only in test DB seeding; may make fixture clocks TZ-sensitive | **No** | Test-only. Stage 3.10 managed e2e passed. Optional later cleanup of lifecycle-critical fixtures. |
+
 ## Explicit non-goals this hotfix
 
 - No mechanical replace of all `NOW()` in e2e seeds
 - No `@db.Timestamptz` migration
 - No change to DB `TimeZone` setting (app-level UTC wall helper is the minimal fix)
+- Concurrent FINISH / auto-timer harness deferred as non-blocking follow-up
