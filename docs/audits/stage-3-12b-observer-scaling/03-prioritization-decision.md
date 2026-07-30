@@ -1,32 +1,32 @@
-# Prioritization Decision
+# Ordering Decision
 
-Checkpoint O2 status: PARTIAL — camera/stable-order priority only.
+Checkpoint O2 status: corrected — stable roster order only.
 
-Implemented priority buckets:
-1. Camera-enabled observers.
-2. Connected observers.
-3. Disconnected or recently disconnected observers.
-4. Unknown connection/media state observers.
+Implemented order:
+1. Stable roster order from `Session.participants`.
+2. New observers append at the right end.
+3. Reconnects retain the same position when the roster identity remains the same.
 
-Within each bucket, stable roster order is preserved using the original roster index from `Session.participants` ordered by `createdAt ASC`.
+Observer ordering is stable roster order. Camera, microphone and connection states are represented within the tile. Automatic observer reordering is deferred because stable positioning is more important for usability and predictable scrolling.
 
-Inputs used:
-- `SessionRosterEntry.cameraEnabled`
-- `ParticipantPresenceMediaModel.cameraStatus`
-- `SessionRosterEntry.isLogicallyPresent`
-- `ParticipantPresenceMediaModel.connectionStatus`
-- Stable roster index
+Inputs used for visual order:
+- Stable roster index.
+- Stable React identity from `rosterEntry.id`.
 
-Inputs deliberately not used:
-- Raw audio level.
+Inputs deliberately not used for visual order:
+- `SessionRosterEntry.cameraEnabled`.
+- `ParticipantPresenceMediaModel.cameraStatus`.
+- Microphone state.
+- Connection state.
+- Remote speaking state or raw audio level.
 - Persisted `SessionParticipantAudioActivity`.
 - High-frequency polling or new telemetry.
 - Facilitator pinning/manual ranking.
 
 Rationale:
-- Camera and connection state are already exposed to the room client without API/provider/schema changes.
-- The room has remote speaking detection for tile highlight and telemetry submission, but there is no stable observer roster contract for active-speaker priority or anti-jump semantics.
-- Deferring active-speaker sorting avoids visual jumping, unexpected focus movement, and accidental coupling to transcript/speaker-mapping telemetry.
+- Camera-priority sorting moved earlier observers and could place newly added observers anywhere other than the right edge.
+- Start-aligned overflow depends on stable first-to-last order so the earliest observers remain visible at the left edge.
+- Media state remains visible through tile icons, labels, connection status, and speaking highlight without changing tile position.
 
 Future work:
 - Define an observer activity product contract before adding active/recent speaker priority.

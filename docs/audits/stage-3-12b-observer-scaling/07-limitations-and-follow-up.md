@@ -2,7 +2,7 @@
 
 Known limitations:
 - The 100-observer case is deterministic roster rendering, not 100 live browser contexts or 100 simultaneous provider streams.
-- Active-speaker observer prioritization is deferred because the existing audio activity data is telemetry/transcript-oriented and not a stable observer roster contract.
+- Active-speaker and camera-priority observer sorting are deferred because stable tile position is more important for usability, focus retention, and predictable scrolling.
 - No observer virtualization is introduced. Every observer-zone roster entry remains mounted in the rail.
 - The observer tile still uses the existing Voximplant participant tile. This preserves media binding behavior but keeps the existing compact icon treatment rather than introducing a new design system.
 

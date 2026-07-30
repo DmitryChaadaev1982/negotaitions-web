@@ -89,23 +89,17 @@ export type ObserverRosterPriorityInput = {
 };
 
 export function getObserverRosterPriorityBucket(
-  item: ObserverRosterPriorityInput,
+  _item: ObserverRosterPriorityInput,
 ): number {
-  if (item.cameraEnabled) return 0;
-  if (item.connected) return 1;
-  if (item.disconnected) return 2;
-  return 3;
+  return 0;
 }
 
 export function orderObserverRosterItems<T extends ObserverRosterPriorityInput>(
   items: readonly T[],
 ): T[] {
-  return [...items].sort((a, b) => {
-    const priorityDelta =
-      getObserverRosterPriorityBucket(a) - getObserverRosterPriorityBucket(b);
-    if (priorityDelta !== 0) return priorityDelta;
-    return a.stableRosterIndex - b.stableRosterIndex;
-  });
+  // Observer media state is displayed inside each tile. Visual order remains
+  // stable roster order so existing observers do not move as media changes.
+  return [...items].sort((a, b) => a.stableRosterIndex - b.stableRosterIndex);
 }
 
 export function resolveRosterVisualRoles(roster: SessionRosterEntry[]): Map<string, ResolvedRosterRole> {

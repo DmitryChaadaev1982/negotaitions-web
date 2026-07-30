@@ -98,7 +98,7 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).not.toContain("flex-wrap");
   });
 
-  test("observer priority buckets prefer camera, then connected, then disconnected", () => {
+  test("observer priority bucket is neutral for media state", () => {
     expect(
       getObserverRosterPriorityBucket({
         stableRosterIndex: 0,
@@ -114,7 +114,7 @@ test.describe("Vox roster-first layout model", () => {
         connected: true,
         disconnected: false,
       }),
-    ).toBe(1);
+    ).toBe(0);
     expect(
       getObserverRosterPriorityBucket({
         stableRosterIndex: 0,
@@ -122,10 +122,10 @@ test.describe("Vox roster-first layout model", () => {
         connected: false,
         disconnected: true,
       }),
-    ).toBe(2);
+    ).toBe(0);
   });
 
-  test("observer priority preserves stable roster order within equal buckets", () => {
+  test("observer ordering remains stable roster order across media state", () => {
     const ordered = orderObserverRosterItems([
       {
         id: "first-disconnected",
@@ -165,12 +165,76 @@ test.describe("Vox roster-first layout model", () => {
     ]);
 
     expect(ordered.map((item) => item.id)).toEqual([
+      "first-disconnected",
       "first-camera",
-      "second-camera",
       "connected-a",
       "connected-b",
-      "first-disconnected",
+      "second-camera",
     ]);
+  });
+
+  test("camera, microphone, and speaking state do not imply observer reordering", () => {
+    const before = orderObserverRosterItems([
+      {
+        id: "observer-1",
+        stableRosterIndex: 0,
+        cameraEnabled: false,
+        connected: true,
+        disconnected: false,
+        micEnabled: false,
+        speaking: false,
+      },
+      {
+        id: "observer-2",
+        stableRosterIndex: 1,
+        cameraEnabled: true,
+        connected: true,
+        disconnected: false,
+        micEnabled: true,
+        speaking: true,
+      },
+      {
+        id: "observer-3",
+        stableRosterIndex: 2,
+        cameraEnabled: false,
+        connected: false,
+        disconnected: true,
+        micEnabled: false,
+        speaking: false,
+      },
+    ]);
+    const after = orderObserverRosterItems([
+      {
+        id: "observer-1",
+        stableRosterIndex: 0,
+        cameraEnabled: true,
+        connected: true,
+        disconnected: false,
+        micEnabled: true,
+        speaking: true,
+      },
+      {
+        id: "observer-2",
+        stableRosterIndex: 1,
+        cameraEnabled: false,
+        connected: true,
+        disconnected: false,
+        micEnabled: false,
+        speaking: false,
+      },
+      {
+        id: "observer-3",
+        stableRosterIndex: 2,
+        cameraEnabled: true,
+        connected: true,
+        disconnected: false,
+        micEnabled: true,
+        speaking: false,
+      },
+    ]);
+
+    expect(before.map((item) => item.id)).toEqual(["observer-1", "observer-2", "observer-3"]);
+    expect(after.map((item) => item.id)).toEqual(["observer-1", "observer-2", "observer-3"]);
   });
 
   test("assigned but disconnected users are excluded from active video tiles", () => {

@@ -10,7 +10,6 @@ import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
-  orderObserverRosterItems,
   resolveRosterVisualRoles,
 } from "@/lib/voximplant/room-layout-model";
 import {
@@ -19,7 +18,7 @@ import {
 } from "@/lib/voximplant/participant-presence-media-model";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import type { KeyboardEvent, ReactNode, WheelEvent } from "react";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type VoxTileParticipant = {
   id: string;
@@ -46,12 +45,12 @@ type ResolvedRosterTile = {
   isLocal: boolean;
 };
 
-type ObserverRosterItem = {
-  tile: ResolvedRosterTile;
-  stableRosterIndex: number;
-  cameraEnabled: boolean;
-  connected: boolean;
-  disconnected: boolean;
+const OBSERVER_RAIL_SCROLL_TOLERANCE_PX = 2;
+
+type ObserverRailScrollState = {
+  hasOverflow: boolean;
+  canScrollLeft: boolean;
+  canScrollRight: boolean;
 };
 
 function normalizeEndpointUsername(value: string | null | undefined): string | null {
@@ -268,26 +267,79 @@ export default function VoximplantVideoLayout({
   const activeTiles = resolvedRosterTiles.filter((tile) => tile.mediaModel.shouldRenderActiveTile);
   const facilitatorTiles = activeTiles.filter((tile) => tile.zone === "facilitator");
   const observerTiles = useMemo(() => {
-    const observerItems: ObserverRosterItem[] = resolvedRosterTiles
-      .map((tile, stableRosterIndex) => ({
-        tile,
-        stableRosterIndex,
-        cameraEnabled:
-          tile.rosterEntry.cameraEnabled === true || tile.mediaModel.cameraStatus === "on",
-        connected:
-          tile.rosterEntry.isLogicallyPresent === true ||
-          tile.mediaModel.connectionStatus === "connected",
-        disconnected:
-          tile.rosterEntry.isLogicallyPresent === false ||
-          tile.mediaModel.connectionStatus === "disconnected",
-      }))
-      .filter((item) => item.tile.zone === "observer");
-
-    return orderObserverRosterItems(observerItems).map((item) => item.tile);
+    // Stable roster order is the visual order. Camera, microphone, connection,
+    // and speaking state are represented within each tile without reordering.
+    return resolvedRosterTiles.filter((tile) => tile.zone === "observer");
   }, [resolvedRosterTiles]);
   const participantATiles = activeTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = activeTiles.filter((tile) => tile.zone === "participant_b");
   const observerRailRef = useRef<HTMLDivElement | null>(null);
+  const observerRailContentRef = useRef<HTMLDivElement | null>(null);
+  const [observerRailScrollState, setObserverRailScrollState] =
+    useState<ObserverRailScrollState>({
+      hasOverflow: false,
+      canScrollLeft: false,
+      canScrollRight: false,
+    });
+  const updateObserverRailScrollState = useCallback(() => {
+    const viewport = observerRailRef.current;
+    const content = observerRailContentRef.current;
+    if (!viewport || !content) {
+      setObserverRailScrollState({
+        hasOverflow: false,
+        canScrollLeft: false,
+        canScrollRight: false,
+      });
+      return;
+    }
+
+    const viewportWidth = viewport.clientWidth;
+    const contentWidth = content.getBoundingClientRect().width;
+    const hasOverflow =
+      contentWidth > viewportWidth + OBSERVER_RAIL_SCROLL_TOLERANCE_PX;
+    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const nextState: ObserverRailScrollState = hasOverflow
+      ? {
+          hasOverflow: true,
+          canScrollLeft: viewport.scrollLeft > OBSERVER_RAIL_SCROLL_TOLERANCE_PX,
+          canScrollRight:
+            viewport.scrollLeft <
+            maxScrollLeft - OBSERVER_RAIL_SCROLL_TOLERANCE_PX,
+        }
+      : {
+          hasOverflow: false,
+          canScrollLeft: false,
+          canScrollRight: false,
+        };
+
+    setObserverRailScrollState((current) =>
+      current.hasOverflow === nextState.hasOverflow &&
+      current.canScrollLeft === nextState.canScrollLeft &&
+      current.canScrollRight === nextState.canScrollRight
+        ? current
+        : nextState,
+    );
+  }, []);
+  useEffect(() => {
+    const viewport = observerRailRef.current;
+    const content = observerRailContentRef.current;
+    if (!viewport || !content) return;
+
+    const frame = window.requestAnimationFrame(updateObserverRailScrollState);
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateObserverRailScrollState);
+    resizeObserver?.observe(viewport);
+    resizeObserver?.observe(content);
+    window.addEventListener("resize", updateObserverRailScrollState);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateObserverRailScrollState);
+    };
+  }, [observerTiles.length, updateObserverRailScrollState]);
   const scrollObserverRail = useCallback((direction: "left" | "right") => {
     const node = observerRailRef.current;
     if (!node) return;
@@ -298,7 +350,8 @@ export default function VoximplantVideoLayout({
         ? "auto"
         : "smooth",
     });
-  }, []);
+    window.requestAnimationFrame(updateObserverRailScrollState);
+  }, [updateObserverRailScrollState]);
   const handleObserverRailKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       const node = observerRailRef.current;
@@ -440,45 +493,66 @@ export default function VoximplantVideoLayout({
         <RoleSection
           title={t("room.observerCountLabel", { count: observerTiles.length })}
           testId="vox-zone-observers"
-          className="h-[9.25rem] shrink-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/45 p-2"
+          className="h-[10rem] shrink-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/45 p-2 sm:h-[11.25rem] lg:h-[11.75rem]"
         >
           {observerTiles.length > 0 ? (
-            <>
-            <div className="-mt-8 mb-1 flex justify-end gap-1">
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/70 text-xs text-slate-200 hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-                aria-label={t("room.scrollObserversLeft")}
-                onClick={() => scrollObserverRail("left")}
-                data-testid="vox-observer-scroll-left"
+            <div className="relative min-w-0" data-testid="vox-observer-rail-shell">
+              {observerRailScrollState.hasOverflow &&
+              observerRailScrollState.canScrollLeft ? (
+                <button
+                  type="button"
+                  className="absolute left-1 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/80 text-xs text-slate-200 shadow-lg hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                  aria-label={t("room.scrollObserversLeft")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    scrollObserverRail("left");
+                  }}
+                  data-testid="vox-observer-scroll-left"
+                >
+                  ←
+                </button>
+              ) : null}
+              <div
+                ref={observerRailRef}
+                className="flex min-w-0 snap-x overflow-x-auto overflow-y-hidden overscroll-x-contain pb-3 [scrollbar-color:rgba(148,163,184,0.65)_rgba(15,23,42,0.35)] [scrollbar-width:thin]"
+                data-testid="vox-observer-row"
+                role="list"
+                tabIndex={0}
+                aria-label={t("room.observerRailRegionLabel", {
+                  count: observerTiles.length,
+                })}
+                onKeyDown={handleObserverRailKeyDown}
+                onScroll={updateObserverRailScrollState}
+                onWheel={handleObserverRailWheel}
               >
-                ←
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/70 text-xs text-slate-200 hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-                aria-label={t("room.scrollObserversRight")}
-                onClick={() => scrollObserverRail("right")}
-                data-testid="vox-observer-scroll-right"
-              >
-                →
-              </button>
+                <div
+                  ref={observerRailContentRef}
+                  className={`flex w-max flex-none gap-2 ${
+                    observerRailScrollState.hasOverflow ? "mx-0" : "mx-auto"
+                  }`}
+                  data-testid="vox-observer-content"
+                >
+                  {observerTiles.map((tile) =>
+                    renderRosterTile(tile, { observerCompact: true }),
+                  )}
+                </div>
+              </div>
+              {observerRailScrollState.hasOverflow &&
+              observerRailScrollState.canScrollRight ? (
+                <button
+                  type="button"
+                  className="absolute right-1 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/80 text-xs text-slate-200 shadow-lg hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                  aria-label={t("room.scrollObserversRight")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    scrollObserverRail("right");
+                  }}
+                  data-testid="vox-observer-scroll-right"
+                >
+                  →
+                </button>
+              ) : null}
             </div>
-            <div
-              ref={observerRailRef}
-              className="flex min-w-0 snap-x gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-2 pr-1 [scrollbar-color:rgba(148,163,184,0.65)_rgba(15,23,42,0.35)] [scrollbar-width:thin]"
-              data-testid="vox-observer-row"
-              role="list"
-              tabIndex={0}
-              aria-label={t("room.observerRailRegionLabel", {
-                count: observerTiles.length,
-              })}
-              onKeyDown={handleObserverRailKeyDown}
-              onWheel={handleObserverRailWheel}
-            >
-              {observerTiles.map((tile) => renderRosterTile(tile, { observerCompact: true }))}
-            </div>
-            </>
           ) : (
             <div
               className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-300"
