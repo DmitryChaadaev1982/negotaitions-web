@@ -179,6 +179,43 @@ Environment notes:
 - Recording/materials semantic stop classifier work.
 - Any rewrite touching occupancy, lease, maintenance, server-stop delivery, or Voximplant scenario.
 
+## Post-implementation technical verification
+
+Rerun date: 2026-07-30.
+
+Verification verdicts:
+
+- L10 stale poll response: PASS WITH LIMITATION. Unit/statically verified request sequencing, stale-response rejection, hidden polling interval, in-flight guard, and cleanup. No new browser race harness was added.
+- L11 event-state cache headers: PASS. Authenticated success and controlled-error routes return no-store/no-cache headers; route audit found no expected response path bypassing the shared JSON helper.
+- L19 structured logs: PASS. Event completion and session control emit stable JSON `area`/`event` records without tokens, cookies, full request bodies, or full headers.
+
+Post-verification fixture defect:
+
+- `tests/e2e/voximplant-event-lobby.spec.ts` reproduced `POST /api/events/:id/host` returning `400 facilitatorInvalid` before the fix.
+- Root cause: `createE2eEvent({ withParticipants: true })` creates legacy token-only `EventParticipant` rows; the failing scenario selected `Dmitry` as facilitator without binding `Dmitry.userId`.
+- Production validation is correct and unchanged: `createSessionFromEvent()` requires the facilitator event participant to exist and have `userId`, because the created `Session.facilitatorId` is a real user id.
+- Fix: the E2E scenario now creates test users, sets `TrainingEvent.hostUserId`/`facilitatorUserId` to the host test user, binds `Dmitry.userId` to that host test user, binds player/observer participants to their generated users, and posts as the authenticated event owner. `Dmitry` keeps `preference='FACILITATE'` and `isHost=true`.
+- Application code, Prisma schema/migrations, lifecycle, occupancy, lease, server-side stop, and Voximplant scenario files were not changed.
+
+Focused rerun results:
+
+- Pre-fix reproduction: `voximplant-event-lobby.spec.ts` failed 1/7 at `session creation from event preserves role assignment and account room path`; `POST /api/events/:id/host` returned `facilitatorInvalid`.
+- Post-fix full run: `voximplant-event-lobby.spec.ts` passed 7/7.
+- Three sequential stability reruns: `voximplant-event-lobby.spec.ts` passed 7/7, 7/7, 7/7.
+- `event-completion.spec.ts`: passed 12/12.
+- `session-finish-canonical.spec.ts`: passed 9/9 twice sequentially.
+- `voximplant-room-presence.spec.ts`: passed 21/21.
+
+Mandatory gate results:
+
+- `npm run validate:fast`: passed. Unit tests: 601/601. E2E list: 615 tests in 41 files.
+- `npm run validate:deploy`: passed. Includes `validate:fast` plus successful Next build/typecheck.
+- `npm run test:e2e:smoke`: passed. 12/12 Playwright smoke tests; E2E database safety checks passed.
+- `npm run test:e2e:smoke:browser`: passed. 5/5 browser smoke tests; E2E database safety checks passed.
+- `npm run test:stage310`: passed. Unit portion 102/102; E2E portion 30/30.
+
+Final rerun verdict: PASS. Merge: GO. Server canary: GO, subject to normal deployment controls.
+
 ## Rollback
 
 Rollback is to revert the feature commit that contains this report and implementation:

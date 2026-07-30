@@ -291,7 +291,6 @@ test("session creation from event preserves role assignment and account room pat
 }) => {
   const negotiationCase = await createE2eCase();
   const event = await createE2eEvent({ withParticipants: true, title: "E2E Vox Event Session Flow" });
-  await query(`UPDATE "TrainingEvent" SET "visibility"='PUBLIC' WHERE "id"=$1`, [event.id]);
   const participants = await getEventParticipants(event.id);
   const dmitry = participants.find((participant) => participant.displayName === "Dmitry");
   const igor = participants.find((participant) => participant.displayName === "Igor");
@@ -301,7 +300,51 @@ test("session creation from event preserves role assignment and account room pat
 
   expect(dmitry && igor && alex && serg && buyerRole && sellerRole).toBeTruthy();
 
+  const hostUser = await createActiveUser();
+  const igorUser = await createActiveUser();
+  const alexUser = await createActiveUser();
+  const sergUser = await createActiveUser();
+  const hostCookie = await createUserSessionCookie(hostUser.id);
+
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "visibility"='PUBLIC',"hostUserId"=$2,"facilitatorUserId"=$2
+     WHERE "id"=$1`,
+    [event.id, hostUser.id],
+  );
+  await query(`UPDATE "EventParticipant" SET "userId"=$2 WHERE "id"=$1`, [
+    dmitry!.id,
+    hostUser.id,
+  ]);
+  await query(`UPDATE "EventParticipant" SET "userId"=$2 WHERE "id"=$1`, [
+    igor!.id,
+    igorUser.id,
+  ]);
+  await query(`UPDATE "EventParticipant" SET "userId"=$2 WHERE "id"=$1`, [
+    alex!.id,
+    alexUser.id,
+  ]);
+  await query(`UPDATE "EventParticipant" SET "userId"=$2 WHERE "id"=$1`, [
+    serg!.id,
+    sergUser.id,
+  ]);
+
+  const facilitatorBinding = await query<{
+    userId: string | null;
+    preference: string;
+    isHost: boolean;
+  }>(
+    `SELECT "userId","preference","isHost" FROM "EventParticipant" WHERE "id"=$1`,
+    [dmitry!.id],
+  );
+  expect(facilitatorBinding[0]).toEqual({
+    userId: hostUser.id,
+    preference: "FACILITATE",
+    isHost: true,
+  });
+
   const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostCookie },
     data: {
       hostToken: event.hostToken,
       selectedCaseId: negotiationCase.id,
@@ -322,17 +365,61 @@ test("session creation from event preserves role assignment and account room pat
   expect(patchResponse.ok()).toBeTruthy();
 
   const createResponse = await request.post(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostCookie },
     data: { hostToken: event.hostToken, connectionId: "host-owner-tab" },
   });
   expect(createResponse.ok()).toBeTruthy();
   const payload = (await createResponse.json()) as {
+    session: { id: string };
     state: {
       participants: Array<{ id: string; assignedSessionId: string | null; roomUrl: string | null }>;
     };
   };
+  const createdSession = await query<{ facilitatorId: string }>(
+    `SELECT "facilitatorId" FROM "Session" WHERE "id"=$1`,
+    [payload.session.id],
+  );
+  expect(createdSession[0]?.facilitatorId).toBe(hostUser.id);
+
+  const sessionParticipants = await query<{
+    eventParticipantId: string | null;
+    userId: string | null;
+    type: string;
+  }>(
+    `SELECT "eventParticipantId","userId","type"
+     FROM "SessionParticipant"
+     WHERE "sessionId"=$1`,
+    [payload.session.id],
+  );
+  expect(sessionParticipants).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        eventParticipantId: dmitry!.id,
+        userId: hostUser.id,
+        type: "FACILITATOR",
+      }),
+      expect.objectContaining({
+        eventParticipantId: igor!.id,
+        userId: igorUser.id,
+        type: "PARTICIPANT",
+      }),
+      expect.objectContaining({
+        eventParticipantId: alex!.id,
+        userId: alexUser.id,
+        type: "PARTICIPANT",
+      }),
+      expect.objectContaining({
+        eventParticipantId: serg!.id,
+        userId: sergUser.id,
+        type: "OBSERVER",
+      }),
+    ]),
+  );
+
   const igorState = payload.state.participants.find((participant) => participant.id === igor!.id);
   expect(igorState?.assignedSessionId).toBeTruthy();
   expect(igorState?.roomUrl).toContain(`/room/${igorState?.assignedSessionId}`);
+  expect(igorState?.roomUrl).not.toContain("joinToken=");
 });
 
 test("lobby camera busy path reports localized warning key and keeps controls shared", async () => {
