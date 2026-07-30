@@ -43,3 +43,9 @@ Use only where raw SQL compares/writes Prisma UTC-convention `timestamp without 
 ## Long-term (out of scope)
 
 Migrating DateTime columns to `@db.Timestamptz` requires compatibility analysis and data migration; track separately.
+
+## Production canary confirmation
+
+Root-cause fix validated in production canary on release `3a487713b521f785e6c81d15c776765e9f15cd61` (session `cms6njs0m000t6nm171at227c`): facilitator FINISH selected `DEBRIEF_OPEN` with live occupancy; grace closed after ~30s; server-side stop delivered via `voximplant_server_control`.
+
+Verdict: **PASS** / **GO**. Evidence: [production-canary-result.md](./production-canary-result.md).

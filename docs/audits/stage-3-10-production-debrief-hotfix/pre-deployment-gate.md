@@ -42,3 +42,11 @@ git merge --ff-only origin/fix/stage-3-10-production-debrief-hotfix
 git push origin deploy/yandex-poc
 # then production pull/build/restart + canary
 ```
+
+## Final production canary closeout
+
+Gate decision above remains the pre-deploy GO. After release `3a487713b521f785e6c81d15c776765e9f15cd61`, production canary session `cms6njs0m000t6nm171at227c` completed: **PASS** / production status **GO**.
+
+Non-blocking follow-ups unchanged (observer mapping, concurrent FINISH/auto-timer, npm vulns, Turbopack NFT, optional timestamptz migration).
+
+Evidence: [production-canary-result.md](./production-canary-result.md).

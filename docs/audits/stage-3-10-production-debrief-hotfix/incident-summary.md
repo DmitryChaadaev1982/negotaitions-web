@@ -31,3 +31,11 @@ Facilitator FINISH immediately wrote `roomLifecycle=CLOSED` because the durable 
 - Production DB writes
 - Broad `NOW()` mechanical replace
 - Migration of DateTime columns to `timestamptz`
+
+## Final production canary (closeout)
+
+Post-hotfix production canary on release `3a487713b521f785e6c81d15c776765e9f15cd61` (session `cms6njs0m000t6nm171at227c`): **PASS** / production status **GO**.
+
+Confirmed: timezone occupancy hotfix; `OPEN` → `DEBRIEF_OPEN` → `CLOSED`; debrief re-entry; 30s auto-close grace; true Voximplant server-side recording stop; Application Secrets sync fix; recording saved and transcribed.
+
+Full evidence: [production-canary-result.md](./production-canary-result.md). Historical incident evidence remains in [production-evidence.md](./production-evidence.md).

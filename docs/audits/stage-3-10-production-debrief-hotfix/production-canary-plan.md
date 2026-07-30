@@ -50,3 +50,13 @@ sudo systemctl restart negotaitions-poc
 ```
 
 (Use the pre-hotfix release commit or previous known-good deploy commit explicitly approved.)
+
+## Final canary outcome
+
+Executed against release `3a487713b521f785e6c81d15c776765e9f15cd61` (session `cms6njs0m000t6nm171at227c`).
+
+- Result: **PASS**
+- Production status: **GO**
+- Plan steps 1–10 satisfied (lifecycle, debrief re-entry, grace auto-close, server-control stop, recording + transcription)
+
+Details: [production-canary-result.md](./production-canary-result.md). Historical pre-hotfix failure evidence remains in [production-evidence.md](./production-evidence.md).

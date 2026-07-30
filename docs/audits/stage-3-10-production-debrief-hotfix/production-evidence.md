@@ -55,3 +55,11 @@ Both stop ops `DELIVERED` via `voximplant_webhook_reconciliation` ~62–92s late
 ## Journald
 
 No historical `activeCount` / lifecycle decision logs at incident time (instrumentation added in hotfix).
+
+## Successful post-hotfix canary (separate evidence)
+
+Incident sessions and historical recording-stop reconciliation above remain the failed-path record and are not overwritten.
+
+Successful canary after hotfix deploy (release `3a487713b521f785e6c81d15c776765e9f15cd61`, session `cms6njs0m000t6nm171at227c`): **PASS** / **GO**.
+
+See [production-canary-result.md](./production-canary-result.md) for lifecycle, recording, and server-side stop results.
