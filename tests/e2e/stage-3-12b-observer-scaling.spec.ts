@@ -2,13 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 import {
   cleanupE2eData,
   createActiveUser,
   e2eId,
   e2eName,
+  expireRoomConnection,
   query,
 } from "./helpers/db";
 
@@ -28,6 +29,8 @@ type ObserverScalingSession = {
   facilitatorUserId: string;
   facilitatorParticipantId: string;
   observerParticipantIds: string[];
+  observerConnectionIds: string[];
+  observerCookies: string[];
 };
 
 type BoxMetrics = {
@@ -118,6 +121,30 @@ async function seedCookieConsent(page: Page) {
       }),
     );
   });
+}
+
+async function seedActiveRoomConnection(input: {
+  sessionId: string;
+  userId: string;
+  role: "OBSERVER" | "PARTICIPANT" | "FACILITATOR";
+  connectionId?: string;
+}) {
+  const connectionId = input.connectionId ?? e2eId("observer-scaling-connection");
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id", "sessionId", "userId", "connectionId", "leaseVersion", "role",
+        "expiresAt", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, 1, $5::"ParticipantType",
+        NOW() + INTERVAL '30 minutes', NOW(), NOW())`,
+    [
+      e2eId("observer-scaling-src"),
+      input.sessionId,
+      input.userId,
+      connectionId,
+      input.role,
+    ],
+  );
+  return connectionId;
 }
 
 async function createObserverScalingSession(input: {
@@ -241,37 +268,77 @@ async function createObserverScalingSession(input: {
   );
 
   const observerParticipantIds: string[] = [];
+  const observerConnectionIds: string[] = [];
+  const observerCookies: string[] = [];
   for (let index = 0; index < input.observerCount; index += 1) {
     const participantId = e2eId("observer-scaling-observer");
+    const observerUser = await createActiveUser({
+      preferredLocale: input.preferredLocale ?? "en",
+      email: `${e2eId("observer-scaling-observer-user")}@test.invalid`,
+    });
+    const displayName = observerName(
+      index,
+      input.longNames ?? false,
+      input.duplicateLookingNames ?? false,
+    );
+    await query(`UPDATE "User" SET "name" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+      observerUser.id,
+      displayName,
+    ]);
     observerParticipantIds.push(participantId);
     await query(
       `INSERT INTO "SessionParticipant"
          ("id", "sessionId", "userId", "sessionRoleId", "type", "joinToken",
           "displayName", "notes", "joinedAt", "lastSeenAt", "updatedAt")
-       VALUES ($1, $2, NULL, NULL, 'OBSERVER', $3, $4, 'observer notes', NOW(), NOW(), NOW())`,
+       VALUES ($1, $2, $3, NULL, 'OBSERVER', $4, $5, 'observer notes', NOW(), NOW(), NOW())`,
       [
         participantId,
         sessionId,
+        observerUser.id,
         `observer-scaling-o-${e2eId("token")}`,
-        observerName(
-          index,
-          input.longNames ?? false,
-          input.duplicateLookingNames ?? false,
-        ),
+        displayName,
       ],
     );
+    observerConnectionIds.push(
+      await seedActiveRoomConnection({
+        sessionId,
+        userId: observerUser.id,
+        role: "OBSERVER",
+      }),
+    );
+    observerCookies.push(await createUserSessionCookie(observerUser.id));
   }
 
   if (input.includeUnassignedParticipantObserver) {
     const participantId = e2eId("observer-scaling-unassigned");
+    const unassignedUser = await createActiveUser({
+      preferredLocale: input.preferredLocale ?? "en",
+      email: `${e2eId("observer-scaling-unassigned-user")}@test.invalid`,
+    });
+    await query(`UPDATE "User" SET "name" = 'Unassigned Participant Observer', "updatedAt" = NOW() WHERE "id" = $1`, [
+      unassignedUser.id,
+    ]);
     observerParticipantIds.push(participantId);
     await query(
       `INSERT INTO "SessionParticipant"
          ("id", "sessionId", "userId", "sessionRoleId", "type", "joinToken",
           "displayName", "notes", "joinedAt", "lastSeenAt", "updatedAt")
-       VALUES ($1, $2, NULL, NULL, 'PARTICIPANT', $3, 'Unassigned Participant Observer', 'unassigned notes', NOW(), NOW(), NOW())`,
-      [participantId, sessionId, `observer-scaling-u-${e2eId("token")}`],
+       VALUES ($1, $2, $3, NULL, 'PARTICIPANT', $4, 'Unassigned Participant Observer', 'unassigned notes', NOW(), NOW(), NOW())`,
+      [
+        participantId,
+        sessionId,
+        unassignedUser.id,
+        `observer-scaling-u-${e2eId("token")}`,
+      ],
     );
+    observerConnectionIds.push(
+      await seedActiveRoomConnection({
+        sessionId,
+        userId: unassignedUser.id,
+        role: "PARTICIPANT",
+      }),
+    );
+    observerCookies.push(await createUserSessionCookie(unassignedUser.id));
   }
 
   const mediaParticipants = [
@@ -328,6 +395,8 @@ async function createObserverScalingSession(input: {
     facilitatorUserId: facilitator.id,
     facilitatorParticipantId,
     observerParticipantIds,
+    observerConnectionIds,
+    observerCookies,
   };
 }
 
@@ -345,20 +414,82 @@ async function appendObserverToSession(
   index: number,
 ) {
   const participantId = e2eId("observer-scaling-appended-observer");
+  const observerUser = await createActiveUser({
+    preferredLocale: "en",
+    email: `${e2eId("observer-scaling-appended-user")}@test.invalid`,
+  });
+  const displayName = observerName(index, false, false);
+  await query(`UPDATE "User" SET "name" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
+    observerUser.id,
+    displayName,
+  ]);
   session.observerParticipantIds.push(participantId);
   await query(
     `INSERT INTO "SessionParticipant"
        ("id", "sessionId", "userId", "sessionRoleId", "type", "joinToken",
         "displayName", "notes", "joinedAt", "lastSeenAt", "updatedAt")
-     VALUES ($1, $2, NULL, NULL, 'OBSERVER', $3, $4, 'observer notes', NOW(), NOW(), NOW())`,
+     VALUES ($1, $2, $3, NULL, 'OBSERVER', $4, $5, 'observer notes', NOW(), NOW(), NOW())`,
     [
       participantId,
       session.sessionId,
+      observerUser.id,
       `observer-scaling-appended-${e2eId("token")}`,
-      observerName(index, false, false),
+      displayName,
     ],
   );
+  session.observerConnectionIds.push(
+    await seedActiveRoomConnection({
+      sessionId: session.sessionId,
+      userId: observerUser.id,
+      role: "OBSERVER",
+    }),
+  );
+  session.observerCookies.push(await createUserSessionCookie(observerUser.id));
   return participantId;
+}
+
+async function postObserverExplicitLeave(
+  request: APIRequestContext,
+  session: ObserverScalingSession,
+  observerIndex: number,
+) {
+  const leave = await request.post(
+    `/api/sessions/${session.sessionId}/presence/leave`,
+    {
+      headers: { Cookie: `auth_session=${session.observerCookies[observerIndex]}` },
+      data: {
+        participantId: session.observerParticipantIds[observerIndex],
+        connectionId: session.observerConnectionIds[observerIndex],
+      },
+    },
+  );
+  expect(leave.ok()).toBeTruthy();
+  const body = (await leave.json()) as {
+    disconnected?: boolean;
+    finalState?: string;
+  };
+  expect(body.disconnected).toBe(true);
+  expect(body.finalState).toBe("DISCONNECTED");
+}
+
+async function roomConnectionState(connectionId: string) {
+  return (
+    await query<{
+      userId: string;
+      connectionId: string;
+      expiresAt: string;
+      disconnectedAt: string | null;
+      disconnectedReason: string | null;
+      supersededAt: string | null;
+      revokedAt: string | null;
+    }>(
+      `SELECT "userId", "connectionId", "expiresAt", "disconnectedAt", "disconnectedReason",
+              "supersededAt", "revokedAt"
+       FROM "SessionRoomConnection"
+       WHERE "connectionId" = $1`,
+      [connectionId],
+    )
+  )[0]!;
 }
 
 async function collectLayoutMetrics(
@@ -573,6 +704,120 @@ test.afterAll(async () => {
     ),
   );
   await cleanupE2eData();
+});
+
+test("observer rail removes inactive observers while facilitator roster keeps them", async ({
+  page,
+  request,
+}) => {
+  const session = await createObserverScalingSession({
+    observerCount: 3,
+    lifecycle: "OPEN",
+    cameraPattern: "all-off",
+    micPattern: "mixed",
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRoom(page, session);
+  await expect(page.getByTestId("session-role-management-panel")).toBeVisible();
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3);
+  expect(await observerTileIds(page)).toEqual(session.observerParticipantIds);
+  for (const participantId of session.observerParticipantIds) {
+    await expect(page.getByTestId(`role-row-${participantId}`)).toBeVisible();
+  }
+
+  const initialMetrics = await captureEvidence(page, "presence-open-initial", 3);
+  expect(initialMetrics.observerCount).toBe(3);
+
+  await postObserverExplicitLeave(request, session, 1);
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(2, {
+    timeout: 5_000,
+  });
+  expect(await observerTileIds(page)).toEqual([
+    session.observerParticipantIds[0],
+    session.observerParticipantIds[2],
+  ]);
+  await expect(page.getByTestId(`role-row-${session.observerParticipantIds[1]}`)).toBeVisible();
+  const leftState = await roomConnectionState(session.observerConnectionIds[1]);
+  expect(leftState.disconnectedReason).toBe("EXPLICIT_LEAVE");
+  expect(leftState.disconnectedAt).not.toBeNull();
+
+  const afterLeaveMetrics = await captureEvidence(page, "presence-open-after-explicit-leave", 2);
+  expect(afterLeaveMetrics.observerCount).toBe(2);
+
+  await expireRoomConnection(session.observerConnectionIds[0]);
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(1, {
+    timeout: 5_000,
+  });
+  expect(await observerTileIds(page)).toEqual([session.observerParticipantIds[2]]);
+  await expect(page.getByTestId(`role-row-${session.observerParticipantIds[0]}`)).toBeVisible();
+  const expiredState = await roomConnectionState(session.observerConnectionIds[0]);
+  expect(new Date(expiredState.expiresAt).getTime()).toBeLessThan(Date.now());
+
+  const afterExpiryMetrics = await captureEvidence(page, "presence-open-after-lease-expiry", 1);
+  expect(afterExpiryMetrics.observerCount).toBe(1);
+});
+
+test("observer reconnect before expiry keeps one stable rail tile", async ({ page }) => {
+  const session = await createObserverScalingSession({
+    observerCount: 3,
+    lifecycle: "OPEN",
+    cameraPattern: "mixed",
+    micPattern: "mixed",
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRoom(page, session);
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3);
+  const initialIds = await observerTileIds(page);
+  expect(initialIds).toEqual(session.observerParticipantIds);
+
+  const oldConnectionId = session.observerConnectionIds[1];
+  const oldConnection = await roomConnectionState(oldConnectionId);
+  const replacementConnectionId = e2eId("observer-scaling-reconnect");
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "supersededAt" = NOW(),
+         "supersededByConnectionId" = $2,
+         "updatedAt" = NOW()
+     WHERE "connectionId" = $1`,
+    [oldConnectionId, replacementConnectionId],
+  );
+  await seedActiveRoomConnection({
+    sessionId: session.sessionId,
+    userId: oldConnection.userId,
+    role: "OBSERVER",
+    connectionId: replacementConnectionId,
+  });
+  session.observerConnectionIds[1] = replacementConnectionId;
+
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3, {
+    timeout: 5_000,
+  });
+  expect(await observerTileIds(page)).toEqual(initialIds);
+  expect(new Set(await observerTileIds(page)).size).toBe(3);
+});
+
+test("observer rail applies active membership during debrief", async ({ page }) => {
+  const session = await createObserverScalingSession({
+    observerCount: 3,
+    lifecycle: "DEBRIEF_OPEN",
+    cameraPattern: "all-off",
+    micPattern: "all-off",
+  });
+  await expireRoomConnection(session.observerConnectionIds[1]);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRoom(page, session);
+  await expect(page.getByTestId("debrief-mode-badge")).toBeVisible();
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(2);
+  expect(await observerTileIds(page)).toEqual([
+    session.observerParticipantIds[0],
+    session.observerParticipantIds[2],
+  ]);
+
+  const metrics = await captureEvidence(page, "presence-debrief-after-lease-expiry", 2);
+  assertObserverRailMetrics(metrics, 2);
 });
 
 test("observer rail scales deterministic roster counts without stage shrink", async ({ page }) => {

@@ -11,6 +11,7 @@ import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activi
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
   resolveRosterVisualRoles,
+  shouldRenderObserverRailTile,
 } from "@/lib/voximplant/room-layout-model";
 import {
   normalizeParticipantPresenceMedia,
@@ -269,7 +270,13 @@ export default function VoximplantVideoLayout({
   const observerTiles = useMemo(() => {
     // Stable roster order is the visual order. Camera, microphone, connection,
     // and speaking state are represented within each tile without reordering.
-    return resolvedRosterTiles.filter((tile) => tile.zone === "observer");
+    return resolvedRosterTiles.filter((tile) =>
+      shouldRenderObserverRailTile({
+        entry: tile.rosterEntry,
+        zone: tile.zone,
+        hasActiveMediaPresence: tile.mediaModel.shouldRenderActiveTile,
+      }),
+    );
   }, [resolvedRosterTiles]);
   const participantATiles = activeTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = activeTiles.filter((tile) => tile.zone === "participant_b");

@@ -39,3 +39,27 @@ Manual regression:
 
 Notes:
 - An initial live-mode browser attempt redirected to login because the already-running development server used the non-E2E database. The live server was stopped and all final browser validation was rerun with the requested managed E2E environment.
+
+## Stage 3.12B-O Stale Observer Tile Correction
+
+Date: 2026-07-30
+
+Base SHA: `e3c132436c619c578b3b51a07d0a0d681af9c5c0`
+
+Focused validation:
+- Exact helper scenario: PASS via `npx playwright test --config=playwright.local.config.ts tests/e2e/voximplant-layout-camera-model.spec.ts --project=chromium -g "observer rail membership follows logical room presence"`; 1 passed.
+- Full layout-camera-model direct live run produced 26 passing test lines before the shell was interrupted.
+- Required managed `tests/e2e/stage-3-12b-observer-scaling.spec.ts`: BLOCKED by `MANAGED_SERVER_PORT_CONFLICT` because port 3000 was already occupied by the existing `npm run dev`.
+- Required managed `tests/e2e/voximplant-layout-camera-model.spec.ts`: BLOCKED by the same port conflict.
+
+Validation gates:
+- `npm run validate:fast`: PASS when run with `PLAYWRIGHT_BASE_URL=http://localhost:3000` to avoid starting a second dev server for the Playwright list step. Existing lint warnings only.
+- `npm run validate:deploy`: PASS with the same external Playwright base URL; includes successful production build.
+- `npm run test:e2e:smoke`: BLOCKED by `MANAGED_SERVER_PORT_CONFLICT`.
+- `npm run test:e2e:smoke:browser`: BLOCKED by `MANAGED_SERVER_PORT_CONFLICT`.
+- `npm run test:stage310`: 102 unit checks PASS; managed browser portion BLOCKED by `MANAGED_SERVER_PORT_CONFLICT`.
+
+Manual regression:
+- Not rerun by the agent because the existing local dev server is already in use and the live server/database did not match the E2E fixtures.
+- Actual lease-expiry delay observed manually by the agent: not measured.
+- The corrected provider-bound rail membership no longer waits for the two-minute lease when the provider/media participant is gone.

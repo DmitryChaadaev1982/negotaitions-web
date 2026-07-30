@@ -20,6 +20,9 @@ Contract:
 - While all observer tiles fit, the ordered content strip is centered with `width: max-content` and automatic inline margins.
 - When measured content overflows, the strip is start-aligned with zero inline margins so the first joined observers stay visible at the left edge.
 - New observers append to the right in stable roster order. The rail does not auto-scroll to new observers or media-state changes.
+- Observer rail membership is active-media membership, not management roster membership. Observer-zone entries require active logical room presence to occupy a rail tile.
+- For provider-bound observers, active logical room presence is necessary but not sufficient: the current media/provider endpoint must also still be present, so the tile disappears immediately on provider disconnect instead of waiting for lease expiry.
+- Known observers that have explicitly left or whose room connection has expired may remain in facilitator management/status UI, but they are absent from the observer rail.
 - The participant A, participant B, facilitator, timer, right sidebar, control bar, recording controls, and room lifecycle behavior are not redesigned.
 
 Zero-observer behavior:
@@ -28,7 +31,7 @@ Zero-observer behavior:
 
 High-count behavior:
 - Counts 0, 1, 2, 4, 5, 8, 12, 30, 50, and 100 are deterministic UI fixture scenarios.
-- All observer entries remain in the DOM; no video virtualization is introduced.
+- All active observer rail entries remain in the DOM; no video virtualization is introduced.
 - This validates roster presentation scalability, not provider capacity for 100 concurrent live camera streams.
 
 Sizing contract:

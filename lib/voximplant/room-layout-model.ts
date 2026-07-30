@@ -102,6 +102,17 @@ export function orderObserverRosterItems<T extends ObserverRosterPriorityInput>(
   return [...items].sort((a, b) => a.stableRosterIndex - b.stableRosterIndex);
 }
 
+export function shouldRenderObserverRailTile(params: {
+  entry: SessionRosterEntry;
+  zone: RosterVisualZone;
+  hasActiveMediaPresence: boolean;
+}): boolean {
+  if (params.zone !== "observer") return false;
+  if (params.entry.isLogicallyPresent !== true) return false;
+  if (!params.entry.voximplantProviderUsername) return true;
+  return params.hasActiveMediaPresence;
+}
+
 export function resolveRosterVisualRoles(roster: SessionRosterEntry[]): Map<string, ResolvedRosterRole> {
   const resolved = new Map<string, ResolvedRosterRole>();
 

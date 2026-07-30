@@ -13,6 +13,7 @@ import {
   resolveConnectionState,
   resolveRosterVisualRoles,
   shouldShowDiagnosticsSection,
+  shouldRenderObserverRailTile,
 } from "../../lib/voximplant/room-layout-model";
 
 function rosterEntry(overrides: Partial<SessionRosterEntry>): SessionRosterEntry {
@@ -25,6 +26,11 @@ function rosterEntry(overrides: Partial<SessionRosterEntry>): SessionRosterEntry
     voximplantProviderUsername: overrides.voximplantProviderUsername ?? null,
     joinedAt: overrides.joinedAt ?? null,
     lastSeenAt: overrides.lastSeenAt ?? null,
+    micEnabled: overrides.micEnabled ?? null,
+    cameraEnabled: overrides.cameraEnabled ?? null,
+    isLogicallyPresent: overrides.isLogicallyPresent ?? null,
+    logicalDisconnectReason: overrides.logicalDisconnectReason ?? null,
+    logicalConnectionId: overrides.logicalConnectionId ?? null,
     sessionRoleId: overrides.sessionRoleId ?? null,
   };
 }
@@ -242,6 +248,113 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).toContain("mediaModel.shouldRenderActiveTile");
     expect(source).toContain("const isLogicallyAbsent = entry.isLogicallyPresent === false");
     expect(source).toContain("connectedSignal: isLocal ? joined : Boolean(matchedRemote) && !isLogicallyAbsent");
+  });
+
+  test("observer rail membership follows logical room presence, not media state", () => {
+    const activeCameraOffObserver = rosterEntry({
+      id: "active-camera-off",
+      participantType: "OBSERVER",
+      userId: "user-active-camera-off",
+      voximplantProviderUsername: "observer-active-camera-off",
+      cameraEnabled: false,
+      micEnabled: false,
+      isLogicallyPresent: true,
+      logicalConnectionId: "connection-active-camera-off",
+    });
+    const activeButProviderDisconnectedObserver = rosterEntry({
+      id: "active-provider-disconnected",
+      participantType: "OBSERVER",
+      userId: "user-active-provider-disconnected",
+      voximplantProviderUsername: "observer-provider-disconnected",
+      isLogicallyPresent: true,
+      logicalConnectionId: "connection-active-provider-disconnected",
+    });
+    const explicitLeaveObserver = rosterEntry({
+      id: "explicit-leave",
+      participantType: "OBSERVER",
+      userId: "user-explicit-leave",
+      voximplantProviderUsername: "observer-explicit-leave",
+      isLogicallyPresent: false,
+      logicalDisconnectReason: "EXPLICIT_LEAVE",
+    });
+    const expiredObserver = rosterEntry({
+      id: "expired",
+      participantType: "OBSERVER",
+      userId: "user-expired",
+      voximplantProviderUsername: "observer-expired",
+      isLogicallyPresent: false,
+      logicalDisconnectReason: "EXPIRED",
+    });
+    const historicalObserverWithoutPresence = rosterEntry({
+      id: "known-only",
+      participantType: "OBSERVER",
+      userId: "user-known-only",
+      isLogicallyPresent: null,
+    });
+    const activeFixtureObserverWithoutProviderIdentity = rosterEntry({
+      id: "active-fixture-without-provider",
+      participantType: "OBSERVER",
+      userId: "user-active-fixture-without-provider",
+      isLogicallyPresent: true,
+      logicalConnectionId: "connection-active-fixture-without-provider",
+    });
+    const assignedParticipant = rosterEntry({
+      id: "participant-a",
+      participantType: "PARTICIPANT",
+      sessionRoleId: "role-a",
+      caseRoleName: "Participant A",
+      isLogicallyPresent: true,
+    });
+
+    expect(
+      shouldRenderObserverRailTile({
+        entry: activeCameraOffObserver,
+        zone: "observer",
+        hasActiveMediaPresence: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: activeButProviderDisconnectedObserver,
+        zone: "observer",
+        hasActiveMediaPresence: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: explicitLeaveObserver,
+        zone: "observer",
+        hasActiveMediaPresence: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: expiredObserver,
+        zone: "observer",
+        hasActiveMediaPresence: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: historicalObserverWithoutPresence,
+        zone: "observer",
+        hasActiveMediaPresence: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: activeFixtureObserverWithoutProviderIdentity,
+        zone: "observer",
+        hasActiveMediaPresence: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderObserverRailTile({
+        entry: assignedParticipant,
+        zone: "participant_a",
+        hasActiveMediaPresence: true,
+      }),
+    ).toBe(false);
   });
 
   test("room tiles keep name and case role without duplicated role/status subtitle text", () => {
