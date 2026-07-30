@@ -7,6 +7,8 @@ import {
   isDuplicateVideoStreamError,
 } from "../../lib/voximplant/camera-toggle-logic";
 import {
+  getObserverRosterPriorityBucket,
+  orderObserverRosterItems,
   resolveRemoteMicStateByPolicy,
   resolveConnectionState,
   resolveRosterVisualRoles,
@@ -91,7 +93,84 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).toContain("testId=\"vox-zone-observers\"");
     expect(source).toContain("vox-observers-empty-state");
     expect(source).toContain("t(\"room.observersNotConnected\")");
-    expect(source).toContain("justify-center");
+    expect(source).toContain("data-testid=\"vox-observer-row\"");
+    expect(source).toContain("overflow-x-auto");
+    expect(source).not.toContain("flex-wrap");
+  });
+
+  test("observer priority buckets prefer camera, then connected, then disconnected", () => {
+    expect(
+      getObserverRosterPriorityBucket({
+        stableRosterIndex: 0,
+        cameraEnabled: true,
+        connected: false,
+        disconnected: false,
+      }),
+    ).toBe(0);
+    expect(
+      getObserverRosterPriorityBucket({
+        stableRosterIndex: 0,
+        cameraEnabled: false,
+        connected: true,
+        disconnected: false,
+      }),
+    ).toBe(1);
+    expect(
+      getObserverRosterPriorityBucket({
+        stableRosterIndex: 0,
+        cameraEnabled: false,
+        connected: false,
+        disconnected: true,
+      }),
+    ).toBe(2);
+  });
+
+  test("observer priority preserves stable roster order within equal buckets", () => {
+    const ordered = orderObserverRosterItems([
+      {
+        id: "first-disconnected",
+        stableRosterIndex: 0,
+        cameraEnabled: false,
+        connected: false,
+        disconnected: true,
+      },
+      {
+        id: "first-camera",
+        stableRosterIndex: 1,
+        cameraEnabled: true,
+        connected: true,
+        disconnected: false,
+      },
+      {
+        id: "connected-a",
+        stableRosterIndex: 2,
+        cameraEnabled: false,
+        connected: true,
+        disconnected: false,
+      },
+      {
+        id: "connected-b",
+        stableRosterIndex: 3,
+        cameraEnabled: false,
+        connected: true,
+        disconnected: false,
+      },
+      {
+        id: "second-camera",
+        stableRosterIndex: 4,
+        cameraEnabled: true,
+        connected: true,
+        disconnected: false,
+      },
+    ]);
+
+    expect(ordered.map((item) => item.id)).toEqual([
+      "first-camera",
+      "second-camera",
+      "connected-a",
+      "connected-b",
+      "first-disconnected",
+    ]);
   });
 
   test("assigned but disconnected users are excluded from active video tiles", () => {
@@ -107,7 +186,7 @@ test.describe("Vox roster-first layout model", () => {
     expect(source).toContain(
       "title={tile.isLocal ? `${tile.rosterEntry.displayName} (${t(\"common.you\")})` : tile.rosterEntry.displayName}",
     );
-    expect(source).not.toContain("connectionLabel");
+    expect(source).toContain("observerTileAriaLabel");
     expect(source).not.toContain("t(\"room.videoOn\")");
   });
 

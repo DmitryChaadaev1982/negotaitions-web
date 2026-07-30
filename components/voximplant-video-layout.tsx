@@ -10,6 +10,7 @@ import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
+  orderObserverRosterItems,
   resolveRosterVisualRoles,
 } from "@/lib/voximplant/room-layout-model";
 import {
@@ -17,8 +18,8 @@ import {
   type ParticipantPresenceMediaModel,
 } from "@/lib/voximplant/participant-presence-media-model";
 import type { RoomAuthToken } from "@/lib/room-auth";
-import type { ReactNode } from "react";
-import { useMemo } from "react";
+import type { KeyboardEvent, ReactNode, WheelEvent } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 type VoxTileParticipant = {
   id: string;
@@ -43,6 +44,14 @@ type ResolvedRosterTile = {
   zone: "facilitator" | "participant_a" | "participant_b" | "observer" | "unknown";
   mediaModel: ParticipantPresenceMediaModel;
   isLocal: boolean;
+};
+
+type ObserverRosterItem = {
+  tile: ResolvedRosterTile;
+  stableRosterIndex: number;
+  cameraEnabled: boolean;
+  connected: boolean;
+  disconnected: boolean;
 };
 
 function normalizeEndpointUsername(value: string | null | undefined): string | null {
@@ -258,9 +267,73 @@ export default function VoximplantVideoLayout({
 
   const activeTiles = resolvedRosterTiles.filter((tile) => tile.mediaModel.shouldRenderActiveTile);
   const facilitatorTiles = activeTiles.filter((tile) => tile.zone === "facilitator");
-  const observerTiles = activeTiles.filter((tile) => tile.zone === "observer");
+  const observerTiles = useMemo(() => {
+    const observerItems: ObserverRosterItem[] = resolvedRosterTiles
+      .map((tile, stableRosterIndex) => ({
+        tile,
+        stableRosterIndex,
+        cameraEnabled:
+          tile.rosterEntry.cameraEnabled === true || tile.mediaModel.cameraStatus === "on",
+        connected:
+          tile.rosterEntry.isLogicallyPresent === true ||
+          tile.mediaModel.connectionStatus === "connected",
+        disconnected:
+          tile.rosterEntry.isLogicallyPresent === false ||
+          tile.mediaModel.connectionStatus === "disconnected",
+      }))
+      .filter((item) => item.tile.zone === "observer");
+
+    return orderObserverRosterItems(observerItems).map((item) => item.tile);
+  }, [resolvedRosterTiles]);
   const participantATiles = activeTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = activeTiles.filter((tile) => tile.zone === "participant_b");
+  const observerRailRef = useRef<HTMLDivElement | null>(null);
+  const scrollObserverRail = useCallback((direction: "left" | "right") => {
+    const node = observerRailRef.current;
+    if (!node) return;
+    const delta = Math.max(180, Math.floor(node.clientWidth * 0.75));
+    node.scrollBy({
+      left: direction === "left" ? -delta : delta,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }, []);
+  const handleObserverRailKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      const node = observerRailRef.current;
+      if (!node) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        scrollObserverRail("left");
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        scrollObserverRail("right");
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        node.scrollTo({ left: 0 });
+      } else if (event.key === "End") {
+        event.preventDefault();
+        node.scrollTo({ left: node.scrollWidth });
+      }
+    },
+    [scrollObserverRail],
+  );
+  const handleObserverRailWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      const node = observerRailRef.current;
+      if (!node || node.scrollWidth <= node.clientWidth) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const nextLeft = node.scrollLeft + event.deltaY;
+      const canScroll =
+        (event.deltaY < 0 && node.scrollLeft > 0) ||
+        (event.deltaY > 0 && node.scrollLeft < node.scrollWidth - node.clientWidth);
+      if (!canScroll) return;
+      event.preventDefault();
+      node.scrollLeft = nextLeft;
+    },
+    [],
+  );
   const remoteTelemetryTargets = useMemo(
     () =>
       resolvedRosterTiles
@@ -297,8 +370,36 @@ export default function VoximplantVideoLayout({
         : tile.mediaModel.cameraStatus === "on"
           ? t("room.mediaCameraOn")
           : t("room.mediaCameraOff");
+    const connectionLabel =
+      tile.mediaModel.connectionStatus === "connected"
+        ? t("room.presenceOnline")
+        : tile.mediaModel.connectionStatus === "disconnected"
+          ? t("room.presenceRecentlyDisconnected")
+          : t("room.presenceOffline");
+    const observerTileLabel = options?.observerCompact
+      ? t("room.observerTileAriaLabel", {
+          name: tile.isLocal
+            ? `${tile.rosterEntry.displayName} (${t("common.you")})`
+            : tile.rosterEntry.displayName,
+          connection: connectionLabel,
+          mic: micLabel,
+          camera: cameraLabel,
+        })
+      : undefined;
     return (
-      <div key={tile.rosterEntry.id} className={options?.observerCompact ? "w-[220px] min-w-0 max-w-full shrink-0" : "min-w-0"}>
+      <div
+        key={tile.rosterEntry.id}
+        className={
+          options?.observerCompact
+            ? "w-40 min-w-0 max-w-full shrink-0 snap-start rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300 sm:w-48 lg:w-52"
+            : "min-w-0"
+        }
+        role={options?.observerCompact ? "listitem" : undefined}
+        tabIndex={options?.observerCompact ? 0 : undefined}
+        aria-label={observerTileLabel}
+        data-testid={options?.observerCompact ? "vox-observer-tile" : undefined}
+        data-observer-id={options?.observerCompact ? tile.rosterEntry.id : undefined}
+      >
         <VoximplantParticipantTile
           stream={tile.participant.stream}
           muted={tile.isLocal}
@@ -336,14 +437,51 @@ export default function VoximplantVideoLayout({
         targets={remoteTelemetryTargets}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <RoleSection title={t("room.observersSection")} testId="vox-zone-observers">
+        <RoleSection
+          title={t("room.observerCountLabel", { count: observerTiles.length })}
+          testId="vox-zone-observers"
+          className="h-[9.25rem] shrink-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/45 p-2"
+        >
           {observerTiles.length > 0 ? (
-            <div className="flex flex-wrap justify-center gap-2 pb-1" data-testid="vox-observer-row">
+            <>
+            <div className="-mt-8 mb-1 flex justify-end gap-1">
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/70 text-xs text-slate-200 hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                aria-label={t("room.scrollObserversLeft")}
+                onClick={() => scrollObserverRail("left")}
+                data-testid="vox-observer-scroll-left"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/80 bg-slate-950/70 text-xs text-slate-200 hover:border-cyan-400/60 hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                aria-label={t("room.scrollObserversRight")}
+                onClick={() => scrollObserverRail("right")}
+                data-testid="vox-observer-scroll-right"
+              >
+                →
+              </button>
+            </div>
+            <div
+              ref={observerRailRef}
+              className="flex min-w-0 snap-x gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-2 pr-1 [scrollbar-color:rgba(148,163,184,0.65)_rgba(15,23,42,0.35)] [scrollbar-width:thin]"
+              data-testid="vox-observer-row"
+              role="list"
+              tabIndex={0}
+              aria-label={t("room.observerRailRegionLabel", {
+                count: observerTiles.length,
+              })}
+              onKeyDown={handleObserverRailKeyDown}
+              onWheel={handleObserverRailWheel}
+            >
               {observerTiles.map((tile) => renderRosterTile(tile, { observerCompact: true }))}
             </div>
+            </>
           ) : (
             <div
-              className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 px-3 py-1 text-xs text-slate-300"
+              className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-300"
               data-testid="vox-observers-empty-state"
             >
               {t("room.observersNotConnected")}

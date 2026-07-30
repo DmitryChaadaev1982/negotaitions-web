@@ -62,6 +62,7 @@ coverage/
 *.tgz
 *.bak
 *.old
+/artifacts/stage-3-12b-observer-scaling/
 
 # VoxEngine CI — generated upload staging folder (set via VOX_CI_ROOT_PATH)
 voxengine-ci/

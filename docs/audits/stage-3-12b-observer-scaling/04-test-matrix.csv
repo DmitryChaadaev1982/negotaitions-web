@@ -1,0 +1,26 @@
+category,scenario,coverage,status
+fixture-observer-count,0 observers,rail empty state and zero-to-one shift,pass
+fixture-observer-count,1 observer,single tile without page overflow,pass
+fixture-observer-count,4 observers,short rail on desktop/tablet/mobile,pass
+fixture-observer-count,8 observers,desktop overflow threshold,pass
+fixture-observer-count,12 observers,long names and duplicate-looking names,pass
+fixture-observer-count,30 observers,high-count scroll and viewport samples,pass
+fixture-observer-count,50 observers,desktop stage stability,pass
+fixture-observer-count,100 observers,DOM roster scalability without 100 browsers,pass
+media-state,camera all off,fixture media-status store,pass
+media-state,camera all on,fixture media-status store,pass
+media-state,camera mixed,fixture media-status store,pass
+media-state,mic all muted,fixture media-status store,pass
+media-state,mic mixed,fixture media-status store,pass
+connection-state,connected/disconnected/reconnecting,covered by existing presence tests plus observer rail roster states,pass
+role-state,unassigned participant observer,DEBRIEF_OPEN rail test,pass
+viewport,1440x900 counts 0 1 4 8 12 30 50 100,full viewport and rail evidence,pass
+viewport,1366x768 counts 4 12 30,full viewport and rail evidence,pass
+viewport,1280x720 counts 4 12 30,full viewport and rail evidence,pass
+viewport,1024x768 counts 4 12,full viewport and rail evidence,pass
+viewport,768x1024 counts 4 12 30,full viewport and rail evidence,pass
+viewport,390x844 counts 1 4 12,full viewport and rail evidence,pass
+priority,camera before inactive stable buckets,unit coverage,pass
+priority,equal-priority stable order,unit coverage,pass
+browser-context,1 facilitator + fixture observers,focused deterministic room layout,pass
+browser-context,1 facilitator + 2 participants + 2/8/12 observers,covered by bounded automated/regression plan,pass

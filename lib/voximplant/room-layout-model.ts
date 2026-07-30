@@ -81,6 +81,33 @@ export type ResolvedRosterRole = {
   diagnosticLabel: string | null;
 };
 
+export type ObserverRosterPriorityInput = {
+  stableRosterIndex: number;
+  cameraEnabled: boolean;
+  connected: boolean;
+  disconnected: boolean;
+};
+
+export function getObserverRosterPriorityBucket(
+  item: ObserverRosterPriorityInput,
+): number {
+  if (item.cameraEnabled) return 0;
+  if (item.connected) return 1;
+  if (item.disconnected) return 2;
+  return 3;
+}
+
+export function orderObserverRosterItems<T extends ObserverRosterPriorityInput>(
+  items: readonly T[],
+): T[] {
+  return [...items].sort((a, b) => {
+    const priorityDelta =
+      getObserverRosterPriorityBucket(a) - getObserverRosterPriorityBucket(b);
+    if (priorityDelta !== 0) return priorityDelta;
+    return a.stableRosterIndex - b.stableRosterIndex;
+  });
+}
+
 export function resolveRosterVisualRoles(roster: SessionRosterEntry[]): Map<string, ResolvedRosterRole> {
   const resolved = new Map<string, ResolvedRosterRole>();
 
