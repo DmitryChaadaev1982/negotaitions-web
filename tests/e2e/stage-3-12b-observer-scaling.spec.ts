@@ -2,7 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type ConsoleMessage,
+  type Page,
+  type Response,
+} from "@playwright/test";
 
 import {
   cleanupE2eData,
@@ -13,13 +20,19 @@ import {
   query,
 } from "./helpers/db";
 
-test.describe.configure({ mode: "serial" });
-
 const ARTIFACT_ROOT = path.join(
   process.cwd(),
   "artifacts",
   "stage-3-12b-observer-scaling",
 );
+const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v1";
+const observerCounts = [0, 1, 4, 8, 12, 30, 50, 100] as const;
+const controlledRoomErrorTestIds = [
+  "room-entry-error-details",
+  "room-explicit-leave-error",
+  "vox-recording-relay-error",
+  "room-leave-error",
+] as const;
 
 type ObserverPattern = "all-on" | "all-off" | "mixed";
 type Lifecycle = "OPEN" | "RUNNING" | "DEBRIEF_OPEN";
@@ -69,6 +82,7 @@ type LayoutMetrics = {
 };
 
 const evidenceRecords: LayoutMetrics[] = [];
+const scaleEvidenceRecords: LayoutMetrics[] = [];
 
 function observerName(index: number, longNames: boolean, duplicateLookingNames: boolean) {
   if (duplicateLookingNames) {
@@ -110,17 +124,18 @@ async function loginWithUserSession(page: Page, userId: string) {
 }
 
 async function seedCookieConsent(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript((storageKey) => {
     localStorage.setItem(
-      "negotaitions.cookieConsent.v1",
+      storageKey,
       JSON.stringify({
+        version: 1,
         necessary: true,
         analytics: false,
         marketing: false,
-        timestamp: Date.now(),
+        updatedAt: new Date().toISOString(),
       }),
     );
-  });
+  }, COOKIE_CONSENT_STORAGE_KEY);
 }
 
 async function seedActiveRoomConnection(input: {
@@ -400,13 +415,93 @@ async function createObserverScalingSession(input: {
   };
 }
 
-async function openRoom(page: Page, session: ObserverScalingSession) {
+async function attachRoomOpenDiagnostics(input: {
+  page: Page;
+  scenarioId: string;
+  response: Response | null;
+  gotoMs: number;
+  pageErrors: string[];
+  consoleErrors: string[];
+}) {
+  const controlledErrors: Record<string, string[]> = {};
+  for (const testId of controlledRoomErrorTestIds) {
+    controlledErrors[testId] = await input.page
+      .getByTestId(testId)
+      .allTextContents()
+      .catch(() => []);
+  }
+  await test.info().attach(`room-open-diagnostics-${input.scenarioId}`, {
+    contentType: "application/json",
+    body: JSON.stringify(
+      {
+        scenarioId: input.scenarioId,
+        finalUrl: input.page.url(),
+        responseStatus: input.response?.status() ?? null,
+        responseOk: input.response?.ok() ?? null,
+        gotoMs: input.gotoMs,
+        controlledErrors,
+        pageErrors: input.pageErrors,
+        consoleErrors: input.consoleErrors,
+      },
+      null,
+      2,
+    ),
+  });
+}
+
+async function openRoom(
+  page: Page,
+  session: ObserverScalingSession,
+  scenarioId = session.sessionId,
+) {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const handlePageError = (error: Error) => pageErrors.push(error.message);
+  const handleConsole = (message: ConsoleMessage) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  };
+
+  page.on("pageerror", handlePageError);
+  page.on("console", handleConsole);
+  let response: Response | null = null;
+  const gotoStartedAt = Date.now();
   await page.context().clearCookies();
   await seedCookieConsent(page);
   await loginWithUserSession(page, session.facilitatorUserId);
-  await page.goto(`/room/${session.sessionId}?media=off`);
-  await expect(page.getByTestId("session-room-header")).toBeVisible({ timeout: 25_000 });
-  await expect(page.getByTestId("vox-zone-observers")).toBeVisible({ timeout: 25_000 });
+  try {
+    response = await page.goto(`/room/${session.sessionId}?media=off`, {
+      waitUntil: "domcontentloaded",
+    });
+    const gotoMs = Date.now() - gotoStartedAt;
+    expect(response, `room navigation returned no response for ${scenarioId}`).not.toBeNull();
+    expect(
+      response!.status(),
+      `room navigation status for ${scenarioId} at ${page.url()}`,
+    ).toBeLessThan(400);
+    expect(page.url()).toContain(`/room/${session.sessionId}`);
+    await expect(page.getByTestId("cookie-banner")).toHaveCount(0);
+    for (const testId of controlledRoomErrorTestIds) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+    await expect(page.getByTestId("session-room-header")).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByTestId("vox-zone-observers")).toBeVisible({ timeout: 25_000 });
+    return { gotoMs };
+  } catch (error) {
+    await attachRoomOpenDiagnostics({
+      page,
+      scenarioId,
+      response,
+      gotoMs: Date.now() - gotoStartedAt,
+      pageErrors,
+      consoleErrors,
+    });
+    throw error;
+  } finally {
+    page.off("pageerror", handlePageError);
+    page.off("console", handleConsole);
+  }
 }
 
 async function appendObserverToSession(
@@ -685,25 +780,54 @@ function assertStartAlignedOverflow(metrics: LayoutMetrics) {
   }
 }
 
+function assertStableStageAcrossScale(records: LayoutMetrics[]) {
+  const recordsByCount = new Map(records.map((record) => [record.observerCount, record]));
+  if (!observerCounts.every((count) => recordsByCount.has(count))) {
+    return;
+  }
+
+  const stageBoxes = observerCounts
+    .map((count) => recordsByCount.get(count)!.mainStageBox)
+    .filter((box): box is BoxMetrics => box !== null);
+  expect(stageBoxes.length).toBe(observerCounts.length);
+  const widths = stageBoxes.map((box) => box.width);
+  const heights = stageBoxes.map((box) => box.height);
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(2);
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(2);
+
+  const zeroObserverHeight = recordsByCount.get(0)!.observerZoneBox.height;
+  const oneObserverHeight = recordsByCount.get(1)!.observerZoneBox.height;
+  expect(Math.abs(oneObserverHeight - zeroObserverHeight)).toBeLessThanOrEqual(2);
+}
+
 test.beforeAll(async () => {
   await cleanupE2eData();
   mkdirSync(ARTIFACT_ROOT, { recursive: true });
 });
 
-test.afterAll(async () => {
-  writeFileSync(
-    path.join(ARTIFACT_ROOT, "manifest.json"),
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        note: "Screenshots are local artifacts and are not intended for git.",
-        records: evidenceRecords,
-      },
-      null,
-      2,
-    ),
-  );
+test.afterEach(async ({ page }) => {
+  await page.close();
   await cleanupE2eData();
+});
+
+test.afterAll(async () => {
+  try {
+    writeFileSync(
+      path.join(ARTIFACT_ROOT, "manifest.json"),
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          note: "Screenshots are local artifacts and are not intended for git.",
+          records: evidenceRecords,
+        },
+        null,
+        2,
+      ),
+    );
+    assertStableStageAcrossScale(scaleEvidenceRecords);
+  } finally {
+    await cleanupE2eData();
+  }
 });
 
 test("observer rail removes inactive observers while facilitator roster keeps them", async ({
@@ -820,79 +944,58 @@ test("observer rail applies active membership during debrief", async ({ page }) 
   assertObserverRailMetrics(metrics, 2);
 });
 
-test("observer rail scales deterministic roster counts without stage shrink", async ({ page }) => {
-  const counts = [0, 1, 2, 4, 5, 8, 12, 30, 50, 100];
-  const sessions = new Map<number, ObserverScalingSession>();
-  for (const count of counts) {
-    sessions.set(
-      count,
-      await createObserverScalingSession({
-        observerCount: count,
+for (const observerCount of observerCounts) {
+  test(`observer rail scales stable with ${observerCount} observers`, async ({ page }) => {
+    let session: ObserverScalingSession | null = null;
+    await test.step(`create ${observerCount} observer fixture`, async () => {
+      session = await createObserverScalingSession({
+        observerCount,
         lifecycle: "RUNNING",
-        cameraPattern: count === 0 ? "all-off" : count % 2 === 0 ? "mixed" : "all-on",
-        micPattern: count % 3 === 0 ? "all-off" : "mixed",
-        longNames: count >= 12,
-        duplicateLookingNames: count === 12,
-      }),
-    );
-  }
+        cameraPattern:
+          observerCount === 0 ? "all-off" : observerCount >= 30 ? "all-off" : "mixed",
+        micPattern: observerCount % 3 === 0 ? "all-off" : "mixed",
+        longNames: observerCount >= 12,
+        duplicateLookingNames: observerCount === 12,
+      });
+    });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const stageBoxes: LayoutMetrics["mainStageBox"][] = [];
-  let zeroObserverHeight = 0;
-  let oneObserverHeight = 0;
-
-  for (const count of counts) {
-    const session = sessions.get(count)!;
-    await openRoom(page, session);
-    await expect(page.getByTestId("vox-observer-tile")).toHaveCount(count);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await test.step(`open ${observerCount} observer room`, async () => {
+      await openRoom(page, session!, `desktop-1440x900-${observerCount}`);
+    });
+    await expect(page.getByTestId("vox-observer-tile")).toHaveCount(observerCount);
     await expect(page.getByTestId("vox-zone-participant-a")).toBeVisible();
     await expect(page.getByTestId("vox-zone-participant-b")).toBeVisible();
     await expect(page.getByTestId("vox-zone-facilitator")).toBeVisible();
-    if ([1, 2, 4].includes(count)) {
+    if ([1, 4].includes(observerCount)) {
       await waitForRailOverflow(page, false);
     }
-    if (count === 5) {
+    if (observerCount >= 8) {
       await waitForRailOverflow(page, true);
       await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
     }
 
-    const metrics = await captureEvidence(page, `desktop-1440x900-${count}`, count);
-    assertObserverRailMetrics(metrics, count);
+    const metrics = await captureEvidence(
+      page,
+      `desktop-1440x900-${observerCount}`,
+      observerCount,
+    );
+    scaleEvidenceRecords.push(metrics);
+    assertObserverRailMetrics(metrics, observerCount);
     const observerIds = await observerTileIds(page);
-    assertStableObserverOrder(observerIds, session.observerParticipantIds);
-    if ([1, 2, 4].includes(count)) {
+    assertStableObserverOrder(observerIds, session!.observerParticipantIds);
+    if ([1, 4].includes(observerCount)) {
       assertCenteredWhileFitting(metrics);
       await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
       await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
     }
-    if (count === 5) {
+    if (observerCount >= 8) {
       assertStartAlignedOverflow(metrics);
       await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
       await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
     }
-    if (metrics.mainStageBox) stageBoxes.push(metrics.mainStageBox);
-    if (count === 0) zeroObserverHeight = metrics.observerZoneBox.height;
-    if (count === 1) oneObserverHeight = metrics.observerZoneBox.height;
-  }
-
-  const widths = stageBoxes.map((box) => box!.width);
-  const heights = stageBoxes.map((box) => box!.height);
-  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(2);
-  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(2);
-  expect(Math.abs(oneObserverHeight - zeroObserverHeight)).toBeLessThanOrEqual(2);
-
-  const highCountSession = sessions.get(100)!;
-  await openRoom(page, highCountSession);
-  const rail = page.getByTestId("vox-observer-row");
-  await rail.focus();
-  await page.keyboard.press("End");
-  await expect
-    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
-    .toBeGreaterThan(0);
-  await page.getByTestId("vox-observer-tile").last().focus();
-  await expect(page.getByTestId("vox-observer-tile").last()).toBeFocused();
-});
+  });
+}
 
 test("observer rail exposes conditional arrows during manual scrolling", async ({ page }) => {
   const session = await createObserverScalingSession({
@@ -961,6 +1064,14 @@ test("observer rail exposes conditional arrows during manual scrolling", async (
     .toBeLessThanOrEqual(2);
   const returnedMetrics = await collectLayoutMetrics(page, "desktop-1440x900-30-returned", 30);
   assertStartAlignedOverflow(returnedMetrics);
+
+  await rail.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
+    .toBeGreaterThan(0);
+  await page.getByTestId("vox-observer-tile").last().focus();
+  await expect(page.getByTestId("vox-observer-tile").last()).toBeFocused();
 });
 
 test("observer rail keeps stable append-right order as observers are added", async ({ page }) => {
