@@ -24,6 +24,8 @@ export default async function SessionDetailPage({
   params,
 }: SessionDetailPageProps) {
   const { id } = await params;
+  // Computed once per request so parent/child SSR presence classifications agree.
+  const presenceSnapshotAt = new Date().toISOString();
   const user = await requireActiveUser(`/sessions/${id}`);
   const access = await getCurrentUserSessionAccess(id, user, {});
   if (!access || !canManageSession(access)) {
@@ -84,6 +86,7 @@ export default async function SessionDetailPage({
 
   return (
     <SessionDetailView
+      presenceSnapshotAt={presenceSnapshotAt}
       session={{
         id: session.id,
         title: session.title,

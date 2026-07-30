@@ -15,15 +15,20 @@ const variantStyles: Record<Difficulty | "default" | "info" | "success" | "warni
   danger: "bg-rose-500/15 text-rose-300 ring-rose-500/25",
 };
 
-type BadgeProps = {
+type BadgeProps = Omit<React.HTMLAttributes<HTMLSpanElement>, "children"> & {
   children: React.ReactNode;
   variant?: Difficulty | "default" | "info" | "success" | "warning" | "danger";
-  className?: string;
 };
 
-export function Badge({ children, variant = "default", className }: BadgeProps) {
+export function Badge({
+  children,
+  variant = "default",
+  className,
+  ...spanProps
+}: BadgeProps) {
   return (
     <span
+      {...spanProps}
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset",
         variantStyles[variant],

@@ -52,6 +52,7 @@ import type { RoomAuthToken } from "@/lib/room-auth";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { RoomRecordingState, ShellSessionCloseState } from "@/lib/room-provider/types";
+import { formatRoomHeaderTitle } from "@/lib/room-header-title";
 
 // ─── RoomSidebar ─────────────────────────────────────────────────────────────
 // Authoritative sidebar for all providers. Shows role briefings, notes,
@@ -594,7 +595,10 @@ export function SharedRoomShell({
             <div className="flex items-center gap-2">
               {/* Session title — always the domain title, never the provider conference name */}
               <p className="truncate text-sm font-semibold text-slate-50">
-                {sidebar.sessionTitle}
+                {formatRoomHeaderTitle({
+                  roomLabel: sidebar.roomLabel,
+                  sessionTitle: sidebar.sessionTitle,
+                })}
               </p>
               <VisibilityBadge visibility={sidebar.visibility} showLabel={false} />
             </div>

@@ -16,6 +16,22 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const EVENT_STATE_NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+} as const;
+
+function eventStateJson<T>(body: T, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: EVENT_STATE_NO_STORE_HEADERS,
+  });
+}
+
 export async function GET(request: Request, context: RouteContext) {
   const { id: eventId } = await context.params;
   const { searchParams } = new URL(request.url);
@@ -30,18 +46,18 @@ export async function GET(request: Request, context: RouteContext) {
     searchParams.get("claimLease") === "true";
 
   if (!parsed.success) {
-    return NextResponse.json({ error: "invalidAccess" }, { status: 400 });
+    return eventStateJson({ error: "invalidAccess" }, { status: 400 });
   }
 
   const user = await getOptionalCurrentUser();
   const access = await resolveEventAccess(eventId, parsed.data, user);
 
   if (!access) {
-    return NextResponse.json({ error: "invalidAccess" }, { status: 403 });
+    return eventStateJson({ error: "invalidAccess" }, { status: 403 });
   }
 
   if (isEventDeletedOrCancelled(access.event)) {
-    return NextResponse.json({ error: "eventUnavailable" }, { status: 410 });
+    return eventStateJson({ error: "eventUnavailable" }, { status: 410 });
   }
 
   // Authenticated lobby identity must be resolved by eventId + currentUser.id.
@@ -86,7 +102,7 @@ export async function GET(request: Request, context: RouteContext) {
       });
     }
     if (!lease.isCurrentConnectionActive) {
-      return NextResponse.json(
+      return eventStateJson(
         {
           error: "staleConnection",
           code: "STALE_CONNECTION",
@@ -110,5 +126,5 @@ export async function GET(request: Request, context: RouteContext) {
     userId: user?.id ?? null,
   });
 
-  return NextResponse.json(state);
+  return eventStateJson(state);
 }

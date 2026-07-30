@@ -35,6 +35,18 @@ describe("getRecordingDisplayState", () => {
     );
   });
 
+  it("maps in-flight durable stop states to stopping", () => {
+    for (const stopOperationState of ["PENDING", "DELIVERING", "DELIVERED"]) {
+      assert.equal(
+        getRecordingDisplayState({
+          recordingStatus: "RECORDING",
+          stopOperationState,
+        }),
+        "stopping",
+      );
+    }
+  });
+
   it("maps stopped/completed recording to completed", () => {
     assert.equal(
       getRecordingDisplayState({
@@ -54,6 +66,17 @@ describe("getRecordingDisplayState", () => {
     assert.equal(
       getRecordingDisplayState({
         recordingStatus: "FAILED",
+        stopOperationState: "DELIVERING",
+      }),
+      "failed",
+    );
+  });
+
+  it("does not treat FAILED stop operation as ongoing stopping", () => {
+    assert.equal(
+      getRecordingDisplayState({
+        recordingStatus: "FAILED",
+        stopOperationState: "FAILED",
       }),
       "failed",
     );

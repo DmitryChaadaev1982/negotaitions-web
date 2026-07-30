@@ -39,6 +39,7 @@ export type RoomSidebarData = {
   sessionId: string;
   currentParticipantId: string;
   sessionTitle: string;
+  roomLabel?: string | null;
   visibility: "PUBLIC" | "PRIVATE";
   event: {
     id: string;

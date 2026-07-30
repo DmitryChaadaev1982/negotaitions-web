@@ -224,8 +224,16 @@ export function SessionPostProcessingPanel({
   const autoTranscribeStartedRef = useRef(false);
   const autoCollapsedRef = useRef(false);
   const forcePollingTimerRef = useRef<number | null>(null);
+  const statusPollInFlightRef = useRef(false);
+  const statusRequestSeqRef = useRef(0);
+  const latestAppliedStatusRequestRef = useRef(0);
 
   const fetchStatus = useCallback(async () => {
+    if (statusPollInFlightRef.current) {
+      return;
+    }
+    statusPollInFlightRef.current = true;
+    const requestId = ++statusRequestSeqRef.current;
     try {
       const res = await fetch(
         `/api/sessions/${sessionId}/materials/status?${roomAuthQuery(roomAuth)}`,
@@ -233,9 +241,17 @@ export function SessionPostProcessingPanel({
       );
       if (!res.ok || !mountedRef.current) return;
       const data = (await res.json()) as MaterialsStatusResponse;
-      if (mountedRef.current) setStatusData(data);
+      if (
+        mountedRef.current &&
+        requestId >= latestAppliedStatusRequestRef.current
+      ) {
+        latestAppliedStatusRequestRef.current = requestId;
+        setStatusData(data);
+      }
     } catch {
       // ignore
+    } finally {
+      statusPollInFlightRef.current = false;
     }
   }, [roomAuth, sessionId]);
 

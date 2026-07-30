@@ -960,6 +960,9 @@ export function SessionMaterialsDashboard({
   const isMountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
   const forcePollingTimerRef = useRef<number | null>(null);
+  const statusPollInFlightRef = useRef(false);
+  const statusRequestSeqRef = useRef(0);
+  const latestAppliedStatusRequestRef = useRef(0);
 
   const canPoll = Boolean(sessionId && joinToken);
 
@@ -1089,6 +1092,9 @@ export function SessionMaterialsDashboard({
 
   const fetchStatus = useCallback(async () => {
     if (!sessionId || !joinToken) return;
+    if (statusPollInFlightRef.current) return;
+    statusPollInFlightRef.current = true;
+    const requestId = ++statusRequestSeqRef.current;
     try {
       const res = await fetch(
         `/api/sessions/${sessionId}/materials/status?joinToken=${encodeURIComponent(joinToken)}`,
@@ -1097,11 +1103,17 @@ export function SessionMaterialsDashboard({
       if (!isMountedRef.current) return;
       if (!res.ok) return;
       const data = (await res.json()) as MaterialsStatusResponse;
-      if (isMountedRef.current) {
+      if (
+        isMountedRef.current &&
+        requestId >= latestAppliedStatusRequestRef.current
+      ) {
+        latestAppliedStatusRequestRef.current = requestId;
         setLiveData(data);
       }
     } catch {
       // Ignore transient polling errors silently
+    } finally {
+      statusPollInFlightRef.current = false;
     }
   }, [sessionId, joinToken]);
 

@@ -43,7 +43,15 @@ export async function GET(_request: Request, context: RouteContext) {
         deletedAt: null,
       },
       include: {
-        recording: true,
+        recording: {
+          include: {
+            stopOperation: {
+              select: {
+                state: true,
+              },
+            },
+          },
+        },
         transcript: {
           include: {
             segments: {
@@ -107,6 +115,7 @@ export async function GET(_request: Request, context: RouteContext) {
             startedAt: session.recording.startedAt?.toISOString() ?? null,
             endedAt: session.recording.endedAt?.toISOString() ?? null,
             errorMessage: session.recording.errorMessage,
+            stopOperationState: session.recording.stopOperation?.state ?? null,
           }
         : null,
       transcript: session.transcript

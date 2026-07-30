@@ -7,7 +7,8 @@ import { formatDateFromIso } from "@/lib/format-date";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ParticipantNoteEntry } from "@/lib/participant-notes-types";
 import {
-  isParticipantOnline,
+  buildInitialParticipantPresenceSnapshot,
+  parsePresenceSnapshotAt,
   resolveConnectionStatus,
   type ParticipantConnectionStatus,
   type ParticipantPresenceSnapshot,
@@ -27,6 +28,8 @@ type ParticipantRow = {
 type ParticipantsTableProps = {
   sessionId: string;
   participants: ParticipantRow[];
+  /** Shared SSR/hydration epoch; live SSE replaces presence after mount. */
+  presenceSnapshotAt: string;
   readOnly?: boolean;
   onViewNotes: (participant: ParticipantRow) => void;
 };
@@ -71,6 +74,7 @@ type ParticipantsPresenceTableProps = {
   sessionId: string;
   participants: ParticipantRow[];
   initialPresence: Map<string, ParticipantPresenceSnapshot>;
+  presenceSnapshotAt: string;
   readOnly?: boolean;
   onViewNotes: (participant: ParticipantRow) => void;
 };
@@ -94,12 +98,14 @@ function ParticipantsPresenceTable({
   sessionId,
   participants,
   initialPresence,
+  presenceSnapshotAt,
   readOnly = false,
   onViewNotes,
 }: ParticipantsPresenceTableProps) {
   const { t, locale } = useI18n();
   const [presenceById, setPresenceById] =
     useState<Map<string, ParticipantPresenceSnapshot>>(initialPresence);
+  const initialSnapshotEpoch = parsePresenceSnapshotAt(presenceSnapshotAt);
 
   useEffect(() => {
     const source = new EventSource(
@@ -204,6 +210,7 @@ function ParticipantsPresenceTable({
                           : participant.lastSeenAt
                             ? new Date(participant.lastSeenAt)
                             : null,
+                        initialSnapshotEpoch,
                       )
                     }
                   />
@@ -254,6 +261,7 @@ function ParticipantsPresenceTable({
 export function ParticipantsTable({
   sessionId,
   participants,
+  presenceSnapshotAt,
   readOnly = false,
   onViewNotes,
 }: ParticipantsTableProps) {
@@ -261,21 +269,14 @@ export function ParticipantsTable({
     const map = new Map<string, ParticipantPresenceSnapshot>();
 
     for (const participant of participants) {
-      map.set(participant.id, {
-        id: participant.id,
-        joinedAt: participant.joinedAt,
-        lastSeenAt: participant.lastSeenAt,
-        isOnline: isParticipantOnline(
-          participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
-        ),
-        connectionStatus: resolveConnectionStatus(
-          participant.lastSeenAt ? new Date(participant.lastSeenAt) : null,
-        ),
-      });
+      map.set(
+        participant.id,
+        buildInitialParticipantPresenceSnapshot(participant, presenceSnapshotAt),
+      );
     }
 
     return map;
-  }, [participants]);
+  }, [participants, presenceSnapshotAt]);
 
   const participantsKey = useMemo(
     () =>
@@ -294,6 +295,7 @@ export function ParticipantsTable({
       sessionId={sessionId}
       participants={participants}
       initialPresence={initialPresence}
+      presenceSnapshotAt={presenceSnapshotAt}
       readOnly={readOnly}
       onViewNotes={onViewNotes}
     />

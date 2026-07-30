@@ -23,6 +23,7 @@ const roomSidebarParticipantInclude = {
   session: {
     select: {
       title: true,
+      roomLabel: true,
       facilitatorId: true,
       visibility: true,
       durationSeconds: true,
@@ -211,6 +212,7 @@ async function buildRoomSidebarData(
     sessionId: participant.sessionId,
     currentParticipantId: participant.id,
     sessionTitle: participant.session.title,
+    roomLabel: participant.session.roomLabel,
     visibility: participant.session.visibility,
     event: participant.session.event
       ? {

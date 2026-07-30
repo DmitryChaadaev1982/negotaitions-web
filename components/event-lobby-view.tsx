@@ -3,7 +3,7 @@
 import "@livekit/components-styles";
 import "@/styles/livekit-overrides.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -33,6 +33,11 @@ import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery
 import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
 import { useClientConnectionId } from "@/lib/client/connection-id";
 import type { EventAssignmentDraft } from "@/lib/event-assignment";
+import {
+  EVENT_LOBBY_POLL_INTERVAL_MS,
+  getEventLobbyPollDelayMs,
+  shouldApplyEventStateResponse,
+} from "@/lib/event-state-polling";
 
 const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 
@@ -108,10 +113,31 @@ export function EventLobbyView({
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
   const [staleConnection, setStaleConnection] = useState(false);
+  const stateRequestSequenceRef = useRef(0);
+  const latestAppliedStateRequestRef = useRef(0);
+  const statePollInFlightRef = useRef(false);
   const lobbyConnectionId = useClientConnectionId(`event-lobby-${eventId}`);
   const activateStaleConnection = useCallback(() => {
     setStaleConnection(true);
   }, []);
+
+  const applyEventState = useCallback(
+    (data: EventStateResponse, requestId = ++stateRequestSequenceRef.current) => {
+      if (
+        !shouldApplyEventStateResponse({
+          requestId,
+          latestAppliedRequestId: latestAppliedStateRequestRef.current,
+        })
+      ) {
+        return false;
+      }
+      latestAppliedStateRequestRef.current = requestId;
+      setState(data);
+      setError(null);
+      return true;
+    },
+    [],
+  );
 
   const accessQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -201,6 +227,7 @@ export function EventLobbyView({
     if (!lobbyConnectionId) {
       return null;
     }
+    const requestId = ++stateRequestSequenceRef.current;
 
     const params = new URLSearchParams(accessQuery);
     params.set("connectionId", lobbyConnectionId);
@@ -230,10 +257,9 @@ export function EventLobbyView({
     }
 
     const data = (await response.json()) as EventStateResponse;
-    setState(data);
-    setError(null);
+    applyEventState(data, requestId);
     return data;
-  }, [accessQuery, activateStaleConnection, eventId, lobbyConnectionId]);
+  }, [accessQuery, activateStaleConnection, applyEventState, eventId, lobbyConnectionId]);
 
   useEffect(() => {
     if (!lobbyConnectionId) {
@@ -246,7 +272,9 @@ export function EventLobbyView({
     async function bootstrap() {
       try {
         let stateData: EventStateResponse | null = null;
+        let stateRequestId = 0;
         for (const retryDelayMs of LOBBY_BOOTSTRAP_RETRY_DELAYS_MS) {
+          stateRequestId = ++stateRequestSequenceRef.current;
           const params = new URLSearchParams(accessQuery);
           params.set("connectionId", activeConnectionId);
           params.set("claimLease", "1");
@@ -286,8 +314,7 @@ export function EventLobbyView({
           return;
         }
 
-        setState(stateData);
-        setError(null);
+        applyEventState(stateData, stateRequestId);
 
         if (active) {
           setIsBootstrapping(false);
@@ -333,6 +360,7 @@ export function EventLobbyView({
   }, [
     accessQuery,
     activateStaleConnection,
+    applyEventState,
     eventId,
     fetchLiveKitToken,
     fetchVoxAccess,
@@ -344,8 +372,29 @@ export function EventLobbyView({
     if (staleConnection) {
       return;
     }
-    const interval = window.setInterval(() => {
-      void (async () => {
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const clearScheduledPoll = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const scheduleNextPoll = (delayMs: number) => {
+      clearScheduledPoll();
+      timeoutId = window.setTimeout(() => {
+        void runPollCycle();
+      }, delayMs);
+    };
+
+    const runPollTick = async () => {
+      if (cancelled || statePollInFlightRef.current) {
+        return;
+      }
+      statePollInFlightRef.current = true;
+      try {
         const latestState = await fetchState();
         if (
           latestState &&
@@ -364,10 +413,47 @@ export function EventLobbyView({
           await fetchVoxAccess();
         }
         touchRecoveryContext();
-      })();
-    }, 2500);
+      } finally {
+        statePollInFlightRef.current = false;
+      }
+    };
 
-    return () => window.clearInterval(interval);
+    const runPollCycle = async () => {
+      if (cancelled) {
+        return;
+      }
+      await runPollTick();
+      if (cancelled) {
+        return;
+      }
+      scheduleNextPoll(
+        getEventLobbyPollDelayMs(document.visibilityState === "visible"),
+      );
+    };
+
+    const triggerImmediatePoll = () => {
+      if (cancelled || document.visibilityState !== "visible") {
+        return;
+      }
+      clearScheduledPoll();
+      void (async () => {
+        await runPollTick();
+        if (!cancelled) {
+          scheduleNextPoll(EVENT_LOBBY_POLL_INTERVAL_MS);
+        }
+      })();
+    };
+
+    scheduleNextPoll(EVENT_LOBBY_POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", triggerImmediatePoll);
+    window.addEventListener("focus", triggerImmediatePoll);
+
+    return () => {
+      cancelled = true;
+      clearScheduledPoll();
+      document.removeEventListener("visibilitychange", triggerImmediatePoll);
+      window.removeEventListener("focus", triggerImmediatePoll);
+    };
   }, [
     fetchLiveKitToken,
     fetchState,
@@ -420,7 +506,7 @@ export function EventLobbyView({
 
       if (response.ok) {
         const data = (await response.json()) as EventStateResponse;
-        setState(data);
+        applyEventState(data);
       } else if (response.status === 409) {
         const stalePayload = (await response.json().catch(() => ({}))) as {
           code?: string;
@@ -430,7 +516,7 @@ export function EventLobbyView({
         }
       }
     },
-    [activateStaleConnection, eventId, hostAccessToken, lobbyConnectionId, staleConnection],
+    [activateStaleConnection, applyEventState, eventId, hostAccessToken, lobbyConnectionId, staleConnection],
   );
 
   const updatePreference = useCallback(
@@ -469,7 +555,7 @@ export function EventLobbyView({
 
       if (response.ok) {
         const data = (await response.json()) as EventStateResponse;
-        setState(data);
+        applyEventState(data);
       } else if (response.status === 409) {
         const stalePayload = (await response.json().catch(() => ({}))) as {
           code?: string;
@@ -481,7 +567,7 @@ export function EventLobbyView({
         await fetchState();
       }
     },
-    [activateStaleConnection, eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
+    [activateStaleConnection, applyEventState, eventId, fetchState, lobbyConnectionId, participantAccessToken, staleConnection],
   );
 
   const createSession = useCallback(async (overrides?: {
@@ -533,7 +619,7 @@ export function EventLobbyView({
 
       if (response.ok) {
         const data = await response.json();
-        setState(data.state as EventStateResponse);
+        applyEventState(data.state as EventStateResponse);
       } else if (response.status === 409) {
         const stalePayload = (await response.json().catch(() => ({}))) as {
           code?: string;
@@ -560,7 +646,7 @@ export function EventLobbyView({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [activateStaleConnection, eventId, hostAccessToken, isCreatingSession, lobbyConnectionId, staleConnection, state, t]);
+  }, [activateStaleConnection, applyEventState, eventId, hostAccessToken, isCreatingSession, lobbyConnectionId, staleConnection, state, t]);
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;

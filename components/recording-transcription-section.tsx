@@ -20,7 +20,6 @@ import {
   formatTranscriptTimeRangeUi,
   formatTranscriptTimeRangeWithDurationUi,
   groupSegmentsIntoTurns,
-  type GroupedTranscriptTurn,
 } from "@/lib/transcription/transcript-timing";
 import {
   resolveAssistedMappingSuggestion,
@@ -32,6 +31,7 @@ import { getRecordingDisplayState } from "@/lib/recording-display-state";
 type RecordingData = {
   id: string;
   status: string;
+  stopOperationState?: string | null;
   recordingType: string;
   fileKey: string | null;
   fileName: string | null;
@@ -148,7 +148,12 @@ function resolveDisplayRecordingStatus(
 }
 
 function isRecordingReadyForTranscription(recording: RecordingData) {
-  return recording.status === "COMPLETED" && Boolean(recording.fileKey);
+  return (
+    getRecordingDisplayState({
+      recordingStatus: recording.status,
+      stopOperationState: recording.stopOperationState,
+    }) === "completed" && Boolean(recording.fileKey)
+  );
 }
 
 function hasUsableTranscript(transcript: TranscriptData | null) {
@@ -205,16 +210,6 @@ function resolveSegmentSpeakerDisplay(
     mappingApplied: false,
   };
 }
-
-type DiarizedTurn = {
-  speakerName: GroupedTranscriptTurn["speakerName"];
-  rawSpeakerLabel: GroupedTranscriptTurn["rawSpeakerLabel"];
-  mappingApplied: GroupedTranscriptTurn["mappingApplied"];
-  speakerKey: GroupedTranscriptTurn["speakerKey"];
-  text: GroupedTranscriptTurn["text"];
-  startSeconds: GroupedTranscriptTurn["startSeconds"];
-  endSeconds: GroupedTranscriptTurn["endSeconds"];
-};
 
 type ManualSpeakerTurn = {
   id: string;
@@ -611,7 +606,10 @@ export function RecordingTranscriptionSection({
       const shouldPollRecording =
         sessionStatus === "FINISHED" ||
         recording?.status === "PROCESSING" ||
-        recording?.status === "STOPPED";
+        recording?.status === "STOPPED" ||
+        recording?.stopOperationState === "PENDING" ||
+        recording?.stopOperationState === "DELIVERING" ||
+        recording?.stopOperationState === "DELIVERED";
 
       if (shouldPollRecording) {
         void pollRecordingStatus();
@@ -624,6 +622,7 @@ export function RecordingTranscriptionSection({
     pollSessionStatus,
     readOnly,
     recording?.status,
+    recording?.stopOperationState,
     sessionStatus,
   ]);
 
@@ -1062,15 +1061,26 @@ export function RecordingTranscriptionSection({
     COMPLETED: t("recording.recordingCompleted"),
     FAILED: t("recording.recordingFailed"),
     STOPPED: t("recording.recordingStopped"),
+    STOPPING: t("recording.recordingStopping"),
   };
 
   const displayRecordingStatus = recording
     ? resolveDisplayRecordingStatus(recording.status, sessionStatus)
     : null;
-  const displayRecordingSemanticState = getRecordingDisplayState({
-    recordingStatus: displayRecordingStatus,
-    sessionStatus,
-  });
+  const stopOperationFailed = recording?.stopOperationState === "FAILED";
+  const displayRecordingSemanticState = stopOperationFailed
+    ? "failed"
+    : getRecordingDisplayState({
+        recordingStatus: displayRecordingStatus,
+        stopOperationState: recording?.stopOperationState,
+        sessionStatus,
+      });
+  const recordingStateForLabel =
+    displayRecordingSemanticState === "stopping"
+      ? "STOPPING"
+      : displayRecordingSemanticState === "failed"
+        ? "FAILED"
+        : displayRecordingStatus;
 
   const showPauseRecordingNotice = sessionStatus === "PAUSED";
   const showActiveRecordingNotice =
@@ -1234,12 +1244,13 @@ export function RecordingTranscriptionSection({
                     <p
                       data-testid="recording-status"
                       data-status={displayRecordingStatus ?? "NOT_STARTED"}
+                      data-stop-operation-state={recording?.stopOperationState ?? "NONE"}
                       data-recording-state={displayRecordingSemanticState}
                       className="text-sm font-medium text-slate-100"
                     >
-                      {recording && displayRecordingStatus
+                      {recording && recordingStateForLabel
                         ? recordingStatusLabel(
-                            displayRecordingStatus,
+                            recordingStateForLabel,
                             recordingStatusLabels,
                             t("recording.recordingStatusUnknown"),
                           )
@@ -1321,12 +1332,13 @@ export function RecordingTranscriptionSection({
                 <p
                   data-testid="recording-status"
                   data-status={displayRecordingStatus ?? "NOT_STARTED"}
+                  data-stop-operation-state={recording?.stopOperationState ?? "NONE"}
                   data-recording-state={displayRecordingSemanticState}
                   className="text-sm font-medium text-slate-100"
                 >
-                  {recording && displayRecordingStatus
+                  {recording && recordingStateForLabel
                     ? recordingStatusLabel(
-                        displayRecordingStatus,
+                        recordingStateForLabel,
                         recordingStatusLabels,
                         t("recording.recordingStatusUnknown"),
                       )

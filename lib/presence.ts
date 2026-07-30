@@ -65,12 +65,56 @@ export type ParticipantPresenceSnapshot = {
   connectionStatus: ParticipantConnectionStatus;
 };
 
+/** Parse a shared SSR/client presence epoch from an ISO string or epoch ms. */
+export function parsePresenceSnapshotAt(
+  presenceSnapshotAt: string | number,
+): number {
+  if (typeof presenceSnapshotAt === "number") {
+    return presenceSnapshotAt;
+  }
+
+  const parsed = Date.parse(presenceSnapshotAt);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid presenceSnapshotAt: ${presenceSnapshotAt}`);
+  }
+
+  return parsed;
+}
+
+/**
+ * Build the initial presence classification using a stable shared timestamp so
+ * SSR HTML and the first client hydration render agree. Live SSE/polling
+ * updates should use fresh response timestamps after hydration.
+ */
+export function buildInitialParticipantPresenceSnapshot(
+  participant: {
+    id: string;
+    joinedAt: string | null;
+    lastSeenAt: string | null;
+  },
+  presenceSnapshotAt: string | number,
+): ParticipantPresenceSnapshot {
+  const now = parsePresenceSnapshotAt(presenceSnapshotAt);
+  const lastSeenAt = participant.lastSeenAt
+    ? new Date(participant.lastSeenAt)
+    : null;
+  const connectionStatus = resolveConnectionStatus(lastSeenAt, now);
+
+  return {
+    id: participant.id,
+    joinedAt: participant.joinedAt,
+    lastSeenAt: participant.lastSeenAt,
+    isOnline: connectionStatus === "ONLINE",
+    connectionStatus,
+  };
+}
+
 export function toParticipantPresenceSnapshot(participant: {
   id: string;
   joinedAt: Date | null;
   lastSeenAt: Date | null;
-}): ParticipantPresenceSnapshot {
-  const connectionStatus = resolveConnectionStatus(participant.lastSeenAt);
+}, now = Date.now()): ParticipantPresenceSnapshot {
+  const connectionStatus = resolveConnectionStatus(participant.lastSeenAt, now);
 
   return {
     id: participant.id,

@@ -99,10 +99,16 @@ type SessionDetailViewProps = {
       lobbyUrl: string;
     } | null;
   };
+  /** Shared SSR/hydration epoch for initial presence badges. */
+  presenceSnapshotAt: string;
   autoTranscribeEnabled?: boolean;
 };
 
-export function SessionDetailView({ session, autoTranscribeEnabled = false }: SessionDetailViewProps) {
+export function SessionDetailView({
+  session,
+  presenceSnapshotAt,
+  autoTranscribeEnabled = false,
+}: SessionDetailViewProps) {
   const { t, locale } = useI18n();
   const [notesModalParticipant, setNotesModalParticipant] =
     useState<ParticipantNotesModalParticipant | null>(null);
@@ -456,6 +462,7 @@ export function SessionDetailView({ session, autoTranscribeEnabled = false }: Se
             <ParticipantsTable
               sessionId={session.id}
               participants={participantsWithLiveNotes}
+              presenceSnapshotAt={presenceSnapshotAt}
               readOnly={isReadOnly}
               onViewNotes={openNotesModal}
             />

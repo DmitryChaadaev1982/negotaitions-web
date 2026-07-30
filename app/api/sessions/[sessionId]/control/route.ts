@@ -57,6 +57,25 @@ type RouteContext = {
 
 export const runtime = "nodejs";
 
+function shortConnectionId(connectionId: string | null | undefined) {
+  if (!connectionId) return null;
+  if (connectionId.length <= 12) return connectionId;
+  return connectionId.slice(-12);
+}
+
+function logStage310SessionControl(
+  event: string,
+  payload: Record<string, unknown>,
+) {
+  console.info(
+    JSON.stringify({
+      area: "stage310_session_control",
+      event,
+      ...payload,
+    }),
+  );
+}
+
 async function syncPauseIntervals(
   sessionId: string,
   action: "PAUSE" | "RESUME" | "FINISH",
@@ -150,12 +169,24 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { action } = parsed.data;
+  logStage310SessionControl("operation_started", {
+    sessionId,
+    action,
+    connectionId: shortConnectionId(parsed.data.connectionId),
+  });
   const participant = await resolveRoomParticipantFromBody(
     parsed.data as Record<string, unknown>,
     sessionId,
   );
 
   if (!participant) {
+    logStage310SessionControl("authorisation_result", {
+      sessionId,
+      action,
+      authorised: false,
+      reason: "participant_not_found",
+      connectionId: shortConnectionId(parsed.data.connectionId),
+    });
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
   }
 
@@ -181,6 +212,17 @@ export async function POST(request: Request, context: RouteContext) {
       eventStatus: participant.session.event?.status ?? null,
       preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
     },
+  });
+  logStage310SessionControl("authorisation_result", {
+    sessionId,
+    action,
+    authorised: isRoomAccessAllowed(accessDecision.output),
+    decision: accessDecision.output,
+    participantType: participant.type,
+    negotiationState: participant.session.negotiationState,
+    roomLifecycle: participant.session.roomLifecycle ?? null,
+    eventId: participant.session.eventId ?? null,
+    connectionId: shortConnectionId(parsed.data.connectionId),
   });
   if (!isRoomAccessAllowed(accessDecision.output)) {
     if (accessDecision.output === "DENY_DELETED") {
@@ -223,6 +265,15 @@ export async function POST(request: Request, context: RouteContext) {
       connectionId: parsed.data.connectionId,
     });
     if (!leaseState.isCurrentConnectionActive) {
+      logStage310SessionControl("controlled_error", {
+        sessionId,
+        action,
+        operation: "connection_lease",
+        error: "staleConnection",
+        participantType: participant.type,
+        activeConnectionVersion: leaseState.version,
+        connectionId: shortConnectionId(parsed.data.connectionId),
+      });
       return NextResponse.json(
         {
           error: "staleConnection",
@@ -235,6 +286,14 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (participant.type !== ParticipantType.FACILITATOR) {
+    logStage310SessionControl("authorisation_result", {
+      sessionId,
+      action,
+      authorised: false,
+      reason: "not_facilitator",
+      participantType: participant.type,
+      connectionId: shortConnectionId(parsed.data.connectionId),
+    });
     return NextResponse.json(
       { error: "Only facilitators can control negotiation state." },
       { status: 403 },
@@ -247,6 +306,13 @@ export async function POST(request: Request, context: RouteContext) {
     let session = await applyAutoTransitions(sessionId, now);
 
     if (isSessionClosedByOrganizer(session)) {
+      logStage310SessionControl("lifecycle_decision", {
+        sessionId,
+        action,
+        decision: "closed_by_organizer",
+        participantType: participant.type,
+        negotiationState: session.negotiationState,
+      });
       return NextResponse.json(
         { error: "sessionClosedByEvent" },
         { status: 409 },
@@ -254,6 +320,13 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     if (shouldAutoFinish(session, now) && action !== "FINISH") {
+      logStage310SessionControl("lifecycle_decision", {
+        sessionId,
+        action,
+        decision: "auto_finished",
+        participantType: participant.type,
+        negotiationState: session.negotiationState,
+      });
       return NextResponse.json(
         buildControlState(session, participant.type, now),
       );
@@ -273,6 +346,14 @@ export async function POST(request: Request, context: RouteContext) {
       const recording = await prisma.recording.findUnique({
         where: { sessionId },
         select: { status: true, errorMessage: true },
+      });
+      logStage310SessionControl("operation_result", {
+        sessionId,
+        action,
+        result: "idempotent_noop",
+        participantType: participant.type,
+        negotiationState: session.negotiationState,
+        recordingStatus: recording?.status ?? null,
       });
       return NextResponse.json({
         ...buildControlState(session, participant.type, now),
@@ -312,6 +393,18 @@ export async function POST(request: Request, context: RouteContext) {
         sessionId,
         mode: "ROOM_FACILITATOR_FINISH",
       });
+      logStage310SessionControl("lifecycle_decision", {
+        sessionId,
+        action,
+        decision: "facilitator_finish",
+        participantType: participant.type,
+        negotiationState: finishResult.negotiationState,
+        roomLifecycle: finishResult.roomLifecycle,
+        closeReason: finishResult.closeReason,
+        recordingStatus: finishResult.recording.status,
+        stopOperationId: finishResult.recording.stopOperationId,
+        stopOperationState: finishResult.recording.stopOperationState,
+      });
       recordingWarning = finishResult.recording.warning ?? undefined;
 
       session = await prisma.session.findUniqueOrThrow({
@@ -350,6 +443,16 @@ export async function POST(request: Request, context: RouteContext) {
       select: { status: true, errorMessage: true },
     });
 
+    logStage310SessionControl("operation_result", {
+      sessionId,
+      action,
+      result: "ok",
+      participantType: participant.type,
+      negotiationState: session.negotiationState,
+      recordingStatus: recording?.status ?? null,
+      recordingWarning: recordingWarning ?? null,
+    });
+
     return NextResponse.json({
       ...buildControlState(session, participant.type, now),
       recordingWarning,
@@ -361,6 +464,15 @@ export async function POST(request: Request, context: RouteContext) {
         : null,
     });
   } catch (error) {
+    logStage310SessionControl("controlled_error", {
+      sessionId,
+      action,
+      operation: "control_update",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to update negotiation state.",
+    });
     return NextResponse.json(
       {
         error:
