@@ -1,0 +1,2275 @@
+{
+  "scenario": {
+    "scenarioId": "UIAUD-FILTER-001",
+    "surface": "events-list",
+    "journey": "list-filtering",
+    "role": "event-owner",
+    "viewport": "1440x900",
+    "state": "filters-visible",
+    "findingIds": [
+      "UI-F003"
+    ]
+  },
+  "url": "http://127.0.0.1:3100/events",
+  "title": "NegotAItions — AI-powered negotiation training",
+  "timestamp": "2026-07-30T15:07:52.339Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "devicePixelRatio": 1
+  },
+  "document": {
+    "scrollWidth": 1440,
+    "scrollHeight": 1293,
+    "clientWidth": 1440,
+    "clientHeight": 900,
+    "horizontalOverflow": false
+  },
+  "counts": {
+    "totalActions": 121,
+    "visibleActions": 58,
+    "scrollContainers": 1,
+    "clippedText": 9,
+    "overlapPairs": 0,
+    "headings": 1,
+    "landmarks": 3,
+    "dialogs": 1
+  },
+  "actions": [
+    {
+      "index": 0,
+      "tag": "a",
+      "role": null,
+      "label": "NegotAItions — AI-powered negotiation training",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 22,
+        "width": 213,
+        "height": 48,
+        "top": 22,
+        "left": 168,
+        "right": 381,
+        "bottom": 70
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 1,
+      "tag": "a",
+      "role": null,
+      "label": "Dashboard",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-dashboard",
+      "actionVariant": null,
+      "rect": {
+        "x": 429,
+        "y": 28,
+        "width": 99,
+        "height": 36,
+        "top": 28,
+        "left": 429,
+        "right": 528,
+        "bottom": 64
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 2,
+      "tag": "a",
+      "role": null,
+      "label": "Cases",
+      "href": "http://127.0.0.1:3100/cases",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-cases",
+      "actionVariant": null,
+      "rect": {
+        "x": 549,
+        "y": 39,
+        "width": 65,
+        "height": 32,
+        "top": 39,
+        "left": 549,
+        "right": 613,
+        "bottom": 71
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 3,
+      "tag": "a",
+      "role": null,
+      "label": "Events",
+      "href": "http://127.0.0.1:3100/events",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-events",
+      "actionVariant": null,
+      "rect": {
+        "x": 617,
+        "y": 38,
+        "width": 70,
+        "height": 34,
+        "top": 38,
+        "left": 617,
+        "right": 688,
+        "bottom": 72
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgba(56, 189, 248, 0.3)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 4,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions",
+      "href": "http://127.0.0.1:3100/sessions",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-sessions",
+      "actionVariant": null,
+      "rect": {
+        "x": 692,
+        "y": 39,
+        "width": 83,
+        "height": 32,
+        "top": 39,
+        "left": 692,
+        "right": 775,
+        "bottom": 71
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 5,
+      "tag": "button",
+      "role": null,
+      "label": "ru",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-ru",
+      "actionVariant": null,
+      "rect": {
+        "x": 953,
+        "y": 32,
+        "width": 43,
+        "height": 28,
+        "top": 32,
+        "left": 953,
+        "right": 996,
+        "bottom": 60
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 6,
+      "tag": "button",
+      "role": null,
+      "label": "en",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-en",
+      "actionVariant": null,
+      "rect": {
+        "x": 998,
+        "y": 32,
+        "width": 43,
+        "height": 28,
+        "top": 32,
+        "left": 998,
+        "right": 1041,
+        "bottom": 60
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 7,
+      "tag": "button",
+      "role": null,
+      "label": "ААудитор интерфейса Stage 3.12",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "account-menu-trigger",
+      "actionVariant": null,
+      "rect": {
+        "x": 1058,
+        "y": 26,
+        "width": 214,
+        "height": 40,
+        "top": 26,
+        "left": 1058,
+        "right": 1272,
+        "bottom": 66
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 8,
+      "tag": "a",
+      "role": null,
+      "label": "Create a new event",
+      "href": "http://127.0.0.1:3100/events/new",
+      "type": null,
+      "disabled": false,
+      "testId": "create-event-button",
+      "actionVariant": null,
+      "rect": {
+        "x": 1101,
+        "y": 132,
+        "width": 171,
+        "height": 42,
+        "top": 132,
+        "left": 1101,
+        "right": 1272,
+        "bottom": 174
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgba(255, 255, 255, 0.12)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 9,
+      "tag": "input",
+      "role": null,
+      "label": "",
+      "href": null,
+      "type": "search",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 192,
+        "y": 301,
+        "width": 217,
+        "height": 32,
+        "top": 301,
+        "left": 192,
+        "right": 409,
+        "bottom": 333
+      },
+      "background": "oklab(0.128998 -0.0038857 -0.0418156 / 0.7)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "oklab(0.371997 -0.00968701 -0.0429107 / 0.5)",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 10,
+      "tag": "button",
+      "role": null,
+      "label": "All statuses",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 443,
+        "y": 301,
+        "width": 86,
+        "height": 32,
+        "top": 301,
+        "left": 443,
+        "right": 529,
+        "bottom": 333
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(91.0821 -24.0435 -12.8306)",
+      "border": "lab(91.0821 -24.0435 -12.8306)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 11,
+      "tag": "button",
+      "role": null,
+      "label": "Unfinished",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 535,
+        "y": 301,
+        "width": 80,
+        "height": 32,
+        "top": 301,
+        "left": 535,
+        "right": 615,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 12,
+      "tag": "button",
+      "role": null,
+      "label": "Active",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 621,
+        "y": 301,
+        "width": 55,
+        "height": 32,
+        "top": 301,
+        "left": 621,
+        "right": 676,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 13,
+      "tag": "button",
+      "role": null,
+      "label": "Completed",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 682,
+        "y": 301,
+        "width": 82,
+        "height": 32,
+        "top": 301,
+        "left": 682,
+        "right": 764,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 14,
+      "tag": "button",
+      "role": null,
+      "label": "Any",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 798,
+        "y": 301,
+        "width": 41,
+        "height": 32,
+        "top": 301,
+        "left": 798,
+        "right": 839,
+        "bottom": 333
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(91.0821 -24.0435 -12.8306)",
+      "border": "lab(91.0821 -24.0435 -12.8306)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 15,
+      "tag": "button",
+      "role": null,
+      "label": "Public",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 845,
+        "y": 301,
+        "width": 55,
+        "height": 32,
+        "top": 301,
+        "left": 845,
+        "right": 900,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 16,
+      "tag": "button",
+      "role": null,
+      "label": "Private",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 906,
+        "y": 301,
+        "width": 59,
+        "height": 32,
+        "top": 301,
+        "left": 906,
+        "right": 965,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 17,
+      "tag": "button",
+      "role": null,
+      "label": "Any",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 999,
+        "y": 301,
+        "width": 41,
+        "height": 32,
+        "top": 301,
+        "left": 999,
+        "right": 1041,
+        "bottom": 333
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(91.0821 -24.0435 -12.8306)",
+      "border": "lab(91.0821 -24.0435 -12.8306)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 18,
+      "tag": "button",
+      "role": null,
+      "label": "With active sessions",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 1047,
+        "y": 301,
+        "width": 135,
+        "height": 32,
+        "top": 301,
+        "left": 1047,
+        "right": 1181,
+        "bottom": 333
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 19,
+      "tag": "button",
+      "role": null,
+      "label": "Reset",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 1204,
+        "y": 267,
+        "width": 55,
+        "height": 32,
+        "top": 267,
+        "left": 1204,
+        "right": 1259,
+        "bottom": 299
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.7)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "oklab(0.445997 -0.00947179 -0.0419324 / 0.45)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 20,
+      "tag": "button",
+      "role": null,
+      "label": "Event",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 181,
+        "y": 400,
+        "width": 42,
+        "height": 16,
+        "top": 400,
+        "left": 181,
+        "right": 223,
+        "bottom": 416
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 21,
+      "tag": "button",
+      "role": null,
+      "label": "Status",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 512,
+        "y": 400,
+        "width": 48,
+        "height": 16,
+        "top": 400,
+        "left": 512,
+        "right": 559,
+        "bottom": 416
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 22,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=ui-audit-event_rms7ne4hzp8s4md2p_bnmxtk",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1138,
+        "y": 437,
+        "width": 71,
+        "height": 32,
+        "top": 437,
+        "left": 1138,
+        "right": 1209,
+        "bottom": 469
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 23,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1215,
+        "y": 437,
+        "width": 44,
+        "height": 32,
+        "top": 437,
+        "left": 1215,
+        "right": 1259,
+        "bottom": 469
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 24,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=ui-audit-event_rms7ne4hzp8s4md2p_11oo7h",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1138,
+        "y": 510,
+        "width": 71,
+        "height": 32,
+        "top": 510,
+        "left": 1138,
+        "right": 1209,
+        "bottom": 542
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 25,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1215,
+        "y": 510,
+        "width": 44,
+        "height": 32,
+        "top": 510,
+        "left": 1215,
+        "right": 1259,
+        "bottom": 542
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 26,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_riyhl9/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1031,
+        "y": 583,
+        "width": 50,
+        "height": 32,
+        "top": 583,
+        "left": 1031,
+        "right": 1081,
+        "bottom": 615
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 27,
+      "tag": "a",
+      "role": null,
+      "label": "Edit event",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_riyhl9/edit",
+      "type": null,
+      "disabled": false,
+      "testId": "edit-event-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1087,
+        "y": 583,
+        "width": 42,
+        "height": 32,
+        "top": 583,
+        "left": 1087,
+        "right": 1129,
+        "bottom": 615
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 28,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1135,
+        "y": 583,
+        "width": 44,
+        "height": 32,
+        "top": 583,
+        "left": 1135,
+        "right": 1178,
+        "bottom": 615
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 29,
+      "tag": "button",
+      "role": null,
+      "label": "Complete event",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "complete-event-button",
+      "actionVariant": "dangerOutline",
+      "rect": {
+        "x": 1184,
+        "y": 583,
+        "width": 75,
+        "height": 32,
+        "top": 583,
+        "left": 1184,
+        "right": 1259,
+        "bottom": 615
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 30,
+      "tag": "button",
+      "role": null,
+      "label": "Cancel",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "cancel-event-button",
+      "actionVariant": "danger",
+      "rect": {
+        "x": 1200,
+        "y": 621,
+        "width": 59,
+        "height": 32,
+        "top": 621,
+        "left": 1200,
+        "right": 1259,
+        "bottom": 653
+      },
+      "background": "oklab(0.645009 0.235914 0.0696316 / 0.1)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 31,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1035,
+        "y": 674,
+        "width": 50,
+        "height": 32,
+        "top": 674,
+        "left": 1035,
+        "right": 1085,
+        "bottom": 706
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 32,
+      "tag": "a",
+      "role": null,
+      "label": "Edit event",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8/edit",
+      "type": null,
+      "disabled": false,
+      "testId": "edit-event-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1091,
+        "y": 674,
+        "width": 42,
+        "height": 32,
+        "top": 674,
+        "left": 1091,
+        "right": 1132,
+        "bottom": 706
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 33,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1138,
+        "y": 674,
+        "width": 71,
+        "height": 32,
+        "top": 674,
+        "left": 1138,
+        "right": 1209,
+        "bottom": 706
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 34,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1215,
+        "y": 674,
+        "width": 44,
+        "height": 32,
+        "top": 674,
+        "left": 1215,
+        "right": 1259,
+        "bottom": 706
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 35,
+      "tag": "button",
+      "role": null,
+      "label": "Complete event",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "complete-event-button",
+      "actionVariant": "dangerOutline",
+      "rect": {
+        "x": 1119,
+        "y": 712,
+        "width": 75,
+        "height": 32,
+        "top": 712,
+        "left": 1119,
+        "right": 1194,
+        "bottom": 744
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 36,
+      "tag": "button",
+      "role": null,
+      "label": "Cancel",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "cancel-event-button",
+      "actionVariant": "danger",
+      "rect": {
+        "x": 1200,
+        "y": 712,
+        "width": 59,
+        "height": 32,
+        "top": 712,
+        "left": 1200,
+        "right": 1259,
+        "bottom": 744
+      },
+      "background": "oklab(0.645009 0.235914 0.0696316 / 0.1)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 37,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_xww3hx/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1035,
+        "y": 765,
+        "width": 50,
+        "height": 32,
+        "top": 765,
+        "left": 1035,
+        "right": 1085,
+        "bottom": 797
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 38,
+      "tag": "a",
+      "role": null,
+      "label": "Edit event",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_xww3hx/edit",
+      "type": null,
+      "disabled": false,
+      "testId": "edit-event-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1091,
+        "y": 765,
+        "width": 42,
+        "height": 32,
+        "top": 765,
+        "left": 1091,
+        "right": 1132,
+        "bottom": 797
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 39,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=ui-audit-event_rms7ne4hzp8s4md2p_xww3hx",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1138,
+        "y": 765,
+        "width": 71,
+        "height": 32,
+        "top": 765,
+        "left": 1138,
+        "right": 1209,
+        "bottom": 797
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 40,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1215,
+        "y": 765,
+        "width": 44,
+        "height": 32,
+        "top": 765,
+        "left": 1215,
+        "right": 1259,
+        "bottom": 797
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 41,
+      "tag": "button",
+      "role": null,
+      "label": "Complete event",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "complete-event-button",
+      "actionVariant": "dangerOutline",
+      "rect": {
+        "x": 1119,
+        "y": 803,
+        "width": 75,
+        "height": 32,
+        "top": 803,
+        "left": 1119,
+        "right": 1194,
+        "bottom": 835
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 42,
+      "tag": "button",
+      "role": null,
+      "label": "Cancel",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "cancel-event-button",
+      "actionVariant": "danger",
+      "rect": {
+        "x": 1200,
+        "y": 803,
+        "width": 59,
+        "height": 32,
+        "top": 803,
+        "left": 1200,
+        "right": 1259,
+        "bottom": 835
+      },
+      "background": "oklab(0.645009 0.235914 0.0696316 / 0.1)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 43,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ow4gh3/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1031,
+        "y": 856,
+        "width": 50,
+        "height": 32,
+        "top": 856,
+        "left": 1031,
+        "right": 1081,
+        "bottom": 888
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 44,
+      "tag": "a",
+      "role": null,
+      "label": "Edit event",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ow4gh3/edit",
+      "type": null,
+      "disabled": false,
+      "testId": "edit-event-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1087,
+        "y": 856,
+        "width": 42,
+        "height": 32,
+        "top": 856,
+        "left": 1087,
+        "right": 1129,
+        "bottom": 888
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 45,
+      "tag": "button",
+      "role": null,
+      "label": "Copy event join link",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "copy-event-link-button",
+      "actionVariant": "link",
+      "rect": {
+        "x": 1135,
+        "y": 856,
+        "width": 44,
+        "height": 32,
+        "top": 856,
+        "left": 1135,
+        "right": 1178,
+        "bottom": 888
+      },
+      "background": "oklab(0.622989 -0.0378534 -0.210606 / 0.12)",
+      "foreground": "lab(77.5052 -6.4629 -36.42)",
+      "border": "lab(77.5052 -6.4629 -36.42)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 46,
+      "tag": "button",
+      "role": null,
+      "label": "Complete event",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "complete-event-button",
+      "actionVariant": "dangerOutline",
+      "rect": {
+        "x": 1184,
+        "y": 856,
+        "width": 75,
+        "height": 32,
+        "top": 856,
+        "left": 1184,
+        "right": 1259,
+        "bottom": 888
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 47,
+      "tag": "button",
+      "role": null,
+      "label": "Cancel",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "cancel-event-button",
+      "actionVariant": "danger",
+      "rect": {
+        "x": 1200,
+        "y": 894,
+        "width": 59,
+        "height": 32,
+        "top": 894,
+        "left": 1200,
+        "right": 1259,
+        "bottom": 926
+      },
+      "background": "oklab(0.645009 0.235914 0.0696316 / 0.1)",
+      "foreground": "lab(76.6339 38.3549 9.68834)",
+      "border": "lab(76.6339 38.3549 9.68834)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 48,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/cmrdcnr3i000mrwua5e5pqo42/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1132,
+        "y": 947,
+        "width": 50,
+        "height": 32,
+        "top": 947,
+        "left": 1132,
+        "right": 1182,
+        "bottom": 979
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 49,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=cmrdcnr3i000mrwua5e5pqo42",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1188,
+        "y": 947,
+        "width": 71,
+        "height": 32,
+        "top": 947,
+        "left": 1188,
+        "right": 1259,
+        "bottom": 979
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 50,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/cmr2jjmdt000yi4uat5xmaxdj/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": "open-event-lobby-button",
+      "actionVariant": "primary",
+      "rect": {
+        "x": 1132,
+        "y": 1020,
+        "width": 50,
+        "height": 32,
+        "top": 1020,
+        "left": 1132,
+        "right": 1182,
+        "bottom": 1052
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 51,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions in this event",
+      "href": "http://127.0.0.1:3100/sessions?eventId=cmr2jjmdt000yi4uat5xmaxdj",
+      "type": null,
+      "disabled": false,
+      "testId": "view-event-sessions-button",
+      "actionVariant": "secondary",
+      "rect": {
+        "x": 1188,
+        "y": 1020,
+        "width": 71,
+        "height": 32,
+        "top": 1020,
+        "left": 1188,
+        "right": 1259,
+        "bottom": 1052
+      },
+      "background": "oklab(0.278998 -0.00710082 -0.0403727 / 0.8)",
+      "foreground": "lab(84.7652 -1.94535 -7.93337)",
+      "border": "lab(84.7652 -1.94535 -7.93337)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 52,
+      "tag": "a",
+      "role": null,
+      "label": "Legal information",
+      "href": "http://127.0.0.1:3100/privacy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 1137,
+        "width": 114,
+        "height": 18,
+        "top": 1137,
+        "left": 168,
+        "right": 282,
+        "bottom": 1155
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 53,
+      "tag": "a",
+      "role": null,
+      "label": "Terms of use",
+      "href": "http://127.0.0.1:3100/terms",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 840,
+        "y": 1137,
+        "width": 83,
+        "height": 18,
+        "top": 1137,
+        "left": 840,
+        "right": 923,
+        "bottom": 1155
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 54,
+      "tag": "a",
+      "role": null,
+      "label": "Cookie Policy",
+      "href": "http://127.0.0.1:3100/cookie-policy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 55,
+      "tag": "button",
+      "role": null,
+      "label": "Accept all",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-accept-all",
+      "actionVariant": null,
+      "rect": {
+        "x": 357,
+        "y": 817,
+        "width": 99,
+        "height": 38,
+        "top": 817,
+        "left": 357,
+        "right": 456,
+        "bottom": 855
+      },
+      "background": "lab(55.1767 -26.7496 -30.5138)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 56,
+      "tag": "button",
+      "role": null,
+      "label": "Reject optional",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-reject-optional",
+      "actionVariant": null,
+      "rect": {
+        "x": 464,
+        "y": 817,
+        "width": 135,
+        "height": 38,
+        "top": 817,
+        "left": 464,
+        "right": 600,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(35.5623 -1.74978 -15.4316)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 57,
+      "tag": "button",
+      "role": null,
+      "label": "Customize",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-customize",
+      "actionVariant": null,
+      "rect": {
+        "x": 608,
+        "y": 817,
+        "width": 102,
+        "height": 38,
+        "top": 817,
+        "left": 608,
+        "right": 710,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(26.9569 -1.47018 -15.6993)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    }
+  ],
+  "duplicateActionLabels": [
+    {
+      "label": "Any",
+      "count": 2
+    },
+    {
+      "label": "Sessions in this event",
+      "count": 6
+    },
+    {
+      "label": "Copy event join link",
+      "count": 6
+    },
+    {
+      "label": "Open lobby",
+      "count": 6
+    },
+    {
+      "label": "Edit event",
+      "count": 4
+    },
+    {
+      "label": "Complete event",
+      "count": 4
+    },
+    {
+      "label": "Cancel",
+      "count": 4
+    }
+  ],
+  "scrollContainers": [
+    {
+      "hint": "div",
+      "rect": {
+        "x": 169,
+        "y": 390,
+        "width": 1102,
+        "height": 640,
+        "top": 390,
+        "left": 169,
+        "right": 1271,
+        "bottom": 1030
+      },
+      "overflowX": "auto",
+      "overflowY": "auto",
+      "clientWidth": 1102,
+      "clientHeight": 640,
+      "scrollWidth": 1102,
+      "scrollHeight": 692
+    }
+  ],
+  "overlapPairs": [],
+  "clippedText": [
+    {
+      "hint": "html",
+      "text": "NegotAItions — AI-powered negotiation training@font-face{font-family:'__nextjs-Geist';font-style:normal;font-weight:400 600;font-display:swa",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 900,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      },
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "scrollHeight": 1293,
+      "clientHeight": 900
+    },
+    {
+      "hint": "span",
+      "text": "Аудитор интерфейса Stage 3.12",
+      "rect": {
+        "x": 1102,
+        "y": 36,
+        "width": 140,
+        "height": 20,
+        "top": 36,
+        "left": 1102,
+        "right": 1242,
+        "bottom": 56
+      },
+      "scrollWidth": 208,
+      "clientWidth": 140,
+      "scrollHeight": 20,
+      "clientHeight": 20
+    },
+    {
+      "hint": "div",
+      "text": "EventStatusActivityActionsUIAUD dashboard event 6 with intentionally long mixed status title—Latest activity: Jul 30, 2026, 06:07 PMComplete",
+      "rect": {
+        "x": 169,
+        "y": 390,
+        "width": 1102,
+        "height": 640,
+        "top": 390,
+        "left": 169,
+        "right": 1271,
+        "bottom": 1030
+      },
+      "scrollWidth": 1102,
+      "clientWidth": 1102,
+      "scrollHeight": 692,
+      "clientHeight": 640
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 6 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 437,
+        "width": 273,
+        "height": 16,
+        "top": 437,
+        "left": 181,
+        "right": 454,
+        "bottom": 453
+      },
+      "scrollWidth": 371,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 5 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 510,
+        "width": 273,
+        "height": 16,
+        "top": 510,
+        "left": 181,
+        "right": 454,
+        "bottom": 526
+      },
+      "scrollWidth": 371,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 4 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 583,
+        "width": 273,
+        "height": 16,
+        "top": 583,
+        "left": 181,
+        "right": 454,
+        "bottom": 599
+      },
+      "scrollWidth": 371,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 3 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 674,
+        "width": 273,
+        "height": 16,
+        "top": 674,
+        "left": 181,
+        "right": 454,
+        "bottom": 690
+      },
+      "scrollWidth": 371,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 2 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 765,
+        "width": 273,
+        "height": 16,
+        "top": 765,
+        "left": 181,
+        "right": 454,
+        "bottom": 781
+      },
+      "scrollWidth": 371,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    },
+    {
+      "hint": "event-title",
+      "text": "UIAUD dashboard event 1 with intentionally long mixed status title",
+      "rect": {
+        "x": 181,
+        "y": 856,
+        "width": 273,
+        "height": 16,
+        "top": 856,
+        "left": 181,
+        "right": 454,
+        "bottom": 872
+      },
+      "scrollWidth": 368,
+      "clientWidth": 273,
+      "scrollHeight": 16,
+      "clientHeight": 16
+    }
+  ],
+  "targetSizeIssues": [
+    {
+      "label": "Event",
+      "testId": null,
+      "rect": {
+        "x": 181,
+        "y": 400,
+        "width": 42,
+        "height": 16,
+        "top": 400,
+        "left": 181,
+        "right": 223,
+        "bottom": 416
+      }
+    },
+    {
+      "label": "Status",
+      "testId": null,
+      "rect": {
+        "x": 512,
+        "y": 400,
+        "width": 48,
+        "height": 16,
+        "top": 400,
+        "left": 512,
+        "right": 559,
+        "bottom": 416
+      }
+    },
+    {
+      "label": "Legal information",
+      "testId": null,
+      "rect": {
+        "x": 168,
+        "y": 1137,
+        "width": 114,
+        "height": 18,
+        "top": 1137,
+        "left": 168,
+        "right": 282,
+        "bottom": 1155
+      }
+    },
+    {
+      "label": "Terms of use",
+      "testId": null,
+      "rect": {
+        "x": 840,
+        "y": 1137,
+        "width": 83,
+        "height": 18,
+        "top": 1137,
+        "left": 840,
+        "right": 923,
+        "bottom": 1155
+      }
+    },
+    {
+      "label": "Cookie Policy",
+      "testId": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      }
+    }
+  ],
+  "headings": [
+    {
+      "level": 1,
+      "text": "Events",
+      "rect": {
+        "x": 168,
+        "y": 132,
+        "width": 96,
+        "height": 36,
+        "top": 132,
+        "left": 168,
+        "right": 264,
+        "bottom": 168
+      }
+    }
+  ],
+  "landmarks": [
+    {
+      "tag": "header",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 92,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 92
+      }
+    },
+    {
+      "tag": "nav",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 429,
+        "y": 14,
+        "width": 355,
+        "height": 63,
+        "top": 14,
+        "left": 429,
+        "right": 784,
+        "bottom": 77
+      }
+    },
+    {
+      "tag": "footer",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 1103,
+        "width": 1440,
+        "height": 190,
+        "top": 1103,
+        "left": 0,
+        "right": 1440,
+        "bottom": 1293
+      }
+    }
+  ],
+  "regionBounds": [
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 426,
+        "width": 1102,
+        "height": 73,
+        "top": 426,
+        "left": 169,
+        "right": 1271,
+        "bottom": 499
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 499,
+        "width": 1102,
+        "height": 73,
+        "top": 499,
+        "left": 169,
+        "right": 1271,
+        "bottom": 572
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 572,
+        "width": 1102,
+        "height": 91,
+        "top": 572,
+        "left": 169,
+        "right": 1271,
+        "bottom": 663
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 663,
+        "width": 1102,
+        "height": 91,
+        "top": 663,
+        "left": 169,
+        "right": 1271,
+        "bottom": 754
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 754,
+        "width": 1102,
+        "height": 91,
+        "top": 754,
+        "left": 169,
+        "right": 1271,
+        "bottom": 845
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 845,
+        "width": 1102,
+        "height": 91,
+        "top": 845,
+        "left": 169,
+        "right": 1271,
+        "bottom": 936
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 936,
+        "width": 1102,
+        "height": 73,
+        "top": 936,
+        "left": 169,
+        "right": 1271,
+        "bottom": 1009
+      }
+    },
+    {
+      "hint": "event-row",
+      "rect": {
+        "x": 169,
+        "y": 1009,
+        "width": 1102,
+        "height": 73,
+        "top": 1009,
+        "left": 169,
+        "right": 1271,
+        "bottom": 1082
+      }
+    }
+  ],
+  "fixedOrSticky": [
+    {
+      "hint": "header",
+      "position": "sticky",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 92,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 92
+      }
+    },
+    {
+      "hint": "cookie-banner",
+      "position": "fixed",
+      "rect": {
+        "x": 0,
+        "y": 688,
+        "width": 1440,
+        "height": 212,
+        "top": 688,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      }
+    }
+  ],
+  "focusOrderSample": [
+    {
+      "index": 0,
+      "hint": "NegotAItions — AI-powered negotiation training",
+      "label": "NegotAItions — AI-powered negotiation training",
+      "tabIndex": 0
+    },
+    {
+      "index": 1,
+      "hint": "nav-dashboard",
+      "label": "Dashboard",
+      "tabIndex": 0
+    },
+    {
+      "index": 2,
+      "hint": "nav-cases",
+      "label": "Cases",
+      "tabIndex": 0
+    },
+    {
+      "index": 3,
+      "hint": "nav-events",
+      "label": "Events",
+      "tabIndex": 0
+    },
+    {
+      "index": 4,
+      "hint": "nav-sessions",
+      "label": "Sessions",
+      "tabIndex": 0
+    },
+    {
+      "index": 5,
+      "hint": "language-switch-ru",
+      "label": "ru",
+      "tabIndex": 0
+    },
+    {
+      "index": 6,
+      "hint": "language-switch-en",
+      "label": "en",
+      "tabIndex": 0
+    },
+    {
+      "index": 7,
+      "hint": "account-menu-trigger",
+      "label": "ААудитор интерфейса Stage 3.12",
+      "tabIndex": 0
+    },
+    {
+      "index": 8,
+      "hint": "create-event-button",
+      "label": "Create a new event",
+      "tabIndex": 0
+    },
+    {
+      "index": 9,
+      "hint": "input",
+      "label": "",
+      "tabIndex": 0
+    },
+    {
+      "index": 10,
+      "hint": "button",
+      "label": "All statuses",
+      "tabIndex": 0
+    },
+    {
+      "index": 11,
+      "hint": "button",
+      "label": "Unfinished",
+      "tabIndex": 0
+    },
+    {
+      "index": 12,
+      "hint": "button",
+      "label": "Active",
+      "tabIndex": 0
+    },
+    {
+      "index": 13,
+      "hint": "button",
+      "label": "Completed",
+      "tabIndex": 0
+    },
+    {
+      "index": 14,
+      "hint": "button",
+      "label": "Any",
+      "tabIndex": 0
+    },
+    {
+      "index": 15,
+      "hint": "button",
+      "label": "Public",
+      "tabIndex": 0
+    },
+    {
+      "index": 16,
+      "hint": "button",
+      "label": "Private",
+      "tabIndex": 0
+    },
+    {
+      "index": 17,
+      "hint": "button",
+      "label": "Any",
+      "tabIndex": 0
+    },
+    {
+      "index": 18,
+      "hint": "button",
+      "label": "With active sessions",
+      "tabIndex": 0
+    },
+    {
+      "index": 19,
+      "hint": "button",
+      "label": "Reset",
+      "tabIndex": 0
+    },
+    {
+      "index": 20,
+      "hint": "button",
+      "label": "Event",
+      "tabIndex": 0
+    },
+    {
+      "index": 21,
+      "hint": "button",
+      "label": "Status",
+      "tabIndex": 0
+    },
+    {
+      "index": 22,
+      "hint": "view-event-sessions-button",
+      "label": "Sessions in this event",
+      "tabIndex": 0
+    },
+    {
+      "index": 23,
+      "hint": "copy-event-link-button",
+      "label": "Copy event join link",
+      "tabIndex": 0
+    },
+    {
+      "index": 24,
+      "hint": "view-event-sessions-button",
+      "label": "Sessions in this event",
+      "tabIndex": 0
+    },
+    {
+      "index": 25,
+      "hint": "copy-event-link-button",
+      "label": "Copy event join link",
+      "tabIndex": 0
+    },
+    {
+      "index": 26,
+      "hint": "open-event-lobby-button",
+      "label": "Open lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 27,
+      "hint": "edit-event-button",
+      "label": "Edit event",
+      "tabIndex": 0
+    },
+    {
+      "index": 28,
+      "hint": "copy-event-link-button",
+      "label": "Copy event join link",
+      "tabIndex": 0
+    },
+    {
+      "index": 29,
+      "hint": "complete-event-button",
+      "label": "Complete event",
+      "tabIndex": 0
+    }
+  ]
+}

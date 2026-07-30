@@ -75,3 +75,7 @@ voxengine-ci/
 
 # Local scenario sync state (non-sensitive, but machine-specific)
 .vox-scenario-build-id
+
+# Stage 3.12 UI audit heavy local evidence
+/artifacts/ui-audit/screenshots/
+/artifacts/ui-audit/traces/

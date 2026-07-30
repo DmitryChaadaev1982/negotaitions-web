@@ -1,0 +1,3004 @@
+{
+  "scenario": {
+    "scenarioId": "UIAUD-DASH-020",
+    "surface": "dashboard",
+    "journey": "participant-owner-entry",
+    "role": "event-owner",
+    "viewport": "1440x900",
+    "state": "mixed-density",
+    "findingIds": [
+      "UI-F001",
+      "UI-F002",
+      "UI-F010"
+    ]
+  },
+  "url": "http://127.0.0.1:3100/dashboard",
+  "title": "NegotAItions — AI-powered negotiation training",
+  "timestamp": "2026-07-30T15:07:51.492Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "devicePixelRatio": 1
+  },
+  "document": {
+    "scrollWidth": 1440,
+    "scrollHeight": 3859,
+    "clientWidth": 1440,
+    "clientHeight": 900,
+    "horizontalOverflow": false
+  },
+  "counts": {
+    "totalActions": 67,
+    "visibleActions": 66,
+    "scrollContainers": 0,
+    "clippedText": 2,
+    "overlapPairs": 0,
+    "headings": 6,
+    "landmarks": 3,
+    "dialogs": 1
+  },
+  "actions": [
+    {
+      "index": 0,
+      "tag": "a",
+      "role": null,
+      "label": "NegotAItions — AI-powered negotiation training",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 21,
+        "width": 213,
+        "height": 48,
+        "top": 21,
+        "left": 168,
+        "right": 381,
+        "bottom": 69
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 1,
+      "tag": "a",
+      "role": null,
+      "label": "Dashboard",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-dashboard",
+      "actionVariant": null,
+      "rect": {
+        "x": 429,
+        "y": 26,
+        "width": 101,
+        "height": 38,
+        "top": 26,
+        "left": 429,
+        "right": 530,
+        "bottom": 64
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgba(56, 189, 248, 0.3)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 2,
+      "tag": "a",
+      "role": null,
+      "label": "Cases",
+      "href": "http://127.0.0.1:3100/cases",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-cases",
+      "actionVariant": null,
+      "rect": {
+        "x": 551,
+        "y": 38,
+        "width": 65,
+        "height": 32,
+        "top": 38,
+        "left": 551,
+        "right": 615,
+        "bottom": 70
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 3,
+      "tag": "a",
+      "role": null,
+      "label": "Events",
+      "href": "http://127.0.0.1:3100/events",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-events",
+      "actionVariant": null,
+      "rect": {
+        "x": 619,
+        "y": 38,
+        "width": 68,
+        "height": 32,
+        "top": 38,
+        "left": 619,
+        "right": 688,
+        "bottom": 70
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 4,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions",
+      "href": "http://127.0.0.1:3100/sessions",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-sessions",
+      "actionVariant": null,
+      "rect": {
+        "x": 692,
+        "y": 38,
+        "width": 83,
+        "height": 32,
+        "top": 38,
+        "left": 692,
+        "right": 775,
+        "bottom": 70
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 5,
+      "tag": "button",
+      "role": null,
+      "label": "ru",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-ru",
+      "actionVariant": null,
+      "rect": {
+        "x": 953,
+        "y": 31,
+        "width": 43,
+        "height": 28,
+        "top": 31,
+        "left": 953,
+        "right": 996,
+        "bottom": 59
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 6,
+      "tag": "button",
+      "role": null,
+      "label": "en",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-en",
+      "actionVariant": null,
+      "rect": {
+        "x": 998,
+        "y": 31,
+        "width": 43,
+        "height": 28,
+        "top": 31,
+        "left": 998,
+        "right": 1041,
+        "bottom": 59
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 7,
+      "tag": "button",
+      "role": null,
+      "label": "ААудитор интерфейса Stage 3.12",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "account-menu-trigger",
+      "actionVariant": null,
+      "rect": {
+        "x": 1058,
+        "y": 25,
+        "width": 214,
+        "height": 40,
+        "top": 25,
+        "left": 1058,
+        "right": 1272,
+        "bottom": 65
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 8,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_9rrl53",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 320,
+        "width": 73,
+        "height": 18,
+        "top": 320,
+        "left": 193,
+        "right": 266,
+        "bottom": 338
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 9,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_riyhl9/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 646,
+        "width": 76,
+        "height": 18,
+        "top": 646,
+        "left": 193,
+        "right": 269,
+        "bottom": 664
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 10,
+      "tag": "a",
+      "role": null,
+      "label": "Continue session",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_3y07y3",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 646,
+        "width": 115,
+        "height": 18,
+        "top": 646,
+        "left": 751,
+        "right": 866,
+        "bottom": 664
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 11,
+      "tag": "a",
+      "role": null,
+      "label": "Continue session",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_fhujtx",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 906,
+        "width": 115,
+        "height": 18,
+        "top": 906,
+        "left": 193,
+        "right": 308,
+        "bottom": 924
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 12,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ow4gh3/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 906,
+        "width": 76,
+        "height": 18,
+        "top": 906,
+        "left": 751,
+        "right": 827,
+        "bottom": 924
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 13,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/cmrdcnr3i000mrwua5e5pqo42/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 1142,
+        "width": 76,
+        "height": 18,
+        "top": 1142,
+        "left": 193,
+        "right": 269,
+        "bottom": 1160
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 14,
+      "tag": "a",
+      "role": null,
+      "label": "Continue session",
+      "href": "http://127.0.0.1:3100/room/cmr2jn2xm0014i4uarh3sc9k8",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 1142,
+        "width": 115,
+        "height": 18,
+        "top": 1142,
+        "left": 751,
+        "right": 866,
+        "bottom": 1160
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 15,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_9rrl53",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 1430,
+        "width": 73,
+        "height": 20,
+        "top": 1430,
+        "left": 193,
+        "right": 266,
+        "bottom": 1450
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 16,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_9rrl53/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 1430,
+        "width": 102,
+        "height": 20,
+        "top": 1430,
+        "left": 278,
+        "right": 380,
+        "bottom": 1450
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 17,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_lnmcje",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 1430,
+        "width": 73,
+        "height": 20,
+        "top": 1430,
+        "left": 751,
+        "right": 824,
+        "bottom": 1450
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 18,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_lnmcje/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 1430,
+        "width": 102,
+        "height": 20,
+        "top": 1430,
+        "left": 836,
+        "right": 938,
+        "bottom": 1450
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 19,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_mvtk6j",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 1635,
+        "width": 73,
+        "height": 20,
+        "top": 1635,
+        "left": 193,
+        "right": 266,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 20,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_mvtk6j/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 1635,
+        "width": 102,
+        "height": 20,
+        "top": 1635,
+        "left": 278,
+        "right": 380,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 21,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_bnmxtk/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 392,
+        "y": 1635,
+        "width": 145,
+        "height": 20,
+        "top": 1635,
+        "left": 392,
+        "right": 537,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 22,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_fh01od",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 1635,
+        "width": 73,
+        "height": 20,
+        "top": 1635,
+        "left": 751,
+        "right": 824,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 23,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_fh01od/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 1635,
+        "width": 102,
+        "height": 20,
+        "top": 1635,
+        "left": 836,
+        "right": 938,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 24,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_11oo7h/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 950,
+        "y": 1635,
+        "width": 145,
+        "height": 20,
+        "top": 1635,
+        "left": 950,
+        "right": 1095,
+        "bottom": 1655
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 25,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_3y07y3",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 1840,
+        "width": 73,
+        "height": 20,
+        "top": 1840,
+        "left": 193,
+        "right": 266,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 26,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_3y07y3/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 1840,
+        "width": 102,
+        "height": 20,
+        "top": 1840,
+        "left": 278,
+        "right": 380,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 27,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 392,
+        "y": 1840,
+        "width": 145,
+        "height": 20,
+        "top": 1840,
+        "left": 392,
+        "right": 537,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 28,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_fhujtx",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 1840,
+        "width": 73,
+        "height": 20,
+        "top": 1840,
+        "left": 751,
+        "right": 824,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 29,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_fhujtx/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 1840,
+        "width": 102,
+        "height": 20,
+        "top": 1840,
+        "left": 836,
+        "right": 938,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 30,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_xww3hx/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 950,
+        "y": 1840,
+        "width": 145,
+        "height": 20,
+        "top": 1840,
+        "left": 950,
+        "right": 1095,
+        "bottom": 1860
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 31,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmrda8ip40000rwua7p82e1au",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 2045,
+        "width": 73,
+        "height": 20,
+        "top": 2045,
+        "left": 193,
+        "right": 266,
+        "bottom": 2065
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 32,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmrda8ip40000rwua7p82e1au/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 2045,
+        "width": 102,
+        "height": 20,
+        "top": 2045,
+        "left": 278,
+        "right": 380,
+        "bottom": 2065
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 33,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmr9cu37a0076b0ua1yci7fkn",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 2045,
+        "width": 73,
+        "height": 20,
+        "top": 2045,
+        "left": 751,
+        "right": 824,
+        "bottom": 2065
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 34,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmr9cu37a0076b0ua1yci7fkn/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 2045,
+        "width": 102,
+        "height": 20,
+        "top": 2045,
+        "left": 836,
+        "right": 938,
+        "bottom": 2065
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 35,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmr9co1ak004lb0uacsayn2l8",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 2250,
+        "width": 73,
+        "height": 20,
+        "top": 2250,
+        "left": 193,
+        "right": 266,
+        "bottom": 2270
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 36,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmr9co1ak004lb0uacsayn2l8/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 2250,
+        "width": 102,
+        "height": 20,
+        "top": 2250,
+        "left": 278,
+        "right": 380,
+        "bottom": 2270
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 37,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmr4pn5he000044uac2y7lili",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 2250,
+        "width": 73,
+        "height": 20,
+        "top": 2250,
+        "left": 751,
+        "right": 824,
+        "bottom": 2270
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 38,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmr4pn5he000044uac2y7lili/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 2250,
+        "width": 102,
+        "height": 20,
+        "top": 2250,
+        "left": 836,
+        "right": 938,
+        "bottom": 2270
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 39,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmr2jn2xm0014i4uarh3sc9k8",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 2455,
+        "width": 73,
+        "height": 20,
+        "top": 2455,
+        "left": 193,
+        "right": 266,
+        "bottom": 2475
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 40,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmr2jn2xm0014i4uarh3sc9k8/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 2455,
+        "width": 102,
+        "height": 20,
+        "top": 2455,
+        "left": 278,
+        "right": 380,
+        "bottom": 2475
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 41,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/cmr2jjmdt000yi4uat5xmaxdj/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 392,
+        "y": 2455,
+        "width": 145,
+        "height": 20,
+        "top": 2455,
+        "left": 392,
+        "right": 537,
+        "bottom": 2475
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 42,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmr2j4laz000si4uavhkvj88k",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 2455,
+        "width": 73,
+        "height": 20,
+        "top": 2455,
+        "left": 751,
+        "right": 824,
+        "bottom": 2475
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 43,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmr2j4laz000si4uavhkvj88k/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 2455,
+        "width": 102,
+        "height": 20,
+        "top": 2455,
+        "left": 836,
+        "right": 938,
+        "bottom": 2475
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 44,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/cmqveqdoc0000acuaf0rdadvf",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 2660,
+        "width": 73,
+        "height": 20,
+        "top": 2660,
+        "left": 193,
+        "right": 266,
+        "bottom": 2680
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 45,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/cmqveqdoc0000acuaf0rdadvf/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 2660,
+        "width": 102,
+        "height": 20,
+        "top": 2660,
+        "left": 278,
+        "right": 380,
+        "bottom": 2680
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 46,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_fkp3na",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 2949,
+        "width": 73,
+        "height": 20,
+        "top": 2949,
+        "left": 193,
+        "right": 266,
+        "bottom": 2969
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 47,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_fkp3na/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 2949,
+        "width": 102,
+        "height": 20,
+        "top": 2949,
+        "left": 278,
+        "right": 380,
+        "bottom": 2969
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 48,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_gcpgho",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 2925,
+        "width": 73,
+        "height": 20,
+        "top": 2925,
+        "left": 751,
+        "right": 824,
+        "bottom": 2945
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 49,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_gcpgho/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 836,
+        "y": 2925,
+        "width": 102,
+        "height": 20,
+        "top": 2925,
+        "left": 836,
+        "right": 938,
+        "bottom": 2945
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 50,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_bnmxtk/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 950,
+        "y": 2925,
+        "width": 145,
+        "height": 20,
+        "top": 2925,
+        "left": 950,
+        "right": 1095,
+        "bottom": 2945
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 51,
+      "tag": "a",
+      "role": null,
+      "label": "Open room",
+      "href": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_jcjfwv",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 3154,
+        "width": 73,
+        "height": 20,
+        "top": 3154,
+        "left": 193,
+        "right": 266,
+        "bottom": 3174
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 52,
+      "tag": "a",
+      "role": null,
+      "label": "Open materials",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_jcjfwv/materials",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 278,
+        "y": 3154,
+        "width": 102,
+        "height": 20,
+        "top": 3154,
+        "left": 278,
+        "right": 380,
+        "bottom": 3174
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 53,
+      "tag": "a",
+      "role": null,
+      "label": "Return to Event lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 392,
+        "y": 3154,
+        "width": 145,
+        "height": 20,
+        "top": 3154,
+        "left": 392,
+        "right": 537,
+        "bottom": 3174
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 54,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_bnmxtk/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 3337,
+        "width": 87,
+        "height": 21,
+        "top": 3337,
+        "left": 193,
+        "right": 280,
+        "bottom": 3358
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 55,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_11oo7h/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 3337,
+        "width": 87,
+        "height": 21,
+        "top": 3337,
+        "left": 751,
+        "right": 838,
+        "bottom": 3358
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 56,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_riyhl9/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 3463,
+        "width": 87,
+        "height": 21,
+        "top": 3463,
+        "left": 193,
+        "right": 280,
+        "bottom": 3484
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 57,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_1tj9o8/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 3463,
+        "width": 87,
+        "height": 21,
+        "top": 3463,
+        "left": 751,
+        "right": 838,
+        "bottom": 3484
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 58,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_xww3hx/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 193,
+        "y": 3589,
+        "width": 87,
+        "height": 21,
+        "top": 3589,
+        "left": 193,
+        "right": 280,
+        "bottom": 3610
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 59,
+      "tag": "a",
+      "role": null,
+      "label": "Open lobby",
+      "href": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ow4gh3/lobby",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 751,
+        "y": 3589,
+        "width": 87,
+        "height": 21,
+        "top": 3589,
+        "left": 751,
+        "right": 838,
+        "bottom": 3610
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 60,
+      "tag": "a",
+      "role": null,
+      "label": "Legal information",
+      "href": "http://127.0.0.1:3100/privacy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 3703,
+        "width": 114,
+        "height": 18,
+        "top": 3703,
+        "left": 168,
+        "right": 282,
+        "bottom": 3721
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 61,
+      "tag": "a",
+      "role": null,
+      "label": "Terms of use",
+      "href": "http://127.0.0.1:3100/terms",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 840,
+        "y": 3703,
+        "width": 83,
+        "height": 18,
+        "top": 3703,
+        "left": 840,
+        "right": 923,
+        "bottom": 3721
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 62,
+      "tag": "a",
+      "role": null,
+      "label": "Cookie Policy",
+      "href": "http://127.0.0.1:3100/cookie-policy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 63,
+      "tag": "button",
+      "role": null,
+      "label": "Accept all",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-accept-all",
+      "actionVariant": null,
+      "rect": {
+        "x": 357,
+        "y": 817,
+        "width": 99,
+        "height": 38,
+        "top": 817,
+        "left": 357,
+        "right": 456,
+        "bottom": 855
+      },
+      "background": "lab(55.1767 -26.7496 -30.5138)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 64,
+      "tag": "button",
+      "role": null,
+      "label": "Reject optional",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-reject-optional",
+      "actionVariant": null,
+      "rect": {
+        "x": 464,
+        "y": 817,
+        "width": 135,
+        "height": 38,
+        "top": 817,
+        "left": 464,
+        "right": 600,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(35.5623 -1.74978 -15.4316)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 65,
+      "tag": "button",
+      "role": null,
+      "label": "Customize",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-customize",
+      "actionVariant": null,
+      "rect": {
+        "x": 608,
+        "y": 817,
+        "width": 102,
+        "height": 38,
+        "top": 817,
+        "left": 608,
+        "right": 710,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(26.9569 -1.47018 -15.6993)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    }
+  ],
+  "duplicateActionLabels": [
+    {
+      "label": "Open room",
+      "count": 17
+    },
+    {
+      "label": "Open lobby",
+      "count": 9
+    },
+    {
+      "label": "Continue session",
+      "count": 3
+    },
+    {
+      "label": "Open materials",
+      "count": 16
+    },
+    {
+      "label": "Return to Event lobby",
+      "count": 7
+    }
+  ],
+  "scrollContainers": [],
+  "overlapPairs": [],
+  "clippedText": [
+    {
+      "hint": "html",
+      "text": "NegotAItions — AI-powered negotiation training@font-face{font-family:'__nextjs-Geist';font-style:normal;font-weight:400 600;font-display:swa",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 900,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      },
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "scrollHeight": 3859,
+      "clientHeight": 900
+    },
+    {
+      "hint": "span",
+      "text": "Аудитор интерфейса Stage 3.12",
+      "rect": {
+        "x": 1102,
+        "y": 35,
+        "width": 140,
+        "height": 20,
+        "top": 35,
+        "left": 1102,
+        "right": 1242,
+        "bottom": 55
+      },
+      "scrollWidth": 208,
+      "clientWidth": 140,
+      "scrollHeight": 20,
+      "clientHeight": 20
+    }
+  ],
+  "targetSizeIssues": [
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 320,
+        "width": 73,
+        "height": 18,
+        "top": 320,
+        "left": 193,
+        "right": 266,
+        "bottom": 338
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 646,
+        "width": 76,
+        "height": 18,
+        "top": 646,
+        "left": 193,
+        "right": 269,
+        "bottom": 664
+      }
+    },
+    {
+      "label": "Continue session",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 646,
+        "width": 115,
+        "height": 18,
+        "top": 646,
+        "left": 751,
+        "right": 866,
+        "bottom": 664
+      }
+    },
+    {
+      "label": "Continue session",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 906,
+        "width": 115,
+        "height": 18,
+        "top": 906,
+        "left": 193,
+        "right": 308,
+        "bottom": 924
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 906,
+        "width": 76,
+        "height": 18,
+        "top": 906,
+        "left": 751,
+        "right": 827,
+        "bottom": 924
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 1142,
+        "width": 76,
+        "height": 18,
+        "top": 1142,
+        "left": 193,
+        "right": 269,
+        "bottom": 1160
+      }
+    },
+    {
+      "label": "Continue session",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 1142,
+        "width": 115,
+        "height": 18,
+        "top": 1142,
+        "left": 751,
+        "right": 866,
+        "bottom": 1160
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 1430,
+        "width": 73,
+        "height": 20,
+        "top": 1430,
+        "left": 193,
+        "right": 266,
+        "bottom": 1450
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 1430,
+        "width": 102,
+        "height": 20,
+        "top": 1430,
+        "left": 278,
+        "right": 380,
+        "bottom": 1450
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 1430,
+        "width": 73,
+        "height": 20,
+        "top": 1430,
+        "left": 751,
+        "right": 824,
+        "bottom": 1450
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 1430,
+        "width": 102,
+        "height": 20,
+        "top": 1430,
+        "left": 836,
+        "right": 938,
+        "bottom": 1450
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 1635,
+        "width": 73,
+        "height": 20,
+        "top": 1635,
+        "left": 193,
+        "right": 266,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 1635,
+        "width": 102,
+        "height": 20,
+        "top": 1635,
+        "left": 278,
+        "right": 380,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 392,
+        "y": 1635,
+        "width": 145,
+        "height": 20,
+        "top": 1635,
+        "left": 392,
+        "right": 537,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 1635,
+        "width": 73,
+        "height": 20,
+        "top": 1635,
+        "left": 751,
+        "right": 824,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 1635,
+        "width": 102,
+        "height": 20,
+        "top": 1635,
+        "left": 836,
+        "right": 938,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 950,
+        "y": 1635,
+        "width": 145,
+        "height": 20,
+        "top": 1635,
+        "left": 950,
+        "right": 1095,
+        "bottom": 1655
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 1840,
+        "width": 73,
+        "height": 20,
+        "top": 1840,
+        "left": 193,
+        "right": 266,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 1840,
+        "width": 102,
+        "height": 20,
+        "top": 1840,
+        "left": 278,
+        "right": 380,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 392,
+        "y": 1840,
+        "width": 145,
+        "height": 20,
+        "top": 1840,
+        "left": 392,
+        "right": 537,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 1840,
+        "width": 73,
+        "height": 20,
+        "top": 1840,
+        "left": 751,
+        "right": 824,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 1840,
+        "width": 102,
+        "height": 20,
+        "top": 1840,
+        "left": 836,
+        "right": 938,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 950,
+        "y": 1840,
+        "width": 145,
+        "height": 20,
+        "top": 1840,
+        "left": 950,
+        "right": 1095,
+        "bottom": 1860
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 2045,
+        "width": 73,
+        "height": 20,
+        "top": 2045,
+        "left": 193,
+        "right": 266,
+        "bottom": 2065
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 2045,
+        "width": 102,
+        "height": 20,
+        "top": 2045,
+        "left": 278,
+        "right": 380,
+        "bottom": 2065
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 2045,
+        "width": 73,
+        "height": 20,
+        "top": 2045,
+        "left": 751,
+        "right": 824,
+        "bottom": 2065
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 2045,
+        "width": 102,
+        "height": 20,
+        "top": 2045,
+        "left": 836,
+        "right": 938,
+        "bottom": 2065
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 2250,
+        "width": 73,
+        "height": 20,
+        "top": 2250,
+        "left": 193,
+        "right": 266,
+        "bottom": 2270
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 2250,
+        "width": 102,
+        "height": 20,
+        "top": 2250,
+        "left": 278,
+        "right": 380,
+        "bottom": 2270
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 2250,
+        "width": 73,
+        "height": 20,
+        "top": 2250,
+        "left": 751,
+        "right": 824,
+        "bottom": 2270
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 2250,
+        "width": 102,
+        "height": 20,
+        "top": 2250,
+        "left": 836,
+        "right": 938,
+        "bottom": 2270
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 2455,
+        "width": 73,
+        "height": 20,
+        "top": 2455,
+        "left": 193,
+        "right": 266,
+        "bottom": 2475
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 2455,
+        "width": 102,
+        "height": 20,
+        "top": 2455,
+        "left": 278,
+        "right": 380,
+        "bottom": 2475
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 392,
+        "y": 2455,
+        "width": 145,
+        "height": 20,
+        "top": 2455,
+        "left": 392,
+        "right": 537,
+        "bottom": 2475
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 2455,
+        "width": 73,
+        "height": 20,
+        "top": 2455,
+        "left": 751,
+        "right": 824,
+        "bottom": 2475
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 2455,
+        "width": 102,
+        "height": 20,
+        "top": 2455,
+        "left": 836,
+        "right": 938,
+        "bottom": 2475
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 2660,
+        "width": 73,
+        "height": 20,
+        "top": 2660,
+        "left": 193,
+        "right": 266,
+        "bottom": 2680
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 2660,
+        "width": 102,
+        "height": 20,
+        "top": 2660,
+        "left": 278,
+        "right": 380,
+        "bottom": 2680
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 2949,
+        "width": 73,
+        "height": 20,
+        "top": 2949,
+        "left": 193,
+        "right": 266,
+        "bottom": 2969
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 2949,
+        "width": 102,
+        "height": 20,
+        "top": 2949,
+        "left": 278,
+        "right": 380,
+        "bottom": 2969
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 2925,
+        "width": 73,
+        "height": 20,
+        "top": 2925,
+        "left": 751,
+        "right": 824,
+        "bottom": 2945
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 836,
+        "y": 2925,
+        "width": 102,
+        "height": 20,
+        "top": 2925,
+        "left": 836,
+        "right": 938,
+        "bottom": 2945
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 950,
+        "y": 2925,
+        "width": 145,
+        "height": 20,
+        "top": 2925,
+        "left": 950,
+        "right": 1095,
+        "bottom": 2945
+      }
+    },
+    {
+      "label": "Open room",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 3154,
+        "width": 73,
+        "height": 20,
+        "top": 3154,
+        "left": 193,
+        "right": 266,
+        "bottom": 3174
+      }
+    },
+    {
+      "label": "Open materials",
+      "testId": null,
+      "rect": {
+        "x": 278,
+        "y": 3154,
+        "width": 102,
+        "height": 20,
+        "top": 3154,
+        "left": 278,
+        "right": 380,
+        "bottom": 3174
+      }
+    },
+    {
+      "label": "Return to Event lobby",
+      "testId": null,
+      "rect": {
+        "x": 392,
+        "y": 3154,
+        "width": 145,
+        "height": 20,
+        "top": 3154,
+        "left": 392,
+        "right": 537,
+        "bottom": 3174
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 3337,
+        "width": 87,
+        "height": 21,
+        "top": 3337,
+        "left": 193,
+        "right": 280,
+        "bottom": 3358
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 3337,
+        "width": 87,
+        "height": 21,
+        "top": 3337,
+        "left": 751,
+        "right": 838,
+        "bottom": 3358
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 3463,
+        "width": 87,
+        "height": 21,
+        "top": 3463,
+        "left": 193,
+        "right": 280,
+        "bottom": 3484
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 3463,
+        "width": 87,
+        "height": 21,
+        "top": 3463,
+        "left": 751,
+        "right": 838,
+        "bottom": 3484
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 193,
+        "y": 3589,
+        "width": 87,
+        "height": 21,
+        "top": 3589,
+        "left": 193,
+        "right": 280,
+        "bottom": 3610
+      }
+    },
+    {
+      "label": "Open lobby",
+      "testId": null,
+      "rect": {
+        "x": 751,
+        "y": 3589,
+        "width": 87,
+        "height": 21,
+        "top": 3589,
+        "left": 751,
+        "right": 838,
+        "bottom": 3610
+      }
+    },
+    {
+      "label": "Legal information",
+      "testId": null,
+      "rect": {
+        "x": 168,
+        "y": 3703,
+        "width": 114,
+        "height": 18,
+        "top": 3703,
+        "left": 168,
+        "right": 282,
+        "bottom": 3721
+      }
+    },
+    {
+      "label": "Terms of use",
+      "testId": null,
+      "rect": {
+        "x": 840,
+        "y": 3703,
+        "width": 83,
+        "height": 18,
+        "top": 3703,
+        "left": 840,
+        "right": 923,
+        "bottom": 3721
+      }
+    },
+    {
+      "label": "Cookie Policy",
+      "testId": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      }
+    }
+  ],
+  "headings": [
+    {
+      "level": 1,
+      "text": "Dashboard",
+      "rect": {
+        "x": 168,
+        "y": 130,
+        "width": 153,
+        "height": 36,
+        "top": 130,
+        "left": 168,
+        "right": 321,
+        "bottom": 166
+      }
+    },
+    {
+      "level": 2,
+      "text": "Continue",
+      "rect": {
+        "x": 168,
+        "y": 228,
+        "width": 1104,
+        "height": 28,
+        "top": 228,
+        "left": 168,
+        "right": 1272,
+        "bottom": 256
+      }
+    },
+    {
+      "level": 2,
+      "text": "My active events",
+      "rect": {
+        "x": 168,
+        "y": 394,
+        "width": 1104,
+        "height": 28,
+        "top": 394,
+        "left": 168,
+        "right": 1272,
+        "bottom": 422
+      }
+    },
+    {
+      "level": 2,
+      "text": "My active sessions",
+      "rect": {
+        "x": 168,
+        "y": 1210,
+        "width": 1104,
+        "height": 28,
+        "top": 1210,
+        "left": 168,
+        "right": 1272,
+        "bottom": 1238
+      }
+    },
+    {
+      "level": 2,
+      "text": "My completed sessions",
+      "rect": {
+        "x": 168,
+        "y": 2729,
+        "width": 1104,
+        "height": 28,
+        "top": 2729,
+        "left": 168,
+        "right": 1272,
+        "bottom": 2757
+      }
+    },
+    {
+      "level": 2,
+      "text": "Events I host",
+      "rect": {
+        "x": 168,
+        "y": 3223,
+        "width": 1104,
+        "height": 28,
+        "top": 3223,
+        "left": 168,
+        "right": 1272,
+        "bottom": 3251
+      }
+    }
+  ],
+  "landmarks": [
+    {
+      "tag": "header",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 90,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 90
+      }
+    },
+    {
+      "tag": "nav",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 429,
+        "y": 14,
+        "width": 355,
+        "height": 61,
+        "top": 14,
+        "left": 429,
+        "right": 784,
+        "bottom": 75
+      }
+    },
+    {
+      "tag": "footer",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 3669,
+        "width": 1440,
+        "height": 190,
+        "top": 3669,
+        "left": 0,
+        "right": 1440,
+        "bottom": 3859
+      }
+    }
+  ],
+  "regionBounds": [],
+  "fixedOrSticky": [
+    {
+      "hint": "header",
+      "position": "sticky",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 90,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 90
+      }
+    },
+    {
+      "hint": "cookie-banner",
+      "position": "fixed",
+      "rect": {
+        "x": 0,
+        "y": 688,
+        "width": 1440,
+        "height": 212,
+        "top": 688,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      }
+    }
+  ],
+  "focusOrderSample": [
+    {
+      "index": 0,
+      "hint": "NegotAItions — AI-powered negotiation training",
+      "label": "NegotAItions — AI-powered negotiation training",
+      "tabIndex": 0
+    },
+    {
+      "index": 1,
+      "hint": "nav-dashboard",
+      "label": "Dashboard",
+      "tabIndex": 0
+    },
+    {
+      "index": 2,
+      "hint": "nav-cases",
+      "label": "Cases",
+      "tabIndex": 0
+    },
+    {
+      "index": 3,
+      "hint": "nav-events",
+      "label": "Events",
+      "tabIndex": 0
+    },
+    {
+      "index": 4,
+      "hint": "nav-sessions",
+      "label": "Sessions",
+      "tabIndex": 0
+    },
+    {
+      "index": 5,
+      "hint": "language-switch-ru",
+      "label": "ru",
+      "tabIndex": 0
+    },
+    {
+      "index": 6,
+      "hint": "language-switch-en",
+      "label": "en",
+      "tabIndex": 0
+    },
+    {
+      "index": 7,
+      "hint": "account-menu-trigger",
+      "label": "ААудитор интерфейса Stage 3.12",
+      "tabIndex": 0
+    },
+    {
+      "index": 8,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 9,
+      "hint": "a",
+      "label": "Open lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 10,
+      "hint": "a",
+      "label": "Continue session",
+      "tabIndex": 0
+    },
+    {
+      "index": 11,
+      "hint": "a",
+      "label": "Continue session",
+      "tabIndex": 0
+    },
+    {
+      "index": 12,
+      "hint": "a",
+      "label": "Open lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 13,
+      "hint": "a",
+      "label": "Open lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 14,
+      "hint": "a",
+      "label": "Continue session",
+      "tabIndex": 0
+    },
+    {
+      "index": 15,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 16,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    },
+    {
+      "index": 17,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 18,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    },
+    {
+      "index": 19,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 20,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    },
+    {
+      "index": 21,
+      "hint": "a",
+      "label": "Return to Event lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 22,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 23,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    },
+    {
+      "index": 24,
+      "hint": "a",
+      "label": "Return to Event lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 25,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 26,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    },
+    {
+      "index": 27,
+      "hint": "a",
+      "label": "Return to Event lobby",
+      "tabIndex": 0
+    },
+    {
+      "index": 28,
+      "hint": "a",
+      "label": "Open room",
+      "tabIndex": 0
+    },
+    {
+      "index": 29,
+      "hint": "a",
+      "label": "Open materials",
+      "tabIndex": 0
+    }
+  ]
+}

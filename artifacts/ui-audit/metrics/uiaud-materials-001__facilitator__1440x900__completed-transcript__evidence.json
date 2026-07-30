@@ -1,0 +1,980 @@
+{
+  "scenario": {
+    "scenarioId": "UIAUD-MATERIALS-001",
+    "surface": "materials",
+    "journey": "materials-review",
+    "role": "facilitator",
+    "viewport": "1440x900",
+    "state": "completed-transcript",
+    "findingIds": [
+      "UI-F015"
+    ]
+  },
+  "url": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_9czobx/materials",
+  "title": "NegotAItions — AI-powered negotiation training",
+  "timestamp": "2026-07-30T15:08:16.125Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "devicePixelRatio": 1
+  },
+  "document": {
+    "scrollWidth": 1440,
+    "scrollHeight": 1987,
+    "clientWidth": 1440,
+    "clientHeight": 900,
+    "horizontalOverflow": false
+  },
+  "counts": {
+    "totalActions": 27,
+    "visibleActions": 21,
+    "scrollContainers": 0,
+    "clippedText": 1,
+    "overlapPairs": 0,
+    "headings": 4,
+    "landmarks": 3,
+    "dialogs": 1
+  },
+  "actions": [
+    {
+      "index": 0,
+      "tag": "a",
+      "role": null,
+      "label": "NegotAItions — AI-powered negotiation training",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 22,
+        "width": 213,
+        "height": 48,
+        "top": 22,
+        "left": 168,
+        "right": 381,
+        "bottom": 70
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 1,
+      "tag": "a",
+      "role": null,
+      "label": "Dashboard",
+      "href": "http://127.0.0.1:3100/dashboard",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-dashboard",
+      "actionVariant": null,
+      "rect": {
+        "x": 429,
+        "y": 28,
+        "width": 99,
+        "height": 36,
+        "top": 28,
+        "left": 429,
+        "right": 528,
+        "bottom": 64
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 2,
+      "tag": "a",
+      "role": null,
+      "label": "Cases",
+      "href": "http://127.0.0.1:3100/cases",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-cases",
+      "actionVariant": null,
+      "rect": {
+        "x": 549,
+        "y": 39,
+        "width": 65,
+        "height": 32,
+        "top": 39,
+        "left": 549,
+        "right": 613,
+        "bottom": 71
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 3,
+      "tag": "a",
+      "role": null,
+      "label": "Events",
+      "href": "http://127.0.0.1:3100/events",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-events",
+      "actionVariant": null,
+      "rect": {
+        "x": 617,
+        "y": 39,
+        "width": 68,
+        "height": 32,
+        "top": 39,
+        "left": 617,
+        "right": 686,
+        "bottom": 71
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 4,
+      "tag": "a",
+      "role": null,
+      "label": "Sessions",
+      "href": "http://127.0.0.1:3100/sessions",
+      "type": null,
+      "disabled": false,
+      "testId": "nav-sessions",
+      "actionVariant": null,
+      "rect": {
+        "x": 690,
+        "y": 38,
+        "width": 85,
+        "height": 34,
+        "top": 38,
+        "left": 690,
+        "right": 775,
+        "bottom": 72
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgba(56, 189, 248, 0.3)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 5,
+      "tag": "a",
+      "role": null,
+      "label": "Rejoin",
+      "href": "http://127.0.0.1:3100/rejoin",
+      "type": null,
+      "disabled": false,
+      "testId": "rejoin-link",
+      "actionVariant": null,
+      "rect": {
+        "x": 929,
+        "y": 36,
+        "width": 42,
+        "height": 20,
+        "top": 36,
+        "left": 929,
+        "right": 971,
+        "bottom": 56
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 6,
+      "tag": "button",
+      "role": null,
+      "label": "ru",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-ru",
+      "actionVariant": null,
+      "rect": {
+        "x": 988,
+        "y": 32,
+        "width": 43,
+        "height": 28,
+        "top": 32,
+        "left": 988,
+        "right": 1032,
+        "bottom": 60
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 7,
+      "tag": "button",
+      "role": null,
+      "label": "en",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "language-switch-en",
+      "actionVariant": null,
+      "rect": {
+        "x": 1034,
+        "y": 32,
+        "width": 43,
+        "height": 28,
+        "top": 32,
+        "left": 1034,
+        "right": 1076,
+        "bottom": 60
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 8,
+      "tag": "button",
+      "role": null,
+      "label": "EE2E Locale User",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "account-menu-trigger",
+      "actionVariant": null,
+      "rect": {
+        "x": 1093,
+        "y": 26,
+        "width": 179,
+        "height": 40,
+        "top": 26,
+        "left": 1093,
+        "right": 1272,
+        "bottom": 66
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "rgb(248, 250, 252)",
+      "border": "rgb(248, 250, 252)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 9,
+      "tag": "a",
+      "role": null,
+      "label": "← Back to sessions",
+      "href": "http://127.0.0.1:3100/sessions",
+      "type": null,
+      "disabled": false,
+      "testId": "back-to-sessions-link",
+      "actionVariant": null,
+      "rect": {
+        "x": 978,
+        "y": 164,
+        "width": 174,
+        "height": 42,
+        "top": 164,
+        "left": 978,
+        "right": 1152,
+        "bottom": 206
+      },
+      "background": "rgba(15, 23, 42, 0.65)",
+      "foreground": "rgb(226, 232, 240)",
+      "border": "rgba(148, 163, 184, 0.28)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 10,
+      "tag": "textarea",
+      "role": null,
+      "label": "UI audit notes",
+      "href": null,
+      "type": null,
+      "disabled": false,
+      "testId": "materials-notes-textarea",
+      "actionVariant": null,
+      "rect": {
+        "x": 313,
+        "y": 918,
+        "width": 518,
+        "height": 136,
+        "top": 918,
+        "left": 313,
+        "right": 831,
+        "bottom": 1054
+      },
+      "background": "oklab(0.207998 -0.00311178 -0.0418783 / 0.6)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 11,
+      "tag": "button",
+      "role": null,
+      "label": "Save notes",
+      "href": null,
+      "type": "submit",
+      "disabled": false,
+      "testId": "materials-notes-save-button",
+      "actionVariant": null,
+      "rect": {
+        "x": 313,
+        "y": 1073,
+        "width": 86,
+        "height": 28,
+        "top": 1073,
+        "left": 313,
+        "right": 399,
+        "bottom": 1101
+      },
+      "background": "oklab(0.714993 -0.116823 -0.0824538 / 0.15)",
+      "foreground": "lab(85.3886 -36.7635 -21.5717)",
+      "border": "lab(85.3886 -36.7635 -21.5717)",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 12,
+      "tag": "a",
+      "role": null,
+      "label": "↓ Recording & transcription",
+      "href": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_9czobx/materials#transcription-section",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 664,
+        "y": 1365,
+        "width": 150,
+        "height": 16,
+        "top": 1365,
+        "left": 664,
+        "right": 814,
+        "bottom": 1381
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(48.0876 -2.03595 -16.5814)",
+      "border": "lab(48.0876 -2.03595 -16.5814)",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 13,
+      "tag": "button",
+      "role": null,
+      "label": "Run AI analysis",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "post-processing-run-ai-analysis-button",
+      "actionVariant": null,
+      "rect": {
+        "x": 671,
+        "y": 1435,
+        "width": 143,
+        "height": 42,
+        "top": 1435,
+        "left": 671,
+        "right": 814,
+        "bottom": 1477
+      },
+      "background": "rgba(15, 23, 42, 0.65)",
+      "foreground": "rgb(226, 232, 240)",
+      "border": "rgba(148, 163, 184, 0.28)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 14,
+      "tag": "button",
+      "role": null,
+      "label": "Expand",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 774,
+        "y": 1548,
+        "width": 57,
+        "height": 24,
+        "top": 1548,
+        "left": 774,
+        "right": 831,
+        "bottom": 1572
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(65.5349 -2.25151 -14.5072)",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 15,
+      "tag": "a",
+      "role": null,
+      "label": "Legal information",
+      "href": "http://127.0.0.1:3100/privacy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 168,
+        "y": 1831,
+        "width": 114,
+        "height": 18,
+        "top": 1831,
+        "left": 168,
+        "right": 282,
+        "bottom": 1849
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 16,
+      "tag": "a",
+      "role": null,
+      "label": "Terms of use",
+      "href": "http://127.0.0.1:3100/terms",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 840,
+        "y": 1831,
+        "width": 83,
+        "height": 18,
+        "top": 1831,
+        "left": 840,
+        "right": 923,
+        "bottom": 1849
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(91.7353 -0.998765 -4.76968)",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "position": "static"
+    },
+    {
+      "index": 17,
+      "tag": "a",
+      "role": null,
+      "label": "Cookie Policy",
+      "href": "http://127.0.0.1:3100/cookie-policy",
+      "type": null,
+      "disabled": false,
+      "testId": null,
+      "actionVariant": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(76.6045 -40.9406 -29.6231)",
+      "border": "lab(76.6045 -40.9406 -29.6231)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    },
+    {
+      "index": 18,
+      "tag": "button",
+      "role": null,
+      "label": "Accept all",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-accept-all",
+      "actionVariant": null,
+      "rect": {
+        "x": 357,
+        "y": 817,
+        "width": 99,
+        "height": 38,
+        "top": 817,
+        "left": 357,
+        "right": 456,
+        "bottom": 855
+      },
+      "background": "lab(55.1767 -26.7496 -30.5138)",
+      "foreground": "rgb(255, 255, 255)",
+      "border": "rgb(255, 255, 255)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 19,
+      "tag": "button",
+      "role": null,
+      "label": "Reject optional",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-reject-optional",
+      "actionVariant": null,
+      "rect": {
+        "x": 464,
+        "y": 817,
+        "width": 135,
+        "height": 38,
+        "top": 817,
+        "left": 464,
+        "right": 600,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(91.7353 -0.998765 -4.76968)",
+      "border": "lab(35.5623 -1.74978 -15.4316)",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "position": "static"
+    },
+    {
+      "index": 20,
+      "tag": "button",
+      "role": null,
+      "label": "Customize",
+      "href": null,
+      "type": "button",
+      "disabled": false,
+      "testId": "cookie-customize",
+      "actionVariant": null,
+      "rect": {
+        "x": 608,
+        "y": 817,
+        "width": 102,
+        "height": 38,
+        "top": 817,
+        "left": 608,
+        "right": 710,
+        "bottom": 855
+      },
+      "background": "rgba(0, 0, 0, 0)",
+      "foreground": "lab(65.5349 -2.25151 -14.5072)",
+      "border": "lab(26.9569 -1.47018 -15.6993)",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "position": "static"
+    }
+  ],
+  "duplicateActionLabels": [],
+  "scrollContainers": [],
+  "overlapPairs": [],
+  "clippedText": [
+    {
+      "hint": "html",
+      "text": "NegotAItions — AI-powered negotiation training@font-face{font-family:'__nextjs-Geist';font-style:normal;font-weight:400 600;font-display:swa",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 900,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      },
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "scrollHeight": 1987,
+      "clientHeight": 900
+    }
+  ],
+  "targetSizeIssues": [
+    {
+      "label": "Rejoin",
+      "testId": "rejoin-link",
+      "rect": {
+        "x": 929,
+        "y": 36,
+        "width": 42,
+        "height": 20,
+        "top": 36,
+        "left": 929,
+        "right": 971,
+        "bottom": 56
+      }
+    },
+    {
+      "label": "↓ Recording & transcription",
+      "testId": null,
+      "rect": {
+        "x": 664,
+        "y": 1365,
+        "width": 150,
+        "height": 16,
+        "top": 1365,
+        "left": 664,
+        "right": 814,
+        "bottom": 1381
+      }
+    },
+    {
+      "label": "Legal information",
+      "testId": null,
+      "rect": {
+        "x": 168,
+        "y": 1831,
+        "width": 114,
+        "height": 18,
+        "top": 1831,
+        "left": 168,
+        "right": 282,
+        "bottom": 1849
+      }
+    },
+    {
+      "label": "Terms of use",
+      "testId": null,
+      "rect": {
+        "x": 840,
+        "y": 1831,
+        "width": 83,
+        "height": 18,
+        "top": 1831,
+        "left": 840,
+        "right": 923,
+        "bottom": 1849
+      }
+    },
+    {
+      "label": "Cookie Policy",
+      "testId": null,
+      "rect": {
+        "x": 769,
+        "y": 780,
+        "width": 86,
+        "height": 18,
+        "top": 780,
+        "left": 769,
+        "right": 855,
+        "bottom": 798
+      }
+    }
+  ],
+  "headings": [
+    {
+      "level": 1,
+      "text": "Long Negotiation Session With Multiple Roles and Observers [E2E rms7ne4hzp8s4md2p]",
+      "rect": {
+        "x": 288,
+        "y": 164,
+        "width": 597,
+        "height": 108,
+        "top": 164,
+        "left": 288,
+        "right": 885,
+        "bottom": 272
+      }
+    },
+    {
+      "level": 2,
+      "text": "Post-session processing",
+      "rect": {
+        "x": 313,
+        "y": 1159,
+        "width": 518,
+        "height": 24,
+        "top": 1159,
+        "left": 313,
+        "right": 831,
+        "bottom": 1183
+      }
+    },
+    {
+      "level": 2,
+      "text": "Recording & transcription",
+      "rect": {
+        "x": 313,
+        "y": 1548,
+        "width": 196,
+        "height": 24,
+        "top": 1548,
+        "left": 313,
+        "right": 509,
+        "bottom": 1572
+      }
+    },
+    {
+      "level": 2,
+      "text": "AI analysis",
+      "rect": {
+        "x": 313,
+        "y": 1631,
+        "width": 82,
+        "height": 24,
+        "top": 1631,
+        "left": 313,
+        "right": 395,
+        "bottom": 1655
+      }
+    }
+  ],
+  "landmarks": [
+    {
+      "tag": "header",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 92,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 92
+      }
+    },
+    {
+      "tag": "nav",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 429,
+        "y": 14,
+        "width": 355,
+        "height": 63,
+        "top": 14,
+        "left": 429,
+        "right": 784,
+        "bottom": 77
+      }
+    },
+    {
+      "tag": "footer",
+      "role": null,
+      "label": null,
+      "rect": {
+        "x": 0,
+        "y": 1797,
+        "width": 1440,
+        "height": 190,
+        "top": 1797,
+        "left": 0,
+        "right": 1440,
+        "bottom": 1987
+      }
+    }
+  ],
+  "regionBounds": [
+    {
+      "hint": "session-post-processing-panel",
+      "rect": {
+        "x": 288,
+        "y": 1142,
+        "width": 568,
+        "height": 583,
+        "top": 1142,
+        "left": 288,
+        "right": 856,
+        "bottom": 1725
+      }
+    }
+  ],
+  "fixedOrSticky": [
+    {
+      "hint": "header",
+      "position": "sticky",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 92,
+        "top": 0,
+        "left": 0,
+        "right": 1440,
+        "bottom": 92
+      }
+    },
+    {
+      "hint": "cookie-banner",
+      "position": "fixed",
+      "rect": {
+        "x": 0,
+        "y": 688,
+        "width": 1440,
+        "height": 212,
+        "top": 688,
+        "left": 0,
+        "right": 1440,
+        "bottom": 900
+      }
+    }
+  ],
+  "focusOrderSample": [
+    {
+      "index": 0,
+      "hint": "NegotAItions — AI-powered negotiation training",
+      "label": "NegotAItions — AI-powered negotiation training",
+      "tabIndex": 0
+    },
+    {
+      "index": 1,
+      "hint": "nav-dashboard",
+      "label": "Dashboard",
+      "tabIndex": 0
+    },
+    {
+      "index": 2,
+      "hint": "nav-cases",
+      "label": "Cases",
+      "tabIndex": 0
+    },
+    {
+      "index": 3,
+      "hint": "nav-events",
+      "label": "Events",
+      "tabIndex": 0
+    },
+    {
+      "index": 4,
+      "hint": "nav-sessions",
+      "label": "Sessions",
+      "tabIndex": 0
+    },
+    {
+      "index": 5,
+      "hint": "rejoin-link",
+      "label": "Rejoin",
+      "tabIndex": 0
+    },
+    {
+      "index": 6,
+      "hint": "language-switch-ru",
+      "label": "ru",
+      "tabIndex": 0
+    },
+    {
+      "index": 7,
+      "hint": "language-switch-en",
+      "label": "en",
+      "tabIndex": 0
+    },
+    {
+      "index": 8,
+      "hint": "account-menu-trigger",
+      "label": "EE2E Locale User",
+      "tabIndex": 0
+    },
+    {
+      "index": 9,
+      "hint": "back-to-sessions-link",
+      "label": "← Back to sessions",
+      "tabIndex": 0
+    },
+    {
+      "index": 10,
+      "hint": "materials-notes-textarea",
+      "label": "UI audit notes",
+      "tabIndex": 0
+    },
+    {
+      "index": 11,
+      "hint": "materials-notes-save-button",
+      "label": "Save notes",
+      "tabIndex": 0
+    },
+    {
+      "index": 12,
+      "hint": "a",
+      "label": "↓ Recording & transcription",
+      "tabIndex": 0
+    },
+    {
+      "index": 13,
+      "hint": "post-processing-run-ai-analysis-button",
+      "label": "Run AI analysis",
+      "tabIndex": 0
+    },
+    {
+      "index": 14,
+      "hint": "button",
+      "label": "Expand",
+      "tabIndex": 0
+    },
+    {
+      "index": 15,
+      "hint": "a",
+      "label": "Legal information",
+      "tabIndex": 0
+    },
+    {
+      "index": 16,
+      "hint": "a",
+      "label": "Terms of use",
+      "tabIndex": 0
+    },
+    {
+      "index": 17,
+      "hint": "a",
+      "label": "Cookie Policy",
+      "tabIndex": 0
+    },
+    {
+      "index": 18,
+      "hint": "cookie-accept-all",
+      "label": "Accept all",
+      "tabIndex": 0
+    },
+    {
+      "index": 19,
+      "hint": "cookie-reject-optional",
+      "label": "Reject optional",
+      "tabIndex": 0
+    },
+    {
+      "index": 20,
+      "hint": "cookie-customize",
+      "label": "Customize",
+      "tabIndex": 0
+    }
+  ]
+}

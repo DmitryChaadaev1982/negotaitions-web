@@ -1,0 +1,21 @@
+hypothesisId,area,originalObservation,auditStatus,evidence,findingIds,recommendedDirection,confidence
+POH-001,dashboard,Dashboard overloaded by historical Events and Sessions,CONFIRMED,UI-F001 UI-F010,UI-F001 UI-F010,Segment current/scheduled/archive; collapse archive,High
+POH-002,dashboard,"Future separation of scheduled items, archive, statistics and messages",CONFIRMED,UI-F002,UI-F002,Reserve dashboard lanes before adding stats/messages,High
+POH-003,lists,Oversized and confusing filters,PARTIALLY_CONFIRMED,Filters are consistent but consume large vertical/visual footprint,UI-F003,Compact toolbar plus active chips,High
+POH-004,room,Room scaling for 2–8 negotiators,CONFIRMED,Two-slot layout source cannot represent 3–8 negotiators safely,UI-F011,Design stable 2–8 grid model,High
+POH-005,room,Unlimited observer scaling,CONFIRMED,Observer row wraps and can compete with stage,UI-F012,Dedicated scrollable observer roster,High
+POH-006,room,Observer prioritization,BLOCKED_BY_MISSING_STATE,Camera/mic state exists; active priority requires additional product/runtime state,UI-F013,Define priority inputs and anti-jump policy,Medium
+POH-007,room,Right-side independent scrolling,PARTIALLY_CONFIRMED,"Right panel scroll exists, but fixed width competes with video area",UI-F016,Tabbed/collapsible panel with stable stage,High
+POH-008,lobby,Duplicated lobby room-entry buttons,PARTIALLY_CONFIRMED,Duplicate visual treatment is confirmed; exact duplicate destinations depend on role/state,UI-F004 UI-F006,Single current-room action area,High
+POH-009,lobby,Room-entry controls disappearing below long content,CONFIRMED,Long people/sessions stack pushes controls into page scroll,UI-F005,Sticky session action strip or board,High
+POH-010,actions,Oversized button typography,PARTIALLY_CONFIRMED,Typography is not universally oversized; label length and primary weight cause more risk,UI-F006 UI-F018,Shorter labels plus semantic variants,Medium
+POH-011,actions,Room/material/lobby actions looking identical,CONFIRMED,Primary gradient used across contradictory destinations,UI-F006 UI-F015,Semantic action taxonomy,High
+POH-012,roles,Overloaded participant status text,CONFIRMED,Role/name/location/case-role repeated in lobby and room,UI-F007 UI-F017,Persona row pattern,High
+POH-013,lobby,Confusing Event management area,CONFIRMED,"Case library, assignment, session creation, room entry share one stack",UI-F004 UI-F008,"Separate setup, roster, and room access",High
+POH-014,lobby,Participant assignment at scale,CONFIRMED,Select/list assignment does not scale to 50-100 people,UI-F008,Roster assignment workspace,High
+POH-015,lobby,Possible combined roster and assignment interface,CONFIRMED,"Evidence supports a roster model, but not necessarily a full board rewrite first",UI-F008,Moderate roster/drawer option,Medium
+POH-016,case content,Inconsistent Case description between preparation and debrief,CONFIRMED,Multiple components render same source content with different hierarchy,UI-F014,Shared case content contract,High
+POH-017,lobby,Oversized desired-role selector,PARTIALLY_CONFIRMED,Interaction is important pre-selection but over-weighted afterwards,UI-F018,Compact persona/status control,Medium
+POH-018,branding,Need restrained visual branding,CONFIRMED,Current language is coherent but locally varied and card-heavy,UI-F019,Document tokens; avoid redesign,Medium
+POH-019,roles,Excessive role/name/case-role text,CONFIRMED,Repeated labels increase scan cost,UI-F017,Consistent persona/role format,High
+POH-020,roles,Possible role icons with accessible text equivalents,PARTIALLY_CONFIRMED,Icons can reduce noise but must not be sole meaning; binoculars-like observer icon has comprehension risk,UI-F017 UI-F020,"Text badge, tooltip, and aria-label",Medium

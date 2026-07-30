@@ -1,0 +1,16 @@
+action,page,component,visibleLabel,icon,buttonVariant,computedTreatment,classification,risk
+join room,dashboard/events/sessions/lobby/materials,"AccountDashboardView, SessionsListView, EventSessionRoomButton, SharedRoomShell",Open room / Join video room / Открыть,none,primary/gradient or list primary,cyan gradient or cyan chip,progression,Multiple entry points and variants
+return to lobby,room/debrief,"SharedRoomShell, SessionClosedOverlay",Back to lobby / Вернуться,none,secondary or gradient in overlay,slate or gradient,navigation,Overlay variant can compete with materials
+return to debrief,lobby/session action,EventSessionRoomButton,Return to debrief,none,gradient,primary gradient,review destination,Same as open room
+open materials,dashboard/sessions/lobby/room/debrief,"AccountDashboardView, SessionsListView, EventSessionRoomButton, SharedRoomShell",Open materials / Session materials,none,secondary/list or gradient,mixed,materials/history,Same as active room in lobby resolution
+create Session,event lobby,EventHostControlsPanel,Create session / Создать ещё одну сессию,none,gradient,primary gradient,creation,Label should become Create session
+edit Event,events list,EventsListView,Edit,none,secondary list,slate,management,OK
+finish Session,room,FacilitatorRoomControls,Finish,none,primary/control,varies,lifecycle progression,Needs warning semantics
+complete Event,events list/lobby,"EventsListView, EventCompletionDangerZone",Complete,none,dangerOutline/danger,rose,destructive/completion,Mostly clear but competes in dense action group
+leave,room/debrief,"VoximplantLeaveButton, SessionClosedOverlay",Leave,none,secondary,slate,exit,Can appear near materials/lobby actions
+manage participants,lobby/room sidebar,"EventHostControlsPanel, SessionRoleManagementPanel",Participant roles / assign,none,forms/selects,neutral,management,Scale risk
+select desired role,event lobby,EventLobbyView,Play / Observe / Facilitate,none,full-size control,neutral/primary,preference,Too prominent after selection
+assign user,event lobby/room sidebar,"EventHostControlsPanel, SessionRoleManagementPanel",Role select,none,select control,native,management,Needs roster pattern at scale
+unassign user,event lobby/room sidebar,"EventHostControlsPanel, SessionRoleManagementPanel",Clear / unassign,none,select/control,native,management,State feedback must remain visible
+recording controls,room,"RecordingIndicator, Voximplant recording controls",Recording / stop,status icon/text,status/control,mixed,recording lifecycle,Server-side stop semantics must not change
+retry/review failed processing,materials,"RecordingTranscriptionSection, SessionMaterialsDashboard",Retry / Analyze / Review,none,secondary/primary,mixed,post-processing,Needs distinct failure state

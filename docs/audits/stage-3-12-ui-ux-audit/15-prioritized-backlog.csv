@@ -1,0 +1,13 @@
+id,findingIds,title,wave,effort,value,regressionRisk,affectedComponents
+W1-001,UI-F006 UI-F015,Define semantic action taxonomy and apply to lobby/session/material CTAs,Wave 1,M,High,Medium,"EventSessionRoomButton, list action buttons, SharedRoomShell"
+W1-002,UI-F004 UI-F005,Add one persistent current-room action area in lobby,Wave 1,M,High,Medium,"EventLobbyView, EventHostControlsPanel"
+W1-003,UI-F007 UI-F017,Introduce compact persona/role display rules,Wave 1,M,High,Low,"EventLobbyView, room roster labels"
+W1-004,UI-F018,Compress desired-role selector after selection,Wave 1,S,Medium,Low,EventLobbyView
+W1-005,UI-F010,De-emphasize archive/history on dashboard,Wave 1,S,Medium,Low,AccountDashboardView
+W2-001,UI-F003,Replace full filter panels with compact toolbar/disclosure,Wave 2,M,High,Medium,"ListFilterBar, Cases/Events/Sessions views"
+W2-002,UI-F008,Create scalable roster/assignment management surface,Wave 2,L,High,Medium,EventHostControlsPanel
+W2-003,UI-F011 UI-F012 UI-F016,Design stable 2-8 negotiator grid and observer side roster,Wave 2,L,High,High,"VoximplantVideoLayout, SharedRoomShell"
+W2-004,UI-F014,Create shared case-content presentation component,Wave 2,M,Medium,Medium,"RoleBriefingCard, RoomSidebar, materials views"
+W3-001,UI-F002,Add dashboard progress/stat/message lanes only after IA is reserved,Wave 3,L,Medium,Medium,Dashboard
+W3-002,UI-F013,Define active observer priority model and backend state,Wave 3,XL,Medium,High,"media status, audio activity, room roster"
+W3-003,UI-F008 UI-F012,Virtualize observer/people rosters for 100+ people,Wave 3,L,Medium,Medium,"Lobby roster, room observer roster"

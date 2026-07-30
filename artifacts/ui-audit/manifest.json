@@ -1,0 +1,151 @@
+{
+  "records": [
+    {
+      "scenarioId": "UIAUD-DASH-020",
+      "surface": "dashboard",
+      "journey": "participant-owner-entry",
+      "role": "event-owner",
+      "viewport": "1440x900",
+      "state": "mixed-density",
+      "findingIds": [
+        "UI-F001",
+        "UI-F002",
+        "UI-F010"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-dash-020__event-owner__1440x900__mixed-density__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-dash-020__event-owner__1440x900__mixed-density__evidence.json",
+      "url": "http://127.0.0.1:3100/dashboard",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-FILTER-001",
+      "surface": "events-list",
+      "journey": "list-filtering",
+      "role": "event-owner",
+      "viewport": "1440x900",
+      "state": "filters-visible",
+      "findingIds": [
+        "UI-F003"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-filter-001__event-owner__1440x900__filters-visible__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-filter-001__event-owner__1440x900__filters-visible__evidence.json",
+      "url": "http://127.0.0.1:3100/events",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-FILTER-002",
+      "surface": "sessions-list",
+      "journey": "list-filtering",
+      "role": "facilitator",
+      "viewport": "1440x900",
+      "state": "filters-visible",
+      "findingIds": [
+        "UI-F003",
+        "UI-F006"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-filter-002__facilitator__1440x900__filters-visible__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-filter-002__facilitator__1440x900__filters-visible__evidence.json",
+      "url": "http://127.0.0.1:3100/sessions",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-FILTER-003",
+      "surface": "cases-list",
+      "journey": "list-filtering",
+      "role": "facilitator",
+      "viewport": "1440x900",
+      "state": "filters-visible",
+      "findingIds": [
+        "UI-F003"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-filter-003__facilitator__1440x900__filters-visible__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-filter-003__facilitator__1440x900__filters-visible__evidence.json",
+      "url": "http://127.0.0.1:3100/cases",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-LOBBY-050",
+      "surface": "event-lobby",
+      "journey": "event-owner-management",
+      "role": "event-owner",
+      "viewport": "1440x900",
+      "state": "50-users-4-sessions",
+      "findingIds": [
+        "UI-F004",
+        "UI-F005",
+        "UI-F006",
+        "UI-F007",
+        "UI-F008"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-lobby-050__event-owner__1440x900__50-users-4-sessions__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-lobby-050__event-owner__1440x900__50-users-4-sessions__evidence.json",
+      "url": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ujfhso/lobby?hostToken=%5Bredacted%5D",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-LOBBY-MOB-001",
+      "surface": "event-lobby",
+      "journey": "event-owner-management",
+      "role": "event-owner",
+      "viewport": "390x844",
+      "state": "50-users-mobile",
+      "findingIds": [
+        "UI-F004",
+        "UI-F005",
+        "UI-F009"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-lobby-mob-001__event-owner__390x844__50-users-mobile__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-lobby-mob-001__event-owner__390x844__50-users-mobile__evidence.json",
+      "url": "http://127.0.0.1:3100/events/ui-audit-event_rms7ne4hzp8s4md2p_ujfhso/lobby?hostToken=%5Bredacted%5D",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-SCALE-008",
+      "surface": "negotiation-room",
+      "journey": "facilitator-active-room",
+      "role": "facilitator",
+      "viewport": "1440x900",
+      "state": "8-negotiators-20-observers",
+      "findingIds": [
+        "UI-F011",
+        "UI-F012",
+        "UI-F013"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-scale-008__facilitator__1440x900__8-negotiators-20-observers__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-scale-008__facilitator__1440x900__8-negotiators-20-observers__evidence.json",
+      "url": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_980wme",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-DEBRIEF-001",
+      "surface": "debrief",
+      "journey": "facilitator-debrief",
+      "role": "facilitator",
+      "viewport": "1440x900",
+      "state": "debrief-open",
+      "findingIds": [
+        "UI-F014",
+        "UI-F015"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-debrief-001__facilitator__1440x900__debrief-open__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-debrief-001__facilitator__1440x900__debrief-open__evidence.json",
+      "url": "http://127.0.0.1:3100/room/ui-audit-session_rms7ne4hzp8s4md2p_9czobx",
+      "horizontalOverflow": false
+    },
+    {
+      "scenarioId": "UIAUD-MATERIALS-001",
+      "surface": "materials",
+      "journey": "materials-review",
+      "role": "facilitator",
+      "viewport": "1440x900",
+      "state": "completed-transcript",
+      "findingIds": [
+        "UI-F015"
+      ],
+      "screenshotPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\screenshots\\uiaud-materials-001__facilitator__1440x900__completed-transcript__evidence.png",
+      "metricsPath": "C:\\Projects\\Negotiations AI\\negotiations-web-ui-ux-audit\\artifacts\\ui-audit\\metrics\\uiaud-materials-001__facilitator__1440x900__completed-transcript__evidence.json",
+      "url": "http://127.0.0.1:3100/sessions/ui-audit-session_rms7ne4hzp8s4md2p_9czobx/materials",
+      "horizontalOverflow": false
+    }
+  ]
+}
