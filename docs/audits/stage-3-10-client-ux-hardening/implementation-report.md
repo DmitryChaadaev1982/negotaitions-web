@@ -169,15 +169,18 @@ Environment notes:
 - `FAILED` durable stop operation is surfaced as failure/review state in UI, but no new backend remediation workflow was added.
 - Observability logs are console JSON logs only; no external telemetry sink was added.
 
-## Deferred Wave 2/3 Items
+## Deferred Items
 
-- Occupancy-gated return to debrief.
-- Client room phase helper.
-- Recording finalization phase.
-- Post-close relay continuity.
-- Session lifecycle display consolidation.
-- Recording/materials semantic stop classifier work.
-- Any rewrite touching occupancy, lease, maintenance, server-stop delivery, or Voximplant scenario.
+Non-blocking backlog outside the completed Stage 3.10 Client UX Hardening scope:
+
+- Consolidated session lifecycle display.
+- Further materials stop semantics.
+- Client finalization/post-close relay only if a reproducible defect appears.
+- UI optimization as a separate stage.
+- Operational lifecycle log deduplication.
+- Browser-level deterministic out-of-order polling test.
+
+Current correct debrief access remains DEBRIEF_OPEN + ALLOW_DEBRIEF during grace, without requiring another active participant.
 
 ## Post-implementation technical verification
 
@@ -216,12 +219,44 @@ Mandatory gate results:
 
 Final rerun verdict: PASS. Merge: GO. Server canary: GO, subject to normal deployment controls.
 
+## Production Closure
+
+Production deployment and canary completed on 2026-07-30.
+
+- Production branch: `origin/deploy/yandex-poc`.
+- Production SHA: `45feca7b46b89d08775ab799a4e95f235f9ebe9e`.
+- Build ID: `Im6zeoKR7rtLtY-P8ySOj`.
+- Server: `negotaitions-app-poc`.
+- Service: `negotaitions-poc` active.
+- Production URL: `https://negotaitions.ru`.
+- Production Event: `cms7kkg3n00001rm10x0lnxhc`.
+- Production canary Session: `cms7kp93q00041rm1akvt26co`.
+- Public health: `https://negotaitions.ru/login` returned HTTP 200.
+- Production `.env.production` remained unchanged.
+
+Production canary result: `docs/audits/stage-3-10-client-ux-hardening/production-canary-result.md`.
+
+Final verdict:
+
+- Stage 3.10 Client UX Hardening: PASS.
+- Production canary: PASS.
+- Release status: GO.
+
+## Legacy Worktree Status
+
+`C:\Projects\Negotiations AI\negotiations-web` remains frozen and retained as historical source.
+
+Do not delete it yet because it still contains uncommitted Wave 2/3 candidates and corresponding backup evidence.
+
+Its existence does not block starting the next project stage.
+
 ## Rollback
 
-Rollback is to revert the feature commit that contains this report and implementation:
+Safe rollback uses the retained rollback branch and runtime backup:
 
-```bash
-git revert <feature-commit-sha>
-```
-
-Do not use `git reset --hard`, detached HEAD, or merge/rewrite operations against `deploy/yandex-poc`.
+- Rollback branch: `rollback/stage310-client-ux-20260730-163605`.
+- Backup runtime: `/var/www/negotaitions-secure-backups/stage310-client-ux-20260730-163605/.next-pre-deploy`.
+- Preserve production evidence.
+- Do not use `git reset --hard`.
+- Do not leave the repository in detached HEAD.
+- Recovery returns to `deploy/yandex-poc` using `git switch` and `git pull --ff-only`.
