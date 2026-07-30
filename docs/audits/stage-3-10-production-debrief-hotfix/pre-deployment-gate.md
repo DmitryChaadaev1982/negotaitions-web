@@ -8,7 +8,7 @@ Hotfix: `f94257bf643e3c23f411f389bc3e7d4d9c20c03e`
 
 All mandatory commands exited 0; Stage 3.10 suite green; no unresolved class **A** timezone comparison remains on FINISH/occupancy/lease-count path; class **B** items are outside the live lifecycle compare path and are non-blocking.
 
-Merge / production deploy **not** executed (await explicit approval).
+At the time this pre-deployment gate was recorded, merge and production deployment had not yet been executed and were awaiting explicit approval.
 
 ## Checklist
 
@@ -34,7 +34,9 @@ Merge / production deploy **not** executed (await explicit approval).
 
 No remaining raw `expiresAt > NOW()` (or equivalent) in production occupancy/finish/close CAS after hotfix. Prisma lease expiry/renewal remains JS Date (**D**).
 
-## Commands awaiting approval (not run)
+## Historical commands awaiting approval at gate time
+
+These commands reflect the repository state at pre-deployment gate time. Merge, production deploy, and the production canary were subsequently completed successfully; see [production-canary-result.md](./production-canary-result.md).
 
 ```bash
 git checkout deploy/yandex-poc

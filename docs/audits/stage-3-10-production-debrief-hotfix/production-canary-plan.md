@@ -1,8 +1,14 @@
 # Production canary plan
 
-Do **not** deploy until user explicitly approves.
+**Status: historical / executed.** This document is the original canary plan that was already carried out after the Stage 3.10 debrief hotfix deploy. It is retained for audit traceability; do not treat the preconditions or “awaiting approval” wording as current open work.
+
+**Final result:** [production-canary-result.md](./production-canary-result.md) — Stage 3.10 production canary **PASS**, production status **GO**.
+
+---
 
 ## Preconditions
+
+*(As written at plan time; subsequently satisfied.)*
 
 - Secrets sync `--check`: all four Voximplant secrets MATCH (already true)
 - Hotfix merged to `deploy/yandex-poc` and service restarted after build
@@ -38,18 +44,74 @@ Do **not** deploy until user explicitly approves.
 - **GO**: steps 1–4 and 8 mandatory; 5–7 for server-stop path; 9–10 for close path
 - **NO-GO**: any immediate CLOSED with activeCount log >0 mismatch, or control-state 409 right after finish while connections valid
 
-## Rollback (non-destructive)
+## Rollback (branch-aware, non-destructive)
 
-```
+Do **not** `git checkout <sha>` on production: that leaves the repo in detached HEAD. Use a named rollback branch from the pre-hotfix commit (explicitly approved), then build and restart.
+
+```bash
+set -euo pipefail
+
 cd /var/www/negotaitions/app-git
-git fetch origin
-git checkout 3647593a61f3f6d132183622708c1c34d43e0614
+
+test -z "$(git status --porcelain)" || {
+  echo "ERROR: production worktree is dirty"
+  exit 1
+}
+
+git fetch origin --prune
+
+PRE_HOTFIX_SHA="3647593a61f3f6d132183622708c1c34d43e0614"
+ROLLBACK_BRANCH="rollback/stage310-debrief-hotfix-$(date +%Y%m%d-%H%M%S)"
+
+git switch -c "$ROLLBACK_BRANCH" "$PRE_HOTFIX_SHA"
+
 npm ci
 npm run build
 sudo systemctl restart negotaitions-poc
+
+systemctl is-active negotaitions-poc
+curl -fsS --max-time 15 \
+  -o /dev/null \
+  -w 'PUBLIC /login HTTP %{http_code}\n' \
+  https://negotaitions.ru/login
+
+git branch --show-current
+git rev-parse HEAD
 ```
 
-(Use the pre-hotfix release commit or previous known-good deploy commit explicitly approved.)
+(Use the pre-hotfix release commit above, or another known-good deploy commit explicitly approved. Do not leave production on detached HEAD.)
+
+### Recovery back to `deploy/yandex-poc`
+
+After an approved rollback, return production to the current deploy branch without detached HEAD (clean worktree required; no `reset --hard`):
+
+```bash
+set -euo pipefail
+
+cd /var/www/negotaitions/app-git
+
+test -z "$(git status --porcelain)" || {
+  echo "ERROR: production worktree is dirty"
+  exit 1
+}
+
+git fetch origin --prune
+git switch deploy/yandex-poc
+git pull --ff-only origin deploy/yandex-poc
+
+npm ci
+npm run build
+sudo systemctl restart negotaitions-poc
+
+systemctl is-active negotaitions-poc
+curl -fsS --max-time 15 \
+  -o /dev/null \
+  -w 'PUBLIC /login HTTP %{http_code}\n' \
+  https://negotaitions.ru/login
+
+git branch --show-current
+git rev-parse HEAD
+```
 
 ## Final canary outcome
 

@@ -25,7 +25,9 @@ Facilitator FINISH immediately wrote `roomLifecycle=CLOSED` because the durable 
 - Structured decision logs for canary
 - Dual-TZ regression tests (UTC + Europe/Moscow)
 
-## Not done without approval
+## Not performed during initial incident analysis without approval
+
+Historical description of constraints during the initial incident analysis — not the current project state after hotfix deploy and canary.
 
 - Production deploy
 - Production DB writes
