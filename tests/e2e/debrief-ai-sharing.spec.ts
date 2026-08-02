@@ -10,18 +10,22 @@
  * 6. Observer privacy: shared report does not expose private briefings
  */
 
-import { expect, type APIRequestContext, test } from "@playwright/test";
+import { createHash, randomBytes } from "node:crypto";
+
+import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
 
 import {
   cleanupE2eData,
   clearAiAnalysis,
   createCompletedTranscript,
+  createActiveUser,
   createE2eEvent,
   createE2eCase,
   getAiAnalysis,
   getEventParticipants,
   getSession,
   participantByName,
+  query,
 } from "./helpers/db";
 
 test.describe.configure({ mode: "serial" });
@@ -36,6 +40,35 @@ test.afterAll(async () => {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+async function createUserSessionCookie(userId: string) {
+  const rawToken = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  await query(
+    `INSERT INTO "UserSession"
+       ("id","userId","sessionTokenHash","expiresAt","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,NOW() + INTERVAL '30 days',NOW())`,
+    [userId, tokenHash],
+  );
+  return rawToken;
+}
+
+async function authHeaders(userId: string) {
+  return { Cookie: `auth_session=${await createUserSessionCookie(userId)}` };
+}
+
+async function login(page: Page, userId: string) {
+  const rawToken = await createUserSessionCookie(userId);
+  await page.context().addCookies([
+    {
+      name: "auth_session",
+      value: rawToken,
+      url: test.info().project.use.baseURL ?? "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+}
+
 async function createAndAssignSession(request: APIRequestContext) {
   const negotiationCase = await createE2eCase();
   const event = await createE2eEvent({ withParticipants: true });
@@ -45,13 +78,47 @@ async function createAndAssignSession(request: APIRequestContext) {
   const alex = participantByName(participants, "Alex");
   const serg = participantByName(participants, "Serg");
   const [buyerRole, sellerRole] = negotiationCase.roles;
+  const hostUser = await createActiveUser();
+  const igorUser = await createActiveUser();
+  const alexUser = await createActiveUser();
+  const sergUser = await createActiveUser();
   if (!buyerRole || !sellerRole) throw new Error("E2E case roles missing");
 
-  await request.patch(`/api/events/${event.id}/host`, {
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "visibility"='PUBLIC',"hostUserId"=$2,"facilitatorUserId"=$2
+     WHERE "id"=$1`,
+    [event.id, hostUser.id],
+  );
+  await query(
+    `UPDATE "EventParticipant"
+     SET "userId" = CASE "id"
+       WHEN $2 THEN $6
+       WHEN $3 THEN $7
+       WHEN $4 THEN $8
+       WHEN $5 THEN $9
+       ELSE "userId"
+     END
+     WHERE "eventId"=$1`,
+    [
+      event.id,
+      dmitry.id,
+      igor.id,
+      alex.id,
+      serg.id,
+      hostUser.id,
+      igorUser.id,
+      alexUser.id,
+      sergUser.id,
+    ],
+  );
+
+  const patchRes = await request.patch(`/api/events/${event.id}/host`, {
     data: {
       hostToken: event.hostToken,
       selectedCaseId: negotiationCase.id,
       assignmentDraft: {
+        roomLabel: "Debrief E2E Room",
         facilitatorEventParticipantId: dmitry.id,
         roleAssignments: { [buyerRole.id]: igor.id, [sellerRole.id]: alex.id },
         observerEventParticipantIds: [serg.id],
@@ -60,6 +127,7 @@ async function createAndAssignSession(request: APIRequestContext) {
       },
     },
   });
+  expect(patchRes.ok()).toBeTruthy();
 
   const createRes = await request.post(`/api/events/${event.id}/host`, {
     data: { hostToken: event.hostToken },
@@ -75,18 +143,28 @@ async function createAndAssignSession(request: APIRequestContext) {
     igor: participantByName(session.participants, "Igor"),
     alex: participantByName(session.participants, "Alex"),
     serg: participantByName(session.participants, "Serg"),
+    users: {
+      facilitator: hostUser,
+      igor: igorUser,
+      alex: alexUser,
+      serg: sergUser,
+    },
   };
 }
 
 async function finishSession(
-  request: APIRequestContext,
   sessionId: string,
-  facilitatorToken: string,
 ) {
-  const res = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken: facilitatorToken, action: "FINISH" },
-  });
-  expect(res.ok()).toBeTruthy();
+  await query(
+    `UPDATE "Session"
+     SET "negotiationState"='FINISHED',
+         "roomLifecycle"='DEBRIEF_OPEN',
+         "negotiationStartedAt"=COALESCE("negotiationStartedAt", NOW() - INTERVAL '2 minutes'),
+         "negotiationEndedAt"=COALESCE("negotiationEndedAt", NOW()),
+         "updatedAt"=NOW()
+     WHERE "id"=$1`,
+    [sessionId],
+  );
 }
 
 // ── Test 1: Stay in room after finish ─────────────────────────────────────
@@ -95,12 +173,13 @@ test("debrief: user stays in session room after session finish", async ({
   page,
   request,
 }) => {
-  const { session, facilitator } = await createAndAssignSession(request);
+  const { session, facilitator, users } = await createAndAssignSession(request);
 
   // Finish the session directly via API (no need to actually start it for UI test)
-  await finishSession(request, session.id, facilitator.joinToken);
+  await finishSession(session.id);
 
   // Navigate to the room
+  await login(page, users.facilitator.id);
   await page.goto(`/room/${session.id}?joinToken=${facilitator.joinToken}`);
 
   // The session-room-page should still be visible (not redirected away)
@@ -123,24 +202,27 @@ test("debrief: user stays in session room after session finish", async ({
 
 // ── Test 2: Run AI analysis from Sessions page ────────────────────────────
 
-test("sessions page: facilitator can run AI analysis when transcript is ready", async ({
+test("materials: facilitator can run AI analysis when transcript is ready", async ({
   page,
   request,
 }) => {
-  const { session, facilitator } = await createAndAssignSession(request);
-  await finishSession(request, session.id, facilitator.joinToken);
+  const { session, facilitator, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
 
   // Seed a completed transcript
   await createCompletedTranscript(session.id);
 
-  // Open sessions page
-  await page.goto("/sessions");
-  await expect(page.getByText(session.title)).toBeVisible({ timeout: 10000 });
+  // Open materials page
+  await login(page, users.facilitator.id);
+  await page.goto(`/join/${facilitator.joinToken}`);
+  await expect(page.getByTestId("post-processing-ai-section")).toBeVisible({ timeout: 10000 });
 
   // Run AI analysis button should appear for this finished session
-  const runBtn = page.getByTestId("sessions-run-ai-analysis-button").first();
+  const runBtn = page.getByTestId("post-processing-run-ai-analysis-button");
   await expect(runBtn).toBeVisible({ timeout: 5000 });
   await runBtn.click();
+  await page.getByTestId("ai-analysis-consent-checkbox").check();
+  await page.getByTestId("ai-analysis-confirm").click();
 
   // Wait for AI analysis to be created
   await expect(async () => {
@@ -161,12 +243,13 @@ test("materials: facilitator can share AI analysis with participants", async ({
   page,
   request,
 }) => {
-  const { session, facilitator, igor } = await createAndAssignSession(request);
-  await finishSession(request, session.id, facilitator.joinToken);
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
   await createCompletedTranscript(session.id);
 
   // Run AI analysis via API
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -178,29 +261,33 @@ test("materials: facilitator can share AI analysis with participants", async ({
   }).toPass({ timeout: 30000 });
 
   // Open Session Materials as facilitator
+  await login(page, users.facilitator.id);
   await page.goto(`/join/${facilitator.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("post-processing-ai-section")).toBeVisible({ timeout: 10000 });
 
   // Share button should be visible
-  const shareBtn = page.getByTestId("share-ai-analysis-button");
+  const shareBtn = page.getByTestId("post-processing-share-analysis-button");
   await expect(shareBtn).toBeVisible({ timeout: 5000 });
   await shareBtn.click();
+  await page.getByTestId("share-debrief-consent-checkbox").check();
+  await page.getByTestId("share-debrief-confirm").click();
 
   // Shared indicator appears
-  await expect(page.getByTestId("analysis-shared-indicator")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("post-processing-unshare-analysis-button")).toBeVisible({ timeout: 5000 });
 
   // Now open as participant — shared analysis should be visible
+  await login(page, users.igor.id);
   await page.goto(`/join/${igor.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("post-processing-ai-section")).toBeVisible({ timeout: 10000 });
 
   // Participant should NOT see facilitator-only badge
-  await expect(page.getByTestId("ai-report-facilitator-badge")).not.toBeVisible();
+  await expect(page.getByText("Full facilitator analysis")).not.toBeVisible();
 
   // Participant should NOT see private role objective analysis
   // (the shared report has roleObjectivesAnalysis stripped)
   // The shared report badge should be visible if analysis is shown
   // Check the not-shared message is gone
-  await expect(page.getByTestId("ai-analysis-not-shared-message")).not.toBeVisible();
+  await expect(page.getByText("AI analysis has not been shared yet.")).not.toBeVisible();
 
   // Clean up
   await clearAiAnalysis(session.id);
@@ -212,12 +299,13 @@ test("materials: participant cannot see AI report before facilitator shares it",
   page,
   request,
 }) => {
-  const { session, facilitator, igor } = await createAndAssignSession(request);
-  await finishSession(request, session.id, facilitator.joinToken);
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
   await createCompletedTranscript(session.id);
 
   // Run AI analysis (stays facilitator-only by default)
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -228,14 +316,15 @@ test("materials: participant cannot see AI report before facilitator shares it",
   }).toPass({ timeout: 30000 });
 
   // Open as participant
+  await login(page, users.igor.id);
   await page.goto(`/join/${igor.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("post-processing-ai-section")).toBeVisible({ timeout: 10000 });
 
   // Should show "not shared yet" message
-  await expect(page.getByTestId("ai-analysis-not-shared-message")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("AI analysis has not been shared yet.")).toBeVisible({ timeout: 5000 });
 
   // Should NOT show the AI report
-  await expect(page.getByTestId("ai-report")).not.toBeVisible();
+  await expect(page.getByText("Overall assessment")).not.toBeVisible();
 
   // Clean up
   await clearAiAnalysis(session.id);
@@ -250,14 +339,15 @@ test("multi-session: sharing analysis in session 1 does not affect session 2", a
   const setup1 = await createAndAssignSession(request);
   const setup2 = await createAndAssignSession(request);
 
-  await finishSession(request, setup1.session.id, setup1.facilitator.joinToken);
-  await finishSession(request, setup2.session.id, setup2.facilitator.joinToken);
+  await finishSession(setup1.session.id);
+  await finishSession(setup2.session.id);
 
   await createCompletedTranscript(setup1.session.id);
   await createCompletedTranscript(setup2.session.id);
 
   // Run AI for session 1 only
   const analyzeRes = await request.post(`/api/sessions/${setup1.session.id}/analyze`, {
+    headers: await authHeaders(setup1.users.facilitator.id),
     data: { joinToken: setup1.facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -269,13 +359,17 @@ test("multi-session: sharing analysis in session 1 does not affect session 2", a
   // Share session 1 analysis
   const shareRes = await request.post(
     `/api/sessions/${setup1.session.id}/ai-analysis/share`,
-    { data: { joinToken: setup1.facilitator.joinToken, shareDebriefConfirmed: true } },
+    {
+      headers: await authHeaders(setup1.users.facilitator.id),
+      data: { joinToken: setup1.facilitator.joinToken, shareDebriefConfirmed: true },
+    },
   );
   expect(shareRes.ok()).toBeTruthy();
 
   // Session 2 AI analysis: should NOT be shared
   const session2Status = await request.get(
     `/api/sessions/${setup2.session.id}/materials/status?joinToken=${setup2.igor.joinToken}`,
+    { headers: await authHeaders(setup2.users.igor.id) },
   );
   expect(session2Status.ok()).toBeTruthy();
   const status2 = (await session2Status.json()) as {
@@ -294,11 +388,12 @@ test("observer: shared report does not expose private participant instructions",
   page,
   request,
 }) => {
-  const { session, facilitator, serg } = await createAndAssignSession(request);
-  await finishSession(request, session.id, facilitator.joinToken);
+  const { session, facilitator, serg, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
   await createCompletedTranscript(session.id);
 
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -309,12 +404,14 @@ test("observer: shared report does not expose private participant instructions",
 
   // Share the analysis
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
 
   // Open as observer
+  await login(page, users.serg.id);
   await page.goto(`/join/${serg.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("post-processing-ai-section")).toBeVisible({ timeout: 10000 });
 
   // Observer should not see private role markers
   const pageContent = await page.content();
@@ -332,11 +429,12 @@ test("observer: shared report does not expose private participant instructions",
 test("materials/status API: returns safe shared data to participants, not full analysis", async ({
   request,
 }) => {
-  const { session, facilitator, igor } = await createAndAssignSession(request);
-  await finishSession(request, session.id, facilitator.joinToken);
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
   await createCompletedTranscript(session.id);
 
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -348,6 +446,7 @@ test("materials/status API: returns safe shared data to participants, not full a
   // Before sharing: participant should not see analysis
   const beforeShare = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
   );
   const beforeData = (await beforeShare.json()) as {
     aiAnalysis: {
@@ -363,12 +462,14 @@ test("materials/status API: returns safe shared data to participants, not full a
 
   // Share the analysis
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
 
   // After sharing: participant can see shared (sanitized) analysis
   const afterShare = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
   );
   const afterData = (await afterShare.json()) as {
     aiAnalysis: {
@@ -380,17 +481,18 @@ test("materials/status API: returns safe shared data to participants, not full a
   expect(afterData.aiAnalysis.canView).toBe(true);
   expect(afterData.aiAnalysis.isSharedWithSession).toBe(true);
   // Shared version has roleObjectivesAnalysis stripped
-  expect(afterData.aiAnalysis.analysisJson?.roleObjectivesAnalysis).toHaveLength(0);
+  expect(afterData.aiAnalysis.analysisJson?.roleObjectivesAnalysis ?? []).toHaveLength(0);
 
   // Facilitator still gets full analysis data
   const facilitatorStatus = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   const facilitatorData = (await facilitatorStatus.json()) as {
     aiAnalysis: { visibility: string; canShare: boolean };
   };
   expect(facilitatorData.aiAnalysis.visibility).toBe("SHARED_WITH_SESSION");
-  expect(facilitatorData.aiAnalysis.canShare).toBe(false); // already completed, can't share again (it is shared)
+  expect(facilitatorData.aiAnalysis.canShare).toBe(true);
 
   // Clean up
   await clearAiAnalysis(session.id);

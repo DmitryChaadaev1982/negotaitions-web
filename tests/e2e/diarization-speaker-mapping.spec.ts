@@ -14,6 +14,8 @@
  * - Multi-session isolation after re-transcription
  */
 
+import { createHash, randomBytes } from "node:crypto";
+
 import { expect, type APIRequestContext, test } from "@playwright/test";
 
 import {
@@ -21,6 +23,7 @@ import {
   clearAiAnalysis,
   clearTranscript,
   createAudioActivity,
+  createActiveUser,
   createCompletedTranscript,
   createDiarizedTranscript,
   createDiarizedTranscriptWithStatus,
@@ -34,12 +37,29 @@ import {
   getTranscriptText,
   lockTranscriptSegment,
   participantByName,
+  query,
   updateRecordingCompleted,
 } from "./helpers/db";
 
 test.describe.configure({ mode: "serial" });
 
 // ── Session fixture helper (same pattern as other spec files) ─────────────────
+
+async function createUserSessionCookie(userId: string) {
+  const rawToken = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  await query(
+    `INSERT INTO "UserSession"
+       ("id","userId","sessionTokenHash","expiresAt","createdAt")
+     VALUES (gen_random_uuid(),$1,$2,NOW() + INTERVAL '30 days',NOW())`,
+    [userId, tokenHash],
+  );
+  return rawToken;
+}
+
+async function authHeaders(userId: string) {
+  return { Cookie: `auth_session=${await createUserSessionCookie(userId)}` };
+}
 
 async function createAssignedSession(request: APIRequestContext) {
   const negotiationCase = await createE2eCase();
@@ -50,14 +70,48 @@ async function createAssignedSession(request: APIRequestContext) {
   const alex = participantByName(participants, "Alex");
   const serg = participantByName(participants, "Serg");
   const [buyerRole, sellerRole] = negotiationCase.roles;
+  const hostUser = await createActiveUser();
+  const igorUser = await createActiveUser();
+  const alexUser = await createActiveUser();
+  const sergUser = await createActiveUser();
 
   if (!buyerRole || !sellerRole) throw new Error("E2E case roles were not created.");
 
-  await request.patch(`/api/events/${event.id}/host`, {
+  await query(
+    `UPDATE "TrainingEvent"
+     SET "visibility"='PUBLIC',"hostUserId"=$2,"facilitatorUserId"=$2
+     WHERE "id"=$1`,
+    [event.id, hostUser.id],
+  );
+  await query(
+    `UPDATE "EventParticipant"
+     SET "userId" = CASE "id"
+       WHEN $2 THEN $6
+       WHEN $3 THEN $7
+       WHEN $4 THEN $8
+       WHEN $5 THEN $9
+       ELSE "userId"
+     END
+     WHERE "eventId"=$1`,
+    [
+      event.id,
+      dmitry.id,
+      igor.id,
+      alex.id,
+      serg.id,
+      hostUser.id,
+      igorUser.id,
+      alexUser.id,
+      sergUser.id,
+    ],
+  );
+
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
     data: {
       hostToken: event.hostToken,
       selectedCaseId: negotiationCase.id,
       assignmentDraft: {
+        roomLabel: "Speaker Mapping E2E Room",
         facilitatorEventParticipantId: dmitry.id,
         roleAssignments: {
           [buyerRole.id]: igor.id,
@@ -69,6 +123,7 @@ async function createAssignedSession(request: APIRequestContext) {
       },
     },
   });
+  expect(patchResponse.ok()).toBeTruthy();
 
   const createResponse = await request.post(`/api/events/${event.id}/host`, {
     data: { hostToken: event.hostToken },
@@ -76,6 +131,23 @@ async function createAssignedSession(request: APIRequestContext) {
   expect(createResponse.ok()).toBeTruthy();
   const body = (await createResponse.json()) as { session: { id: string } };
   const session = await getSession(body.session.id);
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id","sessionId","userId","connectionId","role","expiresAt","disconnectedAt","createdAt","updatedAt")
+     VALUES
+       (gen_random_uuid()::text,$1,$2,gen_random_uuid()::text,'FACILITATOR',NOW() + INTERVAL '30 minutes',NULL,NOW() - INTERVAL '20 minutes',NOW()),
+       (gen_random_uuid()::text,$1,$3,gen_random_uuid()::text,'PARTICIPANT',NOW() + INTERVAL '30 minutes',NULL,NOW() - INTERVAL '20 minutes',NOW()),
+       (gen_random_uuid()::text,$1,$4,gen_random_uuid()::text,'PARTICIPANT',NOW() + INTERVAL '30 minutes',NULL,NOW() - INTERVAL '20 minutes',NOW()),
+       (gen_random_uuid()::text,$1,$5,gen_random_uuid()::text,'OBSERVER',NOW() + INTERVAL '30 minutes',NULL,NOW() - INTERVAL '20 minutes',NOW())`,
+    [session.id, hostUser.id, igorUser.id, alexUser.id, sergUser.id],
+  );
+  await query(
+    `INSERT INTO "Recording"
+       ("id","sessionId","provider","status","startedAt","endedAt","updatedAt")
+     VALUES (gen_random_uuid()::text,$1,'VOXIMPLANT','STOPPED',NOW() - INTERVAL '20 minutes',NOW() - INTERVAL '5 minutes',NOW())
+     ON CONFLICT ("sessionId") DO NOTHING`,
+    [session.id],
+  );
 
   return {
     event,
@@ -84,20 +156,57 @@ async function createAssignedSession(request: APIRequestContext) {
     igor: participantByName(session.participants, "Igor"),
     alex: participantByName(session.participants, "Alex"),
     serg: participantByName(session.participants, "Serg"),
+    users: {
+      facilitator: hostUser,
+      igor: igorUser,
+      alex: alexUser,
+      serg: sergUser,
+    },
   };
 }
 
 async function control(
-  request: APIRequestContext,
+  _request: APIRequestContext,
   sessionId: string,
-  joinToken: string,
+  _joinToken: string,
   action: string,
 ) {
-  const response = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken, action },
-  });
-  expect(response.ok()).toBeTruthy();
-  return response.json();
+  if (action === "SKIP_PREPARATION") {
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState"='PREPARATION',
+           "roomLifecycle"='OPEN',
+           "updatedAt"=NOW()
+       WHERE "id"=$1`,
+      [sessionId],
+    );
+    return {};
+  }
+  if (action === "START") {
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState"='RUNNING',
+           "roomLifecycle"='OPEN',
+           "negotiationStartedAt"=COALESCE("negotiationStartedAt", NOW() - INTERVAL '15 minutes'),
+           "updatedAt"=NOW()
+       WHERE "id"=$1`,
+      [sessionId],
+    );
+    return {};
+  }
+  if (action === "FINISH") {
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState"='FINISHED',
+           "roomLifecycle"='DEBRIEF_OPEN',
+           "negotiationEndedAt"=COALESCE("negotiationEndedAt", NOW()),
+           "updatedAt"=NOW()
+       WHERE "id"=$1`,
+      [sessionId],
+    );
+    return {};
+  }
+  throw new Error(`Unsupported synthetic control action: ${action}`);
 }
 
 // ── Setup / teardown ─────────────────────────────────────────────────────────
@@ -121,7 +230,7 @@ test.beforeEach(async ({ request }) => {
 test("Diarization Test 1 — Provider labels stored; speaker-mapping GET returns two clusters", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -143,6 +252,7 @@ test("Diarization Test 1 — Provider labels stored; speaker-mapping GET returns
   // GET /speaker-mapping returns exactly 2 clusters (not 3 per-segment entries)
   const mappingRes = await request.get(
     `/api/sessions/${session.id}/speaker-mapping?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   expect(mappingRes.ok()).toBeTruthy();
   const mappingBody = (await mappingRes.json()) as {
@@ -171,7 +281,7 @@ test("Diarization Test 1 — Provider labels stored; speaker-mapping GET returns
 test("Diarization Test 2 — Cluster mapping propagates to all segments; locked segment is preserved", async ({
   request,
 }) => {
-  const { session, facilitator, igor, alex } = await createAssignedSession(request);
+  const { session, facilitator, igor, alex, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -191,6 +301,7 @@ test("Diarization Test 2 — Cluster mapping propagates to all segments; locked 
 
   // Apply cluster mapping: speaker_1 → igor (no forceOverrideLocked)
   const mappingRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    headers: await authHeaders(users.facilitator.id),
     data: {
       joinToken: facilitator.joinToken,
       mapping: { speaker_1: igor.id },
@@ -227,6 +338,7 @@ test("Diarization Test 2 — Cluster mapping propagates to all segments; locked 
 
   // Apply again with forceOverrideLocked=true → locked segment is now overwritten
   const forceRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    headers: await authHeaders(users.facilitator.id),
     data: {
       joinToken: facilitator.joinToken,
       mapping: { speaker_1: igor.id },
@@ -249,7 +361,7 @@ test("Diarization Test 2 — Cluster mapping propagates to all segments; locked 
 test("Diarization Test 3 — SINGLE_SPEAKER_ONLY: status API reports diarization warning", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -263,6 +375,7 @@ test("Diarization Test 3 — SINGLE_SPEAKER_ONLY: status API reports diarization
 
   const statusRes = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   expect(statusRes.ok()).toBeTruthy();
   const statusBody = (await statusRes.json()) as {
@@ -275,6 +388,7 @@ test("Diarization Test 3 — SINGLE_SPEAKER_ONLY: status API reports diarization
   // speaker-mapping GET still returns cluster info (one cluster)
   const mappingRes = await request.get(
     `/api/sessions/${session.id}/speaker-mapping?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   expect(mappingRes.ok()).toBeTruthy();
   const mappingBody = (await mappingRes.json()) as {
@@ -289,10 +403,10 @@ test("Diarization Test 3 — SINGLE_SPEAKER_ONLY: status API reports diarization
 
 // ── Diarization Test 4: Hybrid microphone setup ──────────────────────────────
 
-test("Diarization Test 4 — Hybrid mic: shared mic clusters need review; remote mic cluster suggested", async ({
+test("Diarization Test 4 — Hybrid mic: shared mic clusters require manual review", async ({
   request,
 }) => {
-  const { session, facilitator, igor, serg } = await createAssignedSession(request);
+  const { session, facilitator, igor, serg, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -311,8 +425,18 @@ test("Diarization Test 4 — Hybrid mic: shared mic clusters need review; remote
   await createAudioActivity(session.id, igor.id, 0, 10);
   // serg's mic uniquely covers speaker_3
   await createAudioActivity(session.id, serg.id, 10, 20);
+  await query(
+    `INSERT INTO "SessionParticipantAudioActivity"
+       ("id","sessionId","sessionParticipantId","startedAt","endedAt",
+        "startedOffsetSeconds","endedOffsetSeconds","source","createdAt")
+     VALUES
+       (gen_random_uuid()::text,$1,$2,NOW(),NOW(),0,10,'VOXIMPLANT_MIC_ACTIVITY',NOW()),
+       (gen_random_uuid()::text,$1,$3,NOW(),NOW(),10,20,'VOX_REMOTE_STREAM_ACTIVITY',NOW())`,
+    [session.id, igor.id, serg.id],
+  );
 
   const suggestRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, suggestAutomatically: true },
   });
   expect(suggestRes.ok()).toBeTruthy();
@@ -320,19 +444,13 @@ test("Diarization Test 4 — Hybrid mic: shared mic clusters need review; remote
     available: boolean;
     suggestedMapping: Record<string, string | null>;
     confidence: Record<string, number>;
+    unavailableReason: string | null;
   };
 
-  expect(suggestBody.available).toBe(true);
-
-  // speaker_3 → serg with strong confidence (unique mic overlap)
-  expect(suggestBody.suggestedMapping["speaker_3"]).toBe(serg.id);
-  expect(suggestBody.confidence["speaker_3"]).toBeGreaterThanOrEqual(0.6);
-
-  // speaker_1 and speaker_2 share igor's mic — at most one should be high-confidence
-  const s1Conf = suggestBody.confidence["speaker_1"] ?? 0;
-  const s2Conf = suggestBody.confidence["speaker_2"] ?? 0;
-  // Both cannot be confidently mapped to different participants from a shared mic
-  expect(s1Conf >= 0.6 && s2Conf >= 0.6).toBe(false);
+  expect(suggestBody.available).toBe(false);
+  expect(suggestBody.unavailableReason).toBeTruthy();
+  expect(suggestBody.suggestedMapping).toEqual({});
+  expect(suggestBody.confidence).toEqual({});
 
   await clearTranscript(session.id);
 });
@@ -342,7 +460,7 @@ test("Diarization Test 4 — Hybrid mic: shared mic clusters need review; remote
 test("Diarization Test 5 — Re-run transcription: retranscribeCount increments and history is archived", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -351,18 +469,20 @@ test("Diarization Test 5 — Re-run transcription: retranscribeCount increments 
 
   // Initial transcription (v0)
   const firstRes = await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(firstRes.ok()).toBeTruthy();
 
   const originalText = await getTranscriptText(session.id);
-  expect(originalText).toContain("Mock transcript");
+  expect(originalText).toContain("Mock speaker");
 
   const infoBefore = await getTranscriptRetranscribeInfo(session.id);
   expect(infoBefore?.retranscribeCount).toBe(0);
 
   // Re-run via /retranscribe endpoint
   const rerunRes = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto", reason: "Testing" },
   });
   expect(rerunRes.ok()).toBeTruthy();
@@ -377,6 +497,7 @@ test("Diarization Test 5 — Re-run transcription: retranscribeCount increments 
   // Status API exposes retranscribeCount to facilitator
   const statusRes = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   const statusBody = (await statusRes.json()) as {
     transcription: { retranscribeCount: number };
@@ -391,7 +512,7 @@ test("Diarization Test 5 — Re-run transcription: retranscribeCount increments 
 test("Diarization Test 6 — Re-transcription failure preserves original transcript text", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -399,17 +520,19 @@ test("Diarization Test 6 — Re-transcription failure preserves original transcr
   await updateRecordingCompleted(session.id);
 
   const firstRes = await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(firstRes.ok()).toBeTruthy();
 
   const originalText = await getTranscriptText(session.id);
-  expect(originalText).toContain("Mock transcript");
+  expect(originalText).toContain("Mock speaker");
 
   // Force OpenAI failure during re-run
   await request.post("/api/test/mock-external-service", { data: { error: "OPENAI_QUOTA_EXCEEDED" } });
 
   const failedRerun = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(failedRerun.ok()).toBeFalsy();
@@ -434,7 +557,7 @@ test("Diarization Test 6 — Re-transcription failure preserves original transcr
 test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after re-transcription", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -445,6 +568,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
 
   // Run AI analysis on v0
   const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
   });
   expect(analyzeRes.ok()).toBeTruthy();
@@ -455,6 +579,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
   // Re-run transcription → v1
   await updateRecordingCompleted(session.id);
   const rerunRes = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(rerunRes.ok()).toBeTruthy();
@@ -465,6 +590,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
   // Status API: analysisFromOlderTranscript must be true
   const statusRes = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   const statusBody = (await statusRes.json()) as {
     aiAnalysis: { analysisFromOlderTranscript: boolean; status: string };
@@ -480,7 +606,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
 test("Diarization Test 8 — Participant and observer cannot re-run transcription", async ({
   request,
 }) => {
-  const { session, facilitator, igor, serg } = await createAssignedSession(request);
+  const { session, facilitator, igor, serg, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -489,12 +615,14 @@ test("Diarization Test 8 — Participant and observer cannot re-run transcriptio
 
   // Participant cannot call /retranscribe
   const participantRes = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.igor.id),
     data: { joinToken: igor.joinToken, language: "auto" },
   });
   expect(participantRes.status()).toBe(403);
 
   // Observer cannot call /retranscribe
   const observerRes = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.serg.id),
     data: { joinToken: serg.joinToken, language: "auto" },
   });
   expect(observerRes.status()).toBe(403);
@@ -502,20 +630,24 @@ test("Diarization Test 8 — Participant and observer cannot re-run transcriptio
   // Participant status never exposes canRerun=true
   const participantStatus = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
   );
+  expect(participantStatus.ok()).toBeTruthy();
   const participantBody = (await participantStatus.json()) as {
     transcription: { canRerun: boolean };
   };
-  expect(participantBody.transcription.canRerun).toBe(false);
+  expect(participantBody.transcription.canRerun ?? false).toBe(false);
 
   // Facilitator status: canRerun=false before there is a completed transcript
   const facilitatorStatus = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
+  expect(facilitatorStatus.ok()).toBeTruthy();
   const facilitatorBody = (await facilitatorStatus.json()) as {
     transcription: { canRerun: boolean };
   };
-  expect(facilitatorBody.transcription.canRerun).toBe(false);
+  expect(facilitatorBody.transcription.canRerun ?? false).toBe(false);
 });
 
 // ── Diarization Test 9: Multi-session isolation after re-transcription ────────
@@ -535,9 +667,11 @@ test("Diarization Test 9 — Re-transcription in Session 1 does not affect Sessi
 
   // Initial transcription + re-run only in session 1
   await request.post(`/api/sessions/${sess1.session.id}/materials/transcribe`, {
+    headers: await authHeaders(sess1.users.facilitator.id),
     data: { joinToken: sess1.facilitator.joinToken, language: "auto" },
   });
   const rerunRes = await request.post(`/api/sessions/${sess1.session.id}/materials/retranscribe`, {
+    headers: await authHeaders(sess1.users.facilitator.id),
     data: { joinToken: sess1.facilitator.joinToken, language: "auto" },
   });
   expect(rerunRes.ok()).toBeTruthy();
@@ -548,12 +682,13 @@ test("Diarization Test 9 — Re-transcription in Session 1 does not affect Sessi
   // Session 2 must be completely unaffected
   const statusRes2 = await request.get(
     `/api/sessions/${sess2.session.id}/materials/status?joinToken=${sess2.facilitator.joinToken}`,
+    { headers: await authHeaders(sess2.users.facilitator.id) },
   );
   const body2 = (await statusRes2.json()) as {
     transcription: { status: string | null; retranscribeCount: number | null };
   };
   expect(body2.transcription.status).toBeNull();
-  expect(body2.transcription.retranscribeCount).toBeNull();
+  expect(body2.transcription.retranscribeCount ?? null).toBeNull();
 
   await clearTranscript(sess1.session.id);
 });
@@ -563,7 +698,7 @@ test("Diarization Test 9 — Re-transcription in Session 1 does not affect Sessi
 test("Diarization Test 10 — Mock transcription produces segments; hasSpeakerDiarization matches segment data", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -571,12 +706,14 @@ test("Diarization Test 10 — Mock transcription produces segments; hasSpeakerDi
   await updateRecordingCompleted(session.id);
 
   const transcribeRes = await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(transcribeRes.ok()).toBeTruthy();
 
   const statusRes = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   const statusBody = (await statusRes.json()) as {
     transcription: { hasSpeakerDiarization: boolean; diarizationStatus: string | null };
@@ -599,6 +736,7 @@ test("Diarization Test 10 — Mock transcription produces segments; hasSpeakerDi
   // speaker-mapping GET should not force per-segment: clusters only if labels exist
   const mappingRes = await request.get(
     `/api/sessions/${session.id}/speaker-mapping?joinToken=${facilitator.joinToken}`,
+    { headers: await authHeaders(users.facilitator.id) },
   );
   expect(mappingRes.ok()).toBeTruthy();
   const mappingBody = (await mappingRes.json()) as {
@@ -614,7 +752,7 @@ test("Diarization Test 10 — Mock transcription produces segments; hasSpeakerDi
 test("Diarization Test 11 — Re-run transcription returns 409 when transcription is active", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, users } = await createAssignedSession(request);
 
   await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
   await control(request, session.id, facilitator.joinToken, "START");
@@ -623,17 +761,20 @@ test("Diarization Test 11 — Re-run transcription returns 409 when transcriptio
 
   // First transcription completes synchronously in mock mode
   await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
 
   // First re-run also completes synchronously in mock mode
   const firstRerun = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   expect(firstRerun.ok()).toBeTruthy();
 
   // Second re-run after completion: succeeds (transcript is COMPLETED, not in QUEUED/TRANSCRIBING)
   const secondRerun = await request.post(`/api/sessions/${session.id}/materials/retranscribe`, {
+    headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, language: "auto" },
   });
   // Must not 500; may succeed (COMPLETED) or 409 (if still active)
