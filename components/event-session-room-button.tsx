@@ -1,14 +1,13 @@
 "use client";
 
-import {
-  GradientButtonLink,
-} from "@/components/ui/buttons";
+import { SemanticActionLink } from "@/components/semantic-action";
 import {
   resolveEventSessionPrimaryAction,
   type EventSessionPrimaryAction,
 } from "@/lib/event-session-primary-action";
 import type { RoomAccessDecisionOutput } from "@/lib/session-room-access";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { semanticKindForEventSessionAction } from "@/lib/ui/semantic-action-model";
 
 type EventSessionRoomButtonProps = {
   roomAccessDecision: RoomAccessDecisionOutput | null;
@@ -37,14 +36,15 @@ export function EventSessionRoomButton({
   if (!action) {
     return null;
   }
-  const className = compact ? "px-2 py-1 text-xs" : undefined;
   return (
-    <GradientButtonLink
+    <SemanticActionLink
       href={action.href}
-      className={className}
+      actionKind={semanticKindForEventSessionAction(action.kind)}
+      actionTarget={action.href}
+      size={compact ? "compact" : "default"}
       data-testid={testId}
     >
       {t(action.labelKey)}
-    </GradientButtonLink>
+    </SemanticActionLink>
   );
 }
