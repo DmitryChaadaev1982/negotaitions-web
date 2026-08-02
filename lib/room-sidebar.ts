@@ -2,6 +2,7 @@ import { ParticipantType } from "@/app/generated/prisma/enums";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getEventLobbyUrl } from "@/lib/config";
 import { isAssignableCaseRole } from "@/lib/case-roles";
+import { resolveDebriefVisibleNotes } from "@/lib/debrief-visible-notes";
 import { prisma } from "@/lib/prisma";
 import { summarizeLogicalPresenceByUser } from "@/lib/session-room-logical-presence";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
@@ -26,6 +27,7 @@ const roomSidebarParticipantInclude = {
       roomLabel: true,
       facilitatorId: true,
       visibility: true,
+      roomLifecycle: true,
       durationSeconds: true,
       snapshotBusinessContext: true,
       snapshotPublicInstructions: true,
@@ -155,6 +157,25 @@ async function buildRoomSidebarData(
             role: sessionParticipant.sessionRole!,
           }))
       : [];
+  const debriefNotes = resolveDebriefVisibleNotes({
+    roomLifecycle: participant.session.roomLifecycle,
+    viewerParticipantId: participant.id,
+    viewerType: currentParticipantEffectiveType,
+    participants: participant.session.participants.map((sessionParticipant) => ({
+      id: sessionParticipant.id,
+      userId: sessionParticipant.userId,
+      displayName: sessionParticipant.displayName,
+      type: sessionParticipant.type,
+      notes: sessionParticipant.notes,
+      updatedAt: sessionParticipant.updatedAt,
+      sessionRole: sessionParticipant.sessionRole
+        ? {
+            name: sessionParticipant.sessionRole.name,
+            sortOrder: sessionParticipant.sessionRole.sortOrder,
+          }
+        : null,
+    })),
+  });
 
   const roster = participant.session.participants.map((sessionParticipant) => ({
     ...(sessionParticipant.userId
@@ -243,6 +264,7 @@ async function buildRoomSidebarData(
     caseRole: hasAssignedRole ? participant.sessionRole : null,
     hasAssignedRole,
     facilitatorBriefings,
+    debriefNotes,
     roster,
     sessionRolesForFacilitator,
   };

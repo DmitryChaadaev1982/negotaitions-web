@@ -1,5 +1,6 @@
 export const sessionRoleBriefingSelect = {
   name: true,
+  sortOrder: true,
   privateInstructions: true,
   objectives: true,
   constraints: true,

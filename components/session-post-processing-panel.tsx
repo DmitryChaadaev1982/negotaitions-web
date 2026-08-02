@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { AiAnalysisReport } from "@/components/session-materials-dashboard";
 import { Card, CardContent, CardHeader } from "@/components/card";
@@ -94,6 +94,7 @@ type SessionPostProcessingPanelProps = {
   showNavigation?: boolean;
   eventLobbyUrl?: string | null;
   fallbackContext?: Pick<RoomSidebarData, "participantType" | "publicContext" | "caseRole">;
+  debriefNotesContent?: ReactNode;
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
@@ -194,6 +195,7 @@ export function SessionPostProcessingPanel({
   showNavigation = false,
   eventLobbyUrl,
   fallbackContext,
+  debriefNotesContent,
 }: SessionPostProcessingPanelProps) {
   const { t } = useI18n();
   const isFacilitator = participantType === "FACILITATOR";
@@ -1204,6 +1206,7 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {debriefFallbackContent}
+        {debriefNotesContent}
         {shouldDisplayFallbackInsteadOfAi ? null : aiContent}
         {navigationLinks}
       </div>
@@ -1290,6 +1293,7 @@ export function SessionPostProcessingPanel({
       ) : null}
 
       {debriefFallbackContent}
+      {debriefNotesContent}
       {shouldDisplayFallbackInsteadOfAi ? null : aiContent}
 
       {ai?.processingStage === "failed" ? (

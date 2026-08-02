@@ -1,5 +1,6 @@
 import type { CaseLanguage, ParticipantType } from "@/app/generated/prisma/enums";
 import type { RoleBriefing } from "@/components/role-briefing-card";
+import type { DebriefVisibleNote } from "@/lib/debrief-visible-notes";
 
 export type PublicContext = {
   description: string;
@@ -63,6 +64,11 @@ export type RoomSidebarData = {
     displayName: string;
     role: RoleBriefing;
   }>;
+  /**
+   * Server-filtered read-only meeting notes for DEBRIEF_OPEN only.
+   * Empty outside debrief and never includes unauthorized participant notes.
+   */
+  debriefNotes: DebriefVisibleNote[];
   roster: SessionRosterEntry[];
   /**
    * Phase 6.11B: Assignable roles from the session case snapshot.
