@@ -24,6 +24,7 @@ export type ExplicitLeaveSuccess = {
   alreadyFinalized: boolean;
   roomClosed: boolean;
   finalState: ExplicitLeaveFinalState;
+  confirmationTimedOut?: boolean;
 };
 
 export type ExplicitLeaveFailureReason =
@@ -47,6 +48,7 @@ type PersistExplicitRoomLeaveParams = {
   sessionId: string;
   body: Record<string, unknown>;
   timeoutMs?: number;
+  timeoutBehavior?: "fail" | "assume-dispatched";
   fetchImpl?: typeof fetch;
 };
 
@@ -73,6 +75,7 @@ export async function persistExplicitRoomLeave({
   sessionId,
   body,
   timeoutMs = 3000,
+  timeoutBehavior = "fail",
   fetchImpl = fetch,
 }: PersistExplicitRoomLeaveParams): Promise<ExplicitLeaveResult> {
   const controller = new AbortController();
@@ -84,7 +87,8 @@ export async function persistExplicitRoomLeave({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      keepalive: timeoutBehavior === "assume-dispatched",
+      signal: timeoutBehavior === "fail" ? controller.signal : undefined,
     },
   ).then(
     (response) => ({ type: "response" as const, response }),
@@ -93,7 +97,9 @@ export async function persistExplicitRoomLeave({
 
   const timeout = new Promise<{ type: "timeout" }>((resolve) => {
     timeoutId = setTimeout(() => {
-      controller.abort();
+      if (timeoutBehavior === "fail") {
+        controller.abort();
+      }
       resolve({ type: "timeout" });
     }, timeoutMs);
   });
@@ -104,6 +110,16 @@ export async function persistExplicitRoomLeave({
   }
 
   if (raceResult.type === "timeout") {
+    if (timeoutBehavior === "assume-dispatched") {
+      return {
+        ok: true,
+        disconnected: false,
+        alreadyFinalized: false,
+        roomClosed: false,
+        finalState: "UNKNOWN",
+        confirmationTimedOut: true,
+      };
+    }
     return {
       ok: false,
       reason: "timeout",

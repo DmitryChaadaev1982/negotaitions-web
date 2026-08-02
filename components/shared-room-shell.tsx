@@ -279,6 +279,7 @@ function SessionClosedOverlay({
   eventCompleted,
   onLeave,
   onReturnToEventLobby,
+  isReturningToEventLobby = false,
 }: {
   materialsUrl: string;
   closeMessageKey: NonNullable<ShellSessionCloseState["closeMessageKey"]>;
@@ -287,6 +288,7 @@ function SessionClosedOverlay({
   eventCompleted?: boolean;
   onLeave: () => void;
   onReturnToEventLobby?: (() => void | Promise<void>) | null;
+  isReturningToEventLobby?: boolean;
 }) {
   const { t } = useI18n();
   const hadRecording =
@@ -315,10 +317,12 @@ function SessionClosedOverlay({
                   eventCompleted ? "pointer-events-none opacity-60" : ""
                 }`}
                 data-testid="return-to-event-lobby-button"
-                aria-disabled={eventCompleted}
+                disabled={eventCompleted || isReturningToEventLobby}
+                aria-busy={isReturningToEventLobby}
+                aria-disabled={eventCompleted || isReturningToEventLobby}
                 onClick={() => void onReturnToEventLobby()}
               >
-                {t("events.returnToEventLobby")}
+                {isReturningToEventLobby ? t("room.leaving") : t("events.returnToEventLobby")}
               </button>
             ) : (
               <GradientButtonLink
@@ -406,6 +410,7 @@ export type SharedRoomShellProps = {
    * of immediate navigation to allow explicit leave + safe provider teardown.
    */
   onReturnToEventLobby?: (() => void | Promise<void>) | null;
+  isReturningToEventLobby?: boolean;
 
   // ── Provider-specific slots ──────────────────────────────────────────────
 
@@ -517,6 +522,7 @@ export function SharedRoomShell({
   staleConnection = false,
   onLeave,
   onReturnToEventLobby = null,
+  isReturningToEventLobby = false,
   leaveButton,
   controlBar,
   mediaArea,
@@ -568,6 +574,7 @@ export function SharedRoomShell({
           eventCompleted={sidebar.event?.status === "COMPLETED"}
           onLeave={onLeave}
           onReturnToEventLobby={onReturnToEventLobby}
+          isReturningToEventLobby={isReturningToEventLobby}
         />
       ) : null}
 
@@ -642,9 +649,11 @@ export function SharedRoomShell({
                 aria-label={t("events.backToLobbyCompact")}
                 title={t("events.backToLobbyCompact")}
                 data-testid="back-to-event-lobby-button"
+                disabled={isReturningToEventLobby}
+                aria-busy={isReturningToEventLobby}
                 onClick={() => void onReturnToEventLobby()}
               >
-                {t("events.backToLobbyCompact")}
+                {isReturningToEventLobby ? t("room.leaving") : t("events.backToLobbyCompact")}
               </button>
             ) : (
               <SecondaryButtonLink

@@ -35,6 +35,7 @@ export async function runExplicitLeaveSequence({
   }
 
   markLocalInactive();
+  navigate();
 
   let providerDisconnectError: string | null = null;
   try {
@@ -44,7 +45,6 @@ export async function runExplicitLeaveSequence({
       error instanceof Error ? error.message : String(error);
   }
 
-  navigate();
   return {
     ok: true,
     leave: leaveResult,

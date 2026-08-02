@@ -53,8 +53,8 @@ test("navigation waits until bounded leave persistence completes", async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(callOrder, [
     "markLocalInactive",
-    "disconnectProvider",
     "navigate",
+    "disconnectProvider",
   ]);
 });
 
@@ -112,8 +112,8 @@ test("provider disconnect failure does not cancel successful leave navigation", 
   assert.equal(result.providerDisconnectError, "provider hangup failed");
   assert.deepEqual(callOrder, [
     "markLocalInactive",
-    "disconnectProvider",
     "navigate",
+    "disconnectProvider",
   ]);
 });
 

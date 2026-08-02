@@ -111,3 +111,21 @@ test("times out with bounded wait when leave endpoint hangs", async () => {
   assert.equal(result.reason, "timeout");
   assert.ok(elapsedMs >= 20, `expected bounded timeout, got ${elapsedMs}ms`);
 });
+
+test("can treat a dispatched leave timeout as navigation-safe", async () => {
+  const result = await persistExplicitRoomLeave({
+    sessionId: "session-1",
+    body: { participantId: "participant-1", connectionId: "conn-1" },
+    timeoutMs: 30,
+    timeoutBehavior: "assume-dispatched",
+    fetchImpl: async () =>
+      new Promise<Response>(() => {
+        // Intentionally unresolved after the browser dispatches the request.
+      }),
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.confirmationTimedOut, true);
+  assert.equal(result.finalState, "UNKNOWN");
+});

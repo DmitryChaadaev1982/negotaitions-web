@@ -144,9 +144,10 @@ function VoximplantLeaveButton({
       type="button"
       onClick={onLeave}
       disabled={isLeaving}
+      aria-busy={isLeaving}
       className="btn-secondary inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-sm font-semibold transition-all hover:brightness-110 disabled:opacity-60"
     >
-      {isLeaving ? `${t("common.loading")}...` : t("room.leaveRoom")}
+      {isLeaving ? t("room.leaving") : t("room.leaveRoom")}
     </button>
   );
 }
@@ -208,7 +209,9 @@ export default function VoximplantNegotiationRoomPage(
   const roomConnectionId = useClientConnectionId(`room-${props.sessionId}`);
   const [staleConnection, setStaleConnection] = useState(false);
   const staleConnectionRef = useRef(false);
+  const intentionalLeaveRef = useRef(false);
   const activateStaleConnection = useCallback(() => {
+    if (intentionalLeaveRef.current) return;
     if (staleConnectionRef.current) return;
     staleConnectionRef.current = true;
     setStaleConnection(true);
@@ -375,6 +378,7 @@ export default function VoximplantNegotiationRoomPage(
     if (!roomConnectionId || businessLoading || businessError) return;
 
     const intervalId = window.setInterval(async () => {
+      if (intentionalLeaveRef.current) return;
       touchRecoveryContext();
 
       try {
@@ -889,6 +893,7 @@ export default function VoximplantNegotiationRoomPage(
       return;
     }
     explicitLeaveInFlightRef.current = true;
+    intentionalLeaveRef.current = true;
     setIsExplicitLeavePending(true);
     setLeaveError(null);
     try {
@@ -924,6 +929,7 @@ export default function VoximplantNegotiationRoomPage(
             sessionId: props.sessionId,
             body: roomAuthBody(roomAuth, { connectionId: connectionIdForLeave }),
             timeoutMs: 3000,
+            timeoutBehavior: "assume-dispatched",
           }),
         markLocalInactive: markCurrentParticipantLogicallyAbsent,
         disconnectProvider: async () => {
@@ -937,6 +943,7 @@ export default function VoximplantNegotiationRoomPage(
 
       if (!sequence.ok) {
         if (sequence.leave.reason === "stale_connection") {
+          intentionalLeaveRef.current = false;
           activateStaleConnection();
         }
         setLeaveError(leaveFailureMessage(sequence.leave));
@@ -949,6 +956,7 @@ export default function VoximplantNegotiationRoomPage(
         );
       }
     } catch (error) {
+      intentionalLeaveRef.current = false;
       setLeaveError(t("room.unableToPersistLeave"));
       console.warn("[room-leave] unexpected explicit leave error", error);
     } finally {
@@ -994,12 +1002,13 @@ export default function VoximplantNegotiationRoomPage(
     clearRecoveryContext();
   }, []);
   const handleStaleConnection = useCallback(() => {
+    if (intentionalLeaveRef.current) return;
     activateStaleConnection();
   }, [activateStaleConnection]);
   const policyMutedBySystemRef = useRef(false);
 
   useEffect(() => {
-    if (staleConnection && joined) {
+    if (staleConnection && joined && !intentionalLeaveRef.current) {
       void leave();
     }
   }, [joined, leave, staleConnection]);
@@ -1175,6 +1184,7 @@ export default function VoximplantNegotiationRoomPage(
             ? () => void handleReturnToEventLobby()
             : null
         }
+        isReturningToEventLobby={isExplicitLeavePending}
         // ── Voximplant-specific slots ────────────────────────────────────────
         audioRenderer={null}
         micEnforcement={null}
