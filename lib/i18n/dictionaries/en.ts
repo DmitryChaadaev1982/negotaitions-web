@@ -1009,6 +1009,7 @@ export const en = {
     stopScreenShare: "Stop screen share",
     leave: "Leave",
     leaveRoom: "Leave room",
+    leaving: "Leaving...",
     participantLeftRoomOpen:
       "You left the negotiation room. The room is still open — you can return.",
     sessionMaterials: "Session materials",
@@ -1082,6 +1083,15 @@ export const en = {
       "This session is finished. You can stay in the room for debrief.",
     debriefModeNotice:
       "Negotiations have ended. The room is now in debrief mode.",
+    meetingNotes: "Meeting notes",
+    meetingNotesReadOnly: "Read-only notes visible to your debrief role.",
+    debriefNoteRole: {
+      PARTICIPANT_A: "Participant A",
+      PARTICIPANT_B: "Participant B",
+      PARTICIPANT: "Participant",
+      OBSERVER: "Observer",
+      FACILITATOR: "Facilitator",
+    },
     openSessionMaterials: "Open Session materials",
     returnToEventLobby: "Return to Event lobby",
     processingStatus: "Processing status",
@@ -1192,6 +1202,8 @@ export const en = {
     room: "Room",
     activeSession: "Active session",
     activeSessions: "Active sessions",
+    availableToObserve: "Available to observe",
+    availableToObserveHint: "Active Sessions you can join now as an observer.",
     onlineWithLocation: "Online · {location}",
     presenceOnline: "Online",
     presenceRecentlyDisconnected: "Recently disconnected",

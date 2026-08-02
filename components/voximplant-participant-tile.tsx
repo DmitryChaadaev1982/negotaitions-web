@@ -6,6 +6,7 @@ import type {
   ParticipantConnectionStatus,
   ParticipantMediaStatus,
 } from "@/lib/voximplant/participant-presence-media-model";
+import { MediaStatusIconBadge } from "@/components/media-status-icon";
 
 function MicLevelBar({ level, muted }: { level: number; muted: boolean }) {
   const filled = muted ? 0 : Math.min(100, level);
@@ -57,18 +58,6 @@ export function VoximplantParticipantTile({
     videoRef.current.srcObject = stream;
   }, [stream]);
 
-  const iconTone = (
-    status: ParticipantMediaStatus,
-    connection: ParticipantConnectionStatus,
-  ): string => {
-    if (connection !== "connected" || status === "unknown") {
-      return "text-slate-300 bg-slate-700/70 border-slate-500/60";
-    }
-    return status === "on"
-      ? "text-emerald-200 bg-emerald-700/55 border-emerald-400/70"
-      : "text-rose-200 bg-rose-700/55 border-rose-400/70";
-  };
-
   return (
     <div
       className={`relative box-border min-w-0 overflow-hidden rounded-xl border bg-slate-900 transition-all duration-150 ${
@@ -97,26 +86,20 @@ export function VoximplantParticipantTile({
             <span className="block truncate text-xs text-slate-300">{subtitle}</span>
           ) : null}
           <div className="mt-1 flex items-center gap-1.5">
-            <span
-              className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(micStatus, connectionStatus)}`}
-              title={micLabel}
-              aria-label={micLabel}
-              role="img"
-              data-testid="participant-tile-mic-status-icon"
-              data-status={connectionStatus === "connected" ? micStatus : "unknown"}
-            >
-              <MicStatusIcon status={micStatus} />
-            </span>
-            <span
-              className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(cameraStatus, connectionStatus)}`}
-              title={cameraLabel}
-              aria-label={cameraLabel}
-              role="img"
-              data-testid="participant-tile-camera-status-icon"
-              data-status={connectionStatus === "connected" ? cameraStatus : "unknown"}
-            >
-              <CameraStatusIcon status={cameraStatus} />
-            </span>
+            <MediaStatusIconBadge
+              kind="mic"
+              status={micStatus}
+              connectionStatus={connectionStatus}
+              label={micLabel}
+              testId="participant-tile-mic-status-icon"
+            />
+            <MediaStatusIconBadge
+              kind="camera"
+              status={cameraStatus}
+              connectionStatus={connectionStatus}
+              label={cameraLabel}
+              testId="participant-tile-camera-status-icon"
+            />
           </div>
         </div>
         {micLevel !== undefined && (
@@ -124,56 +107,5 @@ export function VoximplantParticipantTile({
         )}
       </div>
     </div>
-  );
-}
-
-function MicStatusIcon({ status }: { status: ParticipantMediaStatus }) {
-  const showOffSlash = status === "off";
-  return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
-      <rect x="9" y="3" width="6" height="10" rx="3" ry="3" fill="currentColor" />
-      <path
-        d="M7 10v1a5 5 0 0 0 10 0v-1M12 16v4M9 20h6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {showOffSlash ? (
-        <path
-          d="M4 4l16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      ) : null}
-    </svg>
-  );
-}
-
-function CameraStatusIcon({ status }: { status: ParticipantMediaStatus }) {
-  const showOffSlash = status === "off";
-  return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
-      <rect x="3" y="7" width="13" height="10" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M16 10l5-2v8l-5-2z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      {showOffSlash ? (
-        <path
-          d="M4 4l16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      ) : null}
-    </svg>
   );
 }

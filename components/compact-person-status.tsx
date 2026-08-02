@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/badge";
 import { EventPresenceIndicator } from "@/components/event-presence-indicator";
+import { MediaStatusIconBadge } from "@/components/media-status-icon";
 import { cn } from "@/lib/cn";
 import { useI18n } from "@/lib/i18n/useI18n";
 
@@ -126,20 +127,22 @@ export function CompactPersonStatus({
           </span>
         ) : null}
         {cameraLabel ? (
-          <span
-            className="rounded-full border border-slate-600/35 bg-slate-900/55 px-2 py-0.5 text-[10px] text-slate-300"
-            data-media-state={cameraEnabled ? "on" : "off"}
-          >
-            {cameraLabel}
-          </span>
+          <MediaStatusIconBadge
+            kind="camera"
+            status={cameraEnabled ? "on" : "off"}
+            label={cameraLabel}
+            className="h-5 w-5"
+            testId="compact-person-camera-status-icon"
+          />
         ) : null}
         {micLabel ? (
-          <span
-            className="rounded-full border border-slate-600/35 bg-slate-900/55 px-2 py-0.5 text-[10px] text-slate-300"
-            data-media-state={micEnabled ? "on" : "off"}
-          >
-            {micLabel}
-          </span>
+          <MediaStatusIconBadge
+            kind="mic"
+            status={micEnabled ? "on" : "off"}
+            label={micLabel}
+            className="h-5 w-5"
+            testId="compact-person-mic-status-icon"
+          />
         ) : null}
       </div>
     </div>

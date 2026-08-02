@@ -1014,6 +1014,7 @@ export const ru: Dictionary = {
     stopScreenShare: "Остановить демонстрацию",
     leave: "Выйти",
     leaveRoom: "Покинуть комнату",
+    leaving: "Выходим...",
     participantLeftRoomOpen:
       "Вы покинули переговорную комнату. Комната открыта — можно вернуться.",
     sessionMaterials: "Материалы сессии",
@@ -1088,6 +1089,15 @@ export const ru: Dictionary = {
       "Сессия завершена. Вы можете остаться в комнате для разбора.",
     debriefModeNotice:
       "Переговоры завершены. Комната переведена в режим дебрифинга.",
+    meetingNotes: "Заметки встречи",
+    meetingNotesReadOnly: "Заметки доступны только для чтения в рамках вашей роли на разборе.",
+    debriefNoteRole: {
+      PARTICIPANT_A: "Участник A",
+      PARTICIPANT_B: "Участник B",
+      PARTICIPANT: "Участник",
+      OBSERVER: "Наблюдатель",
+      FACILITATOR: "Фасилитатор",
+    },
     openSessionMaterials: "Открыть материалы сессии",
     returnToEventLobby: "Вернуться в лобби встречи",
     processingStatus: "Статус обработки",
@@ -1198,6 +1208,8 @@ export const ru: Dictionary = {
     room: "Комната",
     activeSession: "Активная сессия",
     activeSessions: "Активные сессии",
+    availableToObserve: "Доступно для наблюдения",
+    availableToObserveHint: "Активные сессии, к которым можно присоединиться как наблюдатель.",
     onlineWithLocation: "Онлайн · {location}",
     presenceOnline: "Онлайн",
     presenceRecentlyDisconnected: "Недавно отключился",

@@ -322,7 +322,7 @@ function EventLobbyVoxVideoTile({
 }: {
   participant: VoxLobbyParticipant;
   muted: boolean;
-  subtitle: string;
+  subtitle?: string;
   isSpeaking: boolean;
   explicitMicEnabled: boolean | null;
   explicitCameraEnabled: boolean | null;
@@ -1177,7 +1177,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
                   key={participant.id}
                   participant={participant}
                   muted={isLocal}
-                  subtitle={isLocal ? t("common.you") : t("events.participantsInLobby")}
+                  {...(isLocal ? { subtitle: t("common.you") } : {})}
                   isSpeaking={activeSpeakerId === participant.id}
                   explicitMicEnabled={explicit.micEnabled}
                   explicitCameraEnabled={explicit.cameraEnabled}

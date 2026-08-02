@@ -770,7 +770,8 @@ export function EventLobbyView({
       ? state.sessions.filter(
           (session) =>
             !mySessionIdSet.has(session.id) &&
-            session.sessionDisplayState === "joinable",
+            session.sessionDisplayState === "joinable" &&
+            Boolean(session.observerJoinUrl),
         )
       : [];
   const observerMaterialsOnlySessions =
@@ -950,6 +951,74 @@ export function EventLobbyView({
             />
           ) : null}
 
+          {observerActiveSessions.length > 0 ? (
+            <GlassCard
+              elevated
+              className="border-cyan-400/40 bg-cyan-950/15"
+              data-testid="available-observer-session-section"
+            >
+              <GlassCardContent className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-cyan-100">
+                    {t("events.availableToObserve")}
+                  </p>
+                  <p className="mt-1 text-xs text-cyan-200/75">
+                    {t("events.availableToObserveHint")}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {observerActiveSessions.map((session) => {
+                    const statusLabel =
+                      t(
+                        `status.${session.negotiationState}` as
+                          | "status.PREPARATION"
+                          | "status.PREPARATION_RUNNING"
+                          | "status.PREPARATION_PAUSED"
+                          | "status.READY_TO_START"
+                          | "status.RUNNING"
+                          | "status.PAUSED"
+                          | "status.FINISHED",
+                      );
+                    return (
+                      <article
+                        key={session.id}
+                        className="rounded-xl border border-cyan-400/35 bg-slate-950/60 px-3 py-3 shadow-[0_0_24px_rgba(34,211,238,0.08)]"
+                        data-testid="available-observer-session-card"
+                        data-session-access-state={session.sessionDisplayState}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-semibold text-slate-50">
+                              {session.roomLabel ?? session.title}
+                            </p>
+                            <p className="mt-0.5 break-words text-xs text-slate-400">
+                              {session.caseTitle}
+                            </p>
+                            <span
+                              className="mt-2 inline-flex rounded-full border border-emerald-400/45 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-100"
+                              data-testid="available-observer-session-status"
+                            >
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <SemanticActionLink
+                            href={session.observerJoinUrl!}
+                            actionKind="PRIMARY_PROGRESS"
+                            actionTarget={session.observerJoinUrl!}
+                            className="shrink-0"
+                            data-testid="join-session-as-observer"
+                          >
+                            {t("events.joinAsObserver")}
+                          </SemanticActionLink>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
+
           <details open className="rounded-2xl border border-slate-700/40 bg-slate-900/20" data-testid="lobby-panel-participants">
             <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-50">
               {t("events.participantsInLobby")}
@@ -1035,57 +1104,6 @@ export function EventLobbyView({
               onCreateSession={(overrides) => void createSession(overrides)}
               createSessionError={createSessionError}
             />
-          ) : null}
-
-          {observerActiveSessions.length > 0 ? (
-            <GlassCard data-testid="joinable-event-session-list">
-              <GlassCardContent className="space-y-3">
-                <p className="text-sm font-semibold text-slate-100">
-                  {t("events.activeSessions")}
-                </p>
-                <div className="space-y-2">
-                  {observerActiveSessions.map((session) => (
-                    <article
-                      key={session.id}
-                      className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
-                      data-testid="joinable-event-session-card"
-                      data-session-access-state={session.sessionDisplayState}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-100">
-                            {session.roomLabel ?? session.title}
-                          </p>
-                          <p className="text-xs text-slate-400">{session.caseTitle}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {session.sessionDisplayState === "materials-only"
-                              ? t("events.completedSessionStatus")
-                              : t(
-                                  `status.${session.negotiationState}` as
-                                    | "status.PREPARATION"
-                                    | "status.PREPARATION_RUNNING"
-                                    | "status.PREPARATION_PAUSED"
-                                    | "status.READY_TO_START"
-                                    | "status.RUNNING"
-                                    | "status.PAUSED"
-                                    | "status.FINISHED",
-                                )}
-                          </p>
-                        </div>
-                        {session.observerJoinUrl ? (
-                          <SecondaryButtonLink
-                            href={session.observerJoinUrl}
-                            data-testid="join-session-as-observer"
-                          >
-                            {t("events.joinAsObserver")}
-                          </SecondaryButtonLink>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </GlassCardContent>
-            </GlassCard>
           ) : null}
 
           {mySessionsInEvent.length > 0 && !showOwnerHostManagement ? (
