@@ -40,6 +40,55 @@ Manual regression:
 Notes:
 - An initial live-mode browser attempt redirected to login because the already-running development server used the non-E2E database. The live server was stopped and all final browser validation was rerun with the requested managed E2E environment.
 
+## Stage 3.12B Observer Suite Split (test/docs only)
+
+Date: 2026-08-03
+
+Runtime SHA whose heavy gates remain authoritative: `ad7f60a`. No runtime
+production file was changed by this task, so those gates were not rerun.
+
+Policy and trigger matrix: `docs/testing/observer-test-execution-policy.md`.
+
+Suite split:
+- `@observer-smoke`: 7 tests, counts 0-5 and 12 plus one 390x844 sample.
+- `@observer-layout`: 24 tests, counts 0, 1, 4, 5, 8, 12, 30, 50, 100 at
+  1440x900 plus 1366x768, 1280x720, 1024x768, 768x1024 and 390x844 samples.
+- The previous monolithic `observer rail remains bounded across required
+  viewport samples` test opened 13 rooms in one test and exceeded the 60 s
+  timeout. It is replaced by one Playwright test per viewport/count sample.
+
+Automated validation:
+- `npm run test:e2e:observer:smoke`: PASS, 7 passed, 53.0 s reported / 58 s wall.
+- `npm run test:e2e:observer:layout`: PASS, 24 passed, 2.1 min reported / 134 s
+  wall; slowest individual test 9 s, no timeout.
+- `npm run test:stage310`: PASS, 102 unit checks and 37 browser checks, 70.7 s
+  wall; observer smoke included, `--grep-invert @observer-layout` keeps the full
+  matrix out.
+- `npm run validate:fast`: PASS, 58.5 s, 669 tests discovered in 45 files.
+- `npm run validate:deploy`: intentionally not run. Only test files, test
+  scripts, `.gitignore` and documentation changed; no production TypeScript
+  import, build configuration or Playwright config was touched, and
+  `validate:fast` already covers lint, Prisma validate/generate, unit tests and
+  Playwright discovery.
+
+Provider dependency:
+- Unchanged by this task. Layout scenarios still call
+  `POST /api/sessions/:id/voximplant/access` and attempt a WebSDK connection;
+  `?media=off` skips only camera/microphone capture.
+- During the layout run the gateway transport failed
+  (`TransportInternalError ... code 500`) and all geometry assertions still
+  passed, confirming that tile geometry derives from the server roster.
+- Provider-neutral rendering would require a guarded runtime seam in
+  `app/room/[sessionId]/page.tsx`, which is out of scope here. Routine
+  provider-touching room opens dropped from 31 to 7 instead.
+
+Note:
+- One `test:stage310` attempt failed with `Unable to initialize Voximplant
+  (404)`. The cause was editing files while the managed Next.js dev server was
+  running: the recompile made API routes transiently return the Next.js HTML
+  404. Rerunning without concurrent edits passed. This rule is now recorded in
+  `AGENTS.md`.
+
 ## Stage 3.12B-O Stale Observer Tile Correction
 
 Date: 2026-07-30

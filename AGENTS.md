@@ -28,6 +28,54 @@ Rules:
 - `npm run test:e2e:full` is manual/nightly unless explicitly requested.
 - Tunnel/live-provider suites are opt-in (`test:e2e:tunnel*`, `test:e2e:live*`) and are not default gates.
 
+## Observer suite execution policy
+
+Authoritative trigger matrix, suite scope, durations and limitations:
+`docs/testing/observer-test-execution-policy.md`. Update that document rather
+than duplicating its rules here.
+
+- Do not run the full observer layout matrix (`npm run test:e2e:observer:layout`)
+  unless the change can affect Session room screen structure or geometry:
+  `components/voximplant-video-layout.tsx`, observer rail/tile dimensions,
+  participant stage geometry, room grid/flex layout, room CSS affecting width,
+  height, overflow or scroll, `lib/voximplant/room-layout-model.ts`, room
+  responsive breakpoints, rail scrolling controls, roster rendering structure
+  that changes tile count or geometry, or the room shell dimensions.
+- Ordinary UI and functional changes must never trigger it automatically. A
+  shared generic component being imported by room code is not a trigger.
+- Use `npm run test:e2e:observer:smoke` for observer membership, explicit leave,
+  reconnect, provider ownership/lifecycle, media-state representation, Session
+  lifecycle and room navigation changes.
+- If shared provider lifecycle code changes, run observer smoke only, unless
+  room geometry also changed.
+- Dashboard, Event lobby layout outside the Session room, notes, speaker
+  mapping, transcription, AI analysis, materials, administrative pages and
+  documentation require neither suite unless a shared room runtime file
+  actually changed.
+- Run the full layout suite once before deploying a release that contains
+  Session room layout changes since the last successful full run.
+- `npm run test:stage310` includes observer smoke and excludes the full layout
+  matrix via `--grep-invert @observer-layout`.
+
+## Heavy-gate repetition policy
+
+- Run heavy suites once, after runtime code has stabilized.
+- Do not repeat a successful heavy command (`validate:deploy`, smoke suites,
+  `test:stage310`, full observer layout) for a follow-up change that only edits
+  tests or documentation. Rerun only the affected tests.
+- Record the runtime SHA whose heavy gates passed separately from the final
+  test/docs SHA, and state both in the completion report.
+- Use one managed server lifecycle at a time. Never run a standalone
+  `npm run dev` and managed Playwright at the same time; managed mode requires
+  port 3000 to be free and binds port 3100 itself.
+- Do not edit files in the working tree while a managed Playwright run is in
+  progress. The managed Next.js dev server watches the tree, and a recompile
+  triggered mid-run makes API routes transiently return 404, which surfaces as
+  unrelated room-entry failures.
+- Investigate before increasing a timeout. A test that exceeds the 60 s
+  repository timeout is usually doing too much in one test; split it into
+  independent cases instead of raising the limit.
+
 ## Stage Tests Phase 4 fixture policy
 
 - Execute mandatory gates sequentially. `test:e2e:smoke:browser` binds localhost port `3100`, so overlapping runs are not supported.

@@ -51,6 +51,7 @@ tmp/
 .debug/
 playwright-report/
 test-results/
+artifacts/
 coverage/
 .agent/preflight.json
 .agent/validation-baseline.json

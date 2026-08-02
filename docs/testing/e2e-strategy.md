@@ -53,9 +53,20 @@ Curated deterministic browser smoke:
 
 - `npm run test:e2e:smoke:browser`
 
-Stage 3.10 focused deterministic regression (provider-free):
+Stage 3.10 focused deterministic regression (unit + Playwright, includes the
+observer smoke suite; excludes the full observer layout matrix):
 
 - `npm run test:stage310`
+
+Observer regression suites (see
+[Observer test execution policy](./observer-test-execution-policy.md) for the
+trigger matrix — the full layout suite is opt-in and must not be run for
+unrelated changes):
+
+- `npm run test:e2e:observer:smoke`
+- `npm run test:e2e:observer:layout`
+- `npm run test:e2e:observer:smoke:list`
+- `npm run test:e2e:observer:layout:list`
 
 Stage 3.10 focused browser smoke subset:
 
@@ -261,6 +272,7 @@ Intentionally not covered in Phase 2 smoke:
 ## Canonical References
 
 - `tests/e2e/**`
+- `docs/testing/observer-test-execution-policy.md`
 - `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
 - `docs/testing/stage-3-10-session-lifecycle-traceability.csv`
 - `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`

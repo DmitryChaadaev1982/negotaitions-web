@@ -63,6 +63,13 @@ Sequential requirement:
 - `validate:deploy` runs `validate:fast` and then production build.
 - `test:e2e:smoke` runs critical browser/API smoke checks only (`@smoke`, Chromium).
 - `test:e2e:smoke:browser` runs critical browser-first smoke checks only (`@browser-smoke`) under deterministic local config.
+- `test:e2e:observer:smoke` is the routine observer regression suite and is also
+  included in `test:stage310`.
+- `test:e2e:observer:layout` is the full observer geometry matrix. It is opt-in
+  and is excluded from every aggregate gate. Run it only when Session room
+  structure or geometry can change, and once before deploying a release that
+  contains such changes. Trigger matrix:
+  [Observer test execution policy](./observer-test-execution-policy.md).
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
 

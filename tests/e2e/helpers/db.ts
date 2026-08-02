@@ -223,14 +223,24 @@ export async function cleanupE2eData() {
  * Create an ACTIVE, non-admin user with the current auth schema
  * (globalRole/status/preferredLocale) so e2e tests can log in via the form.
  */
+/**
+ * Bcrypt at cost 12 dominates the runtime of bulk fixtures (hundreds of
+ * observer accounts). Suites that never log those accounts in via the password
+ * form can hash once with `hashE2ePassword()` and pass the result here.
+ */
+export async function hashE2ePassword(password = "e2e-pass-1234") {
+  return hash(password, 12);
+}
+
 export async function createActiveUser(input?: {
   email?: string;
   password?: string;
+  passwordHash?: string;
   preferredLocale?: "ru" | "en";
 }) {
   const email = input?.email ?? e2eEmail(`locale-user-${id("u")}`);
   const password = input?.password ?? "e2e-pass-1234";
-  const passwordHash = await hash(password, 12);
+  const passwordHash = input?.passwordHash ?? (await hash(password, 12));
   const userId = id("user");
 
   await query(

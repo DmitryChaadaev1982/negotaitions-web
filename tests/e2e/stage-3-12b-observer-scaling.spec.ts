@@ -17,6 +17,7 @@ import {
   e2eId,
   e2eName,
   expireRoomConnection,
+  hashE2ePassword,
   query,
 } from "./helpers/db";
 
@@ -26,7 +27,28 @@ const ARTIFACT_ROOT = path.join(
   "stage-3-12b-observer-scaling",
 );
 const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v1";
-const observerCounts = [0, 1, 4, 8, 12, 30, 50, 100] as const;
+
+/**
+ * Suite split (see `docs/testing/observer-test-execution-policy.md`):
+ *
+ * - `@observer-smoke` is the default observer regression suite. Small and
+ *   moderate counts only, no full viewport matrix.
+ * - `@observer-layout` is the full geometry regression matrix. Mandatory only
+ *   when Session room structure, geometry or responsive breakpoints change.
+ */
+const OBSERVER_SMOKE_TAG = "@observer-smoke";
+const OBSERVER_LAYOUT_TAG = "@observer-layout";
+
+const desktopViewport = { width: 1440, height: 900 } as const;
+/** Desktop counts whose participant-stage geometry must stay identical. */
+const layoutObserverCounts = [0, 1, 4, 5, 8, 12, 30, 50, 100] as const;
+/**
+ * Measured at 1440x900: the rail fits up to 4 observers and starts to overflow
+ * at 5. Both boundary counts are asserted explicitly so a tile/rail dimension
+ * change cannot silently move the transition.
+ */
+const desktopLastFittingObserverCount = 4;
+
 const controlledRoomErrorTestIds = [
   "room-entry-error-details",
   "room-explicit-leave-error",
@@ -83,6 +105,19 @@ type LayoutMetrics = {
 
 const evidenceRecords: LayoutMetrics[] = [];
 const scaleEvidenceRecords: LayoutMetrics[] = [];
+
+/**
+ * Fixture accounts here are always authenticated through a seeded
+ * `UserSession` cookie, never through the password form, so one bcrypt hash is
+ * reused across every seeded account. At 100 observers per room this removes
+ * tens of seconds of pure hashing per test.
+ */
+let sharedFixturePasswordHash: string | null = null;
+
+async function fixturePasswordHash() {
+  sharedFixturePasswordHash ??= await hashE2ePassword();
+  return sharedFixturePasswordHash;
+}
 
 function observerName(index: number, longNames: boolean, duplicateLookingNames: boolean) {
   if (duplicateLookingNames) {
@@ -172,9 +207,11 @@ async function createObserverScalingSession(input: {
   duplicateLookingNames?: boolean;
   includeUnassignedParticipantObserver?: boolean;
 }): Promise<ObserverScalingSession> {
+  const passwordHash = await fixturePasswordHash();
   const facilitator = await createActiveUser({
     preferredLocale: input.preferredLocale ?? "en",
     email: `${e2eId("observer-scaling-fac")}@test.invalid`,
+    passwordHash,
   });
   await query(`UPDATE "User" SET "name" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
     facilitator.id,
@@ -290,6 +327,7 @@ async function createObserverScalingSession(input: {
     const observerUser = await createActiveUser({
       preferredLocale: input.preferredLocale ?? "en",
       email: `${e2eId("observer-scaling-observer-user")}@test.invalid`,
+      passwordHash,
     });
     const displayName = observerName(
       index,
@@ -329,6 +367,7 @@ async function createObserverScalingSession(input: {
     const unassignedUser = await createActiveUser({
       preferredLocale: input.preferredLocale ?? "en",
       email: `${e2eId("observer-scaling-unassigned-user")}@test.invalid`,
+      passwordHash,
     });
     await query(`UPDATE "User" SET "name" = 'Unassigned Participant Observer', "updatedAt" = NOW() WHERE "id" = $1`, [
       unassignedUser.id,
@@ -512,6 +551,7 @@ async function appendObserverToSession(
   const observerUser = await createActiveUser({
     preferredLocale: "en",
     email: `${e2eId("observer-scaling-appended-user")}@test.invalid`,
+    passwordHash: await fixturePasswordHash(),
   });
   const displayName = observerName(index, false, false);
   await query(`UPDATE "User" SET "name" = $2, "updatedAt" = NOW() WHERE "id" = $1`, [
@@ -780,16 +820,164 @@ function assertStartAlignedOverflow(metrics: LayoutMetrics) {
   }
 }
 
+/**
+ * Append-right ordering plus first-observer visibility. Both hold at every
+ * viewport and observer count, with or without rail overflow.
+ */
+function assertAppendRightOrderAndFirstObserverVisible(metrics: LayoutMetrics) {
+  if (metrics.observerTileBoxes.length === 0) {
+    return;
+  }
+  expect(metrics.railBox).not.toBeNull();
+  const firstTile = metrics.observerTileBoxes[0];
+  expect(firstTile.right).toBeGreaterThan(metrics.railBox!.left);
+  expect(firstTile.left).toBeLessThan(metrics.railBox!.right);
+  for (let index = 1; index < metrics.observerTileBoxes.length; index += 1) {
+    expect(metrics.observerTileBoxes[index].left).toBeGreaterThan(
+      metrics.observerTileBoxes[index - 1].left,
+    );
+  }
+}
+
+/**
+ * Applies the fit/overflow contract that actually matches the measured rail,
+ * instead of hard-coding which observer count is expected to overflow.
+ */
+function assertMeasuredFitOrOverflowContract(metrics: LayoutMetrics) {
+  if (metrics.observerTileBoxes.length === 0) {
+    expect(metrics.leftArrowVisible).toBe(false);
+    expect(metrics.rightArrowVisible).toBe(false);
+    return "empty" as const;
+  }
+  expect(metrics.railBox).not.toBeNull();
+  expect(metrics.contentBox).not.toBeNull();
+  if (metrics.contentBox!.width > metrics.railBox!.width + 2) {
+    assertStartAlignedOverflow(metrics);
+    return "overflow" as const;
+  }
+  assertCenteredWhileFitting(metrics);
+  return "fit" as const;
+}
+
+/**
+ * Start / middle / end scroll behaviour with conditional arrows. Shared so the
+ * smoke suite can check one representative overflow size and the layout suite
+ * can check the high-count case without duplicating the sequence.
+ */
+async function assertConditionalArrowScrollSequence(
+  page: Page,
+  input: {
+    observerCount: number;
+    scenarioPrefix: string;
+    withEvidence: boolean;
+    withKeyboardAccessibility: boolean;
+  },
+) {
+  const { observerCount, scenarioPrefix } = input;
+  const record = (scenarioId: string) =>
+    input.withEvidence
+      ? captureEvidence(page, scenarioId, observerCount)
+      : collectLayoutMetrics(page, scenarioId, observerCount);
+  const rail = page.getByTestId("vox-observer-row");
+
+  await waitForRailOverflow(page, true);
+
+  // Arrow visibility is React state driven by scroll events, so every metrics
+  // snapshot below is taken only after the retrying locator assertions for that
+  // scroll position have settled.
+  await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
+  await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+  const startMetrics = await record(`${scenarioPrefix}-start`);
+  assertStartAlignedOverflow(startMetrics);
+
+  const pageScrollBefore = await page.evaluate(() => ({
+    x: window.scrollX,
+    y: window.scrollY,
+  }));
+  await page.getByTestId("vox-observer-scroll-right").click();
+  await expect
+    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
+    .toBeGreaterThan(0);
+  const pageScrollAfter = await page.evaluate(() => ({
+    x: window.scrollX,
+    y: window.scrollY,
+  }));
+  expect(pageScrollAfter).toEqual(pageScrollBefore);
+  await expect(page.getByTestId("vox-observer-scroll-left")).toBeVisible();
+  await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+
+  const middleMetrics = await record(`${scenarioPrefix}-middle`);
+  expect(middleMetrics.leftArrowVisible).toBe(true);
+  expect(middleMetrics.rightArrowVisible).toBe(true);
+
+  await rail.evaluate((node) => {
+    const element = node as HTMLElement;
+    element.scrollTo({ left: element.scrollWidth, behavior: "auto" });
+  });
+  await expect
+    .poll(() =>
+      rail.evaluate((node) => {
+        const element = node as HTMLElement;
+        return element.scrollWidth - element.clientWidth - element.scrollLeft;
+      }),
+    )
+    .toBeLessThanOrEqual(2);
+  await expect(page.getByTestId("vox-observer-scroll-left")).toBeVisible();
+  await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
+  const endMetrics = await record(`${scenarioPrefix}-end`);
+  expect(endMetrics.leftArrowVisible).toBe(true);
+  expect(endMetrics.rightArrowVisible).toBe(false);
+  expect(endMetrics.observerTileBoxes[observerCount - 1].right).toBeLessThanOrEqual(
+    endMetrics.railBox!.right + 2,
+  );
+
+  await rail.evaluate((node) => {
+    (node as HTMLElement).scrollTo({ left: 0, behavior: "auto" });
+  });
+  await expect
+    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
+    .toBeLessThanOrEqual(2);
+  await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
+  await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+  assertStartAlignedOverflow(
+    await collectLayoutMetrics(page, `${scenarioPrefix}-returned`, observerCount),
+  );
+
+  if (!input.withKeyboardAccessibility) {
+    return;
+  }
+  await rail.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
+    .toBeGreaterThan(0);
+  await page.getByTestId("vox-observer-tile").last().focus();
+  await expect(page.getByTestId("vox-observer-tile").last()).toBeFocused();
+}
+
+/** Camera-off observers must keep their tile and must not read as camera-on. */
+async function assertObserversRenderedWithCameraOff(page: Page, expectedCount: number) {
+  const cameraBadges = page
+    .getByTestId("vox-zone-observers")
+    .getByTestId("participant-tile-camera-status-icon");
+  await expect(cameraBadges).toHaveCount(expectedCount);
+  const statuses = await cameraBadges.evaluateAll((badges) =>
+    badges.map((badge) => (badge as HTMLElement).dataset.status ?? ""),
+  );
+  expect(statuses).toHaveLength(expectedCount);
+  expect(statuses.filter((status) => status === "on")).toEqual([]);
+}
+
 function assertStableStageAcrossScale(records: LayoutMetrics[]) {
   const recordsByCount = new Map(records.map((record) => [record.observerCount, record]));
-  if (!observerCounts.every((count) => recordsByCount.has(count))) {
+  if (!layoutObserverCounts.every((count) => recordsByCount.has(count))) {
     return;
   }
 
-  const stageBoxes = observerCounts
+  const stageBoxes = layoutObserverCounts
     .map((count) => recordsByCount.get(count)!.mainStageBox)
     .filter((box): box is BoxMetrics => box !== null);
-  expect(stageBoxes.length).toBe(observerCounts.length);
+  expect(stageBoxes.length).toBe(layoutObserverCounts.length);
   const widths = stageBoxes.map((box) => box.width);
   const heights = stageBoxes.map((box) => box.height);
   expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(2);
@@ -830,10 +1018,9 @@ test.afterAll(async () => {
   }
 });
 
-test("observer rail removes inactive observers while facilitator roster keeps them", async ({
-  page,
-  request,
-}) => {
+test("observer rail removes inactive observers while facilitator roster keeps them", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page, request }) => {
   const session = await createObserverScalingSession({
     observerCount: 3,
     lifecycle: "OPEN",
@@ -841,10 +1028,11 @@ test("observer rail removes inactive observers while facilitator roster keeps th
     micPattern: "mixed",
   });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
   await expect(page.getByTestId("session-role-management-panel")).toBeVisible();
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3);
+  await assertObserversRenderedWithCameraOff(page, 3);
   expect(await observerTileIds(page)).toEqual(session.observerParticipantIds);
   for (const participantId of session.observerParticipantIds) {
     await expect(page.getByTestId(`role-row-${participantId}`)).toBeVisible();
@@ -882,7 +1070,9 @@ test("observer rail removes inactive observers while facilitator roster keeps th
   expect(afterExpiryMetrics.observerCount).toBe(1);
 });
 
-test("observer reconnect before expiry keeps one stable rail tile", async ({ page }) => {
+test("observer reconnect before expiry keeps one stable rail tile", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
   const session = await createObserverScalingSession({
     observerCount: 3,
     lifecycle: "OPEN",
@@ -890,7 +1080,7 @@ test("observer reconnect before expiry keeps one stable rail tile", async ({ pag
     micPattern: "mixed",
   });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3);
   const initialIds = await observerTileIds(page);
@@ -922,7 +1112,9 @@ test("observer reconnect before expiry keeps one stable rail tile", async ({ pag
   expect(new Set(await observerTileIds(page)).size).toBe(3);
 });
 
-test("observer rail applies active membership during debrief", async ({ page }) => {
+test("observer rail applies active membership during debrief", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
   const session = await createObserverScalingSession({
     observerCount: 3,
     lifecycle: "DEBRIEF_OPEN",
@@ -931,10 +1123,11 @@ test("observer rail applies active membership during debrief", async ({ page }) 
   });
   await expireRoomConnection(session.observerConnectionIds[1]);
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
   await expect(page.getByTestId("debrief-mode-badge")).toBeVisible();
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(2);
+  await assertObserversRenderedWithCameraOff(page, 2);
   expect(await observerTileIds(page)).toEqual([
     session.observerParticipantIds[0],
     session.observerParticipantIds[2],
@@ -944,60 +1137,106 @@ test("observer rail applies active membership during debrief", async ({ page }) 
   assertObserverRailMetrics(metrics, 2);
 });
 
-for (const observerCount of observerCounts) {
-  test(`observer rail scales stable with ${observerCount} observers`, async ({ page }) => {
-    let session: ObserverScalingSession | null = null;
-    await test.step(`create ${observerCount} observer fixture`, async () => {
-      session = await createObserverScalingSession({
+type LayoutCase = {
+  viewport: { width: number; height: number };
+  observerCount: number;
+  /**
+   * Desktop reference samples whose participant-stage geometry is compared
+   * across the whole count range in `afterAll`.
+   */
+  desktopScaleSample?: boolean;
+};
+
+/**
+ * One Playwright test per viewport/count sample. Each case owns its fixture,
+ * room, timeout, trace and cleanup, so a single viewport failure never hides
+ * the remaining samples and no test walks the whole matrix sequentially.
+ */
+const layoutCases: LayoutCase[] = [
+  ...layoutObserverCounts.map((observerCount) => ({
+    viewport: desktopViewport,
+    observerCount,
+    desktopScaleSample: true,
+  })),
+  { viewport: { width: 1366, height: 768 }, observerCount: 4 },
+  { viewport: { width: 1366, height: 768 }, observerCount: 12 },
+  { viewport: { width: 1366, height: 768 }, observerCount: 30 },
+  { viewport: { width: 1280, height: 720 }, observerCount: 4 },
+  { viewport: { width: 1280, height: 720 }, observerCount: 12 },
+  { viewport: { width: 1280, height: 720 }, observerCount: 30 },
+  { viewport: { width: 1024, height: 768 }, observerCount: 4 },
+  { viewport: { width: 1024, height: 768 }, observerCount: 12 },
+  { viewport: { width: 768, height: 1024 }, observerCount: 4 },
+  { viewport: { width: 768, height: 1024 }, observerCount: 12 },
+  { viewport: { width: 768, height: 1024 }, observerCount: 30 },
+  { viewport: { width: 390, height: 844 }, observerCount: 1 },
+  { viewport: { width: 390, height: 844 }, observerCount: 4 },
+  { viewport: { width: 390, height: 844 }, observerCount: 12 },
+];
+
+for (const layoutCase of layoutCases) {
+  const { width, height } = layoutCase.viewport;
+  const { observerCount } = layoutCase;
+  const scenarioId = `viewport-${width}x${height}-${observerCount}`;
+
+  test(`observer rail layout at ${width}x${height} with ${observerCount} observers`, {
+    tag: [OBSERVER_LAYOUT_TAG],
+  }, async ({ page }) => {
+    const session = await test.step(`create ${observerCount} observer fixture`, () =>
+      createObserverScalingSession({
         observerCount,
         lifecycle: "RUNNING",
-        cameraPattern:
-          observerCount === 0 ? "all-off" : observerCount >= 30 ? "all-off" : "mixed",
+        cameraPattern: observerCount === 0 || observerCount >= 30 ? "all-off" : "mixed",
         micPattern: observerCount % 3 === 0 ? "all-off" : "mixed",
         longNames: observerCount >= 12,
-        duplicateLookingNames: observerCount === 12,
-      });
-    });
+        duplicateLookingNames: layoutCase.desktopScaleSample === true && observerCount === 12,
+        preferredLocale: width <= 768 ? "ru" : "en",
+      }));
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await test.step(`open ${observerCount} observer room`, async () => {
-      await openRoom(page, session!, `desktop-1440x900-${observerCount}`);
-    });
+    await page.setViewportSize({ width, height });
+    await test.step(`open ${scenarioId}`, () => openRoom(page, session, scenarioId));
     await expect(page.getByTestId("vox-observer-tile")).toHaveCount(observerCount);
-    await expect(page.getByTestId("vox-zone-participant-a")).toBeVisible();
-    await expect(page.getByTestId("vox-zone-participant-b")).toBeVisible();
-    await expect(page.getByTestId("vox-zone-facilitator")).toBeVisible();
-    if ([1, 4].includes(observerCount)) {
-      await waitForRailOverflow(page, false);
-    }
-    if (observerCount >= 8) {
-      await waitForRailOverflow(page, true);
-      await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+
+    const expectDesktopOverflow =
+      layoutCase.desktopScaleSample === true &&
+      observerCount > desktopLastFittingObserverCount;
+
+    if (layoutCase.desktopScaleSample) {
+      await expect(page.getByTestId("vox-zone-participant-a")).toBeVisible();
+      await expect(page.getByTestId("vox-zone-participant-b")).toBeVisible();
+      await expect(page.getByTestId("vox-zone-facilitator")).toBeVisible();
+
+      // Settle the scroll-affordance state before snapshotting geometry, so a
+      // measured arrow value can never race the React re-render.
+      if (observerCount > 0) {
+        await waitForRailOverflow(page, expectDesktopOverflow);
+        await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
+        if (expectDesktopOverflow) {
+          await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+        } else {
+          await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
+        }
+      }
     }
 
-    const metrics = await captureEvidence(
-      page,
-      `desktop-1440x900-${observerCount}`,
-      observerCount,
-    );
-    scaleEvidenceRecords.push(metrics);
+    const metrics = await captureEvidence(page, scenarioId, observerCount);
     assertObserverRailMetrics(metrics, observerCount);
-    const observerIds = await observerTileIds(page);
-    assertStableObserverOrder(observerIds, session!.observerParticipantIds);
-    if ([1, 4].includes(observerCount)) {
-      assertCenteredWhileFitting(metrics);
-      await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
-      await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
-    }
-    if (observerCount >= 8) {
-      assertStartAlignedOverflow(metrics);
-      await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
-      await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
+    assertAppendRightOrderAndFirstObserverVisible(metrics);
+    assertStableObserverOrder(await observerTileIds(page), session.observerParticipantIds);
+
+    if (layoutCase.desktopScaleSample) {
+      scaleEvidenceRecords.push(metrics);
+      const fitState = assertMeasuredFitOrOverflowContract(metrics);
+      if (observerCount > 0) {
+        expect(fitState).toBe(expectDesktopOverflow ? "overflow" : "fit");
+      }
     }
   });
 }
 
-test("observer rail exposes conditional arrows during manual scrolling", async ({ page }) => {
+test("observer rail exposes conditional arrows during manual scrolling", {
+  tag: [OBSERVER_LAYOUT_TAG],
+}, async ({ page }) => {
   const session = await createObserverScalingSession({
     observerCount: 30,
     lifecycle: "RUNNING",
@@ -1006,152 +1245,131 @@ test("observer rail exposes conditional arrows during manual scrolling", async (
     longNames: true,
   });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(30);
-  await waitForRailOverflow(page, true);
 
-  const startMetrics = await captureEvidence(page, "desktop-1440x900-30-start", 30);
-  assertStartAlignedOverflow(startMetrics);
-  await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
-  await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
-
-  const pageScrollBefore = await page.evaluate(() => ({
-    x: window.scrollX,
-    y: window.scrollY,
-  }));
-  await page.getByTestId("vox-observer-scroll-right").click();
-  const rail = page.getByTestId("vox-observer-row");
-  await expect
-    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
-    .toBeGreaterThan(0);
-  const pageScrollAfter = await page.evaluate(() => ({
-    x: window.scrollX,
-    y: window.scrollY,
-  }));
-  expect(pageScrollAfter).toEqual(pageScrollBefore);
-  await expect(page.getByTestId("vox-observer-scroll-left")).toBeVisible();
-  await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
-
-  const middleMetrics = await captureEvidence(page, "desktop-1440x900-30-middle", 30);
-  expect(middleMetrics.leftArrowVisible).toBe(true);
-  expect(middleMetrics.rightArrowVisible).toBe(true);
-
-  await rail.evaluate((node) => {
-    const element = node as HTMLElement;
-    element.scrollTo({ left: element.scrollWidth, behavior: "auto" });
+  await assertConditionalArrowScrollSequence(page, {
+    observerCount: 30,
+    scenarioPrefix: "desktop-1440x900-30",
+    withEvidence: true,
+    withKeyboardAccessibility: true,
   });
-  await expect
-    .poll(() =>
-      rail.evaluate((node) => {
-        const element = node as HTMLElement;
-        return element.scrollWidth - element.clientWidth - element.scrollLeft;
-      }),
-    )
-    .toBeLessThanOrEqual(2);
-  const endMetrics = await captureEvidence(page, "desktop-1440x900-30-end", 30);
-  expect(endMetrics.leftArrowVisible).toBe(true);
-  expect(endMetrics.rightArrowVisible).toBe(false);
-  await expect(page.getByTestId("vox-observer-scroll-left")).toBeVisible();
-  await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
-  expect(endMetrics.observerTileBoxes[29].right).toBeLessThanOrEqual(endMetrics.railBox!.right + 2);
-
-  await rail.evaluate((node) => {
-    (node as HTMLElement).scrollTo({ left: 0, behavior: "auto" });
-  });
-  await expect
-    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
-    .toBeLessThanOrEqual(2);
-  const returnedMetrics = await collectLayoutMetrics(page, "desktop-1440x900-30-returned", 30);
-  assertStartAlignedOverflow(returnedMetrics);
-
-  await rail.focus();
-  await page.keyboard.press("End");
-  await expect
-    .poll(() => rail.evaluate((node) => (node as HTMLElement).scrollLeft))
-    .toBeGreaterThan(0);
-  await page.getByTestId("vox-observer-tile").last().focus();
-  await expect(page.getByTestId("vox-observer-tile").last()).toBeFocused();
 });
 
-test("observer rail keeps stable append-right order as observers are added", async ({ page }) => {
+test("observer rail exposes conditional arrows at a moderate overflow size", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
   const session = await createObserverScalingSession({
-    observerCount: 1,
+    observerCount: 12,
+    lifecycle: "RUNNING",
+    cameraPattern: "mixed",
+    micPattern: "mixed",
+    longNames: true,
+    duplicateLookingNames: true,
+  });
+
+  await page.setViewportSize(desktopViewport);
+  await openRoom(page, session, "smoke-desktop-1440x900-12");
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(12);
+  assertStableObserverOrder(await observerTileIds(page), session.observerParticipantIds);
+
+  await assertConditionalArrowScrollSequence(page, {
+    observerCount: 12,
+    scenarioPrefix: "smoke-desktop-1440x900-12",
+    withEvidence: false,
+    withKeyboardAccessibility: false,
+  });
+
+  assertObserverRailMetrics(
+    await collectLayoutMetrics(page, "smoke-desktop-1440x900-12-final", 12),
+    12,
+  );
+});
+
+test("observer rail grows from empty to first overflow with stable append-right order", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
+  const session = await createObserverScalingSession({
+    observerCount: 0,
     lifecycle: "RUNNING",
     cameraPattern: "all-off",
     micPattern: "all-off",
   });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
-  for (let count = 1; count <= 5; count += 1) {
-    if (count > 1) {
-      await appendObserverToSession(session, count - 1);
-    }
+  await page.setViewportSize(desktopViewport);
+  await openRoom(page, session, "smoke-append-0");
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(0);
+  await expect(page.getByTestId("vox-zone-participant-a")).toBeVisible();
+  await expect(page.getByTestId("vox-zone-participant-b")).toBeVisible();
+  await expect(page.getByTestId("vox-zone-facilitator")).toBeVisible();
 
-    await openRoom(page, session);
-    await expect(page.getByTestId("vox-observer-tile")).toHaveCount(count);
-    await waitForRailOverflow(page, count > 4);
-    if (count > 4) {
+  const emptyMetrics = await collectLayoutMetrics(page, "smoke-append-0", 0);
+  assertObserverRailMetrics(emptyMetrics, 0);
+  expect(assertMeasuredFitOrOverflowContract(emptyMetrics)).toBe("empty");
+  const emptyRailHeight = emptyMetrics.observerZoneBox.height;
+
+  // The roster polls every second, so observers can join the open room instead
+  // of forcing one navigation per count.
+  for (let count = 1; count <= desktopLastFittingObserverCount + 1; count += 1) {
+    const shouldOverflow = count > desktopLastFittingObserverCount;
+    await appendObserverToSession(session, count - 1);
+    await expect(page.getByTestId("vox-observer-tile")).toHaveCount(count, {
+      timeout: 10_000,
+    });
+
+    await waitForRailOverflow(page, shouldOverflow);
+    await expect(page.getByTestId("vox-observer-scroll-left")).toHaveCount(0);
+    if (shouldOverflow) {
       await expect(page.getByTestId("vox-observer-scroll-right")).toBeVisible();
-    }
-    const metrics = await collectLayoutMetrics(page, `append-${count}`, count);
-    const observerIds = await observerTileIds(page);
-    assertStableObserverOrder(observerIds, session.observerParticipantIds);
-    for (let index = 1; index < metrics.observerTileBoxes.length; index += 1) {
-      expect(metrics.observerTileBoxes[index].left).toBeGreaterThan(
-        metrics.observerTileBoxes[index - 1].left,
-      );
+    } else {
+      await expect(page.getByTestId("vox-observer-scroll-right")).toHaveCount(0);
     }
 
-    if (count <= 4) {
-      assertCenteredWhileFitting(metrics);
-    } else {
-      assertStartAlignedOverflow(metrics);
+    const metrics = await collectLayoutMetrics(page, `smoke-append-${count}`, count);
+    assertObserverRailMetrics(metrics, count);
+    assertAppendRightOrderAndFirstObserverVisible(metrics);
+    expect(assertMeasuredFitOrOverflowContract(metrics)).toBe(
+      shouldOverflow ? "overflow" : "fit",
+    );
+    if (shouldOverflow) {
       expect(metrics.railScrollLeft).toBeLessThanOrEqual(2);
     }
-  }
-});
 
-test("observer rail remains bounded across required viewport samples", async ({ page }) => {
-  const scenarios = [
-    { viewport: [1366, 768] as const, counts: [4, 12, 30] },
-    { viewport: [1280, 720] as const, counts: [4, 12, 30] },
-    { viewport: [1024, 768] as const, counts: [4, 12] },
-    { viewport: [768, 1024] as const, counts: [4, 12, 30] },
-    { viewport: [390, 844] as const, counts: [1, 4, 12] },
-  ];
-  const sessionCache = new Map<number, ObserverScalingSession>();
+    const observerIds = await observerTileIds(page);
+    expect(new Set(observerIds).size).toBe(observerIds.length);
+    assertStableObserverOrder(observerIds, session.observerParticipantIds);
 
-  for (const scenario of scenarios) {
-    await page.setViewportSize({
-      width: scenario.viewport[0],
-      height: scenario.viewport[1],
-    });
-    for (const count of scenario.counts) {
-      if (!sessionCache.has(count)) {
-        sessionCache.set(
-          count,
-          await createObserverScalingSession({
-            observerCount: count,
-            lifecycle: "RUNNING",
-            cameraPattern: "mixed",
-            micPattern: "mixed",
-            longNames: count >= 12,
-            preferredLocale: scenario.viewport[0] <= 768 ? "ru" : "en",
-          }),
-        );
-      }
-      const session = sessionCache.get(count)!;
-      await openRoom(page, session);
-      await expect(page.getByTestId("vox-observer-tile")).toHaveCount(count);
-      const scenarioId = `viewport-${scenario.viewport[0]}x${scenario.viewport[1]}-${count}`;
-      const metrics = await captureEvidence(page, scenarioId, count);
-      assertObserverRailMetrics(metrics, count);
+    if (count === 1) {
+      expect(Math.abs(metrics.observerZoneBox.height - emptyRailHeight)).toBeLessThanOrEqual(2);
     }
   }
 });
 
-test("unassigned participant remains in observer rail during debrief", async ({ page }) => {
+test("observer rail stays bounded on a narrow mobile viewport", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
+  const session = await createObserverScalingSession({
+    observerCount: 4,
+    lifecycle: "RUNNING",
+    cameraPattern: "mixed",
+    micPattern: "mixed",
+    preferredLocale: "ru",
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRoom(page, session, "smoke-mobile-390x844-4");
+  await expect(page.getByTestId("vox-observer-tile")).toHaveCount(4);
+
+  const metrics = await collectLayoutMetrics(page, "smoke-mobile-390x844-4", 4);
+  assertObserverRailMetrics(metrics, 4);
+  assertAppendRightOrderAndFirstObserverVisible(metrics);
+  assertStableObserverOrder(await observerTileIds(page), session.observerParticipantIds);
+});
+
+test("unassigned participant remains in observer rail during debrief", {
+  tag: [OBSERVER_SMOKE_TAG],
+}, async ({ page }) => {
   const session = await createObserverScalingSession({
     observerCount: 4,
     lifecycle: "DEBRIEF_OPEN",
@@ -1160,7 +1378,7 @@ test("unassigned participant remains in observer rail during debrief", async ({ 
     includeUnassignedParticipantObserver: true,
   });
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
   await expect(page.getByTestId("debrief-mode-badge")).toBeVisible();
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(5);

@@ -6,7 +6,14 @@ Known limitations:
 - No observer virtualization is introduced. Every observer-zone roster entry remains mounted in the rail.
 - The observer tile still uses the existing Voximplant participant tile. This preserves media binding behavior but keeps the existing compact icon treatment rather than introducing a new design system.
 
+- Observer geometry tests still open a real provider session per room. A
+  guarded, production-unreachable provider-neutral room mode would remove the
+  Voximplant Management API and WebSDK dependency from geometry-only scenarios,
+  but it is a runtime architecture change. See
+  `docs/testing/observer-test-execution-policy.md` section 7.
+
 Deferred architecture work:
+- Provider-neutral room rendering seam for geometry-only E2E scenarios.
 - 3-8 negotiator layout model.
 - Observer active/recent speaker product contract.
 - Manual observer pinning/ranking.
