@@ -1,0 +1,13 @@
+area,scenario,automated_coverage,manual_coverage,status
+semantic actions,event session action kind maps to semantic category,lib/ui/semantic-action-model.test.ts,,planned/runnable
+semantic actions,room/materials/lobby actions expose data-action-kind and data-action-target,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+dashboard,current section appears above archive,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+dashboard,archive collapsed by default and materials remain reachable,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+event lobby,assigned participant sees My Session primary room action,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+event lobby,ordinary participant has no duplicate primary same-target room action,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+desired role,undecided preference keeps full selector visible,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+desired role,saved preference shows compact summary and Change/Cancel flow,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,,planned/runnable
+persona/status,compact participant rows render presence and media text,tests/e2e/stage-3-12b-wave1-core-ui.spec.ts,manual visual review,partial
+responsive,1440x900 1366x768 1280x720 1024x768 768x1024 390x844,,manual visual review,pending
+zoom,100 125 150 200 percent,,manual visual review,pending
+observer rail,unchanged observer rail regression,tests/e2e/stage-3-12b-observer-scaling.spec.ts,manual observer pass,pending

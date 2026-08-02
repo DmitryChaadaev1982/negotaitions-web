@@ -2,15 +2,16 @@
 
 import { useCallback, useMemo, useState } from "react";
 
+import { CompactPersonStatus } from "@/components/compact-person-status";
 import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { CompleteSessionButton } from "@/components/complete-session-button";
 import { EventCaseLibrary } from "@/components/event-case-library";
 import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import {
-  GradientButton,
   SecondaryButton,
 } from "@/components/ui/buttons";
+import { SemanticActionButton } from "@/components/semantic-action";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import {
   inputClassName,
@@ -288,7 +289,8 @@ export function EventHostControlsPanel({
     <div data-testid="host-controls-panel" className="space-y-4">
       <GlassCard elevated data-testid="event-settings-section">
         <GlassCardHeader>
-          <h3 className="text-sm font-semibold text-slate-50">{t("events.eventSettings")}</h3>
+          <h3 className="text-sm font-semibold text-slate-50">{t("events.eventLevelManagement")}</h3>
+          <p className="text-xs text-slate-400">{t("events.eventSettings")}</p>
         </GlassCardHeader>
         <GlassCardContent className="space-y-4">
           {showLibrary ? (
@@ -362,15 +364,17 @@ export function EventHostControlsPanel({
         <GlassCardHeader>
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-slate-50">{t("events.sessionsBoard")}</h3>
+            <span className="sr-only">{t("events.sessionCreationSetup")}</span>
             {selectedCase ? (
-              <SecondaryButton
+              <SemanticActionButton
                 type="button"
+                actionKind="MANAGEMENT"
                 data-testid="create-another-session-button"
-                className="px-2 py-1 text-xs"
+                size="compact"
                 onClick={openSessionSetup}
               >
                 {t("events.createSession")}
-              </SecondaryButton>
+              </SemanticActionButton>
             ) : null}
           </div>
         </GlassCardHeader>
@@ -465,11 +469,13 @@ export function EventHostControlsPanel({
                       })()}
                       <div className="mt-1 space-y-1">
                         {session.participants.map((participant) => (
-                          <p key={participant.id}>
-                            {participant.displayName} ·{" "}
-                            {t(`participantType.${participant.participantType}`)}
-                            {participant.roleName ? ` · ${participant.roleName}` : ""}
-                          </p>
+                          <CompactPersonStatus
+                            key={participant.id}
+                            displayName={participant.displayName}
+                            caseRoleName={participant.roleName}
+                            participantType={participant.participantType}
+                            className="rounded-lg border border-slate-700/35 bg-slate-950/30 px-2 py-1"
+                          />
                         ))}
                       </div>
                     </div>
@@ -504,25 +510,29 @@ export function EventHostControlsPanel({
                           primaryAction.kind === "OPEN_ROOM" ||
                           primaryAction.kind === "RETURN_TO_DEBRIEF";
                       })() ? (
-                        <SecondaryButton
+                        <SemanticActionButton
                           type="button"
+                          actionKind="REVIEW_RESULTS"
+                          actionTarget={session.materialsUrl}
                           data-testid="open-session-materials-button"
-                          className="px-2 py-1 text-xs"
+                          size="compact"
                           onClick={() => {
                             window.location.href = session.materialsUrl!;
                           }}
                         >
                           {t("events.openMaterials")}
-                        </SecondaryButton>
+                        </SemanticActionButton>
                       ) : null}
-                      <SecondaryButton
+                      <SemanticActionButton
                         type="button"
+                        actionKind="MANAGEMENT"
+                        actionTarget={session.id}
                         data-testid="copy-room-links-button"
-                        className="px-2 py-1 text-xs"
+                        size="compact"
                         onClick={() => void copyRoomLinks(session.id)}
                       >
                         {t("events.copyRoomLinks")}
-                      </SecondaryButton>
+                      </SemanticActionButton>
                       {session.isActive ? (
                         <CompleteSessionButton
                           sessionId={session.id}
@@ -545,7 +555,7 @@ export function EventHostControlsPanel({
           {selectedCase && showSessionSetup ? (
             <div className="space-y-4 border-t border-slate-600/30 pt-4" data-testid="session-setup-section">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {t("events.newSession")}
+              {t("events.sessionCreationSetup")}
             </p>
 
             {createSessionError ? (
@@ -661,6 +671,7 @@ export function EventHostControlsPanel({
 
             <div className="space-y-2">
               <p className={labelClassName}>{t("events.assignRoles")}</p>
+              <p className="text-xs text-slate-500">{t("events.participantAssignment")}</p>
               {selectedCase.roles.length > 0 ? (
                 <div
                   className="space-y-2 rounded-lg border border-slate-700/40 bg-slate-900/30 px-3 py-2"
@@ -805,14 +816,15 @@ export function EventHostControlsPanel({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <GradientButton
+              <SemanticActionButton
                 type="button"
+                actionKind="MANAGEMENT"
                 data-testid="create-session-button"
                 disabled={isCreatingSession}
                 onClick={handleCreateSession}
               >
                 {t("events.createSession")}
-              </GradientButton>
+              </SemanticActionButton>
               <SecondaryButton
                 type="button"
                 data-testid="cancel-session-setup-button"

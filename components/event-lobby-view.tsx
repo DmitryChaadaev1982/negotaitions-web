@@ -5,16 +5,17 @@ import "@/styles/livekit-overrides.css";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Badge, DifficultyBadge } from "@/components/badge";
+import { DifficultyBadge } from "@/components/badge";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
+import { CompactPersonStatus } from "@/components/compact-person-status";
 import { EventLobbyPresence } from "@/components/event-lobby-presence";
 import { EventLobbyVideoRoom } from "@/components/event-lobby-video-room";
 import { EventLobbyVoximplantRoom } from "@/components/event-lobby-voximplant-room";
 import { EventCompletionDangerZone } from "@/components/event-completion-danger-zone";
-import { EventPresenceIndicator } from "@/components/event-presence-indicator";
 import { EventSessionRoomButton } from "@/components/event-session-room-button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { EventHostControlsPanel } from "@/components/event-host-controls-panel";
+import { SemanticActionButton, SemanticActionLink } from "@/components/semantic-action";
 import {
   GradientButtonLink,
   SecondaryButton,
@@ -91,6 +92,16 @@ function participantLocationLabel(
   return t("rejoin.offline");
 }
 
+function preferenceLabel(
+  preference: string,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+) {
+  if (preference === "PLAY") return t("events.wantToPlay");
+  if (preference === "OBSERVE") return t("events.wantToObserve");
+  if (preference === "FACILITATE") return t("events.canFacilitate");
+  return t("events.undecided");
+}
+
 export function EventLobbyView({
   eventId,
   videoProvider,
@@ -113,6 +124,7 @@ export function EventLobbyView({
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
   const [staleConnection, setStaleConnection] = useState(false);
+  const [isEditingPreference, setIsEditingPreference] = useState(false);
   const stateRequestSequenceRef = useRef(0);
   const latestAppliedStateRequestRef = useRef(0);
   const statePollInFlightRef = useRef(false);
@@ -729,6 +741,7 @@ export function EventLobbyView({
   const currentAssignment = state.currentParticipant
     ? state.participants.find((p) => p.id === state.currentParticipant?.id)
     : null;
+  const currentAssignmentOrNull = currentAssignment ?? null;
   const assignedSession = currentAssignment?.assignedSessionId
     ? state.sessions.find(
         (session) => session.id === currentAssignment.assignedSessionId,
@@ -745,7 +758,9 @@ export function EventLobbyView({
   const showOwnerHostManagement = isEventOwner && !staleConnection;
   const mySessionsInEvent =
     !showOwnerHostManagement && state.currentParticipant
-      ? participantHistoricalSessions
+      ? participantHistoricalSessions.filter(
+          (session) => session.id !== currentAssignment?.assignedSessionId,
+        )
       : [];
   const mySessionIdSet = new Set(mySessionsInEvent.map((session) => session.id));
   const observerActiveSessions =
@@ -914,59 +929,25 @@ export function EventLobbyView({
 
         <aside className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-y-auto rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 xl:w-[420px]">
           {state.currentParticipant ? (
-            <GlassCard elevated>
-              <GlassCardHeader>
-                <h3 className="text-sm font-semibold text-slate-50">
-                  {state.currentParticipant.displayName}
-                  {/* Show "Ведущий" only when this participant IS the actual event
-                      host (isHost on EventParticipant row). System-level admin
-                      access gives host controls but must not label the admin as
-                      the event host if they didn't create the event. */}
-                  {currentAssignment?.isHost ? (
-                    <span className="ml-2 text-xs font-normal text-cyan-400">
-                      ({t("events.hostLabel")})
-                    </span>
-                  ) : null}
-                </h3>
-              </GlassCardHeader>
-              <GlassCardContent className="space-y-3">
-                <p className="text-xs font-medium text-slate-400">{t("events.yourPreference")}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      ["UNDECIDED", t("events.undecided")],
-                      ["PLAY", t("events.wantToPlay")],
-                      ["OBSERVE", t("events.wantToObserve")],
-                      ["FACILITATE", t("events.canFacilitate")],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={staleConnection}
-                      onClick={() => {
-                        if (!staleConnection) {
-                          void updatePreference(value);
-                        }
-                      }}
-                      className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
-                        state.currentParticipant?.preference === value
-                          ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
-                          : "border-slate-600/40 bg-slate-900/50 text-slate-300 hover:border-slate-500/50"
-                      } ${staleConnection ? "cursor-not-allowed opacity-50 hover:border-slate-600/40" : ""}`}
-                      aria-disabled={staleConnection}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {staleConnection ? (
-                  <p className="text-xs text-amber-300">
-                    {t("events.lobbyActionsDisabledInStaleTab")}
-                  </p>
-                ) : null}
-              </GlassCardContent>
-            </GlassCard>
+            <DesiredRolePreferenceCard
+              participant={state.currentParticipant}
+              currentAssignment={currentAssignmentOrNull}
+              staleConnection={staleConnection}
+              isEditing={isEditingPreference || state.currentParticipant.preference === "UNDECIDED"}
+              onEdit={() => setIsEditingPreference(true)}
+              onCancel={() => setIsEditingPreference(false)}
+              onUpdatePreference={(nextPreference) => {
+                void updatePreference(nextPreference);
+                setIsEditingPreference(false);
+              }}
+            />
+          ) : null}
+
+          {state.currentParticipant && !staleConnection ? (
+            <MySessionCard
+              currentAssignment={currentAssignmentOrNull}
+              assignedSession={assignedSession}
+            />
           ) : null}
 
           <details open className="rounded-2xl border border-slate-700/40 bg-slate-900/20" data-testid="lobby-panel-participants">
@@ -984,45 +965,24 @@ export function EventLobbyView({
                   <div
                     key={participant.id}
                     data-testid="participant-card"
-                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
+                    className="rounded-lg border border-slate-600/30 bg-slate-900/50 px-3 py-2"
                   >
-                    <span className="text-sm font-medium text-slate-100">
-                      {participant.displayName}
-                      {participant.isHost ? (
-                        <span className="ml-1.5 text-xs font-normal text-cyan-400">
-                          ({t("events.hostLabel")})
-                        </span>
-                      ) : null}
-                      {participant.activeAssignmentLabel ? (
-                        <span className="mt-1 block text-xs font-normal text-cyan-300">
-                          {t("events.activeSession")}: {participant.activeAssignmentLabel}
-                        </span>
-                      ) : null}
-                      <span className="mt-1 block">
-                        <EventPresenceIndicator
-                          status={participant.eventPresenceStatus}
-                          compact
-                        />
-                      </span>
-                      {participant.eventPresenceStatus === "ONLINE" ? (
-                        <span className="mt-1 block text-xs font-normal text-slate-400">
-                          {t("events.onlineWithLocation", {
-                            location: participantLocationLabel(participant, t),
-                          })}
-                        </span>
-                      ) : null}
-                    </span>
-                    <div className="flex flex-col items-end gap-1">
-                      <Badge variant="default" className="text-[10px]">
-                        {participant.preference === "PLAY"
-                          ? t("events.wantToPlay")
-                          : participant.preference === "OBSERVE"
-                            ? t("events.wantToObserve")
-                            : participant.preference === "FACILITATE"
-                              ? t("events.canFacilitate")
-                              : t("events.undecided")}
-                      </Badge>
-                    </div>
+                    <CompactPersonStatus
+                      displayName={participant.displayName}
+                      caseRoleName={participant.assignedRoleName}
+                      participantType={participant.assignedType}
+                      assignmentLabel={participant.activeAssignmentLabel}
+                      preferenceLabel={preferenceLabel(participant.preference, t)}
+                      isHost={participant.isHost}
+                      presenceStatus={participant.eventPresenceStatus}
+                      locationLabel={
+                        participant.eventPresenceStatus === "ONLINE"
+                          ? participantLocationLabel(participant, t)
+                          : null
+                      }
+                      micEnabled={participant.micEnabled}
+                      cameraEnabled={participant.cameraEnabled}
+                    />
                   </div>
                 ))
               )}
@@ -1075,92 +1035,6 @@ export function EventLobbyView({
               onCreateSession={(overrides) => void createSession(overrides)}
               createSessionError={createSessionError}
             />
-          ) : null}
-
-          {currentAssignment?.assignedSessionId ? (
-            <GlassCard elevated className="border-emerald-500/30" data-testid="assigned-session-card">
-              <GlassCardContent className="space-y-3">
-                <p className="text-sm text-emerald-200">{t("events.assignedToRoom")}</p>
-                <p className="text-base font-semibold text-slate-50">
-                  {assignedSession?.roomLabel ?? assignedSession?.title}
-                </p>
-                <p className="text-xs text-slate-400">
-                  {currentAssignment.assignedType === "FACILITATOR"
-                    ? t("participantType.FACILITATOR")
-                    : currentAssignment.assignedType === "OBSERVER"
-                      ? t("participantType.OBSERVER")
-                      : t("participantType.PARTICIPANT")}
-                  {currentAssignment.assignedRoleName
-                    ? ` · ${currentAssignment.assignedRoleName}`
-                    : ""}
-                </p>
-                {(() => {
-                  const primaryAction = resolveEventSessionPrimaryAction({
-                    roomAccessDecision: assignedSession?.roomAccessDecision ?? null,
-                    roomHref:
-                      currentAssignment.roomUrl ??
-                      (currentAssignment.assignedSessionId
-                        ? buildAccountSessionRoomPath(currentAssignment.assignedSessionId)
-                        : null),
-                    materialsHref:
-                      currentAssignment.materialsUrl ??
-                      (currentAssignment.assignedSessionId
-                        ? buildAccountSessionMaterialsPath(
-                            currentAssignment.assignedSessionId,
-                          )
-                        : null),
-                    redirectHref: assignedSession?.roomAccessRedirectTo ?? null,
-                  });
-                  const showSecondaryMaterials =
-                    Boolean(currentAssignment.materialsUrl) &&
-                    (!primaryAction ||
-                      primaryAction.kind === "OPEN_ROOM" ||
-                      primaryAction.kind === "RETURN_TO_DEBRIEF");
-
-                  return (
-                    <>
-                      {primaryAction ? (
-                        <EventSessionRoomButton
-                          roomAccessDecision={assignedSession?.roomAccessDecision ?? null}
-                          roomHref={
-                            currentAssignment.roomUrl ??
-                            (currentAssignment.assignedSessionId
-                              ? buildAccountSessionRoomPath(
-                                  currentAssignment.assignedSessionId,
-                                )
-                              : null)
-                          }
-                          materialsHref={
-                            currentAssignment.materialsUrl ??
-                            (currentAssignment.assignedSessionId
-                              ? buildAccountSessionMaterialsPath(
-                                  currentAssignment.assignedSessionId,
-                                )
-                              : null)
-                          }
-                          redirectHref={assignedSession?.roomAccessRedirectTo ?? null}
-                          testId="go-to-session-room-button"
-                        />
-                      ) : null}
-                      {showSecondaryMaterials ? (
-                        <SecondaryButtonLink
-                          href={
-                            currentAssignment.materialsUrl ??
-                            buildAccountSessionMaterialsPath(
-                              currentAssignment.assignedSessionId,
-                            )
-                          }
-                          className="w-full text-center"
-                          data-testid="open-session-materials-button"
-                        >
-                          {t("events.sessionMaterials")}
-                        </SecondaryButtonLink>
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </GlassCardContent>
-            </GlassCard>
           ) : null}
 
           {observerActiveSessions.length > 0 ? (
@@ -1336,6 +1210,200 @@ export function EventLobbyView({
         </aside>
       </div>
     </div>
+  );
+}
+
+function DesiredRolePreferenceCard({
+  participant,
+  currentAssignment,
+  staleConnection,
+  isEditing,
+  onEdit,
+  onCancel,
+  onUpdatePreference,
+}: {
+  participant: NonNullable<EventStateResponse["currentParticipant"]>;
+  currentAssignment: EventStateResponse["participants"][number] | null;
+  staleConnection: boolean;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onUpdatePreference: (preference: string) => void;
+}) {
+  const { t } = useI18n();
+  const selectedLabel = preferenceLabel(participant.preference, t);
+
+  return (
+    <GlassCard elevated data-testid="desired-role-card">
+      <GlassCardHeader>
+        <CompactPersonStatus
+          displayName={participant.displayName}
+          caseRoleName={currentAssignment?.assignedRoleName}
+          participantType={currentAssignment?.assignedType}
+          isHost={currentAssignment?.isHost}
+        />
+      </GlassCardHeader>
+      <GlassCardContent className="space-y-3">
+        {!isEditing ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-slate-300" data-testid="desired-role-summary">
+              {t("events.desiredRoleSelected", { role: selectedLabel })}
+            </p>
+            <SemanticActionButton
+              type="button"
+              actionKind="NAVIGATION"
+              size="compact"
+              aria-expanded={false}
+              aria-controls="desired-role-options"
+              onClick={onEdit}
+              data-testid="desired-role-change-button"
+            >
+              {t("events.changeDesiredRole")}
+            </SemanticActionButton>
+          </div>
+        ) : (
+          <div className="space-y-3" id="desired-role-options" data-testid="desired-role-options">
+            <div>
+              <p className="text-xs font-medium text-slate-400">{t("events.desiredRole")}</p>
+              <p className="mt-1 text-xs text-slate-500">{t("events.desiredRoleHelp")}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["UNDECIDED", t("events.undecided")],
+                  ["PLAY", t("events.wantToPlay")],
+                  ["OBSERVE", t("events.wantToObserve")],
+                  ["FACILITATE", t("events.canFacilitate")],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={staleConnection}
+                  onClick={() => {
+                    if (!staleConnection) {
+                      onUpdatePreference(value);
+                    }
+                  }}
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
+                    participant.preference === value
+                      ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                      : "border-slate-600/40 bg-slate-900/50 text-slate-300 hover:border-slate-500/50"
+                  } ${staleConnection ? "cursor-not-allowed opacity-50 hover:border-slate-600/40" : ""}`}
+                  aria-pressed={participant.preference === value}
+                  aria-disabled={staleConnection}
+                  data-testid="desired-role-option"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {participant.preference !== "UNDECIDED" ? (
+              <SemanticActionButton
+                type="button"
+                actionKind="NAVIGATION"
+                size="compact"
+                aria-expanded
+                aria-controls="desired-role-options"
+                onClick={onCancel}
+                data-testid="desired-role-cancel-button"
+              >
+                {t("common.cancel")}
+              </SemanticActionButton>
+            ) : null}
+            {staleConnection ? (
+              <p className="text-xs text-amber-300">
+                {t("events.lobbyActionsDisabledInStaleTab")}
+              </p>
+            ) : null}
+          </div>
+        )}
+      </GlassCardContent>
+    </GlassCard>
+  );
+}
+
+function MySessionCard({
+  currentAssignment,
+  assignedSession,
+}: {
+  currentAssignment: EventStateResponse["participants"][number] | null;
+  assignedSession: EventStateResponse["sessions"][number] | null | undefined;
+}) {
+  const { t } = useI18n();
+  const assignedSessionId = currentAssignment?.assignedSessionId ?? null;
+  const roomHref =
+    currentAssignment?.roomUrl ??
+    (assignedSessionId ? buildAccountSessionRoomPath(assignedSessionId) : null);
+  const materialsHref =
+    currentAssignment?.materialsUrl ??
+    (assignedSessionId ? buildAccountSessionMaterialsPath(assignedSessionId) : null);
+  const primaryAction = resolveEventSessionPrimaryAction({
+    roomAccessDecision: assignedSession?.roomAccessDecision ?? null,
+    roomHref,
+    materialsHref,
+    redirectHref: assignedSession?.roomAccessRedirectTo ?? null,
+  });
+  const showSecondaryMaterials =
+    Boolean(materialsHref) &&
+    (!primaryAction ||
+      primaryAction.kind === "OPEN_ROOM" ||
+      primaryAction.kind === "RETURN_TO_DEBRIEF");
+
+  return (
+    <GlassCard elevated className="border-emerald-500/30" data-testid="my-session-card">
+      <div data-testid="assigned-session-card">
+        <GlassCardHeader>
+          <h3 className="text-sm font-semibold text-slate-50">{t("events.mySession")}</h3>
+          <p className="text-xs text-slate-400">{t("events.mySessionSubtitle")}</p>
+        </GlassCardHeader>
+        <GlassCardContent className="space-y-3">
+          {currentAssignment?.assignedSessionId ? (
+            <>
+              <p className="text-sm text-emerald-200">{t("events.assignedToRoom")}</p>
+              <p className="truncate text-base font-semibold text-slate-50">
+                {assignedSession?.roomLabel ?? assignedSession?.title}
+              </p>
+              <CompactPersonStatus
+                displayName={currentAssignment.displayName}
+                caseRoleName={currentAssignment.assignedRoleName}
+                participantType={currentAssignment.assignedType}
+                assignmentLabel={assignedSession?.roomLabel ?? assignedSession?.title}
+                micEnabled={currentAssignment.micEnabled}
+                cameraEnabled={currentAssignment.cameraEnabled}
+              />
+              {primaryAction ? (
+                <EventSessionRoomButton
+                  roomAccessDecision={assignedSession?.roomAccessDecision ?? null}
+                  roomHref={roomHref}
+                  materialsHref={materialsHref}
+                  redirectHref={assignedSession?.roomAccessRedirectTo ?? null}
+                  testId="go-to-session-room-button"
+                />
+              ) : null}
+              {showSecondaryMaterials && materialsHref ? (
+                <SemanticActionLink
+                  href={materialsHref}
+                  actionKind="REVIEW_RESULTS"
+                  actionTarget={materialsHref}
+                  className="w-full text-center"
+                  data-testid="open-session-materials-button"
+                >
+                  {t("events.sessionMaterials")}
+                </SemanticActionLink>
+              ) : null}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-200">
+                {t("events.noCurrentSessionAssignment")}
+              </p>
+              <p className="text-xs text-slate-400">{t("events.waitingForAssignment")}</p>
+            </div>
+          )}
+        </GlassCardContent>
+      </div>
+    </GlassCard>
   );
 }
 
