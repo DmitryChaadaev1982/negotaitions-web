@@ -16,6 +16,10 @@ import {
 } from "@/lib/transcription/speaker-labels";
 import { deriveSpeakerMappingStatus, resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
+import {
+  resolveSpeakerMappingCandidates,
+  resolveSpeakerMappingEvidenceInterval,
+} from "@/lib/transcription/speaker-mapping-candidates";
 
 export const runtime = "nodejs";
 type RouteContext = {
@@ -33,6 +37,68 @@ function summarizeMappingValues(mapping: Record<string, string | null>) {
     },
     {},
   );
+}
+
+async function getSpeakerMappingCandidates(sessionId: string, transcript: {
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  const [session, sessionParticipants, connections] = await Promise.all([
+    prisma.session.findUnique({
+      where: { id: sessionId },
+      select: {
+        startedAt: true,
+        endedAt: true,
+        negotiationStartedAt: true,
+        negotiationEndedAt: true,
+        recording: {
+          select: {
+            startedAt: true,
+            endedAt: true,
+          },
+        },
+      },
+    }),
+    prisma.sessionParticipant.findMany({
+      where: { sessionId },
+      include: {
+        sessionRole: { select: { name: true, sortOrder: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.sessionRoomConnection.findMany({
+      where: { sessionId },
+      select: {
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        disconnectedAt: true,
+        supersededAt: true,
+        revokedAt: true,
+      },
+    }),
+  ]);
+
+  const interval = resolveSpeakerMappingEvidenceInterval({
+    recordingStartedAt: session?.recording?.startedAt,
+    recordingEndedAt: session?.recording?.endedAt,
+    negotiationStartedAt: session?.negotiationStartedAt,
+    negotiationEndedAt: session?.negotiationEndedAt,
+    sessionStartedAt: session?.startedAt,
+    sessionEndedAt: session?.endedAt,
+    transcriptStartedAt: transcript.startedAt,
+    transcriptCompletedAt: transcript.completedAt,
+    transcriptCreatedAt: transcript.createdAt,
+    transcriptUpdatedAt: transcript.updatedAt,
+  });
+
+  return resolveSpeakerMappingCandidates({
+    participants: sessionParticipants,
+    connections,
+    interval,
+  });
 }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
@@ -65,12 +131,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
 
-  const sessionParticipants = await prisma.sessionParticipant.findMany({
-    where: { sessionId },
-    include: {
-      sessionRole: { select: { name: true } },
-    },
-  });
+  const sessionParticipants = await getSpeakerMappingCandidates(sessionId, transcript);
 
   const existingMapping = resolveSpeakerMappingForUi({
     speakerMapping: transcript.speakerMapping,
@@ -101,10 +162,10 @@ export async function GET(request: Request, context: RouteContext) {
   }));
 
   const participants = sessionParticipants.map((p) => ({
-    sessionParticipantId: p.id,
+    sessionParticipantId: p.sessionParticipantId,
     displayName: p.displayName,
-    participantType: p.type,
-    roleName: p.sessionRole?.name ?? null,
+    participantType: p.participantType,
+    roleName: p.roleName,
   }));
 
   return NextResponse.json({
@@ -189,12 +250,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
 
-  const sessionParticipants = await prisma.sessionParticipant.findMany({
-    where: { sessionId },
-    include: {
-      sessionRole: { select: { name: true } },
-    },
-  });
+  const sessionParticipants = await getSpeakerMappingCandidates(sessionId, transcript);
 
   // ── Suggest automatically ────────────────────────────────────────────────
   if (suggestAutomatically) {
@@ -225,7 +281,7 @@ export async function POST(request: Request, context: RouteContext) {
   ).map((label) => label.speakerLabel);
 
   // ── Build sanitized mapping ───────────────────────────────────────────────
-  const participantIds = new Set(sessionParticipants.map((p) => p.id));
+  const participantIds = new Set(sessionParticipants.map((p) => p.sessionParticipantId));
   const sanitizedMapping: SpeakerMapping = {};
   for (const speakerLabel of labelOrder) {
     const participantId = mapping[speakerLabel];
@@ -272,10 +328,10 @@ export async function POST(request: Request, context: RouteContext) {
     : sanitizedMapping;
 
   const participantDisplayInfo = sessionParticipants.map((p) => ({
-    id: p.id,
+    id: p.sessionParticipantId,
     displayName: p.displayName,
-    type: p.type,
-    roleName: p.sessionRole?.name ?? null,
+    type: p.participantType,
+    roleName: p.roleName,
   }));
 
   const diarizedText = buildDiarizedText(
