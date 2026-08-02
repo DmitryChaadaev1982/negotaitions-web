@@ -6,7 +6,7 @@ import { ru } from "@/lib/i18n/dictionaries/ru";
 
 test("event create-session label is consistent in RU/EN", () => {
   assert.equal(ru.events.createSession, "Создать сессию");
-  assert.equal(en.events.createSession, "Create session");
+  assert.equal(en.events.createSession, "Create Session");
 });
 
 test("createAnotherSession key is removed from RU/EN events dictionaries", () => {

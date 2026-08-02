@@ -15,11 +15,11 @@ This document is updated as validation gates run.
 - Wave 1 focused E2E: passed with `npm run test:e2e:focused:managed -- tests/e2e/stage-3-12b-wave1-core-ui.spec.ts --project=chromium`.
 - `npm run lint`: passed with 5 existing warnings outside Wave 1 changes.
 - `npx tsc --noEmit`: Wave 1 errors fixed; command still fails on pre-existing unrelated test type errors in `lib/ai-publication-aggregate.test.ts`, `lib/services/transcript-enhancement-orchestration.test.ts`, `lib/voximplant/participant-presence-media-model.test.ts`, `lib/voximplant/server-stop-client.test.ts`, `tests/e2e/event-flow.spec.ts`, `tests/e2e/stage-3-12b-observer-scaling.spec.ts`, and `tests/e2e/two-pass-transcription.spec.ts`.
-- `npm run validate:fast`: pending.
-- `npm run validate:deploy`: pending.
-- `npm run test:e2e:smoke`: pending.
-- `npm run test:e2e:smoke:browser`: pending.
-- `npm run test:stage310`: pending.
+- `npm run validate:fast`: passed after aligning the existing create-session label unit assertion with the Wave 1 Event label contract.
+- `npm run validate:deploy`: passed.
+- `npm run test:e2e:smoke`: passed.
+- `npm run test:e2e:smoke:browser`: passed.
+- `npm run test:stage310`: passed.
 
 ## Existing Relevant Suites To Run
 
@@ -34,4 +34,4 @@ This document is updated as validation gates run.
 
 ## Manual
 
-Manual dashboard, participant, observer, facilitator, Event owner, lifecycle, responsive, zoom, and RU/EN checks are pending.
+Manual dashboard, participant, observer, facilitator, Event owner, lifecycle, responsive, zoom, and RU/EN checks remain pending.
