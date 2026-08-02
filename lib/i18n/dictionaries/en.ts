@@ -1278,6 +1278,9 @@ export const en = {
     voxLobbyConnected: "Connected",
     voxLobbyDisconnected: "Disconnected: {reason}",
     voxLobbyUnableToConnect: "Unable to connect to Vox lobby.",
+    voxLobbyConnectingVideo: "Connecting video…",
+    voxLobbyRetryingVideo: "Video connection delayed, retrying…",
+    voxLobbyRetryVideo: "Retry video",
     lobbyTakeoverDisconnected:
       "You joined this lobby in another tab or device. This tab has been disconnected.",
     reconnectLobby: "Reconnect lobby",

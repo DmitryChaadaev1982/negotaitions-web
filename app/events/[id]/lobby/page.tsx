@@ -4,6 +4,7 @@ import { EventLobbyView } from "@/components/event-lobby-view";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { getVideoProvider } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { getVoxProviderFaultMode } from "@/lib/test-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -40,14 +41,25 @@ export default async function EventLobbyPage({
   // Privacy hardening: account-mode lobby must never serialize token field names
   // into HTML/Flight payloads. Keep token access server-side and pass it only for
   // legacy token-based flows under neutral key names.
+  // Always "off" unless the server runs with EXTERNAL_SERVICES_MODE=mock, which
+  // only the E2E web server sets. See lib/voximplant/provider-fault-simulation.
+  const providerFaultSimulation = getVoxProviderFaultMode();
+
   if (user) {
-    return <EventLobbyView eventId={id} videoProvider={videoProvider} />;
+    return (
+      <EventLobbyView
+        eventId={id}
+        videoProvider={videoProvider}
+        providerFaultSimulation={providerFaultSimulation}
+      />
+    );
   }
 
   return (
     <EventLobbyView
       eventId={id}
       videoProvider={videoProvider}
+      providerFaultSimulation={providerFaultSimulation}
       tokenAccess={{ h: hostToken, p: participantToken }}
     />
   );

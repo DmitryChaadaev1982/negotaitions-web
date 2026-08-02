@@ -5,16 +5,39 @@ import { VoximplantMediaControls } from "@/components/voximplant-media-controls"
 import { VoximplantParticipantTile } from "@/components/voximplant-participant-tile";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
+  acquireVoxClientOwnership,
+  endIntentionalProviderHandoff,
+  isIntentionalProviderHandoffActive,
   registerVoxClientDisconnect,
   waitForVoxClientIdle,
+  type VoxClientOwnership,
 } from "@/lib/voximplant/browser-client-lifecycle";
 import {
+  createIdempotentRelease,
+  createProviderConnectRunner,
+  type ProviderAttemptResult,
+  type ProviderConnectRunner,
+  type ProviderConnectState,
+} from "@/lib/voximplant/provider-connect-retry";
+import {
+  VoxAccessError,
+  type VoxLifecyclePhase,
+} from "@/lib/voximplant/provider-error-classification";
+import {
+  createSyntheticProviderError,
+  resolveVoxProviderFaultPlan,
+  shouldFailAttempt,
+  type VoxProviderFaultMode,
+} from "@/lib/voximplant/provider-fault-simulation";
+import {
+  initVoxCore,
+  registerVoxSdkLogSink,
+  resetVoxSdkLogDedupe,
+} from "@/lib/voximplant/websdk-core";
+import {
   installVoxCameraErrorSuppressor,
-  installVoxRuntimeErrorSuppressor,
   isAlreadyExistsStreamError,
   isRecoverableVoxMediaError,
-  isRecoverableVoxSignallingError,
-  toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import { normalizeParticipantPresenceMedia } from "@/lib/voximplant/participant-presence-media-model";
 import {
@@ -158,6 +181,8 @@ type EventLobbyVoximplantRoomProps = {
   participantToken?: string;
   connectionId: string;
   participants: EventStateParticipant[];
+  /** E2E-only scripted transport outcome; `"off"` in every real deployment. */
+  providerFaultSimulation?: VoxProviderFaultMode;
   onStaleConnection?: () => void;
   onDeviceWarning?: (message: string | null) => void;
 };
@@ -265,10 +290,6 @@ function normalizeProviderUsername(value: string | null | undefined): string | n
   const normalized = normalizeEndpointIdentity(value);
   if (!normalized) return null;
   return normalized.includes("@") ? (normalized.split("@")[0] ?? null) : normalized;
-}
-
-function toErrorMessage(error: unknown): string {
-  return toVoxErrorMessage(error);
 }
 
 function streamToMediaStream(stream: VoxStream | null): MediaStream | null {
@@ -384,6 +405,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   participantToken,
   connectionId,
   participants,
+  providerFaultSimulation = "off",
   onStaleConnection,
   onDeviceWarning,
 }: EventLobbyVoximplantRoomProps) {
@@ -392,10 +414,14 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   const cleanupPromiseRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const droppedCauseReporterRef = useRef(createDroppedCauseReporter());
+  const clientOwnershipRef = useRef<VoxClientOwnership | null>(null);
+  const lifecyclePhaseRef = useRef<VoxLifecyclePhase>("idle");
+  const connectRunnerRef = useRef<ProviderConnectRunner | null>(null);
 
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [connectState, setConnectState] = useState<ProviderConnectState | null>(null);
   const [joined, setJoined] = useState(false);
   const [localParticipant, setLocalParticipant] = useState<VoxLobbyParticipant | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<VoxLobbyParticipant[]>([]);
@@ -408,6 +434,21 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   const speakerMeterCleanupByTrackRef = useRef(new Map<string, () => void>());
   const micUnknownTimerByParticipantRef = useRef(new Map<string, number>());
   const lastPublishedMediaStatusRef = useRef<string | null>(null);
+
+  // Owns the shared SDK log callback while the lobby is the active surface, so
+  // provider errors are classified against the lobby lifecycle rather than by a
+  // Session-room callback that outlived its route.
+  useEffect(() => {
+    return registerVoxSdkLogSink({
+      surface: "event-lobby",
+      getContext: () => ({
+        phase: lifecyclePhaseRef.current,
+        intentionalHandoff: isIntentionalProviderHandoffActive(),
+        attempt: connectRunnerRef.current?.getState().attempt,
+        maxAttempts: connectRunnerRef.current?.getState().maxAttempts,
+      }),
+    });
+  }, []);
 
   const recomputeActiveSpeaker = useCallback(() => {
     let nextSpeakerId: string | null = null;
@@ -537,11 +578,22 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           } catch {}
         }
 
-        stopVoxStreamTracks(runtime.localAudioStream);
-        stopVoxStreamTracks(runtime.localVideoStream);
-        runtime.localAudioStream?.close?.();
-        runtime.localVideoStream?.close?.();
-        await runtime.core.client.disconnect().catch(() => undefined);
+        const releaseLocalMedia = createIdempotentRelease(() => {
+          stopVoxStreamTracks(runtime.localAudioStream);
+          stopVoxStreamTracks(runtime.localVideoStream);
+          runtime.localAudioStream?.close?.();
+          runtime.localVideoStream?.close?.();
+        });
+        releaseLocalMedia();
+
+        // Local hardware is always released; the shared client is only
+        // disconnected while this surface still owns it.
+        const ownership = clientOwnershipRef.current;
+        clientOwnershipRef.current = null;
+        if (!ownership || ownership.isCurrent()) {
+          await runtime.core.client.disconnect().catch(() => undefined);
+          ownership?.release();
+        }
       })(),
     ).finally(() => {
       if (cleanupPromiseRef.current === trackedCleanup) {
@@ -556,7 +608,6 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   useEffect(() => {
     mountedRef.current = true;
     let cancelled = false;
-    const restoreRuntimeSuppressor = installVoxRuntimeErrorSuppressor();
 
     const upsertRemote = (next: VoxLobbyParticipant) => {
       setRemoteParticipants((current) => {
@@ -572,15 +623,65 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       });
     };
 
-    const join = async () => {
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    /**
+     * Scripted transport outcome used by the media-handoff E2E suite. Reached
+     * only when the server is in external-services mock mode; every other part
+     * of the lobby lifecycle stays real.
+     */
+    const runSimulatedProviderConnect = async (
+      mode: VoxProviderFaultMode,
+      attempt: number,
+    ): Promise<"connected" | "aborted"> => {
+      const plan = resolveVoxProviderFaultPlan(mode);
+      setStatus(t("events.voxLobbyConnectingVideo"));
+      if (plan.disconnectDelayMs > 0) await wait(plan.disconnectDelayMs);
+      if (plan.connectDelayMs > 0) await wait(plan.connectDelayMs);
+      if (cancelled || !mountedRef.current) return "aborted";
+
+      if (shouldFailAttempt(plan, attempt)) {
+        throw createSyntheticProviderError(mode);
+      }
+
+      setJoined(true);
+      setStatus(t("events.voxLobbyConnected"));
+      setLocalParticipant({
+        id: "local",
+        identityKey: normalizeEndpointIdentity(connectionId) ?? connectionId,
+        endpointUsername: null,
+        displayName: t("common.you"),
+        stream: null,
+        micState: "off",
+        cameraState: "off",
+        firstSeenAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      });
+      lifecyclePhaseRef.current = "connected";
+      endIntentionalProviderHandoff();
+      return "connected";
+    };
+
+    const join = async (attempt: number): Promise<"connected" | "aborted"> => {
       setError(null);
       setErrorDetails(null);
       setStatus(t("events.voxLobbyAuthorizing"));
+      lifecyclePhaseRef.current = "connecting";
+      resetVoxSdkLogDedupe();
 
       try {
         setStatus(t("events.voxLobbyWaitingForPreviousDisconnect"));
+        // Bounded: a Session teardown that never completes must degrade lobby
+        // media, not keep the lobby waiting for it.
         await waitForVoxClientIdle();
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
+
+        if (providerFaultSimulation !== "off") {
+          return await runSimulatedProviderConnect(providerFaultSimulation, attempt);
+        }
 
         setStatus(t("events.voxLobbyAuthorizing"));
         const initialResponse = await fetch(
@@ -596,16 +697,19 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             }),
           },
         );
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
         const initialPayload = (await initialResponse.json().catch(() => ({}))) as AccessPayload & {
           code?: string;
         };
         if (!initialResponse.ok) {
           if (initialResponse.status === 409 && initialPayload.code === "STALE_CONNECTION") {
             onStaleConnection?.();
-            return;
+            return "aborted";
           }
-          throw new Error(initialPayload.error ?? `Vox access failed (${initialResponse.status}).`);
+          throw new VoxAccessError(
+            initialResponse.status,
+            initialPayload.error ?? `Vox access failed (${initialResponse.status}).`,
+          );
         }
         if (
           initialPayload.provider !== "voximplant" ||
@@ -614,14 +718,14 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           throw new Error("Unexpected Vox lobby access payload.");
         }
 
-        const [{ Core, connectionToken }, conferenceModule, streamModulePackage] =
+        const [{ Core, LogLevel, connectionToken }, conferenceModule, streamModulePackage] =
           await Promise.all([
             import("@voximplant/websdk"),
             import("@voximplant/websdk/modules/conference-manager"),
             import("@voximplant/websdk/modules/stream"),
           ]);
-        if (cancelled || !mountedRef.current) return;
-        const core = Core.init({}) as unknown as VoxCore;
+        if (cancelled || !mountedRef.current) return "aborted";
+        const core = initVoxCore({ Core, LogLevel }) as VoxCore;
 
         // Must run before the conference module registers its own handleReInvite
         // subscriber. Core.init is a singleton, so whichever surface initializes
@@ -647,14 +751,18 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
 
         setStatus(t("events.voxLobbyWaitingForPreviousDisconnect"));
         await waitForVoxClientIdle();
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
 
+        // Claiming ownership immediately before connect means a Session teardown
+        // that lands after this point cannot disconnect the lobby's transport.
+        clientOwnershipRef.current = acquireVoxClientOwnership("event-lobby");
+        setStatus(t("events.voxLobbyConnectingVideo"));
         await core.client.connect({});
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
         const oneTimeKey = await core.client.requestOneTimeKey({
           username: initialPayload.user.sdkUsername,
         });
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
         const readyResponse = await fetch(
           `/api/events/${encodeURIComponent(eventId)}/voximplant-access`,
           {
@@ -669,7 +777,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             }),
           },
         );
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
         const readyPayload = (await readyResponse.json().catch(() => ({}))) as AccessPayload;
         if (!readyResponse.ok) {
           if (
@@ -677,9 +785,12 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             (readyPayload as AccessPayload & { code?: string }).code === "STALE_CONNECTION"
           ) {
             onStaleConnection?.();
-            return;
+            return "aborted";
           }
-          throw new Error(readyPayload.error ?? `Vox access failed (${readyResponse.status}).`);
+          throw new VoxAccessError(
+            readyResponse.status,
+            readyPayload.error ?? `Vox access failed (${readyResponse.status}).`,
+          );
         }
         if (
           readyPayload.provider !== "voximplant" ||
@@ -695,7 +806,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           username: readyPayload.user.sdkUsername,
           hash: readyPayload.credentials.oneTimeKeyHash,
         });
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current) return "aborted";
 
         let localAudioStream: VoxStream | null = null;
         let localVideoStream: VoxStream | null = null;
@@ -953,25 +1064,62 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         for (const endpoint of conference.endpoints.value.values()) {
           subscribeEndpoint(endpoint);
         }
+
+        lifecyclePhaseRef.current = "connected";
+        // The Session room that opened the handoff window has unmounted by now,
+        // so the lobby is what closes it.
+        endIntentionalProviderHandoff();
+        return "connected";
       } catch (joinError) {
-        const details = toErrorMessage(joinError);
-        if (isRecoverableVoxSignallingError(joinError)) {
-          console.warn("[EventLobbyVox] transient signalling failure:", details);
-        } else {
-          console.error("[EventLobbyVox] connect failed:", joinError);
-        }
-        setError(t("events.voxLobbyUnableToConnect"));
-        setErrorDetails(details);
-        setStatus(t("events.voxLobbyUnableToConnect"));
+        // Release the partially built runtime so the next attempt starts clean
+        // and never holds a second room membership or camera track.
         await cleanup();
+        throw joinError;
       }
     };
 
-    void join();
+    const attemptJoin = async ({
+      attempt,
+    }: {
+      attempt: number;
+    }): Promise<ProviderAttemptResult> => {
+      try {
+        const outcome = await join(attempt);
+        return outcome === "connected" ? { outcome: "connected" } : { outcome: "aborted" };
+      } catch (joinError) {
+        if (cancelled || !mountedRef.current) return { outcome: "aborted" };
+        return { outcome: "failed", error: joinError };
+      }
+    };
+
+    const runner = createProviderConnectRunner({
+      surface: "event-lobby",
+      attempt: attemptJoin,
+      getPhase: () => lifecyclePhaseRef.current,
+      onState: (next) => {
+        if (!mountedRef.current) return;
+        setConnectState(next);
+        if (next.status === "terminal") {
+          setError(t("events.voxLobbyUnableToConnect"));
+          setErrorDetails(next.reason);
+          setStatus(t("events.voxLobbyUnableToConnect"));
+          return;
+        }
+        if (next.status === "degraded") {
+          setError(null);
+          setStatus(t("events.voxLobbyRetryingVideo"));
+        }
+      },
+    });
+    connectRunnerRef.current = runner;
+
+    void runner.start();
     return () => {
       cancelled = true;
       mountedRef.current = false;
-      restoreRuntimeSuppressor();
+      lifecyclePhaseRef.current = "intentional_teardown";
+      runner.cancel();
+      connectRunnerRef.current = null;
       void cleanup();
     };
   }, [
@@ -980,6 +1128,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     clearUnknownMicTimer,
     detachRemoteAudioStreams,
     eventId,
+    providerFaultSimulation,
     hostToken,
     onDeviceWarning,
     onStaleConnection,
@@ -1149,15 +1298,40 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       >
         <p>{error}</p>
         {errorDetails ? <p className="text-xs text-slate-400">{errorDetails}</p> : null}
+        <button
+          type="button"
+          className="mt-1 rounded-md border border-slate-500/50 px-3 py-1 text-xs text-slate-200 hover:bg-slate-700/40"
+          data-testid="event-lobby-voximplant-retry"
+          onClick={() => {
+            setError(null);
+            setErrorDetails(null);
+            void connectRunnerRef.current?.retryNow();
+          }}
+        >
+          {t("events.voxLobbyRetryVideo")}
+        </button>
       </div>
     );
   }
+
+  const isReconnectingVideo =
+    connectState?.status === "degraded" || connectState?.status === "connecting";
 
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f172a]"
       data-testid="event-lobby-voximplant-room"
     >
+      {isReconnectingVideo && !joined ? (
+        <p
+          className="shrink-0 border-b border-slate-700/50 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-300"
+          data-testid="event-lobby-video-connecting"
+        >
+          {connectState?.status === "degraded"
+            ? t("events.voxLobbyRetryingVideo")
+            : t("events.voxLobbyConnectingVideo")}
+        </p>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-hidden p-3">
         {sortedParticipants.length === 0 ? (
           <div className="flex h-full items-center justify-center p-6 text-sm text-slate-400">{status || t("common.loading")}</div>

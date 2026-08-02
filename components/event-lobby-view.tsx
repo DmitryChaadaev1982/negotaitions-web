@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/form-styles";
 import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
+import type { VoxProviderFaultMode } from "@/lib/voximplant/provider-fault-simulation";
 import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
@@ -45,6 +46,8 @@ const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 type EventLobbyViewProps = {
   eventId: string;
   videoProvider: "livekit" | "voximplant";
+  /** E2E-only scripted transport outcome; `"off"` in every real deployment. */
+  providerFaultSimulation?: VoxProviderFaultMode;
   tokenAccess?: {
     h?: string;
     p?: string;
@@ -105,6 +108,7 @@ function preferenceLabel(
 export function EventLobbyView({
   eventId,
   videoProvider,
+  providerFaultSimulation = "off",
   tokenAccess,
 }: EventLobbyViewProps) {
   const hostAccessToken = tokenAccess?.h;
@@ -910,13 +914,16 @@ export function EventLobbyView({
                 serverUrl={liveKit.serverUrl}
                 onDeviceWarning={setDeviceWarning}
               />
-            ) : videoProvider === "voximplant" && voxReady && lobbyConnectionId ? (
+            ) : videoProvider === "voximplant" &&
+              (voxReady || providerFaultSimulation !== "off") &&
+              lobbyConnectionId ? (
               <EventLobbyVoximplantRoom
                 eventId={eventId}
                 hostToken={hostAccessToken}
                 participantToken={participantAccessToken}
                 connectionId={lobbyConnectionId}
                 participants={state.participants}
+                providerFaultSimulation={providerFaultSimulation}
                 onStaleConnection={activateStaleConnection}
                 onDeviceWarning={setDeviceWarning}
               />

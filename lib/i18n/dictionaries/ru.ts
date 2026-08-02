@@ -1284,6 +1284,9 @@ export const ru: Dictionary = {
     voxLobbyConnected: "Подключено",
     voxLobbyDisconnected: "Отключено: {reason}",
     voxLobbyUnableToConnect: "Не удалось подключиться к Vox-лобби.",
+    voxLobbyConnectingVideo: "Подключение видео…",
+    voxLobbyRetryingVideo: "Видео подключается дольше обычного, повтор…",
+    voxLobbyRetryVideo: "Повторить подключение видео",
     lobbyTakeoverDisconnected:
       "Вы вошли в это лобби в другой вкладке или на другом устройстве. Эта вкладка отключена.",
     reconnectLobby: "Переподключиться",

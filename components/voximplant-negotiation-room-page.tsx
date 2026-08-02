@@ -54,6 +54,7 @@ import {
   type ExplicitLeaveFailure,
 } from "@/lib/client/explicit-room-leave";
 import { runExplicitLeaveSequence } from "@/lib/client/explicit-room-leave-sequence";
+import { beginIntentionalProviderHandoff } from "@/lib/voximplant/browser-client-lifecycle";
 import {
   getRoomClosureRedirectFromConflict,
   isStaleConnectionResponse,
@@ -896,6 +897,10 @@ export default function VoximplantNegotiationRoomPage(
     intentionalLeaveRef.current = true;
     setIsExplicitLeavePending(true);
     setLeaveError(null);
+    // Opens the window in which provider transport errors are expected teardown
+    // noise rather than faults. Bounded by TTL and closed by the lobby once its
+    // own media connects, because this page unmounts during the navigation.
+    const endProviderHandoff = beginIntentionalProviderHandoff();
     try {
       const shouldAttemptRelayBeforeLeave =
         Boolean(recordingStopRelayHint) &&
@@ -946,6 +951,8 @@ export default function VoximplantNegotiationRoomPage(
           intentionalLeaveRef.current = false;
           activateStaleConnection();
         }
+        // Navigation did not happen, so this page keeps owning the provider.
+        endProviderHandoff();
         setLeaveError(leaveFailureMessage(sequence.leave));
         return;
       }
@@ -957,6 +964,7 @@ export default function VoximplantNegotiationRoomPage(
       }
     } catch (error) {
       intentionalLeaveRef.current = false;
+      endProviderHandoff();
       setLeaveError(t("room.unableToPersistLeave"));
       console.warn("[room-leave] unexpected explicit leave error", error);
     } finally {

@@ -10,8 +10,11 @@ import {
   isDuplicateVideoStreamError,
 } from "@/lib/voximplant/camera-toggle-logic";
 import {
+  acquireVoxClientOwnership,
+  isIntentionalProviderHandoffActive,
   registerVoxClientDisconnect,
   waitForVoxClientIdle,
+  type VoxClientOwnership,
 } from "@/lib/voximplant/browser-client-lifecycle";
 import { AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER } from "@/lib/telemetry/speaking-activity-config";
 import { clearRemoteAudioElements, stopVoxLikeStreamTracks } from "@/lib/voximplant/media-cleanup";
@@ -21,7 +24,12 @@ import {
   isRecoverableVoxMediaError,
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
-import { createWebSdkLogFilterAdapter } from "@/lib/voximplant/websdk-log-filter";
+import {
+  initVoxCore,
+  registerVoxSdkLogSink,
+  resetVoxSdkLogDedupe,
+} from "@/lib/voximplant/websdk-core";
+import type { VoxLifecyclePhase } from "@/lib/voximplant/provider-error-classification";
 import {
   createDroppedCauseReporter,
   installVoxReInviteSchemeSanitizer,
@@ -572,12 +580,8 @@ export function useVoximplantRoom({
   const staleNotifiedRef = useRef(false);
   const sdkUsernameRef = useRef<string | null>(null);
   const takeoverChannelRef = useRef<BroadcastChannel | null>(null);
-  const webSdkLogFilterRef = useRef(
-    createWebSdkLogFilterAdapter({
-      emitWarn: (message) => console.warn(message),
-      emitError: (...args) => console.error(...args),
-    }),
-  );
+  const clientOwnershipRef = useRef<VoxClientOwnership | null>(null);
+  const lifecyclePhaseRef = useRef<VoxLifecyclePhase>("idle");
   const droppedCauseReporterRef = useRef(createDroppedCauseReporter());
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
@@ -585,6 +589,7 @@ export function useVoximplantRoom({
 
   const invalidateGeneration = useCallback((reason: VoxLifecycleAbortReason) => {
     generationRef.current += 1;
+    lifecyclePhaseRef.current = "intentional_teardown";
     if (reason === "stale_connection") {
       staleLifecycleRef.current = true;
     }
@@ -596,9 +601,22 @@ export function useVoximplantRoom({
   const beginJoinGeneration = useCallback(() => {
     staleLifecycleRef.current = false;
     staleNotifiedRef.current = false;
-    webSdkLogFilterRef.current.reset();
+    lifecyclePhaseRef.current = "connecting";
+    resetVoxSdkLogDedupe();
     generationRef.current += 1;
     return generationRef.current;
+  }, []);
+
+  // Owns the shared SDK log callback while this room is the active surface.
+  // Released on unmount, but only if the Event lobby has not already taken over.
+  useEffect(() => {
+    return registerVoxSdkLogSink({
+      surface: "session-room",
+      getContext: () => ({
+        phase: lifecyclePhaseRef.current,
+        intentionalHandoff: isIntentionalProviderHandoffActive(),
+      }),
+    });
   }, []);
 
   const assertGenerationCurrent = useCallback(
@@ -1074,7 +1092,15 @@ export function useVoximplantRoom({
         runtimeSnapshot.localAudioStream = null;
         runtimeSnapshot.localVideoStream = null;
 
-        await runtimeSnapshot.core.client.disconnect().catch(() => undefined);
+        // Only disconnect the shared client while this surface still owns it.
+        // A late Session teardown must not drop the transport the Event lobby
+        // has already connected on the same singleton client.
+        const ownership = clientOwnershipRef.current;
+        clientOwnershipRef.current = null;
+        if (!ownership || ownership.isCurrent()) {
+          await runtimeSnapshot.core.client.disconnect().catch(() => undefined);
+          ownership?.release();
+        }
         clearStateAfterCleanup();
         if (!options?.preserveStatus && mountedRef.current) {
           setStatus("Отключено.");
@@ -1510,19 +1536,7 @@ export function useVoximplantRoom({
           ]);
         assertGenerationCurrent(joinGeneration);
 
-        const core = Core.init({
-          logger: {
-            enableConsoleLogger: false,
-            callbackLogLevel: LogLevel.Error,
-            onLogCallback: (props) => {
-              webSdkLogFilterRef.current.onLog({
-                fullMessage: props.fullMessage,
-                message: props.message,
-                extraData: props.extraData,
-              });
-            },
-          },
-        }) as unknown as VoxCore;
+        const core = initVoxCore({ Core, LogLevel }) as VoxCore;
 
         // Must run before the conference module registers its own handleReInvite
         // subscriber, so unresolvable conf-info causes are removed from the shared
@@ -1552,6 +1566,7 @@ export function useVoximplantRoom({
 
         // Step 3 — connect and authenticate.
         setStatus("Подключение к Voximplant...");
+        clientOwnershipRef.current = acquireVoxClientOwnership("session-room");
         await core.client.connect({});
         assertGenerationCurrent(joinGeneration);
 
@@ -1703,6 +1718,7 @@ export function useVoximplantRoom({
         const onConnected = () => {
           runtimeState.conferenceConnected = true;
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
+          lifecyclePhaseRef.current = "connected";
           setJoined(true);
           setStatus("Подключено к переговорной комнате.");
         };
