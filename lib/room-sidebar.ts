@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { summarizeLogicalPresenceByUser } from "@/lib/session-room-logical-presence";
 import { sessionRoleBriefingSelect } from "@/lib/session-role";
 import { getSessionMediaStatusMap } from "@/lib/voximplant/media-status-store";
+import { isMediaStatusCurrentForConnection } from "@/lib/voximplant/reconnect-media-state";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 
 export type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -177,44 +178,49 @@ async function buildRoomSidebarData(
     })),
   });
 
-  const roster = participant.session.participants.map((sessionParticipant) => ({
-    ...(sessionParticipant.userId
-      ? (() => {
-          const logicalPresence = logicalPresenceByUserId.get(sessionParticipant.userId) ?? null;
-          if (!logicalPresence) {
-            return {};
-          }
-          return {
+  const roster = participant.session.participants.map((sessionParticipant) => {
+    const logicalPresence = sessionParticipant.userId
+      ? (logicalPresenceByUserId.get(sessionParticipant.userId) ?? null)
+      : null;
+    const activeConnectionId = logicalPresence?.activeConnectionId ?? null;
+    const mediaStatus = mediaStatusByParticipantId[sessionParticipant.id] ?? null;
+    const mediaStatusBelongsToActiveConnection = isMediaStatusCurrentForConnection(
+      mediaStatus,
+      activeConnectionId,
+    );
+
+    return {
+      ...(logicalPresence
+        ? {
             isLogicallyPresent: logicalPresence.isActive,
             logicalDisconnectReason: logicalPresence.inactiveReason,
             logicalConnectionId: logicalPresence.activeConnectionId,
-          };
-        })()
-      : {}),
-    ...(mediaStatusByParticipantId[sessionParticipant.id]
-      ? {
-          micEnabled: mediaStatusByParticipantId[sessionParticipant.id]?.micEnabled ?? null,
-          cameraEnabled: mediaStatusByParticipantId[sessionParticipant.id]?.cameraEnabled ?? null,
-          mediaStatusUpdatedAt:
-            mediaStatusByParticipantId[sessionParticipant.id]?.updatedAt ?? null,
-        }
-      : {}),
-    id: sessionParticipant.id,
-    displayName: sessionParticipant.displayName,
-    participantType: sessionParticipant.type,
-    caseRoleName: sessionParticipant.sessionRole?.name ?? null,
-    userId: sessionParticipant.userId ?? null,
-    voximplantProviderUsername: sessionParticipant.userId
-      ? (voximplantUsernameByUserId.get(sessionParticipant.userId) ?? null)
-      : null,
-    joinedAt: sessionParticipant.joinedAt?.toISOString() ?? null,
-    lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
-    // Phase 6.11B: expose sessionRoleId only; no private briefing data.
-    sessionRoleId:
-      sessionParticipant.type === ParticipantType.PARTICIPANT
-        ? (sessionParticipant.sessionRoleId ?? null)
-        : undefined,
-  }));
+          }
+        : {}),
+      ...(mediaStatusBelongsToActiveConnection
+        ? {
+            micEnabled: mediaStatus?.micEnabled ?? null,
+            cameraEnabled: mediaStatus?.cameraEnabled ?? null,
+            mediaStatusUpdatedAt: mediaStatus?.updatedAt ?? null,
+          }
+        : {}),
+      id: sessionParticipant.id,
+      displayName: sessionParticipant.displayName,
+      participantType: sessionParticipant.type,
+      caseRoleName: sessionParticipant.sessionRole?.name ?? null,
+      userId: sessionParticipant.userId ?? null,
+      voximplantProviderUsername: sessionParticipant.userId
+        ? (voximplantUsernameByUserId.get(sessionParticipant.userId) ?? null)
+        : null,
+      joinedAt: sessionParticipant.joinedAt?.toISOString() ?? null,
+      lastSeenAt: sessionParticipant.lastSeenAt?.toISOString() ?? null,
+      // Phase 6.11B: expose sessionRoleId only; no private briefing data.
+      sessionRoleId:
+        sessionParticipant.type === ParticipantType.PARTICIPANT
+          ? (sessionParticipant.sessionRoleId ?? null)
+          : undefined,
+    };
+  });
 
   // Phase 6.11B: for facilitators, include assignable session roles for role management panel.
   const sessionRolesForFacilitator =

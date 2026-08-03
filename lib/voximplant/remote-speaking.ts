@@ -98,7 +98,28 @@ export function createAudioLevelMeter(
 export type RemoteSpeakingInput = {
   id: string;
   stream: MediaStream | null;
+  microphoneEnabled?: boolean;
+  generation?: string | number | null;
 };
+
+export function shouldAttachRemoteSpeakingMeter(participant: RemoteSpeakingInput): boolean {
+  if (participant.microphoneEnabled === false) return false;
+  const tracks = participant.stream?.getAudioTracks() ?? [];
+  return tracks.some((track) => track.enabled);
+}
+
+export function shouldAcceptRemoteSpeakingLevel(input: {
+  currentGeneration: string | number | null | undefined;
+  updateGeneration: string | number | null | undefined;
+  microphoneEnabled: boolean;
+  level: number;
+}): boolean {
+  return (
+    input.microphoneEnabled &&
+    input.currentGeneration === input.updateGeneration &&
+    Number.isFinite(input.level)
+  );
+}
 
 /**
  * Track speaking state for a set of remote participants.
@@ -113,7 +134,15 @@ export function useRemoteSpeaking(
 ): Record<string, boolean> {
   const [speakingById, setSpeakingById] = useState<Record<string, boolean>>({});
   const metersRef = useRef(
-    new Map<string, { stream: MediaStream; cleanup: () => void }>(),
+    new Map<
+      string,
+      {
+        stream: MediaStream;
+        generation: string | number | null;
+        microphoneEnabled: boolean;
+        cleanup: () => void;
+      }
+    >(),
   );
 
   useEffect(() => {
@@ -125,15 +154,22 @@ export function useRemoteSpeaking(
 
     // Tear down meters that are gone or whose stream changed.
     for (const [id, meter] of [...meters]) {
+      const participant = participants.find((item) => item.id === id);
       const stream = wanted.get(id);
-      if (!wanted.has(id) || stream !== meter.stream) {
+      const generation = participant?.generation ?? null;
+      const microphoneEnabled = participant?.microphoneEnabled !== false;
+      if (
+        !wanted.has(id) ||
+        stream !== meter.stream ||
+        generation !== meter.generation ||
+        microphoneEnabled !== meter.microphoneEnabled ||
+        !shouldAttachRemoteSpeakingMeter(participant ?? { id, stream: stream ?? null })
+      ) {
         meter.cleanup();
         meters.delete(id);
         setSpeakingById((prev) => {
-          if (!(id in prev)) return prev;
-          const next = { ...prev };
-          delete next[id];
-          return next;
+          if (prev[id] === false) return prev;
+          return { ...prev, [id]: false };
         });
       }
     }
@@ -143,10 +179,31 @@ export function useRemoteSpeaking(
       const stream = participant.stream;
       if (!stream) continue;
       const existing = meters.get(participant.id);
-      if (existing && existing.stream === stream) continue;
-      if (stream.getAudioTracks().length === 0) continue;
+      const generation = participant.generation ?? null;
+      const microphoneEnabled = participant.microphoneEnabled !== false;
+      if (
+        existing &&
+        existing.stream === stream &&
+        existing.generation === generation &&
+        existing.microphoneEnabled === microphoneEnabled
+      ) {
+        continue;
+      }
+      if (!shouldAttachRemoteSpeakingMeter(participant)) continue;
 
       const cleanup = createAudioLevelMeter(stream, (level) => {
+        const currentMeter = metersRef.current.get(participant.id);
+        if (
+          currentMeter?.stream !== stream ||
+          !shouldAcceptRemoteSpeakingLevel({
+            currentGeneration: currentMeter?.generation,
+            updateGeneration: generation,
+            microphoneEnabled: currentMeter?.microphoneEnabled === true,
+            level,
+          })
+        ) {
+          return;
+        }
         setSpeakingById((prev) => {
           const current = prev[participant.id] ?? false;
           if (level > SPEAKING_LEVEL_THRESHOLD && !current) {
@@ -158,7 +215,7 @@ export function useRemoteSpeaking(
           return prev;
         });
       });
-      meters.set(participant.id, { stream, cleanup });
+      meters.set(participant.id, { stream, generation, microphoneEnabled, cleanup });
     }
   }, [participants]);
 

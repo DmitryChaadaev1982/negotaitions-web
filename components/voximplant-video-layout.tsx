@@ -14,7 +14,10 @@ import {
   shouldRenderObserverRailTile,
 } from "@/lib/voximplant/room-layout-model";
 import {
+  buildParticipantReconnectMediaState,
+  canShowSpeakingHighlight,
   normalizeParticipantPresenceMedia,
+  type ParticipantReconnectMediaState,
   type ParticipantPresenceMediaModel,
 } from "@/lib/voximplant/participant-presence-media-model";
 import type { RoomAuthToken } from "@/lib/room-auth";
@@ -43,6 +46,7 @@ type ResolvedRosterTile = {
   matchedRemoteId: string | null;
   zone: "facilitator" | "participant_a" | "participant_b" | "observer" | "unknown";
   mediaModel: ParticipantPresenceMediaModel;
+  reconnectMediaState: ParticipantReconnectMediaState;
   isLocal: boolean;
 };
 
@@ -80,11 +84,22 @@ function RoleSection({
   );
 }
 
-export function buildRemoteSpeakingInput(remoteParticipants: VoxTileParticipant[]) {
+type RemoteSpeakingParticipantInput = VoxTileParticipant & {
+  microphoneEnabled?: boolean;
+  generation?: string | number | null;
+};
+
+export function buildRemoteSpeakingInput(remoteParticipants: RemoteSpeakingParticipantInput[]) {
   return remoteParticipants.map((participant) => ({
     id: participant.id,
     stream: participant.audioStream ?? participant.stream,
+    microphoneEnabled: participant.microphoneEnabled,
+    generation: participant.generation,
   }));
+}
+
+function getMediaStreamId(stream: MediaStream | null | undefined): string | null {
+  return typeof stream?.id === "string" ? stream.id : null;
 }
 
 export default function VoximplantVideoLayout({
@@ -130,15 +145,10 @@ export default function VoximplantVideoLayout({
 }) {
   const { t } = useI18n();
   const isSpeaking =
-    !isMicMuted && micLevel !== undefined && micLevel > REMOTE_SPEAKING_LEVEL_THRESHOLD;
-
-  // Bug 1 fix: derive real speaking state for remote participants from their
-  // audio streams. Memoized so meters are not rebuilt on local mic-level ticks.
-  const remoteSpeakingInput = useMemo(
-    () => buildRemoteSpeakingInput(remoteParticipants),
-    [remoteParticipants],
-  );
-  const remoteSpeakingById = useRemoteSpeaking(remoteSpeakingInput);
+    !isMicMuted &&
+    !localMicSystemMuted &&
+    micLevel !== undefined &&
+    micLevel > REMOTE_SPEAKING_LEVEL_THRESHOLD;
 
   const remoteByVoxUsername = useMemo(() => {
     const map = new Map<string, VoxTileParticipant>();
@@ -243,12 +253,32 @@ export default function VoximplantVideoLayout({
               ? "on"
               : "off",
       });
+      const reconnectMediaState = buildParticipantReconnectMediaState({
+        userId: entry.userId,
+        role: entry.participantType,
+        connectionGeneration: entry.logicalConnectionId ?? null,
+        providerEndpointId: matchedRemote?.id ?? null,
+        streamId: getMediaStreamId(participant.audioStream ?? participant.stream),
+        audioStream: isLocal
+          ? participant.audioStream
+          : (participant.audioStream ?? participant.stream),
+        microphoneEnabled:
+          mediaModel.connectionStatus === "connected" && mediaModel.micStatus !== "unknown"
+            ? mediaModel.micStatus === "on"
+            : null,
+        cameraEnabled:
+          mediaModel.connectionStatus === "connected" && mediaModel.cameraStatus !== "unknown"
+            ? mediaModel.cameraStatus === "on"
+            : null,
+        lastMediaUpdateAt: entry.mediaStatusUpdatedAt ?? null,
+      });
       return {
         rosterEntry: entry,
         participant,
         matchedRemoteId: matchedRemote?.id ?? null,
         zone: visual.zone,
         mediaModel,
+        reconnectMediaState,
         isLocal,
       };
     });
@@ -267,6 +297,27 @@ export default function VoximplantVideoLayout({
 
   const activeTiles = resolvedRosterTiles.filter((tile) => tile.mediaModel.shouldRenderActiveTile);
   const facilitatorTiles = activeTiles.filter((tile) => tile.zone === "facilitator");
+  // Speaking meters are bound after roster/provider merge so they inherit the
+  // same reconnect-generation and mic-state contract as the rendered tiles.
+  const remoteSpeakingInput = useMemo(
+    () =>
+      resolvedRosterTiles
+        .filter((tile) => !tile.isLocal)
+        .map((tile) => ({
+          id: tile.participant.id,
+          stream: tile.participant.audioStream ?? tile.participant.stream,
+          microphoneEnabled: tile.reconnectMediaState.microphoneEnabled === true,
+          generation: [
+            tile.rosterEntry.id,
+            tile.reconnectMediaState.connectionGeneration ?? "unknown-connection",
+            tile.reconnectMediaState.providerEndpointId ?? "unknown-endpoint",
+            tile.reconnectMediaState.streamId ?? "unknown-stream",
+            tile.reconnectMediaState.lastMediaUpdateAt ?? "unknown-media-time",
+          ].join(":"),
+        })),
+    [resolvedRosterTiles],
+  );
+  const remoteSpeakingById = useRemoteSpeaking(remoteSpeakingInput);
   const observerTiles = useMemo(() => {
     // Stable roster order is the visual order. Camera, microphone, connection,
     // and speaking state are represented within each tile without reordering.
@@ -423,13 +474,17 @@ export default function VoximplantVideoLayout({
         ? t("room.notConnected")
         : tile.mediaModel.micStatus === "on"
           ? t("room.mediaMicOn")
-          : t("room.mediaMicOff");
+          : tile.mediaModel.micStatus === "off"
+            ? t("room.mediaMicOff")
+            : t("room.unknownMicState");
     const cameraLabel =
       tile.mediaModel.connectionStatus !== "connected"
         ? t("room.notConnected")
         : tile.mediaModel.cameraStatus === "on"
           ? t("room.mediaCameraOn")
-          : t("room.mediaCameraOff");
+          : tile.mediaModel.cameraStatus === "off"
+            ? t("room.mediaCameraOff")
+            : t("room.mediaCameraOff");
     const connectionLabel =
       tile.mediaModel.connectionStatus === "connected"
         ? t("room.presenceOnline")
@@ -472,11 +527,13 @@ export default function VoximplantVideoLayout({
           cameraLabel={cameraLabel}
           micLevel={tile.isLocal ? micLevel : undefined}
           isSpeaking={
-            tile.isLocal
-              ? isSpeaking
-              : // Remote tile: highlight when the matched remote endpoint is
-                // producing audio. Muted/disconnected remotes report ~0 level.
-                (remoteSpeakingById[tile.participant.id] ?? false)
+            canShowSpeakingHighlight({
+              connectionStatus: tile.mediaModel.connectionStatus,
+              micStatus: tile.mediaModel.micStatus,
+              isSpeaking: tile.isLocal
+                ? isSpeaking
+                : (remoteSpeakingById[tile.participant.id] ?? false),
+            })
           }
         />
       </div>

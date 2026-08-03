@@ -61,14 +61,15 @@ export function VoximplantParticipantTile({
   return (
     <div
       className={`relative box-border min-w-0 overflow-hidden rounded-xl border bg-slate-900 transition-all duration-150 ${
-        isSpeaking
-          ? "border-green-400 shadow-[0_0_0_2px_rgba(74,222,128,0.4)]"
-          : connectionStatus !== "connected"
-            ? "border-slate-600/70"
-            : micStatus === "on"
-              ? "border-emerald-600/80"
-              : micStatus === "off"
-                ? "border-rose-700/70"
+        // Visual precedence: stale/disconnected, muted, speaking, connected/default.
+        connectionStatus !== "connected"
+          ? "border-slate-600/70"
+          : micStatus === "off"
+            ? "border-rose-700/70"
+            : micStatus === "on" && isSpeaking
+              ? "border-green-400 shadow-[0_0_0_2px_rgba(74,222,128,0.4)]"
+              : micStatus === "on"
+                ? "border-emerald-600/80"
                 : "border-slate-600/70"
       } ${className ?? ""}`}
     >
