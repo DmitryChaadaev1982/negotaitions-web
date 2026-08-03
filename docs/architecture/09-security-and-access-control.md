@@ -15,8 +15,14 @@
   with `resolveEventAccess(...).isEventOwner`. A participant/observer/facilitator
   who is not the Event owner can control only their own local media.
 - Remote media commands verify that the target belongs to the current Event and
-  is online according to the server Event-state model. Target clients can only
-  acknowledge commands addressed to their own current Event participant.
+  is actively in the Event lobby according to the server Event-state model.
+  Generic online presence is not sufficient: targets in a Session, temporarily
+  away, offline, invited-never-connected, or unknown-location states are rejected
+  with a controlled non-actionable response.
+- Pending Event lobby media commands are invalidated when the target leaves the
+  lobby surface. Target clients can only acknowledge commands addressed to their
+  own current Event participant, and command delivery is filtered to lobby
+  presence.
 
 ## Tokenized Runtime Paths
 

@@ -350,6 +350,125 @@ test("owner media-control API authorizes commands and rejects invalid targets", 
     },
   });
   expect(ack.ok()).toBeTruthy();
+
+  const ownerEnableRequest = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantAId,
+      device: "camera",
+      action: "enable_request",
+    },
+  });
+  expect(ownerEnableRequest.ok()).toBeTruthy();
+  const ownerEnablePayload = (await ownerEnableRequest.json()) as {
+    command: { id: string; targetParticipantId: string; action: string };
+  };
+
+  await query(
+    `UPDATE "EventParticipant" SET "lastSeenAt"=NOW() - INTERVAL '1 minute' WHERE "id"=$1`,
+    [fixture.eventParticipantAId],
+  );
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id","sessionId","userId","connectionId","role","expiresAt","createdAt","updatedAt")
+     VALUES ($1,$2,$3,$4,'PARTICIPANT',NOW() + INTERVAL '2 minutes',NOW(),NOW())`,
+    [
+      e2eId("stage-312b-w1c-media-active-session"),
+      fixture.sessionId,
+      fixture.participantAUserId,
+      e2eId("stage-312b-w1c-media-active-session-conn"),
+    ],
+  );
+
+  const inSessionAttempt = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantAId,
+      device: "mic",
+      action: "disable",
+    },
+  });
+  expect(inSessionAttempt.status()).toBe(409);
+  const inSessionAttemptBody = (await inSessionAttempt.json()) as { code?: string };
+  expect(inSessionAttemptBody.code).toBe("TARGET_NOT_IN_LOBBY");
+
+  const inSessionState = await request.get(
+    `/api/events/${fixture.eventId}/state?connectionId=media-control-a-session&claimLease=1`,
+    { headers: { Cookie: `auth_session=${participantAToken}` } },
+  );
+  expect(inSessionState.ok()).toBeTruthy();
+  const inSessionPayload = (await inSessionState.json()) as {
+    participants: Array<{ id: string; eventPresenceStatus: string }>;
+    mediaControlCommands: Array<{ id: string; action: string }>;
+  };
+  expect(
+    inSessionPayload.participants.find(
+      (participant) => participant.id === fixture.eventParticipantAId,
+    )?.eventPresenceStatus,
+  ).toBe("IN_SESSION");
+  expect(inSessionPayload.mediaControlCommands).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: ownerEnablePayload.command.id }),
+    ]),
+  );
+
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "disconnectedAt"=NOW(),"disconnectedReason"='EXPLICIT_LEAVE',"updatedAt"=NOW()
+     WHERE "userId"=$1 AND "sessionId"=$2`,
+    [fixture.participantAUserId, fixture.sessionId],
+  );
+  const awayState = await request.get(
+    `/api/events/${fixture.eventId}/state?connectionId=media-control-owner-away&claimLease=1`,
+    { headers: { Cookie: `auth_session=${ownerToken}` } },
+  );
+  expect(awayState.ok()).toBeTruthy();
+  const awayPayload = (await awayState.json()) as {
+    participants: Array<{ id: string; eventPresenceStatus: string }>;
+  };
+  expect(
+    awayPayload.participants.find(
+      (participant) => participant.id === fixture.eventParticipantAId,
+    )?.eventPresenceStatus,
+  ).toBe("TEMPORARILY_AWAY");
+
+  const awayAttempt = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantAId,
+      device: "camera",
+      action: "disable",
+    },
+  });
+  expect(awayAttempt.status()).toBe(409);
+
+  await query(
+    `UPDATE "SessionRoomConnection"
+     SET "disconnectedAt"=NOW() - INTERVAL '3 minutes',
+         "expiresAt"=NOW() - INTERVAL '3 minutes',
+         "updatedAt"=NOW()
+     WHERE "userId"=$1 AND "sessionId"=$2`,
+    [fixture.participantAUserId, fixture.sessionId],
+  );
+  await query(
+    `UPDATE "EventParticipant"
+     SET "lastSeenAt"=NOW() - INTERVAL '3 minutes'
+     WHERE "id"=$1`,
+    [fixture.eventParticipantAId],
+  );
+  const expiredState = await request.get(
+    `/api/events/${fixture.eventId}/state?connectionId=media-control-owner-expired&claimLease=1`,
+    { headers: { Cookie: `auth_session=${ownerToken}` } },
+  );
+  expect(expiredState.ok()).toBeTruthy();
+  const expiredPayload = (await expiredState.json()) as {
+    participants: Array<{ id: string; eventPresenceStatus: string }>;
+  };
+  expect(
+    expiredPayload.participants.find(
+      (participant) => participant.id === fixture.eventParticipantAId,
+    )?.eventPresenceStatus,
+  ).toBe("OFFLINE");
 });
 
 test("completed sessions are grouped in a collapsible management section", async ({ page }) => {

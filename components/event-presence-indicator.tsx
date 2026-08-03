@@ -3,10 +3,11 @@
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type EventPresenceStatus =
-  | "INVITED_NEVER_CONNECTED"
-  | "ONLINE"
-  | "RECENTLY_DISCONNECTED"
-  | "OFFLINE";
+  | "IN_LOBBY"
+  | "IN_SESSION"
+  | "TEMPORARILY_AWAY"
+  | "OFFLINE"
+  | "INVITED_NOT_CONNECTED";
 
 type EventPresenceIndicatorProps = {
   status: EventPresenceStatus;
@@ -14,21 +15,28 @@ type EventPresenceIndicatorProps = {
 };
 
 function statusTone(status: EventPresenceStatus) {
-  if (status === "ONLINE") {
+  if (status === "IN_LOBBY") {
     return {
       dot: "bg-emerald-400",
       text: "text-emerald-300",
-      labelKey: "events.presenceOnline" as const,
+      labelKey: "events.presenceInLobby" as const,
     };
   }
-  if (status === "RECENTLY_DISCONNECTED") {
+  if (status === "IN_SESSION") {
+    return {
+      dot: "bg-cyan-400",
+      text: "text-cyan-300",
+      labelKey: "events.presenceInSession" as const,
+    };
+  }
+  if (status === "TEMPORARILY_AWAY") {
     return {
       dot: "bg-amber-400",
       text: "text-amber-300",
-      labelKey: "events.presenceRecentlyDisconnected" as const,
+      labelKey: "events.presenceTemporarilyAway" as const,
     };
   }
-  if (status === "INVITED_NEVER_CONNECTED") {
+  if (status === "INVITED_NOT_CONNECTED") {
     return {
       dot: "bg-slate-400",
       text: "text-slate-300",

@@ -88,6 +88,13 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Delivery reuses the existing Event-state polling payload. The target client
   executes only commands addressed to its current Event participant and then
   acknowledges the command through the same API.
+- Event lobby media commands are actionable only while the target participant's
+  authoritative Event presence state is `IN_LOBBY`. `IN_SESSION`,
+  `TEMPORARILY_AWAY`, `OFFLINE`, `INVITED_NOT_CONNECTED`, and unknown locations
+  are neutral, non-actionable states for lobby controls.
+- Event-state invalidates pending lobby media commands when a target leaves the
+  lobby surface, including entering a Session or becoming temporarily away, so a
+  stale enable request cannot later apply to Session media.
 - Remote disable is idempotent. Remote enable is a participant confirmation
   request; the target's local browser action is the only code path that can
   enable camera or microphone.

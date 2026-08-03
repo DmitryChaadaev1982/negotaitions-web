@@ -71,13 +71,26 @@ lifetime; it must not reuse the short debrief grace.
 
 ## Event Presence DTO
 
-- Event participant presence is derived event-wide (lobby + canonical room connections), not lobby-only.
+- Event participant presence is derived event-wide from lobby heartbeat evidence
+  plus canonical `SessionRoomConnection` rows, including terminal
+  `disconnectedAt`, `supersededAt`, `revokedAt`, and expired `expiresAt`
+  timestamps.
 - Canonical statuses:
-  - `INVITED_NEVER_CONNECTED`
-  - `ONLINE`
-  - `RECENTLY_DISCONNECTED`
+  - `IN_LOBBY`
+  - `IN_SESSION`
+  - `TEMPORARILY_AWAY`
   - `OFFLINE`
-- UI traffic-light presentation maps directly to this DTO and must not be used as a lease/access authority.
+  - `INVITED_NOT_CONNECTED`
+- Resolver precedence is active lobby, active Session, recent terminal
+  Event/Session evidence, offline history, then invited-never-connected. If
+  lobby and Session evidence overlap briefly, the newest active surface wins so
+  the UI never displays two active locations.
+- `TEMPORARILY_AWAY` uses the existing
+  `PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS` grace window and is emitted on
+  the next Event-state refresh after active presence is lost; it does not wait
+  for the grace window to expire.
+- UI traffic-light presentation maps directly to this DTO and must not be used
+  as a lease/access authority.
 
 ## Stale-Tab Completion Redirect
 

@@ -8,10 +8,11 @@ import { useI18n } from "@/lib/i18n/useI18n";
 
 type CompactParticipantType = "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | string;
 type EventPresenceStatus =
-  | "INVITED_NEVER_CONNECTED"
-  | "ONLINE"
-  | "RECENTLY_DISCONNECTED"
-  | "OFFLINE";
+  | "IN_LOBBY"
+  | "IN_SESSION"
+  | "TEMPORARILY_AWAY"
+  | "OFFLINE"
+  | "INVITED_NOT_CONNECTED";
 
 type CompactPersonStatusProps = {
   displayName: string;
@@ -82,26 +83,40 @@ export function CompactPersonStatus({
   const roleParts = [caseRoleName, slotLabel, participantTypeText].filter(
     (part): part is string => Boolean(part),
   );
-  const isOffline =
-    presenceStatus === "OFFLINE" ||
-    presenceStatus === "RECENTLY_DISCONNECTED" ||
-    presenceStatus === "INVITED_NEVER_CONNECTED";
+  const isLobbyActionable = presenceStatus === "IN_LOBBY";
+  const isUnavailable = presenceStatus != null && !isLobbyActionable;
+  const cameraUnavailableLabel =
+    presenceStatus === "IN_SESSION"
+      ? t("events.cameraUnavailableInSession")
+      : presenceStatus === "TEMPORARILY_AWAY"
+        ? t("events.cameraUnavailableTemporarilyAway")
+        : presenceStatus === "INVITED_NOT_CONNECTED"
+          ? t("events.cameraUnavailableInvitedNeverConnected")
+          : t("events.cameraUnavailableOffline");
+  const microphoneUnavailableLabel =
+    presenceStatus === "IN_SESSION"
+      ? t("events.microphoneUnavailableInSession")
+      : presenceStatus === "TEMPORARILY_AWAY"
+        ? t("events.microphoneUnavailableTemporarilyAway")
+        : presenceStatus === "INVITED_NOT_CONNECTED"
+          ? t("events.microphoneUnavailableInvitedNeverConnected")
+          : t("events.microphoneUnavailableOffline");
   const cameraLabel =
-    cameraEnabled == null
-      ? null
-      : isOffline
-        ? t("events.cameraUnavailableOffline")
+    isUnavailable
+      ? cameraUnavailableLabel
+      : cameraEnabled == null
+        ? mediaControls?.camera?.label ?? null
         : cameraEnabled
-        ? t("events.cameraOn")
-        : t("events.cameraOff");
+          ? t("events.cameraOn")
+          : t("events.cameraOff");
   const micLabel =
-    micEnabled == null
-      ? null
-      : isOffline
-        ? t("events.microphoneUnavailableOffline")
+    isUnavailable
+      ? microphoneUnavailableLabel
+      : micEnabled == null
+        ? mediaControls?.mic?.label ?? null
         : micEnabled
-        ? t("events.microphoneOn")
-        : t("events.microphoneMuted");
+          ? t("events.microphoneOn")
+          : t("events.microphoneMuted");
   const accessibleLabel = [
     displayName,
     ...roleParts,
@@ -152,29 +167,29 @@ export function CompactPersonStatus({
         {cameraLabel ? (
           <MediaStatusIconBadge
             kind="camera"
-            status={isOffline ? "unknown" : cameraEnabled ? "on" : "off"}
-            connectionStatus={isOffline ? "disconnected" : "connected"}
+            status={isUnavailable ? "unknown" : cameraEnabled ? "on" : "off"}
+            connectionStatus={isUnavailable ? "disconnected" : "connected"}
             label={mediaControls?.camera?.label ?? cameraLabel}
             className="h-5 w-5"
             testId="compact-person-camera-status-icon"
-            onClick={isOffline ? undefined : mediaControls?.camera?.onClick}
+            onClick={isUnavailable ? undefined : mediaControls?.camera?.onClick}
             disabled={mediaControls?.camera?.disabled}
             busy={mediaControls?.camera?.busy}
-            pressed={isOffline ? undefined : Boolean(cameraEnabled)}
+            pressed={isUnavailable ? undefined : Boolean(cameraEnabled)}
           />
         ) : null}
         {micLabel ? (
           <MediaStatusIconBadge
             kind="mic"
-            status={isOffline ? "unknown" : micEnabled ? "on" : "off"}
-            connectionStatus={isOffline ? "disconnected" : "connected"}
+            status={isUnavailable ? "unknown" : micEnabled ? "on" : "off"}
+            connectionStatus={isUnavailable ? "disconnected" : "connected"}
             label={mediaControls?.mic?.label ?? micLabel}
             className="h-5 w-5"
             testId="compact-person-mic-status-icon"
-            onClick={isOffline ? undefined : mediaControls?.mic?.onClick}
+            onClick={isUnavailable ? undefined : mediaControls?.mic?.onClick}
             disabled={mediaControls?.mic?.disabled}
             busy={mediaControls?.mic?.busy}
-            pressed={isOffline ? undefined : Boolean(micEnabled)}
+            pressed={isUnavailable ? undefined : Boolean(micEnabled)}
           />
         ) : null}
       </div>

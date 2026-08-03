@@ -13,6 +13,11 @@ import {
   buildSessionRoomPath,
 } from "@/lib/config";
 import {
+  connectionStatusForEventPresenceState,
+  resolveEventParticipantPresence,
+  type EventParticipantPresenceState,
+} from "@/lib/event-participant-presence";
+import {
   isSessionActiveForAssignment,
 } from "@/lib/event-active-assignment";
 import {
@@ -22,7 +27,10 @@ import {
 import { caseVisibilityWhereForUser } from "@/lib/case-access";
 import { toPublicCaseSummary, type PublicCaseSummary } from "@/lib/event-case-public";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
-import { resolveConnectionStatusForLobby } from "@/lib/presence";
+import {
+  LOBBY_ONLINE_THRESHOLD_MS,
+  PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS,
+} from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { activeCaseWhere } from "@/lib/soft-delete";
 import { getEventMediaStatusMap } from "@/lib/voximplant/media-status-store";
@@ -33,8 +41,8 @@ import {
   type RoomAccessDecisionOutput,
 } from "@/lib/session-room-access";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
-import { getCanonicalActiveSessionPresenceByUser } from "@/lib/session-active-presence";
 import {
+  expirePendingEventMediaControlCommands,
   getPendingEventMediaControlCommands,
   type EventMediaControlCommand,
 } from "@/lib/voximplant/event-media-control-store";
@@ -51,11 +59,7 @@ export type EventStateParticipant = {
   joinedAt: string | null;
   lastSeenAt: string | null;
   connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
-  eventPresenceStatus:
-    | "INVITED_NEVER_CONNECTED"
-    | "ONLINE"
-    | "RECENTLY_DISCONNECTED"
-    | "OFFLINE";
+  eventPresenceStatus: EventParticipantPresenceState;
   presenceStatus: "online" | "offline";
   currentLocation:
     | { kind: "offline" }
@@ -182,11 +186,7 @@ type BuildEventStateInput = {
 };
 
 type DerivedEventParticipantPresence = {
-  eventPresenceStatus:
-    | "INVITED_NEVER_CONNECTED"
-    | "ONLINE"
-    | "RECENTLY_DISCONNECTED"
-    | "OFFLINE";
+  eventPresenceStatus: EventParticipantPresenceState;
   connectionStatus: "ONLINE" | "RECENTLY_DISCONNECTED" | "OFFLINE";
   presenceStatus: "online" | "offline";
   currentLocation:
@@ -249,59 +249,42 @@ function getAssignmentDurationDefaults(
 
 function deriveEventParticipantPresence(params: {
   participant: EventParticipant;
-  activeSessionByUserId: Map<
-    string,
-    { sessionId: string; sessionTitle: string; updatedAtMs: number }
-  >;
+  sessionConnections: Array<{
+    sessionId: string;
+    sessionTitle: string;
+    disconnectedAt: Date | null;
+    supersededAt: Date | null;
+    revokedAt: Date | null;
+    expiresAt: Date;
+    updatedAt: Date;
+  }>;
+  now: Date;
 }): DerivedEventParticipantPresence {
-  const userId = params.participant.userId ?? null;
-  if (userId) {
-    const activeSession = params.activeSessionByUserId.get(userId);
-    if (activeSession) {
-      return {
-        eventPresenceStatus: "ONLINE",
-        connectionStatus: "ONLINE",
-        presenceStatus: "online",
-        currentLocation: {
-          kind: "session",
-          sessionId: activeSession.sessionId,
-          sessionTitle: activeSession.sessionTitle,
-        },
-      };
-    }
-  }
-
-  const lobbyStatus = resolveConnectionStatusForLobby(params.participant.lastSeenAt);
-  if (lobbyStatus === "ONLINE") {
-    return {
-      eventPresenceStatus: "ONLINE",
-      connectionStatus: "ONLINE",
-      presenceStatus: "online",
-      currentLocation: { kind: "lobby" },
-    };
-  }
-  if (lobbyStatus === "RECENTLY_DISCONNECTED") {
-    return {
-      eventPresenceStatus: "RECENTLY_DISCONNECTED",
-      connectionStatus: "RECENTLY_DISCONNECTED",
-      presenceStatus: "offline",
-      currentLocation: { kind: "offline" },
-    };
-  }
-  if (!params.participant.joinedAt && !params.participant.lastSeenAt) {
-    return {
-      eventPresenceStatus: "INVITED_NEVER_CONNECTED",
-      connectionStatus: "OFFLINE",
-      presenceStatus: "offline",
-      currentLocation: { kind: "offline" },
-    };
-  }
-
+  const resolved = resolveEventParticipantPresence({
+    lobbyPresence: {
+      joinedAt: params.participant.joinedAt,
+      lastSeenAt: params.participant.lastSeenAt,
+    },
+    sessionConnections: params.sessionConnections,
+    now: params.now,
+    lobbyOnlineWindowMs: LOBBY_ONLINE_THRESHOLD_MS,
+    recentDisconnectWindowMs: PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS,
+  });
+  const connectionStatus = connectionStatusForEventPresenceState(resolved.state);
   return {
-    eventPresenceStatus: "OFFLINE",
-    connectionStatus: "OFFLINE",
-    presenceStatus: "offline",
-    currentLocation: { kind: "offline" },
+    eventPresenceStatus: resolved.state,
+    connectionStatus,
+    presenceStatus: connectionStatus === "ONLINE" ? "online" : "offline",
+    currentLocation:
+      resolved.location.kind === "session"
+        ? {
+            kind: "session",
+            sessionId: resolved.location.sessionId,
+            sessionTitle: resolved.location.sessionTitle,
+          }
+        : resolved.location.kind === "lobby"
+          ? { kind: "lobby" }
+          : { kind: "offline" },
   };
 }
 
@@ -523,9 +506,21 @@ export async function buildEventState(
     ? (participantIdToCanonicalId.get(input.currentParticipant.id) ??
       input.currentParticipant.id)
     : null;
-  const canonicalSessionPresenceByUserId = getCanonicalActiveSessionPresenceByUser(
-    eventRoomConnections.map((connection) => ({
-      userId: connection.userId,
+  const sessionConnectionsByUserId = new Map<
+    string,
+    Array<{
+      sessionId: string;
+      sessionTitle: string;
+      disconnectedAt: Date | null;
+      supersededAt: Date | null;
+      revokedAt: Date | null;
+      expiresAt: Date;
+      updatedAt: Date;
+    }>
+  >();
+  for (const connection of eventRoomConnections) {
+    const userConnections = sessionConnectionsByUserId.get(connection.userId) ?? [];
+    userConnections.push({
       sessionId: connection.sessionId,
       sessionTitle: connection.session.roomLabel ?? connection.session.title,
       disconnectedAt: connection.disconnectedAt,
@@ -533,19 +528,10 @@ export async function buildEventState(
       revokedAt: connection.revokedAt,
       expiresAt: connection.expiresAt,
       updatedAt: connection.updatedAt,
-    })),
-  );
-  const activeSessionByUserId = new Map<
-    string,
-    { sessionId: string; sessionTitle: string; updatedAtMs: number }
-  >();
-  for (const [userId, connection] of canonicalSessionPresenceByUserId) {
-    activeSessionByUserId.set(userId, {
-      sessionId: connection.sessionId,
-      sessionTitle: connection.sessionTitle,
-      updatedAtMs: connection.updatedAt.getTime(),
     });
+    sessionConnectionsByUserId.set(connection.userId, userConnections);
   }
+  const presenceResolvedAt = new Date();
   const mappedParticipants = canonicalParticipants.map((participant) =>
     mapEventParticipant({
       participant,
@@ -560,7 +546,10 @@ export async function buildEventState(
       mediaStatus: mediaStatusByParticipantId[participant.id] ?? null,
       derivedPresence: deriveEventParticipantPresence({
         participant,
-        activeSessionByUserId,
+        sessionConnections: participant.userId
+          ? (sessionConnectionsByUserId.get(participant.userId) ?? [])
+          : [],
+        now: presenceResolvedAt,
       }),
     }),
   );
@@ -574,12 +563,25 @@ export async function buildEventState(
       eventStatus: input.event.status,
     }),
   );
-  const mediaControlCommands = currentParticipantId
-    ? await getPendingEventMediaControlCommands({
-        eventId: input.event.id,
-        targetParticipantId: currentParticipantId,
-      })
-    : [];
+  const nonLobbyMediaTargets = mappedParticipants
+    .filter((participant) => participant.eventPresenceStatus !== "IN_LOBBY")
+    .map((participant) => participant.id);
+  await expirePendingEventMediaControlCommands({
+    eventId: input.event.id,
+    targetParticipantIds: nonLobbyMediaTargets,
+    resultMessage: "targetLeftEventLobby",
+  });
+  const currentParticipantPresence = currentParticipantId
+    ? mappedParticipants.find((participant) => participant.id === currentParticipantId)
+    : null;
+  const mediaControlCommands =
+    currentParticipantId &&
+    currentParticipantPresence?.eventPresenceStatus === "IN_LOBBY"
+      ? await getPendingEventMediaControlCommands({
+          eventId: input.event.id,
+          targetParticipantId: currentParticipantId,
+        })
+      : [];
 
   return {
     event: {

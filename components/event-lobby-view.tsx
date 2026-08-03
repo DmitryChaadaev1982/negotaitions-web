@@ -28,6 +28,7 @@ import {
   alertErrorClassName,
 } from "@/components/ui/form-styles";
 import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
+import { resolveLobbyMediaControlPermission } from "@/lib/event-lobby-media-control-permission";
 import type { EventStateResponse } from "@/lib/event-state";
 import type {
   EventMediaControlAction,
@@ -787,11 +788,22 @@ export function EventLobbyView({
 
   useEffect(() => {
     if (!state || !localMediaController) return;
+    const currentParticipant = state.currentParticipant
+      ? state.participants.find(
+          (participant) => participant.id === state.currentParticipant?.id,
+        )
+      : null;
+    const canConsumeLobbyMediaCommands =
+      currentParticipant?.eventPresenceStatus === "IN_LOBBY";
     for (const command of state.mediaControlCommands) {
       if (command.action !== "disable") continue;
       if (handledMediaControlCommandsRef.current.has(command.id)) continue;
       handledMediaControlCommandsRef.current.add(command.id);
       void (async () => {
+        if (!canConsumeLobbyMediaCommands) {
+          await acknowledgeMediaCommand(command, "expired", "targetLeftEventLobby");
+          return;
+        }
         const isAlreadyDisabled =
           command.device === "mic"
             ? !localMediaController.micEnabled
@@ -905,7 +917,10 @@ export function EventLobbyView({
   }
 
   const pendingEnableRequest =
-    state.mediaControlCommands.find((command) => command.action === "enable_request") ?? null;
+    state.participants.find((participant) => participant.id === state.currentParticipant?.id)
+      ?.eventPresenceStatus === "IN_LOBBY"
+      ? state.mediaControlCommands.find((command) => command.action === "enable_request") ?? null
+      : null;
 
   return (
     <div className="fixed inset-0 flex min-h-0 flex-col overflow-hidden bg-[#020617]" data-testid="event-lobby-page">
@@ -1147,11 +1162,28 @@ export function EventLobbyView({
                 state.participants.map((participant) => {
                   const isCurrentUser =
                     participant.id === state.currentParticipant?.id;
-                  const isOnline = participant.eventPresenceStatus === "ONLINE";
+                  const mediaPermission = resolveLobbyMediaControlPermission({
+                    actor: {
+                      participantId: state.currentParticipant?.id ?? null,
+                      isEventOwner,
+                    },
+                    target: {
+                      participantId: participant.id,
+                    },
+                    targetPresence: {
+                      state: participant.eventPresenceStatus,
+                    },
+                    device: "mic",
+                  });
                   const canUseSelfControls =
-                    isCurrentUser && isOnline && Boolean(localMediaController);
+                    mediaPermission.allowed &&
+                    mediaPermission.controlKind === "self" &&
+                    Boolean(localMediaController);
                   const canOwnerControlOther =
-                    isEventOwner && !isCurrentUser && isOnline && !staleConnection;
+                    mediaPermission.allowed &&
+                    mediaPermission.controlKind === "remote" &&
+                    !isCurrentUser &&
+                    !staleConnection;
                   const buildOwnerControl = (
                     device: EventMediaControlDevice,
                     enabled: boolean | null,
@@ -1216,12 +1248,20 @@ export function EventLobbyView({
                       isHost={participant.isHost}
                       presenceStatus={participant.eventPresenceStatus}
                       locationLabel={
-                        participant.eventPresenceStatus === "ONLINE"
+                        participant.eventPresenceStatus === "IN_SESSION"
                           ? participantLocationLabel(participant, t)
                           : null
                       }
-                      micEnabled={participant.micEnabled}
-                      cameraEnabled={participant.cameraEnabled}
+                      micEnabled={
+                        canUseSelfControls
+                          ? localMediaController!.micEnabled
+                          : participant.micEnabled
+                      }
+                      cameraEnabled={
+                        canUseSelfControls
+                          ? localMediaController!.cameraEnabled
+                          : participant.cameraEnabled
+                      }
                       mediaControls={mediaControls}
                     />
                   </div>

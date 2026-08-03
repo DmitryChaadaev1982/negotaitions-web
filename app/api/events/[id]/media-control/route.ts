@@ -5,6 +5,7 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { isEventDeletedOrCancelled, resolveEventAccess } from "@/lib/event-auth";
 import { ensureUserEventParticipant } from "@/lib/ensure-event-participant";
+import { resolveLobbyMediaControlPermission } from "@/lib/event-lobby-media-control-permission";
 import { buildEventState } from "@/lib/event-state";
 import {
   acknowledgeEventMediaControlCommand,
@@ -103,8 +104,43 @@ export async function POST(request: Request, context: RouteContext) {
   if (!target) {
     return NextResponse.json({ error: "targetNotInEvent" }, { status: 404 });
   }
-  if (target.eventPresenceStatus !== "ONLINE") {
-    return NextResponse.json({ error: "targetOffline" }, { status: 409 });
+  const permission = resolveLobbyMediaControlPermission({
+    actor: {
+      participantId: currentParticipant.id,
+      isEventOwner: access.isEventOwner,
+    },
+    target: {
+      participantId: target.id,
+    },
+    targetPresence: {
+      state: target.eventPresenceStatus,
+    },
+    device: body.data.device,
+  });
+  if (!permission.allowed || permission.controlKind !== "remote") {
+    const isSelfControl = permission.allowed && permission.controlKind === "self";
+    const reason = permission.allowed ? null : permission.reason;
+    return NextResponse.json(
+      {
+        error:
+          isSelfControl
+            ? "selfControlUsesLocalMedia"
+            : reason === "ACTOR_NOT_AUTHORIZED"
+              ? "Forbidden."
+              : "targetNotInLobby",
+        code:
+          reason && reason !== "ACTOR_NOT_AUTHORIZED"
+            ? reason
+            : undefined,
+      },
+      {
+        status: isSelfControl
+          ? 400
+          : reason === "ACTOR_NOT_AUTHORIZED"
+            ? 403
+            : 409,
+      },
+    );
   }
 
   const command = await createEventMediaControlCommand({

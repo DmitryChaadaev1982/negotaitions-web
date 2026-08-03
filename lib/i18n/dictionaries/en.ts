@@ -1208,6 +1208,9 @@ export const en = {
     availableToObserveHint: "Active Sessions you can join now as an observer.",
     onlineWithLocation: "Online · {location}",
     presenceOnline: "Online",
+    presenceInLobby: "In lobby",
+    presenceInSession: "In Session",
+    presenceTemporarilyAway: "Temporarily away",
     presenceRecentlyDisconnected: "Recently disconnected",
     presenceOffline: "Offline",
     presenceInvitedNeverConnected: "Invited, never connected",
@@ -1231,6 +1234,17 @@ export const en = {
     microphoneMuted: "Microphone muted",
     cameraUnavailableOffline: "Camera unavailable: user is offline",
     microphoneUnavailableOffline: "Microphone unavailable: user is offline",
+    cameraUnavailableInSession: "Camera unavailable: the user is in a Session",
+    microphoneUnavailableInSession:
+      "Microphone unavailable: the user is in a Session",
+    cameraUnavailableTemporarilyAway:
+      "Camera unavailable: the user is temporarily away",
+    microphoneUnavailableTemporarilyAway:
+      "Microphone unavailable: the user is temporarily away",
+    cameraUnavailableInvitedNeverConnected:
+      "Camera unavailable: the user has not connected yet",
+    microphoneUnavailableInvitedNeverConnected:
+      "Microphone unavailable: the user has not connected yet",
     turnOnOwnCamera: "Turn camera on",
     turnOffOwnCamera: "Turn camera off",
     turnOnOwnMicrophone: "Turn microphone on",

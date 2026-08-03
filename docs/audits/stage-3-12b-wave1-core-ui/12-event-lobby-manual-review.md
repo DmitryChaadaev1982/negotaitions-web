@@ -100,3 +100,94 @@ Manual verification and screenshot capture remain to be recorded during the fina
 - No provider-secret or durable-lease change.
 - No direct remote camera/microphone activation without target consent.
 - No observer rail or Session room geometry change.
+
+## Follow-Up: Presence Transitions And Lobby Media Eligibility
+
+Root causes found during Stage 3.12B-W1 follow-up:
+
+- Event-state derived active Session location from active `SessionRoomConnection`
+  rows, but discarded terminal rows before presence classification. An explicit
+  Session leave therefore removed `IN_SESSION` without exposing the recent
+  `disconnectedAt` timestamp needed to emit `TEMPORARILY_AWAY`.
+- Roster controls and `POST /api/events/[id]/media-control` treated
+  `eventPresenceStatus === ONLINE` as actionable. That status covered both lobby
+  and Session presence, so Event lobby commands could still target a user whose
+  active surface was a Session room.
+
+Authoritative Event participant states are now resolved by
+`resolveEventParticipantPresence(...)` from lobby heartbeat evidence and durable
+Session connection evidence:
+
+1. `IN_LOBBY` - active lobby presence, shown as `В лобби` / `In lobby`.
+2. `IN_SESSION` - active Session connection in this Event, shown as
+   `В сессии: <Session>` / `In session: <Session>`.
+3. `TEMPORARILY_AWAY` - no active lobby or Session presence, but a recent
+   lobby/session terminal timestamp remains within the existing
+   `PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS` grace window.
+4. `OFFLINE` - confirmed historical participation outside the grace window.
+5. `INVITED_NOT_CONNECTED` - invited participant with no confirmed presence
+   history.
+
+Resolver precedence is active lobby, active Session, recent terminal
+disconnect/revoke/supersede/expiry evidence, offline history, then invited. If
+active lobby and Session evidence overlap during propagation, the newest active
+surface wins deterministically; stale duplicate surfaces are not displayed.
+`TEMPORARILY_AWAY` is emitted on the next normal Event-state poll after active
+presence is lost and does not wait for the grace window to expire.
+
+Lobby media controls now use `resolveLobbyMediaControlPermission(...)` in the
+roster and server API. The target must be `IN_LOBBY`; generic online presence is
+not sufficient.
+
+| Target state | Self control | Event-owner remote control |
+|---|---:|---:|
+| In lobby | Yes | Yes |
+| In Session | No | No |
+| Temporarily away | No | No |
+| Offline | No | No |
+| Invited, never joined | No | No |
+
+Server authorization:
+
+- `POST /api/events/[id]/media-control` resolves current Event state itself and
+  rejects non-lobby targets with `409` / `TARGET_NOT_IN_LOBBY`.
+- Pending lobby enable/disable commands are expired when the target leaves the
+  lobby surface, enters a Session, becomes temporarily away, or goes offline.
+- Event-state only delivers pending commands to the current participant while
+  that participant is `IN_LOBBY`; target clients also skip and expire commands
+  if their current state is no longer lobby.
+
+Accessibility and labels:
+
+- `IN_SESSION`: neutral gray camera/microphone icons, no click action, labels
+  `Камера недоступна: пользователь находится в сессии` /
+  `Микрофон недоступен: пользователь находится в сессии` and
+  `Camera unavailable: the user is in a Session` /
+  `Microphone unavailable: the user is in a Session`.
+- `TEMPORARILY_AWAY`: neutral gray icons, labels
+  `Камера недоступна: пользователь временно вышел` /
+  `Микрофон недоступен: пользователь временно вышел` and
+  `Camera unavailable: the user is temporarily away` /
+  `Microphone unavailable: the user is temporarily away`.
+- `OFFLINE` keeps the neutral gray unavailable behavior.
+- `INVITED_NOT_CONNECTED` uses neutral unavailable labels for never-connected
+  targets.
+
+Focused test matrix:
+
+- Unit: `lib/event-participant-presence.test.ts` covers lobby, Session,
+  explicit leave, grace boundary, invited, reconnect, simultaneous evidence,
+  terminal timestamps, other-Event connections, and server-time injection.
+- Unit: `lib/event-lobby-media-control-permission.test.ts` covers self, owner,
+  unrelated participant, all non-lobby states, and return-to-lobby eligibility.
+- Focused E2E/API:
+  `tests/e2e/stage-3-12b-wave1-corrections.spec.ts` covers owner API
+  authorization, in-Session rejection, pending command invalidation,
+  `TEMPORARILY_AWAY`, and grace expiry to `OFFLINE`.
+
+Manual browser verification against the supplied existing fixture was attempted
+after final validation with `npm run dev`. The fixture redirected to login, and
+the run did not read participant PII/secrets from the development database to
+bypass authentication, so screenshot capture remains blocked for the user to
+recheck with an authenticated browser profile. No limitation requiring a Prisma
+migration or presence redesign was found.

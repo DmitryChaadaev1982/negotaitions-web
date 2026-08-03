@@ -1214,6 +1214,9 @@ export const ru: Dictionary = {
     availableToObserveHint: "Активные сессии, к которым можно присоединиться как наблюдатель.",
     onlineWithLocation: "Онлайн · {location}",
     presenceOnline: "Онлайн",
+    presenceInLobby: "В лобби",
+    presenceInSession: "В сессии",
+    presenceTemporarilyAway: "Временно вышел",
     presenceRecentlyDisconnected: "Недавно отключился",
     presenceOffline: "Офлайн",
     presenceInvitedNeverConnected: "Приглашён, не подключался",
@@ -1237,6 +1240,18 @@ export const ru: Dictionary = {
     microphoneMuted: "Микрофон выключен",
     cameraUnavailableOffline: "Камера недоступна: пользователь не в сети",
     microphoneUnavailableOffline: "Микрофон недоступен: пользователь не в сети",
+    cameraUnavailableInSession:
+      "Камера недоступна: пользователь находится в сессии",
+    microphoneUnavailableInSession:
+      "Микрофон недоступен: пользователь находится в сессии",
+    cameraUnavailableTemporarilyAway:
+      "Камера недоступна: пользователь временно вышел",
+    microphoneUnavailableTemporarilyAway:
+      "Микрофон недоступен: пользователь временно вышел",
+    cameraUnavailableInvitedNeverConnected:
+      "Камера недоступна: пользователь ещё не подключался",
+    microphoneUnavailableInvitedNeverConnected:
+      "Микрофон недоступен: пользователь ещё не подключался",
     turnOnOwnCamera: "Включить камеру",
     turnOffOwnCamera: "Выключить камеру",
     turnOnOwnMicrophone: "Включить микрофон",

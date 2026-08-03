@@ -192,6 +192,40 @@ export async function getPendingEventMediaControlCommands(params: {
   );
 }
 
+export async function expirePendingEventMediaControlCommands(params: {
+  eventId: string;
+  targetParticipantIds: string[];
+  resultMessage: string;
+}) {
+  const targetIds = new Set(params.targetParticipantIds);
+  if (targetIds.size === 0) return [];
+
+  return mutateDocument(params.eventId, (document) => {
+    const completedAt = nowIso();
+    const expiredCommands: EventMediaControlCommand[] = [];
+    const commands = document.commands.map((command) => {
+      if (
+        command.status !== "pending" ||
+        !targetIds.has(command.targetParticipantId)
+      ) {
+        return command;
+      }
+      const expiredCommand = {
+        ...command,
+        status: "expired" as const,
+        completedAt,
+        resultMessage: params.resultMessage,
+      };
+      expiredCommands.push(expiredCommand);
+      return expiredCommand;
+    });
+    return {
+      document: { ...document, commands },
+      result: expiredCommands,
+    };
+  });
+}
+
 export async function acknowledgeEventMediaControlCommand(params: {
   eventId: string;
   commandId: string;
