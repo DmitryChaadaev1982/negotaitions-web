@@ -29,6 +29,7 @@ Repository implementation planning can continue in Stage 3.13B1, but no real ema
 | `negotaitions.ru` is delegated to Yandex Cloud DNS name servers `ns1.yandexcloud.net` and `ns2.yandexcloud.net`. | PARTIALLY READY | PUBLIC DNS |
 | Public recursive DNS returned no MX, no root SPF TXT, and no `_dmarc` TXT. | NOT CONFIGURED | PUBLIC DNS |
 | Root, `www`, `app`, `local`, and a random wildcard subdomain resolve publicly to `172.29.172.1` with TTL `0`. This must be reviewed before mail rollout. | BLOCKED for production hygiene | PUBLIC DNS |
+| Repository deployment notes document web DNS targets as `130.193.62.91`, which conflicts with the B0 public DNS snapshot returning `172.29.172.1`. | BLOCKED for DNS hygiene | REPOSITORY, PUBLIC DNS |
 | Yandex Cloud CLI `yc` is not available in the local shell, so Cloud DNS zone contents, Postbox resources, quotas, service accounts, Lockbox metadata, and VM service-account attachment were not live-verified. | MANUAL VERIFICATION REQUIRED | YANDEX CLOUD CLI blocked |
 | SSH to `deploy@130.193.62.91:22` timed out, so production service metadata and outbound Postbox connectivity from the VM were not live-verified. | MANUAL VERIFICATION REQUIRED | PRODUCTION SERVER blocked |
 | Official Postbox docs support SMTP, AWS-compatible API/SDK/CLI, and cURL; IAM-token sending is supported for Compute Cloud VMs linked to a service account. | READY as provider capability | OFFICIAL DOCUMENTATION |

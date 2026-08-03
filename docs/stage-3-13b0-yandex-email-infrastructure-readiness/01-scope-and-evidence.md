@@ -51,6 +51,9 @@ No infrastructure was created or changed.
 | `docs/operations/deployment-runbook.md` | Production model: `/var/www/negotaitions/app-git`, `/var/www/negotaitions/app`, `negotaitions-poc`, nginx, `.env.production` outside git. | REPOSITORY |
 | `docs/operations/server-operations.md` | Domain topology lists `negotaitions.ru`, `app.negotaitions.ru`, `local.negotaitions.ru`; runtime secrets stay outside git. | REPOSITORY |
 | `docs/operations/stage-3-10-maintenance-runbook.md` | Existing maintenance sweeps are timer-friendly, idempotent, and no-secret-output. Useful pattern for future email worker. | REPOSITORY |
+| `docs/deployment/yandex-poc-server-parameters.md` | Non-secret POC parameters document VM IP `130.193.62.91` and web DNS target records for root, `www`, and `app`. This conflicts with B0 public DNS, which currently returns `172.29.172.1`. | REPOSITORY, PUBLIC DNS |
+| `docs/deployment/yandex-poc-runtime-audit.md` | Runtime audit documents `negotaitions-poc`, `/var/www/negotaitions/app`, Yandex Managed PostgreSQL, and Vox secret path; it states nginx and main app systemd configs are not in this repository and notes no email/Postbox env group. | REPOSITORY |
+| `docs/architecture/11-deployment-architecture.md` | Deployment architecture captures Yandex VM POC, nginx-to-Node topology, single app process assumption, and runtime secrets outside repository. | REPOSITORY |
 | `deploy/systemd/negotiations-stage310-maintenance.service` | Existing oneshot service runs as `www-data` in `/var/www/negotaitions/app` and logs to journal. | REPOSITORY |
 | `deploy/systemd/negotiations-stage310-maintenance.timer` | Existing one-minute timer pattern with randomized delay and persistent execution. | REPOSITORY |
 | `app/privacy/page.tsx`, `app/terms/page.tsx` | Legal/operator/contact details remain placeholders; privacy page says email is currently only for identification and no marketing communications are sent. | REPOSITORY |
