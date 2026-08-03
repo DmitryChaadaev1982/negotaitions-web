@@ -238,7 +238,40 @@ events, no microphone hardware, no `AudioContext`) with a real session fixture:
 - shared-role regression for facilitator and Participant A/B;
 - observer rail ordering and geometry unchanged.
 
-## 10. Known Limitations
+## 10. Manual Local Verification
+
+Status: **not completed — blocked, requires the operator.**
+
+Completed locally:
+
+- `npm run dev` starts cleanly on the hotfix worktree with no compile errors;
+- `/login` and `/room/[sessionId]` are served (HTTP 200) with the changed client
+  components in the bundle.
+
+Blocked:
+
+- `npm run test:e2e:tunnel:check` fails with `network_error` for
+  `https://local.negotaitions.ru/`. The reverse tunnel needs the VPN plus
+  `ssh -N -R 127.0.0.1:3300:127.0.0.1:3000 deploy@172.29.172.1`, which cannot be
+  established from this environment.
+- The remaining checks require real speech from a physical microphone in a
+  multi-user Voximplant session, which cannot be produced headlessly.
+
+Operator checklist still to run over the tunnel, capturing one screenshot each:
+
+1. Observer microphone enabled.
+2. Observer speaks in `RUNNING` → speaking border appears.
+3. Pause negotiation → speaking border still appears.
+4. Enter `DEBRIEF_OPEN` → speaking border still appears.
+5. Mute observer → red muted border, no speaking highlight.
+6. Unmute → speaking highlight returns.
+7. Reconnect observer → speaking highlight still works, no duplicate tile.
+
+The tile now exposes `data-tile-border-state`
+(`disconnected` | `muted` | `speaking` | `connected`) and `data-speaking`, so each
+step can be confirmed from the DOM in addition to the visual border.
+
+## 11. Known Limitations
 
 - The remote speaking flag remains a client-side `AnalyserNode` derivation, so
   each viewer computes it independently; there is no server-authoritative
