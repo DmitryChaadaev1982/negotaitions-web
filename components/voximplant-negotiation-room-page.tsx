@@ -1282,7 +1282,6 @@ export default function VoximplantNegotiationRoomPage(
             isCameraOn={isCameraOn}
             isMicMuted={isMicMuted}
             localMicSystemMuted={!controlState.micAllowed}
-            localAudioTrackPresent={localAudioStreamCreated}
             micLevel={micLevel}
             sessionId={props.sessionId}
             roomAuth={roomAuth}

@@ -563,19 +563,7 @@ test.describe("Vox camera toggle idempotency helpers", () => {
       "components/voximplant-video-layout.tsx",
       "utf-8",
     );
-    expect(source).toContain("isRemoteSpeaking(remoteSpeakingById, tile.participant.id)");
-  });
-
-  test("every rendered room user resolves speaking through the shared rule", () => {
-    const source = readFileSync(
-      "components/voximplant-video-layout.tsx",
-      "utf-8",
-    );
-    expect(source).toContain("resolveTileSpeakingHighlight({");
-    expect(source).toContain("isSpeaking={resolveSpeakingHighlightForTile(tile)}");
-    // Speaking visualization must not depend on role, stage slot, or phase.
-    expect(source).not.toMatch(/resolveTileSpeakingHighlight\([\s\S]{0,600}participantType/);
-    expect(source).not.toMatch(/resolveTileSpeakingHighlight\([\s\S]{0,600}negotiationState/);
+    expect(source).toContain("remoteSpeakingById[tile.participant.id] ?? false");
   });
 
   test("participant tiles render icon-based mic/camera status", () => {

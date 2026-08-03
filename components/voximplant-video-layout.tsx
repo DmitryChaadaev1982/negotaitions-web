@@ -8,23 +8,18 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
-import {
-  isRemoteSpeaking,
-  resolveRemoteSpeakingGeneration,
-  resolveSpeakingSourceStream,
-  useRemoteSpeaking,
-} from "@/lib/voximplant/remote-speaking";
+import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
   resolveRosterVisualRoles,
   shouldRenderObserverRailTile,
 } from "@/lib/voximplant/room-layout-model";
 import {
   buildParticipantReconnectMediaState,
+  canShowSpeakingHighlight,
   normalizeParticipantPresenceMedia,
   type ParticipantReconnectMediaState,
   type ParticipantPresenceMediaModel,
 } from "@/lib/voximplant/participant-presence-media-model";
-import { resolveTileSpeakingHighlight } from "@/lib/voximplant/tile-speaking-state";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import type { KeyboardEvent, ReactNode, WheelEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -52,31 +47,8 @@ type ResolvedRosterTile = {
   zone: "facilitator" | "participant_a" | "participant_b" | "observer" | "unknown";
   mediaModel: ParticipantPresenceMediaModel;
   reconnectMediaState: ParticipantReconnectMediaState;
-  /** Identity of the connection + media generation the tile currently renders. */
-  connectionGeneration: string;
   isLocal: boolean;
 };
-
-/**
- * Connection/media generation shared by the speaking analyser and the tile
- * renderer, so a speaking signal produced by a superseded connection, endpoint,
- * or audio track can never highlight the current tile.
- */
-export function buildSpeakingConnectionGeneration(input: {
-  rosterEntryId: string;
-  connectionGeneration: string | number | null;
-  providerEndpointId: string | null;
-  streamId: string | null;
-  lastMediaUpdateAt: string | null;
-}): string {
-  return [
-    input.rosterEntryId,
-    input.connectionGeneration ?? "unknown-connection",
-    input.providerEndpointId ?? "unknown-endpoint",
-    input.streamId ?? "unknown-stream",
-    input.lastMediaUpdateAt ?? "unknown-media-time",
-  ].join(":");
-}
 
 const OBSERVER_RAIL_SCROLL_TOLERANCE_PX = 2;
 
@@ -120,10 +92,7 @@ type RemoteSpeakingParticipantInput = VoxTileParticipant & {
 export function buildRemoteSpeakingInput(remoteParticipants: RemoteSpeakingParticipantInput[]) {
   return remoteParticipants.map((participant) => ({
     id: participant.id,
-    stream: resolveSpeakingSourceStream({
-      audioStream: participant.audioStream,
-      videoStream: participant.stream,
-    }),
+    stream: participant.audioStream ?? participant.stream,
     microphoneEnabled: participant.microphoneEnabled,
     generation: participant.generation,
   }));
@@ -142,7 +111,6 @@ export default function VoximplantVideoLayout({
   isCameraOn,
   isMicMuted,
   localMicSystemMuted,
-  localAudioTrackPresent,
   micLevel,
   sessionId,
   roomAuth,
@@ -163,8 +131,6 @@ export default function VoximplantVideoLayout({
   isCameraOn?: boolean;
   isMicMuted?: boolean;
   localMicSystemMuted?: boolean;
-  /** True while the local microphone stream exists (track may still be muted). */
-  localAudioTrackPresent?: boolean;
   micLevel?: number;
   sessionId: string;
   roomAuth: RoomAuthToken;
@@ -313,13 +279,6 @@ export default function VoximplantVideoLayout({
         zone: visual.zone,
         mediaModel,
         reconnectMediaState,
-        connectionGeneration: buildSpeakingConnectionGeneration({
-          rosterEntryId: entry.id,
-          connectionGeneration: reconnectMediaState.connectionGeneration,
-          providerEndpointId: reconnectMediaState.providerEndpointId,
-          streamId: reconnectMediaState.streamId,
-          lastMediaUpdateAt: reconnectMediaState.lastMediaUpdateAt,
-        }),
         isLocal,
       };
     });
@@ -346,12 +305,15 @@ export default function VoximplantVideoLayout({
         .filter((tile) => !tile.isLocal)
         .map((tile) => ({
           id: tile.participant.id,
-          stream: resolveSpeakingSourceStream({
-            audioStream: tile.participant.audioStream,
-            videoStream: tile.participant.stream,
-          }),
+          stream: tile.participant.audioStream ?? tile.participant.stream,
           microphoneEnabled: tile.reconnectMediaState.microphoneEnabled === true,
-          generation: tile.connectionGeneration,
+          generation: [
+            tile.rosterEntry.id,
+            tile.reconnectMediaState.connectionGeneration ?? "unknown-connection",
+            tile.reconnectMediaState.providerEndpointId ?? "unknown-endpoint",
+            tile.reconnectMediaState.streamId ?? "unknown-stream",
+            tile.reconnectMediaState.lastMediaUpdateAt ?? "unknown-media-time",
+          ].join(":"),
         })),
     [resolvedRosterTiles],
   );
@@ -492,31 +454,10 @@ export default function VoximplantVideoLayout({
         .map((tile) => ({
           sessionParticipantId: tile.rosterEntry.id,
           participantIdentity: tile.rosterEntry.displayName ?? null,
-          isSpeaking: isRemoteSpeaking(remoteSpeakingById, tile.participant.id),
+          isSpeaking: remoteSpeakingById[tile.participant.id] ?? false,
         })),
     [remoteSpeakingById, resolvedRosterTiles],
   );
-
-  // One shared speaking rule for every rendered room user: Participant A,
-  // Participant B, Facilitator, and Observer, local or remote. Role, stage slot,
-  // observer rail membership, and negotiation phase are deliberately not inputs.
-  const resolveSpeakingHighlightForTile = (tile: ResolvedRosterTile): boolean =>
-    resolveTileSpeakingHighlight({
-      connectionStatus: tile.mediaModel.connectionStatus,
-      micStatus: tile.mediaModel.micStatus,
-      audioTrackPresent: tile.isLocal
-        ? localAudioTrackPresent !== false
-        : tile.reconnectMediaState.audioTrackPresent,
-      isSpeaking: tile.isLocal
-        ? isSpeaking
-        : isRemoteSpeaking(remoteSpeakingById, tile.participant.id),
-      staleConnection: staleConnection && tile.isLocal,
-      connectionGeneration: tile.connectionGeneration,
-      speakingGeneration: tile.isLocal
-        ? tile.connectionGeneration
-        : (resolveRemoteSpeakingGeneration(remoteSpeakingById, tile.participant.id) ??
-          tile.connectionGeneration),
-    });
 
   const renderRosterTile = (
     tile: ResolvedRosterTile,
@@ -585,7 +526,15 @@ export default function VoximplantVideoLayout({
           micLabel={micLabel}
           cameraLabel={cameraLabel}
           micLevel={tile.isLocal ? micLevel : undefined}
-          isSpeaking={resolveSpeakingHighlightForTile(tile)}
+          isSpeaking={
+            canShowSpeakingHighlight({
+              connectionStatus: tile.mediaModel.connectionStatus,
+              micStatus: tile.mediaModel.micStatus,
+              isSpeaking: tile.isLocal
+                ? isSpeaking
+                : (remoteSpeakingById[tile.participant.id] ?? false),
+            })
+          }
         />
       </div>
     );

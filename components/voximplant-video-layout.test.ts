@@ -63,7 +63,5 @@ test("repeated reconnect deduplicates remote tile by stable username", () => {
 test("muted border takes precedence over active-speaker border", () => {
   const source = readFileSync("components/voximplant-participant-tile.tsx", "utf-8");
   assert.match(source, /Visual precedence: stale\/disconnected, muted, speaking, connected\/default/);
-  assert.match(source, /muted: "border-rose-700\/70"/);
-  assert.match(source, /speaking: "border-green-400/);
-  assert.match(source, /resolveTileBorderState\(/);
+  assert.match(source, /micStatus === "off"[\s\S]*border-rose-700\/70[\s\S]*micStatus === "on" && isSpeaking/);
 });
