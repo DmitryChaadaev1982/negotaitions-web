@@ -151,6 +151,8 @@ The current cookie policy states analytics and marketing cookies are not current
 
 There is no consent model for transactional/product/marketing email. There is no unsubscribe state.
 
+Recording and AI-processing confirmations are also not durable communication consents today. They are captured as UI/API confirmation flags around recording and sharing flows, while `UserConsent` only records registration-time legal consents.
+
 ### 3.4 Event and Session Invites
 
 Event invites:
@@ -175,6 +177,8 @@ Both invite models support:
 - uniqueness by event/session plus user or normalized email.
 
 `lib/invite-email.ts` only normalizes and validates addresses. It does not send email.
+
+Current product copy explicitly reflects this: the English dictionary says "Email invitations are not sent yet. Added users will see this meeting in their list." This wording should remain until a real outbox/provider flow exists.
 
 Important current access behavior:
 
@@ -259,6 +263,7 @@ High-priority gaps:
 - No product/marketing consent model.
 - No real contact addresses in legal pages; placeholders remain.
 - No service address matrix or owner mailbox plan.
+- Existing deployment/runtime docs contain some stale or aspirational communication references, including old auth terminology and assumptions about invite/email links. Stage 3.13B should clean those docs when runtime implementation begins.
 
 Security and privacy risks if email is added directly:
 
@@ -269,6 +274,8 @@ Security and privacy risks if email is added directly:
 - provider webhooks without signature validation could poison delivery state;
 - template rendering without HTML escaping could create injection/phishing risk;
 - no suppression list would harm domain reputation after bounces/complaints.
+
+Existing auth/admin follow-up risk that should be addressed before or alongside account-security email flows: page-level `requireAdminUser()` blocks non-bootstrap admins that are `BLOCKED` or `REJECTED`, but admin API guards should be re-checked to ensure they apply the same status restrictions and do not rely only on `isAdmin()`.
 
 ## 5. Communication Taxonomy
 
@@ -512,6 +519,8 @@ Core concepts:
 - Suppression is checked before enqueue and before send.
 - Transactional/security messages have explicit override policy, not blanket bypass.
 - Admin UI can inspect and retry failed messages.
+- Add `EMAIL` or a more specific mail-provider value to the service/error taxonomy before logging provider failures through `ExternalServiceEvent`.
+- Prefer a DB outbox plus systemd timer or dedicated worker, using the Stage 3.10 maintenance pattern as inspiration. Do not send batches inline from interactive HTTP requests.
 
 ## 10. Data Model Proposal
 
