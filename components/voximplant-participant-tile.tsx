@@ -6,7 +6,19 @@ import type {
   ParticipantConnectionStatus,
   ParticipantMediaStatus,
 } from "@/lib/voximplant/participant-presence-media-model";
+import {
+  resolveTileBorderState,
+  type TileBorderState,
+} from "@/lib/voximplant/tile-speaking-state";
 import { MediaStatusIconBadge } from "@/components/media-status-icon";
+
+// Visual precedence: stale/disconnected, muted, speaking, connected/default.
+const TILE_BORDER_CLASS: Record<TileBorderState, string> = {
+  disconnected: "border-slate-600/70",
+  muted: "border-rose-700/70",
+  speaking: "border-green-400 shadow-[0_0_0_2px_rgba(74,222,128,0.4)]",
+  connected: "border-emerald-600/80",
+};
 
 function MicLevelBar({ level, muted }: { level: number; muted: boolean }) {
   const filled = muted ? 0 : Math.min(100, level);
@@ -58,20 +70,19 @@ export function VoximplantParticipantTile({
     videoRef.current.srcObject = stream;
   }, [stream]);
 
+  const borderState = resolveTileBorderState({
+    connectionStatus,
+    micStatus,
+    isSpeaking: isSpeaking === true,
+  });
+
   return (
     <div
       className={`relative box-border min-w-0 overflow-hidden rounded-xl border bg-slate-900 transition-all duration-150 ${
-        // Visual precedence: stale/disconnected, muted, speaking, connected/default.
-        connectionStatus !== "connected"
-          ? "border-slate-600/70"
-          : micStatus === "off"
-            ? "border-rose-700/70"
-            : micStatus === "on" && isSpeaking
-              ? "border-green-400 shadow-[0_0_0_2px_rgba(74,222,128,0.4)]"
-              : micStatus === "on"
-                ? "border-emerald-600/80"
-                : "border-slate-600/70"
+        TILE_BORDER_CLASS[borderState]
       } ${className ?? ""}`}
+      data-tile-border-state={borderState}
+      data-speaking={borderState === "speaking" ? "true" : "false"}
     >
       <video
         ref={videoRef}

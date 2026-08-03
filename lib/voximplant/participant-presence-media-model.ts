@@ -66,6 +66,42 @@ export function canShowSpeakingHighlight(input: {
   );
 }
 
+export type SpeakingHighlightInput = {
+  connected: boolean;
+  stale: boolean;
+  microphoneEnabled: boolean;
+  audioTrackPresent: boolean;
+  isSpeaking: boolean;
+  /** Generation of the connection currently rendered by the tile. */
+  connectionGeneration?: string | number | null;
+  /** Generation the speaking signal was produced under. */
+  speakingGeneration?: string | number | null;
+};
+
+/**
+ * Single speaking-highlight rule shared by every rendered room user
+ * (Participant A, Participant B, Facilitator, Observer; local and remote).
+ *
+ * The rule is deliberately role-agnostic and phase-agnostic: it depends only on
+ * the current connection having a present, enabled audio track that the audio
+ * analyser reports as speaking. Negotiation phase and control policy decide
+ * whether a microphone is *allowed*, never whether real speech is *visualized*.
+ *
+ * Tile precedence is preserved by the caller: disconnected/stale and muted are
+ * resolved before speaking, and speaking is resolved before connected/default.
+ */
+export function canRenderSpeakingHighlight(input: SpeakingHighlightInput): boolean {
+  if (!input.connected) return false;
+  if (input.stale) return false;
+  if (!input.microphoneEnabled) return false;
+  if (!input.audioTrackPresent) return false;
+  if (!input.isSpeaking) return false;
+  const connectionGeneration = input.connectionGeneration ?? null;
+  const speakingGeneration =
+    input.speakingGeneration === undefined ? connectionGeneration : input.speakingGeneration;
+  return connectionGeneration === speakingGeneration;
+}
+
 export function buildParticipantReconnectMediaState(input: {
   userId?: string | null;
   role: string;

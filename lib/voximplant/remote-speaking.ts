@@ -102,10 +102,65 @@ export type RemoteSpeakingInput = {
   generation?: string | number | null;
 };
 
+export type RemoteSpeakingState = {
+  isSpeaking: boolean;
+  generation: string | number | null;
+};
+
 export function shouldAttachRemoteSpeakingMeter(participant: RemoteSpeakingInput): boolean {
   if (participant.microphoneEnabled === false) return false;
   const tracks = participant.stream?.getAudioTracks() ?? [];
   return tracks.some((track) => track.enabled);
+}
+
+/**
+ * The stream that actually carries the participant's audio.
+ *
+ * Remote endpoints publish audio and video as separate streams, and the audio
+ * stream can be re-wrapped around the same live track. Resolving the source
+ * explicitly keeps the analyser attached to real audio for every role instead of
+ * silently falling back to a video-only stream.
+ */
+export function resolveSpeakingSourceStream(input: {
+  audioStream?: MediaStream | null;
+  videoStream?: MediaStream | null;
+}): MediaStream | null {
+  const candidates = [input.audioStream ?? null, input.videoStream ?? null].filter(
+    (stream): stream is MediaStream => stream !== null,
+  );
+  return (
+    candidates.find((stream) => stream.getAudioTracks().some((track) => track.enabled)) ??
+    candidates.find((stream) => stream.getAudioTracks().length > 0) ??
+    null
+  );
+}
+
+/**
+ * Identity of the audio track a meter is bound to. Meters are keyed by track
+ * identity rather than MediaStream identity so re-wrapping the same live track
+ * does not tear down a working analyser (which would reset speaking to false),
+ * while a genuinely replaced track always gets a new analyser.
+ */
+export function resolveSpeakingAudioTrackId(
+  stream: MediaStream | null | undefined,
+): string | null {
+  const tracks = stream?.getAudioTracks() ?? [];
+  const enabled = tracks.find((track) => track.enabled);
+  return enabled?.id ?? null;
+}
+
+export function isRemoteSpeaking(
+  speakingById: Record<string, RemoteSpeakingState>,
+  participantId: string,
+): boolean {
+  return speakingById[participantId]?.isSpeaking === true;
+}
+
+export function resolveRemoteSpeakingGeneration(
+  speakingById: Record<string, RemoteSpeakingState>,
+  participantId: string,
+): string | number | null | undefined {
+  return speakingById[participantId]?.generation;
 }
 
 export function shouldAcceptRemoteSpeakingLevel(input: {
@@ -123,7 +178,8 @@ export function shouldAcceptRemoteSpeakingLevel(input: {
 
 /**
  * Track speaking state for a set of remote participants.
- * Returns a map of participantId → isSpeaking.
+ * Returns a map of participantId → speaking state tagged with the generation the
+ * signal was produced under, so a renderer can reject a stale connection.
  *
  * The input array should be memoized by the caller so meters are only rebuilt
  * when the participant set or their streams actually change (not on every
@@ -131,13 +187,14 @@ export function shouldAcceptRemoteSpeakingLevel(input: {
  */
 export function useRemoteSpeaking(
   participants: RemoteSpeakingInput[],
-): Record<string, boolean> {
-  const [speakingById, setSpeakingById] = useState<Record<string, boolean>>({});
+): Record<string, RemoteSpeakingState> {
+  const [speakingById, setSpeakingById] = useState<Record<string, RemoteSpeakingState>>({});
   const metersRef = useRef(
     new Map<
       string,
       {
         stream: MediaStream;
+        audioTrackId: string;
         generation: string | number | null;
         microphoneEnabled: boolean;
         cleanup: () => void;
@@ -152,49 +209,58 @@ export function useRemoteSpeaking(
       wanted.set(participant.id, participant.stream ?? null);
     }
 
-    // Tear down meters that are gone or whose stream changed.
+    const clearSpeaking = (id: string, generation: string | number | null) => {
+      setSpeakingById((prev) => {
+        const current = prev[id];
+        if (current && !current.isSpeaking && current.generation === generation) return prev;
+        return { ...prev, [id]: { isSpeaking: false, generation } };
+      });
+    };
+
+    // Tear down meters that are gone or whose audio track, generation, or
+    // microphone state changed.
     for (const [id, meter] of [...meters]) {
       const participant = participants.find((item) => item.id === id);
-      const stream = wanted.get(id);
+      const stream = wanted.get(id) ?? null;
       const generation = participant?.generation ?? null;
       const microphoneEnabled = participant?.microphoneEnabled !== false;
       if (
         !wanted.has(id) ||
-        stream !== meter.stream ||
+        resolveSpeakingAudioTrackId(stream) !== meter.audioTrackId ||
         generation !== meter.generation ||
         microphoneEnabled !== meter.microphoneEnabled ||
-        !shouldAttachRemoteSpeakingMeter(participant ?? { id, stream: stream ?? null })
+        !shouldAttachRemoteSpeakingMeter(participant ?? { id, stream })
       ) {
         meter.cleanup();
         meters.delete(id);
-        setSpeakingById((prev) => {
-          if (prev[id] === false) return prev;
-          return { ...prev, [id]: false };
-        });
+        clearSpeaking(id, generation);
       }
     }
 
-    // Attach meters for new streams with an audio track.
+    // Attach meters for participants whose current audio track has no meter yet.
     for (const participant of participants) {
       const stream = participant.stream;
       if (!stream) continue;
       const existing = meters.get(participant.id);
       const generation = participant.generation ?? null;
       const microphoneEnabled = participant.microphoneEnabled !== false;
+      const audioTrackId = resolveSpeakingAudioTrackId(stream);
       if (
         existing &&
-        existing.stream === stream &&
+        audioTrackId !== null &&
+        existing.audioTrackId === audioTrackId &&
         existing.generation === generation &&
         existing.microphoneEnabled === microphoneEnabled
       ) {
         continue;
       }
+      if (audioTrackId === null) continue;
       if (!shouldAttachRemoteSpeakingMeter(participant)) continue;
 
       const cleanup = createAudioLevelMeter(stream, (level) => {
         const currentMeter = metersRef.current.get(participant.id);
         if (
-          currentMeter?.stream !== stream ||
+          currentMeter?.audioTrackId !== audioTrackId ||
           !shouldAcceptRemoteSpeakingLevel({
             currentGeneration: currentMeter?.generation,
             updateGeneration: generation,
@@ -205,17 +271,26 @@ export function useRemoteSpeaking(
           return;
         }
         setSpeakingById((prev) => {
-          const current = prev[participant.id] ?? false;
+          const current = prev[participant.id]?.isSpeaking ?? false;
           if (level > SPEAKING_LEVEL_THRESHOLD && !current) {
-            return { ...prev, [participant.id]: true };
+            return { ...prev, [participant.id]: { isSpeaking: true, generation } };
           }
           if (level < SPEAKING_LEVEL_RELEASE && current) {
-            return { ...prev, [participant.id]: false };
+            return { ...prev, [participant.id]: { isSpeaking: false, generation } };
+          }
+          if (prev[participant.id]?.generation !== generation) {
+            return { ...prev, [participant.id]: { isSpeaking: current, generation } };
           }
           return prev;
         });
       });
-      meters.set(participant.id, { stream, generation, microphoneEnabled, cleanup });
+      meters.set(participant.id, {
+        stream,
+        audioTrackId,
+        generation,
+        microphoneEnabled,
+        cleanup,
+      });
     }
   }, [participants]);
 

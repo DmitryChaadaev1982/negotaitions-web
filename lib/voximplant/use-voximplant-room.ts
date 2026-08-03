@@ -19,6 +19,12 @@ import {
 import { AUDIO_LEVEL_RMS_TO_PERCENT_MULTIPLIER } from "@/lib/telemetry/speaking-activity-config";
 import { clearRemoteAudioElements, stopVoxLikeStreamTracks } from "@/lib/voximplant/media-cleanup";
 import {
+  buildRemoteAudioElementKey,
+  isRemoteAudioElementKeyForEndpoint,
+  resolveRemoteAudioStream,
+  shouldCreateRemoteAudioElement,
+} from "@/lib/voximplant/remote-audio-registry";
+import {
   installVoxCameraErrorSuppressor,
   isAlreadyExistsStreamError,
   isRecoverableVoxMediaError,
@@ -245,10 +251,17 @@ export function shouldApplyVoxTakeoverMessage(input: {
 
 type UpsertRemoteParticipantInput = {
   id: string;
-  displayName: string;
+  displayName?: string;
   endpointUsername?: string | null;
   stream?: MediaStream | null;
-  audioStream?: MediaStream | null;
+  /**
+   * Either the next audio stream, or a resolver that receives the currently
+   * tracked stream so endpoint refreshes never downgrade a live stream to null.
+   */
+  audioStream?:
+    | MediaStream
+    | null
+    | ((previous: MediaStream | null) => MediaStream | null);
 };
 
 // ─── Hook options & result ────────────────────────────────────────────────────
@@ -893,6 +906,11 @@ export function useVoximplantRoom({
   );
 
   const upsertRemote = useCallback((next: UpsertRemoteParticipantInput) => {
+    const resolveAudioStream = (previous: MediaStream | null): MediaStream | null => {
+      if (next.audioStream === undefined) return previous;
+      if (typeof next.audioStream === "function") return next.audioStream(previous);
+      return next.audioStream;
+    };
     setRemoteParticipants((current) => {
       const index = current.findIndex((item) => item.id === next.id);
       if (index === -1) {
@@ -900,24 +918,23 @@ export function useVoximplantRoom({
           ...current,
           {
             id: next.id,
-            displayName: next.displayName,
+            displayName: next.displayName ?? next.id,
             endpointUsername: next.endpointUsername ?? null,
             stream: next.stream ?? null,
-            audioStream: next.audioStream ?? null,
+            audioStream: resolveAudioStream(null),
           },
         ];
       }
       const copy = [...current];
       copy[index] = {
         ...copy[index],
-        displayName: next.displayName,
+        displayName: next.displayName ?? copy[index].displayName,
         endpointUsername:
           next.endpointUsername === undefined
             ? copy[index].endpointUsername ?? null
             : next.endpointUsername,
         stream: next.stream === undefined ? copy[index].stream : next.stream,
-        audioStream:
-          next.audioStream === undefined ? copy[index].audioStream ?? null : next.audioStream,
+        audioStream: resolveAudioStream(copy[index].audioStream ?? null),
       };
       return copy;
     });
@@ -939,17 +956,25 @@ export function useVoximplantRoom({
       const ms = streamToMediaStream(voxStream);
       if (!ms) return;
 
-      const key = `${endpointId}-${voxStream.id}`;
-      if (rt.remoteAudioElements.has(key)) return;
+      // The tracked audio stream is published on every attach, even when the
+      // playback element already exists: a re-added stream must reach the tile
+      // (and therefore the speaking analyser) instead of being swallowed by
+      // playback idempotency.
+      upsertRemote({ id: endpointId, audioStream: ms });
+
+      const key = buildRemoteAudioElementKey(endpointId, voxStream.id);
+      if (
+        !shouldCreateRemoteAudioElement({
+          attachedElementKeys: [...rt.remoteAudioElements.keys()],
+          key,
+        })
+      ) {
+        return;
+      }
 
       const audio = new Audio();
       audio.srcObject = ms;
       audio.autoplay = true;
-      upsertRemote({
-        id: endpointId,
-        displayName: endpointId,
-        audioStream: ms,
-      });
       rt.remoteAudioElements.set(key, audio);
       setRemoteAudioElementCount(rt.remoteAudioElements.size);
 
@@ -980,10 +1005,9 @@ export function useVoximplantRoom({
   const detachRemoteAudioStreams = useCallback((endpointId: string) => {
     const rt = runtimeRef.current;
     if (!rt) return;
-    const prefix = `${endpointId}-`;
     const toDelete: string[] = [];
     for (const [key, audio] of rt.remoteAudioElements) {
-      if (key.startsWith(prefix)) {
+      if (isRemoteAudioElementKeyForEndpoint(key, endpointId)) {
         audio.pause();
         // srcObject cleared in cleanup; element is removed from map and will be GC'd.
         toDelete.push(key);
@@ -992,13 +1016,27 @@ export function useVoximplantRoom({
     for (const key of toDelete) rt.remoteAudioElements.delete(key);
     if (toDelete.length > 0) setRemoteAudioElementCount(rt.remoteAudioElements.size);
     if (toDelete.length > 0) {
-      upsertRemote({
-        id: endpointId,
-        displayName: endpointId,
-        audioStream: null,
-      });
+      upsertRemote({ id: endpointId, audioStream: null });
     }
   }, [upsertRemote]);
+
+  /**
+   * Release the playback element bound to one removed remote audio stream so a
+   * later re-add of the same stream id is not treated as already attached.
+   */
+  const releaseRemoteAudioStream = useCallback(
+    (endpointId: string, voxStream: VoxStream) => {
+      const rt = runtimeRef.current;
+      if (!rt) return;
+      const key = buildRemoteAudioElementKey(endpointId, voxStream.id);
+      const audio = rt.remoteAudioElements.get(key);
+      if (!audio) return;
+      audio.pause();
+      rt.remoteAudioElements.delete(key);
+      setRemoteAudioElementCount(rt.remoteAudioElements.size);
+    },
+    [],
+  );
 
   /** Attempt to play all paused remote audio elements (call after user gesture). */
   const unlockAudioPlayback = useCallback(() => {
@@ -1057,13 +1095,16 @@ export function useVoximplantRoom({
     (endpoint: VoxEndpoint, generation: number) => {
       if (generationRef.current !== generation || staleLifecycleRef.current) return;
       const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
-      const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
+      const endpointAudioStreams = endpoint
+        .getAnyAudioStreams()
+        .map((audioStream) => streamToMediaStream(audioStream));
       upsertRemote({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
         endpointUsername: endpoint.userName ?? null,
         stream: streamToMediaStream(videoStream),
-        audioStream: streamToMediaStream(audioStream),
+        audioStream: (attachedAudioStream) =>
+          resolveRemoteAudioStream({ endpointAudioStreams, attachedAudioStream }),
       });
     },
     [upsertRemote],
@@ -1288,8 +1329,12 @@ export function useVoximplantRoom({
           applyRemoteVideoStream(endpoint, generation);
         }
       };
-      const onRemoved = () => {
+      const onRemoved = (event: VoxEndpointMediaEvent) => {
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
+        const stream = event.payload?.stream;
+        if (stream?.type === "audio") {
+          releaseRemoteAudioStream(endpoint.id, stream);
+        }
         applyRemoteVideoStream(endpoint, generation);
       };
 
@@ -1303,7 +1348,13 @@ export function useVoximplantRoom({
         attachRemoteAudioStream(endpoint.id, audioStream, generation);
       }
     },
-    [applyRemoteVideoStream, attachRemoteAudioStream, isRuntimeActive, unsubscribeEndpoint],
+    [
+      applyRemoteVideoStream,
+      attachRemoteAudioStream,
+      isRuntimeActive,
+      releaseRemoteAudioStream,
+      unsubscribeEndpoint,
+    ],
   );
 
   // ── Microphone toggle ─────────────────────────────────────────────────────
