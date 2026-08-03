@@ -76,6 +76,15 @@ function resolveEventSessionBadgeState(
   return "preparation";
 }
 
+function isCompletedHistorySession(session: EventStateResponse["sessions"][number]) {
+  return (
+    session.roomLifecycle === "CLOSED" ||
+    session.status === "COMPLETED" ||
+    Boolean(session.closedByEventAt) ||
+    (session.negotiationState === "FINISHED" && session.roomLifecycle !== "DEBRIEF_OPEN")
+  );
+}
+
 function eventSessionBadgeClassName(state: EventSessionBadgeState) {
   if (state === "active") {
     return "border-cyan-500/35 bg-cyan-500/12 text-cyan-200";
@@ -87,6 +96,181 @@ function eventSessionBadgeClassName(state: EventSessionBadgeState) {
     return "border-violet-500/35 bg-violet-500/12 text-violet-200";
   }
   return "border-slate-500/35 bg-slate-500/12 text-slate-300";
+}
+
+function EventSessionBoardCard({
+  session,
+  hostToken,
+  onCopyRoomLinks,
+  onRefresh,
+}: {
+  session: EventStateResponse["sessions"][number];
+  hostToken?: string;
+  onCopyRoomLinks: (sessionId: string) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  const { t } = useI18n();
+  const primaryAction = resolveEventSessionPrimaryAction({
+    roomAccessDecision: session.roomAccessDecision,
+    roomHref: session.roomUrl,
+    materialsHref: session.materialsUrl,
+    redirectHref: session.roomAccessRedirectTo,
+  });
+  const showMaterials =
+    Boolean(session.materialsUrl) &&
+    (!primaryAction ||
+      primaryAction.kind === "OPEN_ROOM" ||
+      primaryAction.kind === "RETURN_TO_DEBRIEF");
+  const showCompleteSession =
+    session.isActive || session.roomLifecycle === "DEBRIEF_OPEN";
+  const requestPayload = {
+    ...(hostToken ? { hostToken } : {}),
+    ...(session.roomLifecycle === "DEBRIEF_OPEN" ? { closeDebriefForAll: true } : {}),
+  };
+
+  return (
+    <div
+      data-testid="event-session-card"
+      className="space-y-3 rounded-xl border border-slate-600/30 bg-slate-900/50 px-3 py-3"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-50">
+            {session.roomLabel ?? session.title}
+          </p>
+          <p className="text-xs text-slate-400">{session.caseTitle}</p>
+        </div>
+        {(() => {
+          const badgeState = resolveEventSessionBadgeState(session);
+          const badgeLabel =
+            badgeState === "completed"
+              ? t("events.completedSessionStatus")
+              : badgeState === "debrief"
+                ? t("room.debrief")
+                : t(
+                    `status.${session.negotiationState}` as
+                      | "status.PREPARATION"
+                      | "status.PREPARATION_RUNNING"
+                      | "status.PREPARATION_PAUSED"
+                      | "status.READY_TO_START"
+                      | "status.RUNNING"
+                      | "status.PAUSED"
+                      | "status.FINISHED",
+                  );
+
+          return (
+            <span
+              data-testid="event-session-status-badge"
+              data-session-state={badgeState}
+              data-room-lifecycle={session.roomLifecycle}
+              data-session-negotiation-state={session.negotiationState}
+              className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${eventSessionBadgeClassName(
+                badgeState,
+              )}`}
+            >
+              {badgeLabel}
+            </span>
+          );
+        })()}
+      </div>
+      <div className="grid gap-1 text-xs text-slate-400">
+        <p>
+          {t("events.assignFacilitator")}:{" "}
+          <span className="text-slate-200">
+            {session.facilitatorName ?? t("common.notYet")}
+          </span>
+        </p>
+        <p>
+          {t("sessions.participants")}: {session.participantCount} ·{" "}
+          {t("sessions.observers")}: {session.observerCount}
+        </p>
+        <p>
+          {t("common.preparationDurationValue", {
+            minutes: Math.round(session.preparationDuration / 60),
+          })}
+          {" · "}
+          {t("common.negotiationDurationValue", {
+            minutes: Math.round(session.negotiationDuration / 60),
+          })}
+        </p>
+        {(() => {
+          const recordingPresentation = getRecordingDisplayPresentation(
+            session.recordingDisplayState,
+          );
+          return (
+            <p
+              data-recording-state={recordingPresentation.state}
+              className={recordingPresentation.className}
+            >
+              {t("recording.recordingStatus")}: {t(recordingPresentation.labelKey)}
+            </p>
+          );
+        })()}
+        <div className="mt-1 space-y-1">
+          {session.participants.map((participant) => (
+            <CompactPersonStatus
+              key={participant.id}
+              displayName={participant.displayName}
+              caseRoleName={participant.roleName}
+              participantType={participant.participantType}
+              className="rounded-lg border border-slate-700/35 bg-slate-950/30 px-2 py-1"
+            />
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {primaryAction ? (
+          <EventSessionRoomButton
+            roomAccessDecision={session.roomAccessDecision}
+            roomHref={session.roomUrl}
+            materialsHref={session.materialsUrl}
+            redirectHref={session.roomAccessRedirectTo}
+            compact
+            testId="open-session-room-button"
+          />
+        ) : null}
+        {showMaterials && session.materialsUrl ? (
+          <SemanticActionButton
+            type="button"
+            actionKind="REVIEW_RESULTS"
+            actionTarget={session.materialsUrl}
+            data-testid="open-session-materials-button"
+            size="compact"
+            onClick={() => {
+              window.location.href = session.materialsUrl!;
+            }}
+          >
+            {t("events.openMaterials")}
+          </SemanticActionButton>
+        ) : null}
+        <SemanticActionButton
+          type="button"
+          actionKind="MANAGEMENT"
+          actionTarget={session.id}
+          data-testid="copy-room-links-button"
+          size="compact"
+          onClick={() => void onCopyRoomLinks(session.id)}
+        >
+          {t("events.copyRoomLinks")}
+        </SemanticActionButton>
+        {showCompleteSession ? (
+          <CompleteSessionButton
+            sessionId={session.id}
+            variant="button"
+            testId="finish-session-button"
+            className="px-2 py-1 text-xs"
+            requestPayload={requestPayload}
+            confirmBody={
+              session.roomLifecycle === "DEBRIEF_OPEN"
+                ? t("sessions.completeSessionDebriefConfirmBody")
+                : undefined
+            }
+            onCompleted={onRefresh}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export function EventHostControlsPanel({
@@ -185,6 +369,40 @@ export function EventHostControlsPanel({
   const observerSelectionSet = useMemo(
     () => new Set(draftState.observerEventParticipantIds),
     [draftState.observerEventParticipantIds],
+  );
+  const activeBoardSessions = useMemo(
+    () => state.sessions.filter((session) => !isCompletedHistorySession(session)),
+    [state.sessions],
+  );
+  const completedBoardSessions = useMemo(
+    () => state.sessions.filter(isCompletedHistorySession),
+    [state.sessions],
+  );
+  const completedDisclosureId = `completed-sessions-${state.event.id}`;
+  const completedDisclosureStorageKey = `event-lobby:${state.event.id}:${state.currentParticipant?.id ?? "owner"}:completed-sessions-open`;
+  const defaultCompletedOpen = completedBoardSessions.length <= 1;
+  const [completedSessionsOpen, setCompletedSessionsOpen] = useState(() => {
+    try {
+      const stored = window.sessionStorage.getItem(completedDisclosureStorageKey);
+      if (stored === "open") return true;
+      if (stored === "closed") return false;
+    } catch {
+      return defaultCompletedOpen;
+    }
+    return defaultCompletedOpen;
+  });
+
+  const updateCompletedSessionsOpen = useCallback(
+    (open: boolean) => {
+      setCompletedSessionsOpen(open);
+      try {
+        window.sessionStorage.setItem(
+          completedDisclosureStorageKey,
+          open ? "open" : "closed",
+        );
+      } catch {}
+    },
+    [completedDisclosureStorageKey],
   );
 
   const saveDraft = useCallback(
@@ -387,167 +605,51 @@ export function EventHostControlsPanel({
               <p className="text-sm text-slate-400">{t("events.noSessionsCreatedYet")}</p>
             ) : (
               <div className="space-y-2">
-                {state.sessions.map((session) => (
-                  <div
+                {activeBoardSessions.map((session) => (
+                  <EventSessionBoardCard
                     key={session.id}
-                    data-testid="event-session-card"
-                    className="space-y-3 rounded-xl border border-slate-600/30 bg-slate-900/50 px-3 py-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-50">
-                          {session.roomLabel ?? session.title}
-                        </p>
-                        <p className="text-xs text-slate-400">{session.caseTitle}</p>
-                      </div>
-                      {(() => {
-                        const badgeState = resolveEventSessionBadgeState(session);
-                        const badgeLabel =
-                          badgeState === "completed"
-                            ? t("events.completedSessionStatus")
-                            : badgeState === "debrief"
-                              ? t("room.debrief")
-                              : t(
-                                  `status.${session.negotiationState}` as
-                                    | "status.PREPARATION"
-                                    | "status.PREPARATION_RUNNING"
-                                    | "status.PREPARATION_PAUSED"
-                                    | "status.READY_TO_START"
-                                    | "status.RUNNING"
-                                    | "status.PAUSED"
-                                    | "status.FINISHED",
-                                );
-
-                        return (
-                          <span
-                            data-testid="event-session-status-badge"
-                            data-session-state={badgeState}
-                            data-room-lifecycle={session.roomLifecycle}
-                            data-session-negotiation-state={session.negotiationState}
-                            className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${eventSessionBadgeClassName(
-                              badgeState,
-                            )}`}
-                          >
-                            {badgeLabel}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    <div className="grid gap-1 text-xs text-slate-400">
-                      <p>
-                        {t("events.assignFacilitator")}:{" "}
-                        <span className="text-slate-200">
-                          {session.facilitatorName ?? t("common.notYet")}
-                        </span>
-                      </p>
-                      <p>
-                        {t("sessions.participants")}: {session.participantCount} ·{" "}
-                        {t("sessions.observers")}: {session.observerCount}
-                      </p>
-                      <p>
-                        {t("common.preparationDurationValue", {
-                          minutes: Math.round(session.preparationDuration / 60),
-                        })}
-                        {" · "}
-                        {t("common.negotiationDurationValue", {
-                          minutes: Math.round(session.negotiationDuration / 60),
-                        })}
-                      </p>
-                      {(() => {
-                        const recordingPresentation = getRecordingDisplayPresentation(
-                          session.recordingDisplayState,
-                        );
-                        return (
-                          <p
-                            data-recording-state={recordingPresentation.state}
-                            className={recordingPresentation.className}
-                          >
-                            {t("recording.recordingStatus")}:{" "}
-                            {t(recordingPresentation.labelKey)}
-                          </p>
-                        );
-                      })()}
-                      <div className="mt-1 space-y-1">
-                        {session.participants.map((participant) => (
-                          <CompactPersonStatus
-                            key={participant.id}
-                            displayName={participant.displayName}
-                            caseRoleName={participant.roleName}
-                            participantType={participant.participantType}
-                            className="rounded-lg border border-slate-700/35 bg-slate-950/30 px-2 py-1"
-                          />
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {(() => {
-                        const primaryAction = resolveEventSessionPrimaryAction({
-                          roomAccessDecision: session.roomAccessDecision,
-                          roomHref: session.roomUrl,
-                          materialsHref: session.materialsUrl,
-                          redirectHref: session.roomAccessRedirectTo,
-                        });
-                        return primaryAction ? (
-                          <EventSessionRoomButton
-                            roomAccessDecision={session.roomAccessDecision}
-                            roomHref={session.roomUrl}
-                            materialsHref={session.materialsUrl}
-                            redirectHref={session.roomAccessRedirectTo}
-                            compact
-                            testId="open-session-room-button"
-                          />
-                        ) : null;
-                      })()}
-                      {session.materialsUrl &&
-                      (() => {
-                        const primaryAction = resolveEventSessionPrimaryAction({
-                          roomAccessDecision: session.roomAccessDecision,
-                          roomHref: session.roomUrl,
-                          materialsHref: session.materialsUrl,
-                          redirectHref: session.roomAccessRedirectTo,
-                        });
-                        return !primaryAction ||
-                          primaryAction.kind === "OPEN_ROOM" ||
-                          primaryAction.kind === "RETURN_TO_DEBRIEF";
-                      })() ? (
-                        <SemanticActionButton
-                          type="button"
-                          actionKind="REVIEW_RESULTS"
-                          actionTarget={session.materialsUrl}
-                          data-testid="open-session-materials-button"
-                          size="compact"
-                          onClick={() => {
-                            window.location.href = session.materialsUrl!;
-                          }}
-                        >
-                          {t("events.openMaterials")}
-                        </SemanticActionButton>
-                      ) : null}
-                      <SemanticActionButton
-                        type="button"
-                        actionKind="MANAGEMENT"
-                        actionTarget={session.id}
-                        data-testid="copy-room-links-button"
-                        size="compact"
-                        onClick={() => void copyRoomLinks(session.id)}
-                      >
-                        {t("events.copyRoomLinks")}
-                      </SemanticActionButton>
-                      {session.isActive ? (
-                        <CompleteSessionButton
-                          sessionId={session.id}
-                          variant="button"
-                          testId="finish-session-button"
-                          className="px-2 py-1 text-xs"
-                          requestPayload={hostToken ? { hostToken } : undefined}
-                          onCompleted={() => {
-                            void onUpdateHost({});
-                          }}
-                        />
-                      ) : null}
-                    </div>
-                  </div>
+                    session={session}
+                    hostToken={hostToken}
+                    onCopyRoomLinks={copyRoomLinks}
+                    onRefresh={() => void onUpdateHost({})}
+                  />
                 ))}
+                {completedBoardSessions.length > 0 ? (
+                  <section
+                    className="rounded-xl border border-slate-700/40 bg-slate-950/25"
+                    data-testid="completed-sessions-section"
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-semibold text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                      aria-expanded={completedSessionsOpen}
+                      aria-controls={completedDisclosureId}
+                      onClick={() => updateCompletedSessionsOpen(!completedSessionsOpen)}
+                      data-testid="completed-sessions-toggle"
+                    >
+                      <span>
+                        {t("events.completedSessions")} ({completedBoardSessions.length})
+                      </span>
+                      <span aria-hidden="true">{completedSessionsOpen ? "^" : "v"}</span>
+                    </button>
+                    <div
+                      id={completedDisclosureId}
+                      hidden={!completedSessionsOpen}
+                      className="space-y-2 border-t border-slate-700/35 p-2"
+                      data-testid="completed-sessions-list"
+                    >
+                      {completedBoardSessions.map((session) => (
+                        <EventSessionBoardCard
+                          key={session.id}
+                          session={session}
+                          hostToken={hostToken}
+                          onCopyRoomLinks={copyRoomLinks}
+                          onRefresh={() => void onUpdateHost({})}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             )}
           </div>

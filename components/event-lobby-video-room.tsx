@@ -6,6 +6,7 @@ import {
   LiveKitRoom,
   ParticipantTile,
   RoomAudioRenderer,
+  useLocalParticipant,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
@@ -14,7 +15,7 @@ import { isTrackReference } from "@livekit/components-core";
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { LiveKitReconnectBanner } from "@/components/livekit-reconnect-banner";
 import { ensureLiveKitClientSetup } from "@/lib/livekit-client-setup";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const PARTICIPANT_TILE_CLASS =
   "h-full w-full [&_.lk-participant-media-video]:h-full [&_.lk-participant-media-video]:w-full [&_.lk-participant-media-video]:object-cover [&_.lk-participant-metadata]:hidden [&_.lk-participant-placeholder]:h-full [&_.lk-participant-placeholder]:w-full [&_video]:h-full [&_video]:w-full [&_video]:object-cover";
@@ -23,6 +24,14 @@ type EventLobbyVideoRoomProps = {
   token: string;
   serverUrl: string;
   onDeviceWarning?: (message: string | null) => void;
+  onLocalMediaControllerChange?: (controller: {
+    micEnabled: boolean;
+    cameraEnabled: boolean;
+    micBusy: boolean;
+    cameraBusy: boolean;
+    toggleMic: () => Promise<void> | void;
+    toggleCamera: () => Promise<void> | void;
+  } | null) => void;
 };
 
 function EventLobbyVideoGrid() {
@@ -160,10 +169,103 @@ function EventLobbyMediaPublisher({
   return null;
 }
 
+function EventLobbyLiveKitMediaController({
+  onDeviceWarning,
+  onLocalMediaControllerChange,
+}: {
+  onDeviceWarning?: (message: string | null) => void;
+  onLocalMediaControllerChange?: EventLobbyVideoRoomProps["onLocalMediaControllerChange"];
+}) {
+  const { localParticipant } = useLocalParticipant();
+  const [micBusy, setMicBusy] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(
+    Boolean(localParticipant?.isMicrophoneEnabled),
+  );
+  const [cameraEnabled, setCameraEnabled] = useState(
+    Boolean(localParticipant?.isCameraEnabled),
+  );
+
+  useEffect(() => {
+    if (!localParticipant) return;
+    const sync = () => {
+      setMicEnabled(Boolean(localParticipant.isMicrophoneEnabled));
+      setCameraEnabled(Boolean(localParticipant.isCameraEnabled));
+    };
+    sync();
+    localParticipant.on(RoomEvent.LocalTrackPublished, sync);
+    localParticipant.on(RoomEvent.LocalTrackUnpublished, sync);
+    localParticipant.on(RoomEvent.TrackMuted, sync);
+    localParticipant.on(RoomEvent.TrackUnmuted, sync);
+    return () => {
+      localParticipant.off(RoomEvent.LocalTrackPublished, sync);
+      localParticipant.off(RoomEvent.LocalTrackUnpublished, sync);
+      localParticipant.off(RoomEvent.TrackMuted, sync);
+      localParticipant.off(RoomEvent.TrackUnmuted, sync);
+    };
+  }, [localParticipant]);
+
+  const toggleMic = useCallback(async () => {
+    if (!localParticipant || micBusy) return;
+    setMicBusy(true);
+    try {
+      await localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled);
+      setMicEnabled(Boolean(localParticipant.isMicrophoneEnabled));
+      onDeviceWarning?.(null);
+    } catch {
+      onDeviceWarning?.("microphoneUnavailable");
+    } finally {
+      setMicBusy(false);
+    }
+  }, [localParticipant, micBusy, onDeviceWarning]);
+
+  const toggleCamera = useCallback(async () => {
+    if (!localParticipant || cameraBusy) return;
+    setCameraBusy(true);
+    try {
+      await localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled);
+      setCameraEnabled(Boolean(localParticipant.isCameraEnabled));
+      onDeviceWarning?.(null);
+    } catch {
+      onDeviceWarning?.("cameraUnavailable");
+    } finally {
+      setCameraBusy(false);
+    }
+  }, [cameraBusy, localParticipant, onDeviceWarning]);
+
+  useEffect(() => {
+    if (!localParticipant) {
+      onLocalMediaControllerChange?.(null);
+      return;
+    }
+    onLocalMediaControllerChange?.({
+      micEnabled,
+      cameraEnabled,
+      micBusy,
+      cameraBusy,
+      toggleMic,
+      toggleCamera,
+    });
+    return () => onLocalMediaControllerChange?.(null);
+  }, [
+    cameraBusy,
+    cameraEnabled,
+    localParticipant,
+    micBusy,
+    micEnabled,
+    onLocalMediaControllerChange,
+    toggleCamera,
+    toggleMic,
+  ]);
+
+  return null;
+}
+
 export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
   token,
   serverUrl,
   onDeviceWarning,
+  onLocalMediaControllerChange,
 }: EventLobbyVideoRoomProps) {
   useEffect(() => {
     ensureLiveKitClientSetup();
@@ -227,6 +329,10 @@ export const EventLobbyVideoRoom = memo(function EventLobbyVideoRoom({
       className="lk-room-container flex h-full min-h-[360px] flex-col bg-[#0f172a]"
     >
       <EventLobbyMediaPublisher token={token} onDeviceWarning={onDeviceWarning} />
+      <EventLobbyLiveKitMediaController
+        onDeviceWarning={onDeviceWarning}
+        onLocalMediaControllerChange={onLocalMediaControllerChange}
+      />
       <RoomAudioRenderer />
       <div className="lk-video-conference flex min-h-0 flex-1 flex-col">
         <div className="lk-video-conference-inner relative min-h-0 flex-1 overflow-hidden">

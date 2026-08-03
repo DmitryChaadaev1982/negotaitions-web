@@ -29,6 +29,11 @@ import {
 } from "@/components/ui/form-styles";
 import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
 import type { EventStateResponse } from "@/lib/event-state";
+import type {
+  EventMediaControlAction,
+  EventMediaControlCommand,
+  EventMediaControlDevice,
+} from "@/lib/voximplant/event-media-control-store";
 import type { VoxProviderFaultMode } from "@/lib/voximplant/provider-fault-simulation";
 import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
 import { saveRecoveryContext, touchRecoveryContext } from "@/lib/rejoin/recovery-storage";
@@ -42,6 +47,15 @@ import {
 } from "@/lib/event-state-polling";
 
 const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
+
+type LocalLobbyMediaController = {
+  micEnabled: boolean;
+  cameraEnabled: boolean;
+  micBusy: boolean;
+  cameraBusy: boolean;
+  toggleMic: () => Promise<void> | void;
+  toggleCamera: () => Promise<void> | void;
+};
 
 type EventLobbyViewProps = {
   eventId: string;
@@ -129,9 +143,13 @@ export function EventLobbyView({
   const [completeWarnings, setCompleteWarnings] = useState<string[]>([]);
   const [staleConnection, setStaleConnection] = useState(false);
   const [isEditingPreference, setIsEditingPreference] = useState(false);
+  const [localMediaController, setLocalMediaController] =
+    useState<LocalLobbyMediaController | null>(null);
+  const [pendingRemoteControlKey, setPendingRemoteControlKey] = useState<string | null>(null);
   const stateRequestSequenceRef = useRef(0);
   const latestAppliedStateRequestRef = useRef(0);
   const statePollInFlightRef = useRef(false);
+  const handledMediaControlCommandsRef = useRef(new Set<string>());
   const lobbyConnectionId = useClientConnectionId(`event-lobby-${eventId}`);
   const activateStaleConnection = useCallback(() => {
     setStaleConnection(true);
@@ -704,7 +722,91 @@ export function EventLobbyView({
     }
   }, [eventId, fetchState, hostAccessToken, t]);
 
+  const acknowledgeMediaCommand = useCallback(
+    async (
+      command: EventMediaControlCommand,
+      status: "applied" | "accepted" | "declined" | "expired" | "failed",
+      resultMessage?: string,
+    ) => {
+      const response = await fetch(`/api/events/${eventId}/media-control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+          ...(participantAccessToken ? { participantToken: participantAccessToken } : {}),
+          commandId: command.id,
+          status,
+          ...(resultMessage ? { resultMessage } : {}),
+        }),
+      });
+      if (response.ok) {
+        await fetchState();
+      }
+    },
+    [eventId, fetchState, hostAccessToken, participantAccessToken],
+  );
+
+  const requestParticipantMediaControl = useCallback(
+    async (
+      targetParticipantId: string,
+      device: EventMediaControlDevice,
+      action: EventMediaControlAction,
+    ) => {
+      if (pendingRemoteControlKey) return;
+      const operationKey = `${targetParticipantId}:${device}:${action}`;
+      setPendingRemoteControlKey(operationKey);
+      try {
+        const response = await fetch(`/api/events/${eventId}/media-control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+            ...(participantAccessToken ? { participantToken: participantAccessToken } : {}),
+            targetParticipantId,
+            device,
+            action,
+          }),
+        });
+        if (response.ok) {
+          await fetchState();
+        }
+      } finally {
+        setPendingRemoteControlKey(null);
+      }
+    },
+    [
+      eventId,
+      fetchState,
+      hostAccessToken,
+      participantAccessToken,
+      pendingRemoteControlKey,
+    ],
+  );
+
   const isEventCompleted = state?.event.status === "COMPLETED";
+
+  useEffect(() => {
+    if (!state || !localMediaController) return;
+    for (const command of state.mediaControlCommands) {
+      if (command.action !== "disable") continue;
+      if (handledMediaControlCommandsRef.current.has(command.id)) continue;
+      handledMediaControlCommandsRef.current.add(command.id);
+      void (async () => {
+        const isAlreadyDisabled =
+          command.device === "mic"
+            ? !localMediaController.micEnabled
+            : !localMediaController.cameraEnabled;
+        if (!isAlreadyDisabled) {
+          await (command.device === "mic"
+            ? localMediaController.toggleMic()
+            : localMediaController.toggleCamera());
+        }
+        await acknowledgeMediaCommand(command, "applied");
+      })().catch(() => {
+        void acknowledgeMediaCommand(command, "failed", "localMediaOperationFailed");
+      });
+    }
+  }, [acknowledgeMediaCommand, localMediaController, state]);
 
   if (error === "eventUnavailable") {
     return (
@@ -802,8 +904,11 @@ export function EventLobbyView({
     );
   }
 
+  const pendingEnableRequest =
+    state.mediaControlCommands.find((command) => command.action === "enable_request") ?? null;
+
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#020617]" data-testid="event-lobby-page">
+    <div className="fixed inset-0 flex min-h-0 flex-col overflow-hidden bg-[#020617]" data-testid="event-lobby-page">
       {/* Render in all lobby modes. In account mode (no token), the heartbeat
           endpoint resolves presence via the authenticated user session. */}
       <EventLobbyPresence
@@ -861,7 +966,7 @@ export function EventLobbyView({
         ) : null}
       </header>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-hidden p-4 lg:flex-row">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:overflow-hidden">
         <section
           className="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25"
           data-testid="event-lobby-video-area"
@@ -913,6 +1018,7 @@ export function EventLobbyView({
                 token={liveKit.token}
                 serverUrl={liveKit.serverUrl}
                 onDeviceWarning={setDeviceWarning}
+                onLocalMediaControllerChange={setLocalMediaController}
               />
             ) : videoProvider === "voximplant" &&
               (voxReady || providerFaultSimulation !== "off") &&
@@ -926,6 +1032,7 @@ export function EventLobbyView({
                 providerFaultSimulation={providerFaultSimulation}
                 onStaleConnection={activateStaleConnection}
                 onDeviceWarning={setDeviceWarning}
+                onLocalMediaControllerChange={setLocalMediaController}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">
@@ -935,7 +1042,7 @@ export function EventLobbyView({
           </div>
         </section>
 
-        <aside className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-y-auto rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 xl:w-[420px]">
+        <aside className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-visible rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 lg:overflow-y-auto xl:w-[420px]">
           {state.currentParticipant ? (
             <DesiredRolePreferenceCard
               participant={state.currentParticipant}
@@ -1037,7 +1144,64 @@ export function EventLobbyView({
               {state.participants.length === 0 ? (
                 <p className="text-sm text-slate-400">{t("events.noParticipantsYet")}</p>
               ) : (
-                state.participants.map((participant) => (
+                state.participants.map((participant) => {
+                  const isCurrentUser =
+                    participant.id === state.currentParticipant?.id;
+                  const isOnline = participant.eventPresenceStatus === "ONLINE";
+                  const canUseSelfControls =
+                    isCurrentUser && isOnline && Boolean(localMediaController);
+                  const canOwnerControlOther =
+                    isEventOwner && !isCurrentUser && isOnline && !staleConnection;
+                  const buildOwnerControl = (
+                    device: EventMediaControlDevice,
+                    enabled: boolean | null,
+                  ) => {
+                    if (!canOwnerControlOther || enabled === null) return undefined;
+                    const action: EventMediaControlAction = enabled ? "disable" : "enable_request";
+                    const operationKey = `${participant.id}:${device}:${action}`;
+                    return {
+                      label:
+                        device === "mic"
+                          ? enabled
+                            ? t("events.disableParticipantMicrophone")
+                            : t("events.requestParticipantMicrophone")
+                          : enabled
+                            ? t("events.disableParticipantCamera")
+                            : t("events.requestParticipantCamera"),
+                      disabled: pendingRemoteControlKey !== null,
+                      busy: pendingRemoteControlKey === operationKey,
+                      onClick: () => {
+                        void requestParticipantMediaControl(participant.id, device, action);
+                      },
+                    };
+                  };
+                  const mediaControls = canUseSelfControls
+                    ? {
+                        mic: {
+                          label: localMediaController!.micEnabled
+                            ? t("events.turnOffOwnMicrophone")
+                            : t("events.turnOnOwnMicrophone"),
+                          disabled: localMediaController!.micBusy,
+                          busy: localMediaController!.micBusy,
+                          onClick: () => void localMediaController!.toggleMic(),
+                        },
+                        camera: {
+                          label: localMediaController!.cameraEnabled
+                            ? t("events.turnOffOwnCamera")
+                            : t("events.turnOnOwnCamera"),
+                          disabled: localMediaController!.cameraBusy,
+                          busy: localMediaController!.cameraBusy,
+                          onClick: () => void localMediaController!.toggleCamera(),
+                        },
+                      }
+                    : canOwnerControlOther
+                      ? {
+                          mic: buildOwnerControl("mic", participant.micEnabled),
+                          camera: buildOwnerControl("camera", participant.cameraEnabled),
+                        }
+                      : undefined;
+
+                  return (
                   <div
                     key={participant.id}
                     data-testid="participant-card"
@@ -1058,9 +1222,11 @@ export function EventLobbyView({
                       }
                       micEnabled={participant.micEnabled}
                       cameraEnabled={participant.cameraEnabled}
+                      mediaControls={mediaControls}
                     />
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </details>
@@ -1234,6 +1400,35 @@ export function EventLobbyView({
           ) : null}
         </aside>
       </div>
+      {pendingEnableRequest ? (
+        <MediaEnableRequestDialog
+          command={pendingEnableRequest}
+          localMediaController={localMediaController}
+          onAccept={(command) => {
+            if (!localMediaController) {
+              void acknowledgeMediaCommand(command, "failed", "localMediaUnavailable");
+              return;
+            }
+            void (async () => {
+              const alreadyEnabled =
+                command.device === "mic"
+                  ? localMediaController.micEnabled
+                  : localMediaController.cameraEnabled;
+              if (!alreadyEnabled) {
+                await (command.device === "mic"
+                  ? localMediaController.toggleMic()
+                  : localMediaController.toggleCamera());
+              }
+              await acknowledgeMediaCommand(command, "accepted");
+            })().catch(() => {
+              void acknowledgeMediaCommand(command, "failed", "localMediaOperationFailed");
+            });
+          }}
+          onDecline={(command) => {
+            void acknowledgeMediaCommand(command, "declined");
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1345,6 +1540,74 @@ function DesiredRolePreferenceCard({
         )}
       </GlassCardContent>
     </GlassCard>
+  );
+}
+
+function MediaEnableRequestDialog({
+  command,
+  localMediaController,
+  onAccept,
+  onDecline,
+}: {
+  command: EventMediaControlCommand;
+  localMediaController: LocalLobbyMediaController | null;
+  onAccept: (command: EventMediaControlCommand) => void;
+  onDecline: (command: EventMediaControlCommand) => void;
+}) {
+  const { t } = useI18n();
+  const titleId = `media-enable-request-title-${command.id}`;
+  const descriptionId = `media-enable-request-description-${command.id}`;
+  const isBusy =
+    command.device === "mic"
+      ? Boolean(localMediaController?.micBusy)
+      : Boolean(localMediaController?.cameraBusy);
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="presentation">
+      <div className="absolute inset-0 bg-[#020617]/80 backdrop-blur-sm" />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        className="relative w-full max-w-md rounded-xl border border-slate-700/60 bg-slate-900/95 p-6 shadow-2xl shadow-black/50 ring-1 ring-slate-600/30"
+        data-testid="media-enable-request-dialog"
+      >
+        <h2 id={titleId} className="text-lg font-semibold text-slate-50">
+          {command.device === "mic"
+            ? t("events.microphoneEnableRequested")
+            : t("events.cameraEnableRequested")}
+        </h2>
+        <p id={descriptionId} className="mt-3 text-sm leading-6 text-slate-400">
+          {t("events.mediaEnableRequestBody", {
+            name: command.requestedByDisplayName,
+            device:
+              command.device === "mic"
+                ? t("events.microphoneDevice")
+                : t("events.cameraDevice"),
+          })}
+        </p>
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <SecondaryButton
+            type="button"
+            disabled={isBusy}
+            onClick={() => onDecline(command)}
+            data-testid="decline-media-enable-request"
+          >
+            {t("events.declineMediaEnableRequest")}
+          </SecondaryButton>
+          <SemanticActionButton
+            type="button"
+            actionKind="MANAGEMENT"
+            disabled={isBusy || !localMediaController}
+            onClick={() => onAccept(command)}
+            data-testid="accept-media-enable-request"
+          >
+            {isBusy ? t("common.loading") : t("events.acceptMediaEnableRequest")}
+          </SemanticActionButton>
+        </div>
+      </div>
+    </div>
   );
 }
 

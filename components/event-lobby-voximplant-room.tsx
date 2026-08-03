@@ -185,6 +185,14 @@ type EventLobbyVoximplantRoomProps = {
   providerFaultSimulation?: VoxProviderFaultMode;
   onStaleConnection?: () => void;
   onDeviceWarning?: (message: string | null) => void;
+  onLocalMediaControllerChange?: (controller: {
+    micEnabled: boolean;
+    cameraEnabled: boolean;
+    micBusy: boolean;
+    cameraBusy: boolean;
+    toggleMic: () => Promise<void> | void;
+    toggleCamera: () => Promise<void> | void;
+  } | null) => void;
 };
 
 type RuntimeState = {
@@ -408,6 +416,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   providerFaultSimulation = "off",
   onStaleConnection,
   onDeviceWarning,
+  onLocalMediaControllerChange,
 }: EventLobbyVoximplantRoomProps) {
   const { t } = useI18n();
   const runtimeRef = useRef<RuntimeState | null>(null);
@@ -1199,6 +1208,25 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       setIsBusy(false);
     }
   }, [isBusy, isCameraOn, onDeviceWarning]);
+
+  useEffect(() => {
+    onLocalMediaControllerChange?.({
+      micEnabled: !isMicMuted,
+      cameraEnabled: isCameraOn,
+      micBusy: isBusy,
+      cameraBusy: isBusy,
+      toggleMic,
+      toggleCamera,
+    });
+    return () => onLocalMediaControllerChange?.(null);
+  }, [
+    isCameraOn,
+    isBusy,
+    isMicMuted,
+    onLocalMediaControllerChange,
+    toggleCamera,
+    toggleMic,
+  ]);
 
   const visibleRemoteParticipants = useMemo(() => {
     const byIdentity = new Map<string, VoxLobbyParticipant>();

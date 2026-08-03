@@ -26,6 +26,10 @@ export function MediaStatusIconBadge({
   label,
   className = "",
   testId,
+  onClick,
+  disabled = false,
+  busy = false,
+  pressed,
 }: {
   kind: MediaStatusKind;
   status: ParticipantMediaStatus;
@@ -33,10 +37,37 @@ export function MediaStatusIconBadge({
   label: string;
   className?: string;
   testId?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  pressed?: boolean;
 }) {
+  const commonClassName = `inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(status, connectionStatus)} ${className}`;
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`${commonClassName} transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#020617] disabled:cursor-not-allowed disabled:opacity-60 ${
+          disabled || busy ? "" : "hover:scale-105"
+        }`}
+        title={label}
+        aria-label={label}
+        aria-pressed={pressed}
+        aria-busy={busy || undefined}
+        disabled={disabled || busy}
+        onClick={onClick}
+        data-testid={testId}
+        data-media-kind={kind}
+        data-status={connectionStatus === "connected" ? status : "unknown"}
+      >
+        {kind === "mic" ? <MicStatusIcon status={status} /> : <CameraStatusIcon status={status} />}
+      </button>
+    );
+  }
+
   return (
     <span
-      className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${iconTone(status, connectionStatus)} ${className}`}
+      className={commonClassName}
       title={label}
       aria-label={label}
       role="img"

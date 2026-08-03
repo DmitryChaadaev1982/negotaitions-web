@@ -19,6 +19,7 @@ const completeSessionSchema = z
   .object({
     expectedOperationId: z.string().trim().min(1).max(256).optional(),
     hostToken: z.string().trim().min(1).optional(),
+    closeDebriefForAll: z.boolean().optional(),
   })
   .optional();
 
@@ -88,6 +89,7 @@ export async function POST(request: Request, context: RouteContext) {
       mode: "ADMINISTRATIVE_SESSION_FINISH",
       reason:
         parsedBody?.expectedOperationId?.trim() ?? "ADMINISTRATIVE_SESSION_FINISH",
+      hardClose: parsedBody?.closeDebriefForAll === true,
     });
 
     return NextResponse.json({

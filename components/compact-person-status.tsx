@@ -25,6 +25,20 @@ type CompactPersonStatusProps = {
   locationLabel?: string | null;
   micEnabled?: boolean | null;
   cameraEnabled?: boolean | null;
+  mediaControls?: {
+    mic?: {
+      label: string;
+      onClick: () => void;
+      disabled?: boolean;
+      busy?: boolean;
+    };
+    camera?: {
+      label: string;
+      onClick: () => void;
+      disabled?: boolean;
+      busy?: boolean;
+    };
+  };
   className?: string;
   testId?: string;
 };
@@ -59,6 +73,7 @@ export function CompactPersonStatus({
   locationLabel,
   micEnabled,
   cameraEnabled,
+  mediaControls,
   className,
   testId,
 }: CompactPersonStatusProps) {
@@ -67,16 +82,24 @@ export function CompactPersonStatus({
   const roleParts = [caseRoleName, slotLabel, participantTypeText].filter(
     (part): part is string => Boolean(part),
   );
+  const isOffline =
+    presenceStatus === "OFFLINE" ||
+    presenceStatus === "RECENTLY_DISCONNECTED" ||
+    presenceStatus === "INVITED_NEVER_CONNECTED";
   const cameraLabel =
     cameraEnabled == null
       ? null
-      : cameraEnabled
+      : isOffline
+        ? t("events.cameraUnavailableOffline")
+        : cameraEnabled
         ? t("events.cameraOn")
         : t("events.cameraOff");
   const micLabel =
     micEnabled == null
       ? null
-      : micEnabled
+      : isOffline
+        ? t("events.microphoneUnavailableOffline")
+        : micEnabled
         ? t("events.microphoneOn")
         : t("events.microphoneMuted");
   const accessibleLabel = [
@@ -129,19 +152,29 @@ export function CompactPersonStatus({
         {cameraLabel ? (
           <MediaStatusIconBadge
             kind="camera"
-            status={cameraEnabled ? "on" : "off"}
-            label={cameraLabel}
+            status={isOffline ? "unknown" : cameraEnabled ? "on" : "off"}
+            connectionStatus={isOffline ? "disconnected" : "connected"}
+            label={mediaControls?.camera?.label ?? cameraLabel}
             className="h-5 w-5"
             testId="compact-person-camera-status-icon"
+            onClick={isOffline ? undefined : mediaControls?.camera?.onClick}
+            disabled={mediaControls?.camera?.disabled}
+            busy={mediaControls?.camera?.busy}
+            pressed={isOffline ? undefined : Boolean(cameraEnabled)}
           />
         ) : null}
         {micLabel ? (
           <MediaStatusIconBadge
             kind="mic"
-            status={micEnabled ? "on" : "off"}
-            label={micLabel}
+            status={isOffline ? "unknown" : micEnabled ? "on" : "off"}
+            connectionStatus={isOffline ? "disconnected" : "connected"}
+            label={mediaControls?.mic?.label ?? micLabel}
             className="h-5 w-5"
             testId="compact-person-mic-status-icon"
+            onClick={isOffline ? undefined : mediaControls?.mic?.onClick}
+            disabled={mediaControls?.mic?.disabled}
+            busy={mediaControls?.mic?.busy}
+            pressed={isOffline ? undefined : Boolean(micEnabled)}
           />
         ) : null}
       </div>

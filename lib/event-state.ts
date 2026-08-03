@@ -34,6 +34,10 @@ import {
 } from "@/lib/session-room-access";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
 import { getCanonicalActiveSessionPresenceByUser } from "@/lib/session-active-presence";
+import {
+  getPendingEventMediaControlCommands,
+  type EventMediaControlCommand,
+} from "@/lib/voximplant/event-media-control-store";
 
 export type EventStateParticipant = {
   id: string;
@@ -161,6 +165,7 @@ export type EventStateResponse = {
     closeReason: string | null;
     closedByEventAt: string | null;
   }>;
+  mediaControlCommands: EventMediaControlCommand[];
 };
 
 type BuildEventStateInput = {
@@ -569,6 +574,12 @@ export async function buildEventState(
       eventStatus: input.event.status,
     }),
   );
+  const mediaControlCommands = currentParticipantId
+    ? await getPendingEventMediaControlCommands({
+        eventId: input.event.id,
+        targetParticipantId: currentParticipantId,
+      })
+    : [];
 
   return {
     event: {
@@ -632,6 +643,7 @@ export async function buildEventState(
       closeReason: session.closeReason,
       closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
     })),
+    mediaControlCommands,
   };
 }
 

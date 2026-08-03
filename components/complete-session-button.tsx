@@ -32,6 +32,7 @@ type CompleteSessionButtonProps = {
   className?: string;
   disabled?: boolean;
   requestPayload?: Record<string, unknown>;
+  confirmBody?: string;
   testId?: string;
   onCompleted?: (result: CompleteSessionResponse) => void;
 };
@@ -42,6 +43,7 @@ export function CompleteSessionButton({
   className,
   disabled = false,
   requestPayload,
+  confirmBody,
   testId = "complete-session-button",
   onCompleted,
 }: CompleteSessionButtonProps) {
@@ -162,7 +164,7 @@ export function CompleteSessionButton({
               {t("sessions.completeSessionConfirmTitle")}
             </h2>
             <p id={descriptionId} className="mt-3 text-sm leading-6 text-slate-400">
-              {t("sessions.completeSessionConfirmBody")}
+              {confirmBody ?? t("sessions.completeSessionConfirmBody")}
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <SecondaryButton type="button" onClick={closeDialog} disabled={submitting}>
