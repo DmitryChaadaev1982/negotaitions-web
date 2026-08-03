@@ -18,6 +18,19 @@ The recommended target is a staged architecture:
 
 This audit does not implement any of the above.
 
+## Confirmed Product Decisions for Stage 3.13B0
+
+The Stage 3.13B0 readiness audit carries forward these approved decisions:
+
+- DNS for `negotaitions.ru` is managed in Yandex Cloud DNS; no Yandex 360 organization or Postbox configuration exists yet.
+- Current site operator is `Чаадаев Дмитрий Владимирович`, acting as an individual. Do not publish a residential address or additional personal information without separate legal approval.
+- Initially one operator will receive `support@negotaitions.ru`, `security@negotaitions.ru`, and `business@negotaitions.ru`.
+- Password reset for ACTIVE/APPROVED accounts may create a one-time token and send a reset email to the verified account address. BLOCKED/REJECTED accounts must not get reset tokens; they receive support-guidance email while public UI/API keeps anti-enumeration wording.
+- Future Event invitations require mandatory date/time scheduling with `startsAt`, time zone, and duration or `endsAt`; no schema change is made in Stage 3.13B0.
+- Standalone Session invitations may be emailed when an address is supplied, but must preserve current join-token/access authorization; a raw Session ID must not be sufficient for access.
+- Retention defaults should start conventionally and be configurable later; `.env` is not edited in Stage 3.13B0.
+- Email templates should be editable repository files, version-controlled, RU/EN, HTML/text, manifest-validated, initially scaffold-generated, and not admin-UI editable in the first implementation.
+
 ## 2. Inputs and Sources
 
 Project inputs:
