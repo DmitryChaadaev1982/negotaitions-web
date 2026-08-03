@@ -570,13 +570,12 @@ test.describe("Vox camera toggle idempotency helpers", () => {
     const source = readFileSync("components/voximplant-participant-tile.tsx", "utf-8");
     expect(source).toContain("participant-tile-mic-status-icon");
     expect(source).toContain("participant-tile-camera-status-icon");
-    expect(source).toContain("MicStatusIcon");
-    expect(source).toContain("CameraStatusIcon");
+    expect(source).toContain("MediaStatusIconBadge");
   });
 
   test("lobby layout keeps side panel and video pane independent", () => {
     const source = readFileSync("components/event-lobby-view.tsx", "utf-8");
-    expect(source).toContain("h-dvh");
+    expect(source).toContain("fixed inset-0");
     expect(source).toContain("min-h-0");
     expect(source).toContain("overflow-hidden");
     expect(source).toContain("overflow-y-auto");

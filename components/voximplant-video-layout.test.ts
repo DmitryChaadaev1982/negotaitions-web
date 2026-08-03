@@ -32,3 +32,36 @@ test("remote connected signal is gated by logical room presence", () => {
     /connectedSignal:\s*isLocal\s*\?\s*joined\s*:\s*Boolean\(matchedRemote\)\s*&&\s*!isLogicallyAbsent/,
   );
 });
+
+test("remote speaking input can carry reconnect generation and mic state", () => {
+  const audioStream = {
+    id: "audio-current",
+    getAudioTracks: () => [{ enabled: true } as MediaStreamTrack],
+  } as unknown as MediaStream;
+  const result = buildRemoteSpeakingInput([
+    {
+      id: "facilitator-endpoint-current",
+      displayName: "Facilitator",
+      stream: null,
+      audioStream,
+      microphoneEnabled: true,
+      generation: "participant:connection:endpoint:stream",
+    },
+  ]);
+  assert.equal(result[0]?.stream, audioStream);
+  assert.equal(result[0]?.microphoneEnabled, true);
+  assert.equal(result[0]?.generation, "participant:connection:endpoint:stream");
+});
+
+test("repeated reconnect deduplicates remote tile by stable username", () => {
+  const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+  assert.match(source, /remoteByVoxUsername/);
+  assert.match(source, /collapsedDuplicates/);
+  assert.match(source, /normalized Vox username/);
+});
+
+test("muted border takes precedence over active-speaker border", () => {
+  const source = readFileSync("components/voximplant-participant-tile.tsx", "utf-8");
+  assert.match(source, /Visual precedence: stale\/disconnected, muted, speaking, connected\/default/);
+  assert.match(source, /micStatus === "off"[\s\S]*border-rose-700\/70[\s\S]*micStatus === "on" && isSpeaking/);
+});
