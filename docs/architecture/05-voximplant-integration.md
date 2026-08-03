@@ -79,6 +79,21 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Storage uses `AppSetting` JSON records keyed per session/event, avoiding Prisma schema changes while keeping shared durable status across tabs/participants.
 - SDK stream polling fallback still runs for endpoint/media attachment, but icon/border media state for remote participants is rendered from explicit backend status instead of inferred remote `MediaStreamTrack.enabled`.
 
+## Event Lobby Media-Control Commands
+
+- Event owner remote controls do not reuse the Vox recording scenario message
+  channel and do not alter the Voximplant scenario.
+- Owner disable and enable-request commands use `POST /api/events/[id]/media-control`
+  and are stored in `AppSetting` through `lib/voximplant/event-media-control-store.ts`.
+- Delivery reuses the existing Event-state polling payload. The target client
+  executes only commands addressed to its current Event participant and then
+  acknowledges the command through the same API.
+- Remote disable is idempotent. Remote enable is a participant confirmation
+  request; the target's local browser action is the only code path that can
+  enable camera or microphone.
+- Confirmed media state still propagates through the existing
+  `/api/events/[id]/media-status` publish path.
+
 ## Operational Constraints
 
 - Recording start remains browser-relayed. Terminal recording stop is
@@ -145,6 +160,7 @@ record it fails to resolve arrive in one message.
 - `lib/client/connection-id.ts`
 - `lib/client/stale-connection.ts`
 - `lib/voximplant/use-voximplant-room.ts`
+- `lib/voximplant/event-media-control-store.ts`
 - `lib/voximplant/recording-dispatch.ts`
 - `lib/voximplant/reinvite-scheme-sanitizer.ts`
 - `lib/voximplant/websdk-log-filter.ts`

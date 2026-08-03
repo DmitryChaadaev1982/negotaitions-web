@@ -167,6 +167,9 @@ async function createCorrectionFixture() {
   return {
     eventId: event.id,
     sessionId,
+    eventParticipantAId: igor.id,
+    eventParticipantBId: alex.id,
+    eventObserverParticipantId: serg.id,
     participantAId,
     participantBId,
     facilitatorId,
@@ -211,14 +214,226 @@ test.afterEach(async () => {
 
 test("lobby visual/status corrections keep media labels accessible", async ({ page }) => {
   const fixture = await createCorrectionFixture();
+  await query(
+    `UPDATE "EventParticipant" SET "lastSeenAt"=NOW() - INTERVAL '20 minutes' WHERE "id"=$1`,
+    [fixture.eventParticipantAId],
+  );
   await login(page, fixture.observerUserId);
 
   await page.goto(`/events/${fixture.eventId}/lobby`);
-  await expect(page.getByTestId("participant-card").first()).toBeVisible();
-  await expect(page.getByTestId("compact-person-mic-status-icon").first()).toHaveAttribute("aria-label", "Microphone on");
-  await expect(page.getByTestId("compact-person-camera-status-icon").first()).toHaveAttribute("aria-label", "Camera on");
+  const offlineCard = page.getByTestId("participant-card").filter({ hasText: "Igor" });
+  await expect(offlineCard).toBeVisible();
+  await expect(offlineCard.getByTestId("compact-person-mic-status-icon")).toHaveAttribute(
+    "aria-label",
+    "Microphone unavailable: user is offline",
+  );
+  await expect(offlineCard.getByTestId("compact-person-camera-status-icon")).toHaveAttribute(
+    "aria-label",
+    "Camera unavailable: user is offline",
+  );
+  await expect(offlineCard.getByTestId("compact-person-mic-status-icon")).toHaveAttribute("data-status", "unknown");
+  await expect(offlineCard.locator('button[data-testid="compact-person-mic-status-icon"]')).toHaveCount(0);
   await expect(page.getByText("Microphone on")).toHaveCount(0);
   await expect(page.getByText("Camera on")).toHaveCount(0);
+});
+
+test("event lobby page stays bounded while right panel remains scrollable", async ({ page }) => {
+  const fixture = await createCorrectionFixture();
+  await login(page, fixture.hostUserId);
+  await page.setViewportSize({ width: 1366, height: 768 });
+
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+  await expect(page.getByTestId("event-lobby-page")).toBeVisible();
+
+  const metrics = await page.evaluate(() => ({
+    documentScrollHeight: document.documentElement.scrollHeight,
+    documentClientHeight: document.documentElement.clientHeight,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    documentClientWidth: document.documentElement.clientWidth,
+  }));
+  expect(metrics.documentScrollHeight).toBeLessThanOrEqual(metrics.documentClientHeight + 2);
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.documentClientWidth + 2);
+
+  const rightPanelCanScroll = await page.getByTestId("host-controls-panel").evaluate((node) => {
+    const scroller = node.closest("aside");
+    return Boolean(scroller && scroller.scrollHeight >= scroller.clientHeight);
+  });
+  expect(rightPanelCanScroll).toBeTruthy();
+});
+
+test("neutral device availability copy replaces testing-specific wording", async ({ page }) => {
+  const fixture = await createCorrectionFixture();
+  await login(page, fixture.observerUserId);
+
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+  await expect(page.getByText(/camera or microphone may be unavailable/i)).toBeVisible();
+  await expect(page.getByText(/testing on one computer/i)).toHaveCount(0);
+  await expect(page.getByText(/only one browser tab can use the camera/i)).toHaveCount(0);
+});
+
+test("owner media-control API authorizes commands and rejects invalid targets", async ({
+  request,
+}) => {
+  const fixture = await createCorrectionFixture();
+  const ownerToken = await createUserSessionCookie(fixture.hostUserId);
+  const participantToken = await createUserSessionCookie(fixture.participantBUserId);
+
+  const ownerDisable = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantAId,
+      device: "mic",
+      action: "disable",
+    },
+  });
+  expect(ownerDisable.ok()).toBeTruthy();
+  const ownerDisablePayload = (await ownerDisable.json()) as {
+    command: { id: string; targetParticipantId: string; action: string };
+  };
+  expect(ownerDisablePayload.command.targetParticipantId).toBe(fixture.eventParticipantAId);
+  expect(ownerDisablePayload.command.action).toBe("disable");
+
+  const participantAttempt = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${participantToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantAId,
+      device: "camera",
+      action: "disable",
+    },
+  });
+  expect(participantAttempt.status()).toBe(403);
+
+  await query(
+    `UPDATE "EventParticipant" SET "lastSeenAt"=NOW() - INTERVAL '20 minutes' WHERE "id"=$1`,
+    [fixture.eventParticipantBId],
+  );
+  const offlineAttempt = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: fixture.eventParticipantBId,
+      device: "camera",
+      action: "disable",
+    },
+  });
+  expect(offlineAttempt.status()).toBe(409);
+
+  const unknownAttempt = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${ownerToken}` },
+    data: {
+      targetParticipantId: "not-in-this-event",
+      device: "camera",
+      action: "disable",
+    },
+  });
+  expect(unknownAttempt.status()).toBe(404);
+
+  const participantAToken = await createUserSessionCookie(fixture.participantAUserId);
+  const participantState = await request.get(
+    `/api/events/${fixture.eventId}/state?connectionId=media-control-a&claimLease=1`,
+    { headers: { Cookie: `auth_session=${participantAToken}` } },
+  );
+  expect(participantState.ok()).toBeTruthy();
+  const statePayload = (await participantState.json()) as {
+    mediaControlCommands: Array<{ id: string; action: string; device: string }>;
+  };
+  expect(statePayload.mediaControlCommands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: ownerDisablePayload.command.id, action: "disable", device: "mic" }),
+    ]),
+  );
+
+  const ack = await request.post(`/api/events/${fixture.eventId}/media-control`, {
+    headers: { Cookie: `auth_session=${participantAToken}` },
+    data: {
+      commandId: ownerDisablePayload.command.id,
+      status: "applied",
+    },
+  });
+  expect(ack.ok()).toBeTruthy();
+});
+
+test("completed sessions are grouped in a collapsible management section", async ({ page }) => {
+  const fixture = await createCorrectionFixture();
+  await query(
+    `INSERT INTO "Session"
+       ("id","negotiationCaseId","facilitatorId","eventId","title","roomLabel",
+        "snapshotCaseTitle","snapshotBusinessContext","snapshotPublicInstructions",
+        "snapshotCaseLanguage","status","negotiationState","roomLifecycle",
+        "preparationDurationSeconds","durationSeconds","updatedAt","closedByEventAt")
+     SELECT $1,"negotiationCaseId","facilitatorId","eventId",'Stage 3.12B-W1C Closed A','Closed A',
+        "snapshotCaseTitle","snapshotBusinessContext","snapshotPublicInstructions",
+        "snapshotCaseLanguage",'COMPLETED'::"SessionStatus",'FINISHED'::"NegotiationState",'CLOSED'::"RoomLifecycle",
+        "preparationDurationSeconds","durationSeconds",NOW(),NOW()
+     FROM "Session" WHERE "id"=$3
+     UNION ALL
+     SELECT $2,"negotiationCaseId","facilitatorId","eventId",'Stage 3.12B-W1C Closed B','Closed B',
+        "snapshotCaseTitle","snapshotBusinessContext","snapshotPublicInstructions",
+        "snapshotCaseLanguage",'COMPLETED'::"SessionStatus",'FINISHED'::"NegotiationState",'CLOSED'::"RoomLifecycle",
+        "preparationDurationSeconds","durationSeconds",NOW(),NOW()
+     FROM "Session" WHERE "id"=$3`,
+    [e2eId("stage-312b-w1c-closed-a"), e2eId("stage-312b-w1c-closed-b"), fixture.sessionId],
+  );
+  await login(page, fixture.hostUserId);
+
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+  const section = page.getByTestId("completed-sessions-section");
+  await expect(section).toBeVisible();
+  const toggle = section.getByTestId("completed-sessions-toggle");
+  await expect(toggle).toHaveText(/Completed Sessions \(2\)/);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(section.getByText("Closed A")).toBeHidden();
+  await toggle.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(section.getByText("Closed A")).toBeVisible();
+  await expect(
+    page.getByTestId("sessions-board").getByText("Wave1C Live Room"),
+  ).toBeVisible();
+});
+
+test("event owner can complete a DEBRIEF_OPEN session from lobby and hard-close debrief", async ({
+  page,
+}) => {
+  const fixture = await createCorrectionFixture();
+  await query(
+    `UPDATE "Session"
+     SET "roomLifecycle"='DEBRIEF_OPEN',"negotiationState"='FINISHED',"updatedAt"=NOW()
+     WHERE "id"=$1`,
+    [fixture.sessionId],
+  );
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id","sessionId","userId","connectionId","role","expiresAt","createdAt","updatedAt")
+     VALUES ($1,$2,$3,$4,'PARTICIPANT',NOW() + INTERVAL '5 minutes',NOW(),NOW())`,
+    [
+      e2eId("stage-312b-w1c-active-debrief"),
+      fixture.sessionId,
+      fixture.participantAUserId,
+      e2eId("stage-312b-w1c-active-debrief-conn"),
+    ],
+  );
+  await login(page, fixture.hostUserId);
+
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+  const sessionCard = page.getByTestId("event-session-card").filter({ hasText: "Wave1C Live Room" });
+  await expect(sessionCard.getByRole("link", { name: /Return to debrief/i })).toBeVisible();
+  const completeButton = sessionCard.getByTestId("finish-session-button");
+  await expect(completeButton).toBeVisible();
+  await completeButton.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("Complete this Session and close the debrief for all participants?");
+  await page.getByTestId("confirm-complete-session-button").dblclick();
+
+  await expect(sessionCard.getByTestId("finish-session-button")).toHaveCount(0);
+  const state = await query<{ roomLifecycle: string; closedByEventAt: Date | null }>(
+    `SELECT "roomLifecycle","closedByEventAt" FROM "Session" WHERE "id"=$1`,
+    [fixture.sessionId],
+  );
+  expect(state[0]?.roomLifecycle).toBe("CLOSED");
+  expect(state[0]?.closedByEventAt).toBeTruthy();
+
+  await login(page, fixture.participantAUserId);
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+  await expect(page.getByTestId("finish-session-button")).toHaveCount(0);
 });
 
 test("observer active Session action is primary and above participant history", async ({ page }) => {

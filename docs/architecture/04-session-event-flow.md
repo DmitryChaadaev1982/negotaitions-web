@@ -27,6 +27,11 @@
   requested by canonical completion, and existing participants may use the
   debrief/materials flow. This is the only lifecycle state eligible for
   empty-room auto-close, after `DEBRIEF_AUTO_CLOSE_GRACE_MS`.
+- Event owners may also use the Event lobby `Complete Session` action while a
+  Session is `DEBRIEF_OPEN`. That route still calls the canonical complete API,
+  but passes a debrief-close flag so `completeSessionCanonical(..., hardClose)`
+  transitions the room to `CLOSED` without waiting for every debrief occupant to
+  leave.
 - `CLOSED`: room admission is denied and the backend supplies the canonical
   Event-lobby or materials redirect.
 - Closing an empty `DEBRIEF_OPEN` room is a lifecycle-only transition. It does
@@ -100,6 +105,7 @@ lifetime; it must not reuse the short debrief grace.
 - Event host control: `app/api/events/[id]/host/route.ts`.
 - Event state: `app/api/events/[id]/state/route.ts`.
 - Event lobby media status publish: `app/api/events/[id]/media-status/route.ts`.
+- Event lobby media control commands: `app/api/events/[id]/media-control/route.ts`.
 
 ## Source Notes
 

@@ -11,6 +11,12 @@
 - Facilitator-only operations include negotiation control, recording control, transcription start, AI analysis run/share.
 - Participant and observer views are constrained through serializer and response shaping.
 - Admin diagnostics are separated from standard user surfaces.
+- Event lobby remote media controls are owner-only and are authorized server-side
+  with `resolveEventAccess(...).isEventOwner`. A participant/observer/facilitator
+  who is not the Event owner can control only their own local media.
+- Remote media commands verify that the target belongs to the current Event and
+  is online according to the server Event-state model. Target clients can only
+  acknowledge commands addressed to their own current Event participant.
 
 ## Tokenized Runtime Paths
 
