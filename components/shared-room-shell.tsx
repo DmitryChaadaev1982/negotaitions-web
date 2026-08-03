@@ -41,12 +41,13 @@ import { ParticipantNotesPanel } from "@/components/participant-notes-panel";
 import { RecordingIndicator } from "@/components/recording-indicator";
 import { RejoinNavLink } from "@/components/rejoin-page-view";
 import { RoleBriefingCard } from "@/components/role-briefing-card";
+import { RoomExitControl, type RoomExitHandler } from "@/components/room-exit-control";
 import { SessionRoleManagementPanel } from "@/components/session-role-management-panel";
 import { SessionRoomPresenceHeartbeat } from "@/components/session-room-presence-heartbeat";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
-import { GradientButtonLink, SecondaryButtonLink } from "@/components/ui/buttons";
 import { VisibilityBadge } from "@/components/visibility-badge";
+import { SESSION_EXIT_DESTINATIONS } from "@/lib/client/session-exit-navigation";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
@@ -278,8 +279,8 @@ function SessionClosedOverlay({
   eventLobbyUrl,
   eventCompleted,
   onLeave,
-  onReturnToEventLobby,
-  isReturningToEventLobby = false,
+  onExitSession,
+  isExitingSession = false,
 }: {
   materialsUrl: string;
   closeMessageKey: NonNullable<ShellSessionCloseState["closeMessageKey"]>;
@@ -287,8 +288,8 @@ function SessionClosedOverlay({
   eventLobbyUrl?: string | null;
   eventCompleted?: boolean;
   onLeave: () => void;
-  onReturnToEventLobby?: (() => void | Promise<void>) | null;
-  isReturningToEventLobby?: boolean;
+  onExitSession?: RoomExitHandler | null;
+  isExitingSession?: boolean;
 }) {
   const { t } = useI18n();
   const hadRecording =
@@ -310,37 +311,29 @@ function SessionClosedOverlay({
         ) : null}
         <div className="flex flex-wrap justify-center gap-3 pt-2">
           {eventLobbyUrl ? (
-            onReturnToEventLobby ? (
-              <button
-                type="button"
-                className={`btn-secondary rounded-lg px-4 py-2 text-sm font-semibold ${
-                  eventCompleted ? "pointer-events-none opacity-60" : ""
-                }`}
-                data-testid="return-to-event-lobby-button"
-                disabled={eventCompleted || isReturningToEventLobby}
-                aria-busy={isReturningToEventLobby}
-                aria-disabled={eventCompleted || isReturningToEventLobby}
-                onClick={() => void onReturnToEventLobby()}
-              >
-                {isReturningToEventLobby ? t("room.leaving") : t("events.returnToEventLobby")}
-              </button>
-            ) : (
-              <GradientButtonLink
-                href={eventLobbyUrl}
-                data-testid="return-to-event-lobby-button"
-                className={eventCompleted ? "pointer-events-none opacity-60" : undefined}
-                aria-disabled={eventCompleted}
-              >
-                {t("events.returnToEventLobby")}
-              </GradientButtonLink>
-            )
+            <RoomExitControl
+              href={eventLobbyUrl}
+              onExit={onExitSession}
+              variant={onExitSession ? "secondary" : "gradient"}
+              data-testid="return-to-event-lobby-button"
+              className="px-4 py-2 text-sm"
+              disabled={eventCompleted}
+              pending={isExitingSession}
+              pendingChildren={t("room.leaving")}
+            >
+              {t("events.returnToEventLobby")}
+            </RoomExitControl>
           ) : null}
-          <GradientButtonLink
+          <RoomExitControl
             href={materialsUrl}
+            onExit={onExitSession}
+            variant="gradient"
             data-testid="open-session-materials-button"
+            pending={isExitingSession}
+            pendingChildren={t("room.leaving")}
           >
             {t("room.backToSessionMaterials")}
-          </GradientButtonLink>
+          </RoomExitControl>
           <button
             type="button"
             className="btn-secondary rounded-lg px-4 py-2 text-sm font-semibold"
@@ -405,12 +398,17 @@ export type SharedRoomShellProps = {
   /** Navigate away after leaving (for SessionClosedOverlay). */
   onLeave: () => void;
   /**
-   * Optional room-specific lobby transition handler.
-   * When provided, the header/overlay lobby button uses this callback instead
-   * of immediate navigation to allow explicit leave + safe provider teardown.
+   * Canonical intentional-exit handler, shared by every product action that
+   * deliberately leaves the room: Event lobby, Dashboard, Sessions overview,
+   * session materials and rejoin. It receives the destination and owns the
+   * explicit-leave sequence, the provider handoff and the navigation, so the
+   * `SessionRoomConnection` becomes terminal at the moment the user left
+   * instead of when its lease lapses. Without it the shell keeps plain links
+   * and the connection stays lease-based.
    */
-  onReturnToEventLobby?: (() => void | Promise<void>) | null;
-  isReturningToEventLobby?: boolean;
+  onExitSession?: RoomExitHandler | null;
+  /** True while an explicit leave is in flight, for the pending button label. */
+  isExitingSession?: boolean;
 
   // ── Provider-specific slots ──────────────────────────────────────────────
 
@@ -521,8 +519,8 @@ export function SharedRoomShell({
   connectionId,
   staleConnection = false,
   onLeave,
-  onReturnToEventLobby = null,
-  isReturningToEventLobby = false,
+  onExitSession = null,
+  isExitingSession = false,
   leaveButton,
   controlBar,
   mediaArea,
@@ -573,8 +571,8 @@ export function SharedRoomShell({
           eventLobbyUrl={sidebar.event?.lobbyUrl}
           eventCompleted={sidebar.event?.status === "COMPLETED"}
           onLeave={onLeave}
-          onReturnToEventLobby={onReturnToEventLobby}
-          isReturningToEventLobby={isReturningToEventLobby}
+          onExitSession={onExitSession}
+          isExitingSession={isExitingSession}
         />
       ) : null}
 
@@ -588,14 +586,16 @@ export function SharedRoomShell({
             variant="session"
             size="sm"
             priority
-            href="/dashboard"
+            href={SESSION_EXIT_DESTINATIONS.dashboard}
+            onNavigate={onExitSession}
             className="hidden sm:inline-flex"
           />
           <BrandLogo
             variant="compact"
             size="sm"
             priority
-            href="/dashboard"
+            href={SESSION_EXIT_DESTINATIONS.dashboard}
+            onNavigate={onExitSession}
             className="sm:hidden"
           />
           <div className="min-w-0 space-y-2">
@@ -632,51 +632,48 @@ export function SharedRoomShell({
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <SecondaryButtonLink
-            href="/sessions"
+          <RoomExitControl
+            href={SESSION_EXIT_DESTINATIONS.sessionsOverview}
+            onExit={onExitSession}
+            variant="secondary"
             className="px-3 py-1.5 text-xs"
             aria-label={t("events.backToSessionsCompact")}
             title={t("events.backToSessionsCompact")}
             data-testid="back-to-sessions-button"
+            pending={isExitingSession}
+            pendingChildren={t("room.leaving")}
           >
             {t("events.backToSessionsCompact")}
-          </SecondaryButtonLink>
+          </RoomExitControl>
           {sidebar.event?.lobbyUrl ? (
-            onReturnToEventLobby ? (
-              <button
-                type="button"
-                className="btn-secondary hidden rounded-lg px-3 py-1.5 text-xs font-semibold sm:inline-flex"
-                aria-label={t("events.backToLobbyCompact")}
-                title={t("events.backToLobbyCompact")}
-                data-testid="back-to-event-lobby-button"
-                disabled={isReturningToEventLobby}
-                aria-busy={isReturningToEventLobby}
-                onClick={() => void onReturnToEventLobby()}
-              >
-                {isReturningToEventLobby ? t("room.leaving") : t("events.backToLobbyCompact")}
-              </button>
-            ) : (
-              <SecondaryButtonLink
-                href={sidebar.event.lobbyUrl}
-                className="hidden px-3 py-1.5 text-xs sm:inline-flex"
-                aria-label={t("events.backToLobbyCompact")}
-                title={t("events.backToLobbyCompact")}
-                data-testid="back-to-event-lobby-button"
-              >
-                {t("events.backToLobbyCompact")}
-              </SecondaryButtonLink>
-            )
+            <RoomExitControl
+              href={sidebar.event.lobbyUrl}
+              onExit={onExitSession}
+              variant="secondary"
+              className="hidden px-3 py-1.5 text-xs sm:inline-flex"
+              aria-label={t("events.backToLobbyCompact")}
+              title={t("events.backToLobbyCompact")}
+              data-testid="back-to-event-lobby-button"
+              pending={isExitingSession}
+              pendingChildren={t("room.leaving")}
+            >
+              {t("events.backToLobbyCompact")}
+            </RoomExitControl>
           ) : null}
           {!isDebriefMode ? (
-            <GradientButtonLink
+            <RoomExitControl
               href={materialsUrl}
+              onExit={onExitSession}
+              variant="gradient"
               className="px-3 py-1.5 text-xs"
               data-testid="session-materials-link"
+              pending={isExitingSession}
+              pendingChildren={t("room.leaving")}
             >
               {t("room.sessionMaterials")}
-            </GradientButtonLink>
+            </RoomExitControl>
           ) : null}
-          <RejoinNavLink />
+          <RejoinNavLink onNavigate={onExitSession} />
           <LanguageSwitcher />
           {/* Provider-specific leave button slot */}
           {leaveButton}

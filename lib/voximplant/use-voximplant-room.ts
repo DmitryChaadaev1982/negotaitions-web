@@ -25,11 +25,25 @@ import {
   toVoxErrorMessage,
 } from "@/lib/voximplant/media-error-utils";
 import {
+  dispatchVoxSdkLog,
   initVoxCore,
   registerVoxSdkLogSink,
   resetVoxSdkLogDedupe,
 } from "@/lib/voximplant/websdk-core";
-import type { VoxLifecyclePhase } from "@/lib/voximplant/provider-error-classification";
+import type {
+  VoxClassification,
+  VoxLifecyclePhase,
+} from "@/lib/voximplant/provider-error-classification";
+import {
+  GATEWAY_WEBSOCKET_CLOSE_SDK_LOG,
+  type VoxProviderFaultMode,
+} from "@/lib/voximplant/provider-fault-simulation";
+import { DEFAULT_PROVIDER_CONNECT_RETRY_POLICY } from "@/lib/voximplant/provider-connect-retry";
+import {
+  createSessionTransportRecovery,
+  type SessionTransportRecovery,
+  type SessionTransportRecoveryState,
+} from "@/lib/voximplant/session-transport-recovery";
 import {
   createDroppedCauseReporter,
   installVoxReInviteSchemeSanitizer,
@@ -244,6 +258,12 @@ type UseVoximplantRoomOptions = {
   connectionId?: string;
   onStaleConnection?: () => void;
   /**
+   * Server-gated provider fault script. Only ever anything but `"off"` when the
+   * server runs with `EXTERNAL_SERVICES_MODE=mock`, so production cannot reach
+   * a simulated transport failure.
+   */
+  providerFaultSimulation?: VoxProviderFaultMode;
+  /**
    * Explicit URL debug override only (?camera=off or ?media=off).
    * All roles attempt camera by default when this is false/absent.
    */
@@ -301,6 +321,11 @@ type UseVoximplantRoomResult = {
    * not connected or the SDK does not expose sendMessage on this version.
    */
   sendConferenceMessage: (text: string) => boolean;
+  /**
+   * Non-blocking gateway-transport health for an already connected room. The
+   * Session shell, its state and its lifecycle are unaffected by it.
+   */
+  transportRecovery: SessionTransportRecoveryState;
   /** True when conference.sendMessage() is available on the current SDK object. */
   sendMessageAvailable: boolean;
 };
@@ -562,12 +587,22 @@ function installCameraErrorSuppressor(): () => void {
   return installVoxCameraErrorSuppressor();
 }
 
+/** Steady state: the gateway link is up and nothing is being recovered. */
+const IDLE_TRANSPORT_RECOVERY: SessionTransportRecoveryState = {
+  status: "stable",
+  attempt: 0,
+  maxAttempts: DEFAULT_PROVIDER_CONNECT_RETRY_POLICY.maxAttempts,
+  reason: null,
+  canRetryManually: false,
+};
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useVoximplantRoom({
   sessionId,
   connectionId,
   onStaleConnection,
+  providerFaultSimulation = "off",
   disableInitialCamera = false,
   disableInitialMic = false,
 }: UseVoximplantRoomOptions): UseVoximplantRoomResult {
@@ -607,17 +642,87 @@ export function useVoximplantRoom({
     return generationRef.current;
   }, []);
 
+  const [transportRecovery, setTransportRecovery] =
+    useState<SessionTransportRecoveryState>(IDLE_TRANSPORT_RECOVERY);
+  const transportRecoveryRef = useRef<SessionTransportRecovery | null>(null);
+
+  /**
+   * True only while this hook instance is the live owner of the room. A stale
+   * tab or an unmounted generation must not keep driving recovery, and neither
+   * must this room once the Event lobby has taken the shared client over.
+   */
+  const isTransportOwnerCurrent = useCallback(() => {
+    if (!mountedRef.current || staleLifecycleRef.current) return false;
+    const ownership = clientOwnershipRef.current;
+    return !ownership || ownership.isCurrent();
+  }, []);
+
   // Owns the shared SDK log callback while this room is the active surface.
   // Released on unmount, but only if the Event lobby has not already taken over.
   useEffect(() => {
-    return registerVoxSdkLogSink({
+    const recovery = createSessionTransportRecovery({
+      isConferenceConnected: () => runtimeRef.current?.conferenceConnected === true,
+      isOwnerCurrent: isTransportOwnerCurrent,
+      onState: (next) => {
+        if (!mountedRef.current) return;
+        setTransportRecovery(next);
+      },
+    });
+    transportRecoveryRef.current = recovery;
+
+    const releaseSink = registerVoxSdkLogSink({
       surface: "session-room",
       getContext: () => ({
         phase: lifecyclePhaseRef.current,
         intentionalHandoff: isIntentionalProviderHandoffActive(),
       }),
+      onClassified: (classification: VoxClassification) => {
+        // Only a gateway socket that dropped under a live connection starts a
+        // recovery sequence. Teardown noise, terminal authorization failures
+        // and genuinely unknown faults keep their existing handling.
+        if (classification.reason !== "gateway_websocket_closed") return;
+        recovery.noteTransportLoss(classification);
+      },
     });
-  }, []);
+
+    return () => {
+      recovery.cancel();
+      transportRecoveryRef.current = null;
+      releaseSink();
+    };
+  }, [isTransportOwnerCurrent]);
+
+  /**
+   * Replays the captured gateway-close log line through the real SDK log
+   * pipeline once the room is up, so the classification, the console policy and
+   * the recovery sequence are all exercised end to end without waiting for a
+   * long-lived gateway to actually drop. Inert outside mock mode.
+   *
+   * It waits for the connected phase because that is the state the defect was
+   * reported in, and gives up waiting after a bounded deadline so a room that
+   * never reaches the gateway still produces the closure under test.
+   */
+  useEffect(() => {
+    if (providerFaultSimulation !== "gateway-ws-close-connected") return;
+    const deadline = Date.now() + 15_000;
+    let timer = 0;
+
+    const inject = () => {
+      if (!mountedRef.current) return;
+      if (lifecyclePhaseRef.current !== "connected" && Date.now() < deadline) {
+        timer = window.setTimeout(inject, 250);
+        return;
+      }
+      dispatchVoxSdkLog({
+        fullMessage: GATEWAY_WEBSOCKET_CLOSE_SDK_LOG,
+        message: [GATEWAY_WEBSOCKET_CLOSE_SDK_LOG],
+        extraData: { level: "ERROR", scope: "GW Transport" },
+      });
+    };
+
+    timer = window.setTimeout(inject, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [providerFaultSimulation]);
 
   const assertGenerationCurrent = useCallback(
     (generation: number) => {
@@ -1908,6 +2013,7 @@ export function useVoximplantRoom({
       unlockAudioPlayback,
       sendConferenceMessage,
       sendMessageAvailable,
+      transportRecovery,
     }),
     [
       conferenceName,
@@ -1939,6 +2045,7 @@ export function useVoximplantRoom({
       status,
       toggleCamera,
       toggleMic,
+      transportRecovery,
       unlockAudioPlayback,
     ],
   );

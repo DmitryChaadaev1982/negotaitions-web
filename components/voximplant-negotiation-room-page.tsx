@@ -59,6 +59,7 @@ import {
   getRoomClosureRedirectFromConflict,
   isStaleConnectionResponse,
 } from "@/lib/client/stale-connection";
+import type { VoxProviderFaultMode } from "@/lib/voximplant/provider-fault-simulation";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -74,6 +75,7 @@ type VoximplantNegotiationRoomPageProps =
       disableInitialMic?: boolean;
       debugAudio?: boolean;
       debugRecording?: boolean;
+      providerFaultSimulation?: VoxProviderFaultMode;
     }
   | {
       sessionId: string;
@@ -84,6 +86,7 @@ type VoximplantNegotiationRoomPageProps =
       disableInitialMic?: boolean;
       debugAudio?: boolean;
       debugRecording?: boolean;
+      providerFaultSimulation?: VoxProviderFaultMode;
     };
 
 // ─── VoximplantControlBar ─────────────────────────────────────────────────────
@@ -244,10 +247,12 @@ export default function VoximplantNegotiationRoomPage(
     // Stage 5.4: recording relay
     sendConferenceMessage,
     sendMessageAvailable,
+    transportRecovery,
   } = useVoximplantRoom({
     sessionId: props.sessionId,
     connectionId: roomConnectionId ?? undefined,
     onStaleConnection: activateStaleConnection,
+    providerFaultSimulation: props.providerFaultSimulation,
     disableInitialCamera: props.disableInitialCamera,
     disableInitialMic: props.disableInitialMic,
   });
@@ -993,14 +998,18 @@ export default function VoximplantNegotiationRoomPage(
     await performLeaveAndNavigate(materialsUrl);
   }, [materialsUrl, performLeaveAndNavigate]);
 
-  const handleReturnToEventLobby = useCallback(async () => {
-    const lobbyUrl = sidebar?.event?.lobbyUrl;
-    if (!lobbyUrl) {
-      await handleLeave();
-      return;
-    }
-    await performLeaveAndNavigate(lobbyUrl);
-  }, [handleLeave, performLeaveAndNavigate, sidebar?.event?.lobbyUrl]);
+  /**
+   * Every deliberate exit from the room — Event lobby, Dashboard, Sessions
+   * overview, materials, rejoin — runs the same sequence and differs only in
+   * the destination, so the connection becomes terminal at the moment the user
+   * left regardless of where they went.
+   */
+  const handleExitSession = useCallback(
+    async (destination: string) => {
+      await performLeaveAndNavigate(destination);
+    },
+    [performLeaveAndNavigate],
+  );
 
   useEffect(() => {
     clearSessionLeftFlag(props.sessionId);
@@ -1187,12 +1196,8 @@ export default function VoximplantNegotiationRoomPage(
         onInvalidToken={handleInvalidToken}
         onStaleConnection={handleStaleConnection}
         onLeave={() => void handleLeave()}
-        onReturnToEventLobby={
-          sidebar.event?.lobbyUrl
-            ? () => void handleReturnToEventLobby()
-            : null
-        }
-        isReturningToEventLobby={isExplicitLeavePending}
+        onExitSession={handleExitSession}
+        isExitingSession={isExplicitLeavePending}
         // ── Voximplant-specific slots ────────────────────────────────────────
         audioRenderer={null}
         micEnforcement={null}
@@ -1219,14 +1224,40 @@ export default function VoximplantNegotiationRoomPage(
           ) : null
         }
         providerBanner={
-          leaveError ? (
-            <div
-              className="shrink-0 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
-              data-testid="room-explicit-leave-error"
-            >
-              {leaveError}
-            </div>
-          ) : null
+          <>
+            {leaveError ? (
+              <div
+                className="shrink-0 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
+                data-testid="room-explicit-leave-error"
+              >
+                {leaveError}
+              </div>
+            ) : null}
+            {transportRecovery.status === "recovering" ? (
+              <div
+                className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+                data-testid="room-transport-reconnecting"
+              >
+                {t("room.transportReconnecting")}
+              </div>
+            ) : null}
+            {transportRecovery.status === "lost" ? (
+              <div
+                className="flex shrink-0 items-center gap-3 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
+                data-testid="room-transport-degraded"
+              >
+                <span>{t("room.transportDegraded")}</span>
+                <button
+                  type="button"
+                  className="rounded-md border border-rose-500/50 bg-rose-900/30 px-2 py-1 font-semibold text-rose-100 hover:bg-rose-900/50"
+                  data-testid="room-transport-retry-button"
+                  onClick={() => window.location.reload()}
+                >
+                  {t("common.retry")}
+                </button>
+              </div>
+            ) : null}
+          </>
         }
         recordingControls={
           recordingRelayError && effectiveParticipantType === "FACILITATOR" ? (

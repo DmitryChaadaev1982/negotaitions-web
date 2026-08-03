@@ -10,6 +10,7 @@ import {
   SecondaryButtonLink,
 } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
+import { SESSION_EXIT_DESTINATIONS } from "@/lib/client/session-exit-navigation";
 import { clearRecoveryContext } from "@/lib/rejoin/recovery-storage";
 import { useRecoveryAvailable } from "@/lib/rejoin/use-recovery-available";
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -66,7 +67,18 @@ export function RejoinPageView() {
   );
 }
 
-export function RejoinNavLink({ className }: { className?: string }) {
+export function RejoinNavLink({
+  className,
+  onNavigate = null,
+}: {
+  className?: string;
+  /**
+   * Intercepts the click and receives `/rejoin` instead of navigating. The
+   * Session room uses it so leaving for another session persists an explicit
+   * leave first.
+   */
+  onNavigate?: ((destination: string) => void | Promise<void>) | null;
+}) {
   const { t } = useI18n();
   const visible = useRecoveryAvailable();
 
@@ -74,15 +86,25 @@ export function RejoinNavLink({ className }: { className?: string }) {
     return null;
   }
 
+  const appliedClassName =
+    className ??
+    "text-sm font-semibold text-cyan-400 transition hover:text-cyan-300";
+
+  if (onNavigate) {
+    return (
+      <button
+        type="button"
+        data-testid="rejoin-link"
+        className={appliedClassName}
+        onClick={() => void onNavigate(SESSION_EXIT_DESTINATIONS.rejoin)}
+      >
+        {t("rejoin.rejoin")}
+      </button>
+    );
+  }
+
   return (
-    <Link
-      href="/rejoin"
-      data-testid="rejoin-link"
-      className={
-        className ??
-        "text-sm font-semibold text-cyan-400 transition hover:text-cyan-300"
-      }
-    >
+    <Link href="/rejoin" data-testid="rejoin-link" className={appliedClassName}>
       {t("rejoin.rejoin")}
     </Link>
   );

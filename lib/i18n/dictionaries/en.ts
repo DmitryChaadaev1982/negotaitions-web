@@ -1044,6 +1044,10 @@ export const en = {
       "Negotiation started, but recording failed. Check LiveKit Egress quota, billing, or storage configuration.",
     thisTabIsStale:
       "This session was opened in another tab or device. This tab is now disconnected.",
+    transportReconnecting:
+      "The media connection dropped. Reconnecting — the session continues.",
+    transportDegraded:
+      "The media connection could not be restored. The session and your notes are intact.",
     mediaMicOn: "Mic on",
     mediaMicOff: "Mic off",
     mediaMicLocked: "Mic is locked by session rules",

@@ -6,11 +6,11 @@
  * of them to `console.error` makes the Next.js development overlay take over the
  * page for failures the application already recovers from.
  *
- * Classification is driven by the SDK error type, transport status code and
- * failed action name — never by a broad substring such as "timeout" — combined
- * with the current lifecycle phase, because the same transport error means
- * something different while a session is intentionally tearing down than it
- * does on a steady-state connection.
+ * Classification is driven by the SDK error type, transport status code, failed
+ * action name and socket-close evidence — never by a broad substring such as
+ * "timeout" or "closed with error" — combined with the current lifecycle phase,
+ * because the same transport error means something different while a session is
+ * intentionally tearing down than it does on a steady-state connection.
  */
 
 export type VoxProviderErrorClass =
@@ -31,6 +31,26 @@ export type VoxLifecyclePhase =
   | "intentional_teardown"
   | "handoff";
 
+/**
+ * What the SDK actually tells us about a closed WebSocket.
+ *
+ * The observed gateway line is
+ * `[WEBSDK] [GW Transport] WS transport <id> closed with error {"isTrusted":true}`.
+ * The trailing object is a serialized DOM event, and `code`, `reason` and
+ * `wasClean` are prototype accessors on `CloseEvent`, so `JSON.stringify` drops
+ * them and only `isTrusted` survives. Every field below is therefore optional:
+ * the closure itself and its scope are the reliable evidence, and a close code
+ * is used when the SDK happens to log one.
+ */
+export type VoxTransportClosure = {
+  /** WebSocket close code when the SDK logged one, e.g. `1006`. */
+  closeCode: number | null;
+  closeReason: string | null;
+  wasClean: boolean | null;
+  /** `true` for a real browser event, `false` for one the SDK synthesised. */
+  isTrusted: boolean | null;
+};
+
 export type VoxProviderSignal = {
   /** Raw message the classification was derived from. */
   message: string;
@@ -42,6 +62,8 @@ export type VoxProviderSignal = {
   transportCode: number | null;
   /** Failed SDK action name, e.g. `IceRestartAction`. */
   actionName: string | null;
+  /** Present only when the SDK reported a transport socket closing. */
+  transportClosure: VoxTransportClosure | null;
   /** True when the message came from the WebSDK rather than application code. */
   fromWebSdk: boolean;
 };
@@ -104,6 +126,49 @@ const TRANSIENT_TRANSPORT_CODES = new Set([408, 500, 502, 503, 504]);
 const TERMINAL_TRANSPORT_CODES = new Set([401, 403]);
 
 /**
+ * WebSocket close codes the gateway uses to refuse the credentials rather than
+ * to report a dropped link. They must stay terminal: retrying with the same
+ * token only repeats the rejection.
+ */
+const TERMINAL_WEBSOCKET_CLOSE_CODES = new Set([1008, 4401, 4403]);
+
+/**
+ * Only a socket close reported under a transport scope is transport evidence.
+ * The same words logged by, say, a conference or application scope describe
+ * something else and must keep falling through to the unknown branch.
+ */
+function isTransportScope(scope: string | null): boolean {
+  if (!scope) return false;
+  const normalized = scope.toLowerCase();
+  return normalized.includes("transport") || normalized === "connection";
+}
+
+/**
+ * Matches the SDK's socket-close wording (`WS transport <id> closed with ...`)
+ * and nothing else. Deliberately narrow: `closed with error` on its own is not
+ * enough to call a failure recoverable.
+ */
+const WEBSOCKET_CLOSE_PATTERN = /\b(?:ws|websocket)\s+transport\b[^\n]*?\bclosed\b/i;
+
+function parseTransportClosure(message: string): VoxTransportClosure | null {
+  if (!WEBSOCKET_CLOSE_PATTERN.test(message)) return null;
+
+  // Close codes are four digits (1000-4999) and never collide with the
+  // three-digit gateway status codes parsed into `transportCode`.
+  const closeCodeMatch = /"?(?:close)?code"?\s*[:=]\s*"?(\d{4})\b/i.exec(message);
+  const reasonMatch = /"?(?:close)?reason"?\s*[:=]\s*"([^"]*)"/i.exec(message);
+  const wasCleanMatch = /"?wasClean"?\s*[:=]\s*(true|false)\b/i.exec(message);
+  const isTrustedMatch = /"?isTrusted"?\s*[:=]\s*(true|false)\b/i.exec(message);
+
+  return {
+    closeCode: closeCodeMatch ? Number.parseInt(closeCodeMatch[1]!, 10) : null,
+    closeReason: reasonMatch?.[1] ?? null,
+    wasClean: wasCleanMatch ? wasCleanMatch[1]!.toLowerCase() === "true" : null,
+    isTrusted: isTrustedMatch ? isTrustedMatch[1]!.toLowerCase() === "true" : null,
+  };
+}
+
+/**
  * Failure of our own provider-access endpoint. It is an authorization or
  * availability problem with media access, not an application invariant, so it
  * must not be reported as a fatal application diagnostic.
@@ -155,7 +220,15 @@ export function parseVoxProviderSignal(
   const actionMatch = /actionName\s*[:=]\s*"?([A-Za-z0-9_]+)"?/.exec(message);
   const actionName = actionMatch?.[1] ?? null;
 
-  return { message, scope, errorType, transportCode, actionName, fromWebSdk };
+  return {
+    message,
+    scope,
+    errorType,
+    transportCode,
+    actionName,
+    transportClosure: parseTransportClosure(message),
+    fromWebSdk,
+  };
 }
 
 function isTeardownContext(context: VoxClassificationContext): boolean {
@@ -215,6 +288,32 @@ export function classifyVoxProviderFailure(
   }
   if (signal.transportCode != null && TERMINAL_TRANSPORT_CODES.has(signal.transportCode)) {
     return build("TERMINAL_PROVIDER_FAILURE", "provider_authorization_rejected");
+  }
+
+  // A gateway socket that closes under an established connection is a link
+  // loss, not a fault: the SDK re-establishes it, and the session keeps its
+  // membership, media policy and lifecycle. It reaches here only with real
+  // transport evidence — a transport scope plus the SDK's own close wording —
+  // so a `GW Transport` message that is not a socket close, or a socket close
+  // logged from an unrelated scope, still falls through to the unknown branch.
+  // Terminal authorization evidence is matched above and wins.
+  if (signal.transportClosure && isTransportScope(signal.scope)) {
+    const { closeCode } = signal.transportClosure;
+    if (closeCode != null && TERMINAL_WEBSOCKET_CLOSE_CODES.has(closeCode)) {
+      return build("TERMINAL_PROVIDER_FAILURE", "provider_authorization_rejected");
+    }
+    if (teardown) {
+      return build(
+        "EXPECTED_DURING_INTENTIONAL_TEARDOWN",
+        "gateway_websocket_closed_during_teardown",
+      );
+    }
+    if (hasRetryBudget(context)) {
+      return build("RECOVERABLE_TRANSIENT", "gateway_websocket_closed", {
+        retryable: true,
+      });
+    }
+    return build("TERMINAL_PROVIDER_FAILURE", "transport_retry_budget_exhausted");
   }
 
   // Media renegotiation failures. During an intentional teardown the peer
@@ -306,6 +405,11 @@ export function formatVoxProviderLog(
   if (signal.errorType) fields.push(`errorType=${signal.errorType}`);
   if (signal.transportCode != null) fields.push(`code=${signal.transportCode}`);
   if (signal.actionName) fields.push(`action=${signal.actionName}`);
+  if (signal.transportClosure) {
+    const { closeCode, wasClean } = signal.transportClosure;
+    fields.push(`closeCode=${closeCode ?? "unknown"}`);
+    if (wasClean != null) fields.push(`wasClean=${wasClean}`);
+  }
   if (context.attempt != null && context.maxAttempts != null) {
     fields.push(`attempt=${context.attempt}/${context.maxAttempts}`);
   }

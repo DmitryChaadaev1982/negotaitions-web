@@ -69,18 +69,44 @@ function newestActiveSession(
   return selected;
 }
 
+/**
+ * When the participant actually stopped being present in a Session.
+ *
+ * Two different disconnect kinds reach this function and they must not share a
+ * clock:
+ *
+ * - `EXPLICIT_LEAVE` — the participant used a product action that deliberately
+ *   exits the room, so the server wrote a real terminal timestamp
+ *   (`disconnectedAt`, `revokedAt` or `supersededAt`). That timestamp is the
+ *   truth. The row keeps whatever `expiresAt` the last heartbeat had already
+ *   written, which is up to a full lease ahead of the departure; honouring it
+ *   would restart the away window when the abandoned lease later lapses and
+ *   delay `OFFLINE` by another lease period.
+ * - `NETWORK_LOSS` — refresh, tab close or a dropped connection leaves no
+ *   terminal marker at all. The only durable evidence is the lease, so the
+ *   effective disconnect time is `expiresAt` once it has passed.
+ *
+ * Timestamps are never backdated or synthesised: an explicitly terminated
+ * connection reports its own terminal time, and a lapsed one reports its lease
+ * expiry.
+ */
 function latestTerminalTimestamp(
   connection: EventParticipantSessionPresenceEvidence,
   now: Date,
 ) {
-  const candidates = [
+  const explicitTerminals = [
     connection.disconnectedAt,
     connection.revokedAt,
     connection.supersededAt,
-    connection.expiresAt <= now ? connection.expiresAt : null,
   ].filter((value): value is Date => Boolean(value));
-  if (candidates.length === 0) return null;
-  return new Date(Math.max(...candidates.map((value) => value.getTime())));
+
+  if (explicitTerminals.length > 0) {
+    return new Date(
+      Math.max(...explicitTerminals.map((value) => value.getTime())),
+    );
+  }
+
+  return connection.expiresAt <= now ? connection.expiresAt : null;
 }
 
 function isWithinRecentWindow(value: Date | null, now: Date, windowMs: number) {

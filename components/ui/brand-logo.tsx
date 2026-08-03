@@ -12,6 +12,11 @@ type BrandLogoProps = {
   glow?: boolean;
   variant?: "full" | "compact" | "session" | "icon";
   priority?: boolean;
+  /**
+   * Intercepts the click and receives `href` instead of navigating. The Session
+   * room uses it so the logo runs the explicit-leave sequence before leaving.
+   */
+  onNavigate?: ((destination: string) => void | Promise<void>) | null;
 };
 
 const logoSizeClasses = {
@@ -63,6 +68,7 @@ export function BrandLogo({
   glow = false,
   variant = "full",
   priority: _priority = false,
+  onNavigate = null,
 }: BrandLogoProps) {
   const { t, locale } = useI18n();
   const localeKey = locale === "ru" ? "ru" : "en";
@@ -85,6 +91,19 @@ export function BrandLogo({
       />
     </span>
   );
+
+  if (href && onNavigate) {
+    return (
+      <button
+        type="button"
+        className="inline-flex transition-opacity hover:opacity-90"
+        aria-label={t("brand.alt")}
+        onClick={() => void onNavigate(href)}
+      >
+        {content}
+      </button>
+    );
+  }
 
   if (href) {
     return (

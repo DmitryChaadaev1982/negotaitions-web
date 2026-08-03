@@ -22,9 +22,23 @@ export const VOX_PROVIDER_FAULT_MODES = [
   "delayed-disconnect",
   "terminal-auth",
   "recover-after-first-failure",
+  "gateway-ws-close-connected",
 ] as const;
 
 export type VoxProviderFaultMode = (typeof VOX_PROVIDER_FAULT_MODES)[number];
+
+/**
+ * The gateway-close line captured verbatim from a Session that had been sitting
+ * in `DEBRIEF_OPEN` long enough for the WebSDK's gateway socket to drop.
+ *
+ * The transport id is the only part that varies between occurrences. The
+ * trailing payload is the browser event the SDK serialized: `CloseEvent`
+ * exposes `code`, `reason` and `wasClean` as prototype accessors, so
+ * `JSON.stringify` keeps only `isTrusted`. Classification is asserted against
+ * this exact string so it can never drift from what the SDK really emits.
+ */
+export const GATEWAY_WEBSOCKET_CLOSE_SDK_LOG =
+  '[WEBSDK] [GW Transport] WS transport 1f4c9a20-7d33-4c31-9a6f-2b0f8f0c6d51 closed with error {"isTrusted":true}';
 
 export function isVoxProviderFaultMode(value: unknown): value is VoxProviderFaultMode {
   return (
@@ -48,6 +62,7 @@ const SYNTHETIC_MESSAGES: Record<string, string> = {
   // The recovery scenario must fail with a genuinely retryable transport error.
   "recover-after-first-failure":
     "[WEBSDK] [Connection] Transport creation failed with error TransportTimeoutError: Transport establishing failed with code 408. Rejected due to time",
+  "gateway-ws-close-connected": GATEWAY_WEBSOCKET_CLOSE_SDK_LOG,
 };
 
 export function createSyntheticProviderError(mode: VoxProviderFaultMode): Error {
@@ -80,6 +95,9 @@ export function resolveVoxProviderFaultPlan(
 
   switch (mode) {
     case "off":
+    // The gateway-close scenario replays an SDK log line into an already
+    // running room; it scripts no connect outcome of its own.
+    case "gateway-ws-close-connected":
       return base;
     case "transport-408":
     case "gateway-unavailable":

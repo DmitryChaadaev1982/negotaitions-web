@@ -8,6 +8,7 @@ import { getVideoProvider } from "@/lib/env";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { prisma } from "@/lib/prisma";
+import { getVoxProviderFaultMode } from "@/lib/test-mode";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import {
   decideSessionRoomAccess,
@@ -109,6 +110,7 @@ export default async function RoomPage({
         disableInitialMic={disableInitialMic}
         debugAudio={showDebugAudio}
         debugRecording={showDebugRecording}
+        providerFaultSimulation={getVoxProviderFaultMode()}
       />
     ) : (
       <VideoRoomPage
