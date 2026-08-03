@@ -193,6 +193,116 @@ test("connection belonging to another Event does not affect this Event", () => {
   );
 });
 
+test("explicit leave starts the away window at the terminal timestamp, not at expiresAt", () => {
+  // The heartbeat had just renewed the lease when the participant left, so the
+  // row keeps an expiry a full lease ahead of the real departure.
+  const leftAt = ago(RECENT_MS - 1_000);
+  const abandonedLease = new Date(leftAt.getTime() + RECENT_MS);
+
+  const stillAway = resolve({
+    sessionConnections: [
+      sessionConnection({ disconnectedAt: leftAt, expiresAt: abandonedLease }),
+    ],
+  });
+  assert.equal(stillAway.state, "TEMPORARILY_AWAY");
+  assert.equal(stillAway.terminalSeenAt?.getTime(), leftAt.getTime());
+
+  // One second later the grace period measured from the departure is spent,
+  // even though the abandoned lease has not run out yet.
+  const nowAfterGrace = new Date(NOW.getTime() + 1_001);
+  const offline = resolve({
+    now: nowAfterGrace,
+    sessionConnections: [
+      sessionConnection({ disconnectedAt: leftAt, expiresAt: abandonedLease }),
+    ],
+  });
+  assert.equal(offline.state, "OFFLINE");
+});
+
+test("a stale expiry that outlives an explicit leave does not extend the away window", () => {
+  const leftAt = ago(RECENT_MS + 30_000);
+  // The lease lapsed long after the departure and is itself inside the window.
+  const lapsedLease = ago(1_000);
+
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({ disconnectedAt: leftAt, expiresAt: lapsedLease }),
+    ],
+  });
+
+  assert.equal(presence.state, "OFFLINE");
+  assert.equal(presence.terminalSeenAt?.getTime(), leftAt.getTime());
+});
+
+test("network loss with no terminal timestamp stays lease-based", () => {
+  const lapsedLease = ago(1_000);
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({
+        disconnectedAt: null,
+        revokedAt: null,
+        supersededAt: null,
+        expiresAt: lapsedLease,
+        updatedAt: ago(RECENT_MS),
+      }),
+    ],
+  });
+
+  assert.equal(presence.state, "TEMPORARILY_AWAY");
+  assert.equal(presence.terminalSeenAt?.getTime(), lapsedLease.getTime());
+});
+
+test("a lease that has not lapsed yet keeps an abruptly lost participant IN_SESSION", () => {
+  assert.equal(
+    resolve({
+      sessionConnections: [
+        sessionConnection({
+          expiresAt: new Date(NOW.getTime() + 30_000),
+          updatedAt: ago(90_000),
+        }),
+      ],
+    }).state,
+    "IN_SESSION",
+  );
+});
+
+test("reconnecting into a Session during the grace window reports the new location", () => {
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({
+        sessionId: "session-old",
+        disconnectedAt: ago(5_000),
+      }),
+      sessionConnection({
+        sessionId: "session-new",
+        sessionTitle: "Room 2",
+        updatedAt: ago(500),
+      }),
+    ],
+  });
+
+  assert.equal(presence.state, "IN_SESSION");
+  assert.deepEqual(presence.location, {
+    kind: "session",
+    sessionId: "session-new",
+    sessionTitle: "Room 2",
+  });
+});
+
+test("repeating an explicit leave does not move the away window", () => {
+  const leftAt = ago(10_000);
+  const first = resolve({
+    sessionConnections: [sessionConnection({ disconnectedAt: leftAt })],
+  });
+  // A second leave call is a no-op server-side, so the row is unchanged.
+  const second = resolve({
+    sessionConnections: [sessionConnection({ disconnectedAt: leftAt })],
+  });
+
+  assert.equal(first.state, "TEMPORARILY_AWAY");
+  assert.equal(second.terminalSeenAt?.getTime(), first.terminalSeenAt?.getTime());
+});
+
 test("server timestamp injection controls boundary decisions", () => {
   const serverNow = new Date("2026-08-03T10:05:00.000Z");
   assert.equal(
