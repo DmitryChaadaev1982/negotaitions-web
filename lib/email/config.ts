@@ -18,6 +18,10 @@ export type EmailConfig = {
   retryBaseSeconds: number;
   retryMaxSeconds: number;
   processingLeaseSeconds: number;
+  providerRequestTimeoutMs: number;
+  providerRequestSafetyMarginSeconds: number;
+  providerEventReconciliationWindowSeconds: number;
+  providerEventReconciliationDelaySeconds: number;
   contentRetentionDays: number;
   deliveryAttemptRetentionDays: number;
   providerIdRetentionDays: number;
@@ -102,6 +106,33 @@ export function getEmailConfig(): EmailConfig {
     }
   }
 
+  const processingLeaseSeconds = parseBoundedInteger(
+    "EMAIL_PROCESSING_LEASE_SECONDS",
+    600,
+    60,
+    7200,
+  );
+  const providerRequestTimeoutMs = parseBoundedInteger(
+    "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS",
+    30000,
+    1000,
+    600000,
+  );
+  const providerRequestSafetyMarginSeconds = parseBoundedInteger(
+    "EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS",
+    30,
+    5,
+    600,
+  );
+  if (
+    providerRequestTimeoutMs >=
+    (processingLeaseSeconds - providerRequestSafetyMarginSeconds) * 1000
+  ) {
+    throw new Error(
+      "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS must be shorter than EMAIL_PROCESSING_LEASE_SECONDS minus EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS.",
+    );
+  }
+
   return {
     deliveryEnabled,
     provider,
@@ -140,11 +171,20 @@ export function getEmailConfig(): EmailConfig {
     maxAttempts: parseBoundedInteger("EMAIL_MAX_ATTEMPTS", 5, 1, 20),
     retryBaseSeconds: parseBoundedInteger("EMAIL_RETRY_BASE_SECONDS", 60, 10, 3600),
     retryMaxSeconds: parseBoundedInteger("EMAIL_RETRY_MAX_SECONDS", 43200, 60, 86400),
-    processingLeaseSeconds: parseBoundedInteger(
-      "EMAIL_PROCESSING_LEASE_SECONDS",
-      600,
+    processingLeaseSeconds,
+    providerRequestTimeoutMs,
+    providerRequestSafetyMarginSeconds,
+    providerEventReconciliationWindowSeconds: parseBoundedInteger(
+      "EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS",
+      86400,
       60,
-      7200,
+      604800,
+    ),
+    providerEventReconciliationDelaySeconds: parseBoundedInteger(
+      "EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS",
+      60,
+      5,
+      3600,
     ),
     contentRetentionDays: parseBoundedInteger("EMAIL_CONTENT_RETENTION_DAYS", 90, 1, 3650),
     deliveryAttemptRetentionDays: parseBoundedInteger(

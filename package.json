@@ -56,6 +56,7 @@
     "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts",
     "email:templates:validate": "tsx scripts/validate-email-templates.ts",
     "email:delivery:sweep": "tsx scripts/ops/email-delivery-sweep.ts",
+    "email:events:reconcile": "tsx scripts/ops/email-provider-event-reconciliation.ts",
     "email:retention:dry-run": "tsx scripts/ops/email-retention-cleanup.ts --dry-run",
     "email:retention:cleanup": "tsx scripts/ops/email-retention-cleanup.ts"
   },

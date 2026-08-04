@@ -15,6 +15,8 @@ import type {
 } from "@/lib/email/types";
 import { prisma } from "@/lib/prisma";
 
+type EmailDbClient = typeof prisma | Prisma.TransactionClient;
+
 function normalizeLocale(value: string | null | undefined): EmailLocale {
   return value?.toLowerCase() === "ru" ? "ru" : "en";
 }
@@ -32,6 +34,7 @@ function sanitizeMetadata(
 
 export async function enqueueEmail(
   input: EnqueueEmailInput,
+  db: EmailDbClient = prisma,
 ): Promise<EnqueueEmailResult> {
   const config = getEmailConfig();
   const locale = normalizeLocale(input.locale);
@@ -61,13 +64,14 @@ export async function enqueueEmail(
   const suppression = await evaluateSuppression({
     recipientEmail,
     category: input.category,
+    db,
   });
   const status = suppression.suppressed
     ? EmailMessageStatus.SUPPRESSED
     : EmailMessageStatus.PENDING;
 
   try {
-    const message = await prisma.emailMessage.create({
+    const message = await db.emailMessage.create({
       data: {
         messageType: input.messageType,
         category: input.category,
@@ -97,13 +101,15 @@ export async function enqueueEmail(
     });
     return suppression.suppressed
       ? {
-          created: false,
+          created: true,
+          duplicate: false,
           suppressed: true,
           messageId: message.id,
           status: message.status,
         }
       : {
           created: true,
+          duplicate: false,
           suppressed: false,
           messageId: message.id,
           status: message.status,
@@ -115,11 +121,20 @@ export async function enqueueEmail(
       "code" in error &&
       error.code === "P2002"
     ) {
-      const existing = await prisma.emailMessage.findUnique({
+      const existing = await db.emailMessage.findUnique({
         where: { idempotencyKey: input.idempotencyKey },
         select: { id: true, status: true },
       });
       if (existing) {
+        if (existing.status === EmailMessageStatus.SUPPRESSED) {
+          return {
+            created: false,
+            suppressed: true,
+            duplicate: true,
+            messageId: existing.id,
+            status: existing.status,
+          };
+        }
         return {
           created: false,
           suppressed: false,

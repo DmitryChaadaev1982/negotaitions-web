@@ -5,6 +5,7 @@ import {
 } from "@aws-sdk/client-sesv2";
 
 import { getEmailConfig } from "@/lib/email/config";
+import { classifyProviderError } from "@/lib/email/provider-error-classification";
 import type {
   EmailProvider,
   EmailProviderSendInput,
@@ -49,6 +50,7 @@ export class YandexPostboxEmailProvider implements EmailProvider {
   readonly transport = "sesv2_api";
   private readonly client: SESv2Client;
   private readonly configurationSetName: string | null;
+  private readonly requestTimeoutMs: number;
 
   constructor(config = getEmailConfig()) {
     const { accessKeyId, secretAccessKey, region, endpoint, configurationSetName } =
@@ -57,6 +59,7 @@ export class YandexPostboxEmailProvider implements EmailProvider {
       throw new Error("Missing Yandex Postbox credentials.");
     }
     this.configurationSetName = configurationSetName;
+    this.requestTimeoutMs = config.providerRequestTimeoutMs;
     this.client = new SESv2Client({
       region,
       endpoint,
@@ -89,15 +92,22 @@ export class YandexPostboxEmailProvider implements EmailProvider {
       payload.ConfigurationSetName = this.configurationSetName;
     }
 
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.requestTimeoutMs);
+    let requestDispatched = false;
+
     try {
-      const result = await this.client.send(new SendEmailCommand(payload));
+      requestDispatched = true;
+      const result = await this.client.send(new SendEmailCommand(payload), {
+        abortSignal: abortController.signal,
+      });
       if (!result.MessageId) {
         return {
           ok: false,
           providerName: this.name,
           transport: this.transport,
-          retryable: true,
-          timeoutUnknown: true,
+          retryable: false,
+          acceptanceUnknown: true,
           errorCode: "PROVIDER_ACCEPTANCE_UNKNOWN",
           sanitizedMessage: "Provider response did not include a message id.",
         };
@@ -110,22 +120,19 @@ export class YandexPostboxEmailProvider implements EmailProvider {
         acceptedAt: new Date(),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Provider send failed.";
-      const lower = message.toLowerCase();
-      const retryable =
-        lower.includes("timeout") ||
-        lower.includes("rate") ||
-        lower.includes("temporar") ||
-        lower.includes("throttl") ||
-        lower.includes("5");
+      const classification = classifyProviderError(error, { requestDispatched });
       return {
         ok: false,
         providerName: this.name,
         transport: this.transport,
-        retryable,
-        errorCode: retryable ? "PROVIDER_RETRYABLE_FAILURE" : "PROVIDER_FINAL_FAILURE",
-        sanitizedMessage: message.slice(0, 500),
+        retryable: classification.retryable,
+        acceptanceUnknown: classification.acceptanceUnknown,
+        errorCode: classification.normalizedCode,
+        sanitizedMessage: classification.sanitizedMessage,
+        metadata: { category: classification.category },
       };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

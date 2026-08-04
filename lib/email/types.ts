@@ -8,6 +8,10 @@ import type {
 
 export type EmailLocale = "ru" | "en";
 
+export function parseEmailLocaleStrict(value: unknown): EmailLocale | null {
+  return value === "ru" || value === "en" ? value : null;
+}
+
 export type EmailTemplateKey =
   | "system-test"
   | "password-reset"
@@ -80,7 +84,7 @@ export type EmailProviderSendResult =
       providerName: string;
       transport: string;
       retryable: boolean;
-      timeoutUnknown?: boolean;
+      acceptanceUnknown?: boolean;
       errorCode: string;
       sanitizedMessage: string;
       metadata?: Record<string, unknown>;
@@ -108,6 +112,7 @@ export type EnqueueEmailResult =
   | {
       created: true;
       suppressed: false;
+      duplicate: false;
       messageId: string;
       status: EmailMessageStatus;
     }
@@ -119,8 +124,16 @@ export type EnqueueEmailResult =
       status: EmailMessageStatus;
     }
   | {
+      created: true;
+      suppressed: true;
+      duplicate: false;
+      messageId: string;
+      status: EmailMessageStatus;
+    }
+  | {
       created: false;
       suppressed: true;
+      duplicate: true;
       messageId: string;
       status: EmailMessageStatus;
     };

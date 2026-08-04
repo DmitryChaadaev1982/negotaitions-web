@@ -6,28 +6,11 @@ import {
   EmailSuppressionSource,
   type Prisma,
 } from "@/app/generated/prisma/client";
+import { getEmailConfig } from "@/lib/email/config";
+import { evaluateProviderEventTransition } from "@/lib/email/provider-event-policy";
+import { createActiveSuppression } from "@/lib/email/suppression";
 import type { NormalizedProviderEventInput } from "@/lib/email/types";
 import { prisma } from "@/lib/prisma";
-
-function statusForProviderEvent(eventType: EmailProviderEventType): EmailMessageStatus | null {
-  switch (eventType) {
-    case EmailProviderEventType.ACCEPTED:
-      return EmailMessageStatus.ACCEPTED_BY_PROVIDER;
-    case EmailProviderEventType.DELIVERED:
-      return EmailMessageStatus.DELIVERED;
-    case EmailProviderEventType.DELAYED:
-      return EmailMessageStatus.DELAYED;
-    case EmailProviderEventType.BOUNCED:
-      return EmailMessageStatus.BOUNCED;
-    case EmailProviderEventType.COMPLAINED:
-      return EmailMessageStatus.COMPLAINED;
-    case EmailProviderEventType.REJECTED:
-    case EmailProviderEventType.RENDERING_FAILED:
-      return EmailMessageStatus.FAILED_FINAL;
-    case EmailProviderEventType.UNKNOWN:
-      return null;
-  }
-}
 
 function suppressionReasonForEvent(
   input: NormalizedProviderEventInput,
@@ -53,77 +36,252 @@ function sanitizeMetadata(
   return JSON.parse(json) as Prisma.InputJsonValue;
 }
 
+function addSeconds(date: Date, seconds: number) {
+  return new Date(date.getTime() + seconds * 1000);
+}
+
+function isUniqueViolation(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
 export async function processEmailProviderEvent(input: NormalizedProviderEventInput) {
-  const existing = await prisma.emailProviderEvent.findUnique({
-    where: {
-      provider_providerEventId: {
-        provider: input.provider,
-        providerEventId: input.providerEventId,
-      },
-    },
-  });
-  if (existing) {
-    return { created: false, processed: existing.processingStatus === "PROCESSED" };
-  }
+  const config = getEmailConfig();
+  const now = new Date();
+  let eventId: string;
+  const created = true;
 
-  const message = input.providerMessageId
-    ? await prisma.emailMessage.findFirst({
-        where: { lastProviderMessageId: input.providerMessageId },
-      })
-    : null;
-  const nextStatus = statusForProviderEvent(input.eventType);
-  const suppressionReason = suppressionReasonForEvent(input);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.emailProviderEvent.create({
+  try {
+    const event = await prisma.emailProviderEvent.create({
       data: {
         provider: input.provider,
         providerEventId: input.providerEventId,
         providerMessageId: input.providerMessageId ?? null,
-        emailMessageId: message?.id ?? null,
         eventType: input.eventType,
         eventTime: input.eventTime,
-        processingStatus: EmailProviderEventProcessingStatus.PROCESSED,
+        processingStatus: EmailProviderEventProcessingStatus.PENDING,
+        nextReconcileAt: now,
+        reconciliationDeadlineAt: addSeconds(
+          now,
+          config.providerEventReconciliationWindowSeconds,
+        ),
         metadata: sanitizeMetadata(input.metadata),
-        processedAt: new Date(),
+      },
+    });
+    eventId = event.id;
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const existing = await prisma.emailProviderEvent.findUnique({
+      where: {
+        provider_providerEventId: {
+          provider: input.provider,
+          providerEventId: input.providerEventId,
+        },
+      },
+    });
+    if (!existing) throw error;
+    return {
+      created: false,
+      processed: existing.processingStatus === EmailProviderEventProcessingStatus.PROCESSED,
+      messageId: existing.emailMessageId,
+      processingStatus: existing.processingStatus,
+    };
+  }
+
+  const result = await reconcileEmailProviderEventById(eventId);
+  return { created, ...result };
+}
+
+export async function reconcileEmailProviderEventById(eventId: string, now = new Date()) {
+  const config = getEmailConfig();
+  const event = await prisma.emailProviderEvent.findUnique({ where: { id: eventId } });
+  if (!event) {
+    return { processed: false, messageId: null, processingStatus: null };
+  }
+
+  if (event.processingStatus === EmailProviderEventProcessingStatus.PROCESSED) {
+    return {
+      processed: true,
+      messageId: event.emailMessageId,
+      processingStatus: event.processingStatus,
+    };
+  }
+
+  if (!event.providerMessageId) {
+    await prisma.emailProviderEvent.update({
+      where: { id: event.id },
+      data: {
+        processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+        processingResultCode: "NO_PROVIDER_MESSAGE_ID",
+        processingResultMessage: "Provider event did not include a provider message id.",
+        processedAt: now,
+      },
+    });
+    return {
+      processed: false,
+      messageId: null,
+      processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+    };
+  }
+
+  const message = await prisma.emailMessage.findFirst({
+    where: {
+      providerName: event.provider,
+      lastProviderMessageId: event.providerMessageId,
+    },
+  });
+
+  if (!message) {
+    const deadline = event.reconciliationDeadlineAt ?? addSeconds(
+      event.createdAt,
+      config.providerEventReconciliationWindowSeconds,
+    );
+    const expired = now >= deadline;
+    const updated = await prisma.emailProviderEvent.update({
+      where: { id: event.id },
+      data: expired
+        ? {
+            processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+            processingResultCode: "RECONCILIATION_EXPIRED",
+            processingResultMessage: "No matching email message was found before the reconciliation window expired.",
+            processedAt: now,
+            nextReconcileAt: null,
+            reconciliationDeadlineAt: deadline,
+          }
+        : {
+            processingStatus: EmailProviderEventProcessingStatus.UNMATCHED,
+            processingResultCode: "UNMATCHED_PROVIDER_MESSAGE",
+            processingResultMessage: "No matching email message exists yet for the provider-qualified id.",
+            nextReconcileAt: addSeconds(now, config.providerEventReconciliationDelaySeconds),
+            reconciliationDeadlineAt: deadline,
+            reconciliationAttempts: { increment: 1 },
+          },
+    });
+    return {
+      processed: false,
+      messageId: null,
+      processingStatus: updated.processingStatus,
+    };
+  }
+
+  const decision = evaluateProviderEventTransition({
+    currentStatus: message.status,
+    lastProviderEventTime: message.lastProviderEventTime,
+    eventType: event.eventType,
+    eventTime: event.eventTime,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.emailProviderEvent.update({
+      where: { id: event.id },
+      data: {
+        emailMessageId: message.id,
+        processingStatus: decision.apply
+          ? EmailProviderEventProcessingStatus.PROCESSED
+          : EmailProviderEventProcessingStatus.IGNORED,
+        processingResultCode: decision.resultCode,
+        processingResultMessage: decision.resultMessage,
+        processedAt: now,
+        nextReconcileAt: null,
       },
     });
 
-    if (message && nextStatus) {
+    if (decision.apply) {
       await tx.emailMessage.update({
         where: { id: message.id },
         data: {
-          status: nextStatus,
+          status: decision.nextStatus,
+          lastProviderEventType: event.eventType,
+          lastProviderEventTime: event.eventTime,
           deliveredAt:
-            input.eventType === EmailProviderEventType.DELIVERED
-              ? input.eventTime
+            event.eventType === EmailProviderEventType.DELIVERED
+              ? event.eventTime
               : message.deliveredAt,
           terminalFailureAt:
-            nextStatus === EmailMessageStatus.BOUNCED ||
-            nextStatus === EmailMessageStatus.COMPLAINED ||
-            nextStatus === EmailMessageStatus.FAILED_FINAL
-              ? input.eventTime
+            decision.nextStatus === EmailMessageStatus.BOUNCED ||
+            decision.nextStatus === EmailMessageStatus.COMPLAINED ||
+            decision.nextStatus === EmailMessageStatus.FAILED_FINAL
+              ? event.eventTime
               : message.terminalFailureAt,
-        },
-      });
-    }
-
-    if (message && suppressionReason) {
-      await tx.emailSuppression.create({
-        data: {
-          recipientEmailNormalized: message.recipientEmailNormalized,
-          reason: suppressionReason,
-          source: EmailSuppressionSource.PROVIDER_EVENT,
-          categoryScope: null,
-          metadata: sanitizeMetadata({
-            provider: input.provider,
-            providerEventId: input.providerEventId,
-            messageId: message.id,
-          }),
         },
       });
     }
   });
 
-  return { created: true, processed: true, messageId: message?.id ?? null };
+  const suppressionReason = suppressionReasonForEvent({
+    provider: event.provider,
+    providerEventId: event.providerEventId,
+    providerMessageId: event.providerMessageId,
+    eventType: event.eventType,
+    eventTime: event.eventTime,
+  });
+  if (decision.apply && suppressionReason) {
+    await createActiveSuppression({
+      recipientEmailNormalized: message.recipientEmailNormalized,
+      reason: suppressionReason,
+      source: EmailSuppressionSource.PROVIDER_EVENT,
+      categoryScope: null,
+      metadata: sanitizeMetadata({
+        provider: event.provider,
+        providerEventId: event.providerEventId,
+        messageId: message.id,
+      }),
+    });
+  }
+
+  return {
+    processed: decision.apply,
+    messageId: message.id,
+    processingStatus: decision.apply
+      ? EmailProviderEventProcessingStatus.PROCESSED
+      : EmailProviderEventProcessingStatus.IGNORED,
+    resultCode: decision.resultCode,
+  };
+}
+
+export async function runEmailProviderEventReconciliationSweep(params?: {
+  limit?: number;
+  now?: Date;
+}) {
+  const now = params?.now ?? new Date();
+  const limit = Math.max(1, Math.min(params?.limit ?? 100, 1000));
+  const candidates = await prisma.emailProviderEvent.findMany({
+    where: {
+      processingStatus: {
+        in: [
+          EmailProviderEventProcessingStatus.PENDING,
+          EmailProviderEventProcessingStatus.UNMATCHED,
+        ],
+      },
+      OR: [{ nextReconcileAt: null }, { nextReconcileAt: { lte: now } }],
+    },
+    orderBy: [{ nextReconcileAt: "asc" }, { createdAt: "asc" }],
+    take: limit,
+    select: { id: true },
+  });
+
+  let processed = 0;
+  let unmatched = 0;
+  let ignored = 0;
+  for (const candidate of candidates) {
+    const result = await reconcileEmailProviderEventById(candidate.id, now);
+    if (result.processingStatus === EmailProviderEventProcessingStatus.PROCESSED) {
+      processed += 1;
+    } else if (result.processingStatus === EmailProviderEventProcessingStatus.UNMATCHED) {
+      unmatched += 1;
+    } else if (result.processingStatus === EmailProviderEventProcessingStatus.IGNORED) {
+      ignored += 1;
+    }
+  }
+
+  return {
+    scanned: candidates.length,
+    processed,
+    unmatched,
+    ignored,
+  };
 }
