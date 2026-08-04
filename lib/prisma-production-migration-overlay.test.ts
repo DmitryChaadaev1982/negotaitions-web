@@ -13,7 +13,8 @@ import {
   createTemporaryOverlayDirectory,
   copyFileBytePreserving,
   executeProductionOverlay,
-  EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS,
+  EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+  isExpectedPendingStatusOutput,
   LEGACY_PRODUCTION_MIGRATIONS,
   loadLegacyManifest,
   PrismaProductionOverlayError,
@@ -35,7 +36,9 @@ const ACTIVE_MIGRATIONS = [
   "20260630120000_add_app_setting",
   "20260713183000_stage_3_10_room_lifecycle_and_connection_ledger",
   "20260721002000_stage_3_10_voximplant_server_stop",
-  ...EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS,
+  "20260804113000_stage_3_13b_email_foundation",
+  "20260804143000_stage_3_13b_email_hardening",
+  ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
 ];
 
 function successfulRow(
@@ -59,8 +62,8 @@ function legacyRows(): MigrationHistoryRow[] {
 
 function productionHistoryRows(): MigrationHistoryRow[] {
   const preStageRows = ACTIVE_MIGRATIONS.filter(
-    (name) => !EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS.includes(
-      name as (typeof EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS)[number],
+    (name) => !EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS.includes(
+      name as (typeof EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS)[number],
     ),
   ).map((name) => successfulRow(name));
   return [...legacyRows(), ...preStageRows];
@@ -192,7 +195,7 @@ test("unfinished legacy row is refused", () => {
 test("failed migration history is refused", () => {
   const rows = productionHistoryRows();
   rows.push({
-    ...successfulRow("20260804113000_stage_3_13b_email_foundation"),
+    ...successfulRow("20260804170000_stage_3_13c_account_security_email"),
     finished_at: null,
   });
   assertRefusal(
@@ -201,14 +204,14 @@ test("failed migration history is refused", () => {
   );
 });
 
-test("exact production history is accepted with only Stage 3.13B pending", () => {
+test("Stage 3.13B production history accepts only Stage 3.13C pending", () => {
   const result = validateMigrationHistoryRows(
     productionHistoryRows(),
     ACTIVE_MIGRATIONS,
   );
   assert.deepEqual(
     result.pendingActiveMigrations,
-    [...EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS],
+    [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS],
   );
   assert.deepEqual(
     result.recognizedLegacyMigrations,
@@ -277,6 +280,31 @@ test("sanitized output never logs DATABASE_URL", () => {
   assert.doesNotMatch(sanitized, /secret-password/);
   assert.doesNotMatch(sanitized, /other:secret/);
   assert.match(sanitized, /\[REDACTED_DATABASE_URL\]/);
+});
+
+test("Prisma status accepts singular and plural expected-pending output", () => {
+  const pending = [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS];
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      `Following migration have not yet been applied:\n${pending[0]}`,
+      pending,
+    ),
+    true,
+  );
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      `Following migrations have not yet been applied:\n${pending.join("\n")}`,
+      pending,
+    ),
+    true,
+  );
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      "Following migration have not yet been applied:\nunexpected_migration",
+      pending,
+    ),
+    false,
+  );
 });
 
 test("empty disposable PostgreSQL database is refused by the DB guard", async (t) => {

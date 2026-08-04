@@ -209,6 +209,9 @@ export async function cleanupE2eData() {
   );
   const ids = [...new Set([...testUsers, ...legacyUsers].map((u) => u.id))];
   if (ids.length > 0) {
+    // EmailMessage.userId uses SET NULL, so remove run-owned email content
+    // explicitly before deleting its users.
+    await query(`DELETE FROM "EmailMessage" WHERE "userId" = ANY($1)`, [ids]);
     await query(`DELETE FROM "Session" WHERE "facilitatorId" = ANY($1)`, [ids]);
     await query(
       `DELETE FROM "TrainingEvent" WHERE "hostUserId" = ANY($1) OR "facilitatorUserId" = ANY($1)`,

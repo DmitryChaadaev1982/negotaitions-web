@@ -44,7 +44,15 @@ test("email template registry loads all RU/EN templates", () => {
       assert.equal(template.metadata.key, key);
       assert.equal(template.metadata.locale, locale);
       assert.match(template.metadata.version, /^\d+\.\d+\.\d+$/);
-      if (key === "system-test") {
+      if (
+        [
+          "system-test",
+          "password-reset",
+          "account-recovery-denied",
+          "password-changed",
+          "admin-pending-approval",
+        ].includes(key)
+      ) {
         assert.equal(template.metadata.runtimeEnabled, true);
       } else {
         assert.equal(template.metadata.runtimeEnabled, false);
@@ -108,6 +116,7 @@ test("email config defaults are disabled and validates bounds", () => {
   const config = withEnv(
     {
       EMAIL_DELIVERY_ENABLED: undefined,
+      EMAIL_LOCAL_PREVIEW_ENABLED: undefined,
       EMAIL_PROVIDER: undefined,
       EMAIL_CANONICAL_BASE_URL: undefined,
       EMAIL_MAX_ATTEMPTS: undefined,
@@ -115,8 +124,14 @@ test("email config defaults are disabled and validates bounds", () => {
     () => getEmailConfig(),
   );
   assert.equal(config.deliveryEnabled, false);
+  assert.equal(config.localPreviewEnabled, false);
   assert.equal(config.provider, "disabled");
   assert.equal(config.maxAttempts, 5);
+  assert.equal(
+    withEnv({ EMAIL_LOCAL_PREVIEW_ENABLED: "true" }, () => getEmailConfig())
+      .localPreviewEnabled,
+    true,
+  );
 
   assert.throws(() =>
     withEnv({ EMAIL_MAX_ATTEMPTS: "0" }, () => getEmailConfig()),
@@ -161,6 +176,30 @@ test("suppression policy is category-aware", () => {
   assert.equal(
     doesSuppressionApply(
       EmailSuppressionReason.HARD_BOUNCE,
+      EmailMessageCategory.SECURITY,
+      null,
+    ),
+    true,
+  );
+  assert.equal(
+    doesSuppressionApply(
+      EmailSuppressionReason.COMPLAINT,
+      EmailMessageCategory.SECURITY,
+      null,
+    ),
+    true,
+  );
+  assert.equal(
+    doesSuppressionApply(
+      EmailSuppressionReason.MANUAL,
+      EmailMessageCategory.SECURITY,
+      null,
+    ),
+    true,
+  );
+  assert.equal(
+    doesSuppressionApply(
+      EmailSuppressionReason.UNSUBSCRIBE,
       EmailMessageCategory.SECURITY,
       null,
     ),

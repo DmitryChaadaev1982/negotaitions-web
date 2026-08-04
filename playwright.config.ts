@@ -51,6 +51,11 @@ export default defineConfig({
         timeout: 120_000,
         env: buildE2eServerEnvironment({
           APP_URL: fallbackBaseUrl,
+          EMAIL_PROVIDER: "fake",
+          EMAIL_DELIVERY_ENABLED: "true",
+          EMAIL_ADMIN_TEST_ENABLED: "true",
+          EMAIL_LOCAL_PREVIEW_ENABLED: "true",
+          EMAIL_CANONICAL_BASE_URL: "https://local.negotaitions.ru",
           EXTERNAL_SERVICES_MODE: "mock",
           RECORDING_MODE: "mock",
           TRANSCRIPTION_MODE: "mock",
