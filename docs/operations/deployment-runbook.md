@@ -32,6 +32,21 @@ Run from repository before deployment:
 - `npm run test:unit`
 - `npm run test:stage310` (provider-free Stage 3.10 foundation regression)
 
+## Prisma Migration Paths
+
+Use standard Prisma commands for clean databases, development databases, CI databases, and new environments:
+
+- `npx prisma migrate deploy`
+- `npx prisma migrate status`
+
+The existing Yandex POC production database has two legitimate historical migration rows that predate the current squashed baseline and are archived outside `prisma/migrations`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay documented in `docs/operations/prisma-production-history-repair-20260804.md`:
+
+- `npm run prisma:production:status`
+- `npm run prisma:production:deploy -- --confirm-legacy-production-history`
+- `npm run prisma:production:status`
+
+The overlay must refuse empty, development, or mismatched databases. Do not manually edit `_prisma_migrations` and do not use `prisma migrate resolve` for this repair.
+
 ## Post-Deploy Checks
 
 - Verify service health via admin diagnostics and endpoint checks.
