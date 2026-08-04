@@ -1,0 +1,25 @@
+{
+  "purpose": "Archive exact legacy production Prisma migration files that are already recorded as applied in production but are intentionally outside the active clean-install migration chain.",
+  "emptyDatabaseSafety": "These SQL files must never execute on an empty database. Use only the production migration overlay after database history guards verify the exact legacy applied rows.",
+  "productionHistoryPolicy": "_prisma_migrations is evidence and must not be manually edited. prisma migrate resolve must not be used to conceal this divergence.",
+  "migrations": [
+    {
+      "migrationName": "20260625090944_add_two_pass_transcription_quality_enhancement",
+      "expectedSha256": "ea6930e3c7149c7fcdbf614a81d8e14558ea1208e56c943ef96030114da1e8de",
+      "sourceCommit": "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
+      "sourceBlob": "4ecaef8fb11e8ab7c0e0a830cada34689b4be61e",
+      "purpose": "Production history evidence for an already-applied migration row retained in production.",
+      "productionStatus": "Already applied successfully in production.",
+      "emptyDatabaseSafety": "Must never execute on an empty database."
+    },
+    {
+      "migrationName": "20260625120000_squash_and_diarization_fields",
+      "expectedSha256": "892a0be5d1ae18c87e3c7b0da218e0d87ffdb179da3f8ac3dbed67ef91794fc3",
+      "sourceCommit": "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
+      "sourceBlob": "cc418b3f010e2fa0a1539e68e1eeca2ecaf90303",
+      "purpose": "Production history evidence for an already-applied migration row retained in production.",
+      "productionStatus": "Already applied successfully in production.",
+      "emptyDatabaseSafety": "Must never execute on an empty database."
+    }
+  ]
+}
