@@ -8,6 +8,7 @@ export type EmailReplyToKey = "support" | "security" | "business";
 
 export type EmailConfig = {
   deliveryEnabled: boolean;
+  localPreviewEnabled: boolean;
   provider: EmailProviderName;
   canonicalBaseUrl: string;
   from: Record<EmailSenderKey, string>;
@@ -135,6 +136,7 @@ export function getEmailConfig(): EmailConfig {
 
   return {
     deliveryEnabled,
+    localPreviewEnabled: getEnvBoolean("EMAIL_LOCAL_PREVIEW_ENABLED", false),
     provider,
     canonicalBaseUrl: parseCanonicalBaseUrl(),
     from: {
