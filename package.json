@@ -53,13 +53,18 @@
     "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs",
     "inspect:audio": "tsx scripts/inspect-audio-recording.ts",
     "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts",
-    "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts"
+    "maintenance:stage310": "tsx scripts/ops/stage-3-10-maintenance.ts",
+    "email:templates:validate": "tsx scripts/validate-email-templates.ts",
+    "email:delivery:sweep": "tsx scripts/ops/email-delivery-sweep.ts",
+    "email:retention:dry-run": "tsx scripts/ops/email-retention-cleanup.ts --dry-run",
+    "email:retention:cleanup": "tsx scripts/ops/email-retention-cleanup.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1073.0",
+    "@aws-sdk/client-sesv2": "^3.1102.0",
     "@aws-sdk/s3-request-presigner": "^3.1075.0",
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",

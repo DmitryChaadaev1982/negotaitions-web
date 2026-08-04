@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "key": "account-recovery-denied",
+    "version": "1.0.0",
+    "locale": "en",
+    "messageType": "ACCOUNT_RECOVERY_DENIED",
+    "category": "SECURITY",
+    "description": "Reserved template for Stage 3.13C blocked/rejected account recovery response.",
+    "variables": [
+      { "name": "userName", "type": "string", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "no-reply",
+    "defaultReplyTo": "security",
+    "footerKey": "operational",
+    "sensitive": true,
+    "futureStage": "3.13C",
+    "runtimeEnabled": false
+  },
+  "subject": "Contact a NegotAItions administrator",
+  "text": "Hello, {{userName}}.\n\nAutomatic access recovery is unavailable. Please contact an administrator or support: {{supportEmail}}.",
+  "html": "<p>Hello, {{userName}}.</p><p>Automatic access recovery is unavailable. Please contact an administrator or support: <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a>.</p>"
+}

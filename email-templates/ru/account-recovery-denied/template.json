@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "key": "account-recovery-denied",
+    "version": "1.0.0",
+    "locale": "ru",
+    "messageType": "ACCOUNT_RECOVERY_DENIED",
+    "category": "SECURITY",
+    "description": "Reserved template for Stage 3.13C blocked/rejected account recovery response.",
+    "variables": [
+      { "name": "userName", "type": "string", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "no-reply",
+    "defaultReplyTo": "security",
+    "footerKey": "operational",
+    "sensitive": true,
+    "futureStage": "3.13C",
+    "runtimeEnabled": false
+  },
+  "subject": "Обращение к администратору NegotAItions",
+  "text": "Здравствуйте, {{userName}}.\n\nАвтоматическое восстановление доступа недоступно. Пожалуйста, обратитесь к администратору или в поддержку: {{supportEmail}}.",
+  "html": "<p>Здравствуйте, {{userName}}.</p><p>Автоматическое восстановление доступа недоступно. Пожалуйста, обратитесь к администратору или в поддержку: <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a>.</p>"
+}

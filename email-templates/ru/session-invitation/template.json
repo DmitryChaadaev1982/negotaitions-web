@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "key": "session-invitation",
+    "version": "1.0.0",
+    "locale": "ru",
+    "messageType": "SESSION_INVITATION",
+    "category": "INVITATION",
+    "description": "Reserved template for Stage 3.13D standalone Session invitations.",
+    "variables": [
+      { "name": "recipientName", "type": "string", "required": true },
+      { "name": "sessionTitle", "type": "string", "required": true },
+      { "name": "actionUrl", "type": "url", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "invitations",
+    "defaultReplyTo": "support",
+    "footerKey": "operational",
+    "sensitive": false,
+    "futureStage": "3.13D",
+    "runtimeEnabled": false
+  },
+  "subject": "Приглашение в сессию NegotAItions: {{sessionTitle}}",
+  "text": "Здравствуйте, {{recipientName}}.\n\nВы приглашены в переговорную сессию: {{sessionTitle}}.\nОткройте безопасную ссылку: {{actionUrl}}\n\nИнформация о сессии предназначена только приглашённым участникам.",
+  "html": "<p>Здравствуйте, {{recipientName}}.</p><p>Вы приглашены в переговорную сессию: <strong>{{sessionTitle}}</strong>.</p><p><a href=\"{{actionUrl}}\">Открыть сессию</a></p><p>Информация о сессии предназначена только приглашённым участникам.</p>"
+}

@@ -14,6 +14,7 @@ import {
 } from "@/lib/env";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
 import { getVoximplantManagementApiDiagnostics } from "@/lib/voximplant/management-api";
+import { getEmailConfig } from "@/lib/email/config";
 import {
   getVoximplantRecordingWebhookBaseUrlEnvDefault,
   getVoximplantRecordingWebhookOverrideEnabledRaw,
@@ -63,6 +64,7 @@ export function getEnvironmentConfigStatus() {
   const yandexFolderIdPresent = Boolean(process.env.YANDEX_FOLDER_ID?.trim());
   const yandexApiKeyPresent = Boolean(process.env.YANDEX_API_KEY?.trim());
   const voximplant = getVoximplantEnvironmentConfigStatus();
+  const email = getEmailConfig();
 
   return {
     videoProvider,
@@ -97,6 +99,15 @@ export function getEnvironmentConfigStatus() {
     yandexSpeechKitRequiredKeysPresent: yandexFolderIdPresent && yandexApiKeyPresent,
     ffmpeg: getFfmpegStatus(),
     voximplant,
+    email: {
+      deliveryEnabled: email.deliveryEnabled,
+      provider: email.provider,
+      adminTestEnabled: email.adminTestEnabled,
+      canonicalBaseUrl: email.canonicalBaseUrl,
+      postboxCredentialsConfigured: Boolean(
+        email.yandexPostbox.accessKeyId && email.yandexPostbox.secretAccessKey,
+      ),
+    },
     voximplantRecordingEnabled: getEnvBoolean("VOXIMPLANT_RECORDING_ENABLED", false),
     envGroups: getAdminEnvironmentDisplayGroups(),
   };

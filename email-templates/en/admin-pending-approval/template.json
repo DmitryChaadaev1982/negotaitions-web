@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "key": "admin-pending-approval",
+    "version": "1.0.0",
+    "locale": "en",
+    "messageType": "ADMIN_PENDING_APPROVAL",
+    "category": "TRANSACTIONAL",
+    "description": "Reserved template for Stage 3.13C admin pending-user notification.",
+    "variables": [
+      { "name": "adminName", "type": "string", "required": true },
+      { "name": "pendingUserEmail", "type": "string", "required": true },
+      { "name": "actionUrl", "type": "url", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "notifications",
+    "defaultReplyTo": "support",
+    "footerKey": "operational",
+    "sensitive": false,
+    "futureStage": "3.13C",
+    "runtimeEnabled": false
+  },
+  "subject": "New NegotAItions access request",
+  "text": "Hello, {{adminName}}.\n\nA user is waiting for an administrative decision: {{pendingUserEmail}}.\nOpen the admin panel: {{actionUrl}}.",
+  "html": "<p>Hello, {{adminName}}.</p><p>A user is waiting for an administrative decision: {{pendingUserEmail}}.</p><p><a href=\"{{actionUrl}}\">Open admin panel</a></p>"
+}

@@ -1,0 +1,4 @@
+{
+  "text": "This is an automated NegotAItions message. Never share passwords, codes, access links, or invitations with third parties. If this message was unexpected, contact support: {{supportEmail}}. Site operator: {{operatorName}}. Reason you received this message: {{reason}}. If the From address does not accept incoming mail, reply to the support or Reply-To address.",
+  "html": "<hr><p>This is an automated NegotAItions message.</p><p>Never share passwords, codes, access links, or invitations with third parties. If this message was unexpected, contact support: <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a>.</p><p>Site operator: {{operatorName}}.</p><p>Reason you received this message: {{reason}}.</p><p>If the From address does not accept incoming mail, reply to the support or Reply-To address.</p>"
+}

@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "key": "system-test",
+    "version": "1.0.0",
+    "locale": "ru",
+    "messageType": "SYSTEM_TEST",
+    "category": "ADMIN_TEST",
+    "description": "Административная проверка email foundation без бизнес-триггеров.",
+    "variables": [
+      { "name": "adminName", "type": "string", "required": true },
+      { "name": "generatedAt", "type": "string", "required": true },
+      { "name": "canonicalBaseUrl", "type": "url", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "no-reply",
+    "defaultReplyTo": "support",
+    "footerKey": "operational",
+    "sensitive": false,
+    "futureStage": "3.13B",
+    "runtimeEnabled": true
+  },
+  "subject": "Проверка email foundation NegotAItions",
+  "text": "Здравствуйте, {{adminName}}.\n\nЭто тестовое письмо Stage 3.13B. Оно подтверждает, что шаблон, renderer и durable outbox работают локально. Время формирования: {{generatedAt}}.\n\nCanonical origin: {{canonicalBaseUrl}}\n\nРеальная отправка остаётся отключённой, пока не включены provider credentials, worker и feature flags.",
+  "html": "<p>Здравствуйте, {{adminName}}.</p><p>Это тестовое письмо Stage 3.13B. Оно подтверждает, что шаблон, renderer и durable outbox работают локально.</p><p>Время формирования: {{generatedAt}}.</p><p>Canonical origin: <a href=\"{{canonicalBaseUrl}}\">{{canonicalBaseUrl}}</a></p><p>Реальная отправка остаётся отключённой, пока не включены provider credentials, worker и feature flags.</p>"
+}

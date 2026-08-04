@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "key": "system-test",
+    "version": "1.0.0",
+    "locale": "en",
+    "messageType": "SYSTEM_TEST",
+    "category": "ADMIN_TEST",
+    "description": "Administrative email foundation test without business triggers.",
+    "variables": [
+      { "name": "adminName", "type": "string", "required": true },
+      { "name": "generatedAt", "type": "string", "required": true },
+      { "name": "canonicalBaseUrl", "type": "url", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "no-reply",
+    "defaultReplyTo": "support",
+    "footerKey": "operational",
+    "sensitive": false,
+    "futureStage": "3.13B",
+    "runtimeEnabled": true
+  },
+  "subject": "NegotAItions email foundation test",
+  "text": "Hello, {{adminName}}.\n\nThis is a Stage 3.13B test email. It confirms that the repository template, renderer, and durable outbox are working locally. Rendered at: {{generatedAt}}.\n\nCanonical origin: {{canonicalBaseUrl}}\n\nReal delivery remains disabled until provider credentials, worker, and feature flags are enabled.",
+  "html": "<p>Hello, {{adminName}}.</p><p>This is a Stage 3.13B test email. It confirms that the repository template, renderer, and durable outbox are working locally.</p><p>Rendered at: {{generatedAt}}.</p><p>Canonical origin: <a href=\"{{canonicalBaseUrl}}\">{{canonicalBaseUrl}}</a></p><p>Real delivery remains disabled until provider credentials, worker, and feature flags are enabled.</p>"
+}

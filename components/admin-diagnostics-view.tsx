@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { AdminEmailFoundationPanel } from "@/components/admin-email-foundation-panel";
 import { AdminVoximplantWebhookOverridePanel } from "@/components/admin-voximplant-webhook-override-panel";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { SecondaryButton } from "@/components/ui/buttons";
@@ -313,6 +314,9 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
           <a href="#admin-service-checks" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
             {t("admin.serviceChecks")}
           </a>
+          <a href="#admin-email-foundation" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
+            Email foundation
+          </a>
         </div>
       ) : null}
 
@@ -455,6 +459,8 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
         </CardContent>
       </Card>
       ) : null}
+
+      {showDiagnostics ? <AdminEmailFoundationPanel /> : null}
 
       {showLog ? (
       <Card>

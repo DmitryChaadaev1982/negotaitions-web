@@ -125,7 +125,82 @@ enum ExternalService {
   OPENAI
   YANDEX_OBJECT_STORAGE
   FFMPEG
+  EMAIL
   APP
+}
+
+enum EmailMessageType {
+  SYSTEM_TEST
+  PASSWORD_RESET
+  ACCOUNT_RECOVERY_DENIED
+  PASSWORD_CHANGED
+  EVENT_INVITATION
+  SESSION_INVITATION
+  ADMIN_PENDING_APPROVAL
+}
+
+enum EmailMessageCategory {
+  ADMIN_TEST
+  SECURITY
+  TRANSACTIONAL
+  INVITATION
+  PRODUCT
+  MARKETING
+}
+
+enum EmailMessageStatus {
+  PENDING
+  PROCESSING
+  ACCEPTED_BY_PROVIDER
+  DELIVERED
+  DELAYED
+  BOUNCED
+  COMPLAINED
+  SUPPRESSED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  CANCELLED
+}
+
+enum EmailDeliveryAttemptStatus {
+  STARTED
+  ACCEPTED
+  RETRYABLE_FAILURE
+  FINAL_FAILURE
+  TIMEOUT_UNKNOWN
+  CONFIGURATION_ERROR
+}
+
+enum EmailSuppressionReason {
+  HARD_BOUNCE
+  COMPLAINT
+  MANUAL
+  UNSUBSCRIBE
+  TEMPORARY
+}
+
+enum EmailSuppressionSource {
+  PROVIDER_EVENT
+  ADMIN
+  SYSTEM
+}
+
+enum EmailProviderEventType {
+  ACCEPTED
+  DELIVERED
+  DELAYED
+  BOUNCED
+  COMPLAINED
+  REJECTED
+  RENDERING_FAILED
+  UNKNOWN
+}
+
+enum EmailProviderEventProcessingStatus {
+  PENDING
+  PROCESSED
+  IGNORED
+  FAILED
 }
 
 enum ExternalServiceEventSeverity {
@@ -201,6 +276,8 @@ model User {
   eventInvitesReceived EventInvite[]       @relation("EventInvitee")
   sessionInvitesSent   SessionInvite[]     @relation("SessionInviteSender")
   sessionInvitesReceived SessionInvite[]   @relation("SessionInvitee")
+  emailMessages        EmailMessage[]      @relation("EmailMessageUser")
+  liftedEmailSuppressions EmailSuppression[] @relation("EmailSuppressionLiftedBy")
 }
 
 model UserSession {
@@ -771,6 +848,124 @@ model ExternalServiceEvent {
   @@index([severity])
   @@index([sessionId])
   @@index([createdAt])
+}
+
+model EmailMessage {
+  id                       String             @id @default(cuid())
+  messageType              EmailMessageType
+  category                 EmailMessageCategory
+  status                   EmailMessageStatus @default(PENDING)
+  userId                   String?
+  recipientEmail           String?
+  recipientEmailNormalized String
+  fromAddress              String
+  replyToAddress           String?
+  locale                   String
+  templateKey              String
+  templateVersion          String
+  renderedSubject          String?            @db.Text
+  renderedTextBody         String?            @db.Text
+  renderedHtmlBody         String?            @db.Text
+  metadata                 Json?
+  idempotencyKey           String             @unique
+  providerName             String
+  attemptCount             Int                @default(0)
+  nextAttemptAt            DateTime?
+  claimedAt                DateTime?
+  claimExpiresAt           DateTime?
+  claimToken               String?
+  processingAt             DateTime?
+  sentAt                   DateTime?
+  deliveredAt              DateTime?
+  cancelledAt              DateTime?
+  terminalFailureAt        DateTime?
+  suppressedAt             DateTime?
+  contentClearedAt         DateTime?
+  providerMessageIdClearedAt DateTime?
+  lastProviderMessageId    String?
+  lastErrorCode            String?
+  lastErrorMessage         String?            @db.Text
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  user     User?                  @relation("EmailMessageUser", fields: [userId], references: [id], onDelete: SetNull)
+  attempts EmailDeliveryAttempt[]
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([recipientEmailNormalized])
+  @@index([userId])
+  @@index([lastProviderMessageId])
+  @@index([claimExpiresAt])
+  @@index([createdAt])
+}
+
+model EmailDeliveryAttempt {
+  id                    String                     @id @default(cuid())
+  emailMessageId        String
+  attemptNumber         Int
+  provider              String
+  transport             String
+  status                EmailDeliveryAttemptStatus @default(STARTED)
+  providerMessageId     String?
+  retryable             Boolean                    @default(false)
+  normalizedErrorCode   String?
+  sanitizedErrorMessage String?                    @db.Text
+  providerMetadata      Json?
+  startedAt             DateTime                   @default(now())
+  completedAt           DateTime?
+  providerMessageIdClearedAt DateTime?
+  minimizedAt           DateTime?
+
+  emailMessage EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([emailMessageId, attemptNumber])
+  @@index([providerMessageId])
+  @@index([startedAt])
+  @@index([status])
+}
+
+model EmailSuppression {
+  id                       String                 @id @default(cuid())
+  recipientEmailNormalized String
+  reason                   EmailSuppressionReason
+  source                   EmailSuppressionSource
+  categoryScope            EmailMessageCategory?
+  active                   Boolean                @default(true)
+  metadata                 Json?
+  createdAt                DateTime               @default(now())
+  expiresAt                DateTime?
+  liftedAt                 DateTime?
+  liftedByUserId           String?
+  liftReason               String?                @db.Text
+
+  liftedBy User? @relation("EmailSuppressionLiftedBy", fields: [liftedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([recipientEmailNormalized, active])
+  @@index([reason])
+  @@index([expiresAt])
+  @@index([liftedByUserId])
+}
+
+model EmailProviderEvent {
+  id                String                             @id @default(cuid())
+  provider          String
+  providerEventId   String
+  providerMessageId String?
+  emailMessageId    String?
+  eventType         EmailProviderEventType
+  eventTime         DateTime
+  processingStatus  EmailProviderEventProcessingStatus @default(PENDING)
+  metadata          Json?
+  processedAt       DateTime?
+  retainedUntil     DateTime?
+  createdAt         DateTime                           @default(now())
+
+  @@unique([provider, providerEventId])
+  @@index([providerMessageId])
+  @@index([emailMessageId])
+  @@index([eventType, eventTime])
+  @@index([processingStatus, createdAt])
+  @@index([retainedUntil])
 }
 
 model UsageCounter {

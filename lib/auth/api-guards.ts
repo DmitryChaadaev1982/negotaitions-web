@@ -110,3 +110,27 @@ export async function apiRequireAdminUser() {
   }
   return { user, response: null };
 }
+
+/**
+ * Stronger guard for security-sensitive admin diagnostics actions.
+ *
+ * Unlike the generic admin guard, this deliberately requires an ACTIVE admin
+ * account even for bootstrap admin emails. Stage 3.13B email diagnostics must
+ * not be available to BLOCKED, REJECTED, or inactive admin accounts.
+ */
+export async function apiRequireActiveAdminUser() {
+  const user = await getOptionalCurrentUser();
+  if (!user) {
+    return {
+      user: null,
+      response: NextResponse.json({ error: "Unauthorized." }, { status: 401 }),
+    };
+  }
+  if (!isAdmin(user) || user.status !== "ACTIVE") {
+    return {
+      user: null,
+      response: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
+    };
+  }
+  return { user, response: null };
+}

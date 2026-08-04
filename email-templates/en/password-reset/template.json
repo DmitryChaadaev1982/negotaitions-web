@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "key": "password-reset",
+    "version": "1.0.0",
+    "locale": "en",
+    "messageType": "PASSWORD_RESET",
+    "category": "SECURITY",
+    "description": "Reserved template for Stage 3.13C password reset.",
+    "variables": [
+      { "name": "userName", "type": "string", "required": true },
+      { "name": "actionUrl", "type": "url", "required": true },
+      { "name": "supportEmail", "type": "string", "required": true },
+      { "name": "operatorName", "type": "string", "required": true },
+      { "name": "reason", "type": "string", "required": true }
+    ],
+    "defaultSender": "no-reply",
+    "defaultReplyTo": "security",
+    "footerKey": "operational",
+    "sensitive": true,
+    "futureStage": "3.13C",
+    "runtimeEnabled": false
+  },
+  "subject": "Restore access to NegotAItions",
+  "text": "Hello, {{userName}}.\n\nUse this one-time link to restore access: {{actionUrl}}\n\nIf you did not request this, do not open the link and contact support.",
+  "html": "<p>Hello, {{userName}}.</p><p>Use this one-time link to restore access: <a href=\"{{actionUrl}}\">restore access</a>.</p><p>If you did not request this, do not open the link and contact support.</p>"
+}
