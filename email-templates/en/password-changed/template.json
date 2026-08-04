@@ -18,7 +18,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Your NegotAItions password was changed",
   "text": "Hello, {{userName}}.\n\nYour account password was changed at {{changedAt}}. If this was not you, contact support immediately: {{supportEmail}}.",

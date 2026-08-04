@@ -18,7 +18,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Restore access to NegotAItions",
   "text": "Hello, {{userName}}.\n\nUse this one-time link to restore access: {{actionUrl}}\n\nIf you did not request this, do not open the link and contact support.",

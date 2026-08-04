@@ -17,7 +17,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Contact a NegotAItions administrator",
   "text": "Hello, {{userName}}.\n\nAutomatic access recovery is unavailable. Please contact an administrator or support: {{supportEmail}}.",

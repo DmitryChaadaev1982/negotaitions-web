@@ -18,7 +18,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Восстановление доступа NegotAItions",
   "text": "Здравствуйте, {{userName}}.\n\nДля восстановления доступа используйте одноразовую ссылку: {{actionUrl}}\n\nЕсли вы не запрашивали восстановление, не открывайте ссылку и напишите в поддержку.",

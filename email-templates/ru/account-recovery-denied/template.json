@@ -17,7 +17,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Обращение к администратору NegotAItions",
   "text": "Здравствуйте, {{userName}}.\n\nАвтоматическое восстановление доступа недоступно. Пожалуйста, обратитесь к администратору или в поддержку: {{supportEmail}}.",

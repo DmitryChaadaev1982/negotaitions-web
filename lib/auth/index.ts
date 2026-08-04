@@ -3,6 +3,7 @@ export { parseAdminEmails, isAdmin, canAccessAdmin } from "./admin";
 export {
   createUserSession,
   destroyUserSession,
+  getCurrentSessionTokenHash,
   getOptionalCurrentUser,
   getCurrentUser,
   requireCurrentUser,

@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import { isAdmin, parseAdminEmails } from "@/lib/auth/admin";
 import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
+import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
 
 type ActionResult = {
@@ -127,6 +128,13 @@ export async function registerUser(
 
       return created;
     });
+
+    if (user.status === "PENDING_APPROVAL") {
+      await notifyActiveAdminsOfPendingRegistration({
+        id: user.id,
+        email: user.email,
+      });
+    }
 
     await createUserSession(user.id, { userAgent });
 

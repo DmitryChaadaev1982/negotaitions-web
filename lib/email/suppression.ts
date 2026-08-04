@@ -26,12 +26,6 @@ export function doesSuppressionApply(
   scope: EmailMessageCategory | null,
 ): boolean {
   if (scope && scope !== category) return false;
-  if (reason === EmailSuppressionReason.HARD_BOUNCE) {
-    return category !== EmailMessageCategory.SECURITY;
-  }
-  if (reason === EmailSuppressionReason.COMPLAINT) {
-    return category !== EmailMessageCategory.SECURITY;
-  }
   if (reason === EmailSuppressionReason.UNSUBSCRIBE) {
     return PRODUCT_OR_MARKETING.has(category);
   }

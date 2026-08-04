@@ -1450,6 +1450,25 @@ export const ru: Dictionary = {
     registerButton: "Создать аккаунт",
     loggingIn: "Вход...",
     registering: "Создание аккаунта...",
+    forgotPassword: "Забыли пароль?",
+    forgotPasswordTitle: "Восстановление доступа",
+    forgotPasswordSubtitle:
+      "Введите email. Если восстановление доступно, мы отправим инструкции.",
+    passwordResetRequestButton: "Отправить инструкции",
+    passwordResetRequesting: "Отправка...",
+    passwordResetRequestAccepted:
+      "Если восстановление доступно для этого аккаунта, инструкции скоро будут отправлены.",
+    invalidEmail: "Введите корректный email.",
+    backToLogin: "Вернуться ко входу",
+    resetPasswordTitle: "Новый пароль",
+    resetPasswordSubtitle:
+      "Задайте новый пароль длиной не менее 8 символов.",
+    resetPasswordButton: "Установить новый пароль",
+    resettingPassword: "Обновление пароля...",
+    passwordResetInvalid:
+      "Ссылка для восстановления недействительна или истекла. Запросите новую ссылку.",
+    passwordResetSucceeded:
+      "Пароль изменён. Войдите снова с новым паролем.",
     preferredLocale: "Язык интерфейса",
     preferredLocaleRu: "Русский (RU)",
     preferredLocaleEn: "English (EN)",
@@ -1491,6 +1510,7 @@ export const ru: Dictionary = {
     displayNameUpdated: "Имя обновлено.",
     languageUpdated: "Язык обновлён.",
     invalidCurrentPassword: "Неверный текущий пароль.",
+    passwordChangeFailed: "Не удалось изменить пароль. Попробуйте снова.",
   },
   legal: {
     draftNotice: "Черновик для юридической проверки перед production-запуском.",

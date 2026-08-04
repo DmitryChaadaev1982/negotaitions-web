@@ -19,7 +19,7 @@
     "footerKey": "operational",
     "sensitive": false,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Новая заявка на доступ NegotAItions",
   "text": "Здравствуйте, {{adminName}}.\n\nПользователь ожидает административного решения: {{pendingUserEmail}}.\nОткройте административную панель: {{actionUrl}}.",

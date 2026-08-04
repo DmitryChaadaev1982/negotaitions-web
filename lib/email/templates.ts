@@ -24,6 +24,13 @@ const TEMPLATE_KEYS: EmailTemplateKey[] = [
   "admin-pending-approval",
 ];
 const LOCALES: EmailLocale[] = ["ru", "en"];
+const RUNTIME_ENABLED_KEYS = new Set<EmailTemplateKey>([
+  "system-test",
+  "password-reset",
+  "account-recovery-denied",
+  "password-changed",
+  "admin-pending-approval",
+]);
 
 const MESSAGE_TYPES = new Set(Object.values(EmailMessageType));
 const CATEGORIES = new Set(Object.values(EmailMessageCategory));
@@ -126,14 +133,17 @@ export function validateTemplateData(
   if (!CATEGORIES.has(metadata.category)) {
     issues.push({ file: filePath, message: "Invalid category." });
   }
-  if (metadata.key !== "system-test" && metadata.runtimeEnabled) {
+  if (!RUNTIME_ENABLED_KEYS.has(metadata.key) && metadata.runtimeEnabled) {
     issues.push({
       file: filePath,
-      message: "Only system-test may be runtime-enabled in Stage 3.13B.",
+      message: "Only Stage 3.13B/3.13C templates may be runtime-enabled.",
     });
   }
-  if (metadata.key === "system-test" && !metadata.runtimeEnabled) {
-    issues.push({ file: filePath, message: "system-test must be runtime-enabled." });
+  if (RUNTIME_ENABLED_KEYS.has(metadata.key) && !metadata.runtimeEnabled) {
+    issues.push({
+      file: filePath,
+      message: `${metadata.key} must be runtime-enabled.`,
+    });
   }
   if (!data.subject || !data.text || !data.html) {
     issues.push({ file: filePath, message: "Subject, text, and html are required." });

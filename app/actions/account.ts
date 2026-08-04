@@ -1,10 +1,12 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
-import { requireActiveUser } from "@/lib/auth";
+import { getCurrentSessionTokenHash, requireActiveUser } from "@/lib/auth";
+import { enqueuePasswordChangedEmail } from "@/lib/email/account-security";
 
 type ActionResult = {
   success?: boolean;
@@ -75,12 +77,43 @@ export async function updatePassword(
   }
 
   const newHash = await hashPassword(newPassword);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { passwordHash: newHash },
-  });
+  const currentSessionTokenHash = await getCurrentSessionTokenHash();
+  const changedAt = new Date();
+  const changeId = createHash("sha256").update(newHash).digest("hex").slice(0, 32);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, status: "ACTIVE" },
+        data: { passwordHash: newHash },
+      });
+      if (updated.count !== 1) throw new Error("Account is no longer active.");
 
-  // Current session remains active after password change (MVP; TODO: invalidate other sessions later).
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: user.id,
+          usedAt: null,
+          revokedAt: null,
+        },
+        data: { revokedAt: changedAt },
+      });
+      await tx.userSession.deleteMany({
+        where: {
+          userId: user.id,
+          ...(currentSessionTokenHash
+            ? { sessionTokenHash: { not: currentSessionTokenHash } }
+            : {}),
+        },
+      });
+      await enqueuePasswordChangedEmail({
+        user,
+        changedAt,
+        idempotencyKey: `password-changed:account:${user.id}:${changeId}`,
+        tx,
+      });
+    });
+  } catch {
+    return { error: "auth.passwordChangeFailed" };
+  }
 
   return { success: true };
 }

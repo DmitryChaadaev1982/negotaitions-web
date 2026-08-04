@@ -63,6 +63,12 @@ export async function destroyUserSession(): Promise<void> {
   cookieStore.delete(COOKIE_NAME);
 }
 
+export async function getCurrentSessionTokenHash(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
+  return token ? hashSessionToken(token) : null;
+}
+
 export async function getOptionalCurrentUser(): Promise<AuthUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;

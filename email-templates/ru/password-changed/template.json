@@ -18,7 +18,7 @@
     "footerKey": "operational",
     "sensitive": true,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "Пароль NegotAItions изменён",
   "text": "Здравствуйте, {{userName}}.\n\nПароль вашей учётной записи был изменён: {{changedAt}}. Если это были не вы, срочно напишите в поддержку: {{supportEmail}}.",

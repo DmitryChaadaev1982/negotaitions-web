@@ -271,6 +271,7 @@ model User {
   roomConnections   SessionRoomConnection[]
   videoProviderIdentities VideoProviderIdentity[]
   userSessions        UserSession[]
+  passwordResetTokens PasswordResetToken[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
   targetedAdminActions AdminActionLog[]    @relation("AdminActionTarget")
   userConsents        UserConsent[]
@@ -295,6 +296,22 @@ model UserSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt, revokedAt])
+  @@index([expiresAt])
+  @@index([createdAt])
 }
 
 model VideoProviderIdentity {

@@ -19,7 +19,7 @@
     "footerKey": "operational",
     "sensitive": false,
     "futureStage": "3.13C",
-    "runtimeEnabled": false
+    "runtimeEnabled": true
   },
   "subject": "New NegotAItions access request",
   "text": "Hello, {{adminName}}.\n\nA user is waiting for an administrative decision: {{pendingUserEmail}}.\nOpen the admin panel: {{actionUrl}}.",

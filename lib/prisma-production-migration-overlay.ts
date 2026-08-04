@@ -42,9 +42,8 @@ export const LEGACY_PRODUCTION_MIGRATIONS = [
 export const REQUIRED_PRODUCTION_BASELINE =
   "20260627_production_initial_baseline";
 
-export const EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS = [
-  "20260804113000_stage_3_13b_email_foundation",
-  "20260804143000_stage_3_13b_email_hardening",
+export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
+  "20260804170000_stage_3_13c_account_security_email",
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";
@@ -155,6 +154,19 @@ export function redactSensitiveOutput(chunk: string, databaseUrl?: string): stri
   return sanitized.replace(
     /postgres(?:ql)?:\/\/[^\s"'`<>]+/gi,
     "[REDACTED_DATABASE_URL]",
+  );
+}
+
+export function isExpectedPendingStatusOutput(
+  output: string,
+  expectedPendingMigrations: readonly string[],
+): boolean {
+  return (
+    /Following migrations? ha(?:ve|s) not yet been applied/.test(output) &&
+    expectedPendingMigrations.length > 0 &&
+    expectedPendingMigrations.every((migrationName) =>
+      output.includes(migrationName),
+    )
   );
 }
 
@@ -366,14 +378,14 @@ export function validateMigrationHistoryRows(
 
   const unexpectedPending = pendingActiveMigrations.filter(
     (name) =>
-      !EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS.includes(
-        name as (typeof EXPECTED_STAGE_3_13B_PENDING_MIGRATIONS)[number],
+      !EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS.includes(
+        name as (typeof EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS)[number],
       ),
   );
   if (unexpectedPending.length > 0) {
     throw new PrismaProductionOverlayError(
       "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
-      `Only Stage 3.13B migrations may be pending through this overlay: ${unexpectedPending.join(", ")}`,
+      `Only the Stage 3.13C account-security migration may be pending through this overlay: ${unexpectedPending.join(", ")}`,
     );
   }
 
@@ -576,11 +588,10 @@ export async function runPrismaMigrationCommand({
         expectedPendingMigrations.length > 0
       ) {
         const output = outputChunks.join("");
-        const pendingOnly =
-          output.includes("Following migrations have not yet been applied") &&
-          expectedPendingMigrations.every((migrationName) =>
-            output.includes(migrationName),
-          );
+        const pendingOnly = isExpectedPendingStatusOutput(
+          output,
+          expectedPendingMigrations,
+        );
         if (pendingOnly) {
           resolve();
           return;

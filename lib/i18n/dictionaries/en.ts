@@ -1443,6 +1443,25 @@ export const en = {
     registerButton: "Create account",
     loggingIn: "Logging in...",
     registering: "Creating account...",
+    forgotPassword: "Forgot password?",
+    forgotPasswordTitle: "Restore access",
+    forgotPasswordSubtitle:
+      "Enter your email. If recovery is available, we will send instructions.",
+    passwordResetRequestButton: "Send recovery instructions",
+    passwordResetRequesting: "Sending...",
+    passwordResetRequestAccepted:
+      "If recovery is available for this account, instructions will be sent shortly.",
+    invalidEmail: "Enter a valid email address.",
+    backToLogin: "Back to login",
+    resetPasswordTitle: "Set a new password",
+    resetPasswordSubtitle:
+      "Choose a new password with at least 8 characters.",
+    resetPasswordButton: "Set new password",
+    resettingPassword: "Updating password...",
+    passwordResetInvalid:
+      "This recovery link is invalid or has expired. Request a new link.",
+    passwordResetSucceeded:
+      "Your password was changed. Log in again with your new password.",
     preferredLocale: "Interface language",
     preferredLocaleRu: "Russian (RU)",
     preferredLocaleEn: "English (EN)",
@@ -1484,6 +1503,7 @@ export const en = {
     displayNameUpdated: "Display name updated.",
     languageUpdated: "Language updated.",
     invalidCurrentPassword: "Invalid current password.",
+    passwordChangeFailed: "Password could not be changed. Please try again.",
   },
   legal: {
     draftNotice: "Draft placeholder for legal review before production launch.",

@@ -13,6 +13,7 @@ function LoginForm() {
   const { t } = useI18n();
   const searchParams = useSearchParams();
   const returnUrl = searchParams.get("returnUrl") ?? "";
+  const passwordResetSucceeded = searchParams.get("passwordReset") === "success";
 
   const [state, action, pending] = useActionState(loginUser, {});
 
@@ -66,7 +67,24 @@ function LoginForm() {
             required
             className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
           />
+          <div className="mt-1.5 text-right">
+            <Link
+              href="/forgot-password"
+              className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
+            >
+              {t("auth.forgotPassword")}
+            </Link>
+          </div>
         </div>
+
+        {passwordResetSucceeded && (
+          <p
+            role="status"
+            className="rounded-lg border border-emerald-800/50 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300"
+          >
+            {t("auth.passwordResetSucceeded")}
+          </p>
+        )}
 
         {formError && (
           <p className="text-sm text-red-400 rounded-lg bg-red-950/40 border border-red-800/50 px-3 py-2">
