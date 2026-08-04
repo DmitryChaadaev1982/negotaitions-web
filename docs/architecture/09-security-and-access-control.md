@@ -29,6 +29,27 @@
 - Event host/participant token paths remain in event lobby flows.
 - Session join token remains in guest-compatible materials/join flows.
 - Account mode paths avoid exposing join token where account identity is authoritative.
+- Account password recovery uses a separate random one-time token. Only its
+  SHA-256 hash is stored in `PasswordResetToken`; it is not a Session/Event join
+  credential and cannot modify negotiation-domain access.
+
+## Account recovery
+
+- Forgot-password uses a generic public response for ACTIVE, BLOCKED, REJECTED,
+  PENDING_APPROVAL, unknown, suppressed, and rate-limited valid addresses.
+- Only ACTIVE users receive a reset token. BLOCKED and REJECTED users receive a
+  bounded support-contact message without an internal status or rejection
+  detail. Pending and unknown users receive no message.
+- Reset requires an unexpired, unused, unrevoked token linked to a still-ACTIVE
+  user. Success updates the bcrypt hash, consumes the token, revokes siblings,
+  deletes all account `UserSession` rows, and queues a security alert in one
+  transaction.
+- The reset page uses a no-referrer policy. Local message preview is
+  development-only, fake-provider-only, exact-local-origin-only, and
+  ACTIVE-admin-only.
+
+See `account-security-email-flows.md` for the complete status, rate-limit,
+suppression, notification, and local-preview contracts.
 
 ## Same-Login Lease Enforcement
 
@@ -42,6 +63,8 @@
 - Storage key and download URL handling.
 - Analysis visibility and private role data serialization.
 - Session/event ownership and visibility filters.
+- Password reset anti-enumeration, token lifecycle, and auth-session revocation.
+- Local fake-email preview authorization and production-denial guards.
 
 ## Source Notes
 
@@ -50,5 +73,10 @@
 - `app/api/events/**`
 - `app/api/sessions/**`
 - `lib/auth/**`
+- `lib/email/account-security.ts`
+- `lib/email/local-preview.ts`
+- `app/api/auth/forgot-password/route.ts`
+- `app/api/admin/email-preview/route.ts`
+- `docs/architecture/account-security-email-flows.md`
 - `docs/audits/archive/old-root-reports/AUTH_ACCESS_AUDIT.md`
 - `docs/audits/archive/old-root-reports/COOKIE_STORAGE_AUDIT.md`

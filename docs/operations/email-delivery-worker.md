@@ -1,6 +1,7 @@
 # Email Delivery Worker Runbook
 
-The Stage 3.13B worker is a bounded CLI sweep. It is not a request-time sender and is not installed as a production systemd unit in this stage.
+The worker is a bounded CLI sweep. It is not a request-time sender and Stage
+3.13C does not install or activate it in production.
 
 ## Commands
 
@@ -39,6 +40,10 @@ The worker:
 Two workers racing for the same row should result in one successful claim and one skipped candidate.
 If a stale worker loses ownership, it emits a sanitized `claim_lost` event and does not schedule another retry.
 
+Hard-bounce, complaint, manual, and applicable temporary suppressions also
+block SECURITY mail. Product/marketing unsubscribe does not block SECURITY
+mail. This policy is identical at enqueue and worker recheck.
+
 ## Retry Defaults
 
 - Maximum attempts: 5.
@@ -73,4 +78,10 @@ Logs may include message id, provider, attempt number, status, redacted recipien
 
 ## Production Installation
 
-Do not install in Stage 3.13B. Future deployment should use a timer or separate worker service with the same production env file pattern as the app, after secrets and provider readiness are confirmed.
+Do not install or activate it in Stage 3.13C. Future deployment should use a
+timer or separate worker service with the same production env file pattern as
+the app, after secrets and provider readiness are confirmed.
+
+The local fake-provider procedure is documented in
+`stage-3-13c-local-email-testing.md`. The preview must remain disabled in
+production.

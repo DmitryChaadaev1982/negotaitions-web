@@ -74,7 +74,8 @@ Before overlay `status` or `deploy`, the tool reads only `_prisma_migrations` me
 - `20260627_production_initial_baseline` is successfully applied;
 - no migration row is unfinished/failed;
 - no migration row exists outside the active migration set plus the two legacy evidence rows;
-- only Stage 3.13B migrations may be pending.
+- all Stage 3.13B migrations are already successful and only the allowlisted
+  Stage 3.13C migration may be pending.
 
 Refusal codes are explicit, including `REFUSE_EMPTY_OR_NO_HISTORY`, `REFUSE_LEGACY_ROW_MISSING`, `REFUSE_LEGACY_CHECKSUM_MISMATCH`, `REFUSE_LEGACY_ROLLED_BACK`, `REFUSE_LEGACY_UNFINISHED`, `REFUSE_FAILED_MIGRATION_HISTORY`, `REFUSE_UNKNOWN_LEGACY_DIVERGENCE`, and `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
 
@@ -101,27 +102,41 @@ npm run prisma:production:deploy -- --confirm-legacy-production-history
 npm run prisma:production:status
 ```
 
-The expected pre-deploy overlay status is that both legacy rows are recognized and only these migrations are pending:
+For the Stage 3.13C branch, the expected pre-deploy overlay status is that both
+legacy rows and all Stage 3.13B rows are recognized and only this migration is
+pending:
 
-- `20260804113000_stage_3_13b_email_foundation`
-- `20260804143000_stage_3_13b_email_hardening`
+- `20260804170000_stage_3_13c_account_security_email`
+
+Stage 3.13C local verification must use a simulated production-history
+database. It must not run this deploy command against production.
 
 ## Simulation Evidence
 
 Local disposable PostgreSQL verification must cover both paths:
 
 - clean install with ordinary `npx prisma migrate deploy` succeeds and does not include the two legacy migrations;
-- simulated production history includes the two legacy rows plus the squashed baseline and pre-email migrations;
+- simulated production history includes the two legacy rows plus the squashed
+  baseline and all active migrations through Stage 3.13B;
 - ordinary Prisma status/deploy against the simulated production-history database shows the legacy divergence;
-- overlay status recognizes the legacy rows and shows only Stage 3.13B pending;
-- overlay deploy applies only Stage 3.13B;
+- overlay status recognizes the legacy rows and shows only Stage 3.13C pending;
+- overlay deploy applies only Stage 3.13C;
 - overlay post-status is up to date;
 - email tables and indexes exist afterward;
 - existing application tables remain present.
 
+The automated `verify:stage313c:overlay` simulation may insert synthetic legacy
+history rows only after it has refused any non-local, non-disposable, or
+nonempty target. This fixture is test setup inside that disposable verifier,
+not an operational repair instruction; the script fails before insertion when
+the target is nonempty.
+
 ## Rollback Implications
 
-Stage 3.13B migrations are additive. If runtime rollback is needed after migration, roll back application code to the previous working SHA and leave the additive email schema in place. Do not drop email schema and do not rewrite production migration history.
+Stage 3.13B and Stage 3.13C migrations are additive. If runtime rollback is
+needed after migration, roll back application code to the previous working SHA
+and leave the additive email/token schema in place. Do not drop schema and do
+not rewrite production migration history.
 
 ## Prohibited Repair Actions
 

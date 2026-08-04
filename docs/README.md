@@ -15,6 +15,9 @@ This `docs/` directory is the canonical knowledge base for the current NegotAIti
 1. Read `architecture/README.md`.
 2. Open `architecture/code-map.md`.
 3. Follow links from code map areas to detailed architecture chapters.
+4. For account recovery and security email, read
+   `architecture/account-security-email-flows.md` and
+   `operations/stage-3-13c-local-email-testing.md`.
 
 ## Documentation Update Rule
 

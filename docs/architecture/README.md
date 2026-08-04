@@ -17,6 +17,8 @@ This folder is the canonical architecture reference for the running NegotAItions
 11. `11-deployment-architecture.md`
 12. `12-external-systems.md`
 13. `code-map.md`
+14. `email-delivery-foundation.md`
+15. `account-security-email-flows.md`
 
 These files are the authoritative current-state architecture truth and must be kept aligned with code changes.
 

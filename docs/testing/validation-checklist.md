@@ -14,6 +14,9 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:e2e:install` (explicit browser setup when needed)
 - `npm run test:e2e:smoke` (curated deterministic Chromium subset)
 - `npm run test:e2e:smoke:browser` (browser-first deterministic localhost smoke)
+- `npm run test:stage313c` (account-security email unit and managed browser flow)
+- `npm run verify:stage313c:integration` (disposable local PostgreSQL token,
+  suppression, concurrency, session-revocation, and notification checks)
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)
 - `node --import tsx --test lib/services/transcript-enhancement-persistence.test.ts` (targeted enhancement/ingestion persistence safety)
 - `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
@@ -71,6 +74,10 @@ Sequential requirement:
   contains such changes. Trigger matrix:
   [Observer test execution policy](./observer-test-execution-policy.md).
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
+- `test:stage313c` uses the same managed Playwright mode and must not overlap
+  another managed browser suite.
+- `verify:stage313c:integration` refuses remote, production-like, and unmarked
+  database targets; use only a disposable local database.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
 
 ## Smoke Suite Guardrails (Phase 2)

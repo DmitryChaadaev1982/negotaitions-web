@@ -2,7 +2,8 @@
 
 ## Goals
 
-The email foundation prepares NegotAItions for future security and invitation flows without enabling real production sending in Stage 3.13B.
+The email foundation supports durable account-security mail and prepares later
+invitation flows without enabling real production sending.
 
 Business code enqueues a durable `EmailMessage`; it does not call a provider. A worker claims eligible messages after the business transaction commits and sends through a narrow `EmailProvider` interface.
 
@@ -12,6 +13,8 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 - `EmailDeliveryAttempt`: sanitized provider attempt ledger.
 - `EmailSuppression`: active/lifted suppression policy records.
 - `EmailProviderEvent`: provider-neutral event ledger with provider event deduplication.
+- `PasswordResetToken`: hash-only, expiring, revocable account-recovery token
+  used by Stage 3.13C.
 
 `User`, `Event`, and `Session` business semantics are not changed.
 
@@ -27,10 +30,12 @@ Provider timeout or connection loss after request dispatch is recorded as `TIMEO
 
 `EmailMessage.idempotencyKey` is unique at the database level. Re-enqueueing the same logical email returns the existing message instead of creating a second outbox record. The returned suppression flag reflects the persisted message status, not the current request's suppression check.
 
-Future conventions:
+Idempotency conventions:
 
-- Password reset request: account id plus reset request nonce.
-- Password changed: user id plus password change event id.
+- Password reset request: reset-token record id.
+- Password changed after reset: reset-token record id.
+- Authenticated password changed: user id plus password-change hash.
+- Pending approval: new user id plus active admin recipient id.
 - Account approval: target user id plus approval action id.
 - Event invitation: event id plus invite id plus template version.
 - Session invitation: session id plus invite id plus template version.
@@ -46,6 +51,9 @@ Providers:
 - `disabled`: default no-send mode.
 - `fake`: tests only.
 - `yandex_postbox`: production adapter, inactive unless configured.
+
+The `fake` provider may be inspected through the Stage 3.13C local preview only
+when the exact development guards in `account-security-email-flows.md` hold.
 
 ## Suppression
 

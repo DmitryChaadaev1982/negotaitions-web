@@ -35,9 +35,9 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`
 
 - Security and access control
-  - Code: `lib/auth/**`, `app/api/events/**`, `app/api/sessions/**`, `lib/room-participant-resolver.ts`
-  - Docs: `09-security-and-access-control.md`
-  - Tests: `tests/e2e/phase-1-1-security.spec.ts`, `tests/e2e/phase-6-10-standalone-sessions-auth-role.spec.ts`
+  - Code: `lib/auth/**`, `lib/email/account-security.ts`, `lib/email/local-preview.ts`, `app/api/auth/forgot-password/route.ts`, `app/api/admin/email-preview/route.ts`, `app/api/events/**`, `app/api/sessions/**`, `lib/room-participant-resolver.ts`
+  - Docs: `09-security-and-access-control.md`, `account-security-email-flows.md`, `email-delivery-foundation.md`
+  - Tests: `tests/e2e/phase-1-1-security.spec.ts`, `tests/e2e/phase-6-10-standalone-sessions-auth-role.spec.ts`, `tests/e2e/stage-3-13c-account-email.spec.ts`, `lib/auth/password-reset-core.test.ts`, `lib/email/local-preview.test.ts`
 
 - Deployment and external systems
   - Code: `lib/env.ts`, `lib/config.ts`, `lib/storage/s3.ts`, `app/api/admin/health/route.ts`
