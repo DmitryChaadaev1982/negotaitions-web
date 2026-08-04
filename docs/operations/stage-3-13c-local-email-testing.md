@@ -144,4 +144,3 @@ configuration, migration approval, real provider credentials, worker
 scheduling, sender/domain readiness, monitoring, and an explicit decision to
 keep `EMAIL_LOCAL_PREVIEW_ENABLED=false`. None of those actions is part of
 Stage 3.13C local verification.
-

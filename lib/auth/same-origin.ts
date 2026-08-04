@@ -35,4 +35,3 @@ export function isSameOriginRequest(request: Request): boolean {
   if (forwardedOrigin) candidates.add(forwardedOrigin);
   return candidates.has(origin);
 }
-

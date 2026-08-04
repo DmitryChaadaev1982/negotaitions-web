@@ -43,4 +43,3 @@ test("same-origin validation rejects absent, malformed, and cross-site origins",
     false,
   );
 });
-

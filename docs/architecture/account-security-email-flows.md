@@ -96,4 +96,3 @@ Unavailable configurations return 404 before authentication. List results are
 limited to 20 allowlisted Stage 3.13C message types, mask recipients, and omit
 bodies. A same-origin POST with a listed message id is required to reveal
 rendered content. Responses use `Cache-Control: no-store`.
-
