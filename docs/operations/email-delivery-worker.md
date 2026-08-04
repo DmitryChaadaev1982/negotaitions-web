@@ -7,6 +7,7 @@ The Stage 3.13B worker is a bounded CLI sweep. It is not a request-time sender a
 ```shell
 npm run email:delivery:sweep
 npm run email:delivery:sweep -- --limit 10
+npm run email:events:reconcile
 npm run email:retention:dry-run
 npm run email:retention:cleanup
 ```
@@ -29,12 +30,14 @@ The worker:
 1. Recovers stale `PROCESSING` messages whose claim lease expired.
 2. Selects bounded eligible candidates.
 3. Claims each row with conditional `updateMany`.
-4. Moves the row to `PROCESSING`, increments attempt count, and stores a claim lease.
-5. Creates an `EmailDeliveryAttempt`.
-6. Calls the provider adapter.
-7. Records provider message id, retry, or final failure.
+4. Moves the row to `PROCESSING` and stores a random claim token plus lease.
+5. Rechecks suppression from the current database state before provider send.
+6. Allocates the next attempt number only while `id + PROCESSING + claimToken` is still owned.
+7. Calls the provider adapter.
+8. Records accepted, failure, suppression, or ambiguous outcome only through claim-token CAS.
 
 Two workers racing for the same row should result in one successful claim and one skipped candidate.
+If a stale worker loses ownership, it emits a sanitized `claim_lost` event and does not schedule another retry.
 
 ## Retry Defaults
 
@@ -43,8 +46,26 @@ Two workers racing for the same row should result in one successful claim and on
 - Exponential backoff with bounded jitter.
 - Maximum delay: 12 hours.
 - Stale processing lease: 600 seconds by default.
+- Provider request timeout: 30 seconds by default.
+- Provider timeout safety margin: 30 seconds by default.
 
-Provider authentication/configuration errors should become final failures and operational alerts. Network, timeout, rate, and 5xx-like failures may retry within bounds.
+Provider request timeout must stay shorter than the processing lease minus the safety margin. Invalid timeout/lease configuration fails validation before delivery can activate.
+
+Provider authentication/configuration errors become final failures and operational alerts. Throttle, pre-dispatch network, and pre-dispatch server failures may retry within bounds. Once a request has been dispatched and acceptance cannot be ruled out, the message becomes `ACCEPTANCE_UNKNOWN`, the claim is released, and the normal worker will not retry it automatically.
+
+## Acceptance Unknown
+
+`ACCEPTANCE_UNKNOWN` requires operator review or a later provider event. Stage 3.13B-H intentionally does not add a retry button or manual resend endpoint. Future manual handling is deferred to Stage 3.13E.
+
+## Provider Event Reconciliation
+
+Unmatched provider events stay `UNMATCHED` until the reconciliation sweep finds a provider-qualified message id match or the bounded reconciliation window expires.
+
+```shell
+npm run email:events:reconcile
+```
+
+Expired unmatched events become `IGNORED` with a stable processing result. The sweep is bounded and idempotent.
 
 ## Logging
 

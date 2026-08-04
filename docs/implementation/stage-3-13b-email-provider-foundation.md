@@ -38,3 +38,9 @@ No Stage 3.13C/3.13D business triggers were implemented: forgot password, passwo
 ## Safety Notes
 
 Production delivery remains disabled unless `EMAIL_DELIVERY_ENABLED=true` and a non-disabled provider with required credentials is configured. The admin self-test enqueues only to the current active admin login email and never sends inline from the HTTP request.
+
+## Stage 3.13B-H Hardening
+
+Stage 3.13B-H hardens claim fencing, ambiguous provider outcomes, suppression uniqueness, provider-event monotonicity/reconciliation, transaction-compatible enqueue, admin API validation, and isolated migration/runtime verification.
+
+See `docs/implementation/stage-3-13b-hardening-verification.md` for the complete evidence record and merge-readiness decision.

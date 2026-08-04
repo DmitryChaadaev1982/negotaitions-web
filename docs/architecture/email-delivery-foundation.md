@@ -17,15 +17,15 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 
 ## Lifecycle
 
-Eligible states are `PENDING` and `FAILED_RETRYABLE`. The worker moves a row to `PROCESSING` using conditional `updateMany`, increments `attemptCount`, and stores a claim lease. A second worker cannot claim the same row if the first claim succeeds.
+Eligible states are `PENDING` and `FAILED_RETRYABLE`. The worker moves a row to `PROCESSING` using conditional `updateMany` and stores a random claim token plus lease. Attempt allocation happens only after suppression is rechecked and only while `id + PROCESSING + claimToken` is still owned. A second worker cannot claim the same row if the first claim succeeds, and a stale worker cannot complete over a newer claim.
 
 Terminal states are `DELIVERED`, `BOUNCED`, `COMPLAINED`, `SUPPRESSED`, `FAILED_FINAL`, and `CANCELLED`. `ACCEPTED_BY_PROVIDER` may later move to `DELIVERED`, `DELAYED`, `BOUNCED`, or `COMPLAINED` from provider events.
 
-Provider timeout with unknown outcome is recorded as `TIMEOUT_UNKNOWN` on the attempt and `FAILED_RETRYABLE` on the message only within bounded retry policy. This must be revisited before high-volume production activation because at-least-once delivery can produce duplicates if provider acceptance was ambiguous.
+Provider timeout or connection loss after request dispatch is recorded as `TIMEOUT_UNKNOWN` on the attempt and `ACCEPTANCE_UNKNOWN` on the message. It is not retried by the normal worker sweep because provider acceptance may already have happened. Later provider events may reconcile it.
 
 ## Idempotency
 
-`EmailMessage.idempotencyKey` is unique at the database level. Re-enqueueing the same logical email returns the existing message instead of creating a second outbox record.
+`EmailMessage.idempotencyKey` is unique at the database level. Re-enqueueing the same logical email returns the existing message instead of creating a second outbox record. The returned suppression flag reflects the persisted message status, not the current request's suppression check.
 
 Future conventions:
 
@@ -51,11 +51,15 @@ Providers:
 
 Hard bounce suppresses normal transactional, product, marketing, admin-test, and invitation email by default. Complaint suppresses the same categories by default. Security messages are not given a blanket bypass; exceptions must be explicit in code and tests.
 
+Suppression is checked at enqueue and again after worker claim immediately before provider send. Active suppression uniqueness is enforced with PostgreSQL partial unique indexes: one active global row per normalized recipient and one active scoped row per normalized recipient/category.
+
 Unsubscribe is only meaningful for product/marketing categories in Stage 3.13B. There is no unsubscribe UI yet.
 
 ## Provider Events
 
-Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locates a message by provider message id, updates state, and creates suppression records for hard bounce and complaint.
+Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locates a message by provider plus provider message id, applies a monotonic transition policy, and creates suppression records for hard bounce and complaint.
+
+Unmatched events are stored as `UNMATCHED` and reconciled by `npm run email:events:reconcile` until a bounded deadline. Ignored events retain a stable processing result code/message for audit.
 
 No public webhook route is added in Stage 3.13B. Yandex Cloud Postbox event ingestion is deferred until the real Data Streams/EventRouter path is configured.
 
