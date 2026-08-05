@@ -31,8 +31,11 @@
 
 ## Constraints
 
-- No Prisma schema/migration changes are part of architecture-doc updates.
-- No nginx/systemd config edits are part of this documentation consolidation.
+- No Prisma schema/migration changes are part of architecture-doc updates alone.
+- Production nginx/systemd edits remain a controlled activation step documented in
+  `docs/operations/deployment-runbook.md` and
+  `docs/audits/stage-3-13c-proxy-readiness/`.
+- Application start command binds `127.0.0.1` via `next start -H 127.0.0.1`.
 
 ## Source Notes
 

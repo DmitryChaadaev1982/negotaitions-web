@@ -49,3 +49,12 @@ npm run email:retention:cleanup
 ```
 
 If retention rules conflict, content minimization should happen earlier while suppression/event semantics follow the longer retention window.
+
+## Admin journal reveal
+
+The permanent Admin → Email journal may reveal retained subject/text/HTML only
+through an explicit ACTIVE-admin same-origin action. Password-reset retained
+bodies redact `token=` values before display. Cleared content
+(`contentClearedAt`) is reported as unavailable. Reveal writes
+`AdminActionLog` with action `EMAIL_CONTENT_REVEALED` and metadata limited to
+message id, request id, and outcome — never body, recipient, or token.

@@ -71,6 +71,11 @@ Event/Session invitation templates remain disabled.
   content only through a same-origin POST.
 - Per-IP abuse protection is process-local and therefore not distributed. This
   is a documented limitation; no Redis or new infrastructure is introduced.
+- Stage 3.13C-P hardens client-IP trust behind `TRUSTED_PROXY_ENABLED` and the
+  dedicated `X-NegotAItions-Client-IP` header. Nginx activation remains a
+  documented future step.
+- Permanent Admin → Email journal is available at `/admin/email` and does not
+  depend on `EMAIL_ADMIN_TEST_ENABLED` or `EMAIL_LOCAL_PREVIEW_ENABLED`.
 
 ## Verification entrypoints
 
@@ -80,7 +85,11 @@ npx prisma validate
 npx prisma generate
 npm run test:unit
 npm run test:stage313c
+npm run test:stage313c:proxy
+npm run test:stage313c:email-journal
 npm run verify:stage313c:integration
+npm run verify:stage313c:proxy
+npm run verify:stage313c:email-journal
 ```
 
 The integration verifier refuses non-local/production-like database targets.
@@ -89,4 +98,11 @@ browser reset/login/session behavior, registration notification recipient
 selection, and local preview authorization/list/reveal boundaries.
 
 Production is not activated by this implementation. The migration, provider,
-worker, and local-preview configuration require separate deployment approval.
+worker, nginx trusted-proxy overwrite, and Postbox credentials require separate
+deployment approval.
+
+## Deferred backlog (not this stage)
+
+- Provider event ingestion / Yandex Data Streams
+- `DELIVERED` / `BOUNCED` / `COMPLAINED` processing as live events
+- Controlled retry/resend and advanced suppression management

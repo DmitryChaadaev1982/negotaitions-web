@@ -15,6 +15,10 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:e2e:smoke` (curated deterministic Chromium subset)
 - `npm run test:e2e:smoke:browser` (browser-first deterministic localhost smoke)
 - `npm run test:stage313c` (account-security email unit and managed browser flow)
+- `npm run test:stage313c:proxy` (trusted-proxy unit + managed browser/API checks)
+- `npm run test:stage313c:email-journal` (journal unit + managed browser/API checks)
+- `npm run verify:stage313c:proxy`
+- `npm run verify:stage313c:email-journal`
 - `npm run verify:stage313c:integration` (disposable local PostgreSQL token,
   suppression, concurrency, session-revocation, and notification checks)
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)

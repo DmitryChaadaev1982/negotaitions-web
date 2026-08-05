@@ -64,6 +64,8 @@ suppression, notification, and local-preview contracts.
 - Analysis visibility and private role data serialization.
 - Session/event ownership and visibility filters.
 - Password reset anti-enumeration, token lifecycle, and auth-session revocation.
+- Trusted-proxy client IP identity for process-local password-reset limits.
+- Permanent Admin → Email journal authorization, masking, and audited reveal.
 - Local fake-email preview authorization and production-denial guards.
 
 ## Source Notes

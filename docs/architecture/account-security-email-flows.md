@@ -57,14 +57,22 @@ There is no administrator-initiated password-change path.
 
 Durable token/outbox timestamps enforce per-account cooldown and hourly limits.
 A process-local limiter also keeps one-hour SHA-256 normalized-email buckets
-and HMAC-SHA-256 IP-fingerprint buckets. Raw IP addresses are not stored. The
-HMAC uses `AUTH_SECRET`, with a process-random local fallback. Buckets are
+and HMAC-SHA-256 client-IP fingerprint buckets. Raw IP addresses are not stored.
+
+Client IP identity comes only from `lib/auth/client-ip.ts`:
+
+- `TRUSTED_PROXY_ENABLED=false` (local default): stable unknown bucket.
+- `TRUSTED_PROXY_ENABLED=true`: only nginx-overwritten `X-NegotAItions-Client-IP`.
+- Browser-controlled `X-Forwarded-For` / `X-Real-IP` / `Forwarded` /
+  `CF-Connecting-IP` / `True-Client-IP` are never trusted.
+
+The HMAC uses `AUTH_SECRET`, with a process-random local fallback. Buckets are
 pruned after one hour.
 
 The process-local layer is intentionally single-instance only. It is not a
-distributed rate limiter and Stage 3.13C does not add Redis or infrastructure.
+distributed rate limiter and Stage 3.13C-P does not add Redis or infrastructure.
 Durable per-account checks continue to work across instances; unknown-address
-and per-IP limits do not.
+and per-IP limits remain process-local residual risk.
 
 ## Suppression
 
@@ -96,3 +104,23 @@ Unavailable configurations return 404 before authentication. List results are
 limited to 20 allowlisted Stage 3.13C message types, mask recipients, and omit
 bodies. A same-origin POST with a listed message id is required to reveal
 rendered content. Responses use `Cache-Control: no-store`.
+
+After Stage 3.13C acceptance the local flags remain `false`. The permanent
+Admin → Email journal replaces day-to-day operational inspection.
+
+## Permanent Admin → Email journal
+
+Route: `/admin/email` (RU nav label «Почта», EN «Email»).
+
+Authorization: authenticated ACTIVE `ADMIN` only (`requireActiveAdminUser` /
+`apiRequireActiveAdminUser`).
+
+Data source: durable `EmailMessage` + `EmailDeliveryAttempt` rows. No parallel
+history store. Provider-event statuses such as `DELIVERED` / `BOUNCED` /
+`COMPLAINED` are reserved for future ingestion and are not fabricated.
+
+List responses mask recipients, omit bodies, and never expose reset tokens or
+raw provider payloads. Content reveal is a separate same-origin ACTIVE-admin
+POST that writes `AdminActionLog` action `EMAIL_CONTENT_REVEALED` without body,
+recipient, or token metadata. Password-reset retained content redacts token
+query values before display.

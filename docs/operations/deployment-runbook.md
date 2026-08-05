@@ -14,8 +14,23 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
 ## Process Model
 
 - Service name: `negotaitions-poc`.
-- Runtime start command pattern: `npm run start` / `next start`.
+- Runtime start command pattern: `npm run start` / `next start -H 127.0.0.1`.
 - Reverse proxy model: nginx in front of app service.
+- Trusted client IP: after controlled nginx activation, overwrite
+  `X-NegotAItions-Client-IP` from `$remote_addr` and set
+  `TRUSTED_PROXY_ENABLED=true`. See
+  `docs/audits/stage-3-13c-proxy-readiness/` and
+  `deploy/nginx/trusted-client-ip-snippet.conf`.
+
+### Future nginx activation (not executed in Stage 3.13C-P)
+
+1. Backup current site files under `/etc/nginx/sites-available/`.
+2. Review the exact diff of the trusted-client-IP overwrite snippet.
+3. `sudo nginx -t`.
+4. Reload nginx (`reload`, not restart).
+5. Health-check `https://negotaitions.ru` and tunnel host if changed.
+6. Verify spoofed forwarding headers cannot create new app identities.
+7. Rollback by restoring the backup and reloading.
 
 ## Secrets And Env
 
