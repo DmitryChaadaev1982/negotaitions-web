@@ -214,12 +214,13 @@ test("disabled preview APIs return 404 while email journal remains available", a
   await expect(page.getByTestId("email-journal-page")).toBeVisible();
 });
 
-test("email journal detail reveal is audited and redacts reset tokens", async ({
+test("email journal detail reveal is denied for PASSWORD_RESET (M-07) and audited", async ({
   request,
 }) => {
   const messageId = await seedMessage({
     label: "reveal",
     recipient: e2eEmail("stage313cp-reveal"),
+    messageType: "PASSWORD_RESET",
   });
 
   expect(
@@ -244,10 +245,9 @@ test("email journal detail reveal is audited and redacts reset tokens", async ({
   expect(reveal.status()).toBe(200);
   expect(reveal.headers()["cache-control"]).toContain("no-store");
   const payload = await reveal.json();
-  expect(payload.available).toBe(true);
-  expect(payload.redacted).toBe(true);
-  expect(payload.text).toContain("[redacted]");
-  expect(payload.text).not.toMatch(/token=[a-f0-9]{64}/i);
+  // M-07: PASSWORD_RESET content is always denied — sensitive account-security content.
+  expect(payload.available).toBe(false);
+  expect(payload.reason).toBe("sensitive_unavailable");
 
   const audits = await query<{ count: string }>(
     `SELECT COUNT(*)::text AS "count"
@@ -257,4 +257,27 @@ test("email journal detail reveal is audited and redacts reset tokens", async ({
     [`%${messageId}%`],
   );
   expect(Number(audits[0]?.count ?? 0)).toBeGreaterThanOrEqual(1);
+
+  // Also verify non-PASSWORD_RESET messages can still be revealed normally.
+  const otherMessageId = await seedMessage({
+    label: "reveal-transactional",
+    messageType: "ADMIN_PENDING_APPROVAL",
+    recipient: e2eEmail("stage313cp-reveal-txn"),
+    subject: "Admin notification",
+    text: "Some transactional body",
+    html: "<p>transactional</p>",
+  });
+  const otherReveal = await request.post(
+    `/api/admin/email-journal/${otherMessageId}/reveal`,
+    {
+      headers: {
+        Cookie: adminCookie,
+        Origin: requestOrigin(),
+      },
+      data: {},
+    },
+  );
+  expect(otherReveal.status()).toBe(200);
+  const otherPayload = await otherReveal.json();
+  expect(otherPayload.available).toBe(true);
 });

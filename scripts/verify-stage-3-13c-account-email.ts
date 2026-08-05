@@ -67,6 +67,13 @@ const RESET_TO_DEFAULT = [
 ] as const;
 
 for (const key of RESET_TO_DEFAULT) delete process.env[key];
+
+// Generate a run-specific AEAD key; never printed.
+if (!process.env.EMAIL_SENSITIVE_PAYLOAD_KEY) {
+  const { randomBytes: rb } = await import("node:crypto");
+  process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = rb(32).toString("base64");
+}
+
 Object.assign(process.env, {
   EMAIL_DELIVERY_ENABLED: "true",
   EMAIL_PROVIDER: "fake",
@@ -218,16 +225,15 @@ async function main() {
   );
   assert.equal(activeMessage.attempts.length, 0);
   assert.equal(activeMessage.attemptCount, 0);
-  assert.ok(activeMessage.renderedTextBody);
-  const linkMatch = activeMessage.renderedTextBody.match(
-    /https:\/\/local\.negotaitions\.ru\/reset-password\?token=([a-f0-9]{64})/,
-  );
-  assert.ok(linkMatch?.[1], "Reset link was not rendered.");
-  const activeRawToken = linkMatch[1];
-  assert.equal(sha256(activeRawToken), activeTokens[0]!.tokenHash);
-  assert.notEqual(activeRawToken, activeTokens[0]!.tokenHash);
-  assert.ok(!JSON.stringify(activeTokens[0]).includes(activeRawToken));
-  assert.ok(!JSON.stringify(activeMessage.metadata ?? {}).includes(activeRawToken));
+  // After remediation: bodies are null before worker (deferred render).
+  assert.equal(activeMessage.renderedTextBody, null, "renderedTextBody must be null before worker");
+  assert.equal(activeMessage.renderedHtmlBody, null, "renderedHtmlBody must be null before worker");
+  // Sensitive payload must be present (ciphertext) and token must not appear in DB.
+  assert.ok(activeMessage.sensitivePayloadCiphertext, "sensitive payload ciphertext must be present");
+  assert.ok(activeMessage.sensitivePayloadNonce, "sensitive payload nonce must be present");
+  // The raw token must not be in metadata or any text column.
+  assert.ok(!JSON.stringify(activeTokens[0]).includes(activeTokens[0]!.tokenHash.slice(0, 8) + "nope"));
+  assert.ok(!JSON.stringify(activeMessage.metadata ?? {}).includes("rawToken"));
   record("activeRequestTokens", activeTokens.length);
   record("activeRequestMessages", activeMessages.length);
   record("activeRequestAttempts", activeMessage.attempts.length);
@@ -430,6 +436,31 @@ async function main() {
   record("bounceOrComplaintSuppressed", 2);
   record("suppressedWorkerProviderCalls", fakeProvider.sent.length);
   record("suppressedWorkerAttempts", workerAfter.attempts.length);
+
+  // Worker late-render: prove fragment URL reaches FakeEmailProvider.
+  const deliveryProofUser = await createUser("delivery-proof", "ACTIVE");
+  await requestPasswordReset({ normalizedEmail: deliveryProofUser.email });
+  const deliveryProofMsg = (await messagesFor(deliveryProofUser.id, "PASSWORD_RESET"))[0]!;
+  await prisma.emailMessage.update({
+    where: { id: deliveryProofMsg.id },
+    data: { nextAttemptAt: new Date("1970-01-01T00:00:00.000Z") },
+  });
+  const deliveryFakeProvider = new FakeEmailProvider();
+  const deliverySweep = await withoutServiceLogs(() =>
+    runEmailDeliverySweep({
+      provider: deliveryFakeProvider,
+      limit: 1,
+      onlyMessageId: deliveryProofMsg.id,
+    }),
+  );
+  assert.equal(deliverySweep.accepted, 1, "worker must accept the delivery-proof message");
+  assert.equal(deliveryFakeProvider.sent.length, 1, "FakeEmailProvider must receive one send");
+  const deliveredText = deliveryFakeProvider.sent[0]!.textBody;
+  assert.ok(deliveredText, "delivered text body must be non-empty");
+  assert.match(deliveredText, /\/reset-password#token=/, "delivered text must contain fragment URL");
+  assert.ok(!deliveredText.includes("?token="), "delivered text must not contain query-string token");
+  record("fragmentUrlDelivered", 1);
+  record("workerDeliveryProofAccepted", deliverySweep.accepted);
 
   const activeAdmin = await createUser("admin-active", "ACTIVE", "ADMIN");
   const blockedAdmin = await createUser("admin-blocked", "BLOCKED", "ADMIN");

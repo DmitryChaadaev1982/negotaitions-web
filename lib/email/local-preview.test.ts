@@ -100,7 +100,7 @@ test("local email preview query accepts only allowlisted types and bounded limit
 
 test("local email preview masks recipients", () => {
   assert.equal(maskEmailRecipient("alice@example.com"), "a***@e***.com");
-  assert.equal(maskEmailRecipient("x@localhost"), "x***@l***");
+  assert.equal(maskEmailRecipient("x@localhost"), "****@l***");
   assert.equal(maskEmailRecipient(null), "(unavailable)");
   assert.equal(maskEmailRecipient("invalid"), "***");
 });

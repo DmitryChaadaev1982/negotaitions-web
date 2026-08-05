@@ -239,21 +239,38 @@ test("browser completes reset and revokes prior authentication", async ({
   expect(forgotResponse.status()).toBe(200);
   const resetMessages = await query<{
     renderedTextBody: string | null;
+    sensitivePayloadCiphertext: string | null;
+    sensitivePayloadNonce: string | null;
   }>(
-    `SELECT "renderedTextBody"
+    `SELECT "renderedTextBody", "sensitivePayloadCiphertext", "sensitivePayloadNonce"
      FROM "EmailMessage"
      WHERE "userId" = $1 AND "messageType" = 'PASSWORD_RESET'
      ORDER BY "createdAt" DESC
      LIMIT 1`,
     [user.id],
   );
-  const tokenMatch = resetMessages[0]?.renderedTextBody?.match(
-    /https:\/\/local\.negotaitions\.ru\/reset-password\?token=([a-f0-9]{64})/,
-  );
-  expect(tokenMatch?.[1]).toBeTruthy();
-  const resetToken = tokenMatch![1]!;
+  expect(resetMessages[0]?.renderedTextBody).toBeNull();
+  expect(resetMessages[0]?.sensitivePayloadCiphertext).toBeTruthy();
+  expect(resetMessages[0]?.sensitivePayloadNonce).toBeTruthy();
 
+  const { decryptSensitivePayload } = await import(
+    "@/lib/email/sensitive-payload"
+  );
+  const payload = decryptSensitivePayload({
+    ciphertext: resetMessages[0]!.sensitivePayloadCiphertext!,
+    nonce: resetMessages[0]!.sensitivePayloadNonce!,
+  });
+  const resetToken = payload.rawToken;
+  expect(resetToken).toMatch(/^[a-f0-9]{64}$/);
+
+  // Legacy query-token links must be rejected (already entered request URI).
   await page.goto(`/reset-password?token=${encodeURIComponent(resetToken)}`);
+  await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
+
+  // Fragment tokens are client-only; scrub address bar after bootstrap.
+  await page.goto(`/reset-password#token=${resetToken}`);
+  await page.waitForFunction(() => !window.location.hash.includes("token="));
+  expect(page.url()).not.toContain("token=");
   await page.locator("#password").fill(newPassword);
   await page.locator("#confirmPassword").fill(newPassword);
   await page.locator('form button[type="submit"]').click();

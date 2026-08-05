@@ -68,7 +68,10 @@
     "email:delivery:sweep": "tsx scripts/ops/email-delivery-sweep.ts",
     "email:events:reconcile": "tsx scripts/ops/email-provider-event-reconciliation.ts",
     "email:retention:dry-run": "tsx scripts/ops/email-retention-cleanup.ts --dry-run",
-    "email:retention:cleanup": "tsx scripts/ops/email-retention-cleanup.ts"
+    "email:retention:cleanup": "tsx scripts/ops/email-retention-cleanup.ts",
+    "test:stage313c:remediation": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/auth/credential-concurrency.remediation.test.ts\" \"lib/email/sensitive-payload.test.ts\" \"lib/auth/response-timing-floor.test.ts\" \"lib/email/canonical-origin.test.ts\" \"lib/email/admin-journal.test.ts\"",
+    "verify:stage313c:remediation": "tsx scripts/verify-stage-3-13c-remediation.ts",
+    "verify:stage313c:trusted-proxy": "tsx scripts/verify-stage-3-13c-trusted-proxy-activation.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
