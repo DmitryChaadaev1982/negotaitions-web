@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, startTransition } from "react";
 
 import { resetPassword } from "@/app/actions/password-reset";
 import { LanguageSwitcher } from "@/components/language-switcher";
@@ -35,25 +35,26 @@ export function ResetPasswordForm({
 }) {
   const { t } = useI18n();
   const [state, action, pending] = useActionState(resetPassword, {});
-  const [token, setToken] = useState<string>("");
-  const [bootstrapped, setBootstrapped] = useState(false);
+  const [token, setToken] = useState("");
+  // Query-token links are rejected without waiting for client bootstrap.
+  const [bootstrapped, setBootstrapped] = useState(rejectQueryToken);
 
   useEffect(() => {
-    if (rejectQueryToken) {
-      setToken("");
-      setBootstrapped(true);
-      return;
-    }
+    if (rejectQueryToken) return;
+
     const fragmentToken = readFragmentToken();
     if (fragmentToken) {
-      setToken(fragmentToken);
       scrubFragmentFromAddressBar();
     }
-    setBootstrapped(true);
+
+    // Defer React state updates out of the synchronous effect body.
+    startTransition(() => {
+      setToken(fragmentToken ?? "");
+      setBootstrapped(true);
+    });
   }, [rejectQueryToken]);
 
-  const invalid =
-    rejectQueryToken || (bootstrapped && !token);
+  const invalid = rejectQueryToken || (bootstrapped && !token);
 
   return (
     <div className="w-full max-w-sm">
