@@ -273,6 +273,14 @@ export function AdminEmailFoundationPanel() {
     }
   }
 
+  if (!state) {
+    return null;
+  }
+
+  if (!state.adminTestEnabled) {
+    return <LocalEmailPreviewPanel />;
+  }
+
   return (
     <Card id="admin-email-foundation">
       <CardHeader>
@@ -294,45 +302,39 @@ export function AdminEmailFoundationPanel() {
             {message}
           </div>
         ) : null}
-        {!state ? (
-          <p className="text-sm text-slate-400">Loading...</p>
-        ) : (
-          <>
-            <div className="grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
-              <div>Recipient: current admin login email only</div>
-              <div>Provider: {state.provider}</div>
-              <div>Delivery enabled: {state.deliveryEnabled ? "true" : "false"}</div>
-              <div>Admin test enabled: {state.adminTestEnabled ? "true" : "false"}</div>
+        <div className="grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
+          <div>Recipient: current admin login email only</div>
+          <div>Provider: {state.provider}</div>
+          <div>Delivery enabled: {state.deliveryEnabled ? "true" : "false"}</div>
+          <div>Admin test enabled: {state.adminTestEnabled ? "true" : "false"}</div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {state.previews.map((preview) => (
+            <div
+              key={preview.locale}
+              className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4"
+            >
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="font-semibold text-slate-100">
+                  {preview.locale.toUpperCase()} preview
+                </h3>
+                <span className="text-xs text-slate-500">
+                  v{preview.templateVersion}
+                </span>
+              </div>
+              <p className="text-sm font-medium text-slate-200">{preview.subject}</p>
+              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950/80 p-3 text-xs text-slate-300">
+                {preview.textBody}
+              </pre>
+              <SecondaryButton
+                disabled={!state.adminTestEnabled || busyLocale !== null}
+                onClick={() => void enqueue(preview.locale)}
+              >
+                {busyLocale === preview.locale ? "Queueing..." : `Enqueue ${preview.locale.toUpperCase()} test`}
+              </SecondaryButton>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {state.previews.map((preview) => (
-                <div
-                  key={preview.locale}
-                  className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4"
-                >
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <h3 className="font-semibold text-slate-100">
-                      {preview.locale.toUpperCase()} preview
-                    </h3>
-                    <span className="text-xs text-slate-500">
-                      v{preview.templateVersion}
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-slate-200">{preview.subject}</p>
-                  <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950/80 p-3 text-xs text-slate-300">
-                    {preview.textBody}
-                  </pre>
-                  <SecondaryButton
-                    disabled={!state.adminTestEnabled || busyLocale !== null}
-                    onClick={() => void enqueue(preview.locale)}
-                  >
-                    {busyLocale === preview.locale ? "Queueing..." : `Enqueue ${preview.locale.toUpperCase()} test`}
-                  </SecondaryButton>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+          ))}
+        </div>
         <LocalEmailPreviewPanel />
       </CardContent>
     </Card>

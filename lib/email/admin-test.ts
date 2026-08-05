@@ -25,6 +25,21 @@ function buildSystemTestVariables(user: AuthUser, locale: EmailLocale) {
 
 export function getAdminEmailTestPreview(user: AuthUser) {
   const config = getEmailConfig();
+  if (!config.adminTestEnabled) {
+    return {
+      adminTestEnabled: false,
+      deliveryEnabled: config.deliveryEnabled,
+      provider: config.provider,
+      recipient: user.email,
+      previews: [] as Array<{
+        locale: EmailLocale;
+        subject: string;
+        textBody: string;
+        htmlBody: string;
+        templateVersion: string;
+      }>,
+    };
+  }
   const previews = (["ru", "en"] as EmailLocale[]).map((locale) => ({
     locale,
     ...renderEmailTemplate({

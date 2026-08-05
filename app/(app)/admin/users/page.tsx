@@ -140,6 +140,12 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
             {t("admin.userManagement")}
           </Link>
           <Link
+            href="/admin/email"
+            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+          >
+            {t("nav.adminEmail")}
+          </Link>
+          <Link
             href="/admin/counters"
             className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
           >

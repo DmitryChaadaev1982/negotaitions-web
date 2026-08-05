@@ -9,5 +9,6 @@ export {
   requireCurrentUser,
   requireActiveUser,
   requireAdminUser,
+  requireActiveAdminUser,
   type AuthUser,
 } from "./session";

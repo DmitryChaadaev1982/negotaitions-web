@@ -290,6 +290,12 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
           {t("admin.userManagement")}
         </Link>
         <Link
+          href="/admin/email"
+          className={adminNavClassName(pathname.startsWith("/admin/email"))}
+        >
+          {t("nav.adminEmail")}
+        </Link>
+        <Link
           href="/admin/counters"
           className={adminNavClassName(pathname.startsWith("/admin/counters"))}
         >
@@ -314,9 +320,9 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
           <a href="#admin-service-checks" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
             {t("admin.serviceChecks")}
           </a>
-          <a href="#admin-email-foundation" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
-            Email foundation
-          </a>
+          <Link href="/admin/email" className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800/60">
+            {t("nav.adminEmail")}
+          </Link>
         </div>
       ) : null}
 

@@ -181,3 +181,19 @@ export async function requireAdminUser(returnUrl = "/admin"): Promise<AuthUser> 
 
   return user;
 }
+
+/**
+ * Strict ACTIVE-admin gate for security-sensitive admin surfaces such as the
+ * permanent email operations journal. Bootstrap emails do not bypass status.
+ */
+export async function requireActiveAdminUser(
+  returnUrl = "/admin",
+): Promise<AuthUser> {
+  const user = await requireAdminUser(returnUrl);
+  if (user.status !== "ACTIVE") {
+    if (user.status === "BLOCKED") redirect("/account/blocked");
+    if (user.status === "REJECTED") redirect("/account/rejected");
+    redirect("/pending-approval");
+  }
+  return user;
+}
