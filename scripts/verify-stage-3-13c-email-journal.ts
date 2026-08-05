@@ -92,10 +92,13 @@ async function main() {
     const { prisma } = await import("@/lib/prisma");
     const {
       EMAIL_JOURNAL_ACTION_REVEAL,
+      PASSWORD_RESET_REVEAL_DENIED_MESSAGE,
       listEmailJournal,
       parseEmailJournalListQuery,
+      parseEmailJournalRecipientSearchBody,
       redactPasswordResetSecrets,
       revealEmailJournalContent,
+      EmailJournalInputError,
     } = await import("@/lib/email/admin-journal");
 
     await prisma.user.create({
@@ -122,22 +125,33 @@ async function main() {
         templateKey: "password-reset",
         templateVersion: "1.0.0",
         renderedSubject: "Reset",
-        renderedTextBody: `https://local.negotaitions.ru/reset-password?token=${"cd".repeat(32)}`,
-        renderedHtmlBody: "<p>reset</p>",
+        renderedTextBody: null,
+        renderedHtmlBody: null,
         idempotencyKey: `verify-journal:${runId}`,
         providerName: "fake",
         lastProviderMessageId: `prov_${runId}`,
       },
     });
 
+    // M-05: GET q with full email must be rejected.
+    assert.throws(
+      () =>
+        parseEmailJournalListQuery(
+          new URLSearchParams({
+            q: recipient,
+            provider: "fake",
+            pageSize: "20",
+          }),
+        ),
+      EmailJournalInputError,
+    );
+
     const list = await listEmailJournal(
-      parseEmailJournalListQuery(
-        new URLSearchParams({
-          q: recipient,
-          provider: "fake",
-          pageSize: "20",
-        }),
-      ),
+      parseEmailJournalRecipientSearchBody({
+        recipientEmail: recipient,
+        provider: "fake",
+        pageSize: "20",
+      }),
     );
     assert.ok(list.total >= 1);
     const item = list.items.find((row) => row.id === messageId);
@@ -145,17 +159,18 @@ async function main() {
     assert.match(item.recipientMasked, /\*{3}/);
     assert.equal(item.provider, "fake");
     assert.doesNotMatch(JSON.stringify(item), /token=/i);
+    assert.doesNotMatch(JSON.stringify(item), new RegExp(recipient, "i"));
 
+    // M-07: PASSWORD_RESET reveal is always denied.
     const revealed = await revealEmailJournalContent({
       adminUserId: adminId,
       messageId,
       requestId: runId,
     });
-    assert.equal(revealed.available, true);
-    if (revealed.available) {
-      assert.equal(revealed.redacted, true);
-      assert.match(revealed.text ?? "", /\[redacted\]/);
-      assert.doesNotMatch(revealed.text ?? "", /token=[a-f0-9]{64}/i);
+    assert.equal(revealed.available, false);
+    if (!revealed.available) {
+      assert.equal(revealed.reason, "sensitive_unavailable");
+      assert.equal(revealed.message, PASSWORD_RESET_REVEAL_DENIED_MESSAGE);
     }
 
     const audits = await prisma.adminActionLog.count({
