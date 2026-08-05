@@ -22,15 +22,21 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
   `docs/audits/stage-3-13c-proxy-readiness/` and
   `deploy/nginx/trusted-client-ip-snippet.conf`.
 
-### Future nginx activation (not executed in Stage 3.13C-P)
+### Future nginx activation (not executed in Stage 3.13C)
 
 1. Backup current site files under `/etc/nginx/sites-available/`.
-2. Review the exact diff of the trusted-client-IP overwrite snippet.
+2. Patch **every** vhost that terminates TLS for the app with
+   `deploy/nginx/trusted-client-ip-snippet.conf`.
 3. `sudo nginx -t`.
 4. Reload nginx (`reload`, not restart).
-5. Health-check `https://negotaitions.ru` and tunnel host if changed.
-6. Verify spoofed forwarding headers cannot create new app identities.
-7. Rollback by restoring the backup and reloading.
+5. Verify localhost listeners and both IPv4 / IPv6 direct-access paths do not
+   expose an alternate unauthenticated start surface.
+6. Live spoof canary: forged forwarding headers must not create new identities.
+7. Enabled-mode same-origin HTTPS test against the canonical origin.
+8. Rollback trust first: set `TRUSTED_PROXY_ENABLED=false`, then restore nginx
+   backups and reload.
+9. Committed verifier: `npm run verify:stage313c:trusted-proxy`
+   (live checks require explicit `TARGET_HOST`; never auto-modifies production).
 
 ## Secrets And Env
 

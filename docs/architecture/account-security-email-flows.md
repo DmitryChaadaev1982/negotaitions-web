@@ -26,9 +26,15 @@ Malformed input may receive the common validation error.
 ## Token lifecycle
 
 `PasswordResetToken` stores a unique SHA-256 hash of a random 32-byte opaque
-token. The raw token exists only while constructing the one-time reset URL and
-in the retained rendered email body. It is never stored in the token row,
-metadata, audit records, provider metadata, or logs.
+token. The raw token exists only:
+
+1. ephemerally while enqueueing (encrypted into `sensitivePayloadCiphertext`);
+2. in memory during worker late-render / provider send;
+3. in the browser as a URL fragment that is scrubbed immediately after load.
+
+It is never stored in token rows, rendered email bodies at rest, JSON metadata,
+audit records, provider metadata, or logs. Database-only readers cannot recover
+an active token without the out-of-band `EMAIL_SENSITIVE_PAYLOAD_KEY`.
 
 Defaults:
 
@@ -41,12 +47,15 @@ Creating an ACTIVE-user token revokes previous unused tokens, creates the new
 hash-only row, and enqueues `PASSWORD_RESET` in one serializable transaction.
 The partial unique index on active tokens provides a second concurrency guard.
 
-Reset hashes the submitted token before lookup. The row must be unexpired,
-unused, unrevoked, and linked to a user that is still `ACTIVE`. A successful
-transaction claims the token, updates the bcrypt password hash, revokes sibling
-tokens, deletes every `UserSession` for the account, and enqueues exactly one
-`PASSWORD_CHANGED`. Invalid, expired, reused, revoked, and newly inactive
-accounts receive the same safe failure.
+Reset validates token syntax, hashes the token, cheaply checks eligibility,
+hashes the new password only after that gate, then claims the token in a
+serializable transaction. The claim increments `User.credentialGeneration`,
+updates the bcrypt password hash, revokes sibling tokens, deletes every
+`UserSession`, and enqueues exactly one `PASSWORD_CHANGED`. Login and
+authenticated password-change capture the credential generation observed during
+password verification and only create a session / overwrite the hash when that
+generation is still unchanged (H-01). Invalid, expired, reused, revoked, and
+newly inactive accounts receive the same safe failure.
 
 Authenticated password change uses the same bcrypt policy and transactional
 `PASSWORD_CHANGED` notification. It revokes outstanding reset tokens and all

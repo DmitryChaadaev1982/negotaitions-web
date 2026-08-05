@@ -77,7 +77,27 @@ Event/Session invitation templates remain disabled.
 - Permanent Admin → Email journal is available at `/admin/email` and does not
   depend on `EMAIL_ADMIN_TEST_ENABLED` or `EMAIL_LOCAL_PREVIEW_ENABLED`.
 
-## Verification entrypoints
+## Stage 3.13C-R remediation
+
+Independent review blocked activation on three High findings. Remediation is
+documented in
+[`stage-3-13c-security-remediation.md`](./stage-3-13c-security-remediation.md).
+
+Additive migration `20260805140000_stage_3_13c_security_remediation` introduces:
+
+- `User.credentialGeneration` (default 0) for linearizable password mutations;
+- `EmailMessage.sensitivePayloadCiphertext` / `Nonce` / `ClearedAt`;
+- `EmailMessage.relatedTokenId` for stale-reset cancellation.
+
+Additional verification:
+
+```powershell
+npm run test:stage313c:remediation
+npm run verify:stage313c:remediation
+npm run verify:stage313c:trusted-proxy
+```
+
+Production nginx, Postbox credentials, and remote migration remain out of scope.
 
 ```text
 npm run email:templates:validate

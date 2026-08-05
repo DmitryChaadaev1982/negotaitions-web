@@ -54,51 +54,39 @@ npm run email:retention:dry-run
 
 Owner approval is required before each billing-sensitive step.
 
-## Feature Flag Activation
+## Feature Flag Activation (Stage 3.13C-R safe order)
 
-1. Deploy code and run production migration in a controlled release window.
-2. Configure secrets without printing values.
+Do not activate Postbox during remediation. Future controlled activation:
+
+1. Deploy code and apply additive production migrations in a controlled window
+   (including `20260805140000_stage_3_13c_security_remediation`).
+2. Install `EMAIL_SENSITIVE_PAYLOAD_KEY` (32-byte base64) separately from
+   `AUTH_SECRET`. Never print the value.
 3. Keep `EMAIL_DELIVERY_ENABLED=false`.
 4. Run template validation and retention dry-run.
-5. Run worker once and confirm disabled no-op.
-6. Enable `EMAIL_ADMIN_TEST_ENABLED=true` only for active admin diagnostics.
-7. Enable `EMAIL_PROVIDER=yandex_postbox` with credentials.
-8. Enable `EMAIL_DELIVERY_ENABLED=true` only after low-volume readiness.
-9. Run a single admin self-test email.
-10. Watch logs, provider events, queue depth, bounces, and complaints.
+5. Inspect pending backlog; quarantine stale `PASSWORD_RESET` messages before
+   enabling the worker (`quarantineStalePasswordResetBacklog` / ops script).
+6. Install disabled-by-default units from `deploy/systemd/`:
+   - `negotiations-email-worker.service` + `.timer`
+   - `negotiations-email-retention.service` + `.timer`
+   Use `EnvironmentFile=/etc/negotaitions/env.production` (not the app `.env`).
+7. Enable `EMAIL_PROVIDER=yandex_postbox` with credentials while delivery stays
+   disabled; run one disabled sweep to confirm no-op.
+8. Canary: select exactly one message id, run
+   `runEmailDeliverySweep({ onlyMessageId })` with delivery temporarily
+   enabled for that process only. Do not enable the normal timer yet.
+9. Treat provider `ACCEPTED_BY_PROVIDER` as acceptance, not end-user delivery.
+10. Only then enable the worker timer for normal sweeps.
+11. Watch logs, queue depth, bounces, and complaints.
 
 ## Worker Installation Sketch
 
-Do not install in Stage 3.13B. Future unit/timer example:
-
-```ini
-[Unit]
-Description=NegotAItions email delivery sweep
-
-[Service]
-Type=oneshot
-WorkingDirectory=/var/www/negotaitions/app
-EnvironmentFile=/var/www/negotaitions/app/.env
-ExecStart=/usr/bin/npm run email:delivery:sweep
-```
-
-```ini
-[Unit]
-Description=Run NegotAItions email delivery sweep
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=1min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
+Committed templates live under `deploy/systemd/`. Do not enable in Stage 3.13C.
 
 ## Rollback
 
 1. Set `EMAIL_DELIVERY_ENABLED=false`.
-2. Stop/disable the email worker timer.
+2. Stop/disable the email worker timer first.
 3. Leave the outbox intact for inspection.
 4. Do not delete suppressions during incident response.
 5. Revoke or rotate provider credentials if compromised.
