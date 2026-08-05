@@ -30,8 +30,14 @@ const STAGE_3_13B = [
   "20260804113000_stage_3_13b_email_foundation",
   PRE_STAGE_3_13C,
 ] as const;
-const STAGE_3_13C =
+const STAGE_3_13C_ACCOUNT =
   "20260804170000_stage_3_13c_account_security_email";
+const STAGE_3_13C_REMEDIATION =
+  "20260805140000_stage_3_13c_security_remediation";
+const STAGE_3_13C_PENDING = [
+  STAGE_3_13C_ACCOUNT,
+  STAGE_3_13C_REMEDIATION,
+] as const;
 const LOCAL_HOSTS = new Set([
   "localhost",
   "127.0.0.1",
@@ -150,7 +156,8 @@ async function createWorkspace(repoRoot: string): Promise<Workspace> {
       (name) => name <= PRE_STAGE_3_13C,
     );
     assert.ok(migrationNames.includes(PRE_STAGE_3_13C));
-    assert.ok(!migrationNames.includes(STAGE_3_13C));
+    assert.ok(!migrationNames.includes(STAGE_3_13C_ACCOUNT));
+    assert.ok(!migrationNames.includes(STAGE_3_13C_REMEDIATION));
     for (const name of migrationNames) {
       await cp(
         path.join(repoRoot, "prisma", "migrations", name),
@@ -386,7 +393,10 @@ async function main() {
       stdout: sink,
       stderr: sink,
     });
-    assert.deepEqual(preStatus?.pendingActiveMigrations, [STAGE_3_13C]);
+    assert.deepEqual(
+      preStatus?.pendingActiveMigrations,
+      [...STAGE_3_13C_PENDING],
+    );
     assert.deepEqual(
       preStatus?.pendingActiveMigrations,
       [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS],
@@ -405,17 +415,20 @@ async function main() {
       stdout: sink,
       stderr: sink,
     });
-    assert.deepEqual(deployGuard?.pendingActiveMigrations, [STAGE_3_13C]);
+    assert.deepEqual(
+      deployGuard?.pendingActiveMigrations,
+      [...STAGE_3_13C_PENDING],
+    );
 
     const afterDeployHistory =
       await readMigrationHistoryFromDatabase(databaseUrl);
     const appliedByOverlay = afterDeployHistory
       .map((row) => row.migration_name)
       .filter((name) => !beforeDeployNames.has(name));
-    assert.deepEqual(appliedByOverlay, [STAGE_3_13C]);
+    assert.deepEqual(appliedByOverlay, [...STAGE_3_13C_PENDING]);
     assertHistory(
       afterDeployHistory,
-      new Set([...expectedPreNames, STAGE_3_13C]),
+      new Set([...expectedPreNames, ...STAGE_3_13C_PENDING]),
     );
 
     const postStatus = await executeProductionOverlay({
