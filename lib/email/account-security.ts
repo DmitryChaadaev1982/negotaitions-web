@@ -9,6 +9,10 @@ import {
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailEvent } from "@/lib/email/observability";
 import { enqueueEmail } from "@/lib/email/outbox";
+import {
+  buildPasswordResetActionUrl,
+  encryptSensitivePayload,
+} from "@/lib/email/sensitive-payload";
 import { prisma } from "@/lib/prisma";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 
@@ -18,6 +22,7 @@ type AccountEmailUser = {
   email: string;
   name: string | null;
   preferredLocale: string;
+  credentialGeneration?: number;
 };
 
 function localeFor(user: AccountEmailUser): "ru" | "en" {
@@ -38,29 +43,63 @@ function canonicalUrl(pathname: string, params?: Record<string, string>): string
   return url.toString();
 }
 
+/**
+ * Enqueue a password-reset email without persisting the raw token.
+ * The token lives only in an authenticated ciphertext until delivery/cancel.
+ */
 export async function enqueuePasswordResetEmail(params: {
   user: AccountEmailUser;
   rawToken: string;
   tokenId: string;
+  credentialGeneration: number;
   tx: EmailTransaction;
 }) {
   const config = getEmailConfig();
+  const locale = localeFor(params.user);
+  const variables = {
+    userName: displayName(params.user),
+    supportEmail: config.replyTo.security,
+    operatorName: config.operatorName,
+    reason: "account-security",
+  };
+  const encrypted = encryptSensitivePayload({
+    v: 1,
+    kind: "password-reset",
+    rawToken: params.rawToken,
+    locale,
+    variables,
+    credentialGeneration: params.credentialGeneration,
+    tokenId: params.tokenId,
+  });
+
+  // Fragment URL is computed only for in-memory delivery; never persisted here.
+  // Store a token-free placeholder URL so template validation can still run for
+  // non-sensitive subject rendering when needed by late-render workers.
+  void buildPasswordResetActionUrl(config.canonicalBaseUrl, params.rawToken);
+
   return enqueueEmail(
     {
       messageType: EmailMessageType.PASSWORD_RESET,
       category: EmailMessageCategory.SECURITY,
       recipientEmail: params.user.email,
       userId: params.user.id,
-      locale: localeFor(params.user),
+      locale,
       templateKey: "password-reset",
+      // Placeholder variables without the raw token. Worker re-renders from
+      // the encrypted payload immediately before provider dispatch.
       variables: {
-        userName: displayName(params.user),
-        actionUrl: canonicalUrl("/reset-password", { token: params.rawToken }),
-        supportEmail: config.replyTo.security,
-        operatorName: config.operatorName,
-        reason: "account-security",
+        ...variables,
+        actionUrl: new URL("/reset-password", config.canonicalBaseUrl).toString(),
       },
       idempotencyKey: `password-reset:${params.tokenId}`,
+      relatedTokenId: params.tokenId,
+      deferSensitiveRender: true,
+      sensitivePayload: encrypted,
+      metadata: {
+        credentialGeneration: params.credentialGeneration,
+        passwordResetTokenId: params.tokenId,
+        sensitive: true,
+      },
     },
     params.tx,
   );

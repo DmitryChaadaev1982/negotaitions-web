@@ -29,6 +29,10 @@ function sanitizeMetadata(
   if (json.length > 4096) {
     throw new Error("Email metadata is too large.");
   }
+  // Defense-in-depth: refuse metadata that looks like it embeds a raw reset token.
+  if (/\b[a-f0-9]{64}\b/i.test(json) && /token/i.test(json)) {
+    throw new Error("Email metadata must not contain reset token material.");
+  }
   return JSON.parse(json) as Prisma.InputJsonValue;
 }
 
@@ -54,11 +58,48 @@ export async function enqueueEmail(
     throw new Error("Invalid email idempotency key.");
   }
 
-  const rendered = renderEmailTemplate({
-    key: input.templateKey,
-    locale,
-    variables: input.variables,
-  });
+  const deferSensitive = Boolean(input.deferSensitiveRender);
+  if (deferSensitive && !input.sensitivePayload) {
+    throw new Error("Deferred sensitive render requires an encrypted payload.");
+  }
+
+  let renderedSubject: string | null = null;
+  let renderedTextBody: string | null = null;
+  let renderedHtmlBody: string | null = null;
+  let templateVersion = template.metadata.version;
+
+  if (!deferSensitive) {
+    const rendered = renderEmailTemplate({
+      key: input.templateKey,
+      locale,
+      variables: input.variables,
+    });
+    renderedSubject = rendered.subject;
+    renderedTextBody = rendered.textBody;
+    renderedHtmlBody = rendered.htmlBody;
+    templateVersion = rendered.templateVersion;
+  } else {
+    // Persist only a token-free subject for operations visibility.
+    // Bodies stay null until late-render at dispatch (then cleared after send).
+    const rendered = renderEmailTemplate({
+      key: input.templateKey,
+      locale,
+      variables: input.variables,
+    });
+    renderedSubject = rendered.subject;
+    templateVersion = rendered.templateVersion;
+    // Intentionally discard bodies that may still contain a placeholder URL
+    // without a token — never store the raw token.
+    if (
+      rendered.textBody.includes(input.variables.actionUrl ?? "") === false &&
+      /[a-f0-9]{64}/i.test(rendered.textBody)
+    ) {
+      throw new Error("Refusing to enqueue password-reset content with raw token material.");
+    }
+    renderedTextBody = null;
+    renderedHtmlBody = null;
+  }
+
   const fromAddress = config.from[template.metadata.defaultSender];
   const replyToAddress = config.replyTo[template.metadata.defaultReplyTo];
   const suppression = await evaluateSuppression({
@@ -83,10 +124,14 @@ export async function enqueueEmail(
         replyToAddress,
         locale,
         templateKey: input.templateKey,
-        templateVersion: rendered.templateVersion,
-        renderedSubject: rendered.subject,
-        renderedTextBody: rendered.textBody,
-        renderedHtmlBody: rendered.htmlBody,
+        templateVersion,
+        renderedSubject,
+        renderedTextBody,
+        renderedHtmlBody,
+        sensitivePayloadCiphertext: input.sensitivePayload?.ciphertext ?? null,
+        sensitivePayloadNonce: input.sensitivePayload?.nonce ?? null,
+        sensitivePayloadClearedAt: null,
+        relatedTokenId: input.relatedTokenId ?? null,
         metadata: sanitizeMetadata({
           ...(input.metadata ?? {}),
           suppressionReason: suppression.reason ?? undefined,

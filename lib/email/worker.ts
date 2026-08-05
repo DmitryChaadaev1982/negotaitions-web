@@ -3,12 +3,23 @@ import crypto from "node:crypto";
 import {
   EmailDeliveryAttemptStatus,
   EmailMessageStatus,
+  EmailMessageType,
   type EmailDeliveryAttempt,
   type Prisma,
 } from "@/app/generated/prisma/client";
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailConfigurationFailure, logEmailEvent, safeRecipient } from "@/lib/email/observability";
+import {
+  cancelStalePasswordResetMessage,
+  evaluatePasswordResetDispatchEligibility,
+} from "@/lib/email/password-reset-dispatch";
 import { createEmailProvider } from "@/lib/email/provider";
+import { renderEmailTemplate } from "@/lib/email/renderer";
+import {
+  buildPasswordResetActionUrl,
+  decryptSensitivePayload,
+  SensitivePayloadError,
+} from "@/lib/email/sensitive-payload";
 import { evaluateSuppression } from "@/lib/email/suppression";
 import type { EmailProvider } from "@/lib/email/types";
 import { prisma } from "@/lib/prisma";
@@ -26,9 +37,20 @@ export type EmailDeliverySweepResult = {
   finalFailures: number;
   acceptanceUnknown: number;
   suppressed: number;
+  cancelled: number;
   skipped: number;
   recoveredStale: number;
   deliveryDisabled: boolean;
+};
+
+export type EmailDeliverySweepOptions = {
+  provider?: EmailProvider;
+  limit?: number;
+  beforeSuppressionRecheck?: (messageId: string) => Promise<void>;
+  /** When true, skip normal claim/send and only recover leases (canary isolation). */
+  leaseRecoveryOnly?: boolean;
+  /** Deliver exactly one explicitly selected message id (canary). */
+  onlyMessageId?: string;
 };
 
 function toJsonValue(
@@ -203,6 +225,7 @@ async function finalizeAccepted(params: {
   providerMessageId: string;
   acceptedAt: Date;
   metadata?: Record<string, unknown>;
+  clearSensitivePayload?: boolean;
 }) {
   const updated = await prisma.$transaction(async (tx) => {
     const messageUpdate = await tx.emailMessage.updateMany({
@@ -222,6 +245,15 @@ async function finalizeAccepted(params: {
         processingAt: null,
         lastErrorCode: null,
         lastErrorMessage: null,
+        ...(params.clearSensitivePayload
+          ? {
+              sensitivePayloadCiphertext: null,
+              sensitivePayloadNonce: null,
+              sensitivePayloadClearedAt: params.acceptedAt,
+              renderedTextBody: null,
+              renderedHtmlBody: null,
+            }
+          : {}),
       },
     });
     if (messageUpdate.count === 0) return false;
@@ -295,11 +327,9 @@ async function finalizeFailure(params: {
   return updated;
 }
 
-export async function runEmailDeliverySweep(params?: {
-  provider?: EmailProvider;
-  limit?: number;
-  beforeSuppressionRecheck?: (messageId: string) => Promise<void>;
-}): Promise<EmailDeliverySweepResult> {
+export async function runEmailDeliverySweep(
+  params?: EmailDeliverySweepOptions,
+): Promise<EmailDeliverySweepResult> {
   const config = getEmailConfig();
   const limit = Math.max(1, Math.min(params?.limit ?? config.workerBatchSize, 500));
   if (!config.deliveryEnabled) {
@@ -312,6 +342,7 @@ export async function runEmailDeliverySweep(params?: {
       finalFailures: 0,
       acceptanceUnknown: 0,
       suppressed: 0,
+      cancelled: 0,
       skipped: 0,
       recoveredStale: 0,
       deliveryDisabled: true,
@@ -321,15 +352,34 @@ export async function runEmailDeliverySweep(params?: {
   const provider = params?.provider ?? createEmailProvider();
   const now = new Date();
   const recoveredStale = await recoverStaleProcessing(now, limit);
-  const candidates = await prisma.emailMessage.findMany({
-    where: {
-      status: { in: CLAIMABLE_STATUSES as unknown as EmailMessageStatus[] },
-      OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
-    },
-    orderBy: [{ nextAttemptAt: "asc" }, { createdAt: "asc" }],
-    take: limit,
-    select: { id: true },
-  });
+
+  if (params?.leaseRecoveryOnly) {
+    return {
+      scanned: 0,
+      claimed: 0,
+      accepted: 0,
+      retryableFailures: 0,
+      finalFailures: 0,
+      acceptanceUnknown: 0,
+      suppressed: 0,
+      cancelled: 0,
+      skipped: 0,
+      recoveredStale,
+      deliveryDisabled: false,
+    };
+  }
+
+  const candidates = params?.onlyMessageId
+    ? [{ id: params.onlyMessageId }]
+    : await prisma.emailMessage.findMany({
+        where: {
+          status: { in: CLAIMABLE_STATUSES as unknown as EmailMessageStatus[] },
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+        },
+        orderBy: [{ nextAttemptAt: "asc" }, { createdAt: "asc" }],
+        take: limit,
+        select: { id: true },
+      });
 
   let claimed = 0;
   let accepted = 0;
@@ -337,6 +387,7 @@ export async function runEmailDeliverySweep(params?: {
   let finalFailures = 0;
   let acceptanceUnknown = 0;
   let suppressed = 0;
+  let cancelled = 0;
   let skipped = 0;
 
   for (const candidate of candidates) {
@@ -351,6 +402,34 @@ export async function runEmailDeliverySweep(params?: {
     }
     claimed += 1;
     const claimToken = claimedMessage.claimToken;
+    const isPasswordReset =
+      claimedMessage.messageType === EmailMessageType.PASSWORD_RESET;
+
+    if (isPasswordReset) {
+      const metadata =
+        claimedMessage.metadata && typeof claimedMessage.metadata === "object"
+          ? (claimedMessage.metadata as Record<string, unknown>)
+          : {};
+      const expectedGeneration =
+        typeof metadata.credentialGeneration === "number"
+          ? metadata.credentialGeneration
+          : null;
+      const eligibility = await evaluatePasswordResetDispatchEligibility({
+        relatedTokenId: claimedMessage.relatedTokenId,
+        userId: claimedMessage.userId,
+        expectedCredentialGeneration: expectedGeneration,
+      });
+      if (!eligibility.ok) {
+        const transitioned = await cancelStalePasswordResetMessage({
+          messageId: claimedMessage.id,
+          claimToken,
+          reason: eligibility.reason,
+        });
+        if (transitioned) cancelled += 1;
+        else skipped += 1;
+        continue;
+      }
+    }
 
     await params?.beforeSuppressionRecheck?.(claimedMessage.id);
     const suppression = await evaluateSuppression({
@@ -364,8 +443,19 @@ export async function runEmailDeliverySweep(params?: {
         suppressionId: suppression.suppressionId,
         reason: suppression.reason,
       });
-      if (transitioned) suppressed += 1;
-      else skipped += 1;
+      if (transitioned) {
+        if (isPasswordReset) {
+          await prisma.emailMessage.updateMany({
+            where: { id: claimedMessage.id },
+            data: {
+              sensitivePayloadCiphertext: null,
+              sensitivePayloadNonce: null,
+              sensitivePayloadClearedAt: new Date(),
+            },
+          });
+        }
+        suppressed += 1;
+      } else skipped += 1;
       continue;
     }
 
@@ -382,11 +472,43 @@ export async function runEmailDeliverySweep(params?: {
     const { attempt, attemptNumber } = ownedAttempt;
 
     try {
+      let subject = claimedMessage.renderedSubject;
+      let textBody = claimedMessage.renderedTextBody;
+      let htmlBody = claimedMessage.renderedHtmlBody;
+
+      if (isPasswordReset) {
+        if (
+          !claimedMessage.sensitivePayloadCiphertext ||
+          !claimedMessage.sensitivePayloadNonce
+        ) {
+          throw new SensitivePayloadError("Missing sensitive payload for password reset.");
+        }
+        const payload = decryptSensitivePayload({
+          ciphertext: claimedMessage.sensitivePayloadCiphertext,
+          nonce: claimedMessage.sensitivePayloadNonce,
+        });
+        const actionUrl = buildPasswordResetActionUrl(
+          config.canonicalBaseUrl,
+          payload.rawToken,
+        );
+        const rendered = renderEmailTemplate({
+          key: "password-reset",
+          locale: payload.locale,
+          variables: {
+            ...payload.variables,
+            actionUrl,
+          },
+        });
+        subject = rendered.subject;
+        textBody = rendered.textBody;
+        htmlBody = rendered.htmlBody;
+      }
+
       if (
         !claimedMessage.recipientEmail ||
-        !claimedMessage.renderedSubject ||
-        !claimedMessage.renderedTextBody ||
-        !claimedMessage.renderedHtmlBody
+        !subject ||
+        !textBody ||
+        !htmlBody
       ) {
         throw new Error("EMAIL_CONTENT_UNAVAILABLE");
       }
@@ -396,9 +518,9 @@ export async function runEmailDeliverySweep(params?: {
         recipientEmail: claimedMessage.recipientEmail,
         fromAddress: claimedMessage.fromAddress,
         replyToAddress: claimedMessage.replyToAddress,
-        subject: claimedMessage.renderedSubject,
-        textBody: claimedMessage.renderedTextBody,
-        htmlBody: claimedMessage.renderedHtmlBody,
+        subject,
+        textBody,
+        htmlBody,
         idempotencyKey: claimedMessage.idempotencyKey,
       });
 
@@ -411,6 +533,7 @@ export async function runEmailDeliverySweep(params?: {
           providerMessageId: result.providerMessageId,
           acceptedAt: result.acceptedAt,
           metadata: result.metadata,
+          clearSensitivePayload: isPasswordReset,
         });
         if (!updated) {
           skipped += 1;
@@ -476,8 +599,10 @@ export async function runEmailDeliverySweep(params?: {
           await logEmailConfigurationFailure(result.sanitizedMessage, claimedMessage.id);
         }
       }
-    } catch {
-      const retryable = attemptNumber < config.maxAttempts;
+    } catch (error) {
+      const isSensitiveFailure = error instanceof SensitivePayloadError;
+      const retryable =
+        !isSensitiveFailure && attemptNumber < config.maxAttempts;
       const updated = await finalizeFailure({
         messageId: claimedMessage.id,
         claimToken,
@@ -491,9 +616,23 @@ export async function runEmailDeliverySweep(params?: {
         retryable,
         nextAttemptAt: retryable ? calculateRetryAt(attemptNumber) : null,
         terminalFailureAt: retryable ? null : new Date(),
-        errorCode: "WORKER_EXCEPTION",
-        sanitizedMessage: "Email worker failed before provider acceptance could be confirmed.",
+        errorCode: isSensitiveFailure
+          ? "SENSITIVE_PAYLOAD_ERROR"
+          : "WORKER_EXCEPTION",
+        sanitizedMessage: isSensitiveFailure
+          ? "Sensitive payload could not be decrypted for delivery."
+          : "Email worker failed before provider acceptance could be confirmed.",
       });
+      if (isSensitiveFailure) {
+        await prisma.emailMessage.updateMany({
+          where: { id: claimedMessage.id },
+          data: {
+            sensitivePayloadCiphertext: null,
+            sensitivePayloadNonce: null,
+            sensitivePayloadClearedAt: new Date(),
+          },
+        });
+      }
       if (!updated) {
         skipped += 1;
         continue;
@@ -502,7 +641,9 @@ export async function runEmailDeliverySweep(params?: {
         messageId: claimedMessage.id,
         attemptNumber,
         recipient: safeRecipient(claimedMessage.recipientEmail),
-        errorCode: "WORKER_EXCEPTION",
+        errorCode: isSensitiveFailure
+          ? "SENSITIVE_PAYLOAD_ERROR"
+          : "WORKER_EXCEPTION",
       });
       if (retryable) retryableFailures += 1;
       else finalFailures += 1;
@@ -517,6 +658,7 @@ export async function runEmailDeliverySweep(params?: {
     finalFailures,
     acceptanceUnknown,
     suppressed,
+    cancelled,
     skipped,
     recoveredStale,
     deliveryDisabled: false,

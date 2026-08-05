@@ -106,6 +106,10 @@ export type EnqueueEmailInput = {
   variables: Record<string, string>;
   idempotencyKey: string;
   metadata?: Record<string, unknown>;
+  /** When true, do not persist rendered bodies containing secrets. */
+  deferSensitiveRender?: boolean;
+  sensitivePayload?: { ciphertext: string; nonce: string };
+  relatedTokenId?: string | null;
 };
 
 export type EnqueueEmailResult =
