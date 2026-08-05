@@ -114,6 +114,7 @@ export async function enqueueEmail(
   try {
     const message = await db.emailMessage.create({
       data: {
+        ...(input.id ? { id: input.id } : {}),
         messageType: input.messageType,
         category: input.category,
         status,

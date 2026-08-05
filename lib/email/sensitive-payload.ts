@@ -1,7 +1,16 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+
+import { normalizeEmailAddress } from "@/lib/email/address";
+import {
+  hashPasswordResetToken,
+  isPasswordResetTokenShape,
+} from "@/lib/auth/password-reset-token";
+import { prisma } from "@/lib/prisma";
 
 export const EMAIL_SENSITIVE_PAYLOAD_KEY_ENV = "EMAIL_SENSITIVE_PAYLOAD_KEY";
 export const EMAIL_SENSITIVE_PAYLOAD_VERSION = 1 as const;
+export const EMAIL_SENSITIVE_PAYLOAD_AAD_VERSION = 1 as const;
+export const EMAIL_SENSITIVE_PAYLOAD_PURPOSE = "PASSWORD_RESET" as const;
 
 export type PasswordResetSensitivePayload = {
   v: typeof EMAIL_SENSITIVE_PAYLOAD_VERSION;
@@ -16,6 +25,20 @@ export type PasswordResetSensitivePayload = {
   };
   credentialGeneration: number;
   tokenId: string;
+  userId: string;
+};
+
+/**
+ * Authenticated additional data binding ciphertext to its intended delivery
+ * identity. Field order in {@link encodeSensitivePayloadAad} is fixed.
+ */
+export type SensitivePayloadBinding = {
+  messageId: string;
+  tokenId: string;
+  userId: string;
+  credentialGeneration: number;
+  /** Normalized recipient (trim + lower-case). Never a secret. */
+  recipientNormalized: string;
 };
 
 export type EncryptedSensitivePayload = {
@@ -30,6 +53,29 @@ export class SensitivePayloadError extends Error {
   }
 }
 
+/** Application-generated EmailMessage id used before insert (AAD bootstrap). */
+export function createEmailMessageId(): string {
+  const time = Date.now().toString(36);
+  const entropy = randomBytes(10).toString("hex");
+  return `c${time}${entropy}`;
+}
+
+function isCanonicalBase64(value: string, expectedByteLength?: number): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+  if (value.length % 4 !== 0) return false;
+  let decoded: Buffer;
+  try {
+    decoded = Buffer.from(value, "base64");
+  } catch {
+    return false;
+  }
+  if (decoded.toString("base64") !== value) return false;
+  if (typeof expectedByteLength === "number" && decoded.length !== expectedByteLength) {
+    return false;
+  }
+  return true;
+}
+
 function parseKey(raw: string | undefined): Buffer {
   const trimmed = raw?.trim();
   if (!trimmed) {
@@ -37,14 +83,12 @@ function parseKey(raw: string | undefined): Buffer {
       `${EMAIL_SENSITIVE_PAYLOAD_KEY_ENV} is required for password-reset email enqueue/delivery.`,
     );
   }
-  let key: Buffer;
-  try {
-    key = Buffer.from(trimmed, "base64");
-  } catch {
+  if (!isCanonicalBase64(trimmed)) {
     throw new SensitivePayloadError(
-      `${EMAIL_SENSITIVE_PAYLOAD_KEY_ENV} must be base64-encoded.`,
+      `${EMAIL_SENSITIVE_PAYLOAD_KEY_ENV} must be canonical base64.`,
     );
   }
+  const key = Buffer.from(trimmed, "base64");
   if (key.length !== 32) {
     throw new SensitivePayloadError(
       `${EMAIL_SENSITIVE_PAYLOAD_KEY_ENV} must decode to exactly 32 bytes.`,
@@ -55,32 +99,49 @@ function parseKey(raw: string | undefined): Buffer {
 
 /**
  * Resolve the dedicated AEAD key for sensitive email payloads.
- * Fail closed in production when absent/malformed.
- * Local/test may set a deterministic key via env bootstrap.
+ * Fail closed when absent/malformed.
  */
 export function resolveSensitivePayloadKey(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): Buffer {
-  const raw = env[EMAIL_SENSITIVE_PAYLOAD_KEY_ENV];
-  try {
-    return parseKey(raw);
-  } catch (error) {
-    if (env.NODE_ENV === "production") {
-      throw error;
-    }
-    // Non-production: still fail closed if explicitly empty after trim checks
-    // above; parseKey already throws. Re-throw for clarity.
-    throw error;
-  }
+  return parseKey(env[EMAIL_SENSITIVE_PAYLOAD_KEY_ENV]);
+}
+
+/**
+ * Canonical, versioned AAD encoding. Fixed key order — never ambiguous concat.
+ * Secrets and raw tokens must never appear here.
+ */
+export function encodeSensitivePayloadAad(binding: SensitivePayloadBinding): Buffer {
+  const recipientNormalized = normalizeEmailAddress(binding.recipientNormalized);
+  const canonical = {
+    v: EMAIL_SENSITIVE_PAYLOAD_AAD_VERSION,
+    purpose: EMAIL_SENSITIVE_PAYLOAD_PURPOSE,
+    messageId: binding.messageId,
+    tokenId: binding.tokenId,
+    userId: binding.userId,
+    credentialGeneration: binding.credentialGeneration,
+    recipientNormalized,
+    payloadKind: "password-reset" as const,
+  };
+  return Buffer.from(JSON.stringify(canonical), "utf8");
 }
 
 export function encryptSensitivePayload(
   payload: PasswordResetSensitivePayload,
+  binding: SensitivePayloadBinding,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): EncryptedSensitivePayload {
+  if (
+    payload.tokenId !== binding.tokenId ||
+    payload.userId !== binding.userId ||
+    payload.credentialGeneration !== binding.credentialGeneration
+  ) {
+    throw new SensitivePayloadError("Sensitive payload fields do not match binding.");
+  }
   const key = resolveSensitivePayloadKey(env);
   const nonce = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
+  cipher.setAAD(encodeSensitivePayloadAad(binding));
   const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -92,17 +153,15 @@ export function encryptSensitivePayload(
 
 export function decryptSensitivePayload(
   input: EncryptedSensitivePayload,
+  binding: SensitivePayloadBinding,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): PasswordResetSensitivePayload {
   const key = resolveSensitivePayloadKey(env);
-  let ciphertextWithTag: Buffer;
-  let nonce: Buffer;
-  try {
-    ciphertextWithTag = Buffer.from(input.ciphertext, "base64");
-    nonce = Buffer.from(input.nonce, "base64");
-  } catch {
+  if (!isCanonicalBase64(input.ciphertext) || !isCanonicalBase64(input.nonce, 12)) {
     throw new SensitivePayloadError("Invalid sensitive payload encoding.");
   }
+  const ciphertextWithTag = Buffer.from(input.ciphertext, "base64");
+  const nonce = Buffer.from(input.nonce, "base64");
   if (nonce.length !== 12 || ciphertextWithTag.length <= 16) {
     throw new SensitivePayloadError("Invalid sensitive payload framing.");
   }
@@ -110,6 +169,7 @@ export function decryptSensitivePayload(
   const tag = ciphertextWithTag.subarray(-16);
   try {
     const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+    decipher.setAAD(encodeSensitivePayloadAad(binding));
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([
       decipher.update(ciphertext),
@@ -120,14 +180,85 @@ export function decryptSensitivePayload(
       parsed?.v !== EMAIL_SENSITIVE_PAYLOAD_VERSION ||
       parsed.kind !== "password-reset" ||
       typeof parsed.rawToken !== "string" ||
-      typeof parsed.tokenId !== "string"
+      typeof parsed.tokenId !== "string" ||
+      typeof parsed.userId !== "string" ||
+      typeof parsed.credentialGeneration !== "number"
     ) {
       throw new SensitivePayloadError("Unexpected sensitive payload shape.");
+    }
+    if (
+      parsed.tokenId !== binding.tokenId ||
+      parsed.userId !== binding.userId ||
+      parsed.credentialGeneration !== binding.credentialGeneration
+    ) {
+      throw new SensitivePayloadError("Decrypted payload does not match binding.");
+    }
+    if (!isPasswordResetTokenShape(parsed.rawToken)) {
+      throw new SensitivePayloadError("Unexpected sensitive payload token shape.");
     }
     return parsed;
   } catch (error) {
     if (error instanceof SensitivePayloadError) throw error;
     throw new SensitivePayloadError("Sensitive payload decryption failed.");
+  }
+}
+
+function timingSafeEqualHex(left: string, right: string): boolean {
+  const leftBuf = Buffer.from(left, "utf8");
+  const rightBuf = Buffer.from(right, "utf8");
+  if (leftBuf.length !== rightBuf.length) {
+    // Keep a constant-ish compare against a derived buffer to avoid leaking length
+    // via early return timing of unequal hashes of equal expected size.
+    const dig = createHash("sha256").update(leftBuf).digest();
+    timingSafeEqual(dig, dig);
+    return false;
+  }
+  return timingSafeEqual(leftBuf, rightBuf);
+}
+
+/**
+ * After GCM authentication, re-validate the decrypted token against the durable
+ * PasswordResetToken row and message association before provider.send.
+ */
+export async function assertPasswordResetPayloadDeliveryBinding(params: {
+  payload: PasswordResetSensitivePayload;
+  binding: SensitivePayloadBinding;
+  messageId: string;
+  relatedTokenId: string | null | undefined;
+  messageUserId: string | null | undefined;
+  recipientEmailNormalized: string;
+}): Promise<void> {
+  if (params.binding.messageId !== params.messageId) {
+    throw new SensitivePayloadError("Message identity mismatch.");
+  }
+  if (!params.relatedTokenId || params.relatedTokenId !== params.payload.tokenId) {
+    throw new SensitivePayloadError("Token identity mismatch.");
+  }
+  if (!params.messageUserId || params.messageUserId !== params.payload.userId) {
+    throw new SensitivePayloadError("User identity mismatch.");
+  }
+  if (
+    normalizeEmailAddress(params.recipientEmailNormalized) !==
+    normalizeEmailAddress(params.binding.recipientNormalized)
+  ) {
+    throw new SensitivePayloadError("Recipient identity mismatch.");
+  }
+
+  const token = await prisma.passwordResetToken.findUnique({
+    where: { id: params.payload.tokenId },
+    select: {
+      id: true,
+      userId: true,
+      tokenHash: true,
+    },
+  });
+  if (!token || token.userId !== params.payload.userId) {
+    throw new SensitivePayloadError("Token row association mismatch.");
+  }
+
+  const computedHash = hashPasswordResetToken(params.payload.rawToken);
+  if (!timingSafeEqualHex(computedHash, token.tokenHash)) {
+    throw new SensitivePayloadError("Token hash mismatch.");
   }
 }
 

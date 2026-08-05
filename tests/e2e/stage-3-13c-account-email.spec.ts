@@ -238,11 +238,18 @@ test("browser completes reset and revokes prior authentication", async ({
   const forgotResponse = await requestForgotPassword(request, user.email);
   expect(forgotResponse.status()).toBe(200);
   const resetMessages = await query<{
+    id: string;
+    userId: string | null;
+    relatedTokenId: string | null;
+    recipientEmailNormalized: string;
     renderedTextBody: string | null;
     sensitivePayloadCiphertext: string | null;
     sensitivePayloadNonce: string | null;
+    metadata: unknown;
   }>(
-    `SELECT "renderedTextBody", "sensitivePayloadCiphertext", "sensitivePayloadNonce"
+    `SELECT "id", "userId", "relatedTokenId", "recipientEmailNormalized",
+            "renderedTextBody", "sensitivePayloadCiphertext", "sensitivePayloadNonce",
+            "metadata"
      FROM "EmailMessage"
      WHERE "userId" = $1 AND "messageType" = 'PASSWORD_RESET'
      ORDER BY "createdAt" DESC
@@ -256,10 +263,28 @@ test("browser completes reset and revokes prior authentication", async ({
   const { decryptSensitivePayload } = await import(
     "@/lib/email/sensitive-payload"
   );
-  const payload = decryptSensitivePayload({
-    ciphertext: resetMessages[0]!.sensitivePayloadCiphertext!,
-    nonce: resetMessages[0]!.sensitivePayloadNonce!,
-  });
+  const msg = resetMessages[0]!;
+  const metadata =
+    msg.metadata && typeof msg.metadata === "object"
+      ? (msg.metadata as Record<string, unknown>)
+      : {};
+  const credentialGeneration =
+    typeof metadata.credentialGeneration === "number"
+      ? metadata.credentialGeneration
+      : 0;
+  const payload = decryptSensitivePayload(
+    {
+      ciphertext: msg.sensitivePayloadCiphertext!,
+      nonce: msg.sensitivePayloadNonce!,
+    },
+    {
+      messageId: msg.id,
+      tokenId: msg.relatedTokenId!,
+      userId: msg.userId!,
+      credentialGeneration,
+      recipientNormalized: msg.recipientEmailNormalized,
+    },
+  );
   const resetToken = payload.rawToken;
   expect(resetToken).toMatch(/^[a-f0-9]{64}$/);
 

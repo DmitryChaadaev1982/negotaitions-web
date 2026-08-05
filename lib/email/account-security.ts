@@ -9,8 +9,10 @@ import {
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailEvent } from "@/lib/email/observability";
 import { enqueueEmail } from "@/lib/email/outbox";
+import { normalizeEmailAddress } from "@/lib/email/address";
 import {
   buildPasswordResetActionUrl,
+  createEmailMessageId,
   encryptSensitivePayload,
 } from "@/lib/email/sensitive-payload";
 import { prisma } from "@/lib/prisma";
@@ -62,15 +64,30 @@ export async function enqueuePasswordResetEmail(params: {
     operatorName: config.operatorName,
     reason: "account-security",
   };
-  const encrypted = encryptSensitivePayload({
-    v: 1,
-    kind: "password-reset",
-    rawToken: params.rawToken,
-    locale,
-    variables,
-    credentialGeneration: params.credentialGeneration,
+  // Preallocate EmailMessage.id so AES-GCM AAD can bind ciphertext to the row
+  // before insert. Ciphertext is never committed without this binding.
+  const messageId = createEmailMessageId();
+  const recipientNormalized = normalizeEmailAddress(params.user.email);
+  const binding = {
+    messageId,
     tokenId: params.tokenId,
-  });
+    userId: params.user.id,
+    credentialGeneration: params.credentialGeneration,
+    recipientNormalized,
+  };
+  const encrypted = encryptSensitivePayload(
+    {
+      v: 1,
+      kind: "password-reset",
+      rawToken: params.rawToken,
+      locale,
+      variables,
+      credentialGeneration: params.credentialGeneration,
+      tokenId: params.tokenId,
+      userId: params.user.id,
+    },
+    binding,
+  );
 
   // Fragment URL is computed only for in-memory delivery; never persisted here.
   // Store a token-free placeholder URL so template validation can still run for
@@ -79,6 +96,7 @@ export async function enqueuePasswordResetEmail(params: {
 
   return enqueueEmail(
     {
+      id: messageId,
       messageType: EmailMessageType.PASSWORD_RESET,
       category: EmailMessageCategory.SECURITY,
       recipientEmail: params.user.email,

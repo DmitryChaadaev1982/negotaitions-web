@@ -97,6 +97,8 @@ export interface EmailProvider {
 }
 
 export type EnqueueEmailInput = {
+  /** Optional preallocated id (required for sensitive AAD-bound payloads). */
+  id?: string;
   messageType: EmailMessageType;
   category: EmailMessageCategory;
   recipientEmail: string;

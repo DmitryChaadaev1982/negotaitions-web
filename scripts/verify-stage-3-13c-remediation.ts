@@ -481,7 +481,14 @@ async function main() {
   // -------------------------------------------------------------------------
   // 10. Sensitive payload decrypt round-trip (in-process, using run key)
   // -------------------------------------------------------------------------
-  const { encryptSensitivePayload } = sensitivePayloadModule;
+  const { encryptSensitivePayload, createEmailMessageId } = sensitivePayloadModule;
+  const binding = {
+    messageId: createEmailMessageId(),
+    tokenId: "test-token-id",
+    userId: "test-user-id",
+    credentialGeneration: 1,
+    recipientNormalized: "test@example.com",
+  };
   const testPayload = {
     v: 1 as const,
     kind: "password-reset" as const,
@@ -495,9 +502,10 @@ async function main() {
     },
     credentialGeneration: 1,
     tokenId: "test-token-id",
+    userId: "test-user-id",
   };
-  const encrypted = encryptSensitivePayload(testPayload);
-  const decrypted = decryptSensitivePayload(encrypted);
+  const encrypted = encryptSensitivePayload(testPayload, binding);
+  const decrypted = decryptSensitivePayload(encrypted, binding);
   assert.equal(decrypted.rawToken, testPayload.rawToken, "decrypt must recover rawToken");
   // Confirm ciphertext doesn't contain rawToken
   assert.ok(!encrypted.ciphertext.includes(testPayload.rawToken), "rawToken absent from ciphertext");
