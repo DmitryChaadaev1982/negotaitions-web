@@ -284,10 +284,11 @@ test("sanitized output never logs DATABASE_URL", () => {
 
 test("Prisma status accepts singular and plural expected-pending output", () => {
   const pending = [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS];
+  // Singular phrasing is only valid when exactly one migration is expected.
   assert.equal(
     isExpectedPendingStatusOutput(
       `Following migration have not yet been applied:\n${pending[0]}`,
-      pending,
+      [pending[0]!],
     ),
     true,
   );
