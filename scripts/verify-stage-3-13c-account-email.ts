@@ -1,33 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
-const SAFE_DATABASE_MARKER =
-  /(?:stage[_-]?3[_-]?13c|(?:^|[_-])test(?:ing)?(?:$|[_-]))/i;
-const PRODUCTION_MARKER =
-  /(?:^|[_-])(?:prod|production|main|primary|master)(?:$|[_-])|negotaitions_prod|negotiations_prod/i;
+import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
 
-function assertDisposableDatabaseUrl(raw: string | undefined): string {
-  assert.ok(raw, "DATABASE_URL is required.");
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-  assert.ok(
-    url.protocol === "postgresql:" || url.protocol === "postgres:",
-    "DATABASE_URL must use PostgreSQL.",
-  );
-  const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  assert.ok(LOCAL_HOSTS.has(url.hostname.toLowerCase()), "Database host must be local.");
-  assert.ok(database && SAFE_DATABASE_MARKER.test(database), "Database must have a Stage 3.13C/test marker.");
-  assert.ok(!PRODUCTION_MARKER.test(database), "Production-like database names are refused.");
-  return raw;
-}
-
+let expectedSchema: string;
 try {
-  assertDisposableDatabaseUrl(process.env.DATABASE_URL);
+  expectedSchema =
+    assertApprovedStage313cVerifierChildEnvironment(process.env).schemaName;
 } catch {
   console.error(JSON.stringify({ ok: false, counts: { safetyRefusals: 1 } }));
   process.exit(1);
@@ -86,6 +65,7 @@ const ownedEmails: string[] = [];
 const pendingRegistrationIds: string[] = [];
 const counts: Record<string, number> = {};
 let prisma: (typeof import("@/lib/prisma"))["prisma"] | undefined;
+let currentCase = "bootstrap";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -124,6 +104,7 @@ async function main() {
     addressModule,
     generated,
     accountEmail,
+    credentialFence,
   ] = await Promise.all([
     import("@/lib/prisma"),
     import("@/lib/auth/account-security"),
@@ -135,6 +116,7 @@ async function main() {
     import("@/lib/email/address"),
     import("@/app/generated/prisma/client"),
     import("@/lib/email/account-security"),
+    import("@/lib/auth/credential-dispatch-fence"),
   ]);
   prisma = prismaModule.prisma;
   const { requestPasswordReset, resetPasswordWithToken } = accountSecurity;
@@ -146,7 +128,16 @@ async function main() {
   const { normalizeEmailAddress } = addressModule;
   const { EmailSuppressionReason, EmailSuppressionSource, EmailMessageStatus } = generated;
   const { notifyActiveAdminsOfPendingRegistration } = accountEmail;
+  const {
+    clearCredentialDispatchFenceHooksForTests,
+    setCredentialDispatchFenceHooksForTests,
+  } = credentialFence;
 
+  currentCase = "prisma_search_path";
+  const searchPath = await prisma.$queryRaw<{ schema_name: string | null }[]>`
+    SELECT current_schema() AS schema_name
+  `;
+  assert.equal(searchPath[0]?.schema_name, expectedSchema);
   await prisma.$queryRaw`SELECT 1`;
   const originalPassword = `Old-${randomBytes(12).toString("base64url")}!`;
   const newPassword = `New-${randomBytes(12).toString("base64url")}!`;
@@ -209,27 +200,56 @@ async function main() {
     });
   }
 
+  currentCase = "active_password_reset_request";
   const active = await createUser("active-request", "ACTIVE");
+  record(
+    "activeUsersObserved",
+    await prisma.user.count({ where: { email: active.email, status: "ACTIVE" } }),
+  );
+  const rawActiveUsers = await prisma.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*) AS count
+    FROM "User"
+    WHERE id = ${active.id}
+  `;
+  record("rawActiveUsersObserved", Number(rawActiveUsers[0]?.count ?? 0));
+  let activeFenceAcquisitions = 0;
+  setCredentialDispatchFenceHooksForTests({
+    afterFenceAcquired: () => {
+      activeFenceAcquisitions += 1;
+    },
+  });
+  currentCase = "active_password_reset_dispatch";
   await requestPasswordReset({ normalizedEmail: active.email });
+  clearCredentialDispatchFenceHooksForTests();
+  record("activeFenceAcquisitions", activeFenceAcquisitions);
+  currentCase = "active_password_reset_persistence";
   const activeTokens = await prisma.passwordResetToken.findMany({
     where: { userId: active.id },
   });
   const activeMessages = await messagesFor(active.id, "PASSWORD_RESET");
+  currentCase = "active_password_reset_counts";
+  record("activeTokensObserved", activeTokens.length);
+  record("activeMessagesObserved", activeMessages.length);
   assert.equal(activeTokens.length, 1);
   assert.equal(activeMessages.length, 1);
   const activeMessage = activeMessages[0]!;
+  currentCase = "active_password_reset_status";
   assert.ok(
     activeMessage.status === EmailMessageStatus.PENDING ||
       activeMessage.status === EmailMessageStatus.SUPPRESSED,
   );
+  currentCase = "active_password_reset_attempts";
   assert.equal(activeMessage.attempts.length, 0);
   assert.equal(activeMessage.attemptCount, 0);
+  currentCase = "active_password_reset_deferred_bodies";
   // After remediation: bodies are null before worker (deferred render).
   assert.equal(activeMessage.renderedTextBody, null, "renderedTextBody must be null before worker");
   assert.equal(activeMessage.renderedHtmlBody, null, "renderedHtmlBody must be null before worker");
+  currentCase = "active_password_reset_sensitive_payload";
   // Sensitive payload must be present (ciphertext) and token must not appear in DB.
   assert.ok(activeMessage.sensitivePayloadCiphertext, "sensitive payload ciphertext must be present");
   assert.ok(activeMessage.sensitivePayloadNonce, "sensitive payload nonce must be present");
+  currentCase = "active_password_reset_metadata";
   // The raw token must not be in metadata or any text column.
   assert.ok(!JSON.stringify(activeTokens[0]).includes(activeTokens[0]!.tokenHash.slice(0, 8) + "nope"));
   assert.ok(!JSON.stringify(activeMessage.metadata ?? {}).includes("rawToken"));
@@ -237,6 +257,7 @@ async function main() {
   record("activeRequestMessages", activeMessages.length);
   record("activeRequestAttempts", activeMessage.attempts.length);
 
+  currentCase = "password_reset_supersession";
   const supersededUser = await createUser("superseded", "ACTIVE");
   const previous = await createResetToken(supersededUser.id, {
     createdAt: new Date(Date.now() - 2 * 60_000),
@@ -258,6 +279,7 @@ async function main() {
     supersededRows.filter((row) => !row.usedAt && !row.revokedAt && row.expiresAt > new Date()).length,
   );
 
+  currentCase = "ineligible_password_reset_requests";
   const blocked = await createUser("blocked-request", "BLOCKED");
   const rejected = await createUser("rejected-request", "REJECTED");
   const pending = await createUser("pending-request", "PENDING_APPROVAL");
@@ -288,6 +310,7 @@ async function main() {
   record("deniedRecoveryMessages", 2);
   record("pendingOrUnknownMessages", 0);
 
+  currentCase = "valid_password_reset";
   const resetUser = await createUser("valid-reset", "ACTIVE");
   const target = await createResetToken(resetUser.id);
   const sibling = await createResetToken(resetUser.id, {
@@ -333,6 +356,7 @@ async function main() {
   record("validResetReuseSucceeded", 0);
   record("revokedSiblingRemainedInvalid", siblingAfter.revokedAt ? 1 : 0);
 
+  currentCase = "invalid_password_reset_tokens";
   const expiredUser = await createUser("expired-token", "ACTIVE");
   const usedUser = await createUser("used-token", "ACTIVE");
   const revokedUser = await createUser("revoked-token", "ACTIVE");
@@ -357,6 +381,7 @@ async function main() {
   assert.deepEqual(invalidResults, [false, false, false, false, false]);
   record("invalidResetAccepted", invalidResults.filter(Boolean).length);
 
+  currentCase = "concurrent_password_reset";
   const concurrentUser = await createUser("concurrent-reset", "ACTIVE");
   const concurrentToken = await createResetToken(concurrentUser.id);
   const concurrentResults = await Promise.all([
@@ -386,6 +411,7 @@ async function main() {
     });
   }
 
+  currentCase = "suppression_policy";
   const unsubscribeUser = await createUser("unsubscribe", "ACTIVE");
   await suppress(unsubscribeUser, EmailSuppressionReason.UNSUBSCRIBE);
   await requestPasswordReset({ normalizedEmail: unsubscribeUser.email });
@@ -436,6 +462,7 @@ async function main() {
   record("suppressedWorkerProviderCalls", fakeProvider.sent.length);
   record("suppressedWorkerAttempts", workerAfter.attempts.length);
 
+  currentCase = "worker_late_render_delivery";
   // Worker late-render: prove fragment URL reaches FakeEmailProvider.
   const deliveryProofUser = await createUser("delivery-proof", "ACTIVE");
   await requestPasswordReset({ normalizedEmail: deliveryProofUser.email });
@@ -461,6 +488,7 @@ async function main() {
   record("fragmentUrlDelivered", 1);
   record("workerDeliveryProofAccepted", deliverySweep.accepted);
 
+  currentCase = "active_admin_notification";
   const activeAdmin = await createUser("admin-active", "ACTIVE", "ADMIN");
   const blockedAdmin = await createUser("admin-blocked", "BLOCKED", "ADMIN");
   const rejectedAdmin = await createUser("admin-rejected", "REJECTED", "ADMIN");
@@ -523,7 +551,10 @@ async function main() {
 }
 
 async function cleanup() {
+  const fence = await import("@/lib/auth/credential-dispatch-fence");
+  fence.clearCredentialDispatchFenceHooksForTests();
   if (!prisma) return;
+  await prisma.externalServiceEvent.deleteMany();
   if (pendingRegistrationIds.length > 0) {
     await prisma.emailMessage.deleteMany({
       where: {
@@ -568,7 +599,13 @@ async function run() {
   if (succeeded) {
     originalLog(JSON.stringify({ ok: true, counts }));
   } else {
-    originalError(JSON.stringify({ ok: false, counts: { ...counts, failures: 1 } }));
+    originalError(
+      JSON.stringify({
+        ok: false,
+        counts: { ...counts, failures: 1 },
+        cases: [currentCase],
+      }),
+    );
   }
 }
 

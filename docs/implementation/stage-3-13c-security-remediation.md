@@ -36,10 +36,10 @@ This document maps High and Medium findings to remediations on
   `ACCEPTANCE_UNKNOWN` messages clear recoverable payload immediately.
 - Isolated one-message canary and dry-run-by-default bounded backlog quarantine
   commands are committed. No service or timer is enabled.
-- `verify:stage313c:final-remediation` requires only the dedicated
-  `STAGE313C_DISPOSABLE_DATABASE_URL`; it never falls back to the ordinary
-  `DATABASE_URL`, exercises runtime races/provider boundaries, and proves
-  cleanup.
+- All PostgreSQL verifiers require `STAGE313C_TEST_DATABASE_URL`, explicit
+  approval, and the exact persistent verifier schema. The wrapper never falls
+  back to runtime `DATABASE_URL`; it recreates only the marked schema,
+  exercises runtime races/provider boundaries, and proves cleanup.
 
 ## Earlier Stage 3.13C-R high findings (still in force)
 
@@ -94,13 +94,11 @@ processes stopped, and forward-fix on the additive schema.
 ## Commands
 
 ```powershell
-$env:DATABASE_URL = "postgresql://stage313c:stage313c-local-only@127.0.0.1:55433/stage313c_local_test"
+npm run test:stage313c:test-database-harness
 npm run test:stage313c:high-remediation-r2
 npm run verify:stage313c:high-remediation-r2
 npm run test:stage313c:remediation
 npm run verify:stage313c:remediation
-# Set STAGE313C_DISPOSABLE_DATABASE_URL only to an explicitly approved,
-# migrated, empty-data local Stage 3.13C test database.
 npm run test:stage313c:final-remediation
 npm run verify:stage313c:final-remediation
 ```

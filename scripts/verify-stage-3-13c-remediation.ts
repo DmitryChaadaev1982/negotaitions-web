@@ -1,46 +1,23 @@
 /**
  * Stage 3.13C-R Remediation Verification Script
  *
- * Disposable local-DB safety — same pattern as verify-stage-3-13c-account-email.ts.
- * Proves all remediation assertions in a clean, owned namespace.
+ * Persistent local test-DB safety. The command wrapper recreates and migrates
+ * the one approved verifier-owned schema before invoking this script.
  *
  * Usage:
  *   tsx scripts/verify-stage-3-13c-remediation.ts
  *
- * Requires DATABASE_URL pointing at a local Stage 3.13C / test database.
+ * Requires the approved schema-scoped child DATABASE_URL from the wrapper.
  * EMAIL_SENSITIVE_PAYLOAD_KEY is generated internally for the run.
  * NO secrets are printed to stdout/stderr at any time.
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
-const SAFE_DATABASE_MARKER =
-  /(?:stage[_-]?3[_-]?13c|(?:^|[_-])test(?:ing)?(?:$|[_-]))/i;
-const PRODUCTION_MARKER =
-  /(?:^|[_-])(?:prod|production|main|primary|master)(?:$|[_-])|negotaitions_prod|negotiations_prod/i;
-
-function assertDisposableDatabaseUrl(raw: string | undefined): string {
-  assert.ok(raw, "DATABASE_URL is required.");
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-  assert.ok(
-    url.protocol === "postgresql:" || url.protocol === "postgres:",
-    "DATABASE_URL must use PostgreSQL.",
-  );
-  const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  assert.ok(LOCAL_HOSTS.has(url.hostname.toLowerCase()), "Database host must be local.");
-  assert.ok(database && SAFE_DATABASE_MARKER.test(database), "Database must have a Stage 3.13C/test marker.");
-  assert.ok(!PRODUCTION_MARKER.test(database), "Production-like database names are refused.");
-  return raw;
-}
+import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
 
 try {
-  assertDisposableDatabaseUrl(process.env.DATABASE_URL);
+  assertApprovedStage313cVerifierChildEnvironment(process.env);
 } catch {
   console.error(JSON.stringify({ ok: false, counts: { safetyRefusals: 1 } }));
   process.exit(1);

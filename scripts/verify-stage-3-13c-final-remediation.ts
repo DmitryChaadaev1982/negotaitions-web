@@ -1,7 +1,8 @@
 /**
  * Stage 3.13C-F final security verifier.
  *
- * Requires a dedicated, explicitly supplied disposable local PostgreSQL URL.
+ * Requires the approved schema-scoped URL supplied by the persistent
+ * test-database command wrapper.
  * Output is limited to case names, counters, and one opaque run id.
  */
 import assert from "node:assert/strict";
@@ -11,18 +12,11 @@ import path from "node:path";
 
 import pg from "pg";
 
-const DATABASE_ENV = "STAGE313C_DISPOSABLE_DATABASE_URL";
-const LOCAL_HOSTS = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "[::1]",
-  "0.0.0.0",
-]);
-const DISPOSABLE_MARKER =
-  /(?:stage[_-]?3[_-]?13c|final[_-]?remediation|security[_-]?test)/i;
-const PRODUCTION_MARKER =
-  /(?:^|[_-])(?:prod|production|main|primary|master)(?:$|[_-])/i;
+import {
+  assertApprovedStage313cVerifierChildEnvironment,
+  Stage313cTestDatabaseRefusal,
+  STAGE313C_VERIFIER_APPLICATION_NAME,
+} from "./stage-3-13c-test-database";
 
 class VerifierRefusal extends Error {
   constructor(public readonly code: string) {
@@ -30,43 +24,17 @@ class VerifierRefusal extends Error {
   }
 }
 
-function approvedDatabaseUrl(): string {
-  const raw = process.env[DATABASE_ENV]?.trim();
-  if (!raw) {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_URL_MISSING");
-  }
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_URL_INVALID");
-  }
-  const databaseName = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_NOT_POSTGRESQL");
-  }
-  if (!LOCAL_HOSTS.has(url.hostname.toLowerCase())) {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_NOT_LOCAL");
-  }
-  if (
-    !databaseName ||
-    databaseName.includes("/") ||
-    !DISPOSABLE_MARKER.test(databaseName) ||
-    PRODUCTION_MARKER.test(databaseName)
-  ) {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_NAME_REFUSED");
-  }
-  return raw;
-}
-
 let databaseUrl: string;
 try {
-  databaseUrl = approvedDatabaseUrl();
+  databaseUrl =
+    assertApprovedStage313cVerifierChildEnvironment(
+      process.env,
+    ).scopedDatabaseUrl;
 } catch (error) {
   const code =
-    error instanceof VerifierRefusal
+    error instanceof Stage313cTestDatabaseRefusal
       ? error.code
-      : "DISPOSABLE_DATABASE_REFUSED";
+      : "TEST_DATABASE_REFUSED";
   console.error(
     JSON.stringify({
       ok: false,
@@ -88,7 +56,7 @@ delete process.env.YANDEX_POSTBOX_ACCESS_KEY_ID;
 delete process.env.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
 
 const runId = randomBytes(12).toString("hex");
-const marker = `stage313cf_${runId}`;
+const marker = `stage313cf_${runId.slice(0, 12)}`;
 const cases: string[] = [];
 const counts: Record<string, number> = {};
 const ownedUserIds: string[] = [];
@@ -205,7 +173,7 @@ async function main(): Promise<void> {
     prisma.userConsent.count(),
   ]);
   if (preexisting.some((value) => value !== 0)) {
-    throw new VerifierRefusal("DISPOSABLE_DATABASE_DATA_NOT_EMPTY");
+    throw new VerifierRefusal("VERIFIER_SCHEMA_DATA_NOT_EMPTY");
   }
 
   const originalPassword = `Old-${randomBytes(12).toString("base64url")}!`;
@@ -470,9 +438,13 @@ async function main(): Promise<void> {
     const sessionPromise = createUserSession(user.id, {
       expectedCredentialGeneration: user.credentialGeneration,
     });
+    const sessionRejection = assert.rejects(
+      sessionPromise,
+      StaleCredentialError,
+    );
     gate.release();
     assert.equal(await resetPromise, true);
-    await assert.rejects(sessionPromise, StaleCredentialError);
+    await sessionRejection;
     clearCredentialMutationHooksForTests();
     clearUserSessionCookieWriterForTests();
     assert.equal(cookieCount, 0);
@@ -775,11 +747,14 @@ async function main(): Promise<void> {
     | "consumption";
 
   async function mutationFixture(kind: MutationKind, ordering: string) {
+    currentCase = `${ordering}_${kind}_fixture_user`;
     const user = await createUser(`${kind}-${ordering}`);
+    currentCase = `${ordering}_${kind}_fixture_reset`;
     const reset =
       kind === "supersession"
         ? await seedOldReset(user)
         : await createReset(user);
+    currentCase = `${ordering}_${kind}_fixture_ready`;
     const mutate = async () => {
       if (kind === "supersession") {
         await requestPasswordReset({ normalizedEmail: user.email });
@@ -857,6 +832,7 @@ async function main(): Promise<void> {
     currentCase = `worker_first_${kind}`;
     {
       const fixture = await mutationFixture(kind, "worker-first");
+      currentCase = `worker_first_${kind}`;
       const gate = barrier();
       const fake = new FakeEmailProvider();
       const workerPromise = quiet(() =>
@@ -892,6 +868,7 @@ async function main(): Promise<void> {
     currentCase = `mutation_first_${kind}`;
     {
       const fixture = await mutationFixture(kind, "mutation-first");
+      currentCase = `mutation_first_${kind}`;
       const gate = barrier();
       let armed = true;
       setCredentialDispatchFenceHooksForTests({
@@ -904,6 +881,7 @@ async function main(): Promise<void> {
       });
       const mutationPromise = fixture.mutate();
       await gate.arrived;
+      currentCase = `mutation_first_${kind}_fence_acquired`;
       const fake = new FakeEmailProvider();
       const workerPromise = quiet(() =>
         runEmailDeliverySweep({
@@ -915,10 +893,15 @@ async function main(): Promise<void> {
       assert.equal(fake.sent.length, 0);
       gate.release();
       await mutationPromise;
+      currentCase = `mutation_first_${kind}_mutation_committed`;
       clearCredentialDispatchFenceHooksForTests();
       const workerResult = await workerPromise;
+      currentCase = `mutation_first_${kind}_worker_result`;
+      counts.mutationFirstProviderCallsObserved = fake.sent.length;
+      counts.mutationFirstCancelledObserved = workerResult.cancelled;
       assert.equal(fake.sent.length, 0);
       assert.equal(workerResult.cancelled, 1);
+      currentCase = `mutation_first_${kind}_mutation_state`;
       await assertMutationState(kind, fixture);
       const message: {
         status: string;
@@ -926,9 +909,11 @@ async function main(): Promise<void> {
       } = await prisma.emailMessage.findUniqueOrThrow({
         where: { id: fixture.reset.message.id },
       });
+      currentCase = `mutation_first_${kind}_message_state`;
       assert.equal(message.status, "CANCELLED");
       assert.equal(message.sensitivePayloadCiphertext, null);
       await fenceReleased(fixture.user.id);
+      currentCase = `mutation_first_${kind}`;
       record(currentCase);
     }
   }
@@ -1247,10 +1232,17 @@ async function main(): Promise<void> {
     record(currentCase);
   }
 
+  currentCase = "no_permanent_advisory_locks";
   const lockCheck = new pg.Client({ connectionString: databaseUrl });
   await lockCheck.connect();
   const locks = await lockCheck.query<{ count: string }>(
-    "SELECT COUNT(*)::text AS count FROM pg_locks WHERE locktype = 'advisory' AND granted",
+    `SELECT COUNT(*)::text AS count
+     FROM pg_locks l
+     JOIN pg_stat_activity a ON a.pid = l.pid
+     WHERE l.locktype = 'advisory'
+       AND l.granted
+       AND a.application_name = $1`,
+    [STAGE313C_VERIFIER_APPLICATION_NAME],
   );
   await lockCheck.end();
   assert.equal(Number(locks.rows[0]?.count ?? 0), 0);
@@ -1301,7 +1293,7 @@ async function cleanup(): Promise<void> {
   ]);
   assert.deepEqual(remaining, [0, 0, 0, 0, 0, 0, 0, 0]);
   counts.cleanupTablesVerified = remaining.length;
-  record("disposable_resource_cleanup");
+  record("persistent_schema_resource_cleanup");
 }
 
 async function clearHooksSafely(): Promise<void> {
@@ -1323,10 +1315,46 @@ async function run(): Promise<void> {
     succeeded = true;
   } catch (error) {
     process.exitCode = 1;
+    const structuredCode =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      /^[A-Z0-9_]+$/.test(error.code)
+        ? error.code
+        : null;
+    const messageCategory =
+      error instanceof Error
+        ? /invalid email/i.test(error.message)
+          ? "INVALID_EMAIL"
+          : /unique constraint/i.test(error.message)
+            ? "UNIQUE_CONSTRAINT"
+            : /serializ|transaction/i.test(error.message)
+              ? "TRANSACTION"
+              : /timeout|timed out/i.test(error.message)
+                ? "TIMEOUT"
+                : /credential dispatch|advisory/i.test(error.message)
+                  ? "CREDENTIAL_FENCE"
+                  : /sensitive payload|encrypt|decrypt/i.test(error.message)
+                    ? "SENSITIVE_PAYLOAD"
+                    : /configuration|environment|invalid [A-Z_]+/i.test(
+                          error.message,
+                        )
+                      ? "CONFIGURATION"
+                      : /raw token|idempotency|metadata/i.test(error.message)
+                        ? "EMAIL_CONTENT_POLICY"
+                        : null
+        : null;
     const code =
       error instanceof VerifierRefusal
         ? error.code
-        : "FINAL_REMEDIATION_VERIFICATION_FAILED";
+        : structuredCode
+          ? `FINAL_REMEDIATION_ERROR_${structuredCode}`
+        : messageCategory
+          ? `FINAL_REMEDIATION_ERROR_${messageCategory}`
+        : error instanceof Error && /^[A-Za-z][A-Za-z0-9]*$/.test(error.name)
+          ? `FINAL_REMEDIATION_${error.name.toUpperCase()}`
+          : "FINAL_REMEDIATION_VERIFICATION_FAILED";
     originalError(
       JSON.stringify({
         ok: false,

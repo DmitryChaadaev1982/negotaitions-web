@@ -23,6 +23,12 @@ import {
   readMigrationHistoryFromDatabase,
   type MigrationHistoryRow,
 } from "@/lib/prisma-production-migration-overlay";
+import {
+  assertApprovedStage313cVerifierChildEnvironment,
+  Stage313cTestDatabaseRefusal,
+  STAGE313C_TEST_SCHEMA,
+  STAGE313C_TEST_SCHEMA_MARKER,
+} from "./stage-3-13c-test-database";
 
 const PRE_STAGE_3_13C =
   "20260804143000_stage_3_13b_email_hardening";
@@ -38,19 +44,6 @@ const STAGE_3_13C_PENDING = [
   STAGE_3_13C_ACCOUNT,
   STAGE_3_13C_REMEDIATION,
 ] as const;
-const LOCAL_HOSTS = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "[::1]",
-  "0.0.0.0",
-]);
-const DISPOSABLE_NAME =
-  /(?:^|[_-])(?:stage[_-]?3[_-]?13c|overlay|test(?:ing)?)(?:$|[_-])/i;
-const PRODUCTION_NAME =
-  /(?:^|[_-])(?:prod|production|main|primary|master)(?:$|[_-])/i;
-const DEVELOPMENT_NAME =
-  /(?:^|[_-])(?:dev|development)(?:$|[_-])|^(?:postgres|template[01]|negotaitions|negotiations)$/i;
 const PASSWORD_RESET_INDEXES = [
   "PasswordResetToken_createdAt_idx",
   "PasswordResetToken_expiresAt_idx",
@@ -68,14 +61,8 @@ const REQUIRED_EMAIL_MESSAGE_INDEXES = [
 ] as const;
 
 type FailureCode =
-  | "DATABASE_URL_MISSING"
-  | "DATABASE_URL_INVALID"
-  | "DATABASE_NOT_POSTGRESQL"
-  | "DATABASE_HOST_NOT_LOCAL"
-  | "DATABASE_NAME_NOT_DISPOSABLE"
-  | "DATABASE_NAME_PRODUCTION_LIKE"
-  | "DATABASE_NAME_NORMAL_DEVELOPMENT"
-  | "DATABASE_TARGET_NOT_EMPTY"
+  | "TEST_DATABASE_SAFETY_REFUSAL"
+  | "VERIFIER_SCHEMA_NOT_EMPTY"
   | "DATABASE_IDENTITY_MISMATCH"
   | "PRISMA_SEED_DEPLOY_FAILED"
   | "VERIFICATION_FAILED";
@@ -115,37 +102,6 @@ interface HistoryIdentityRow {
 
 function refuse(code: FailureCode): never {
   throw new VerifierError(code);
-}
-
-function parseDatabaseUrl(raw: string | undefined) {
-  if (!raw) refuse("DATABASE_URL_MISSING");
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    refuse("DATABASE_URL_INVALID");
-  }
-  if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
-    refuse("DATABASE_NOT_POSTGRESQL");
-  }
-  if (!LOCAL_HOSTS.has(url.hostname.toLowerCase())) {
-    refuse("DATABASE_HOST_NOT_LOCAL");
-  }
-  const databaseName = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  if (
-    !databaseName ||
-    databaseName.includes("/") ||
-    !DISPOSABLE_NAME.test(databaseName)
-  ) {
-    refuse("DATABASE_NAME_NOT_DISPOSABLE");
-  }
-  if (PRODUCTION_NAME.test(databaseName)) {
-    refuse("DATABASE_NAME_PRODUCTION_LIKE");
-  }
-  if (DEVELOPMENT_NAME.test(databaseName)) {
-    refuse("DATABASE_NAME_NORMAL_DEVELOPMENT");
-  }
-  return { databaseUrl: raw, databaseName };
 }
 
 async function createWorkspace(repoRoot: string): Promise<Workspace> {
@@ -234,36 +190,42 @@ async function ordinaryDeploy(
   });
 }
 
-async function assertEmpty(client: pg.Client, databaseName: string) {
-  const identity = await client.query<{ name: string }>(
-    "SELECT current_database() AS name",
+async function assertEmpty(
+  client: pg.Client,
+  databaseName: string,
+  schemaName: string,
+) {
+  const identity = await client.query<{
+    name: string;
+    schema_name: string | null;
+  }>(
+    "SELECT current_database() AS name, current_schema() AS schema_name",
   );
-  if (identity.rows[0]?.name !== databaseName) {
+  if (
+    identity.rows[0]?.name !== databaseName ||
+    identity.rows[0]?.schema_name !== schemaName
+  ) {
     refuse("DATABASE_IDENTITY_MISMATCH");
   }
-  const result = await client.query<Record<string, string>>(`
+  const result = await client.query<Record<string, string>>(
+    `
     SELECT
       (SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-         AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%'
+       WHERE n.nspname = $1
          AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')) AS relations,
       (SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-         AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%'
+       WHERE n.nspname = $1
          AND t.typtype IN ('d', 'e')) AS types,
       (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-         AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%') AS routines,
-      (SELECT COUNT(*) FROM pg_namespace
-       WHERE nspname NOT IN ('public', 'pg_catalog', 'information_schema')
-         AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp_%') AS schemas,
-      (SELECT COUNT(*) FROM pg_extension WHERE extname <> 'plpgsql') AS extensions
-  `);
+       WHERE n.nspname = $1) AS routines
+  `,
+    [schemaName],
+  );
   const count = Object.values(result.rows[0] ?? {}).reduce(
     (sum, value) => sum + Number(value),
     0,
   );
-  if (count !== 0) refuse("DATABASE_TARGET_NOT_EMPTY");
+  if (count !== 0) refuse("VERIFIER_SCHEMA_NOT_EMPTY");
 }
 
 function assertHistory(
@@ -343,25 +305,36 @@ async function historyIdentity(client: pg.Client, names: readonly string[]) {
   }));
 }
 
-async function applicationTables(client: pg.Client): Promise<string[]> {
+async function applicationTables(
+  client: pg.Client,
+  schemaName: string,
+): Promise<string[]> {
   const result = await client.query<{ tablename: string }>(
     `SELECT tablename FROM pg_tables
-     WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'
+     WHERE schemaname = $1 AND tablename <> '_prisma_migrations'
      ORDER BY tablename`,
+    [schemaName],
   );
   return result.rows.map((row) => row.tablename);
 }
 
-async function passwordResetIndexes(client: pg.Client): Promise<string[]> {
+async function passwordResetIndexes(
+  client: pg.Client,
+  schemaName: string,
+): Promise<string[]> {
   const result = await client.query<{ indexname: string }>(
     `SELECT indexname FROM pg_indexes
-     WHERE schemaname = 'public' AND tablename = 'PasswordResetToken'
+     WHERE schemaname = $1 AND tablename = 'PasswordResetToken'
      ORDER BY indexname`,
+    [schemaName],
   );
   return result.rows.map((row) => row.indexname);
 }
 
-async function assertStage313cDatabaseInvariants(client: pg.Client) {
+async function assertStage313cDatabaseInvariants(
+  client: pg.Client,
+  schemaName: string,
+) {
   const columns = await client.query<{
     table_name: string;
     column_name: string;
@@ -371,7 +344,7 @@ async function assertStage313cDatabaseInvariants(client: pg.Client) {
   }>(
     `SELECT table_name, column_name, data_type, is_nullable, column_default
      FROM information_schema.columns
-     WHERE table_schema = 'public'
+     WHERE table_schema = $1
        AND (
          (table_name = 'User' AND column_name = 'credentialGeneration')
          OR
@@ -382,7 +355,8 @@ async function assertStage313cDatabaseInvariants(client: pg.Client) {
            'relatedTokenId'
          ))
        )
-     ORDER BY table_name, column_name`,
+    ORDER BY table_name, column_name`,
+    [schemaName],
   );
   assert.equal(columns.rows.length, 5);
   const credentialGeneration = columns.rows.find(
@@ -422,8 +396,9 @@ async function assertStage313cDatabaseInvariants(client: pg.Client) {
      FROM pg_constraint c
      JOIN pg_class t ON t.oid = c.conrelid
      JOIN pg_namespace n ON n.oid = t.relnamespace
-     WHERE n.nspname = 'public' AND t.relname = 'PasswordResetToken'
+     WHERE n.nspname = $1 AND t.relname = 'PasswordResetToken'
      ORDER BY c.conname`,
+    [schemaName],
   );
   const byConstraint = new Map(
     constraints.rows.map((row) => [row.conname, row]),
@@ -445,9 +420,10 @@ async function assertStage313cDatabaseInvariants(client: pg.Client) {
   }>(
     `SELECT tablename, indexname, indexdef
      FROM pg_indexes
-     WHERE schemaname = 'public'
+     WHERE schemaname = $1
        AND tablename IN ('PasswordResetToken', 'EmailMessage', 'User')
      ORDER BY tablename, indexname`,
+    [schemaName],
   );
   const indexesByName = new Map(
     indexRows.rows.map((row) => [row.indexname, row.indexdef]),
@@ -482,14 +458,42 @@ async function assertStage313cDatabaseInvariants(client: pg.Client) {
 }
 
 async function clearOwnedOverlaySchema(client: pg.Client): Promise<void> {
-  await client.query("DROP SCHEMA public CASCADE");
-  await client.query("CREATE SCHEMA public");
+  const ownership = await client.query<{
+    owned_by_current_user: boolean;
+    comment: string | null;
+  }>(
+    `SELECT
+       n.nspowner = (SELECT usesysid FROM pg_user WHERE usename = current_user)
+         AS owned_by_current_user,
+       obj_description(n.oid, 'pg_namespace') AS comment
+     FROM pg_namespace n
+     WHERE n.nspname = $1`,
+    [STAGE313C_TEST_SCHEMA],
+  );
+  if (
+    ownership.rowCount !== 1 ||
+    !ownership.rows[0]?.owned_by_current_user ||
+    ownership.rows[0]?.comment !== STAGE313C_TEST_SCHEMA_MARKER
+  ) {
+    refuse("TEST_DATABASE_SAFETY_REFUSAL");
+  }
+  await client.query(
+    `DROP SCHEMA "${STAGE313C_TEST_SCHEMA}" CASCADE`,
+  );
+  await client.query(
+    `CREATE SCHEMA "${STAGE313C_TEST_SCHEMA}" AUTHORIZATION CURRENT_USER`,
+  );
+  await client.query(
+    `COMMENT ON SCHEMA "${STAGE313C_TEST_SCHEMA}"
+     IS 'NegotAItions Stage 3.13C verifier-owned schema'`,
+  );
 }
 
 async function main() {
-  const { databaseUrl, databaseName } = parseDatabaseUrl(
-    process.env.DATABASE_URL,
-  );
+  const approved =
+    assertApprovedStage313cVerifierChildEnvironment(process.env);
+  const databaseUrl = approved.scopedDatabaseUrl;
+  const { databaseName, schemaName } = approved;
   const repoRoot = process.cwd();
   const client = new pg.Client({ connectionString: databaseUrl });
   let workspace: Workspace | undefined;
@@ -498,14 +502,14 @@ async function main() {
 
   try {
     await client.connect();
-    await assertEmpty(client, databaseName);
+    await assertEmpty(client, databaseName, schemaName);
     ownsOverlaySchema = true;
     workspace = await createWorkspace(repoRoot);
     await ordinaryDeploy(repoRoot, workspace, databaseUrl);
 
     const seedHistory = await readMigrationHistoryFromDatabase(databaseUrl);
     assertHistory(seedHistory, new Set(workspace.migrationNames));
-    const preexistingTables = await applicationTables(client);
+    const preexistingTables = await applicationTables(client, schemaName);
     assert.ok(preexistingTables.length > 0);
 
     await insertSyntheticLegacyRows(client);
@@ -580,19 +584,22 @@ async function main() {
       await historyIdentity(client, STAGE_3_13B),
       stage313bBefore,
     );
-    const postTables = await applicationTables(client);
+    const postTables = await applicationTables(client, schemaName);
     assert.deepEqual(
       postTables.filter((name) => name !== "PasswordResetToken"),
       preexistingTables,
     );
     assert.ok(postTables.includes("PasswordResetToken"));
-    const indexes = await passwordResetIndexes(client);
+    const indexes = await passwordResetIndexes(client, schemaName);
     assert.deepEqual(indexes, [...PASSWORD_RESET_INDEXES].sort());
-    const invariants = await assertStage313cDatabaseInvariants(client);
+    const invariants = await assertStage313cDatabaseInvariants(
+      client,
+      schemaName,
+    );
 
     await clearOwnedOverlaySchema(client);
     overlaySchemaCleaned = true;
-    await assertEmpty(client, databaseName);
+    await assertEmpty(client, databaseName, schemaName);
 
     return {
       ok: true,
@@ -609,7 +616,7 @@ async function main() {
         verifiedColumns: invariants.verifiedColumns,
         verifiedConstraints: invariants.verifiedConstraints,
         verifiedIndexes: invariants.verifiedIndexes,
-        cleanedDisposableSchemas: 1,
+        cleanedVerifierSchemas: 1,
       },
       names: {
         pendingBefore: preStatus?.pendingActiveMigrations ?? [],
@@ -638,13 +645,17 @@ void main()
   .catch((error: unknown) => {
     process.exitCode = 1;
     const reason =
-      error instanceof VerifierError ? error.code : "VERIFICATION_FAILED";
+      error instanceof Stage313cTestDatabaseRefusal
+        ? "TEST_DATABASE_SAFETY_REFUSAL"
+        : error instanceof VerifierError
+          ? error.code
+          : "VERIFICATION_FAILED";
     console.error(
       JSON.stringify({
         ok: false,
         counts: {
           failures: 1,
-          safetyRefusals: reason.startsWith("DATABASE_") ? 1 : 0,
+          safetyRefusals: reason.includes("SAFETY") ? 1 : 0,
         },
         names: { reason: [reason] },
       }),

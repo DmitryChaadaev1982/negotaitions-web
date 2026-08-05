@@ -3,43 +3,17 @@
  *
  * Proves H-01R (session/User FOR UPDATE linearization), H-02R (AAD-bound
  * sensitive payload + ciphertext swap rejection), and M-03R (credential
- * dispatch fence) against a disposable local PostgreSQL database.
+ * dispatch fence) inside the approved persistent test-database schema.
  *
  * Outputs counters and IDs only — never email bodies, recipients, tokens, or keys.
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
-const SAFE_DATABASE_MARKER =
-  /(?:stage[_-]?3[_-]?13c|(?:^|[_-])test(?:ing)?(?:$|[_-]))/i;
-const PRODUCTION_MARKER =
-  /(?:^|[_-])(?:prod|production|main|primary|master)(?:$|[_-])|negotaitions_prod|negotiations_prod/i;
-
-function assertDisposableDatabaseUrl(raw: string | undefined): string {
-  assert.ok(raw, "DATABASE_URL is required.");
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-  assert.ok(
-    url.protocol === "postgresql:" || url.protocol === "postgres:",
-    "DATABASE_URL must use PostgreSQL.",
-  );
-  const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-  assert.ok(LOCAL_HOSTS.has(url.hostname.toLowerCase()), "Database host must be local.");
-  assert.ok(
-    database && SAFE_DATABASE_MARKER.test(database),
-    "Database must have a Stage 3.13C/test marker.",
-  );
-  assert.ok(!PRODUCTION_MARKER.test(database), "Production-like database names are refused.");
-  return raw;
-}
+import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
 
 try {
-  assertDisposableDatabaseUrl(process.env.DATABASE_URL);
+  assertApprovedStage313cVerifierChildEnvironment(process.env);
 } catch {
   console.error(JSON.stringify({ ok: false, counts: { safetyRefusals: 1 } }));
   process.exit(1);

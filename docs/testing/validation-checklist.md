@@ -19,8 +19,10 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:stage313c:email-journal` (journal unit + managed browser/API checks)
 - `npm run verify:stage313c:proxy`
 - `npm run verify:stage313c:email-journal`
-- `npm run verify:stage313c:integration` (disposable local PostgreSQL token,
-  suppression, concurrency, session-revocation, and notification checks)
+- `npm run test:stage313c:test-database-harness`
+- `npm run verify:stage313c:integration` (approved persistent local PostgreSQL
+  schema: token, suppression, concurrency, session-revocation, and notification
+  checks)
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)
 - `node --import tsx --test lib/services/transcript-enhancement-persistence.test.ts` (targeted enhancement/ingestion persistence safety)
 - `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
@@ -80,8 +82,9 @@ Sequential requirement:
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
 - `test:stage313c` uses the same managed Playwright mode and must not overlap
   another managed browser suite.
-- `verify:stage313c:integration` refuses remote, production-like, and unmarked
-  database targets; use only a disposable local database.
+- Stage 3.13C PostgreSQL verifiers require explicit approval and recreate only
+  the marked `stage3_13c_final_remediation` schema inside the persistent local
+  test database. They refuse runtime `DATABASE_URL` fallback.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
 
 ## Smoke Suite Guardrails (Phase 2)

@@ -1,56 +1,37 @@
 # Stage 3.13C Local Email Testing
 
-This procedure uses a disposable local PostgreSQL database and the in-memory
-fake provider. It does not require Postbox credentials and must not be used for
-production.
+This procedure uses one approved persistent local PostgreSQL test database, one
+verifier-owned schema, and the in-memory fake provider. It does not require
+Postbox credentials and must not be used for production.
 
-## 1. Start a disposable database
+## 1. Approve the persistent test database
 
-Run in PowerShell:
+Provisioning the PostgreSQL instance is outside the verifier. Reuse the
+approved local test instance; do not create a database or container per run.
+The database name must be test-like and must not contain a production marker.
 
-```powershell
-docker run --name negotaitions-stage313c-test `
-  -e POSTGRES_USER=stage313c `
-  -e POSTGRES_PASSWORD=stage313c-local-only `
-  -e POSTGRES_DB=stage313c_local_test `
-  -p 55433:5432 -d postgres:16-alpine
-
-$env:DATABASE_URL = "postgresql://stage313c:stage313c-local-only@127.0.0.1:55433/stage313c_local_test"
-npx prisma migrate deploy
-npx prisma migrate status
-```
-
-The database name deliberately contains the Stage 3.13C test marker. Never
-point the verification script or Playwright at the normal development or
-production database.
-
-## 2. Create the ignored local override
-
-Create `.env.local` only in the Stage 3.13C worktree. Do not commit it.
+Set these values manually in the repository's ignored `.env`. Never print or
+commit the URL, and do not create `.env.local` for the verifier:
 
 ```dotenv
-DATABASE_URL=postgresql://stage313c:stage313c-local-only@127.0.0.1:55433/stage313c_local_test
-EMAIL_DELIVERY_ENABLED=true
-EMAIL_PROVIDER=fake
-EMAIL_ADMIN_TEST_ENABLED=true
-EMAIL_LOCAL_PREVIEW_ENABLED=true
-EMAIL_CANONICAL_BASE_URL=https://local.negotaitions.ru
-PASSWORD_RESET_TOKEN_TTL_MINUTES=30
-PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS=60
-PASSWORD_RESET_MAX_REQUESTS_PER_HOUR=5
+STAGE313C_TEST_DATABASE_URL=<approved-local-test-url>
+STAGE313C_TEST_DATABASE_APPROVED=true
+STAGE313C_TEST_SCHEMA=stage3_13c_final_remediation
 ```
 
-For CLI processes, set the same sanitized values in the current PowerShell
-session because Prisma and operational scripts load `.env`, not `.env.local`:
+The five PostgreSQL verifier commands load `.env` with the project env loader.
+They never fall back to runtime `DATABASE_URL`. The wrapper derives a
+process-local schema-scoped URL only for migration and child-verifier
+processes; it does not edit `.env`.
 
-```powershell
-$env:DATABASE_URL = "postgresql://stage313c:stage313c-local-only@127.0.0.1:55433/stage313c_local_test"
-$env:EMAIL_DELIVERY_ENABLED = "true"
-$env:EMAIL_PROVIDER = "fake"
-$env:EMAIL_ADMIN_TEST_ENABLED = "true"
-$env:EMAIL_LOCAL_PREVIEW_ENABLED = "true"
-$env:EMAIL_CANONICAL_BASE_URL = "https://local.negotaitions.ru"
-```
+## 2. Verifier schema lifecycle
+
+Each command acquires one bounded database advisory lock, proves that any
+existing `stage3_13c_final_remediation` schema carries the verifier ownership
+marker, drops and recreates only that schema, applies the required migrations,
+runs with an explicit search path, proves row and advisory-lock cleanup, and
+releases the coordination lock. `public`, other schemas, shared rows,
+extensions, roles, and the database itself are never destructive targets.
 
 ## 3. Start the application and local HTTPS route
 
@@ -98,7 +79,7 @@ completion report.
 
 ## 5. Run a fake delivery sweep
 
-From a PowerShell session with the local variables above:
+For a separately configured local application session using the fake provider:
 
 ```powershell
 npm run email:delivery:sweep -- --limit 20
@@ -111,38 +92,27 @@ without a provider attempt. A marketing unsubscribe must not suppress it.
 
 ## 6. Automated focused checks
 
-Use one managed Playwright mode at a time:
+Run the schema safety unit test, then the PostgreSQL verifiers sequentially:
 
 ```powershell
-npm run email:templates:validate
-npm run test:stage313c
+npm run test:stage313c:test-database-harness
 npm run verify:stage313c:integration
-npm run test:stage313c:final-remediation
-# Explicitly set STAGE313C_DISPOSABLE_DATABASE_URL to the human-approved,
-# migrated local disposable target; the verifier never falls back to DATABASE_URL.
+npm run verify:stage313c:overlay
+npm run verify:stage313c:remediation
+npm run verify:stage313c:high-remediation-r2
 npm run verify:stage313c:final-remediation
 ```
 
-`verify:stage313c:integration` refuses non-local or production-like database
-names and prints sanitized counts only. The final verifier additionally
-requires an empty-data target, exercises real worker/mutation races, and proves
-all verifier-owned rows and advisory locks were removed.
+Every command refuses missing approval, an incorrect schema, a non-local or
+production-like target, a base URL containing a schema override, or a child
+URL not derived by the wrapper. Output is restricted to test names, counters,
+opaque IDs, the approved schema name, and migration identifiers.
 
 ## 7. Cleanup
 
-Stop the dev server and tunnel, then:
-
-```powershell
-Remove-Item .env.local -ErrorAction SilentlyContinue
-docker rm -f negotaitions-stage313c-test
-Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:EMAIL_DELIVERY_ENABLED -ErrorAction SilentlyContinue
-Remove-Item Env:EMAIL_PROVIDER -ErrorAction SilentlyContinue
-Remove-Item Env:EMAIL_ADMIN_TEST_ENABLED -ErrorAction SilentlyContinue
-Remove-Item Env:EMAIL_LOCAL_PREVIEW_ENABLED -ErrorAction SilentlyContinue
-Remove-Item Env:EMAIL_CANONICAL_BASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:STAGE313C_DISPOSABLE_DATABASE_URL -ErrorAction SilentlyContinue
-```
+Retain the persistent test database. It is acceptable to retain the empty,
+marked verifier schema for reuse. Do not drop the database. Remove or rotate
+the three ignored `.env` values manually only when the approval is withdrawn.
 
 ## Production prerequisites
 
