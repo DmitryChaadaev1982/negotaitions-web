@@ -289,7 +289,7 @@ test("browser completes reset and revokes prior authentication", async ({
   expect(resetToken).toMatch(/^[a-f0-9]{64}$/);
 
   // Legacy query-token links must be rejected (already entered request URI).
-  await page.goto(`/reset-password?token=${encodeURIComponent(resetToken)}`);
+  await page.goto("/reset-password?token=legacy-query-value");
   await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
 
   // Fragment tokens are client-only; scrub address bar after bootstrap.
@@ -339,6 +339,49 @@ test("browser completes reset and revokes prior authentication", async ({
     [sessionIds],
   );
   expect(Number(priorSessions[0]?.count ?? 0)).toBe(0);
+});
+
+test("reset fragments scrub before strict parsing and never enter HTTP requests", async ({
+  page,
+}) => {
+  const validToken = randomBytes(32).toString("hex");
+  const otherToken = randomBytes(32).toString("hex");
+  const navigationUrls: string[] = [];
+  page.on("request", (request) => {
+    if (request.isNavigationRequest()) navigationUrls.push(request.url());
+  });
+
+  await page.goto(`/reset-password#token=${validToken}`);
+  await expect(page.locator("#password")).toBeVisible();
+  await page.waitForFunction(() => window.location.hash === "");
+  const copiedUrl = await page.evaluate(() => window.location.href);
+  expect(copiedUrl).not.toContain("#");
+  expect(copiedUrl).not.toContain("token=");
+  expect(navigationUrls.every((url) => !url.includes(validToken))).toBe(true);
+
+  await page.reload();
+  await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
+
+  const invalidFragments = [
+    `token=bad&token=${validToken}`,
+    `token=${validToken}&token=bad`,
+    `token=${validToken}&token=${otherToken}`,
+    "token=%E0%A4%A",
+    "token=",
+    `token=${validToken}&source=email`,
+    `source=email&token=${validToken}`,
+  ];
+  for (const fragment of invalidFragments) {
+    await page.goto(`/reset-password#${fragment}`);
+    await page.waitForFunction(() => window.location.hash === "");
+    await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
+    expect(page.url()).not.toContain("#");
+  }
+
+  await page.goto("/reset-password?token=");
+  await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
+  await page.goto("/reset-password?token=legacy-query-value");
+  await expect(page.getByTestId("reset-password-invalid-link")).toBeVisible();
 });
 
 test("registration notifies only active database admins", async ({ page }) => {

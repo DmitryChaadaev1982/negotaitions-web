@@ -19,10 +19,9 @@ export default async function ResetPasswordPage({
   searchParams: Promise<{ token?: string | string[] }>;
 }) {
   const params = await searchParams;
-  const hasQueryToken =
-    typeof params.token === "string"
-      ? params.token.length > 0
-      : Array.isArray(params.token) && params.token.length > 0;
+  // Reject the key itself, including empty and duplicate query values. Query
+  // tokens have already entered the HTTP request URI.
+  const hasQueryToken = Object.prototype.hasOwnProperty.call(params, "token");
 
   return (
     <ResetPasswordForm

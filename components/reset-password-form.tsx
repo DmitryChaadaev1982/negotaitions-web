@@ -5,27 +5,18 @@ import { useActionState, useEffect, useState, startTransition } from "react";
 
 import { resetPassword } from "@/app/actions/password-reset";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { parseResetTokenFragment } from "@/lib/auth/reset-fragment";
 import { useI18n } from "@/lib/i18n/useI18n";
-
-const TOKEN_SHAPE = /^[a-f0-9]{64}$/i;
-
-function readFragmentToken(): string | null {
-  if (typeof window === "undefined") return null;
-  const hash = window.location.hash.startsWith("#")
-    ? window.location.hash.slice(1)
-    : window.location.hash;
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
-  const token = params.get("token");
-  if (!token || !TOKEN_SHAPE.test(token)) return null;
-  return token.toLowerCase();
-}
 
 function scrubFragmentFromAddressBar(): void {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
   url.hash = "";
-  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${url.pathname}${url.search}`,
+  );
 }
 
 export function ResetPasswordForm({
@@ -40,18 +31,27 @@ export function ResetPasswordForm({
   const [bootstrapped, setBootstrapped] = useState(rejectQueryToken);
 
   useEffect(() => {
-    if (rejectQueryToken) return;
-
-    const fragmentToken = readFragmentToken();
-    if (fragmentToken) {
+    function scrubAndParseFragment() {
+      // Security order is deliberate: copy ephemerally, scrub the complete
+      // live fragment, and only then parse the copy. This also covers
+      // same-document hash changes after the component has mounted.
+      const rawFragment = window.location.hash;
       scrubFragmentFromAddressBar();
+      const fragmentToken = rejectQueryToken
+        ? null
+        : parseResetTokenFragment(rawFragment);
+
+      // Defer React state updates out of the synchronous effect body.
+      startTransition(() => {
+        setToken(fragmentToken ?? "");
+        setBootstrapped(true);
+      });
     }
 
-    // Defer React state updates out of the synchronous effect body.
-    startTransition(() => {
-      setToken(fragmentToken ?? "");
-      setBootstrapped(true);
-    });
+    scrubAndParseFragment();
+    window.addEventListener("hashchange", scrubAndParseFragment);
+    return () =>
+      window.removeEventListener("hashchange", scrubAndParseFragment);
   }, [rejectQueryToken]);
 
   const invalid = rejectQueryToken || (bootstrapped && !token);
