@@ -159,8 +159,7 @@ test("failureSummaryForMessage returns null for healthy non-failed messages", ()
     lastErrorMessage: null as string | null,
     status: "PENDING" as const,
   };
-  // @ts-expect-error status cast for pure function test
-  assert.equal(failureSummaryForMessage(msg), null);
+  assert.equal(failureSummaryForMessage(msg as never), null);
 });
 
 test("failureSummaryForMessage returns error code over message for failed messages", () => {
@@ -169,6 +168,5 @@ test("failureSummaryForMessage returns error code over message for failed messag
     lastErrorMessage: "Longer message here" as string | null,
     status: "FAILED_FINAL" as const,
   };
-  // @ts-expect-error status cast
-  assert.equal(failureSummaryForMessage(msg), "STALE_TOKEN");
+  assert.equal(failureSummaryForMessage(msg as never), "STALE_TOKEN");
 });

@@ -16,7 +16,7 @@ function makeKey(): string {
   return randomBytes(32).toString("base64");
 }
 
-function makeEnv(key?: string): NodeJS.ProcessEnv {
+function makeEnv(key?: string): Record<string, string | undefined> {
   return { [EMAIL_SENSITIVE_PAYLOAD_KEY_ENV]: key };
 }
 

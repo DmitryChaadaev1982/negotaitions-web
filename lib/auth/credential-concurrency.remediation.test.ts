@@ -192,10 +192,14 @@ test("successive hook registrations replace the previous set entirely", async ()
   const second: string[] = [];
 
   setCredentialMutationHooksForTests({
-    afterPasswordVerified: () => first.push("first"),
+    afterPasswordVerified: () => {
+      first.push("first");
+    },
   });
   setCredentialMutationHooksForTests({
-    afterPasswordVerified: () => second.push("second"),
+    afterPasswordVerified: () => {
+      second.push("second");
+    },
   });
 
   try {

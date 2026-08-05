@@ -17,7 +17,7 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 export function getForgotPasswordTimingFloorMs(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): number {
   const raw = env.PASSWORD_RESET_RESPONSE_FLOOR_MS?.trim();
   if (!raw) return DEFAULT_FLOOR_MS;

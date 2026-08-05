@@ -59,7 +59,7 @@ function parseKey(raw: string | undefined): Buffer {
  * Local/test may set a deterministic key via env bootstrap.
  */
 export function resolveSensitivePayloadKey(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): Buffer {
   const raw = env[EMAIL_SENSITIVE_PAYLOAD_KEY_ENV];
   try {
@@ -76,7 +76,7 @@ export function resolveSensitivePayloadKey(
 
 export function encryptSensitivePayload(
   payload: PasswordResetSensitivePayload,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): EncryptedSensitivePayload {
   const key = resolveSensitivePayloadKey(env);
   const nonce = randomBytes(12);
@@ -92,7 +92,7 @@ export function encryptSensitivePayload(
 
 export function decryptSensitivePayload(
   input: EncryptedSensitivePayload,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): PasswordResetSensitivePayload {
   const key = resolveSensitivePayloadKey(env);
   let ciphertextWithTag: Buffer;
