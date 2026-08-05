@@ -3,7 +3,7 @@ import {
   EmailMessageStatus,
   type Prisma,
 } from "@/app/generated/prisma/client";
-import { normalizeEmailAddress, validateEmailAddress } from "@/lib/email/address";
+import { normalizeEmailAddress } from "@/lib/email/address";
 import { getEmailConfig } from "@/lib/email/config";
 import { renderEmailTemplate } from "@/lib/email/renderer";
 import { evaluateSuppression } from "@/lib/email/suppression";
@@ -42,8 +42,10 @@ export async function enqueueEmail(
 ): Promise<EnqueueEmailResult> {
   const config = getEmailConfig();
   const locale = normalizeLocale(input.locale);
-  const recipientEmail = validateEmailAddress(input.recipientEmail, "recipientEmail");
-  const recipientEmailNormalized = normalizeEmailAddress(recipientEmail);
+  // Persist the same canonical ASCII recipient in both durable fields. The
+  // normalized field remains indexed; the nullable field supports retention.
+  const recipientEmail = normalizeEmailAddress(input.recipientEmail);
+  const recipientEmailNormalized = recipientEmail;
   const template = loadTemplate(input.templateKey, locale);
   if (!template.metadata.runtimeEnabled) {
     throw new Error(`Email template ${input.templateKey} is reserved for a future stage.`);

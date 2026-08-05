@@ -881,7 +881,9 @@ model EmailMessage {
   category                 EmailMessageCategory
   status                   EmailMessageStatus @default(PENDING)
   userId                   String?
+  // Nullable content-retention field; never independent dispatch authority.
   recipientEmail           String?
+  // Canonical indexed identity; password-reset AAD authenticates this value.
   recipientEmailNormalized String
   fromAddress              String
   replyToAddress           String?

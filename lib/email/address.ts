@@ -1,8 +1,17 @@
-const BASIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const BASIC_EMAIL_REGEX =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+function isSupportedEmailAddress(value: string): boolean {
+  if (value.length > 254 || !BASIC_EMAIL_REGEX.test(value)) return false;
+  const separator = value.lastIndexOf("@");
+  return separator > 0 && separator <= 64;
+}
 
 export function normalizeEmailAddress(value: string): string {
   const normalized = value.trim().toLowerCase();
-  if (!BASIC_EMAIL_REGEX.test(normalized)) {
+  // Internationalized addresses are not supported by the current provider
+  // contract. Reject them rather than relying on implicit Unicode/IDNA rules.
+  if (!isSupportedEmailAddress(normalized)) {
     throw new Error("Invalid email address.");
   }
   return normalized;
@@ -10,7 +19,7 @@ export function normalizeEmailAddress(value: string): string {
 
 export function validateEmailAddress(value: string, key = "email"): string {
   const trimmed = value.trim();
-  if (!BASIC_EMAIL_REGEX.test(trimmed)) {
+  if (!isSupportedEmailAddress(trimmed)) {
     throw new Error(`Invalid ${key}.`);
   }
   if (/[\r\n]/.test(trimmed)) {

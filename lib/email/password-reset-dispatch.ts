@@ -57,19 +57,10 @@ export async function evaluatePasswordResetDispatchEligibility(params: {
   }
   if (!token.user) return { ok: false, reason: "USER_DELETED" };
   if (token.usedAt) return { ok: false, reason: "TOKEN_USED" };
-  if (token.revokedAt) return { ok: false, reason: "TOKEN_REVOKED" };
   if (token.expiresAt <= now) return { ok: false, reason: "TOKEN_EXPIRED" };
-  if (token.user.status !== "ACTIVE") {
-    return { ok: false, reason: "USER_INACTIVE" };
-  }
-  if (
-    typeof params.expectedCredentialGeneration === "number" &&
-    token.user.credentialGeneration !== params.expectedCredentialGeneration
-  ) {
-    return { ok: false, reason: "CREDENTIAL_CHANGED" };
-  }
 
-  // A newer active token supersedes this message's token.
+  // A newer active token identifies supersession even when issuance already
+  // marked this token revoked.
   const newerActive = await prisma.passwordResetToken.findFirst({
     where: {
       userId: token.userId,
@@ -81,6 +72,16 @@ export async function evaluatePasswordResetDispatchEligibility(params: {
     select: { id: true },
   });
   if (newerActive) return { ok: false, reason: "TOKEN_SUPERSEDED" };
+  if (token.revokedAt) return { ok: false, reason: "TOKEN_REVOKED" };
+  if (token.user.status !== "ACTIVE") {
+    return { ok: false, reason: "USER_INACTIVE" };
+  }
+  if (
+    typeof params.expectedCredentialGeneration === "number" &&
+    token.user.credentialGeneration !== params.expectedCredentialGeneration
+  ) {
+    return { ok: false, reason: "CREDENTIAL_CHANGED" };
+  }
 
   return { ok: true };
 }
@@ -126,9 +127,32 @@ export async function cancelStalePasswordResetMessage(params: {
 export async function quarantineStalePasswordResetBacklog(params?: {
   limit?: number;
   now?: Date;
-}): Promise<{ scanned: number; cancelled: number }> {
+  apply?: boolean;
+}): Promise<{
+  dryRun: boolean;
+  scanned: number;
+  eligible: number;
+  wouldQuarantine: number;
+  quarantined: number;
+  partialFailures: number;
+  classifications: {
+    expired: number;
+    consumed: number;
+    superseded: number;
+    generationMismatched: number;
+    statusIneligible: number;
+    legacyPlaintext: number;
+    revoked: number;
+    missing: number;
+    associationMismatch: number;
+  };
+}> {
   const now = params?.now ?? new Date();
-  const limit = Math.max(1, Math.min(params?.limit ?? 200, 2000));
+  const limit = params?.limit ?? 100;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+    throw new Error("Password-reset quarantine limit must be between 1 and 500.");
+  }
+  const apply = params?.apply === true;
   const candidates = await prisma.emailMessage.findMany({
     where: {
       messageType: EmailMessageType.PASSWORD_RESET,
@@ -141,49 +165,113 @@ export async function quarantineStalePasswordResetBacklog(params?: {
       relatedTokenId: true,
       userId: true,
       metadata: true,
+      renderedTextBody: true,
+      renderedHtmlBody: true,
     },
   });
 
-  let cancelled = 0;
-  for (const message of candidates) {
-    const metadata =
-      message.metadata && typeof message.metadata === "object"
-        ? (message.metadata as Record<string, unknown>)
-        : {};
-    const expectedGeneration =
-      typeof metadata.credentialGeneration === "number"
-        ? metadata.credentialGeneration
-        : null;
-    const eligibility = await evaluatePasswordResetDispatchEligibility({
-      relatedTokenId: message.relatedTokenId,
-      userId: message.userId,
-      expectedCredentialGeneration: expectedGeneration,
-      now,
-    });
-    if (eligibility.ok) continue;
+  const result = {
+    dryRun: !apply,
+    scanned: candidates.length,
+    eligible: 0,
+    wouldQuarantine: 0,
+    quarantined: 0,
+    partialFailures: 0,
+    classifications: {
+      expired: 0,
+      consumed: 0,
+      superseded: 0,
+      generationMismatched: 0,
+      statusIneligible: 0,
+      legacyPlaintext: 0,
+      revoked: 0,
+      missing: 0,
+      associationMismatch: 0,
+    },
+  };
 
-    const result = await prisma.emailMessage.updateMany({
-      where: {
-        id: message.id,
-        status: { in: ["PENDING", "FAILED_RETRYABLE"] },
-        messageType: EmailMessageType.PASSWORD_RESET,
-      },
-      data: {
-        status: "CANCELLED",
-        cancelledAt: now,
-        nextAttemptAt: null,
-        lastErrorCode: "PASSWORD_RESET_STALE",
-        lastErrorMessage: eligibility.reason,
-        sensitivePayloadCiphertext: null,
-        sensitivePayloadNonce: null,
-        sensitivePayloadClearedAt: now,
-        renderedSubject: null,
-        renderedTextBody: null,
-        renderedHtmlBody: null,
-      },
-    });
-    if (result.count === 1) cancelled += 1;
+  for (const message of candidates) {
+    try {
+      const metadata =
+        message.metadata && typeof message.metadata === "object"
+          ? (message.metadata as Record<string, unknown>)
+          : {};
+      const expectedGeneration =
+        typeof metadata.credentialGeneration === "number"
+          ? metadata.credentialGeneration
+          : null;
+      const legacyPlaintext = Boolean(
+        message.renderedTextBody || message.renderedHtmlBody,
+      );
+      if (legacyPlaintext) result.classifications.legacyPlaintext += 1;
+
+      const eligibility: PasswordResetDispatchEligibility =
+        expectedGeneration === null
+          ? { ok: false, reason: "MESSAGE_MISMATCH" }
+          : await evaluatePasswordResetDispatchEligibility({
+              relatedTokenId: message.relatedTokenId,
+              userId: message.userId,
+              expectedCredentialGeneration: expectedGeneration,
+              now,
+            });
+      if (!eligibility.ok) {
+        if (eligibility.reason === "TOKEN_EXPIRED") {
+          result.classifications.expired += 1;
+        } else if (eligibility.reason === "TOKEN_USED") {
+          result.classifications.consumed += 1;
+        } else if (eligibility.reason === "TOKEN_SUPERSEDED") {
+          result.classifications.superseded += 1;
+        } else if (eligibility.reason === "CREDENTIAL_CHANGED") {
+          result.classifications.generationMismatched += 1;
+        } else if (
+          eligibility.reason === "USER_INACTIVE" ||
+          eligibility.reason === "USER_DELETED"
+        ) {
+          result.classifications.statusIneligible += 1;
+        } else if (eligibility.reason === "TOKEN_REVOKED") {
+          result.classifications.revoked += 1;
+        } else if (eligibility.reason === "TOKEN_MISSING") {
+          result.classifications.missing += 1;
+        } else {
+          result.classifications.associationMismatch += 1;
+        }
+      }
+
+      if (eligibility.ok && !legacyPlaintext) {
+        result.eligible += 1;
+        continue;
+      }
+      result.wouldQuarantine += 1;
+      if (!apply) continue;
+
+      const updated = await prisma.emailMessage.updateMany({
+        where: {
+          id: message.id,
+          status: { in: ["PENDING", "FAILED_RETRYABLE"] },
+          messageType: EmailMessageType.PASSWORD_RESET,
+        },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: now,
+          nextAttemptAt: null,
+          lastErrorCode: "PASSWORD_RESET_QUARANTINED",
+          lastErrorMessage: eligibility.ok
+            ? "LEGACY_PLAINTEXT"
+            : eligibility.reason,
+          sensitivePayloadCiphertext: null,
+          sensitivePayloadNonce: null,
+          sensitivePayloadClearedAt: now,
+          renderedSubject: null,
+          renderedTextBody: null,
+          renderedHtmlBody: null,
+        },
+      });
+      if (updated.count === 1) result.quarantined += 1;
+      else result.partialFailures += 1;
+    } catch {
+      result.partialFailures += 1;
+    }
   }
 
-  return { scanned: candidates.length, cancelled };
+  return result;
 }

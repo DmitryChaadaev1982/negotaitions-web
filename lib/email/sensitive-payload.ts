@@ -202,6 +202,47 @@ export function decryptSensitivePayload(
   }
 }
 
+/**
+ * Resolve the only recipient value that may cross the provider boundary.
+ * The indexed association must itself be canonical because AAD normalization
+ * intentionally treats case/outer whitespace as the same identity. The
+ * nullable delivery field may be normalized, but it must resolve to that
+ * authenticated identity; the canonical result is what the provider receives.
+ */
+export function resolvePasswordResetProviderRecipient(params: {
+  recipientEmail: string | null | undefined;
+  recipientEmailNormalized: string;
+  authenticatedRecipientNormalized: string;
+}): string {
+  try {
+    const durableNormalized = normalizeEmailAddress(
+      params.recipientEmailNormalized,
+    );
+    if (durableNormalized !== params.recipientEmailNormalized) {
+      throw new SensitivePayloadError(
+        "Recipient association is not canonical.",
+      );
+    }
+    const authenticatedNormalized = normalizeEmailAddress(
+      params.authenticatedRecipientNormalized,
+    );
+    if (durableNormalized !== authenticatedNormalized) {
+      throw new SensitivePayloadError("Recipient identity mismatch.");
+    }
+    if (!params.recipientEmail) {
+      throw new SensitivePayloadError("Recipient delivery field is missing.");
+    }
+    const providerRecipient = normalizeEmailAddress(params.recipientEmail);
+    if (providerRecipient !== authenticatedNormalized) {
+      throw new SensitivePayloadError("Recipient identity mismatch.");
+    }
+    return providerRecipient;
+  } catch (error) {
+    if (error instanceof SensitivePayloadError) throw error;
+    throw new SensitivePayloadError("Recipient association is invalid.");
+  }
+}
+
 function timingSafeEqualHex(left: string, right: string): boolean {
   const leftBuf = Buffer.from(left, "utf8");
   const rightBuf = Buffer.from(right, "utf8");

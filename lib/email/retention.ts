@@ -128,6 +128,7 @@ export async function runEmailRetentionCleanup(params?: {
               EmailMessageStatus.FAILED_FINAL,
               EmailMessageStatus.SUPPRESSED,
               EmailMessageStatus.ACCEPTED_BY_PROVIDER,
+              EmailMessageStatus.ACCEPTANCE_UNKNOWN,
             ],
           },
         },

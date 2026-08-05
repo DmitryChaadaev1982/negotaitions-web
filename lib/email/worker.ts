@@ -7,7 +7,10 @@ import {
   type EmailDeliveryAttempt,
   type Prisma,
 } from "@/app/generated/prisma/client";
-import { withCredentialDispatchFence } from "@/lib/auth/credential-dispatch-fence";
+import {
+  CredentialDispatchFenceError,
+  withCredentialDispatchFence,
+} from "@/lib/auth/credential-dispatch-fence";
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailConfigurationFailure, logEmailEvent, safeRecipient } from "@/lib/email/observability";
 import {
@@ -20,6 +23,7 @@ import {
   assertPasswordResetPayloadDeliveryBinding,
   buildPasswordResetActionUrl,
   decryptSensitivePayload,
+  resolvePasswordResetProviderRecipient,
   SensitivePayloadError,
 } from "@/lib/email/sensitive-payload";
 import { evaluateSuppression } from "@/lib/email/suppression";
@@ -58,6 +62,8 @@ export type EmailDeliverySweepOptions = {
   leaseRecoveryOnly?: boolean;
   /** Deliver exactly one explicitly selected message id (canary). */
   onlyMessageId?: string;
+  /** Abort bounded advisory-fence acquisition where supported. */
+  signal?: AbortSignal;
 };
 
 function toJsonValue(
@@ -84,11 +90,16 @@ export function calculateRetryAt(
   return new Date(now.getTime() + delay + jitter);
 }
 
-async function recoverStaleProcessing(now: Date, limit: number) {
+async function recoverStaleProcessing(
+  now: Date,
+  limit: number,
+  onlyMessageId?: string,
+) {
   const stale = await prisma.emailMessage.findMany({
     where: {
       status: EmailMessageStatus.PROCESSING,
       claimExpiresAt: { lte: now },
+      ...(onlyMessageId ? { id: onlyMessageId } : {}),
     },
     orderBy: [{ claimExpiresAt: "asc" }, { id: "asc" }],
     take: limit,
@@ -152,6 +163,7 @@ async function markSuppressedByClaim(params: {
   claimToken: string;
   suppressionId?: string;
   reason?: string;
+  clearSensitivePayload?: boolean;
 }) {
   const now = new Date();
   const result = await prisma.emailMessage.updateMany({
@@ -170,6 +182,15 @@ async function markSuppressedByClaim(params: {
       nextAttemptAt: null,
       lastErrorCode: "EMAIL_SUPPRESSED_BEFORE_SEND",
       lastErrorMessage: "Email delivery suppressed before provider send.",
+      ...(params.clearSensitivePayload
+        ? {
+            sensitivePayloadCiphertext: null,
+            sensitivePayloadNonce: null,
+            sensitivePayloadClearedAt: now,
+            renderedTextBody: null,
+            renderedHtmlBody: null,
+          }
+        : {}),
     },
   });
   if (result.count === 0) {
@@ -293,6 +314,7 @@ async function finalizeFailure(params: {
   errorCode: string;
   sanitizedMessage: string;
   metadata?: Record<string, unknown>;
+  clearSensitivePayload?: boolean;
 }) {
   const completedAt = new Date();
   const updated = await prisma.$transaction(async (tx) => {
@@ -312,6 +334,15 @@ async function finalizeFailure(params: {
         processingAt: null,
         lastErrorCode: params.errorCode,
         lastErrorMessage: params.sanitizedMessage,
+        ...(params.clearSensitivePayload
+          ? {
+              sensitivePayloadCiphertext: null,
+              sensitivePayloadNonce: null,
+              sensitivePayloadClearedAt: completedAt,
+              renderedTextBody: null,
+              renderedHtmlBody: null,
+            }
+          : {}),
       },
     });
     if (messageUpdate.count === 0) return false;
@@ -332,6 +363,33 @@ async function finalizeFailure(params: {
     await markClaimLost(params.messageId, params.claimToken, "failure");
   }
   return updated;
+}
+
+async function rescheduleFenceAcquisitionFailure(params: {
+  messageId: string;
+  claimToken: string;
+  nextAttemptAt: Date;
+  error: CredentialDispatchFenceError;
+}): Promise<boolean> {
+  const result = await prisma.emailMessage.updateMany({
+    where: {
+      id: params.messageId,
+      status: EmailMessageStatus.PROCESSING,
+      claimToken: params.claimToken,
+    },
+    data: {
+      status: EmailMessageStatus.FAILED_RETRYABLE,
+      nextAttemptAt: params.nextAttemptAt,
+      claimToken: null,
+      claimedAt: null,
+      claimExpiresAt: null,
+      processingAt: null,
+      lastErrorCode: params.error.code,
+      lastErrorMessage:
+        "Credential dispatch serialization is temporarily unavailable.",
+    },
+  });
+  return result.count === 1;
 }
 
 export async function runEmailDeliverySweep(
@@ -358,7 +416,11 @@ export async function runEmailDeliverySweep(
 
   const provider = params?.provider ?? createEmailProvider();
   const now = new Date();
-  const recoveredStale = await recoverStaleProcessing(now, limit);
+  const recoveredStale = await recoverStaleProcessing(
+    now,
+    params?.onlyMessageId ? 1 : limit,
+    params?.onlyMessageId,
+  );
 
   if (params?.leaseRecoveryOnly) {
     return {
@@ -413,28 +475,31 @@ export async function runEmailDeliverySweep(
       claimedMessage.messageType === EmailMessageType.PASSWORD_RESET;
 
     await params?.beforeSuppressionRecheck?.(claimedMessage.id);
-    const suppression = await evaluateSuppression({
-      recipientEmail: claimedMessage.recipientEmail ?? claimedMessage.recipientEmailNormalized,
-      category: claimedMessage.category,
-    });
+    let suppression: Awaited<ReturnType<typeof evaluateSuppression>>;
+    try {
+      suppression = await evaluateSuppression({
+        recipientEmail: isPasswordReset
+          ? claimedMessage.recipientEmailNormalized
+          : (claimedMessage.recipientEmail ??
+            claimedMessage.recipientEmailNormalized),
+        category: claimedMessage.category,
+      });
+    } catch (error) {
+      // Sensitive association validation under the dispatch fence owns the
+      // terminal decision. A malformed durable recipient must not strand the
+      // claim before that validation, and can never reach provider.send.
+      if (!isPasswordReset) throw error;
+      suppression = { suppressed: false };
+    }
     if (suppression.suppressed) {
       const transitioned = await markSuppressedByClaim({
         messageId: claimedMessage.id,
         claimToken,
         suppressionId: suppression.suppressionId,
         reason: suppression.reason,
+        clearSensitivePayload: isPasswordReset,
       });
       if (transitioned) {
-        if (isPasswordReset) {
-          await prisma.emailMessage.updateMany({
-            where: { id: claimedMessage.id },
-            data: {
-              sensitivePayloadCiphertext: null,
-              sensitivePayloadNonce: null,
-              sensitivePayloadClearedAt: new Date(),
-            },
-          });
-        }
         suppressed += 1;
       } else skipped += 1;
       continue;
@@ -482,6 +547,7 @@ export async function runEmailDeliverySweep(
         errorCode: args.result.errorCode,
         sanitizedMessage: args.result.sanitizedMessage,
         metadata: args.result.metadata,
+        clearSensitivePayload: isPasswordReset && isAcceptanceUnknown,
       });
       if (!updated) return "skipped";
       if (isAcceptanceUnknown) {
@@ -529,22 +595,15 @@ export async function runEmailDeliverySweep(
         sanitizedMessage: isSensitiveFailure
           ? "Sensitive payload could not be decrypted for delivery."
           : "Email worker failed before provider acceptance could be confirmed.",
+        clearSensitivePayload: isSensitiveFailure,
       });
-      if (isSensitiveFailure) {
-        await prisma.emailMessage.updateMany({
-          where: { id: claimedMessage.id },
-          data: {
-            sensitivePayloadCiphertext: null,
-            sensitivePayloadNonce: null,
-            sensitivePayloadClearedAt: new Date(),
-          },
-        });
-      }
       if (!updated) return "skipped";
       logEmailEvent("error", "delivery_attempt_failed", {
         messageId: claimedMessage.id,
         attemptNumber,
-        recipient: safeRecipient(claimedMessage.recipientEmail),
+        ...(!isSensitiveFailure
+          ? { recipient: safeRecipient(claimedMessage.recipientEmail) }
+          : {}),
         errorCode: isSensitiveFailure
           ? "SENSITIVE_PAYLOAD_ERROR"
           : "WORKER_EXCEPTION",
@@ -575,9 +634,10 @@ export async function runEmailDeliverySweep(
           ? metadata.credentialGeneration
           : null;
 
-      outcome = await withCredentialDispatchFence(
-        claimedMessage.userId,
-        async () => {
+      try {
+        outcome = await withCredentialDispatchFence(
+          claimedMessage.userId,
+          async () => {
           const eligibility = await evaluatePasswordResetDispatchEligibility({
             relatedTokenId: claimedMessage.relatedTokenId,
             userId: claimedMessage.userId,
@@ -664,7 +724,6 @@ export async function runEmailDeliverySweep(
               },
             });
             if (
-              !claimedMessage.recipientEmail ||
               !rendered.subject ||
               !rendered.textBody ||
               !rendered.htmlBody
@@ -672,11 +731,20 @@ export async function runEmailDeliverySweep(
               throw new Error("EMAIL_CONTENT_UNAVAILABLE");
             }
 
+            const providerRecipient =
+              resolvePasswordResetProviderRecipient({
+                recipientEmail: claimedMessage.recipientEmail,
+                recipientEmailNormalized:
+                  claimedMessage.recipientEmailNormalized,
+                authenticatedRecipientNormalized:
+                  binding.recipientNormalized,
+              });
+
             await params?.beforeProviderSend?.(claimedMessage.id);
 
             const result = await provider.send({
               id: claimedMessage.id,
-              recipientEmail: claimedMessage.recipientEmail,
+              recipientEmail: providerRecipient,
               fromAddress: claimedMessage.fromAddress,
               replyToAddress: claimedMessage.replyToAddress,
               subject: rendered.subject,
@@ -713,8 +781,21 @@ export async function runEmailDeliverySweep(
           } catch (error) {
             return finishException(error, attempt.id, attemptNumber);
           }
-        },
-      );
+          },
+          { signal: params?.signal },
+        );
+      } catch (error) {
+        if (!(error instanceof CredentialDispatchFenceError)) throw error;
+        const transitioned = await rescheduleFenceAcquisitionFailure({
+          messageId: claimedMessage.id,
+          claimToken,
+          nextAttemptAt: calculateRetryAt(
+            Math.max(1, claimedMessage.attemptCount + 1),
+          ),
+          error,
+        });
+        outcome = transitioned ? "retryable" : "skipped";
+      }
     } else {
       const ownedAttempt = await createAttemptForOwnedClaim({
         messageId: claimedMessage.id,
