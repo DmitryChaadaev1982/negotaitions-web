@@ -1,15 +1,59 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { resetPassword } from "@/app/actions/password-reset";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n/useI18n";
 
-export function ResetPasswordForm({ token }: { token: string }) {
+const TOKEN_SHAPE = /^[a-f0-9]{64}$/i;
+
+function readFragmentToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const token = params.get("token");
+  if (!token || !TOKEN_SHAPE.test(token)) return null;
+  return token.toLowerCase();
+}
+
+function scrubFragmentFromAddressBar(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.hash = "";
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+
+export function ResetPasswordForm({
+  rejectQueryToken = false,
+}: {
+  rejectQueryToken?: boolean;
+}) {
   const { t } = useI18n();
   const [state, action, pending] = useActionState(resetPassword, {});
+  const [token, setToken] = useState<string>("");
+  const [bootstrapped, setBootstrapped] = useState(false);
+
+  useEffect(() => {
+    if (rejectQueryToken) {
+      setToken("");
+      setBootstrapped(true);
+      return;
+    }
+    const fragmentToken = readFragmentToken();
+    if (fragmentToken) {
+      setToken(fragmentToken);
+      scrubFragmentFromAddressBar();
+    }
+    setBootstrapped(true);
+  }, [rejectQueryToken]);
+
+  const invalid =
+    rejectQueryToken || (bootstrapped && !token);
 
   return (
     <div className="w-full max-w-sm">
@@ -24,58 +68,68 @@ export function ResetPasswordForm({ token }: { token: string }) {
           {t("auth.resetPasswordSubtitle")}
         </p>
       </div>
-      <form action={action} className="space-y-4">
-        <input type="hidden" name="token" value={token} />
-        <div>
-          <label
-            htmlFor="password"
-            className="mb-1.5 block text-sm font-medium text-slate-300"
-          >
-            {t("auth.newPassword")}
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="confirmPassword"
-            className="mb-1.5 block text-sm font-medium text-slate-300"
-          >
-            {t("auth.confirmNewPassword")}
-          </label>
-          <input
-            id="confirmPassword"
-            name="confirmPassword"
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-          />
-        </div>
-        {state.error && (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-800/50 bg-red-950/40 px-3 py-2 text-sm text-red-400"
-          >
-            {t(state.error as Parameters<typeof t>[0])}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={pending || !token}
-          className="w-full rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+      {invalid ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-800/50 bg-red-950/40 px-3 py-2 text-sm text-red-400"
+          data-testid="reset-password-invalid-link"
         >
-          {pending ? t("auth.resettingPassword") : t("auth.resetPasswordButton")}
-        </button>
-      </form>
+          {t("auth.passwordResetInvalid")}
+        </div>
+      ) : (
+        <form action={action} className="space-y-4">
+          <input type="hidden" name="token" value={token} />
+          <div>
+            <label
+              htmlFor="password"
+              className="mb-1.5 block text-sm font-medium text-slate-300"
+            >
+              {t("auth.newPassword")}
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="confirmPassword"
+              className="mb-1.5 block text-sm font-medium text-slate-300"
+            >
+              {t("auth.confirmNewPassword")}
+            </label>
+            <input
+              id="confirmPassword"
+              name="confirmPassword"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            />
+          </div>
+          {state.error && (
+            <p
+              role="alert"
+              className="rounded-lg border border-red-800/50 bg-red-950/40 px-3 py-2 text-sm text-red-400"
+            >
+              {t(state.error as Parameters<typeof t>[0])}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={pending || !token || !bootstrapped}
+            className="w-full rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending ? t("auth.resettingPassword") : t("auth.resetPasswordButton")}
+          </button>
+        </form>
+      )}
       <p className="mt-6 text-center text-sm">
         <Link
           href="/login"
