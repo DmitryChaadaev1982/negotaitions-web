@@ -2,7 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { headers, cookies } from "next/headers";
-import crypto from "crypto";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -14,6 +13,10 @@ import {
   getOptionalCurrentUser,
 } from "@/lib/auth";
 import { isAdmin, parseAdminEmails } from "@/lib/auth/admin";
+import {
+  getTrustedClientIdentity,
+  shortClientIpFingerprint,
+} from "@/lib/auth/client-ip";
 import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
 import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
@@ -73,13 +76,8 @@ export async function registerUser(
 
     const headersList = await headers();
     const userAgent = headersList.get("user-agent") ?? undefined;
-    const rawIp =
-      headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      headersList.get("x-real-ip") ??
-      "";
-    const ipHash = rawIp
-      ? crypto.createHash("sha256").update(rawIp).digest("hex").slice(0, 16)
-      : undefined;
+    const identity = getTrustedClientIdentity(headersList);
+    const ipHash = shortClientIpFingerprint(identity.fingerprint);
 
     // User creation and consent records must be atomic: if consent write fails,
     // the user record must not be left without legal consent.

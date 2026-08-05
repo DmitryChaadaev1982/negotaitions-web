@@ -181,6 +181,7 @@ export function getAdminEnvironmentDisplayGroups(): AdminEnvDisplayGroup[] {
         toDisplayItem("EMAIL_BOUNCE_COMPLAINT_RETENTION_DAYS", false),
         toDisplayItem("EMAIL_ADMIN_TEST_ENABLED", false),
         toDisplayItem("EMAIL_LOCAL_PREVIEW_ENABLED", false),
+        toDisplayItem("TRUSTED_PROXY_ENABLED", false),
         toDisplayItem("PASSWORD_RESET_TOKEN_TTL_MINUTES", false),
         toDisplayItem("PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS", false),
         toDisplayItem("PASSWORD_RESET_MAX_REQUESTS_PER_HOUR", false),

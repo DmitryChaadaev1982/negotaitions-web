@@ -17,6 +17,9 @@ export class ProcessLocalPasswordResetLimiter {
 
   consume(params: {
     normalizedEmail: string;
+    /** Precomputed HMAC fingerprint from getTrustedClientIdentity. */
+    clientIpFingerprint?: string | null;
+    /** @deprecated Prefer clientIpFingerprint. Kept for unit tests of raw hashing. */
     rawIp?: string | null;
     now?: number;
     hmacSecret?: string | null;
@@ -26,14 +29,16 @@ export class ProcessLocalPasswordResetLimiter {
     const emailKey = createHash("sha256")
       .update(params.normalizedEmail)
       .digest("hex");
-    const ipKey = params.rawIp
-      ? createHmac(
-          "sha256",
-          params.hmacSecret?.trim() || FALLBACK_HMAC_KEY,
-        )
-          .update(params.rawIp)
-          .digest("hex")
-      : null;
+    const ipKey = params.clientIpFingerprint
+      ? params.clientIpFingerprint
+      : params.rawIp
+        ? createHmac(
+            "sha256",
+            params.hmacSecret?.trim() || FALLBACK_HMAC_KEY,
+          )
+            .update(params.rawIp)
+            .digest("hex")
+        : null;
 
     const emailTimestamps = this.emailBuckets.get(emailKey)?.timestamps ?? [];
     const latestEmailAttempt = emailTimestamps.at(-1);
@@ -84,7 +89,7 @@ let sharedCooldownSeconds = 0;
 
 export function consumePasswordResetAttempt(params: {
   normalizedEmail: string;
-  rawIp?: string | null;
+  clientIpFingerprint?: string | null;
   maxPerAccountPerHour: number;
   cooldownSeconds: number;
 }): boolean {
@@ -103,9 +108,9 @@ export function consumePasswordResetAttempt(params: {
   }
   return sharedLimiter.consume({
     normalizedEmail: params.normalizedEmail,
-    rawIp: params.rawIp,
-    // AUTH_SECRET is used only as an HMAC key. A process-random fallback keeps
-    // raw IP addresses out of memory-backed keys in local/single-instance use.
+    clientIpFingerprint: params.clientIpFingerprint,
+    // AUTH_SECRET is unused when a fingerprint is supplied. Kept only for the
+    // deprecated rawIp path used by focused unit tests.
     hmacSecret: process.env.AUTH_SECRET,
   });
 }

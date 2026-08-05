@@ -51,13 +51,13 @@ async function withSerializableRetry<T>(
 
 export async function requestPasswordReset(params: {
   normalizedEmail: string;
-  rawIp?: string | null;
+  clientIpFingerprint?: string | null;
 }): Promise<void> {
   const config = getPasswordResetConfig();
   if (
     !consumePasswordResetAttempt({
       normalizedEmail: params.normalizedEmail,
-      rawIp: params.rawIp,
+      clientIpFingerprint: params.clientIpFingerprint,
       maxPerAccountPerHour: config.maxPerAccountPerHour,
       cooldownSeconds: config.cooldownSeconds,
     })

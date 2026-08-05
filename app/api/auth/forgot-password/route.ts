@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requestPasswordReset } from "@/lib/auth/account-security";
+import { getTrustedClientIdentity } from "@/lib/auth/client-ip";
 import { normalizeEmail } from "@/lib/auth";
 import { isSameOriginRequest } from "@/lib/auth/same-origin";
 import { normalizeEmailAddress } from "@/lib/email/address";
@@ -31,11 +32,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const rawIp =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip");
+  const identity = getTrustedClientIdentity(request.headers);
   try {
-    await requestPasswordReset({ normalizedEmail: email, rawIp });
+    await requestPasswordReset({
+      normalizedEmail: email,
+      clientIpFingerprint: identity.fingerprint,
+    });
   } catch {
     // Public recovery intentionally does not expose account, suppression,
     // rate-limit, or transient infrastructure state.
