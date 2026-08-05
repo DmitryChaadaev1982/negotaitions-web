@@ -249,6 +249,10 @@ model User {
   // UI language preference: "ru" | "en"
   preferredLocale  String    @default("ru")
 
+  // Incremented on every password mutation. Captured during password
+  // verification so login / password-change can CAS against reset.
+  credentialGeneration Int @default(0)
+
   lastLoginAt      DateTime?
   approvedAt       DateTime?
   approvedByUserId String?
@@ -281,6 +285,8 @@ model User {
   sessionInvitesReceived SessionInvite[]   @relation("SessionInvitee")
   emailMessages        EmailMessage[]      @relation("EmailMessageUser")
   liftedEmailSuppressions EmailSuppression[] @relation("EmailSuppressionLiftedBy")
+
+  @@index([credentialGeneration])
 }
 
 model UserSession {
@@ -885,6 +891,13 @@ model EmailMessage {
   renderedSubject          String?            @db.Text
   renderedTextBody         String?            @db.Text
   renderedHtmlBody         String?            @db.Text
+  // Authenticated ciphertext for late-render secrets (e.g. reset token).
+  // Plaintext must never be stored in rendered* or metadata.
+  sensitivePayloadCiphertext String?          @db.Text
+  sensitivePayloadNonce      String?
+  sensitivePayloadClearedAt  DateTime?
+  // Safe association to PasswordResetToken.id (never the raw token).
+  relatedTokenId           String?
   metadata                 Json?
   idempotencyKey           String             @unique
   providerName             String
@@ -921,6 +934,8 @@ model EmailMessage {
   @@index([lastProviderEventTime])
   @@index([claimExpiresAt])
   @@index([createdAt])
+  @@index([relatedTokenId])
+  @@index([sensitivePayloadClearedAt])
   @@unique([providerName, lastProviderMessageId])
 }
 

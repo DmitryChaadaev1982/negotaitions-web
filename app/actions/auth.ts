@@ -17,6 +17,10 @@ import {
   getTrustedClientIdentity,
   shortClientIpFingerprint,
 } from "@/lib/auth/client-ip";
+import {
+  runAfterPasswordVerifiedHook,
+  StaleCredentialError,
+} from "@/lib/auth/credential-concurrency";
 import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
 import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
@@ -169,40 +173,75 @@ export async function loginUser(
 
   const email = normalizeEmail(rawEmail);
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true,
+      globalRole: true,
+      status: true,
+      preferredLocale: true,
+      approvedAt: true,
+      credentialGeneration: true,
+    },
+  });
 
   if (!user || !(await verifyPassword(rawPassword, user.passwordHash))) {
     return { errors: { form: ["auth.invalidCredentials"] } };
   }
 
+  await runAfterPasswordVerifiedHook();
+
   // Admin bootstrap: if email is in ADMIN_EMAILS, upgrade on login
   const adminEmails = parseAdminEmails();
   const isAdminEmail = adminEmails.includes(email);
+  const expectedCredentialGeneration = user.credentialGeneration;
 
-  if (isAdminEmail && (user.globalRole !== "ADMIN" || user.status !== "ACTIVE")) {
-    const now = new Date();
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        globalRole: "ADMIN",
-        status: "ACTIVE",
-        approvedAt: user.approvedAt ?? now,
-        lastLoginAt: now,
-      },
+  try {
+    if (isAdminEmail && (user.globalRole !== "ADMIN" || user.status !== "ACTIVE")) {
+      const now = new Date();
+      const upgraded = await prisma.user.updateMany({
+        where: {
+          id: user.id,
+          credentialGeneration: expectedCredentialGeneration,
+        },
+        data: {
+          globalRole: "ADMIN",
+          status: "ACTIVE",
+          approvedAt: user.approvedAt ?? now,
+          lastLoginAt: now,
+        },
+      });
+      if (upgraded.count !== 1) {
+        return { errors: { form: ["auth.invalidCredentials"] } };
+      }
+      user.globalRole = "ADMIN";
+      user.status = "ACTIVE";
+    } else {
+      const touched = await prisma.user.updateMany({
+        where: {
+          id: user.id,
+          credentialGeneration: expectedCredentialGeneration,
+        },
+        data: { lastLoginAt: new Date() },
+      });
+      if (touched.count !== 1) {
+        return { errors: { form: ["auth.invalidCredentials"] } };
+      }
+    }
+
+    const headersList = await headers();
+    await createUserSession(user.id, {
+      userAgent: headersList.get("user-agent") ?? undefined,
+      expectedCredentialGeneration,
     });
-    user.globalRole = "ADMIN";
-    user.status = "ACTIVE";
-  } else {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
+  } catch (error) {
+    if (error instanceof StaleCredentialError) {
+      return { errors: { form: ["auth.invalidCredentials"] } };
+    }
+    throw error;
   }
-
-  const headersList = await headers();
-  await createUserSession(user.id, {
-    userAgent: headersList.get("user-agent") ?? undefined,
-  });
 
   // Sync locale cookie to user's saved preferredLocale so pages render immediately in their language.
   const userLocale = (user as Record<string, unknown>).preferredLocale;

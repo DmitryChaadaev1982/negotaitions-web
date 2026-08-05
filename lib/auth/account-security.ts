@@ -3,6 +3,10 @@ import {
   Prisma,
 } from "@/app/generated/prisma/client";
 import {
+  runAfterPasswordVerifiedHook,
+  runBeforePasswordUpdateHook,
+} from "@/lib/auth/credential-concurrency";
+import {
   enqueuePasswordChangedEmail,
   enqueuePasswordResetEmail,
   enqueueRecoveryDeniedEmail,
@@ -22,6 +26,20 @@ const HOUR_MS = 60 * 60 * 1000;
 const SERIALIZABLE_ATTEMPTS = 3;
 
 class InvalidResetTokenError extends Error {}
+
+/** Test-only: observe whether bcrypt ran for a reset attempt. */
+let passwordHashInvocationCountForTests = 0;
+let trackPasswordHashInvocations = false;
+
+export function beginTrackingPasswordHashInvocationsForTests(): void {
+  trackPasswordHashInvocations = true;
+  passwordHashInvocationCountForTests = 0;
+}
+
+export function endTrackingPasswordHashInvocationsForTests(): number {
+  trackPasswordHashInvocations = false;
+  return passwordHashInvocationCountForTests;
+}
 
 function isSerializableConflict(error: unknown): boolean {
   return (
@@ -80,6 +98,7 @@ export async function requestPasswordReset(params: {
         name: true,
         preferredLocale: true,
         status: true,
+        credentialGeneration: true,
       },
     });
     if (!user || user.status === "PENDING_APPROVAL") return;
@@ -123,6 +142,7 @@ export async function requestPasswordReset(params: {
         user,
         rawToken,
         tokenId: token.id,
+        credentialGeneration: user.credentialGeneration,
         tx,
       });
       return;
@@ -159,15 +179,55 @@ export async function requestPasswordReset(params: {
   });
 }
 
+/**
+ * Cheap eligibility probe used before bcrypt. Does not consume the token.
+ */
+async function isResetTokenEligible(
+  tokenHash: string,
+  now: Date,
+): Promise<boolean> {
+  const token = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    select: {
+      usedAt: true,
+      revokedAt: true,
+      expiresAt: true,
+      user: { select: { status: true } },
+    },
+  });
+  return Boolean(
+    token &&
+      !token.usedAt &&
+      !token.revokedAt &&
+      token.expiresAt > now &&
+      token.user.status === "ACTIVE",
+  );
+}
+
 export async function resetPasswordWithToken(params: {
   rawToken: string;
   newPassword: string;
 }): Promise<boolean> {
+  // 1. Validate token syntax (cheap).
   if (!isPasswordResetTokenShape(params.rawToken)) return false;
+  // 2. Hash token (cheap SHA-256).
   const tokenHash = hashPasswordResetToken(params.rawToken);
-  const passwordHash = await hashPassword(params.newPassword);
   const now = new Date();
 
+  // 3. Query eligibility cheaply — do not consume; do not bcrypt yet.
+  if (!(await isResetTokenEligible(tokenHash, now))) {
+    return false;
+  }
+
+  await runAfterPasswordVerifiedHook();
+
+  // 4. Only then perform bcrypt.
+  if (trackPasswordHashInvocations) {
+    passwordHashInvocationCountForTests += 1;
+  }
+  const passwordHash = await hashPassword(params.newPassword);
+
+  // 5. Atomically claim token / update password / bump generation / wipe sessions.
   try {
     await withSerializableRetry(async (tx) => {
       const token = await tx.passwordResetToken.findUnique({
@@ -180,6 +240,7 @@ export async function resetPasswordWithToken(params: {
               name: true,
               preferredLocale: true,
               status: true,
+              credentialGeneration: true,
             },
           },
         },
@@ -205,9 +266,18 @@ export async function resetPasswordWithToken(params: {
       });
       if (claimed.count !== 1) throw new InvalidResetTokenError();
 
+      await runBeforePasswordUpdateHook();
+
       const updated = await tx.user.updateMany({
-        where: { id: token.userId, status: "ACTIVE" },
-        data: { passwordHash },
+        where: {
+          id: token.userId,
+          status: "ACTIVE",
+          credentialGeneration: token.user.credentialGeneration,
+        },
+        data: {
+          passwordHash,
+          credentialGeneration: { increment: 1 },
+        },
       });
       if (updated.count !== 1) throw new InvalidResetTokenError();
 

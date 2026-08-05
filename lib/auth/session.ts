@@ -1,6 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import {
+  runBeforeSessionCreateHook,
+  StaleCredentialError,
+} from "@/lib/auth/credential-concurrency";
 import { prisma } from "@/lib/prisma";
 
 import { isAdmin, parseAdminEmails } from "./admin";
@@ -19,9 +23,17 @@ export type AuthUser = {
   preferredLocale: string;
 };
 
+/**
+ * Create a session only when the credential generation observed during
+ * password verification is still current. Prevents stale login after reset.
+ */
 export async function createUserSession(
   userId: string,
-  meta?: { userAgent?: string; ipHash?: string },
+  meta?: {
+    userAgent?: string;
+    ipHash?: string;
+    expectedCredentialGeneration?: number;
+  },
 ): Promise<void> {
   const token = generateSessionToken();
   const tokenHash = hashSessionToken(token);
@@ -29,15 +41,43 @@ export async function createUserSession(
     Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  await prisma.userSession.create({
-    data: {
-      userId,
-      sessionTokenHash: tokenHash,
-      expiresAt,
-      userAgent: meta?.userAgent ?? null,
-      ipHash: meta?.ipHash ?? null,
-    },
-  });
+  await runBeforeSessionCreateHook();
+
+  if (typeof meta?.expectedCredentialGeneration === "number") {
+    const created = await prisma.$transaction(async (tx) => {
+      const stillValid = await tx.user.findFirst({
+        where: {
+          id: userId,
+          credentialGeneration: meta.expectedCredentialGeneration,
+        },
+        select: { id: true },
+      });
+      if (!stillValid) {
+        throw new StaleCredentialError();
+      }
+      await tx.userSession.create({
+        data: {
+          userId,
+          sessionTokenHash: tokenHash,
+          expiresAt,
+          userAgent: meta?.userAgent ?? null,
+          ipHash: meta?.ipHash ?? null,
+        },
+      });
+      return true;
+    });
+    if (!created) throw new StaleCredentialError();
+  } else {
+    await prisma.userSession.create({
+      data: {
+        userId,
+        sessionTokenHash: tokenHash,
+        expiresAt,
+        userAgent: meta?.userAgent ?? null,
+        ipHash: meta?.ipHash ?? null,
+      },
+    });
+  }
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {

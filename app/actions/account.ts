@@ -5,6 +5,11 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
+import {
+  runAfterPasswordVerifiedHook,
+  runBeforePasswordUpdateHook,
+  StaleCredentialError,
+} from "@/lib/auth/credential-concurrency";
 import { getCurrentSessionTokenHash, requireActiveUser } from "@/lib/auth";
 import { enqueuePasswordChangedEmail } from "@/lib/email/account-security";
 
@@ -61,10 +66,10 @@ export async function updatePassword(
     return { error: "auth.passwordMismatch" };
   }
 
-  // Fetch current password hash — never return it to the client.
+  // Fetch current credential state — never return it to the client.
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { passwordHash: true },
+    select: { passwordHash: true, credentialGeneration: true },
   });
 
   if (!dbUser) {
@@ -76,17 +81,33 @@ export async function updatePassword(
     return { error: "auth.invalidCurrentPassword" };
   }
 
+  await runAfterPasswordVerifiedHook();
+
   const newHash = await hashPassword(newPassword);
   const currentSessionTokenHash = await getCurrentSessionTokenHash();
   const changedAt = new Date();
   const changeId = createHash("sha256").update(newHash).digest("hex").slice(0, 32);
+  const expectedCredentialGeneration = dbUser.credentialGeneration;
   try {
     await prisma.$transaction(async (tx) => {
+      await runBeforePasswordUpdateHook();
+
+      // CAS: only overwrite if the exact verified credential state remains.
       const updated = await tx.user.updateMany({
-        where: { id: user.id, status: "ACTIVE" },
-        data: { passwordHash: newHash },
+        where: {
+          id: user.id,
+          status: "ACTIVE",
+          passwordHash: dbUser.passwordHash,
+          credentialGeneration: expectedCredentialGeneration,
+        },
+        data: {
+          passwordHash: newHash,
+          credentialGeneration: { increment: 1 },
+        },
       });
-      if (updated.count !== 1) throw new Error("Account is no longer active.");
+      if (updated.count !== 1) {
+        throw new StaleCredentialError();
+      }
 
       await tx.passwordResetToken.updateMany({
         where: {
@@ -111,7 +132,10 @@ export async function updatePassword(
         tx,
       });
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof StaleCredentialError) {
+      return { error: "auth.passwordChangeFailed" };
+    }
     return { error: "auth.passwordChangeFailed" };
   }
 

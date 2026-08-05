@@ -44,6 +44,7 @@ export const REQUIRED_PRODUCTION_BASELINE =
 
 export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
   "20260804170000_stage_3_13c_account_security_email",
+  "20260805140000_stage_3_13c_security_remediation",
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";
