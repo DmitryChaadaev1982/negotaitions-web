@@ -21,7 +21,7 @@ import {
   runAfterPasswordVerifiedHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
-import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
+import { createRegisteredUserWithConsents } from "@/lib/auth/registration";
 import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
 
@@ -83,52 +83,17 @@ export async function registerUser(
     const identity = getTrustedClientIdentity(headersList);
     const ipHash = shortClientIpFingerprint(identity.fingerprint);
 
-    // User creation and consent records must be atomic: if consent write fails,
-    // the user record must not be left without legal consent.
-    const user = await prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          email,
-          name: rawName,
-          passwordHash,
-          globalRole,
-          status,
-          preferredLocale,
-          lastLoginAt: now,
-          ...(isAdminEmail ? { approvedAt: now } : {}),
-        },
-      });
-
-      await tx.userConsent.createMany({
-        data: [
-          {
-            userId: created.id,
-            consentType: CONSENT_TYPES.TERMS_PRIVACY_V1,
-            version: "1",
-            acceptedAt: now,
-            ipHash: ipHash ?? null,
-            userAgent: userAgent ?? null,
-          },
-          {
-            userId: created.id,
-            consentType: CONSENT_TYPES.MVP_DATA_LIMITATION_V1,
-            version: "1",
-            acceptedAt: now,
-            ipHash: ipHash ?? null,
-            userAgent: userAgent ?? null,
-          },
-          {
-            userId: created.id,
-            consentType: CONSENT_TYPES.EXTERNAL_INFRASTRUCTURE_V1,
-            version: "1",
-            acceptedAt: now,
-            ipHash: ipHash ?? null,
-            userAgent: userAgent ?? null,
-          },
-        ],
-      });
-
-      return created;
+    // Hashing completed before this short atomic user/consent transaction.
+    const user = await createRegisteredUserWithConsents({
+      email,
+      name: rawName,
+      passwordHash,
+      globalRole,
+      status,
+      preferredLocale,
+      now,
+      ipHash,
+      userAgent,
     });
 
     if (user.status === "PENDING_APPROVAL") {
@@ -138,7 +103,10 @@ export async function registerUser(
       });
     }
 
-    await createUserSession(user.id, { userAgent });
+    await createUserSession(user.id, {
+      userAgent,
+      expectedCredentialGeneration: user.credentialGeneration,
+    });
 
     // Persist chosen locale in cookie so pages render in the user's language immediately.
     const cookieStore = await cookies();

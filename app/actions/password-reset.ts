@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { resetPasswordWithToken } from "@/lib/auth/account-security";
+import { CredentialDispatchFenceError } from "@/lib/auth/credential-dispatch-fence";
 import { consumePasswordResetFinalizeAttempt } from "@/lib/auth/password-reset-rate-limit";
 import {
   hashPasswordResetToken,
@@ -43,7 +44,10 @@ export async function resetPassword(
       newPassword: password,
     });
     if (!succeeded) return { error: "auth.passwordResetInvalid" };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialDispatchFenceError) {
+      return { error: "auth.passwordResetRetry" };
+    }
     return { error: "auth.passwordResetInvalid" };
   }
 

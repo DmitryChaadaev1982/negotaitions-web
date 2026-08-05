@@ -1496,6 +1496,8 @@ export const ru: Dictionary = {
     resettingPassword: "Обновление пароля...",
     passwordResetInvalid:
       "Ссылка для восстановления недействительна или истекла. Запросите новую ссылку.",
+    passwordResetRetry:
+      "Сброс пароля временно недоступен. Попробуйте ещё раз.",
     passwordResetSucceeded:
       "Пароль изменён. Войдите снова с новым паролем.",
     preferredLocale: "Язык интерфейса",

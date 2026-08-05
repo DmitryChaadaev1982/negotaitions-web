@@ -1489,6 +1489,8 @@ export const en = {
     resettingPassword: "Updating password...",
     passwordResetInvalid:
       "This recovery link is invalid or has expired. Request a new link.",
+    passwordResetRetry:
+      "Password reset is temporarily unavailable. Please try again.",
     passwordResetSucceeded:
       "Your password was changed. Log in again with your new password.",
     preferredLocale: "Interface language",

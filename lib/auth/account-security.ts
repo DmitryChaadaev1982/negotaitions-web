@@ -1,4 +1,5 @@
 import {
+  EmailMessageStatus,
   EmailMessageType,
   Prisma,
 } from "@/app/generated/prisma/client";
@@ -92,27 +93,125 @@ export async function requestPasswordReset(params: {
     now.getTime() - config.cooldownSeconds * 1000,
   );
 
-  await withSerializableRetry(async (tx) => {
-    const user = await tx.user.findUnique({
-      where: { email: params.normalizedEmail },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        preferredLocale: true,
-        status: true,
-        credentialGeneration: true,
-      },
-    });
-    if (!user || user.status === "PENDING_APPROVAL") return;
+  // Resolve only the fence identity before opening a transaction. No row lock
+  // is held while waiting for the advisory fence.
+  const candidate = await prisma.user.findUnique({
+    where: { email: params.normalizedEmail },
+    select: { id: true },
+  });
+  if (!candidate) return;
 
-    if (user.status === "ACTIVE") {
+  await withCredentialDispatchFence(candidate.id, async () => {
+    await withSerializableRetry(async (tx) => {
+      // Global order: fence -> transaction -> User -> reset tokens -> messages.
+      const locked = await lockUserRowForUpdate(tx, candidate.id);
+      if (!locked) return;
+      const user = await tx.user.findUnique({
+        where: { id: candidate.id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          preferredLocale: true,
+          status: true,
+          credentialGeneration: true,
+        },
+      });
+      if (!user || user.email !== params.normalizedEmail) return;
+
+      if (user.status === "PENDING_APPROVAL") return;
+
+      if (user.status === "ACTIVE") {
+        const [recentCount, latest] = await Promise.all([
+          tx.passwordResetToken.count({
+            where: { userId: user.id, createdAt: { gte: hourAgo } },
+          }),
+          tx.passwordResetToken.findFirst({
+            where: { userId: user.id },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true },
+          }),
+        ]);
+        if (
+          recentCount >= config.maxPerAccountPerHour ||
+          (latest && latest.createdAt > cooldownAfter)
+        ) {
+          return;
+        }
+
+        const superseded = await tx.passwordResetToken.findMany({
+          where: {
+            userId: user.id,
+            usedAt: null,
+            revokedAt: null,
+          },
+          select: { id: true },
+        });
+        if (superseded.length > 0) {
+          const supersededIds = superseded.map((token) => token.id);
+          await tx.passwordResetToken.updateMany({
+            where: { id: { in: supersededIds } },
+            data: { revokedAt: now },
+          });
+          await tx.emailMessage.updateMany({
+            where: {
+              relatedTokenId: { in: supersededIds },
+              messageType: EmailMessageType.PASSWORD_RESET,
+              status: {
+                in: [
+                  EmailMessageStatus.PENDING,
+                  EmailMessageStatus.FAILED_RETRYABLE,
+                ],
+              },
+            },
+            data: {
+              status: EmailMessageStatus.CANCELLED,
+              cancelledAt: now,
+              nextAttemptAt: null,
+              lastErrorCode: "PASSWORD_RESET_SUPERSEDED",
+              lastErrorMessage: "TOKEN_SUPERSEDED",
+              sensitivePayloadCiphertext: null,
+              sensitivePayloadNonce: null,
+              sensitivePayloadClearedAt: now,
+              renderedTextBody: null,
+              renderedHtmlBody: null,
+            },
+          });
+        }
+
+        const rawToken = generatePasswordResetToken();
+        const token = await tx.passwordResetToken.create({
+          data: {
+            userId: user.id,
+            tokenHash: hashPasswordResetToken(rawToken),
+            expiresAt: new Date(now.getTime() + config.ttlMinutes * 60 * 1000),
+          },
+          select: { id: true },
+        });
+        await enqueuePasswordResetEmail({
+          user,
+          rawToken,
+          tokenId: token.id,
+          credentialGeneration: user.credentialGeneration,
+          tx,
+        });
+        return;
+      }
+
+      if (user.status !== "BLOCKED" && user.status !== "REJECTED") return;
       const [recentCount, latest] = await Promise.all([
-        tx.passwordResetToken.count({
-          where: { userId: user.id, createdAt: { gte: hourAgo } },
+        tx.emailMessage.count({
+          where: {
+            userId: user.id,
+            messageType: EmailMessageType.ACCOUNT_RECOVERY_DENIED,
+            createdAt: { gte: hourAgo },
+          },
         }),
-        tx.passwordResetToken.findFirst({
-          where: { userId: user.id },
+        tx.emailMessage.findFirst({
+          where: {
+            userId: user.id,
+            messageType: EmailMessageType.ACCOUNT_RECOVERY_DENIED,
+          },
           orderBy: { createdAt: "desc" },
           select: { createdAt: true },
         }),
@@ -123,62 +222,11 @@ export async function requestPasswordReset(params: {
       ) {
         return;
       }
-
-      await tx.passwordResetToken.updateMany({
-        where: {
-          userId: user.id,
-          usedAt: null,
-          revokedAt: null,
-        },
-        data: { revokedAt: now },
-      });
-      const rawToken = generatePasswordResetToken();
-      const token = await tx.passwordResetToken.create({
-        data: {
-          userId: user.id,
-          tokenHash: hashPasswordResetToken(rawToken),
-          expiresAt: new Date(now.getTime() + config.ttlMinutes * 60 * 1000),
-        },
-        select: { id: true },
-      });
-      await enqueuePasswordResetEmail({
-        user,
-        rawToken,
-        tokenId: token.id,
-        credentialGeneration: user.credentialGeneration,
-        tx,
-      });
-      return;
-    }
-
-    if (user.status !== "BLOCKED" && user.status !== "REJECTED") return;
-    const [recentCount, latest] = await Promise.all([
-      tx.emailMessage.count({
-        where: {
-          userId: user.id,
-          messageType: EmailMessageType.ACCOUNT_RECOVERY_DENIED,
-          createdAt: { gte: hourAgo },
-        },
-      }),
-      tx.emailMessage.findFirst({
-        where: {
-          userId: user.id,
-          messageType: EmailMessageType.ACCOUNT_RECOVERY_DENIED,
-        },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      }),
-    ]);
-    if (
-      recentCount >= config.maxPerAccountPerHour ||
-      (latest && latest.createdAt > cooldownAfter)
-    ) {
-      return;
-    }
-    const bucket = Math.floor(
-      now.getTime() / (config.cooldownSeconds * 1000),
-    );
-    await enqueueRecoveryDeniedEmail({ user, bucket, tx });
+      const bucket = Math.floor(
+        now.getTime() / (config.cooldownSeconds * 1000),
+      );
+      await enqueueRecoveryDeniedEmail({ user, bucket, tx });
+    });
   });
 }
 
@@ -242,6 +290,13 @@ export async function resetPasswordWithToken(params: {
   try {
     await withCredentialDispatchFence(eligible.userId, async () => {
       await withSerializableRetry(async (tx) => {
+        // Global order: fence -> transaction -> User -> reset tokens ->
+        // sessions -> outbox message.
+        const locked = await lockUserRowForUpdate(tx, eligible.userId);
+        if (!locked || locked.status !== "ACTIVE") {
+          throw new InvalidResetTokenError();
+        }
+
         const token = await tx.passwordResetToken.findUnique({
           where: { tokenHash },
           include: {
@@ -267,10 +322,8 @@ export async function resetPasswordWithToken(params: {
           throw new InvalidResetTokenError();
         }
 
-        const locked = await lockUserRowForUpdate(tx, token.userId);
         if (
-          !locked ||
-          locked.status !== "ACTIVE" ||
+          token.userId !== eligible.userId ||
           locked.credentialGeneration !== token.user.credentialGeneration
         ) {
           throw new InvalidResetTokenError();

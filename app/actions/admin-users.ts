@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
+import { transitionUserToResetIneligibleStatus } from "@/lib/auth/admin-account-status";
 import { parseAdminEmails } from "@/lib/auth/admin";
 import { requireAdminUser } from "@/lib/auth";
 
@@ -159,27 +160,12 @@ export async function rejectUser(userId: string, comment?: string): Promise<void
 
   await ensureSafetyChecks(adminUser, target, "reject");
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: target.id },
-      data: {
-        status: USER_STATUS.REJECTED,
-        rejectedAt: new Date(),
-        rejectedByUserId: adminUser.id,
-        blockedAt: null,
-        blockedByUserId: null,
-        ...(normalizedComment ? { approvalComment: normalizedComment } : {}),
-      },
-    }),
-    prisma.adminActionLog.create({
-      data: {
-        adminUserId: adminUser.id,
-        targetUserId: target.id,
-        action: ADMIN_ACTION.USER_REJECTED,
-        comment: normalizedComment,
-      },
-    }),
-  ]);
+  await transitionUserToResetIneligibleStatus({
+    targetUserId: target.id,
+    adminUserId: adminUser.id,
+    status: USER_STATUS.REJECTED,
+    comment: normalizedComment,
+  });
 
   revalidateAdminPages();
 }
@@ -191,25 +177,12 @@ export async function blockUser(userId: string, comment?: string): Promise<void>
 
   await ensureSafetyChecks(adminUser, target, "block");
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: target.id },
-      data: {
-        status: USER_STATUS.BLOCKED,
-        blockedAt: new Date(),
-        blockedByUserId: adminUser.id,
-        ...(normalizedComment ? { approvalComment: normalizedComment } : {}),
-      },
-    }),
-    prisma.adminActionLog.create({
-      data: {
-        adminUserId: adminUser.id,
-        targetUserId: target.id,
-        action: ADMIN_ACTION.USER_BLOCKED,
-        comment: normalizedComment,
-      },
-    }),
-  ]);
+  await transitionUserToResetIneligibleStatus({
+    targetUserId: target.id,
+    adminUserId: adminUser.id,
+    status: USER_STATUS.BLOCKED,
+    comment: normalizedComment,
+  });
 
   revalidateAdminPages();
 }

@@ -15,6 +15,25 @@ import { generateSessionToken, hashSessionToken } from "./crypto";
 const COOKIE_NAME = "auth_session";
 const SESSION_DURATION_DAYS = 30;
 const LAST_SEEN_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
+const AUTHENTICATED_SESSION_STATUSES = new Set([
+  "ACTIVE",
+  "PENDING_APPROVAL",
+  "REJECTED",
+  "BLOCKED",
+]);
+
+export type UserSessionCreationMetadata = {
+  userAgent?: string;
+  ipHash?: string;
+  expectedCredentialGeneration: number;
+};
+
+type UserSessionCookieWriter = (params: {
+  token: string;
+  expiresAt: Date;
+}) => Promise<void>;
+
+let userSessionCookieWriterForTests: UserSessionCookieWriter | null = null;
 
 export type AuthUser = {
   id: string;
@@ -29,18 +48,21 @@ export type AuthUser = {
  * Persist a UserSession when the observed credential generation is still
  * current. Returns the raw session token (caller issues the cookie).
  *
- * When expectedCredentialGeneration is provided, the User row is locked with
- * SELECT ... FOR UPDATE, generation is inspected, and UserSession is inserted
- * while holding that lock.
+ * The User row is always locked with SELECT ... FOR UPDATE. Generation and
+ * account status are inspected, and UserSession is inserted while holding
+ * that lock. There is deliberately no unguarded production overload.
  */
 export async function createUserSessionToken(
   userId: string,
-  meta?: {
-    userAgent?: string;
-    ipHash?: string;
-    expectedCredentialGeneration?: number;
-  },
+  meta: UserSessionCreationMetadata,
 ): Promise<{ token: string; expiresAt: Date }> {
+  if (
+    !Number.isSafeInteger(meta.expectedCredentialGeneration) ||
+    meta.expectedCredentialGeneration < 0
+  ) {
+    throw new StaleCredentialError();
+  }
+
   const token = generateSessionToken();
   const tokenHash = hashSessionToken(token);
   const expiresAt = new Date(
@@ -49,42 +71,64 @@ export async function createUserSessionToken(
 
   await runBeforeSessionCreateHook();
 
-  if (typeof meta?.expectedCredentialGeneration === "number") {
-    await prisma.$transaction(async (tx) => {
-      const locked = await lockUserRowForUpdate(tx, userId);
-      if (
-        !locked ||
-        locked.credentialGeneration !== meta.expectedCredentialGeneration
-      ) {
-        throw new StaleCredentialError();
-      }
+  await prisma.$transaction(async (tx) => {
+    const locked = await lockUserRowForUpdate(tx, userId);
+    if (
+      !locked ||
+      !AUTHENTICATED_SESSION_STATUSES.has(locked.status) ||
+      locked.credentialGeneration !== meta.expectedCredentialGeneration
+    ) {
+      throw new StaleCredentialError();
+    }
 
-      // Deterministic test barrier while the User row lock is held.
-      await runAfterUserRowLockedForSessionHook();
+    // Deterministic test barrier while the User row lock is held.
+    await runAfterUserRowLockedForSessionHook();
 
-      await tx.userSession.create({
-        data: {
-          userId,
-          sessionTokenHash: tokenHash,
-          expiresAt,
-          userAgent: meta?.userAgent ?? null,
-          ipHash: meta?.ipHash ?? null,
-        },
-      });
-    });
-  } else {
-    await prisma.userSession.create({
+    await tx.userSession.create({
       data: {
         userId,
         sessionTokenHash: tokenHash,
         expiresAt,
-        userAgent: meta?.userAgent ?? null,
-        ipHash: meta?.ipHash ?? null,
+        userAgent: meta.userAgent ?? null,
+        ipHash: meta.ipHash ?? null,
       },
     });
-  }
+  });
 
   return { token, expiresAt };
+}
+
+async function writeUserSessionCookie(params: {
+  token: string;
+  expiresAt: Date;
+}): Promise<void> {
+  if (userSessionCookieWriterForTests) {
+    await userSessionCookieWriterForTests(params);
+    return;
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, params.token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: params.expiresAt,
+  });
+}
+
+/** Test-only cookie boundary injection for real PostgreSQL race verification. */
+export function setUserSessionCookieWriterForTests(
+  writer: UserSessionCookieWriter,
+): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Session cookie test hook is unavailable in production.");
+  }
+  userSessionCookieWriterForTests = writer;
+}
+
+export function clearUserSessionCookieWriterForTests(): void {
+  userSessionCookieWriterForTests = null;
 }
 
 /**
@@ -94,23 +138,12 @@ export async function createUserSessionToken(
  */
 export async function createUserSession(
   userId: string,
-  meta?: {
-    userAgent?: string;
-    ipHash?: string;
-    expectedCredentialGeneration?: number;
-  },
+  meta: UserSessionCreationMetadata,
 ): Promise<void> {
   const { token, expiresAt } = await createUserSessionToken(userId, meta);
 
   // Cookie only after the session row is durably committed.
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: expiresAt,
-  });
+  await writeUserSessionCookie({ token, expiresAt });
 }
 
 export async function destroyUserSession(): Promise<void> {
