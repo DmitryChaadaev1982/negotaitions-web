@@ -97,8 +97,9 @@ export function maskEmailRecipient(value: string | null): string {
   const dot = domain.lastIndexOf(".");
   const domainName = dot > 0 ? domain.slice(0, dot) : domain;
   const suffix = dot > 0 ? domain.slice(dot) : "";
-  const localPrefix = local[0] ?? "";
-  const domainPrefix = domainName[0] ?? "";
+  // One-character local/domain parts must not leak the sole character alone.
+  const localPrefix = local.length <= 1 ? "*" : (local[0] ?? "");
+  const domainPrefix = domainName.length <= 1 ? "*" : (domainName[0] ?? "");
 
   return `${localPrefix}***@${domainPrefix}***${suffix}`;
 }

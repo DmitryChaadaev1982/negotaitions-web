@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { EmailJournalRecipientSearch } from "@/components/email-journal-recipient-search";
 import {
   DataTable,
   DataTableBody,
@@ -114,9 +115,18 @@ export default async function AdminEmailJournalPage({ searchParams }: PageProps)
         </h1>
       </div>
 
+      <EmailJournalRecipientSearch
+        labels={{
+          search: t("admin.emailJournalSearch"),
+          submit: t("common.view"),
+          empty: t("admin.emailJournalEmpty"),
+          error: t("admin.emailJournalEmpty"),
+        }}
+      />
+
       <form method="get" className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4 md:grid-cols-4">
         <label className="md:col-span-2 text-sm text-slate-300">
-          <span className="mb-1 block">{t("admin.emailJournalSearch")}</span>
+          <span className="mb-1 block">{t("admin.emailJournalSearch")} (id)</span>
           <input
             name="q"
             defaultValue={params.get("q") ?? ""}

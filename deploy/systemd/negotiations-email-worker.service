@@ -1,0 +1,33 @@
+[Unit]
+Description=NegotAItions email delivery worker sweep
+# Worker sweeps pending/retryable outbox messages and dispatches via provider.
+# Disabled by default — enable only after activating EMAIL_DELIVERY_ENABLED=true
+# and configuring the provider in /etc/negotaitions/env.production.
+After=network-online.target
+Wants=network-online.target
+# Recommend running after the main app is healthy.
+After=negotiations-app.service
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:delivery:sweep
+TimeoutStartSec=120
+# Prevent privilege escalation.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-worker
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable directly — activate via the companion .timer unit below.
+# systemctl enable --now negotiations-email-worker.timer

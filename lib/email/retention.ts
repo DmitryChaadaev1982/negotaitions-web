@@ -1,4 +1,4 @@
-import { EmailMessageStatus } from "@/app/generated/prisma/client";
+import { EmailMessageStatus, EmailMessageType } from "@/app/generated/prisma/client";
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailEvent } from "@/lib/email/observability";
 import { prisma } from "@/lib/prisma";
@@ -10,7 +10,12 @@ const TERMINAL_MESSAGE_STATES = [
   EmailMessageStatus.SUPPRESSED,
   EmailMessageStatus.FAILED_FINAL,
   EmailMessageStatus.CANCELLED,
+  EmailMessageStatus.ACCEPTED_BY_PROVIDER,
+  EmailMessageStatus.ACCEPTANCE_UNKNOWN,
 ] as const;
+
+/** Password-reset ciphertext retention is short and independent of content days. */
+const SENSITIVE_PAYLOAD_RETENTION_HOURS = 36;
 
 export type EmailRetentionResult = {
   dryRun: boolean;
@@ -23,24 +28,35 @@ export type EmailRetentionResult = {
   providerEventCandidates: number;
   providerEventsDeleted: number;
   expiredSuppressionsDeactivated: number;
+  sensitivePayloadCandidates: number;
+  sensitivePayloadsCleared: number;
+  expiredResetTokenCandidates: number;
+  expiredResetTokensDeleted: number;
+  recipientNormalizedCleared: number;
 };
 
 function daysAgo(days: number, now = new Date()) {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
+function hoursAgo(hours: number, now = new Date()) {
+  return new Date(now.getTime() - hours * 60 * 60 * 1000);
+}
+
 export async function runEmailRetentionCleanup(params?: {
   dryRun?: boolean;
   limit?: number;
+  now?: Date;
 }): Promise<EmailRetentionResult> {
   const config = getEmailConfig();
   const dryRun = Boolean(params?.dryRun);
   const limit = Math.max(1, Math.min(params?.limit ?? 500, 5000));
-  const now = new Date();
+  const now = params?.now ?? new Date();
   const contentCutoff = daysAgo(config.contentRetentionDays, now);
   const providerIdCutoff = daysAgo(config.providerIdRetentionDays, now);
   const attemptCutoff = daysAgo(config.deliveryAttemptRetentionDays, now);
   const eventCutoff = daysAgo(config.providerEventRetentionDays, now);
+  const sensitiveCutoff = hoursAgo(SENSITIVE_PAYLOAD_RETENTION_HOURS, now);
 
   const contentCandidates = await prisma.emailMessage.findMany({
     where: {
@@ -52,6 +68,7 @@ export async function runEmailRetentionCleanup(params?: {
         { renderedTextBody: { not: null } },
         { renderedHtmlBody: { not: null } },
         { recipientEmail: { not: null } },
+        { recipientEmailNormalized: { not: "" } },
       ],
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -94,6 +111,48 @@ export async function runEmailRetentionCleanup(params?: {
     select: { id: true },
   });
 
+  const sensitivePayloadCandidates = await prisma.emailMessage.findMany({
+    where: {
+      OR: [
+        {
+          messageType: EmailMessageType.PASSWORD_RESET,
+          sensitivePayloadCiphertext: { not: null },
+          createdAt: { lte: sensitiveCutoff },
+        },
+        {
+          messageType: EmailMessageType.PASSWORD_RESET,
+          sensitivePayloadCiphertext: { not: null },
+          status: {
+            in: [
+              EmailMessageStatus.CANCELLED,
+              EmailMessageStatus.FAILED_FINAL,
+              EmailMessageStatus.SUPPRESSED,
+              EmailMessageStatus.ACCEPTED_BY_PROVIDER,
+            ],
+          },
+        },
+      ],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: limit,
+    select: { id: true },
+  });
+
+  const expiredResetTokenCandidates = await prisma.passwordResetToken.findMany({
+    where: {
+      OR: [
+        { expiresAt: { lte: now } },
+        { usedAt: { not: null } },
+        { revokedAt: { not: null } },
+      ],
+      // Keep recently used tokens briefly for audit correlation; purge older.
+      createdAt: { lte: daysAgo(7, now) },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: limit,
+    select: { id: true },
+  });
+
   if (dryRun) {
     return {
       dryRun,
@@ -106,10 +165,23 @@ export async function runEmailRetentionCleanup(params?: {
       providerEventCandidates: providerEventCandidates.length,
       providerEventsDeleted: 0,
       expiredSuppressionsDeactivated: 0,
+      sensitivePayloadCandidates: sensitivePayloadCandidates.length,
+      sensitivePayloadsCleared: 0,
+      expiredResetTokenCandidates: expiredResetTokenCandidates.length,
+      expiredResetTokensDeleted: 0,
+      recipientNormalizedCleared: 0,
     };
   }
 
-  const [content, providerIds, attempts, events, suppressions] = await prisma.$transaction([
+  const [
+    content,
+    providerIds,
+    attempts,
+    events,
+    suppressions,
+    sensitive,
+    tokens,
+  ] = await prisma.$transaction([
     prisma.emailMessage.updateMany({
       where: { id: { in: contentCandidates.map((item) => item.id) } },
       data: {
@@ -117,6 +189,8 @@ export async function runEmailRetentionCleanup(params?: {
         renderedTextBody: null,
         renderedHtmlBody: null,
         recipientEmail: null,
+        // Minimize durable recipient identity after retention cutoff.
+        recipientEmailNormalized: "",
         contentClearedAt: now,
       },
     }),
@@ -141,6 +215,19 @@ export async function runEmailRetentionCleanup(params?: {
         liftReason: "Expired temporary suppression.",
       },
     }),
+    prisma.emailMessage.updateMany({
+      where: { id: { in: sensitivePayloadCandidates.map((item) => item.id) } },
+      data: {
+        sensitivePayloadCiphertext: null,
+        sensitivePayloadNonce: null,
+        sensitivePayloadClearedAt: now,
+        renderedTextBody: null,
+        renderedHtmlBody: null,
+      },
+    }),
+    prisma.passwordResetToken.deleteMany({
+      where: { id: { in: expiredResetTokenCandidates.map((item) => item.id) } },
+    }),
   ]);
 
   const result = {
@@ -154,6 +241,11 @@ export async function runEmailRetentionCleanup(params?: {
     providerEventCandidates: providerEventCandidates.length,
     providerEventsDeleted: events.count,
     expiredSuppressionsDeactivated: suppressions.count,
+    sensitivePayloadCandidates: sensitivePayloadCandidates.length,
+    sensitivePayloadsCleared: sensitive.count,
+    expiredResetTokenCandidates: expiredResetTokenCandidates.length,
+    expiredResetTokensDeleted: tokens.count,
+    recipientNormalizedCleared: content.count,
   };
   logEmailEvent("info", "retention_cleanup", result);
   return result;

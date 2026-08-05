@@ -1,0 +1,16 @@
+[Unit]
+Description=Run NegotAItions email retention cleanup daily
+# Disabled by default. To enable:
+#   systemctl enable --now negotiations-email-retention.timer
+
+[Timer]
+# Run once daily, with a randomised delay to avoid maintenance window collisions.
+OnBootSec=30min
+OnCalendar=daily
+RandomizedDelaySec=1800s
+Persistent=true
+Unit=negotiations-email-retention.service
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable until email delivery is active and retention windows are reviewed.

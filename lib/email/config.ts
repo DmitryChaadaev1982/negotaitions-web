@@ -70,19 +70,44 @@ function parseCanonicalBaseUrl(): string {
   } catch {
     throw new Error("Invalid EMAIL_CANONICAL_BASE_URL.");
   }
-  if (!["https:", "http:"].includes(url.protocol)) {
-    throw new Error("EMAIL_CANONICAL_BASE_URL must use http or https.");
-  }
   if (url.username || url.password || url.search || url.hash) {
     throw new Error("EMAIL_CANONICAL_BASE_URL must be an exact origin.");
   }
   if (url.pathname !== "/" && url.pathname !== "") {
     throw new Error("EMAIL_CANONICAL_BASE_URL must not include a path.");
   }
-  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
-    throw new Error("EMAIL_CANONICAL_BASE_URL must use https in production.");
+  // Reject trailing-dot hosts and explicit non-default ports.
+  if (url.hostname.endsWith(".")) {
+    throw new Error("EMAIL_CANONICAL_BASE_URL hostname must not end with a dot.");
   }
-  return url.origin;
+  if (url.port) {
+    throw new Error("EMAIL_CANONICAL_BASE_URL must not include an explicit port.");
+  }
+
+  const origin = url.origin;
+  const isProduction = process.env.NODE_ENV === "production";
+  const approvedProduction = "https://negotaitions.ru";
+  const approvedLocal = "https://local.negotaitions.ru";
+
+  if (isProduction) {
+    if (url.protocol !== "https:") {
+      throw new Error("EMAIL_CANONICAL_BASE_URL must use https in production.");
+    }
+    if (origin !== approvedProduction) {
+      throw new Error(
+        "EMAIL_CANONICAL_BASE_URL must be exactly https://negotaitions.ru in production.",
+      );
+    }
+    return approvedProduction;
+  }
+
+  // Non-production: exact allowlist only (no arbitrary HTTPS hosts).
+  if (origin === approvedProduction || origin === approvedLocal) {
+    return origin;
+  }
+  throw new Error(
+    "EMAIL_CANONICAL_BASE_URL must be https://negotaitions.ru or https://local.negotaitions.ru.",
+  );
 }
 
 function readOptionalSecret(key: string): string | null {

@@ -1,0 +1,15 @@
+[Unit]
+Description=Run NegotAItions email delivery worker every minute
+# Disabled by default. To enable:
+#   systemctl enable --now negotiations-email-worker.timer
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+Persistent=true
+Unit=negotiations-email-worker.service
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable until email delivery is fully activated and canary sweeps pass.

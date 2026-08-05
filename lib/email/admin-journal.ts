@@ -3,6 +3,7 @@ import {
   EmailMessageType,
   Prisma,
 } from "@/app/generated/prisma/client";
+import { getEmailConfig } from "@/lib/email/config";
 import { maskEmailRecipient } from "@/lib/email/local-preview";
 import { prisma } from "@/lib/prisma";
 
@@ -42,6 +43,8 @@ export class EmailJournalInputError extends Error {}
 
 export type EmailJournalListQuery = {
   q?: string;
+  /** Normalized recipient filter — set only via private POST search, never GET. */
+  recipientEmailNormalized?: string;
   messageType?: EmailMessageType;
   status?: EmailMessageStatus;
   provider?: string;
@@ -227,6 +230,56 @@ export function parseEmailJournalListQuery(
   };
 }
 
+/**
+ * Parse a private same-origin POST recipient search body.
+ * Full addresses never appear in the browser URL.
+ */
+export function parseEmailJournalRecipientSearchBody(body: unknown): EmailJournalListQuery {
+  if (!body || typeof body !== "object") {
+    throw new EmailJournalInputError("Invalid recipient search body.");
+  }
+  const record = body as Record<string, unknown>;
+  const recipientRaw = record.recipientEmail;
+  if (typeof recipientRaw !== "string" || !recipientRaw.trim()) {
+    throw new EmailJournalInputError("Recipient email is required.");
+  }
+  if (recipientRaw.length > EMAIL_JOURNAL_MAX_SEARCH_LENGTH) {
+    throw new EmailJournalInputError("Search query is too long.");
+  }
+  if (!recipientRaw.includes("@")) {
+    throw new EmailJournalInputError("Invalid recipient email.");
+  }
+
+  const params = new URLSearchParams();
+  for (const key of [
+    "messageType",
+    "status",
+    "provider",
+    "locale",
+    "suppressed",
+    "hasFailure",
+    "hasProviderMessageId",
+    "createdFrom",
+    "createdTo",
+    "sort",
+    "direction",
+    "page",
+    "pageSize",
+  ] as const) {
+    const value = record[key];
+    if (typeof value === "string" && value !== "") params.set(key, value);
+    else if (typeof value === "number") params.set(key, String(value));
+    else if (typeof value === "boolean") params.set(key, value ? "true" : "false");
+  }
+
+  const base = parseEmailJournalListQuery(params);
+  return {
+    ...base,
+    q: undefined,
+    recipientEmailNormalized: recipientRaw.trim().toLowerCase(),
+  };
+}
+
 export function maskProviderMessageId(value: string | null): string | null {
   if (!value) return null;
   if (value.length <= 8) return "***";
@@ -304,6 +357,13 @@ function buildWhere(query: EmailJournalListQuery): Prisma.EmailMessageWhereInput
 
   if (query.q) {
     const term = query.q.trim();
+    // Full recipient addresses must never travel in GET URLs (M-05).
+    // Reject email-shaped search terms on the GET path.
+    if (term.includes("@")) {
+      throw new EmailJournalInputError(
+        "Recipient email search requires a private POST search.",
+      );
+    }
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
       {
@@ -311,9 +371,15 @@ function buildWhere(query: EmailJournalListQuery): Prisma.EmailMessageWhereInput
           { id: term },
           { idempotencyKey: term },
           { lastProviderMessageId: term },
-          { recipientEmailNormalized: term.toLowerCase() },
         ],
       },
+    ];
+  }
+
+  if (query.recipientEmailNormalized) {
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      { recipientEmailNormalized: query.recipientEmailNormalized },
     ];
   }
 
@@ -588,17 +654,34 @@ export type EmailJournalRevealResult =
     }
   | {
       available: false;
-      reason: "cleared" | "missing";
+      reason:
+        | "cleared"
+        | "missing"
+        | "expired"
+        | "sensitive_unavailable";
+      message?: string;
     };
+
+export const PASSWORD_RESET_REVEAL_DENIED_MESSAGE =
+  "Sensitive account-security content is unavailable.";
+
+function isContentPastRetention(createdAt: Date, retentionDays: number, now = new Date()) {
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+  return createdAt <= cutoff;
+}
 
 export async function revealEmailJournalContent(params: {
   messageId: string;
   adminUserId: string;
   requestId?: string | null;
+  now?: Date;
 }): Promise<EmailJournalRevealResult> {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(params.messageId)) {
     throw new EmailJournalInputError("Invalid email message identifier.");
   }
+
+  const retentionDays = getEmailConfig().contentRetentionDays;
+  const now = params.now ?? new Date();
 
   const row = await prisma.emailMessage.findUnique({
     where: { id: params.messageId },
@@ -606,6 +689,7 @@ export async function revealEmailJournalContent(params: {
       id: true,
       messageType: true,
       contentClearedAt: true,
+      createdAt: true,
       renderedSubject: true,
       renderedTextBody: true,
       renderedHtmlBody: true,
@@ -615,7 +699,9 @@ export async function revealEmailJournalContent(params: {
   if (!row) {
     return { available: false, reason: "missing" };
   }
-  if (row.contentClearedAt) {
+
+  // M-07: PASSWORD_RESET bodies are never revealable through Admin → Email.
+  if (row.messageType === EmailMessageType.PASSWORD_RESET) {
     await prisma.adminActionLog.create({
       data: {
         adminUserId: params.adminUserId,
@@ -624,11 +710,35 @@ export async function revealEmailJournalContent(params: {
         metadata: {
           messageId: row.id,
           requestId: params.requestId ?? null,
-          outcome: "cleared",
+          outcome: "sensitive_unavailable",
         },
       },
     });
-    return { available: false, reason: "cleared" };
+    return {
+      available: false,
+      reason: "sensitive_unavailable",
+      message: PASSWORD_RESET_REVEAL_DENIED_MESSAGE,
+    };
+  }
+
+  // M-06: read-time retention enforcement even if cleanup has not run.
+  if (row.contentClearedAt || isContentPastRetention(row.createdAt, retentionDays, now)) {
+    await prisma.adminActionLog.create({
+      data: {
+        adminUserId: params.adminUserId,
+        targetUserId: row.userId,
+        action: EMAIL_JOURNAL_ACTION_REVEAL,
+        metadata: {
+          messageId: row.id,
+          requestId: params.requestId ?? null,
+          outcome: row.contentClearedAt ? "cleared" : "expired",
+        },
+      },
+    });
+    return {
+      available: false,
+      reason: row.contentClearedAt ? "cleared" : "expired",
+    };
   }
 
   const hasContent = Boolean(
@@ -650,17 +760,6 @@ export async function revealEmailJournalContent(params: {
     return { available: false, reason: "missing" };
   }
 
-  const isPasswordReset = row.messageType === EmailMessageType.PASSWORD_RESET;
-  const subject = isPasswordReset
-    ? redactPasswordResetSecrets(row.renderedSubject)
-    : row.renderedSubject;
-  const text = isPasswordReset
-    ? redactPasswordResetSecrets(row.renderedTextBody)
-    : row.renderedTextBody;
-  const html = isPasswordReset
-    ? redactPasswordResetSecrets(row.renderedHtmlBody)
-    : row.renderedHtmlBody;
-
   await prisma.adminActionLog.create({
     data: {
       adminUserId: params.adminUserId,
@@ -670,16 +769,16 @@ export async function revealEmailJournalContent(params: {
         messageId: row.id,
         requestId: params.requestId ?? null,
         outcome: "revealed",
-        redacted: isPasswordReset,
+        redacted: false,
       },
     },
   });
 
   return {
     available: true,
-    subject,
-    text,
-    html,
-    redacted: isPasswordReset,
+    subject: row.renderedSubject,
+    text: row.renderedTextBody,
+    html: row.renderedHtmlBody,
+    redacted: false,
   };
 }

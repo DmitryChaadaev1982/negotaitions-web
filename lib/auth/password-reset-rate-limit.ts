@@ -114,3 +114,25 @@ export function consumePasswordResetAttempt(params: {
     hmacSecret: process.env.AUTH_SECRET,
   });
 }
+
+/** Process-local limiter for reset-password finalize attempts (token fingerprint). */
+let finalizeLimiter: ProcessLocalPasswordResetLimiter | null = null;
+
+export function consumePasswordResetFinalizeAttempt(
+  tokenFingerprint: string,
+  now = Date.now(),
+): boolean {
+  if (!finalizeLimiter) {
+    finalizeLimiter = new ProcessLocalPasswordResetLimiter(10, 40, 2);
+  }
+  return finalizeLimiter.consume({
+    normalizedEmail: `finalize:${tokenFingerprint}`,
+    now,
+  });
+}
+
+/** Test helper to reset limiter state between cases. */
+export function resetPasswordResetLimitersForTests(): void {
+  sharedLimiter = null;
+  finalizeLimiter = null;
+}

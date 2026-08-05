@@ -3,6 +3,11 @@
 import { redirect } from "next/navigation";
 
 import { resetPasswordWithToken } from "@/lib/auth/account-security";
+import { consumePasswordResetFinalizeAttempt } from "@/lib/auth/password-reset-rate-limit";
+import {
+  hashPasswordResetToken,
+  isPasswordResetTokenShape,
+} from "@/lib/auth/password-reset-token";
 
 export type ResetPasswordActionResult = {
   error?: string;
@@ -21,6 +26,15 @@ export async function resetPassword(
   }
   if (password !== confirmation) {
     return { error: "auth.passwordMismatch" };
+  }
+  if (!isPasswordResetTokenShape(token)) {
+    return { error: "auth.passwordResetInvalid" };
+  }
+
+  // Cheap consume limiter before bcrypt / DB claim work (M-02).
+  const tokenFingerprint = hashPasswordResetToken(token).slice(0, 32);
+  if (!consumePasswordResetFinalizeAttempt(tokenFingerprint)) {
+    return { error: "auth.passwordResetInvalid" };
   }
 
   try {

@@ -1,0 +1,29 @@
+[Unit]
+Description=NegotAItions email retention cleanup
+# Clears sensitive payloads, old content, expired tokens, and provider IDs
+# according to configured retention windows.
+# Disabled by default — enable only after email delivery is active.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:retention:cleanup
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-retention
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable directly — activate via negotiations-email-retention.timer.

@@ -90,6 +90,11 @@ export function getTrustedClientIdentity(
 ): TrustedClientIdentity {
   const env = options?.env ?? process.env;
   const secret = options?.hmacSecret ?? env.AUTH_SECRET;
+  if (!secret?.trim()) {
+    if ((env.NODE_ENV ?? process.env.NODE_ENV) === "production") {
+      throw new Error("AUTH_SECRET is required for trusted client identity in production.");
+    }
+  }
 
   let trustedEnabled = false;
   try {
