@@ -899,6 +899,10 @@ model EmailMessage {
   sensitivePayloadNonce      String?
   sensitivePayloadClearedAt  DateTime?
   // Safe association to PasswordResetToken.id (never the raw token).
+  // Intentionally no foreign key: token retention deletes expired/consumed/
+  // revoked token rows while journal rows outlive them. A missing association
+  // fails closed (dispatch returns TOKEN_MISSING and payload binding rejects).
+  // See docs/architecture/account-security-email-flows.md.
   relatedTokenId           String?
   metadata                 Json?
   idempotencyKey           String             @unique

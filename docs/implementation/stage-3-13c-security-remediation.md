@@ -41,6 +41,29 @@ This document maps High and Medium findings to remediations on
   back to runtime `DATABASE_URL`; it recreates only the marked schema,
   exercises runtime races/provider boundaries, and proves cleanup.
 
+## Stage 3.13C-H nonblocking hardening
+
+Entering review result:
+`STAGE_3_13C_FINAL_INDEPENDENT_REVIEW_PASS_WITH_OPERATIONAL_RESIDUALS`
+(Critical 0 / High 0 / Medium 0 / Low 5 / Informational 5; no merge or
+activation blockers). This round changes no reviewed security invariant.
+
+| ID | Change | Primary files | Tests |
+|----|--------|---------------|-------|
+| F-01 | nginx trusted-proxy gate is a numbered activation step between backlog quarantine and Postbox configuration/canary | `docs/operations/email-yandex-activation-runbook.md`, `docs/operations/deployment-runbook.md` | documentation only |
+| F-02 | Documented the eligibility-enabling admin transition invariant (approve/unblock/make-admin need no fence because they cannot revive an invalidated token or message) | `lib/auth/admin-account-status.ts`, `docs/architecture/account-security-email-flows.md` | `eligibility_enabling_transition_cannot_revive_reset` in `verify:stage313c:final-remediation` |
+| F-03 | Transient authenticated password-change and reset failures map to retry messages; only `CredentialDispatchFenceError` and Prisma `P2028` are transient | `lib/auth/account-security-error-messages.ts`, `app/actions/account.ts`, `app/actions/password-reset.ts`, `lib/i18n/dictionaries/{en,ru}.ts` | `lib/auth/account-security-error-messages.test.ts` |
+| F-04 | Schema extraction tolerates a libpq keyword/value DSN instead of failing on `new URL()` | `lib/prisma-connection-string.ts`, `lib/prisma.ts` | `lib/prisma-connection-string.test.ts` |
+| F-05 | Integration verifier deletes only run-owned `ExternalServiceEvent` rows and asserts the surviving set equals its baseline | `scripts/verify-stage-3-13c-account-email.ts` | `verify:stage313c:integration` |
+| F-06 | Credential-concurrency and dispatch-fence test-hook setters refuse installation when `NODE_ENV=production`, matching the session hook | `lib/auth/credential-concurrency.ts`, `lib/auth/credential-dispatch-fence.ts` | `lib/auth/test-hook-production-guard.test.ts` |
+| F-07 | Documented the direct/session-affinity PostgreSQL connection requirement and connection headroom for the fence | `docs/operations/deployment-runbook.md`, `docs/architecture/account-security-email-flows.md` | documentation only |
+| F-08 | Deferred sensitive rendering rejects any token-shaped rendered subject or body; the ineffective `actionUrl` conjunct is gone | `lib/email/rendered-content-guards.ts`, `lib/email/outbox.ts` | `lib/email/final-remediation.test.ts` |
+| F-10 | Documented why `EmailMessage.relatedTokenId` intentionally has no foreign key | `prisma/schema.prisma` (comment only), `docs/architecture/account-security-email-flows.md` | existing `TOKEN_MISSING` / quarantine coverage |
+
+F-09 (source-text session API audit) stays informational: no type-level or
+AST-based assertion is available in the repository, and no parser dependency was
+added for it.
+
 ## Earlier Stage 3.13C-R high findings (still in force)
 
 | ID | Root cause | Fix | Primary files | Tests | Residual risk | Activation |

@@ -33,10 +33,45 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
    expose an alternate unauthenticated start surface.
 6. Live spoof canary: forged forwarding headers must not create new identities.
 7. Enabled-mode same-origin HTTPS test against the canonical origin.
-8. Rollback trust first: set `TRUSTED_PROXY_ENABLED=false`, then restore nginx
-   backups and reload.
+8. Rollback trust first: set `TRUSTED_PROXY_ENABLED=false` and restart the
+   application, then restore nginx backups and reload.
 9. Committed verifier: `npm run verify:stage313c:trusted-proxy`
    (live checks require explicit `TARGET_HOST`; never auto-modifies production).
+
+This block is a numbered gate inside the email activation order. See
+`docs/operations/email-yandex-activation-runbook.md` step 9: the gate runs after
+backlog quarantine and before Postbox configuration or the canary.
+
+## Credential-dispatch fence connection requirement
+
+`lib/auth/credential-dispatch-fence.ts` serializes credential mutation against
+password-reset dispatch with PostgreSQL **session** advisory locks
+(`pg_try_advisory_lock` / `pg_advisory_unlock`).
+
+- Every statement in one fence lifetime — acquire, the fenced operation's own
+  connections, and unlock — must reach the same PostgreSQL backend. A session
+  advisory lock lives in the backend that took it.
+- The fence therefore uses a dedicated `pg` `Client` that must connect
+  **directly** to PostgreSQL, or through a pooler mode that preserves session
+  affinity (session pooling). Connection release happens on unlock, error, or
+  connection/process death.
+- **Transaction-mode pooling is unsupported for this fence.** In transaction
+  mode the unlock can land on a different backend, so the lock would leak until
+  that backend closes while the fence appears released.
+- Introducing PgBouncer (or any transaction-pooling layer) in front of this
+  application requires either a fence redesign (for example transaction-scoped
+  `pg_advisory_xact_lock` within a single transaction) or explicit validation
+  that session affinity is preserved end to end. Do not add transaction pooling
+  as a routine capacity change.
+- Production `max_connections` must leave headroom for the Prisma pool **plus**
+  one short-lived fence connection per concurrent credential mutation and per
+  concurrent worker dispatch. Size it for peak reset traffic plus the worker
+  batch size, not for the Prisma pool alone.
+- Hold time is bounded: acquisition is limited by
+  `CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS` (default 5000 ms, allowed 50..30000)
+  and the fenced provider call is limited by
+  `EMAIL_PROVIDER_REQUEST_TIMEOUT_MS`. Those two bounds are what keep fence
+  connections short-lived.
 
 ## Secrets And Env
 

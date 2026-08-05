@@ -122,6 +122,66 @@ holds no row lock during acquisition.
 Invalid, expired, reused, revoked, and newly inactive accounts receive the same
 safe failure.
 
+#### Eligibility-enabling admin transition invariant
+
+Approve, unblock, and make-admin run **without** the fence. That is allowed
+because an unfenced account transition is permitted only when it cannot restore
+eligibility of an already invalidated token or message. Under the current data
+model those transitions write `User` and `AdminActionLog` only, and no
+invalidation they could race with is reversible:
+
+- a revoked `PasswordResetToken` is never un-revoked;
+- a consumed token (`usedAt`) is never un-consumed;
+- supersession is terminal — dispatch also treats a newer active token as
+  supersession even when the older row was already revoked;
+- a `CANCELLED` `EmailMessage` is not a claimable status, and its sensitive
+  payload was already cleared, so late render cannot reproduce a reset URL.
+
+So a reset invalidated while the account was BLOCKED or REJECTED stays
+invalidated after the account becomes ACTIVE again; the owner must request a
+new reset.
+
+Any future change that can restore reset-message eligibility — reviving a
+revoked or consumed token, moving a message out of `CANCELLED`, or re-encrypting
+a cleared sensitive payload — must adopt the same user-scoped
+credential-dispatch fence before mutating `User`. The invariant is regression
+tested by `eligibility_enabling_transition_cannot_revive_reset` in
+`scripts/verify-stage-3-13c-final-remediation.ts`.
+
+#### Fence connection requirement
+
+Session advisory locks live in one PostgreSQL backend, so every statement of a
+fence lifetime must reach the same backend. The dedicated `pg` `Client` must
+connect directly or through a session-affinity-preserving pooler mode;
+transaction-mode pooling is unsupported and would leak locks while appearing
+released. Capacity planning must budget the Prisma pool plus concurrent
+short-lived fence connections. See
+`docs/operations/deployment-runbook.md` → "Credential-dispatch fence connection
+requirement".
+
+### `EmailMessage.relatedTokenId` has no foreign key by design
+
+`relatedTokenId` stores `PasswordResetToken.id` (never the raw token) and is
+indexed, but it intentionally carries **no database foreign key**:
+
+- token retention cleanup deletes expired, consumed, and revoked token rows on
+  its own schedule;
+- the email journal is an operational history that must outlive those token
+  rows, so `EmailMessage` and `PasswordResetToken` have independent retention
+  lifecycles;
+- a missing association fails closed rather than open. Dispatch eligibility
+  returns `TOKEN_MISSING`
+  (`lib/email/password-reset-dispatch.ts`), sensitive-payload binding rejects a
+  missing or mismatched token before `provider.send`, and backlog quarantine
+  classifies such rows under `missing`;
+- a restrictive FK (`RESTRICT`/`NO ACTION`) would make token retention fail
+  against historical journal rows, and a cascading FK would silently delete
+  journal history. `SetNull` would only reproduce the fail-closed behavior the
+  application already implements.
+
+Do not add a foreign key on this column and do not rewrite Stage 3.13C
+migration history to introduce one.
+
 ## Browser fragment boundary
 
 The reset client copies `window.location.hash` only into ephemeral memory,

@@ -54,6 +54,21 @@ async function invalidatePasswordResetDelivery(
  * Authorization and last-admin policy remain in the server action; this
  * service owns the fenced database mutation so worker race tests exercise the
  * same runtime path.
+ *
+ * Eligibility-enabling transition invariant
+ * -----------------------------------------
+ * Approve, unblock, and make-admin deliberately run without this fence. An
+ * unfenced account transition is allowed only when it cannot restore
+ * eligibility of an already invalidated token or message. Those transitions
+ * write `User` and `AdminActionLog` only: they never clear
+ * `PasswordResetToken.revokedAt` / `usedAt`, never move an `EmailMessage` out
+ * of `CANCELLED`, and never restore a cleared sensitive payload. Token
+ * supersession and consumption are likewise terminal.
+ *
+ * Any future change that can restore reset-message eligibility — reviving a
+ * revoked or consumed token, un-cancelling a reset message, or re-encrypting a
+ * cleared payload — must adopt the same user-scoped credential-dispatch fence
+ * before it mutates `User`.
  */
 export async function transitionUserToResetIneligibleStatus(params: {
   targetUserId: string;

@@ -76,21 +76,50 @@ Do not activate Postbox during remediation. Future controlled activation:
    sanitized counts, then manually start
    `negotiations-email-backlog-quarantine-apply.service` in bounded batches.
    Repeat dry-run until no stale/legacy rows remain.
-9. Install disabled-by-default units from `deploy/systemd/`:
-   - `negotiations-email-worker.service` + `.timer`
-   - `negotiations-email-retention.service` + `.timer`
-   - `negotiations-email-canary@.service`
-   - the two manual backlog-quarantine services
-   Use `EnvironmentFile=/etc/negotaitions/env.production` (not the app `.env`).
-10. Configure the reviewed Postbox provider credentials while delivery remains
+9. **nginx trusted-proxy gate.** Complete this before any Postbox
+   configuration or canary. Abuse controls bucket per client IP, so activating
+   delivery while proxy trust is unverified is not permitted. Command detail
+   lives in `docs/operations/deployment-runbook.md`
+   ("Future nginx activation"); do not duplicate commands here.
+   1. Patch **every** applicable TLS-terminating application vhost with
+      `deploy/nginx/trusted-client-ip-snippet.conf`, after backing up the
+      current site files.
+   2. Inspect the *effective* nginx configuration (not only the edited files)
+      and confirm no remaining vhost forwards browser-controlled forwarding
+      headers.
+   3. Run `nginx -t`.
+   4. Reload nginx safely (`reload`, never `restart`).
+   5. Verify Next.js listens only on `127.0.0.1`.
+   6. Check IPv4 and IPv6 direct-exposure paths: neither may reach the
+      application without passing through nginx.
+   7. Run the forged-header canary against the dedicated
+      `X-NegotAItions-Client-IP` header plus `X-Forwarded-For` and
+      `X-Real-IP`. A forged value must never create a new rate-limit identity.
+   8. Run the enabled-mode HTTPS same-origin check against the canonical
+      origin.
+   9. Run `npm run verify:stage313c:trusted-proxy` (set `TARGET_HOST` for the
+      live probe).
+   10. Set `TRUSTED_PROXY_ENABLED=true` **only after every check above
+       passes**, and restart the application to pick it up.
+   11. Rollback order is fixed: set `TRUSTED_PROXY_ENABLED=false` and restart
+       the application **first**, then revert the nginx proxy configuration and
+       reload. Reverting nginx while the application still trusts the header
+       would leave forwarding headers browser-controlled.
+10. Install disabled-by-default units from `deploy/systemd/`:
+    - `negotiations-email-worker.service` + `.timer`
+    - `negotiations-email-retention.service` + `.timer`
+    - `negotiations-email-canary@.service`
+    - the two manual backlog-quarantine services
+    Use `EnvironmentFile=/etc/negotaitions/env.production` (not the app `.env`).
+11. Configure the reviewed Postbox provider credentials while delivery remains
     disabled; run one disabled sweep to confirm no-op.
-11. Select exactly one eligible `EmailMessage` id. Set delivery enabled in the
+12. Select exactly one eligible `EmailMessage` id. Set delivery enabled in the
     controlled production env, keep the normal worker/timer stopped, and start
     only `negotiations-email-canary@<EmailMessage-ID>.service`. The command
     refuses missing/invalid ids and has no general-sweep fallback.
-12. Confirm exactly one claim and one provider acceptance. Treat
+13. Confirm exactly one claim and one provider acceptance. Treat
     `ACCEPTED_BY_PROVIDER` as acceptance, not end-user `DELIVERED`.
-13. Only then enable the normal worker timer. Watch sanitized queue counts,
+14. Only then enable the normal worker timer. Watch sanitized queue counts,
     bounces, and complaints.
 
 ## Worker Installation Sketch
