@@ -103,10 +103,11 @@ npm run prisma:production:status
 ```
 
 For the Stage 3.13C branch, the expected pre-deploy overlay status is that both
-legacy rows and all Stage 3.13B rows are recognized and only this migration is
+legacy rows and all Stage 3.13B rows are recognized and only these migrations are
 pending:
 
 - `20260804170000_stage_3_13c_account_security_email`
+- `20260805140000_stage_3_13c_security_remediation`
 
 Stage 3.13C local verification must use a simulated production-history
 database. It must not run this deploy command against production.
