@@ -55,6 +55,7 @@ artifacts/
 coverage/
 .agent/preflight.json
 .agent/validation-baseline.json
+local-performance-results/
 
 # Archive/output artifacts
 *.zip
