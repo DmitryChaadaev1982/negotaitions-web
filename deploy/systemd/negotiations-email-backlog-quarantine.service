@@ -1,0 +1,23 @@
+[Unit]
+Description=NegotAItions password-reset backlog quarantine dry-run
+# Manual-only, no-send inspection. Dry-run is the command default.
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:backlog:quarantine -- --batch-size 100
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-backlog-quarantine
+
+# Deliberately no [Install] section: never enable this manual one-shot unit.

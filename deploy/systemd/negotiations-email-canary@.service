@@ -1,0 +1,26 @@
+[Unit]
+Description=NegotAItions isolated email canary for one selected message
+# Manual-only unit. The instance value is the explicit EmailMessage id.
+# The normal email worker service/timer must be stopped during this canary.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:delivery:canary -- --message-id %i
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-canary
+
+# Deliberately no [Install] section: never enable this manual one-shot unit.

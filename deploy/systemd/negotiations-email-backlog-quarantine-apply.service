@@ -1,0 +1,24 @@
+[Unit]
+Description=NegotAItions password-reset backlog quarantine apply batch
+# Manual-only, no-send mutation. Review the dry-run unit result first.
+ConditionPathExists=/etc/negotaitions/env.production
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:backlog:quarantine -- --apply --batch-size 100
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-backlog-quarantine-apply
+
+# Deliberately no [Install] section: never enable this manual one-shot unit.
