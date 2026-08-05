@@ -7,6 +7,7 @@ import {
   type EmailDeliveryAttempt,
   type Prisma,
 } from "@/app/generated/prisma/client";
+import { withCredentialDispatchFence } from "@/lib/auth/credential-dispatch-fence";
 import { getEmailConfig } from "@/lib/email/config";
 import { logEmailConfigurationFailure, logEmailEvent, safeRecipient } from "@/lib/email/observability";
 import {
@@ -16,6 +17,7 @@ import {
 import { createEmailProvider } from "@/lib/email/provider";
 import { renderEmailTemplate } from "@/lib/email/renderer";
 import {
+  assertPasswordResetPayloadDeliveryBinding,
   buildPasswordResetActionUrl,
   decryptSensitivePayload,
   SensitivePayloadError,
@@ -47,6 +49,11 @@ export type EmailDeliverySweepOptions = {
   provider?: EmailProvider;
   limit?: number;
   beforeSuppressionRecheck?: (messageId: string) => Promise<void>;
+  /**
+   * Test-only barrier after eligibility revalidation under the dispatch fence,
+   * immediately before provider.send for password-reset messages.
+   */
+  beforeProviderSend?: (messageId: string) => Promise<void>;
   /** When true, skip normal claim/send and only recover leases (canary isolation). */
   leaseRecoveryOnly?: boolean;
   /** Deliver exactly one explicitly selected message id (canary). */
@@ -405,32 +412,6 @@ export async function runEmailDeliverySweep(
     const isPasswordReset =
       claimedMessage.messageType === EmailMessageType.PASSWORD_RESET;
 
-    if (isPasswordReset) {
-      const metadata =
-        claimedMessage.metadata && typeof claimedMessage.metadata === "object"
-          ? (claimedMessage.metadata as Record<string, unknown>)
-          : {};
-      const expectedGeneration =
-        typeof metadata.credentialGeneration === "number"
-          ? metadata.credentialGeneration
-          : null;
-      const eligibility = await evaluatePasswordResetDispatchEligibility({
-        relatedTokenId: claimedMessage.relatedTokenId,
-        userId: claimedMessage.userId,
-        expectedCredentialGeneration: expectedGeneration,
-      });
-      if (!eligibility.ok) {
-        const transitioned = await cancelStalePasswordResetMessage({
-          messageId: claimedMessage.id,
-          claimToken,
-          reason: eligibility.reason,
-        });
-        if (transitioned) cancelled += 1;
-        else skipped += 1;
-        continue;
-      }
-    }
-
     await params?.beforeSuppressionRecheck?.(claimedMessage.id);
     const suppression = await evaluateSuppression({
       recipientEmail: claimedMessage.recipientEmail ?? claimedMessage.recipientEmailNormalized,
@@ -459,99 +440,24 @@ export async function runEmailDeliverySweep(
       continue;
     }
 
-    const ownedAttempt = await createAttemptForOwnedClaim({
-      messageId: claimedMessage.id,
-      claimToken,
-      provider,
-    });
-    if (!ownedAttempt) {
-      await markClaimLost(claimedMessage.id, claimToken, "attempt_allocation");
-      skipped += 1;
-      continue;
-    }
-    const { attempt, attemptNumber } = ownedAttempt;
+    type DeliveryOutcome =
+      | "accepted"
+      | "retryable"
+      | "final"
+      | "unknown"
+      | "cancelled"
+      | "skipped";
 
-    try {
-      let subject = claimedMessage.renderedSubject;
-      let textBody = claimedMessage.renderedTextBody;
-      let htmlBody = claimedMessage.renderedHtmlBody;
-
-      if (isPasswordReset) {
-        if (
-          !claimedMessage.sensitivePayloadCiphertext ||
-          !claimedMessage.sensitivePayloadNonce
-        ) {
-          throw new SensitivePayloadError("Missing sensitive payload for password reset.");
-        }
-        const payload = decryptSensitivePayload({
-          ciphertext: claimedMessage.sensitivePayloadCiphertext,
-          nonce: claimedMessage.sensitivePayloadNonce,
-        });
-        const actionUrl = buildPasswordResetActionUrl(
-          config.canonicalBaseUrl,
-          payload.rawToken,
-        );
-        const rendered = renderEmailTemplate({
-          key: "password-reset",
-          locale: payload.locale,
-          variables: {
-            ...payload.variables,
-            actionUrl,
-          },
-        });
-        subject = rendered.subject;
-        textBody = rendered.textBody;
-        htmlBody = rendered.htmlBody;
-      }
-
-      if (
-        !claimedMessage.recipientEmail ||
-        !subject ||
-        !textBody ||
-        !htmlBody
-      ) {
-        throw new Error("EMAIL_CONTENT_UNAVAILABLE");
-      }
-
-      const result = await provider.send({
-        id: claimedMessage.id,
-        recipientEmail: claimedMessage.recipientEmail,
-        fromAddress: claimedMessage.fromAddress,
-        replyToAddress: claimedMessage.replyToAddress,
-        subject,
-        textBody,
-        htmlBody,
-        idempotencyKey: claimedMessage.idempotencyKey,
-      });
-
-      if (result.ok) {
-        const updated = await finalizeAccepted({
-          messageId: claimedMessage.id,
-          claimToken,
-          attemptId: attempt.id,
-          providerName: result.providerName,
-          providerMessageId: result.providerMessageId,
-          acceptedAt: result.acceptedAt,
-          metadata: result.metadata,
-          clearSensitivePayload: isPasswordReset,
-        });
-        if (!updated) {
-          skipped += 1;
-          continue;
-        }
-        accepted += 1;
-        logEmailEvent("info", "accepted_by_provider", {
-          messageId: claimedMessage.id,
-          attemptNumber,
-          provider: result.providerName,
-        });
-        continue;
-      }
-
-      const isAcceptanceUnknown = Boolean(result.acceptanceUnknown);
-      const maxAttemptsReached = attemptNumber >= config.maxAttempts;
-      const retryable = result.retryable && !maxAttemptsReached && !isAcceptanceUnknown;
-      const nextAttemptAt = retryable ? calculateRetryAt(attemptNumber) : null;
+    const finishProviderFailure = async (args: {
+      attemptId: string;
+      attemptNumber: number;
+      result: Extract<Awaited<ReturnType<EmailProvider["send"]>>, { ok: false }>;
+    }): Promise<DeliveryOutcome> => {
+      const isAcceptanceUnknown = Boolean(args.result.acceptanceUnknown);
+      const maxAttemptsReached = args.attemptNumber >= config.maxAttempts;
+      const retryable =
+        args.result.retryable && !maxAttemptsReached && !isAcceptanceUnknown;
+      const nextAttemptAt = retryable ? calculateRetryAt(args.attemptNumber) : null;
       const messageStatus = isAcceptanceUnknown
         ? EmailMessageStatus.ACCEPTANCE_UNKNOWN
         : retryable
@@ -561,52 +467,53 @@ export async function runEmailDeliverySweep(
         ? EmailDeliveryAttemptStatus.TIMEOUT_UNKNOWN
         : retryable
           ? EmailDeliveryAttemptStatus.RETRYABLE_FAILURE
-          : result.errorCode === "EMAIL_DELIVERY_DISABLED"
+          : args.result.errorCode === "EMAIL_DELIVERY_DISABLED"
             ? EmailDeliveryAttemptStatus.CONFIGURATION_ERROR
             : EmailDeliveryAttemptStatus.FINAL_FAILURE;
       const updated = await finalizeFailure({
         messageId: claimedMessage.id,
         claimToken,
-        attemptId: attempt.id,
+        attemptId: args.attemptId,
         attemptStatus,
         messageStatus,
         retryable,
         nextAttemptAt,
         terminalFailureAt: retryable || isAcceptanceUnknown ? null : new Date(),
-        errorCode: result.errorCode,
-        sanitizedMessage: result.sanitizedMessage,
-        metadata: result.metadata,
+        errorCode: args.result.errorCode,
+        sanitizedMessage: args.result.sanitizedMessage,
+        metadata: args.result.metadata,
       });
-      if (!updated) {
-        skipped += 1;
-        continue;
-      }
+      if (!updated) return "skipped";
       if (isAcceptanceUnknown) {
-        acceptanceUnknown += 1;
         logEmailEvent("warn", "acceptance_unknown", {
           messageId: claimedMessage.id,
-          attemptNumber,
-          provider: result.providerName,
-          errorCode: result.errorCode,
+          attemptNumber: args.attemptNumber,
+          provider: args.result.providerName,
+          errorCode: args.result.errorCode,
         });
-        continue;
+        return "unknown";
       }
-      if (retryable) {
-        retryableFailures += 1;
-      } else {
-        finalFailures += 1;
-        if (result.errorCode === "EMAIL_DELIVERY_DISABLED") {
-          await logEmailConfigurationFailure(result.sanitizedMessage, claimedMessage.id);
-        }
+      if (args.result.errorCode === "EMAIL_DELIVERY_DISABLED") {
+        await logEmailConfigurationFailure(
+          args.result.sanitizedMessage,
+          claimedMessage.id,
+        );
       }
-    } catch (error) {
+      return retryable ? "retryable" : "final";
+    };
+
+    const finishException = async (
+      error: unknown,
+      attemptId: string,
+      attemptNumber: number,
+    ): Promise<DeliveryOutcome> => {
       const isSensitiveFailure = error instanceof SensitivePayloadError;
       const retryable =
         !isSensitiveFailure && attemptNumber < config.maxAttempts;
       const updated = await finalizeFailure({
         messageId: claimedMessage.id,
         claimToken,
-        attemptId: attempt.id,
+        attemptId,
         attemptStatus: retryable
           ? EmailDeliveryAttemptStatus.RETRYABLE_FAILURE
           : EmailDeliveryAttemptStatus.FINAL_FAILURE,
@@ -633,10 +540,7 @@ export async function runEmailDeliverySweep(
           },
         });
       }
-      if (!updated) {
-        skipped += 1;
-        continue;
-      }
+      if (!updated) return "skipped";
       logEmailEvent("error", "delivery_attempt_failed", {
         messageId: claimedMessage.id,
         attemptNumber,
@@ -645,9 +549,247 @@ export async function runEmailDeliverySweep(
           ? "SENSITIVE_PAYLOAD_ERROR"
           : "WORKER_EXCEPTION",
       });
-      if (retryable) retryableFailures += 1;
-      else finalFailures += 1;
+      return retryable ? "retryable" : "final";
+    };
+
+    let outcome: DeliveryOutcome = "skipped";
+
+    if (isPasswordReset) {
+      if (!claimedMessage.userId) {
+        const transitioned = await cancelStalePasswordResetMessage({
+          messageId: claimedMessage.id,
+          claimToken,
+          reason: "MESSAGE_MISMATCH",
+        });
+        if (transitioned) cancelled += 1;
+        else skipped += 1;
+        continue;
+      }
+
+      const metadata =
+        claimedMessage.metadata && typeof claimedMessage.metadata === "object"
+          ? (claimedMessage.metadata as Record<string, unknown>)
+          : {};
+      const expectedGeneration =
+        typeof metadata.credentialGeneration === "number"
+          ? metadata.credentialGeneration
+          : null;
+
+      outcome = await withCredentialDispatchFence(
+        claimedMessage.userId,
+        async () => {
+          const eligibility = await evaluatePasswordResetDispatchEligibility({
+            relatedTokenId: claimedMessage.relatedTokenId,
+            userId: claimedMessage.userId,
+            expectedCredentialGeneration: expectedGeneration,
+          });
+          if (!eligibility.ok) {
+            const transitioned = await cancelStalePasswordResetMessage({
+              messageId: claimedMessage.id,
+              claimToken,
+              reason: eligibility.reason,
+            });
+            return transitioned ? "cancelled" : "skipped";
+          }
+
+          const ownedAttempt = await createAttemptForOwnedClaim({
+            messageId: claimedMessage.id,
+            claimToken,
+            provider,
+          });
+          if (!ownedAttempt) {
+            await markClaimLost(
+              claimedMessage.id,
+              claimToken,
+              "attempt_allocation",
+            );
+            return "skipped";
+          }
+          const { attempt, attemptNumber } = ownedAttempt;
+
+          try {
+            if (
+              !claimedMessage.sensitivePayloadCiphertext ||
+              !claimedMessage.sensitivePayloadNonce
+            ) {
+              throw new SensitivePayloadError(
+                "Missing sensitive payload for password reset.",
+              );
+            }
+            if (!claimedMessage.relatedTokenId) {
+              throw new SensitivePayloadError(
+                "Missing related token for password reset.",
+              );
+            }
+            if (typeof expectedGeneration !== "number") {
+              throw new SensitivePayloadError(
+                "Missing credential generation binding.",
+              );
+            }
+
+            const binding = {
+              messageId: claimedMessage.id,
+              tokenId: claimedMessage.relatedTokenId,
+              userId: claimedMessage.userId!,
+              credentialGeneration: expectedGeneration,
+              recipientNormalized: claimedMessage.recipientEmailNormalized,
+            };
+            const payload = decryptSensitivePayload(
+              {
+                ciphertext: claimedMessage.sensitivePayloadCiphertext,
+                nonce: claimedMessage.sensitivePayloadNonce,
+              },
+              binding,
+            );
+            await assertPasswordResetPayloadDeliveryBinding({
+              payload,
+              binding,
+              messageId: claimedMessage.id,
+              relatedTokenId: claimedMessage.relatedTokenId,
+              messageUserId: claimedMessage.userId,
+              recipientEmailNormalized:
+                claimedMessage.recipientEmailNormalized,
+            });
+
+            const actionUrl = buildPasswordResetActionUrl(
+              config.canonicalBaseUrl,
+              payload.rawToken,
+            );
+            const rendered = renderEmailTemplate({
+              key: "password-reset",
+              locale: payload.locale,
+              variables: {
+                ...payload.variables,
+                actionUrl,
+              },
+            });
+            if (
+              !claimedMessage.recipientEmail ||
+              !rendered.subject ||
+              !rendered.textBody ||
+              !rendered.htmlBody
+            ) {
+              throw new Error("EMAIL_CONTENT_UNAVAILABLE");
+            }
+
+            await params?.beforeProviderSend?.(claimedMessage.id);
+
+            const result = await provider.send({
+              id: claimedMessage.id,
+              recipientEmail: claimedMessage.recipientEmail,
+              fromAddress: claimedMessage.fromAddress,
+              replyToAddress: claimedMessage.replyToAddress,
+              subject: rendered.subject,
+              textBody: rendered.textBody,
+              htmlBody: rendered.htmlBody,
+              idempotencyKey: claimedMessage.idempotencyKey,
+            });
+
+            if (result.ok) {
+              const updated = await finalizeAccepted({
+                messageId: claimedMessage.id,
+                claimToken,
+                attemptId: attempt.id,
+                providerName: result.providerName,
+                providerMessageId: result.providerMessageId,
+                acceptedAt: result.acceptedAt,
+                metadata: result.metadata,
+                clearSensitivePayload: true,
+              });
+              if (!updated) return "skipped";
+              logEmailEvent("info", "accepted_by_provider", {
+                messageId: claimedMessage.id,
+                attemptNumber,
+                provider: result.providerName,
+              });
+              return "accepted";
+            }
+
+            return finishProviderFailure({
+              attemptId: attempt.id,
+              attemptNumber,
+              result,
+            });
+          } catch (error) {
+            return finishException(error, attempt.id, attemptNumber);
+          }
+        },
+      );
+    } else {
+      const ownedAttempt = await createAttemptForOwnedClaim({
+        messageId: claimedMessage.id,
+        claimToken,
+        provider,
+      });
+      if (!ownedAttempt) {
+        await markClaimLost(claimedMessage.id, claimToken, "attempt_allocation");
+        skipped += 1;
+        continue;
+      }
+      const { attempt, attemptNumber } = ownedAttempt;
+
+      try {
+        if (
+          !claimedMessage.recipientEmail ||
+          !claimedMessage.renderedSubject ||
+          !claimedMessage.renderedTextBody ||
+          !claimedMessage.renderedHtmlBody
+        ) {
+          throw new Error("EMAIL_CONTENT_UNAVAILABLE");
+        }
+
+        await params?.beforeProviderSend?.(claimedMessage.id);
+
+        const result = await provider.send({
+          id: claimedMessage.id,
+          recipientEmail: claimedMessage.recipientEmail,
+          fromAddress: claimedMessage.fromAddress,
+          replyToAddress: claimedMessage.replyToAddress,
+          subject: claimedMessage.renderedSubject,
+          textBody: claimedMessage.renderedTextBody,
+          htmlBody: claimedMessage.renderedHtmlBody,
+          idempotencyKey: claimedMessage.idempotencyKey,
+        });
+
+        if (result.ok) {
+          const updated = await finalizeAccepted({
+            messageId: claimedMessage.id,
+            claimToken,
+            attemptId: attempt.id,
+            providerName: result.providerName,
+            providerMessageId: result.providerMessageId,
+            acceptedAt: result.acceptedAt,
+            metadata: result.metadata,
+            clearSensitivePayload: false,
+          });
+          if (!updated) {
+            outcome = "skipped";
+          } else {
+            logEmailEvent("info", "accepted_by_provider", {
+              messageId: claimedMessage.id,
+              attemptNumber,
+              provider: result.providerName,
+            });
+            outcome = "accepted";
+          }
+        } else {
+          outcome = await finishProviderFailure({
+            attemptId: attempt.id,
+            attemptNumber,
+            result,
+          });
+        }
+      } catch (error) {
+        outcome = await finishException(error, attempt.id, attemptNumber);
+      }
     }
+
+    if (outcome === "accepted") accepted += 1;
+    else if (outcome === "retryable") retryableFailures += 1;
+    else if (outcome === "final") finalFailures += 1;
+    else if (outcome === "unknown") acceptanceUnknown += 1;
+    else if (outcome === "cancelled") cancelled += 1;
+    else skipped += 1;
   }
 
   return {
