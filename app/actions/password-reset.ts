@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { resetPasswordWithToken } from "@/lib/auth/account-security";
-import { CredentialDispatchFenceError } from "@/lib/auth/credential-dispatch-fence";
+import { passwordResetErrorKey } from "@/lib/auth/account-security-error-messages";
 import { consumePasswordResetFinalizeAttempt } from "@/lib/auth/password-reset-rate-limit";
 import {
   hashPasswordResetToken,
@@ -45,10 +45,9 @@ export async function resetPassword(
     });
     if (!succeeded) return { error: "auth.passwordResetInvalid" };
   } catch (error) {
-    if (error instanceof CredentialDispatchFenceError) {
-      return { error: "auth.passwordResetRetry" };
-    }
-    return { error: "auth.passwordResetInvalid" };
+    // A rolled-back reset transaction leaves the token unconsumed; invalid,
+    // expired, consumed, and revoked tokens return false instead of throwing.
+    return { error: passwordResetErrorKey(error) };
   }
 
   redirect("/login?passwordReset=success");

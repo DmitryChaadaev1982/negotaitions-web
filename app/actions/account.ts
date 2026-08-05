@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
+import { authenticatedPasswordChangeErrorKey } from "@/lib/auth/account-security-error-messages";
 import { commitAuthenticatedPasswordChange } from "@/lib/auth/authenticated-password-change";
 import {
   runAfterPasswordVerifiedHook,
@@ -98,7 +99,7 @@ export async function updatePassword(
     if (error instanceof StaleCredentialError) {
       return { error: "auth.passwordChangeFailed" };
     }
-    return { error: "auth.passwordChangeFailed" };
+    return { error: authenticatedPasswordChangeErrorKey(error) };
   }
 
   return { success: true };

@@ -1542,6 +1542,8 @@ export const ru: Dictionary = {
     languageUpdated: "Язык обновлён.",
     invalidCurrentPassword: "Неверный текущий пароль.",
     passwordChangeFailed: "Не удалось изменить пароль. Попробуйте снова.",
+    passwordChangeRetry:
+      "Изменение пароля временно недоступно. Попробуйте ещё раз.",
   },
   legal: {
     draftNotice: "Черновик для юридической проверки перед production-запуском.",

@@ -1535,6 +1535,8 @@ export const en = {
     languageUpdated: "Language updated.",
     invalidCurrentPassword: "Invalid current password.",
     passwordChangeFailed: "Password could not be changed. Please try again.",
+    passwordChangeRetry:
+      "Password change is temporarily unavailable. Please try again.",
   },
   legal: {
     draftNotice: "Draft placeholder for legal review before production launch.",
