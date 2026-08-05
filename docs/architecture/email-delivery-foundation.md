@@ -22,11 +22,32 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 
 Eligible states are `PENDING` and `FAILED_RETRYABLE`. The worker moves a row to `PROCESSING` using conditional `updateMany` and stores a random claim token plus lease. Attempt allocation happens only after suppression is rechecked and only while `id + PROCESSING + claimToken` is still owned. A second worker cannot claim the same row if the first claim succeeds, and a stale worker cannot complete over a newer claim.
 
-For `PASSWORD_RESET`, after claim and suppression recheck the worker acquires the credential dispatch fence (session advisory lock on a dedicated `pg` connection), revalidates token/user/generation eligibility, decrypts the AAD-bound sensitive payload, validates the raw-token hash against `PasswordResetToken`, then calls `provider.send` while still holding the fence. Credential mutations acquire the same fence so dispatch cannot race password/token invalidation (M-03R). The fence is not held across an unbounded network call without the configured provider timeout bound, and connection/process death releases session advisory locks.
+For `PASSWORD_RESET`, after claim and suppression recheck the worker acquires
+the credential dispatch fence (session advisory lock on a dedicated `pg`
+connection), revalidates token/user/generation eligibility, decrypts the
+AAD-bound sensitive payload, validates the raw-token hash against
+`PasswordResetToken`, validates that `recipientEmail` normalizes to the
+authenticated canonical `recipientEmailNormalized`, and passes only that
+canonical value to `provider.send`. Malformed, internationalized (unsupported),
+noncanonical normalized, or mismatched associations terminalize without a
+provider call and clear the ciphertext. The two recipient fields remain for
+indexed lookup plus nullable content retention; they are not independent
+delivery authorities.
+
+Credential mutations acquire the same fence so dispatch cannot race
+password/token/status invalidation (M-03R). Fence acquisition itself is bounded
+with try-lock backoff, and the provider call has its own configured timeout.
+Connection/process death remains the final release guarantee.
 
 Terminal states are `DELIVERED`, `BOUNCED`, `COMPLAINED`, `SUPPRESSED`, `FAILED_FINAL`, and `CANCELLED`. `ACCEPTED_BY_PROVIDER` may later move to `DELIVERED`, `DELAYED`, `BOUNCED`, or `COMPLAINED` from provider events.
 
-Provider timeout or connection loss after request dispatch is recorded as `TIMEOUT_UNKNOWN` on the attempt and `ACCEPTANCE_UNKNOWN` on the message. It is not retried by the normal worker sweep because provider acceptance may already have happened. Later provider events may reconcile it.
+Provider timeout or connection loss after request dispatch is recorded as
+`TIMEOUT_UNKNOWN` on the attempt and `ACCEPTANCE_UNKNOWN` on the message. In
+the same claim-owned finalization transaction, password-reset ciphertext,
+nonce, and late-rendered bodies are cleared. It is not retried by the normal
+worker sweep because provider acceptance may already have happened. Later
+provider events may reconcile it; `ACCEPTED_BY_PROVIDER` still does not mean
+end-user `DELIVERED`.
 
 ## Idempotency
 
@@ -85,6 +106,17 @@ Defaults are env-controlled:
 - Active suppression: retained until expiry or explicit lift.
 
 Cleanup is bounded, idempotent, and supports dry-run.
+
+## Controlled operations
+
+- `email:delivery:canary` requires one strict `--message-id`, refuses disabled
+  delivery or an ineligible row, scopes recovery/claim/send to that row, and
+  has no general-sweep fallback.
+- `email:backlog:quarantine` is dry-run by default, requires `--apply` to
+  mutate, uses a strict 1..500 batch, handles password-reset messages only,
+  never creates a provider, and clears sensitive fields on cancellation.
+- Normal worker and retention timers plus the manual canary systemd unit remain
+  disabled repository templates; this stage does not install or enable them.
 
 ## Observability
 

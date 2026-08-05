@@ -43,6 +43,29 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
 - `.env.production` is runtime secret material and must never be committed.
 - Keep secret values in server-side secure storage and service environment wiring only.
 
+## Stage 3.13C-F account-security deployment boundary
+
+- Do not roll old and new app/worker versions together. Stop every old app,
+  worker, timer, and ad-hoc email sweep before applying migrations or starting
+  the new runtime.
+- Apply and verify the additive migration overlay before new runtime start.
+- Install `EMAIL_SENSITIVE_PAYLOAD_KEY` before the new runtime accepts ACTIVE
+  password-reset requests.
+- Keep delivery disabled while reviewing and applying bounded stale/legacy
+  password-reset backlog quarantine.
+- Keep the normal worker stopped for the canary. The canary must select exactly
+  one eligible `EmailMessage` through the manual systemd unit.
+- Do not enable the worker timer until that one message is accepted and the
+  operational review passes.
+
+After real remediated reset traffic starts, pre-remediation code is not a normal
+safe rollback target. Disable delivery, set `TRUSTED_PROXY_ENABLED=false` when
+proxy trust is implicated, keep old processes stopped, and forward-fix on the
+remediated schema. Do not roll back additive migration history.
+
+Production nginx verification and Postbox/DNS/credential activation are
+controlled production actions outside local implementation and validation.
+
 ## Standard Validation Steps
 
 Run from repository before deployment:

@@ -8,6 +8,9 @@ The worker is a bounded CLI sweep. It is not a request-time sender and Stage
 ```shell
 npm run email:delivery:sweep
 npm run email:delivery:sweep -- --limit 10
+npm run email:delivery:canary -- --message-id <EmailMessage-ID>
+npm run email:backlog:quarantine -- --batch-size 100
+npm run email:backlog:quarantine -- --apply --batch-size 100
 npm run email:events:reconcile
 npm run email:retention:dry-run
 npm run email:retention:cleanup
@@ -56,11 +59,36 @@ mail. This policy is identical at enqueue and worker recheck.
 
 Provider request timeout must stay shorter than the processing lease minus the safety margin. Invalid timeout/lease configuration fails validation before delivery can activate.
 
+Password-reset dispatch also has a separate bounded advisory-fence acquisition
+deadline: `CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS` defaults to 5000 ms and accepts
+only 50..30000. Acquisition uses `pg_try_advisory_lock` plus bounded backoff.
+Timeout or abort releases the claim to `FAILED_RETRYABLE` with sanitized state;
+invalid configuration fails closed. The dedicated connection is always closed.
+
 Provider authentication/configuration errors become final failures and operational alerts. Throttle, pre-dispatch network, and pre-dispatch server failures may retry within bounds. Once a request has been dispatched and acceptance cannot be ruled out, the message becomes `ACCEPTANCE_UNKNOWN`, the claim is released, and the normal worker will not retry it automatically.
 
 ## Acceptance Unknown
 
-`ACCEPTANCE_UNKNOWN` requires operator review or a later provider event. Stage 3.13B-H intentionally does not add a retry button or manual resend endpoint. Future manual handling is deferred to Stage 3.13E.
+`ACCEPTANCE_UNKNOWN` requires operator review or a later provider event. It is
+not eligible for normal sweep retry. For password-reset messages, ciphertext,
+nonce, and late-rendered bodies are cleared atomically when this state is
+recorded, and repeated retention cleanup remains idempotent. Stage 3.13B-H
+intentionally does not add a retry button or manual resend endpoint. Future
+manual handling is deferred to Stage 3.13E.
+
+## Canary and quarantine
+
+The canary command requires exactly one explicit strict message id, requires
+delivery to already be enabled, verifies current eligibility, and scopes stale
+lease recovery plus claim/send to that id. It never falls back to the normal
+sweep and exits nonzero on refusal or any non-acceptance outcome.
+
+The password-reset backlog command is dry-run by default. `--apply` is required
+for mutation, and `--batch-size` must be 1..500. It classifies expired,
+consumed, superseded, generation-mismatched, status-ineligible, revoked,
+missing/association-invalid, and legacy-plaintext rows. Apply cancels and
+clears sensitive fields; it never constructs a provider. Partial failure is a
+nonzero exit.
 
 ## Provider Event Reconciliation
 
@@ -78,9 +106,10 @@ Logs may include message id, provider, attempt number, status, redacted recipien
 
 ## Production Installation
 
-Do not install or activate it in Stage 3.13C. Future deployment should use a
-timer or separate worker service with the same production env file pattern as
-the app, after secrets and provider readiness are confirmed.
+Do not install or activate it in Stage 3.13C-F. Committed systemd templates use
+`/etc/negotaitions/env.production`; worker/retention timers and manual
+canary/quarantine units remain disabled. The normal worker must remain stopped
+during the isolated canary.
 
 The local fake-provider procedure is documented in
 `stage-3-13c-local-email-testing.md`. The preview must remain disabled in

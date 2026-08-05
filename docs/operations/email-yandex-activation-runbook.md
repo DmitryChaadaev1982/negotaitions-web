@@ -54,30 +54,44 @@ npm run email:retention:dry-run
 
 Owner approval is required before each billing-sensitive step.
 
-## Feature Flag Activation (Stage 3.13C-R safe order)
+## Feature Flag Activation (Stage 3.13C-F safe order)
 
 Do not activate Postbox during remediation. Future controlled activation:
 
-1. Deploy code and apply additive production migrations in a controlled window
-   (including `20260805140000_stage_3_13c_security_remediation`).
-2. Install `EMAIL_SENSITIVE_PAYLOAD_KEY` (32-byte base64) separately from
-   `AUTH_SECRET`. Never print the value.
+1. Announce a non-rolling maintenance window. Mixed old/new application or
+   worker runtime is unsafe.
+2. Stop **all** old application processes, email workers, worker timers, and
+   ad-hoc sweep processes. Confirm none remain.
 3. Keep `EMAIL_DELIVERY_ENABLED=false`.
-4. Run template validation and retention dry-run.
-5. Inspect pending backlog; quarantine stale `PASSWORD_RESET` messages before
-   enabling the worker (`quarantineStalePasswordResetBacklog` / ops script).
-6. Install disabled-by-default units from `deploy/systemd/`:
+4. Apply the additive migration overlay and verify migration status **before**
+   starting any new runtime.
+5. Install `EMAIL_SENSITIVE_PAYLOAD_KEY` (32-byte base64) separately from
+   `AUTH_SECRET`. Never print the value. Do not accept ACTIVE password-reset
+   requests until this key is installed.
+6. Start the new application runtime only after steps 2–5. Keep the normal
+   email worker stopped.
+7. Run template validation and retention dry-run.
+8. Review stale/legacy password-reset backlog while delivery remains disabled:
+   start `negotiations-email-backlog-quarantine.service` (dry-run), review only
+   sanitized counts, then manually start
+   `negotiations-email-backlog-quarantine-apply.service` in bounded batches.
+   Repeat dry-run until no stale/legacy rows remain.
+9. Install disabled-by-default units from `deploy/systemd/`:
    - `negotiations-email-worker.service` + `.timer`
    - `negotiations-email-retention.service` + `.timer`
+   - `negotiations-email-canary@.service`
+   - the two manual backlog-quarantine services
    Use `EnvironmentFile=/etc/negotaitions/env.production` (not the app `.env`).
-7. Enable `EMAIL_PROVIDER=yandex_postbox` with credentials while delivery stays
-   disabled; run one disabled sweep to confirm no-op.
-8. Canary: select exactly one message id, run
-   `runEmailDeliverySweep({ onlyMessageId })` with delivery temporarily
-   enabled for that process only. Do not enable the normal timer yet.
-9. Treat provider `ACCEPTED_BY_PROVIDER` as acceptance, not end-user delivery.
-10. Only then enable the worker timer for normal sweeps.
-11. Watch logs, queue depth, bounces, and complaints.
+10. Configure the reviewed Postbox provider credentials while delivery remains
+    disabled; run one disabled sweep to confirm no-op.
+11. Select exactly one eligible `EmailMessage` id. Set delivery enabled in the
+    controlled production env, keep the normal worker/timer stopped, and start
+    only `negotiations-email-canary@<EmailMessage-ID>.service`. The command
+    refuses missing/invalid ids and has no general-sweep fallback.
+12. Confirm exactly one claim and one provider acceptance. Treat
+    `ACCEPTED_BY_PROVIDER` as acceptance, not end-user `DELIVERED`.
+13. Only then enable the normal worker timer. Watch sanitized queue counts,
+    bounces, and complaints.
 
 ## Worker Installation Sketch
 
@@ -91,3 +105,14 @@ Committed templates live under `deploy/systemd/`. Do not enable in Stage 3.13C.
 4. Do not delete suppressions during incident response.
 5. Revoke or rotate provider credentials if compromised.
 6. Revert DNS only after confirming replacement mail routing.
+
+After real password-reset traffic begins on the remediated runtime, rollback to
+pre-remediation code is **not** a normal safe rollback. Keep old runtime stopped,
+disable delivery, set `TRUSTED_PROXY_ENABLED=false` if proxy trust is relevant,
+and forward-fix on the remediated additive schema. Do not reverse migrations or
+restart an old worker that can bypass recipient binding, generation checks, or
+the bounded fence.
+
+Live nginx verification, trusted-proxy activation, Postbox credentials/DNS, and
+provider activation remain separately controlled production actions. None is
+performed by local Stage 3.13C-F work.

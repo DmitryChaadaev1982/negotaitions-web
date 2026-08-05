@@ -18,6 +18,29 @@ This document maps High and Medium findings to remediations on
 | H-02R | AES-GCM ciphertext was not bound to message/token/user/recipient/generation; ciphertext transplant could decrypt under another row | Versioned canonical JSON AAD; preallocated `EmailMessage.id`; post-decrypt field checks; timing-safe raw-token hash vs `PasswordResetToken` | `lib/email/sensitive-payload.ts`, `lib/email/account-security.ts`, `lib/email/outbox.ts`, `lib/email/worker.ts` | unit AAD/swap tests; R2 verifier ciphertext and `relatedTokenId` swaps | Key compromise still exposes active tokens; no automatic key rotation in R2 | Key must be installed separately; delivery still disabled |
 | M-03R | Eligibility could become stale between evaluation and `provider.send` | Session advisory lock fence shared by worker dispatch and credential mutations; revalidation under fence before send | `lib/auth/credential-dispatch-fence.ts`, `lib/email/worker.ts`, `lib/auth/account-security.ts`, `app/actions/account.ts` | R2 verifier M-03R A/B, blocked/expired, provider throw releases fence | Fence held for bounded provider timeout; worker death releases via connection close | Must quarantine backlog before Postbox enable |
 
+## Stage 3.13C-F final remediations
+
+- Every production `UserSession` creator now requires
+  `expectedCredentialGeneration`. Registration uses the committed user row's
+  generation, and both pending and bootstrap-admin registration follow the same
+  locked insertion/cookie-after-commit boundary.
+- Password-reset dispatch derives the provider recipient only from a canonical
+  value that matches the AAD-authenticated normalized recipient. Replacing
+  either durable field cannot redirect delivery.
+- New-token supersession, token consumption, authenticated password change,
+  and administrator BLOCKED/REJECTED transitions use the same fence before
+  transaction/User/token/session/message mutation.
+- Fence acquisition uses bounded `pg_try_advisory_lock` retries (default 5 s);
+  invalid configuration, timeout, and abort fail closed.
+- Reset fragments are fully scrubbed before parsing. Sensitive
+  `ACCEPTANCE_UNKNOWN` messages clear recoverable payload immediately.
+- Isolated one-message canary and dry-run-by-default bounded backlog quarantine
+  commands are committed. No service or timer is enabled.
+- `verify:stage313c:final-remediation` requires only the dedicated
+  `STAGE313C_DISPOSABLE_DATABASE_URL`; it never falls back to the ordinary
+  `DATABASE_URL`, exercises runtime races/provider boundaries, and proves
+  cleanup.
+
 ## Earlier Stage 3.13C-R high findings (still in force)
 
 | ID | Root cause | Fix | Primary files | Tests | Residual risk | Activation |
@@ -59,7 +82,14 @@ This document maps High and Medium findings to remediations on
 
 A mixed old/new runtime is not considered safe for account-security activation.
 Do not attempt a rolling mixed-version deployment of session creation and
-password-reset paths.
+password-reset paths. Stop every old application and worker process before the
+new runtime starts. Apply migrations before that start, and install
+`EMAIL_SENSITIVE_PAYLOAD_KEY` before accepting ACTIVE password-reset requests.
+
+Once real reset traffic uses the remediated encrypted/fenced schema, reverting
+to pre-remediation code is not a normal safe rollback. Disable delivery, set
+`TRUSTED_PROXY_ENABLED=false` when proxy trust is implicated, keep old
+processes stopped, and forward-fix on the additive schema.
 
 ## Commands
 
@@ -69,6 +99,10 @@ npm run test:stage313c:high-remediation-r2
 npm run verify:stage313c:high-remediation-r2
 npm run test:stage313c:remediation
 npm run verify:stage313c:remediation
+# Set STAGE313C_DISPOSABLE_DATABASE_URL only to an explicitly approved,
+# migrated, empty-data local Stage 3.13C test database.
+npm run test:stage313c:final-remediation
+npm run verify:stage313c:final-remediation
 ```
 
 ## Decision target

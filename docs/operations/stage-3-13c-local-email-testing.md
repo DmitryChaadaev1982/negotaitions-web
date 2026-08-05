@@ -117,10 +117,16 @@ Use one managed Playwright mode at a time:
 npm run email:templates:validate
 npm run test:stage313c
 npm run verify:stage313c:integration
+npm run test:stage313c:final-remediation
+# Explicitly set STAGE313C_DISPOSABLE_DATABASE_URL to the human-approved,
+# migrated local disposable target; the verifier never falls back to DATABASE_URL.
+npm run verify:stage313c:final-remediation
 ```
 
 `verify:stage313c:integration` refuses non-local or production-like database
-names and prints sanitized counts only.
+names and prints sanitized counts only. The final verifier additionally
+requires an empty-data target, exercises real worker/mutation races, and proves
+all verifier-owned rows and advisory locks were removed.
 
 ## 7. Cleanup
 
@@ -135,6 +141,7 @@ Remove-Item Env:EMAIL_PROVIDER -ErrorAction SilentlyContinue
 Remove-Item Env:EMAIL_ADMIN_TEST_ENABLED -ErrorAction SilentlyContinue
 Remove-Item Env:EMAIL_LOCAL_PREVIEW_ENABLED -ErrorAction SilentlyContinue
 Remove-Item Env:EMAIL_CANONICAL_BASE_URL -ErrorAction SilentlyContinue
+Remove-Item Env:STAGE313C_DISPOSABLE_DATABASE_URL -ErrorAction SilentlyContinue
 ```
 
 ## Production prerequisites

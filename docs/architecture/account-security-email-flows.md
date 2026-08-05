@@ -43,9 +43,11 @@ Defaults:
 - account maximum: 5 requests per hour;
 - maximum active tokens per user: 1.
 
-Creating an ACTIVE-user token revokes previous unused tokens, creates the new
-hash-only row, and enqueues `PASSWORD_RESET` in one serializable transaction.
-The partial unique index on active tokens provides a second concurrency guard.
+Creating an ACTIVE-user token first acquires the bounded user-scoped credential
+dispatch fence, then locks `User`, revokes previous unused tokens, cancels their
+claimable reset messages, creates the new hash-only row, and enqueues
+`PASSWORD_RESET` in one serializable transaction. The partial unique index on
+active tokens provides a second concurrency guard.
 
 Reset validates token syntax, hashes the token, cheaply checks eligibility,
 hashes the new password only after that gate, then acquires the credential
@@ -57,8 +59,11 @@ tokens, deletes every `UserSession`, and enqueues exactly one
 
 ### H-01R — session creation linearization
 
-Login verifies the password **outside** any open transaction (bcrypt must not
-hold a DB lock). It captures `credentialGeneration`, then
+Login and registration hash or verify the password **outside** any transaction
+that locks `User` (bcrypt must not hold a DB lock). Every production session
+creation call must supply the observed `credentialGeneration`; there is no
+unguarded overload. Registration uses the generation returned by the committed
+user/consent transaction, including bootstrap-admin ACTIVE registration. Then
 `createUserSessionToken` / `createUserSession`:
 
 1. begins a short Prisma transaction;
@@ -76,11 +81,14 @@ security activation.
 
 ### M-03R — reset dispatch fence
 
-Password-reset provider dispatch and credential mutations share a PostgreSQL
+Password-reset provider dispatch and every reset-eligibility mutation share a PostgreSQL
 **session advisory lock** keyed by a domain-separated SHA-256 of the user id
 (`lib/auth/credential-dispatch-fence.ts`). The fence uses a dedicated `pg`
 `Client` (not the Prisma pool) so it can span the bounded provider call and is
-released on unlock, error, or connection/process death.
+released on unlock, error, or connection/process death. Acquisition repeatedly
+uses `pg_try_advisory_lock` with bounded backoff and a monotonic deadline
+(`CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS`, default 5000 ms, allowed 50..30000).
+Invalid configuration fails closed; timeout/abort never enters the operation.
 
 Worker linearization point (Outcome A/B):
 
@@ -93,10 +101,35 @@ Worker linearization point (Outcome A/B):
 7. release fence.
 
 Credential mutation acquires the same fence before token claim / password
-update. Holding a Prisma row lock across the provider network call is forbidden.
+update. New-token issuance/supersession, reset consumption, authenticated
+password change, and administrator BLOCKED/REJECTED transitions all use this
+boundary. There is no production user-deletion path. Holding a Prisma row lock
+across the provider network call is forbidden.
+
+Global lock order is:
+
+1. credential-dispatch fence;
+2. database transaction;
+3. `User`;
+4. `PasswordResetToken`;
+5. `UserSession`;
+6. `EmailMessage` (and then its attempt row).
+
+No code may wait for the fence while holding one of those row locks. A worker
+may claim and commit an `EmailMessage` before waiting for the fence, but it
+holds no row lock during acquisition.
 
 Invalid, expired, reused, revoked, and newly inactive accounts receive the same
 safe failure.
+
+## Browser fragment boundary
+
+The reset client copies `window.location.hash` only into ephemeral memory,
+immediately removes the complete live fragment with `history.replaceState`,
+and only then parses the copy. Exactly one `token` field is accepted; duplicate,
+empty, malformed, or unrelated fragment fields fail. The fragment is never
+restored, so refresh and copied current URLs contain no token. Any query-string
+`token` key, including an empty or duplicate value, is rejected server-side.
 
 Authenticated password change uses the same bcrypt policy and transactional
 `PASSWORD_CHANGED` notification. It revokes outstanding reset tokens and all
