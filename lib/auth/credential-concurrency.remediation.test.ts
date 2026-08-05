@@ -84,9 +84,15 @@ test("beforePasswordUpdate hook is invoked and can reject", async () => {
 test("clearCredentialMutationHooksForTests restores no-op behaviour", async () => {
   const events: string[] = [];
   setCredentialMutationHooksForTests({
-    afterPasswordVerified: () => events.push("a"),
-    beforeSessionCreate: () => events.push("b"),
-    beforePasswordUpdate: () => events.push("c"),
+    afterPasswordVerified: () => {
+      events.push("a");
+    },
+    beforeSessionCreate: () => {
+      events.push("b");
+    },
+    beforePasswordUpdate: () => {
+      events.push("c");
+    },
   });
   clearCredentialMutationHooksForTests();
   await runAfterPasswordVerifiedHook();
