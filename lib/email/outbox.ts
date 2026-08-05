@@ -6,6 +6,10 @@ import {
 import { normalizeEmailAddress } from "@/lib/email/address";
 import { getEmailConfig } from "@/lib/email/config";
 import { renderEmailTemplate } from "@/lib/email/renderer";
+import {
+  assertDeferredSensitiveRenderIsTokenFree,
+  sanitizeEmailMetadata,
+} from "@/lib/email/rendered-content-guards";
 import { evaluateSuppression } from "@/lib/email/suppression";
 import { loadTemplate } from "@/lib/email/templates";
 import type {
@@ -19,21 +23,6 @@ type EmailDbClient = typeof prisma | Prisma.TransactionClient;
 
 function normalizeLocale(value: string | null | undefined): EmailLocale {
   return value?.toLowerCase() === "ru" ? "ru" : "en";
-}
-
-function sanitizeMetadata(
-  metadata: Record<string, unknown> | undefined,
-): Prisma.InputJsonValue | undefined {
-  if (!metadata) return undefined;
-  const json = JSON.stringify(metadata);
-  if (json.length > 4096) {
-    throw new Error("Email metadata is too large.");
-  }
-  // Defense-in-depth: refuse metadata that looks like it embeds a raw reset token.
-  if (/\b[a-f0-9]{64}\b/i.test(json) && /token/i.test(json)) {
-    throw new Error("Email metadata must not contain reset token material.");
-  }
-  return JSON.parse(json) as Prisma.InputJsonValue;
 }
 
 export async function enqueueEmail(
@@ -88,16 +77,15 @@ export async function enqueueEmail(
       locale,
       variables: input.variables,
     });
+    // Reject token-shaped rendered content regardless of the token-free
+    // placeholder action URL, then discard the bodies entirely.
+    assertDeferredSensitiveRenderIsTokenFree({
+      subject: rendered.subject,
+      textBody: rendered.textBody,
+      htmlBody: rendered.htmlBody,
+    });
     renderedSubject = rendered.subject;
     templateVersion = rendered.templateVersion;
-    // Intentionally discard bodies that may still contain a placeholder URL
-    // without a token — never store the raw token.
-    if (
-      rendered.textBody.includes(input.variables.actionUrl ?? "") === false &&
-      /[a-f0-9]{64}/i.test(rendered.textBody)
-    ) {
-      throw new Error("Refusing to enqueue password-reset content with raw token material.");
-    }
     renderedTextBody = null;
     renderedHtmlBody = null;
   }
@@ -135,7 +123,7 @@ export async function enqueueEmail(
         sensitivePayloadNonce: input.sensitivePayload?.nonce ?? null,
         sensitivePayloadClearedAt: null,
         relatedTokenId: input.relatedTokenId ?? null,
-        metadata: sanitizeMetadata({
+        metadata: sanitizeEmailMetadata({
           ...(input.metadata ?? {}),
           suppressionReason: suppression.reason ?? undefined,
           suppressionId: suppression.suppressionId ?? undefined,

@@ -13,6 +13,11 @@ import {
   parsePasswordResetQuarantineArguments,
 } from "@/lib/email/operational-cli";
 import {
+  assertDeferredSensitiveRenderIsTokenFree,
+  containsResetTokenShapedValue,
+  sanitizeEmailMetadata,
+} from "@/lib/email/rendered-content-guards";
+import {
   resolvePasswordResetProviderRecipient,
   SensitivePayloadError,
 } from "@/lib/email/sensitive-payload";
@@ -119,6 +124,107 @@ test("quarantine arguments are dry-run by default and strictly bounded", () => {
   assert.throws(() =>
     parsePasswordResetQuarantineArguments(["--apply", "--apply"]),
   );
+});
+
+const PLACEHOLDER_ACTION_URL =
+  "https://local.negotaitions.ru/reset-password";
+const TOKEN_SHAPED = "a".repeat(64);
+
+test("deferred sensitive render rejects a token-shaped body even with the placeholder URL", () => {
+  const rejection = /raw token material/;
+  assert.throws(
+    () =>
+      assertDeferredSensitiveRenderIsTokenFree({
+        subject: "Password reset",
+        textBody: `Open ${PLACEHOLDER_ACTION_URL}#token=${TOKEN_SHAPED}`,
+        htmlBody: `<a href="${PLACEHOLDER_ACTION_URL}">Reset</a>`,
+      }),
+    rejection,
+  );
+  assert.throws(
+    () =>
+      assertDeferredSensitiveRenderIsTokenFree({
+        subject: "Password reset",
+        textBody: `Open ${PLACEHOLDER_ACTION_URL}`,
+        htmlBody: `<a href="${PLACEHOLDER_ACTION_URL}#token=${TOKEN_SHAPED}">Reset</a>`,
+      }),
+    rejection,
+  );
+  assert.throws(
+    () =>
+      assertDeferredSensitiveRenderIsTokenFree({
+        subject: `Password reset ${TOKEN_SHAPED}`,
+      }),
+    rejection,
+  );
+});
+
+test("deferred sensitive render accepts token-free placeholder content", () => {
+  assert.doesNotThrow(() =>
+    assertDeferredSensitiveRenderIsTokenFree({
+      subject: "Password reset",
+      textBody: `Open ${PLACEHOLDER_ACTION_URL} to choose a new password.`,
+      htmlBody: `<a href="${PLACEHOLDER_ACTION_URL}">Reset</a>`,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertDeferredSensitiveRenderIsTokenFree({
+      subject: null,
+      textBody: null,
+      htmlBody: null,
+    }),
+  );
+  assert.equal(containsResetTokenShapedValue("a".repeat(63)), false);
+  assert.equal(containsResetTokenShapedValue("a".repeat(65)), true);
+  assert.equal(containsResetTokenShapedValue(undefined), false);
+});
+
+test("outbox applies the guard only to the deferred branch and nulls bodies", async () => {
+  const source = await readFile(
+    path.join(process.cwd(), "lib", "email", "outbox.ts"),
+    "utf8",
+  );
+  // The ineffective actionUrl conjunct must not come back.
+  assert.ok(!source.includes("variables.actionUrl"));
+  assert.match(source, /assertDeferredSensitiveRenderIsTokenFree\(\{/);
+  const deferredBranch = source.slice(source.indexOf("} else {"));
+  assert.match(deferredBranch, /renderedTextBody = null;/);
+  assert.match(deferredBranch, /renderedHtmlBody = null;/);
+  // Non-sensitive rendering keeps persisting real bodies.
+  const normalBranch = source.slice(
+    source.indexOf("if (!deferSensitive) {"),
+    source.indexOf("} else {"),
+  );
+  assert.match(normalBranch, /renderedTextBody = rendered\.textBody;/);
+  assert.match(normalBranch, /renderedHtmlBody = rendered\.htmlBody;/);
+  assert.ok(!normalBranch.includes("assertDeferredSensitiveRenderIsTokenFree"));
+});
+
+test("email metadata rejection stays intact", () => {
+  assert.throws(
+    () =>
+      sanitizeEmailMetadata({
+        passwordResetToken: TOKEN_SHAPED,
+      }),
+    /must not contain reset token material/,
+  );
+  assert.throws(
+    () => sanitizeEmailMetadata({ note: "x".repeat(5000) }),
+    /too large/,
+  );
+  assert.deepEqual(
+    sanitizeEmailMetadata({
+      credentialGeneration: 3,
+      passwordResetTokenId: "cm1234567890",
+      sensitive: true,
+    }),
+    {
+      credentialGeneration: 3,
+      passwordResetTokenId: "cm1234567890",
+      sensitive: true,
+    },
+  );
+  assert.equal(sanitizeEmailMetadata(undefined), undefined);
 });
 
 test("operational CLI wrappers propagate only parsed bounded arguments", async () => {
