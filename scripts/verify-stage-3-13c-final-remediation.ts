@@ -1223,6 +1223,120 @@ async function main(): Promise<void> {
     record(currentCase);
   }
 
+  currentCase = "eligibility_enabling_transition_cannot_revive_reset";
+  {
+    const user = await createUser("unfenced-eligibility");
+    const reset = await createReset(user);
+    const tokenId = reset.message.relatedTokenId!;
+
+    // 1. Block through the fenced production transition.
+    await transitionUserToResetIneligibleStatus({
+      targetUserId: user.id,
+      adminUserId: admin.id,
+      status: "BLOCKED",
+      comment: null,
+    });
+
+    // 2. Active token revoked and pending reset message cancelled.
+    const revokedToken = await prisma.passwordResetToken.findUniqueOrThrow({
+      where: { id: tokenId },
+    });
+    const revokedAt = revokedToken.revokedAt;
+    assert.ok(revokedAt);
+    const cancelledMessage = await prisma.emailMessage.findUniqueOrThrow({
+      where: { id: reset.message.id },
+    });
+    assert.equal(cancelledMessage.status, "CANCELLED");
+    assert.equal(cancelledMessage.sensitivePayloadCiphertext, null);
+
+    // 3. Unblock: the same unfenced User + AdminActionLog write performed by
+    //    app/actions/admin-users.ts unblockUser.
+    const unblockedAt = new Date();
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: {
+          status: "ACTIVE",
+          approvedAt: unblockedAt,
+          approvedByUserId: admin.id,
+          blockedAt: null,
+          blockedByUserId: null,
+          rejectedAt: null,
+          rejectedByUserId: null,
+        },
+      }),
+      prisma.adminActionLog.create({
+        data: {
+          adminUserId: admin.id,
+          targetUserId: user.id,
+          action: "USER_UNBLOCKED",
+          comment: null,
+        },
+      }),
+    ]);
+    assert.equal(
+      (await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).status,
+      "ACTIVE",
+    );
+
+    // 4. The revoked token stays revoked with the same revocation timestamp.
+    const tokenAfterUnblock =
+      await prisma.passwordResetToken.findUniqueOrThrow({
+        where: { id: tokenId },
+      });
+    assert.equal(tokenAfterUnblock.revokedAt?.getTime(), revokedAt.getTime());
+    assert.equal(tokenAfterUnblock.usedAt, null);
+    assert.equal(
+      (
+        await dispatch.evaluatePasswordResetDispatchEligibility({
+          relatedTokenId: tokenId,
+          userId: user.id,
+        })
+      ).ok,
+      false,
+    );
+
+    // 5. The cancelled message remains non-claimable even when targeted.
+    const targetedProvider = new FakeEmailProvider();
+    const targeted = await quiet(() =>
+      runEmailDeliverySweep({
+        provider: targetedProvider,
+        onlyMessageId: reset.message.id,
+        limit: 1,
+      }),
+    );
+    assert.equal(targetedProvider.sent.length, 0);
+    assert.equal(targeted.claimed, 0);
+    assert.equal(targeted.accepted, 0);
+
+    // 6. A normal delivery sweep never reaches the provider for this account.
+    const sweepProvider = new FakeEmailProvider();
+    await quiet(() =>
+      runEmailDeliverySweep({ provider: sweepProvider, limit: 500 }),
+    );
+    assert.ok(
+      sweepProvider.sent.every((sent) => sent.recipientEmail !== user.email),
+    );
+    const messageAfterSweep = await prisma.emailMessage.findUniqueOrThrow({
+      where: { id: reset.message.id },
+    });
+    assert.equal(messageAfterSweep.status, "CANCELLED");
+    assert.equal(messageAfterSweep.sensitivePayloadCiphertext, null);
+
+    // 7. Eligibility-enabling admin transitions write no reset token or
+    //    reset message, which is why they need no fence.
+    const adminActionsSource = await readFile(
+      path.join(process.cwd(), "app", "actions", "admin-users.ts"),
+      "utf8",
+    );
+    assert.ok(!adminActionsSource.includes("passwordResetToken"));
+    assert.ok(!adminActionsSource.includes("emailMessage"));
+    assert.ok(!adminActionsSource.includes("sensitivePayload"));
+
+    await fenceReleased(user.id);
+    record(currentCase);
+  }
+
   currentCase = "invalid_timeout_configuration_fails_closed";
   {
     assert.throws(

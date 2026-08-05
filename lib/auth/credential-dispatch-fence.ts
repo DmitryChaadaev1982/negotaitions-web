@@ -44,6 +44,11 @@ let fenceHooks: CredentialDispatchFenceHooks = {};
 export function setCredentialDispatchFenceHooksForTests(
   hooks: CredentialDispatchFenceHooks,
 ): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Credential dispatch fence test hooks are unavailable in production.",
+    );
+  }
   fenceHooks = hooks;
 }
 

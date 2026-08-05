@@ -41,6 +41,11 @@ let activeHooks: CredentialMutationHooks = {};
 export function setCredentialMutationHooksForTests(
   hooks: CredentialMutationHooks,
 ): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Credential mutation test hooks are unavailable in production.",
+    );
+  }
   activeHooks = hooks;
 }
 

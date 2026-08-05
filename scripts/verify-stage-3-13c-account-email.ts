@@ -66,6 +66,11 @@ const pendingRegistrationIds: string[] = [];
 const counts: Record<string, number> = {};
 let prisma: (typeof import("@/lib/prisma"))["prisma"] | undefined;
 let currentCase = "bootstrap";
+// Ownership baseline for operational-log rows this run may create. Cleanup
+// deletes only rows absent from the baseline, never unrelated rows.
+let externalServiceEventBaselineIds: string[] = [];
+let externalServiceEventBaselineCount = 0;
+let runStartedAt: Date | undefined;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -139,6 +144,20 @@ async function main() {
   `;
   assert.equal(searchPath[0]?.schema_name, expectedSchema);
   await prisma.$queryRaw`SELECT 1`;
+
+  currentCase = "external_service_event_ownership_baseline";
+  // Use the database clock so the ownership window cannot be skewed by the
+  // Node process clock.
+  const clock = await prisma.$queryRaw<{ now: Date }[]>`SELECT now() AS now`;
+  runStartedAt = clock[0]?.now;
+  assert.ok(runStartedAt instanceof Date);
+  const baselineEvents = await prisma.externalServiceEvent.findMany({
+    select: { id: true },
+  });
+  externalServiceEventBaselineIds = baselineEvents.map((event) => event.id);
+  externalServiceEventBaselineCount = externalServiceEventBaselineIds.length;
+  record("externalServiceEventBaseline", externalServiceEventBaselineCount);
+
   const originalPassword = `Old-${randomBytes(12).toString("base64url")}!`;
   const newPassword = `New-${randomBytes(12).toString("base64url")}!`;
   const passwordHash = await hashPassword(originalPassword);
@@ -550,11 +569,41 @@ async function main() {
   record("adminFailureIsolationSucceeded", 1);
 }
 
+/**
+ * Delete only the operational-log rows this run created. Rows present in the
+ * ownership baseline, and any row created before the run started, are never
+ * touched. Repeat runs stay idempotent because the surviving set is asserted
+ * back to the baseline.
+ */
+async function cleanupOwnedExternalServiceEvents(): Promise<void> {
+  if (!prisma || !runStartedAt) return;
+  const owned = await prisma.externalServiceEvent.findMany({
+    where: {
+      createdAt: { gte: runStartedAt },
+      ...(externalServiceEventBaselineIds.length > 0
+        ? { id: { notIn: externalServiceEventBaselineIds } }
+        : {}),
+    },
+    select: { id: true },
+  });
+  if (owned.length > 0) {
+    const deleted = await prisma.externalServiceEvent.deleteMany({
+      where: { id: { in: owned.map((event) => event.id) } },
+    });
+    record("externalServiceEventsOwnedDeleted", deleted.count);
+  } else {
+    record("externalServiceEventsOwnedDeleted", 0);
+  }
+  const remaining = await prisma.externalServiceEvent.count();
+  record("externalServiceEventsRemaining", remaining);
+  assert.equal(remaining, externalServiceEventBaselineCount);
+}
+
 async function cleanup() {
   const fence = await import("@/lib/auth/credential-dispatch-fence");
   fence.clearCredentialDispatchFenceHooksForTests();
   if (!prisma) return;
-  await prisma.externalServiceEvent.deleteMany();
+  await cleanupOwnedExternalServiceEvents();
   if (pendingRegistrationIds.length > 0) {
     await prisma.emailMessage.deleteMany({
       where: {
