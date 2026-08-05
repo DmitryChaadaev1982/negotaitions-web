@@ -59,6 +59,13 @@ const PASSWORD_RESET_INDEXES = [
   "PasswordResetToken_tokenHash_key",
   "PasswordResetToken_userId_usedAt_revokedAt_idx",
 ] as const;
+const REQUIRED_EMAIL_MESSAGE_INDEXES = [
+  "EmailMessage_createdAt_idx",
+  "EmailMessage_relatedTokenId_idx",
+  "EmailMessage_sensitivePayloadClearedAt_idx",
+  "EmailMessage_status_nextAttemptAt_createdAt_idx",
+  "EmailMessage_userId_idx",
+] as const;
 
 type FailureCode =
   | "DATABASE_URL_MISSING"
@@ -354,6 +361,131 @@ async function passwordResetIndexes(client: pg.Client): Promise<string[]> {
   return result.rows.map((row) => row.indexname);
 }
 
+async function assertStage313cDatabaseInvariants(client: pg.Client) {
+  const columns = await client.query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+  }>(
+    `SELECT table_name, column_name, data_type, is_nullable, column_default
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (
+         (table_name = 'User' AND column_name = 'credentialGeneration')
+         OR
+         (table_name = 'EmailMessage' AND column_name IN (
+           'sensitivePayloadCiphertext',
+           'sensitivePayloadNonce',
+           'sensitivePayloadClearedAt',
+           'relatedTokenId'
+         ))
+       )
+     ORDER BY table_name, column_name`,
+  );
+  assert.equal(columns.rows.length, 5);
+  const credentialGeneration = columns.rows.find(
+    (row) =>
+      row.table_name === "User" &&
+      row.column_name === "credentialGeneration",
+  );
+  assert.equal(credentialGeneration?.data_type, "integer");
+  assert.equal(credentialGeneration?.is_nullable, "NO");
+  assert.match(credentialGeneration?.column_default ?? "", /\b0\b/);
+
+  const encryptedColumns = new Map(
+    columns.rows
+      .filter((row) => row.table_name === "EmailMessage")
+      .map((row) => [row.column_name, row]),
+  );
+  assert.equal(
+    encryptedColumns.get("sensitivePayloadCiphertext")?.data_type,
+    "text",
+  );
+  assert.equal(encryptedColumns.get("sensitivePayloadNonce")?.data_type, "text");
+  assert.equal(
+    encryptedColumns.get("sensitivePayloadClearedAt")?.data_type,
+    "timestamp without time zone",
+  );
+  assert.equal(encryptedColumns.get("relatedTokenId")?.data_type, "text");
+  for (const row of encryptedColumns.values()) {
+    assert.equal(row.is_nullable, "YES");
+  }
+
+  const constraints = await client.query<{
+    conname: string;
+    contype: string;
+    definition: string;
+  }>(
+    `SELECT c.conname, c.contype, pg_get_constraintdef(c.oid) AS definition
+     FROM pg_constraint c
+     JOIN pg_class t ON t.oid = c.conrelid
+     JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'public' AND t.relname = 'PasswordResetToken'
+     ORDER BY c.conname`,
+  );
+  const byConstraint = new Map(
+    constraints.rows.map((row) => [row.conname, row]),
+  );
+  assert.equal(byConstraint.get("PasswordResetToken_pkey")?.contype, "p");
+  assert.equal(
+    byConstraint.get("PasswordResetToken_userId_fkey")?.contype,
+    "f",
+  );
+  assert.match(
+    byConstraint.get("PasswordResetToken_userId_fkey")?.definition ?? "",
+    /FOREIGN KEY \("userId"\).*"User"\(id\).*ON DELETE CASCADE/i,
+  );
+
+  const indexRows = await client.query<{
+    tablename: string;
+    indexname: string;
+    indexdef: string;
+  }>(
+    `SELECT tablename, indexname, indexdef
+     FROM pg_indexes
+     WHERE schemaname = 'public'
+       AND tablename IN ('PasswordResetToken', 'EmailMessage', 'User')
+     ORDER BY tablename, indexname`,
+  );
+  const indexesByName = new Map(
+    indexRows.rows.map((row) => [row.indexname, row.indexdef]),
+  );
+  const activeTokenIndex = indexesByName.get(
+    "PasswordResetToken_one_active_per_user_key",
+  );
+  assert.match(activeTokenIndex ?? "", /CREATE UNIQUE INDEX/i);
+  assert.match(activeTokenIndex ?? "", /"usedAt" IS NULL/i);
+  assert.match(activeTokenIndex ?? "", /"revokedAt" IS NULL/i);
+  for (const name of REQUIRED_EMAIL_MESSAGE_INDEXES) {
+    assert.ok(indexesByName.has(name), `Missing required index: ${name}`);
+  }
+  assert.ok(indexesByName.has("User_credentialGeneration_idx"));
+
+  const migrationHistory = await client.query<{ migration_name: string }>(
+    `SELECT migration_name FROM "_prisma_migrations"
+     WHERE migration_name = ANY($1::text[])
+     ORDER BY migration_name`,
+    [[...STAGE_3_13C_PENDING]],
+  );
+  assert.deepEqual(
+    migrationHistory.rows.map((row) => row.migration_name),
+    [...STAGE_3_13C_PENDING],
+  );
+
+  return {
+    verifiedColumns: columns.rows.length,
+    verifiedConstraints: constraints.rows.length,
+    verifiedIndexes: indexRows.rows.length,
+  };
+}
+
+async function clearOwnedOverlaySchema(client: pg.Client): Promise<void> {
+  await client.query("DROP SCHEMA public CASCADE");
+  await client.query("CREATE SCHEMA public");
+}
+
 async function main() {
   const { databaseUrl, databaseName } = parseDatabaseUrl(
     process.env.DATABASE_URL,
@@ -361,10 +493,13 @@ async function main() {
   const repoRoot = process.cwd();
   const client = new pg.Client({ connectionString: databaseUrl });
   let workspace: Workspace | undefined;
+  let ownsOverlaySchema = false;
+  let overlaySchemaCleaned = false;
 
   try {
     await client.connect();
     await assertEmpty(client, databaseName);
+    ownsOverlaySchema = true;
     workspace = await createWorkspace(repoRoot);
     await ordinaryDeploy(repoRoot, workspace, databaseUrl);
 
@@ -453,6 +588,11 @@ async function main() {
     assert.ok(postTables.includes("PasswordResetToken"));
     const indexes = await passwordResetIndexes(client);
     assert.deepEqual(indexes, [...PASSWORD_RESET_INDEXES].sort());
+    const invariants = await assertStage313cDatabaseInvariants(client);
+
+    await clearOwnedOverlaySchema(client);
+    overlaySchemaCleaned = true;
+    await assertEmpty(client, databaseName);
 
     return {
       ok: true,
@@ -466,6 +606,10 @@ async function main() {
         passwordResetTokenIndexes: indexes.length,
         unchangedLegacyRows: legacyBefore.length,
         unchangedStage313bRows: stage313bBefore.length,
+        verifiedColumns: invariants.verifiedColumns,
+        verifiedConstraints: invariants.verifiedConstraints,
+        verifiedIndexes: invariants.verifiedIndexes,
+        cleanedDisposableSchemas: 1,
       },
       names: {
         pendingBefore: preStatus?.pendingActiveMigrations ?? [],
@@ -481,6 +625,9 @@ async function main() {
         await rm(workspace.rootDir, { recursive: true, force: true });
       }
     } finally {
+      if (ownsOverlaySchema && !overlaySchemaCleaned) {
+        await clearOwnedOverlaySchema(client).catch(() => undefined);
+      }
       await client.end().catch(() => undefined);
     }
   }
