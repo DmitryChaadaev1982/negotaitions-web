@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "worktree": "negotiations-web-agent-performance",
+  "startingSha": "f52811b4cf8e4ae2fb98480841afc39d50787431",
+  "node": "v24.17.0",
+  "npm": "11.13.0",
+  "logicalProcessors": 16,
+  "totalRamGB": 31.9,
+  "worktreeCount": 24,
+  "npmCiSec": 79.8,
+  "gitStatusMs": 105,
+  "baseline": {
+    "command": "npm run validate:deploy",
+    "durationSec": 135.1,
+    "intentionallySkipped": [
+      "npm run test:unit (nested)",
+      "npm run validate:fast (nested)"
+    ]
+  },
+  "after": {
+    "command": "npm run validate:agent -- --mode=deploy",
+    "durationSec": 115.0,
+    "durationMs": 114291,
+    "includesExtra": ["email:templates:validate"],
+    "note": "Second run on warm machine; build still ~43s. Not a cold-cache comparison."
+  },
+  "comparableImprovement": {
+    "percent": 14.9,
+    "factor": 1.17,
+    "basis": "validate:deploy 135.1s vs validate:agent --mode=deploy 115.0s"
+  },
+  "overlappingSequenceEstimate": {
+    "note": "Unmeasured estimate only: validate:fast then validate:deploy would roughly double the fast portion. Not claimed as measured acceleration.",
+    "estimatedBeforeSec": null
+  },
+  "cleanupDryRun": {
+    "inactiveWorktreesScanned": 23,
+    "generatedFoldersFound": 70,
+    "reclaimableSpace": "27.53 GB",
+    "deletionPerformed": false
+  }
+}

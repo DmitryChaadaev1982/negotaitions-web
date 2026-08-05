@@ -14,19 +14,32 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## Mandatory validation gates
 
-For implementation changes (code/config/tests/runtime), run and report:
+For implementation changes (code/config/tests/runtime), run and report one
+non-overlapping final gate sequence:
 
-- `npm run validate:fast`
-- `npm run validate:deploy`
-- `npm run test:e2e:smoke`
-- `npm run test:e2e:smoke:browser`
+- Preferred canonical command: `npm run validate:agent -- --mode=full`
+  (union of lint, prisma validate/generate, unit, e2e list, email templates,
+  production build, `@smoke`, `@browser-smoke` — each primitive once)
+- Equivalent legacy sequence (slower if combined naively):
+  `validate:fast` then `validate:deploy` then `test:e2e:smoke` then
+  `test:e2e:smoke:browser` — do **not** run `validate:fast` and
+  `validate:deploy` as if they were independent full workloads;
+  `validate:deploy` already includes `validate:fast`
+- Plan without executing: `npm run validate:agent -- --plan`
+- Stage extensions: add `--with=stage310` / `--with=stage313c` explicitly
 
 Rules:
 
-- All four gates are mandatory unless the task is strictly audit-only or docs-only.
+- All distinct assurances above are mandatory unless the task is strictly
+  audit-only or docs-only.
 - If any gate cannot run, report the blocker explicitly; do not silently skip.
 - `npm run test:e2e:full` is manual/nightly unless explicitly requested.
-- Tunnel/live-provider suites are opt-in (`test:e2e:tunnel*`, `test:e2e:live*`) and are not default gates.
+- Tunnel/live-provider suites are opt-in (`test:e2e:tunnel*`, `test:e2e:live*`)
+  and are not default gates.
+- Do not reinstall dependencies or Playwright unless missing/broken.
+- When switching the active Git worktree under the root folder workspace, run
+  `scripts/local/set-active-negotaitions-worktree.ps1` then reload Cursor.
+- See `docs/operations/local-agent-and-test-performance.md`.
 
 ## Observer suite execution policy
 
@@ -59,10 +72,12 @@ than duplicating its rules here.
 
 ## Heavy-gate repetition policy
 
+- Prefer `npm run validate:agent -- --mode=deploy|full` over chaining overlapping
+  composites (`validate:fast` + `validate:deploy` + standalone `test:unit`).
 - Run heavy suites once, after runtime code has stabilized.
-- Do not repeat a successful heavy command (`validate:deploy`, smoke suites,
-  `test:stage310`, full observer layout) for a follow-up change that only edits
-  tests or documentation. Rerun only the affected tests.
+- Do not repeat a successful heavy command (`validate:deploy`, `validate:agent`,
+  smoke suites, `test:stage310`, full observer layout) for a follow-up change
+  that only edits tests or documentation. Rerun only the affected tests.
 - Record the runtime SHA whose heavy gates passed separately from the final
   test/docs SHA, and state both in the completion report.
 - Use one managed server lifecycle at a time. Never run a standalone

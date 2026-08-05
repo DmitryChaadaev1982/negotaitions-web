@@ -7,6 +7,9 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `git status`
 - `git diff --stat`
 - `git diff --name-status`
+- `npm run validate:agent -- --plan` (deduplicated primitive plan; no execution)
+- `npm run validate:agent -- --mode=deploy` (preferred single deploy-equivalent gate)
+- `npm run validate:agent -- --mode=full` (deploy union + browser smokes, once each)
 - `npm run validate:fast`
 - `npm run validate:deploy`
 - `npm run test:e2e:list` (inventory only)
@@ -38,16 +41,23 @@ Use this checklist for architecture/documentation-affecting changes and release 
 
 ## Mandatory validation gates
 
-For all non-audit, non-doc-only implementation phases, run and report:
+For all non-audit, non-doc-only implementation phases, prefer one non-overlapping
+command:
 
-- `npm run validate:fast`
-- `npm run validate:deploy`
-- `npm run test:e2e:smoke`
-- `npm run test:e2e:smoke:browser`
+- `npm run validate:agent -- --mode=full`
+
+This executes the union of the legacy mandatory assurances once each:
+
+- lint, prisma validate, prisma generate, unit tests, Playwright `--list`,
+  email template validate, production build, `@smoke`, `@browser-smoke`
+
+Legacy scripts remain available. Do not chain `validate:fast` and
+`validate:deploy` as independent full workloads — `validate:deploy` already
+includes `validate:fast`.
 
 Rules:
 
-- All four commands are mandatory unless the task is strictly audit-only or docs-only.
+- All distinct assurances above are mandatory unless the task is strictly audit-only or docs-only.
 - If any gate cannot run, document the exact blocker and do not silently skip it.
 - Do not hide failures with retries or skipped tests.
 - `npm run test:e2e:full` is manual/nightly and is not mandatory unless explicitly requested.
@@ -56,7 +66,9 @@ Rules:
 
 Sequential requirement:
 
-- Run mandatory gates in strict order: `validate:fast` -> `validate:deploy` -> `test:e2e:smoke` -> `test:e2e:smoke:browser`.
+- Prefer `validate:agent --mode=full` (already ordered and non-overlapping).
+- If using legacy scripts: `validate:deploy` -> `test:e2e:smoke` -> `test:e2e:smoke:browser`
+  (skip a separate `validate:fast` when `validate:deploy` already ran).
 - Do not overlap browser smoke with other local Playwright runs because localhost port `3100` is shared.
 
 ## Validation Gate Intent
