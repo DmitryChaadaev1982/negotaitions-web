@@ -2,6 +2,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 
 import { PrismaClient } from "@/app/generated/prisma/client";
+import { extractPrismaSchema } from "@/lib/prisma-connection-string";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -16,7 +17,7 @@ function createPrismaClient() {
     throw new Error("DATABASE_URL is not set");
   }
 
-  const schema = new URL(connectionString).searchParams.get("schema")?.trim();
+  const schema = extractPrismaSchema(connectionString);
   const pool = new Pool({ connectionString });
   const adapter = new PrismaPg(
     pool,
