@@ -58,13 +58,14 @@ test("email journal query parsing enforces allowlists and bounds", () => {
   );
 });
 
-test("GET q with @ parses but buildWhere rejects it (M-05: email addresses rejected at query execution)", () => {
-  // parseEmailJournalListQuery itself accepts q=email@... during parsing.
-  // The rejection is enforced lazily by buildWhere when the query is actually used.
-  // This tests the pure-parse result and documents the downstream safety net.
-  const parsed = parseEmailJournalListQuery(new URLSearchParams({ q: "user@example.com" }));
-  assert.equal(parsed.q, "user@example.com");
-  // Verify that non-email q still works as before.
+test("GET q with @ is rejected at parse time (M-05)", () => {
+  assert.throws(
+    () =>
+      parseEmailJournalListQuery(
+        new URLSearchParams({ q: "user@example.com" }),
+      ),
+    EmailJournalInputError,
+  );
   const valid = parseEmailJournalListQuery(
     new URLSearchParams({ q: "some-message-id-abc123" }),
   );

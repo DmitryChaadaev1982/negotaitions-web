@@ -192,6 +192,12 @@ export function parseEmailJournalListQuery(
   if (qRaw && qRaw.length > EMAIL_JOURNAL_MAX_SEARCH_LENGTH) {
     throw new EmailJournalInputError("Search query is too long.");
   }
+  // Full recipient addresses must never travel in GET URLs (M-05).
+  if (qRaw?.includes("@")) {
+    throw new EmailJournalInputError(
+      "Recipient email search requires a private POST search.",
+    );
+  }
 
   const pageSize = parsePositiveInt(
     searchParams.get("pageSize"),
