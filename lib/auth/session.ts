@@ -2,9 +2,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  runAfterUserRowLockedForSessionHook,
   runBeforeSessionCreateHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
+import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
 import { prisma } from "@/lib/prisma";
 
 import { isAdmin, parseAdminEmails } from "./admin";
@@ -24,17 +26,21 @@ export type AuthUser = {
 };
 
 /**
- * Create a session only when the credential generation observed during
- * password verification is still current. Prevents stale login after reset.
+ * Persist a UserSession when the observed credential generation is still
+ * current. Returns the raw session token (caller issues the cookie).
+ *
+ * When expectedCredentialGeneration is provided, the User row is locked with
+ * SELECT ... FOR UPDATE, generation is inspected, and UserSession is inserted
+ * while holding that lock.
  */
-export async function createUserSession(
+export async function createUserSessionToken(
   userId: string,
   meta?: {
     userAgent?: string;
     ipHash?: string;
     expectedCredentialGeneration?: number;
   },
-): Promise<void> {
+): Promise<{ token: string; expiresAt: Date }> {
   const token = generateSessionToken();
   const tokenHash = hashSessionToken(token);
   const expiresAt = new Date(
@@ -44,17 +50,18 @@ export async function createUserSession(
   await runBeforeSessionCreateHook();
 
   if (typeof meta?.expectedCredentialGeneration === "number") {
-    const created = await prisma.$transaction(async (tx) => {
-      const stillValid = await tx.user.findFirst({
-        where: {
-          id: userId,
-          credentialGeneration: meta.expectedCredentialGeneration,
-        },
-        select: { id: true },
-      });
-      if (!stillValid) {
+    await prisma.$transaction(async (tx) => {
+      const locked = await lockUserRowForUpdate(tx, userId);
+      if (
+        !locked ||
+        locked.credentialGeneration !== meta.expectedCredentialGeneration
+      ) {
         throw new StaleCredentialError();
       }
+
+      // Deterministic test barrier while the User row lock is held.
+      await runAfterUserRowLockedForSessionHook();
+
       await tx.userSession.create({
         data: {
           userId,
@@ -64,9 +71,7 @@ export async function createUserSession(
           ipHash: meta?.ipHash ?? null,
         },
       });
-      return true;
     });
-    if (!created) throw new StaleCredentialError();
   } else {
     await prisma.userSession.create({
       data: {
@@ -79,6 +84,25 @@ export async function createUserSession(
     });
   }
 
+  return { token, expiresAt };
+}
+
+/**
+ * Create a session only when the credential generation observed during
+ * password verification is still current. Prevents stale login after reset.
+ * Issues the auth cookie only after the database transaction commits.
+ */
+export async function createUserSession(
+  userId: string,
+  meta?: {
+    userAgent?: string;
+    ipHash?: string;
+    expectedCredentialGeneration?: number;
+  },
+): Promise<void> {
+  const { token, expiresAt } = await createUserSessionToken(userId, meta);
+
+  // Cookie only after the session row is durably committed.
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,

@@ -5,11 +5,14 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
+import { withCredentialDispatchFence } from "@/lib/auth/credential-dispatch-fence";
 import {
   runAfterPasswordVerifiedHook,
+  runAfterUserRowLockedForCredentialMutationHook,
   runBeforePasswordUpdateHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
+import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
 import { getCurrentSessionTokenHash, requireActiveUser } from "@/lib/auth";
 import { enqueuePasswordChangedEmail } from "@/lib/email/account-security";
 
@@ -89,47 +92,59 @@ export async function updatePassword(
   const changeId = createHash("sha256").update(newHash).digest("hex").slice(0, 32);
   const expectedCredentialGeneration = dbUser.credentialGeneration;
   try {
-    await prisma.$transaction(async (tx) => {
-      await runBeforePasswordUpdateHook();
+    await withCredentialDispatchFence(user.id, async () => {
+      await prisma.$transaction(async (tx) => {
+        const locked = await lockUserRowForUpdate(tx, user.id);
+        if (
+          !locked ||
+          locked.status !== "ACTIVE" ||
+          locked.credentialGeneration !== expectedCredentialGeneration
+        ) {
+          throw new StaleCredentialError();
+        }
 
-      // CAS: only overwrite if the exact verified credential state remains.
-      const updated = await tx.user.updateMany({
-        where: {
-          id: user.id,
-          status: "ACTIVE",
-          passwordHash: dbUser.passwordHash,
-          credentialGeneration: expectedCredentialGeneration,
-        },
-        data: {
-          passwordHash: newHash,
-          credentialGeneration: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) {
-        throw new StaleCredentialError();
-      }
+        await runAfterUserRowLockedForCredentialMutationHook();
+        await runBeforePasswordUpdateHook();
 
-      await tx.passwordResetToken.updateMany({
-        where: {
-          userId: user.id,
-          usedAt: null,
-          revokedAt: null,
-        },
-        data: { revokedAt: changedAt },
-      });
-      await tx.userSession.deleteMany({
-        where: {
-          userId: user.id,
-          ...(currentSessionTokenHash
-            ? { sessionTokenHash: { not: currentSessionTokenHash } }
-            : {}),
-        },
-      });
-      await enqueuePasswordChangedEmail({
-        user,
-        changedAt,
-        idempotencyKey: `password-changed:account:${user.id}:${changeId}`,
-        tx,
+        // CAS: only overwrite if the exact verified credential state remains.
+        const updated = await tx.user.updateMany({
+          where: {
+            id: user.id,
+            status: "ACTIVE",
+            passwordHash: dbUser.passwordHash,
+            credentialGeneration: expectedCredentialGeneration,
+          },
+          data: {
+            passwordHash: newHash,
+            credentialGeneration: { increment: 1 },
+          },
+        });
+        if (updated.count !== 1) {
+          throw new StaleCredentialError();
+        }
+
+        await tx.passwordResetToken.updateMany({
+          where: {
+            userId: user.id,
+            usedAt: null,
+            revokedAt: null,
+          },
+          data: { revokedAt: changedAt },
+        });
+        await tx.userSession.deleteMany({
+          where: {
+            userId: user.id,
+            ...(currentSessionTokenHash
+              ? { sessionTokenHash: { not: currentSessionTokenHash } }
+              : {}),
+          },
+        });
+        await enqueuePasswordChangedEmail({
+          user,
+          changedAt,
+          idempotencyKey: `password-changed:account:${user.id}:${changeId}`,
+          tx,
+        });
       });
     });
   } catch (error) {

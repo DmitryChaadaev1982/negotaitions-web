@@ -2,10 +2,13 @@ import {
   EmailMessageType,
   Prisma,
 } from "@/app/generated/prisma/client";
+import { withCredentialDispatchFence } from "@/lib/auth/credential-dispatch-fence";
 import {
   runAfterPasswordVerifiedHook,
+  runAfterUserRowLockedForCredentialMutationHook,
   runBeforePasswordUpdateHook,
 } from "@/lib/auth/credential-concurrency";
+import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
 import {
   enqueuePasswordChangedEmail,
   enqueuePasswordResetEmail,
@@ -227,75 +230,96 @@ export async function resetPasswordWithToken(params: {
   }
   const passwordHash = await hashPassword(params.newPassword);
 
-  // 5. Atomically claim token / update password / bump generation / wipe sessions.
+  // Resolve userId for the dispatch fence before the mutating transaction.
+  const eligible = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    select: { userId: true },
+  });
+  if (!eligible) return false;
+
+  // 5. Fence dispatch, then atomically claim token / update password / bump
+  //    generation / wipe sessions while holding the User row lock.
   try {
-    await withSerializableRetry(async (tx) => {
-      const token = await tx.passwordResetToken.findUnique({
-        where: { tokenHash },
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              preferredLocale: true,
-              status: true,
-              credentialGeneration: true,
+    await withCredentialDispatchFence(eligible.userId, async () => {
+      await withSerializableRetry(async (tx) => {
+        const token = await tx.passwordResetToken.findUnique({
+          where: { tokenHash },
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+                preferredLocale: true,
+                status: true,
+                credentialGeneration: true,
+              },
             },
           },
-        },
-      });
-      if (
-        !token ||
-        token.usedAt ||
-        token.revokedAt ||
-        token.expiresAt <= now ||
-        token.user.status !== "ACTIVE"
-      ) {
-        throw new InvalidResetTokenError();
-      }
+        });
+        if (
+          !token ||
+          token.usedAt ||
+          token.revokedAt ||
+          token.expiresAt <= now ||
+          token.user.status !== "ACTIVE"
+        ) {
+          throw new InvalidResetTokenError();
+        }
 
-      const claimed = await tx.passwordResetToken.updateMany({
-        where: {
-          id: token.id,
-          usedAt: null,
-          revokedAt: null,
-          expiresAt: { gt: now },
-        },
-        data: { usedAt: now },
-      });
-      if (claimed.count !== 1) throw new InvalidResetTokenError();
+        const locked = await lockUserRowForUpdate(tx, token.userId);
+        if (
+          !locked ||
+          locked.status !== "ACTIVE" ||
+          locked.credentialGeneration !== token.user.credentialGeneration
+        ) {
+          throw new InvalidResetTokenError();
+        }
 
-      await runBeforePasswordUpdateHook();
+        await runAfterUserRowLockedForCredentialMutationHook();
 
-      const updated = await tx.user.updateMany({
-        where: {
-          id: token.userId,
-          status: "ACTIVE",
-          credentialGeneration: token.user.credentialGeneration,
-        },
-        data: {
-          passwordHash,
-          credentialGeneration: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) throw new InvalidResetTokenError();
+        const claimed = await tx.passwordResetToken.updateMany({
+          where: {
+            id: token.id,
+            usedAt: null,
+            revokedAt: null,
+            expiresAt: { gt: now },
+          },
+          data: { usedAt: now },
+        });
+        if (claimed.count !== 1) throw new InvalidResetTokenError();
 
-      await tx.passwordResetToken.updateMany({
-        where: {
-          userId: token.userId,
-          id: { not: token.id },
-          usedAt: null,
-          revokedAt: null,
-        },
-        data: { revokedAt: now },
-      });
-      await tx.userSession.deleteMany({ where: { userId: token.userId } });
-      await enqueuePasswordChangedEmail({
-        user: token.user,
-        changedAt: now,
-        idempotencyKey: `password-changed:reset:${token.id}`,
-        tx,
+        await runBeforePasswordUpdateHook();
+
+        const updated = await tx.user.updateMany({
+          where: {
+            id: token.userId,
+            status: "ACTIVE",
+            credentialGeneration: locked.credentialGeneration,
+          },
+          data: {
+            passwordHash,
+            credentialGeneration: { increment: 1 },
+          },
+        });
+        if (updated.count !== 1) throw new InvalidResetTokenError();
+
+        await tx.passwordResetToken.updateMany({
+          where: {
+            userId: token.userId,
+            id: { not: token.id },
+            usedAt: null,
+            revokedAt: null,
+          },
+          data: { revokedAt: now },
+        });
+        await tx.userSession.deleteMany({ where: { userId: token.userId } });
+        await enqueuePasswordChangedEmail({
+          user: token.user,
+          changedAt: now,
+          idempotencyKey: `password-changed:reset:${token.id}`,
+          tx,
+        });
       });
     });
     return true;
