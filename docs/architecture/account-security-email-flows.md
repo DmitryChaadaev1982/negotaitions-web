@@ -48,14 +48,55 @@ hash-only row, and enqueues `PASSWORD_RESET` in one serializable transaction.
 The partial unique index on active tokens provides a second concurrency guard.
 
 Reset validates token syntax, hashes the token, cheaply checks eligibility,
-hashes the new password only after that gate, then claims the token in a
-serializable transaction. The claim increments `User.credentialGeneration`,
-updates the bcrypt password hash, revokes sibling tokens, deletes every
-`UserSession`, and enqueues exactly one `PASSWORD_CHANGED`. Login and
-authenticated password-change capture the credential generation observed during
-password verification and only create a session / overwrite the hash when that
-generation is still unchanged (H-01). Invalid, expired, reused, revoked, and
-newly inactive accounts receive the same safe failure.
+hashes the new password only after that gate, then acquires the credential
+dispatch fence and claims the token in a serializable transaction while holding
+`SELECT ... FOR UPDATE` on the `User` row. The claim increments
+`User.credentialGeneration`, updates the bcrypt password hash, revokes sibling
+tokens, deletes every `UserSession`, and enqueues exactly one
+`PASSWORD_CHANGED`.
+
+### H-01R — session creation linearization
+
+Login verifies the password **outside** any open transaction (bcrypt must not
+hold a DB lock). It captures `credentialGeneration`, then
+`createUserSessionToken` / `createUserSession`:
+
+1. begins a short Prisma transaction;
+2. locks the target `User` with parameterized `SELECT ... FOR UPDATE`;
+3. rechecks that `credentialGeneration` still matches;
+4. inserts `UserSession` while the lock is held;
+5. commits;
+6. only then sets the auth cookie.
+
+Password reset and authenticated password change serialize on the same `User`
+row lock. Safe order A (login then reset) creates a session that reset deletes.
+Safe order B (reset then login) makes session creation observe a generation
+mismatch and insert nothing. A mixed old/new runtime is **not** safe for account
+security activation.
+
+### M-03R — reset dispatch fence
+
+Password-reset provider dispatch and credential mutations share a PostgreSQL
+**session advisory lock** keyed by a domain-separated SHA-256 of the user id
+(`lib/auth/credential-dispatch-fence.ts`). The fence uses a dedicated `pg`
+`Client` (not the Prisma pool) so it can span the bounded provider call and is
+released on unlock, error, or connection/process death.
+
+Worker linearization point (Outcome A/B):
+
+1. claim message;
+2. acquire dispatch fence for `userId`;
+3. revalidate token/user/generation eligibility;
+4. decrypt + bind-check sensitive payload;
+5. `provider.send`;
+6. record provider outcome;
+7. release fence.
+
+Credential mutation acquires the same fence before token claim / password
+update. Holding a Prisma row lock across the provider network call is forbidden.
+
+Invalid, expired, reused, revoked, and newly inactive accounts receive the same
+safe failure.
 
 Authenticated password change uses the same bcrypt policy and transactional
 `PASSWORD_CHANGED` notification. It revokes outstanding reset tokens and all

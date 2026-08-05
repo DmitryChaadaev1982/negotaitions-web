@@ -22,6 +22,8 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 
 Eligible states are `PENDING` and `FAILED_RETRYABLE`. The worker moves a row to `PROCESSING` using conditional `updateMany` and stores a random claim token plus lease. Attempt allocation happens only after suppression is rechecked and only while `id + PROCESSING + claimToken` is still owned. A second worker cannot claim the same row if the first claim succeeds, and a stale worker cannot complete over a newer claim.
 
+For `PASSWORD_RESET`, after claim and suppression recheck the worker acquires the credential dispatch fence (session advisory lock on a dedicated `pg` connection), revalidates token/user/generation eligibility, decrypts the AAD-bound sensitive payload, validates the raw-token hash against `PasswordResetToken`, then calls `provider.send` while still holding the fence. Credential mutations acquire the same fence so dispatch cannot race password/token invalidation (M-03R). The fence is not held across an unbounded network call without the configured provider timeout bound, and connection/process death releases session advisory locks.
+
 Terminal states are `DELIVERED`, `BOUNCED`, `COMPLAINED`, `SUPPRESSED`, `FAILED_FINAL`, and `CANCELLED`. `ACCEPTED_BY_PROVIDER` may later move to `DELIVERED`, `DELAYED`, `BOUNCED`, or `COMPLAINED` from provider events.
 
 Provider timeout or connection loss after request dispatch is recorded as `TIMEOUT_UNKNOWN` on the attempt and `ACCEPTANCE_UNKNOWN` on the message. It is not retried by the normal worker sweep because provider acceptance may already have happened. Later provider events may reconcile it.
