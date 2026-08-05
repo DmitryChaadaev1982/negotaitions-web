@@ -1,11 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-import { normalizeEmailAddress } from "@/lib/email/address";
 import {
   hashPasswordResetToken,
   isPasswordResetTokenShape,
-} from "@/lib/auth/password-reset-token";
-import { prisma } from "@/lib/prisma";
+} from "../auth/password-reset-token";
+import { normalizeEmailAddress } from "./address";
 
 export const EMAIL_SENSITIVE_PAYLOAD_KEY_ENV = "EMAIL_SENSITIVE_PAYLOAD_KEY";
 export const EMAIL_SENSITIVE_PAYLOAD_VERSION = 1 as const;
@@ -244,7 +243,7 @@ export async function assertPasswordResetPayloadDeliveryBinding(params: {
     throw new SensitivePayloadError("Recipient identity mismatch.");
   }
 
-  const token = await prisma.passwordResetToken.findUnique({
+  const token = await (await import("@/lib/prisma")).prisma.passwordResetToken.findUnique({
     where: { id: params.payload.tokenId },
     select: {
       id: true,
