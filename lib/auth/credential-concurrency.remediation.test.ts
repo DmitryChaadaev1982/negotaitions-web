@@ -171,6 +171,42 @@ test("password-change-vs-reset race: beforePasswordUpdate barrier detects stale 
   }
 });
 
+test("afterUserRowLockedForSession hook fires and can pause", async () => {
+  let called = false;
+  setCredentialMutationHooksForTests({
+    afterUserRowLockedForSession: async () => {
+      called = true;
+    },
+  });
+  try {
+    const { runAfterUserRowLockedForSessionHook } = await import(
+      "@/lib/auth/credential-concurrency"
+    );
+    await runAfterUserRowLockedForSessionHook();
+    assert.ok(called);
+  } finally {
+    clearCredentialMutationHooksForTests();
+  }
+});
+
+test("afterUserRowLockedForCredentialMutation hook fires", async () => {
+  let called = false;
+  setCredentialMutationHooksForTests({
+    afterUserRowLockedForCredentialMutation: () => {
+      called = true;
+    },
+  });
+  try {
+    const { runAfterUserRowLockedForCredentialMutationHook } = await import(
+      "@/lib/auth/credential-concurrency"
+    );
+    await runAfterUserRowLockedForCredentialMutationHook();
+    assert.ok(called);
+  } finally {
+    clearCredentialMutationHooksForTests();
+  }
+});
+
 test("hooks can be async and await properly", async () => {
   let asyncDone = false;
   setCredentialMutationHooksForTests({
