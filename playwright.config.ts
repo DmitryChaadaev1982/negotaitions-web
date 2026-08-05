@@ -53,9 +53,13 @@ export default defineConfig({
           APP_URL: fallbackBaseUrl,
           EMAIL_PROVIDER: "fake",
           EMAIL_DELIVERY_ENABLED: "true",
-          EMAIL_ADMIN_TEST_ENABLED: "true",
-          EMAIL_LOCAL_PREVIEW_ENABLED: "true",
+          EMAIL_ADMIN_TEST_ENABLED:
+            process.env.PLAYWRIGHT_EMAIL_ADMIN_TEST_ENABLED ?? "true",
+          EMAIL_LOCAL_PREVIEW_ENABLED:
+            process.env.PLAYWRIGHT_EMAIL_LOCAL_PREVIEW_ENABLED ?? "true",
           EMAIL_CANONICAL_BASE_URL: "https://local.negotaitions.ru",
+          TRUSTED_PROXY_ENABLED:
+            process.env.PLAYWRIGHT_TRUSTED_PROXY_ENABLED ?? "false",
           EXTERNAL_SERVICES_MODE: "mock",
           RECORDING_MODE: "mock",
           TRANSCRIPTION_MODE: "mock",
