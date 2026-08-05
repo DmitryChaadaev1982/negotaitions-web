@@ -70,8 +70,7 @@ for (const key of RESET_TO_DEFAULT) delete process.env[key];
 
 // Generate a run-specific AEAD key; never printed.
 if (!process.env.EMAIL_SENSITIVE_PAYLOAD_KEY) {
-  const { randomBytes: rb } = await import("node:crypto");
-  process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = rb(32).toString("base64");
+  process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = randomBytes(32).toString("base64");
 }
 
 Object.assign(process.env, {
