@@ -1,15 +1,23 @@
 import { expect, test } from "@playwright/test";
 
-import {
-  getAdminEnvironmentDisplayGroups,
-  maskSecretValue,
-} from "../../lib/services/admin-env-display";
+import { getAdminEnvironmentDisplayGroups } from "../../lib/services/admin-env-display";
 
 test.describe("admin diagnostics env display", () => {
-  test("secret masking helper masks keys/passwords/tokens @smoke", async () => {
-    expect(maskSecretValue("sh")).toBe("s********");
-    expect(maskSecretValue("abcd1234")).toBe("ab********");
-    expect(maskSecretValue("abcdef123456xyz")).toBe("abc********xyz");
+  test("no reversible masking is exposed and secrets serialize as null @smoke", async () => {
+    // Reversible prefix/suffix masking leaked key material to every admin
+    // session, so the helper was removed rather than tightened.
+    const exported: Record<string, unknown> = await import(
+      "../../lib/services/admin-env-display"
+    );
+    expect("maskSecretValue" in exported).toBe(false);
+
+    const groups = getAdminEnvironmentDisplayGroups();
+    const secrets = groups
+      .flatMap((group) => group.items)
+      .filter((item) => item.isSecret);
+    expect(secrets.length).toBeGreaterThan(0);
+    for (const secret of secrets) expect(secret.value).toBeNull();
+    expect(JSON.stringify(groups)).not.toMatch(/\*{2,}/);
   });
 
   test("defaulted runtime values are shown as defaults, not missing", async () => {

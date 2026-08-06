@@ -13,6 +13,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+/** Stable, bounded client-facing failure contract. Never an internal message. */
+export const ADMIN_HEALTH_ERROR_CODE = "ADMIN_DIAGNOSTICS_UNAVAILABLE";
+export const ADMIN_HEALTH_ERROR_MESSAGE =
+  "Unable to load admin diagnostics.";
+
 const emptyUsage = {
   livekitRecordingMinutes: 0,
   voximplantConferenceMinutes: 0,
@@ -65,7 +70,20 @@ export async function GET() {
       usage,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    console.error("[GET /api/admin/health]", error);
+    // Only the exception class reaches the server log: internal messages can
+    // embed connection strings, Prisma arguments, and environment values.
+    console.error(
+      JSON.stringify({
+        route: "GET /api/admin/health",
+        errorCode: ADMIN_HEALTH_ERROR_CODE,
+        errorClass:
+          error && typeof error === "object" && "name" in error
+            ? String((error as { name: unknown }).name)
+                .replace(/[^A-Za-z0-9_]/g, "")
+                .slice(0, 60)
+            : typeof error,
+      }),
+    );
 
     return NextResponse.json(
       {
@@ -74,10 +92,8 @@ export async function GET() {
         hasRecentServiceErrors: false,
         recentEvents: [],
         usage: emptyUsage,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to load admin diagnostics.",
+        errorCode: ADMIN_HEALTH_ERROR_CODE,
+        error: ADMIN_HEALTH_ERROR_MESSAGE,
       },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
