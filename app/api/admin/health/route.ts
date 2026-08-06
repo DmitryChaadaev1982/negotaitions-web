@@ -30,6 +30,39 @@ const emptyUsage = {
   recordingsCreated: 0,
 };
 
+function staticAdminHealthFallback() {
+  return {
+    config: {
+      envGroups: [
+        {
+          group: "Diagnostics",
+          items: [
+            {
+              key: "ADMIN_HEALTH",
+              area: "Diagnostics",
+              status: "invalid",
+              valueSource: "derived",
+              configured: false,
+              isSecret: false,
+              value: null,
+              applicable: true,
+              required: false,
+              consumer: "app/api/admin/health/route.ts",
+              explanation: ADMIN_HEALTH_ERROR_CODE,
+            },
+          ],
+        },
+      ],
+    },
+    voximplantRecordingWebhook: buildVoximplantRecordingWebhookUrlStateWithoutDb(),
+    hasRecentServiceErrors: false,
+    recentEvents: [],
+    usage: emptyUsage,
+    errorCode: ADMIN_HEALTH_ERROR_CODE,
+    error: ADMIN_HEALTH_ERROR_MESSAGE,
+  };
+}
+
 export async function GET() {
   const { response: authError } = await apiRequireAdminUser();
   if (authError) return authError;
@@ -86,15 +119,7 @@ export async function GET() {
     );
 
     return NextResponse.json(
-      {
-        config: getEnvironmentConfigStatus(),
-        voximplantRecordingWebhook: buildVoximplantRecordingWebhookUrlStateWithoutDb(),
-        hasRecentServiceErrors: false,
-        recentEvents: [],
-        usage: emptyUsage,
-        errorCode: ADMIN_HEALTH_ERROR_CODE,
-        error: ADMIN_HEALTH_ERROR_MESSAGE,
-      },
+      staticAdminHealthFallback(),
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }

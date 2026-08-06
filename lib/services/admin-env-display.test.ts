@@ -312,7 +312,6 @@ test("disabled feature children are not reported as missing required", () => {
     "YANDEX_DATA_STREAMS_STREAM_NAME",
     "YANDEX_DATA_STREAMS_ACCESS_KEY_ID",
     "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
-    "EMAIL_SENSITIVE_PAYLOAD_KEY",
     "YANDEX_POSTBOX_ACCESS_KEY_ID",
     "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
   ]) {
@@ -324,10 +323,40 @@ test("disabled feature children are not reported as missing required", () => {
     );
     assert.equal(item?.required, false);
   }
+  const payloadKey = items.find((row) => row.key === "EMAIL_SENSITIVE_PAYLOAD_KEY");
+  assert.equal(payloadKey?.status, "missing_required");
+  assert.equal(payloadKey?.required, true);
+  assert.equal(payloadKey?.applicable, true);
   assert.equal(
     items.some((item) => item.status === "missing_required" && !item.required),
     false,
   );
+});
+
+test("sensitive payload key is required independently of delivery and provider state", () => {
+  const missing = withEnv(
+    {
+      EMAIL_DELIVERY_ENABLED: "false",
+      EMAIL_PROVIDER: "disabled",
+      EMAIL_SENSITIVE_PAYLOAD_KEY: undefined,
+    },
+    rows,
+  ).find((row) => row.key === "EMAIL_SENSITIVE_PAYLOAD_KEY");
+  assert.equal(missing?.status, "missing_required");
+  assert.equal(missing?.required, true);
+  assert.equal(missing?.applicable, true);
+  assert.equal(missing?.value, null);
+
+  const configured = withEnv(
+    {
+      EMAIL_DELIVERY_ENABLED: "false",
+      EMAIL_PROVIDER: "disabled",
+      EMAIL_SENSITIVE_PAYLOAD_KEY: Buffer.alloc(32, 8).toString("base64"),
+    },
+    rows,
+  ).find((row) => row.key === "EMAIL_SENSITIVE_PAYLOAD_KEY");
+  assert.equal(configured?.status, "configured");
+  assert.equal(configured?.value, null);
 });
 
 test("required children are reported missing once the feature is enabled", () => {

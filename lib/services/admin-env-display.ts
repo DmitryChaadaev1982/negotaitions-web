@@ -142,6 +142,14 @@ function readEnvBoolean(key: string): boolean {
   return readEnv(key)?.toLowerCase() === "true";
 }
 
+function safeRead<T>(operation: () => T): T | null {
+  try {
+    return operation();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The email runtime parser fails closed on a rejected environment, but the
  * operator still needs diagnostics in exactly that situation. When the parser
@@ -159,7 +167,10 @@ function unresolvedEmailState(
 }
 
 export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
-  const passwordReset = getPasswordResetConfig();
+  const passwordReset = safeRead(getPasswordResetConfig);
+  const trustedProxyEnabled = safeRead(isTrustedProxyEnabled);
+  const credentialFenceTimeoutMs = safeRead(resolveCredentialDispatchFenceTimeoutMs);
+  const forgotPasswordFloorMs = safeRead(getForgotPasswordTimingFloorMs);
 
   let email: ReturnType<typeof getEmailConfig> | null = null;
   try {
@@ -315,8 +326,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Database / Auth",
       area: "Authentication",
       isSecret: false,
-      ...envOrDefault("TRUSTED_PROXY_ENABLED"),
-      value: isTrustedProxyEnabled(),
+      ...(trustedProxyEnabled === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("TRUSTED_PROXY_ENABLED")),
+      value: trustedProxyEnabled,
       consumer: "lib/auth/trusted-proxy.ts",
       explanation:
         "Effective trusted-proxy mode used for client IP and forwarded-origin handling.",
@@ -326,8 +339,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Database / Auth",
       area: "Authentication",
       isSecret: false,
-      ...envOrDefault("CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS"),
-      value: resolveCredentialDispatchFenceTimeoutMs(),
+      ...(credentialFenceTimeoutMs === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS")),
+      value: credentialFenceTimeoutMs,
       consumer: "lib/auth/credential-dispatch-fence.ts",
       explanation:
         "Effective bounded wait for the credential dispatch fence before failing closed.",
@@ -338,8 +353,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Password reset",
       area: "Password reset",
       isSecret: false,
-      ...envOrDefault("PASSWORD_RESET_TOKEN_TTL_MINUTES"),
-      value: passwordReset.ttlMinutes,
+      ...(passwordReset === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("PASSWORD_RESET_TOKEN_TTL_MINUTES")),
+      value: passwordReset?.ttlMinutes ?? null,
       consumer: "lib/auth/password-reset-config.ts",
       explanation: "Effective reset token lifetime.",
     },
@@ -348,8 +365,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Password reset",
       area: "Password reset",
       isSecret: false,
-      ...envOrDefault("PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS"),
-      value: passwordReset.cooldownSeconds,
+      ...(passwordReset === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS")),
+      value: passwordReset?.cooldownSeconds ?? null,
       consumer: "lib/auth/password-reset-config.ts",
       explanation: "Effective per-account reset request cooldown.",
     },
@@ -358,8 +377,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Password reset",
       area: "Password reset",
       isSecret: false,
-      ...envOrDefault("PASSWORD_RESET_MAX_REQUESTS_PER_HOUR"),
-      value: passwordReset.maxPerAccountPerHour,
+      ...(passwordReset === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("PASSWORD_RESET_MAX_REQUESTS_PER_HOUR")),
+      value: passwordReset?.maxPerAccountPerHour ?? null,
       consumer: "lib/auth/password-reset-config.ts",
       explanation: "Effective per-account hourly reset request limit.",
     },
@@ -368,8 +389,10 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       group: "Password reset",
       area: "Password reset",
       isSecret: false,
-      ...envOrDefault("PASSWORD_RESET_RESPONSE_FLOOR_MS"),
-      value: getForgotPasswordTimingFloorMs(),
+      ...(forgotPasswordFloorMs === null
+        ? { status: "invalid" as const, valueSource: "environment" as const }
+        : envOrDefault("PASSWORD_RESET_RESPONSE_FLOOR_MS")),
+      value: forgotPasswordFloorMs,
       consumer: "lib/auth/response-timing-floor.ts",
       explanation:
         "Effective anti-enumeration response floor for public forgot-password intake.",
@@ -468,14 +491,14 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
       area: "Email",
       isSecret: true,
       ...secretState(EMAIL_SENSITIVE_PAYLOAD_KEY_ENV, {
-        applicable: deliveryEnabled,
-        required: deliveryEnabled,
+        applicable: true,
+        required: true,
       }),
-      applicable: deliveryEnabled,
-      required: deliveryEnabled,
+      applicable: true,
+      required: true,
       consumer: EMAIL_SENSITIVE_PAYLOAD_CONSUMER,
       explanation:
-        "Dedicated AEAD key for password-reset payloads; state only, never a value.",
+        "Dedicated AEAD key for password-reset enqueue; required independently of delivery.",
     },
     {
       key: "YANDEX_POSTBOX_REGION",

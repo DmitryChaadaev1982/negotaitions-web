@@ -26,10 +26,46 @@ import { getAdminEnvironmentDisplayGroups } from "@/lib/services/admin-env-displ
 import { checkOpenAiHealth, isOpenAiConfigured } from "@/lib/services/openai-transcription";
 import { checkStorageHealth } from "@/lib/storage/s3";
 
+function safeValue<T>(operation: () => T, fallback: T): T {
+  try {
+    return operation();
+  } catch {
+    return fallback;
+  }
+}
+
 function getVoximplantEnvironmentConfigStatus() {
-  const config = getVoximplantConfig({ requireForRuntime: false });
-  const webhookBaseUrlDefault = getVoximplantRecordingWebhookBaseUrlEnvDefault();
-  const managementDiagnostics = getVoximplantManagementApiDiagnostics();
+  const config = safeValue(
+    () => getVoximplantConfig({ requireForRuntime: false }),
+    {
+      accountName: "",
+      applicationName: "",
+      userDomain: "",
+      scenarioName: "",
+      ruleName: "",
+      apiKeyPath: null,
+      recording: {
+        enabled: false,
+        audioOnly: false,
+        audioMode: "lossless",
+        pauseEnabled: false,
+      },
+      recordingStorage: null,
+    } as ReturnType<typeof getVoximplantConfig>,
+  );
+  const webhookBaseUrlDefault = safeValue(
+    getVoximplantRecordingWebhookBaseUrlEnvDefault,
+    null,
+  );
+  const managementDiagnostics = safeValue(
+    getVoximplantManagementApiDiagnostics,
+    {
+      accountId: { status: "missing" },
+      applicationId: { status: "missing" },
+      apiAuth: { status: "missing" },
+      apiKeyPathConfigured: false,
+    } as ReturnType<typeof getVoximplantManagementApiDiagnostics>,
+  );
 
   return {
     accountName: Boolean(config.accountName),
@@ -58,13 +94,13 @@ function getVoximplantEnvironmentConfigStatus() {
 }
 
 export function getEnvironmentConfigStatus() {
-  const aiAnalysisProvider = getAiAnalysisProvider();
-  const transcriptionProvider = getTranscriptionProvider();
-  const videoProvider = getVideoProvider();
+  const aiAnalysisProvider = safeValue(getAiAnalysisProvider, "invalid");
+  const transcriptionProvider = safeValue(getTranscriptionProvider, "invalid");
+  const videoProvider = safeValue(getVideoProvider, "invalid");
   const yandexFolderIdPresent = Boolean(process.env.YANDEX_FOLDER_ID?.trim());
   const yandexApiKeyPresent = Boolean(process.env.YANDEX_API_KEY?.trim());
   const voximplant = getVoximplantEnvironmentConfigStatus();
-  const email = getEmailConfig();
+  const email = safeValue(getEmailConfig, null);
 
   return {
     videoProvider,
@@ -89,27 +125,54 @@ export function getEnvironmentConfigStatus() {
     yandexFolderId: yandexFolderIdPresent,
     yandexApiKey: yandexApiKeyPresent,
     yandexAiModel: Boolean(process.env.YANDEX_AI_MODEL?.trim()),
-    yandexSpeechKitModel: Boolean(getYandexSpeechKitModel().trim()),
-    yandexSpeechKitModelValue: getYandexSpeechKitModel(),
-    yandexSpeechKitLanguageValue: getYandexSpeechKitLanguage(),
-    yandexSpeechKitNormalizationEnabled: isYandexSpeechKitTextNormalizationEnabled(),
-    yandexSpeechKitLiteratureTextEnabled: isYandexSpeechKitLiteratureTextEnabled(),
-    yandexSpeechKitSpeakerLabelingEnabled: isYandexSpeechKitSpeakerLabelingEnabled(),
-    yandexTranscriptEnhancementEnabled: isYandexTranscriptEnhancementEnabled(),
+    yandexSpeechKitModel: Boolean(safeValue(getYandexSpeechKitModel, "").trim()),
+    yandexSpeechKitModelValue: safeValue(getYandexSpeechKitModel, ""),
+    yandexSpeechKitLanguageValue: safeValue(getYandexSpeechKitLanguage, "ru-RU"),
+    yandexSpeechKitNormalizationEnabled: safeValue(isYandexSpeechKitTextNormalizationEnabled, false),
+    yandexSpeechKitLiteratureTextEnabled: safeValue(isYandexSpeechKitLiteratureTextEnabled, false),
+    yandexSpeechKitSpeakerLabelingEnabled: safeValue(isYandexSpeechKitSpeakerLabelingEnabled, false),
+    yandexTranscriptEnhancementEnabled: safeValue(isYandexTranscriptEnhancementEnabled, false),
     yandexSpeechKitRequiredKeysPresent: yandexFolderIdPresent && yandexApiKeyPresent,
-    ffmpeg: getFfmpegStatus(),
+    ffmpeg: safeValue(getFfmpegStatus, {
+      available: false,
+      path: null,
+      source: null,
+    }),
     voximplant,
     email: {
-      deliveryEnabled: email.deliveryEnabled,
-      provider: email.provider,
-      adminTestEnabled: email.adminTestEnabled,
-      canonicalBaseUrl: email.canonicalBaseUrl,
+      deliveryEnabled: email?.deliveryEnabled ?? false,
+      provider: email?.provider ?? "invalid",
+      adminTestEnabled: email?.adminTestEnabled ?? false,
+      canonicalBaseUrl: email?.canonicalBaseUrl ?? null,
       postboxCredentialsConfigured: Boolean(
-        email.yandexPostbox.accessKeyId && email.yandexPostbox.secretAccessKey,
+        email?.yandexPostbox.accessKeyId && email.yandexPostbox.secretAccessKey,
       ),
+      invalid: email === null,
     },
-    voximplantRecordingEnabled: getEnvBoolean("VOXIMPLANT_RECORDING_ENABLED", false),
-    envGroups: getAdminEnvironmentDisplayGroups(),
+    voximplantRecordingEnabled: safeValue(
+      () => getEnvBoolean("VOXIMPLANT_RECORDING_ENABLED", false),
+      false,
+    ),
+    envGroups: safeValue(getAdminEnvironmentDisplayGroups, [
+      {
+        group: "Diagnostics",
+        items: [
+          {
+            key: "ADMIN_DIAGNOSTICS",
+            area: "Diagnostics",
+            status: "invalid",
+            valueSource: "derived",
+            configured: false,
+            isSecret: false,
+            value: null,
+            applicable: true,
+            required: false,
+            consumer: "lib/services/admin-health.ts",
+            explanation: "INVALID_ADMIN_DIAGNOSTICS_CONFIGURATION",
+          },
+        ],
+      },
+    ]),
   };
 }
 
