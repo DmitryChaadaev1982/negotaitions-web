@@ -22,6 +22,7 @@ import {
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
 import { createRegisteredUserWithConsents } from "@/lib/auth/registration";
+import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
 
@@ -223,8 +224,10 @@ export async function loginUser(
     });
   }
 
+  const safeReturnUrl = sanitizeReturnUrl(returnUrl);
+
   if (isAdmin(user)) {
-    redirect(isSafeReturnUrl(returnUrl) ? returnUrl : "/dashboard");
+    redirect(safeReturnUrl ?? "/dashboard");
   }
 
   if (user.status === "PENDING_APPROVAL") {
@@ -239,18 +242,12 @@ export async function loginUser(
     redirect("/account/blocked");
   }
 
-  redirect(isSafeReturnUrl(returnUrl) ? returnUrl : "/dashboard");
+  redirect(safeReturnUrl ?? "/dashboard");
 }
 
 export async function logoutUser(): Promise<void> {
   await destroyUserSession();
   redirect("/login");
-}
-
-function isSafeReturnUrl(url: string): boolean {
-  if (!url) return false;
-  // Only allow relative paths starting with /
-  return url.startsWith("/") && !url.startsWith("//");
 }
 
 export async function getCurrentUserForHeader() {

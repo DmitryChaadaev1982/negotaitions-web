@@ -6,13 +6,14 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 import { loginUser } from "@/app/actions/auth";
+import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
 function LoginForm() {
   const { t } = useI18n();
   const searchParams = useSearchParams();
-  const returnUrl = searchParams.get("returnUrl") ?? "";
+  const returnUrl = sanitizeReturnUrl(searchParams.get("returnUrl")) ?? "";
   const passwordResetSucceeded = searchParams.get("passwordReset") === "success";
 
   const [state, action, pending] = useActionState(loginUser, {});
