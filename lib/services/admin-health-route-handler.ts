@@ -4,7 +4,19 @@ export const ADMIN_HEALTH_ERROR_CODE = "ADMIN_HEALTH_UNAVAILABLE";
 export const RUNTIME_CONFIGURATION_ERROR_CODE =
   "RUNTIME_CONFIGURATION_UNAVAILABLE";
 
-const EMPTY_USAGE = Object.freeze({
+type AdminHealthUsage = Readonly<{
+  livekitRecordingMinutes: number;
+  voximplantConferenceMinutes: number;
+  openAiTranscriptionMinutes: number;
+  openAiTranscriptionBytes: number;
+  yandexSpeechKitMinutes: number;
+  yandexAiAnalysisRuns: number;
+  storageUploadedBytes: number;
+  storageDownloadedBytes: number;
+  recordingsCreated: number;
+}>;
+
+const EMPTY_USAGE: AdminHealthUsage = Object.freeze({
   livekitRecordingMinutes: 0,
   voximplantConferenceMinutes: 0,
   openAiTranscriptionMinutes: 0,
@@ -63,7 +75,7 @@ export type AdminHealthDependencies = {
   authorize: () => Promise<{ response: Response | null; user: unknown }>;
   hasRecentErrors: (hours: number) => Promise<boolean>;
   findRecentEvents: () => Promise<AdminHealthEvent[]>;
-  getUsage: () => Promise<typeof EMPTY_USAGE>;
+  getUsage: () => Promise<AdminHealthUsage>;
   getWebhookState: () => Promise<unknown>;
   getWebhookFallback: () => unknown;
   getConfig: () => unknown;

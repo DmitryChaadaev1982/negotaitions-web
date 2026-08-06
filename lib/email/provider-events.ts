@@ -104,6 +104,7 @@ export async function processEmailProviderEvent(input: NormalizedProviderEventIn
       processed: repaired.processed,
       messageId: repaired.messageId,
       processingStatus: repaired.processingStatus,
+      resultCode: repaired.resultCode,
     };
   }
 
@@ -125,7 +126,12 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
     `;
     const event = eventRows[0];
     if (!event) {
-      return { processed: false, messageId: null, processingStatus: null };
+      return {
+        processed: false,
+        messageId: null,
+        processingStatus: null,
+        resultCode: null,
+      };
     }
 
     if (!event.providerMessageId) {
@@ -143,6 +149,7 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
         processed: false,
         messageId: null,
         processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+        resultCode: "NO_PROVIDER_MESSAGE_ID",
       };
     }
 
@@ -185,6 +192,7 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
         processed: false,
         messageId: null,
         processingStatus: updated.processingStatus,
+        resultCode: updated.processingResultCode,
       };
     }
 
@@ -212,6 +220,7 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
         processed: true,
         messageId: message.id,
         processingStatus: event.processingStatus,
+        resultCode: event.processingResultCode,
       };
     }
 

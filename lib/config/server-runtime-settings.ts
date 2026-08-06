@@ -804,7 +804,13 @@ export function parseServerRuntimeSetting(
     key === "EMAIL_PROVIDER_EVENT_INITIAL_POSITION"
       ? raw.toUpperCase()
       : raw.toLowerCase();
-  if (parser.allowedValues.includes(normalized)) return normalized;
-  if (parser.invalidUsesDefault) return parser.defaultValue;
+  const allowedValues: readonly string[] = parser.allowedValues;
+  if (allowedValues.includes(normalized)) return normalized;
+  if (
+    "invalidUsesDefault" in parser &&
+    parser.invalidUsesDefault
+  ) {
+    return parser.defaultValue;
+  }
   throw new Error(`Invalid enum runtime setting: ${key}.`);
 }
