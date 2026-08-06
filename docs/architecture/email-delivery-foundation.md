@@ -12,9 +12,12 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 - `EmailMessage`: durable outbox record with type, category, status, recipient, rendered content, template version, idempotency key, provider state, claim lease, retry fields, and retention markers.
 - `EmailDeliveryAttempt`: sanitized provider attempt ledger.
 - `EmailSuppression`: active/lifted suppression policy records.
-- `EmailProviderEvent`: provider-neutral event ledger with provider event deduplication.
+- `EmailProviderEvent`: provider-neutral event ledger with provider event
+  deduplication and a nullable typed `suppressionDisposition` recording the
+  parse-time suppression decision.
 - `EmailProviderStreamCheckpoint`: per provider/stream/shard sequence checkpoint
-  for live provider-event ingestion.
+  for live provider-event ingestion, plus a nullable `initialReadAt` durable
+  initial-read boundary used before the first sequence checkpoint exists.
 - `EmailProviderIngestionFailure`: sanitized poison-record ledger keyed by
   provider/stream/shard/sequence. It stores payload SHA-256 and bounded error
   disposition only, never raw payload or recipient/body data.
@@ -113,24 +116,49 @@ Mappings:
 - unsupported events -> `UNKNOWN`, recorded/ignored without mutating message
   state.
 
-Permanent bounces request the existing hard-bounce suppression policy.
-Transient bounces explicitly do not create hard-bounce suppression. Complaints
-request the existing complaint suppression policy. Bounce is never inferred to
-Complaint.
+`bounceType` decides permanence and is evaluated before any subtype. Permanent
+bounces request the existing hard-bounce suppression policy. Transient bounces
+never create hard-bounce suppression, whatever the subtype, and a missing or
+undetermined type creates no permanent suppression. Complaints request the
+existing complaint suppression policy. Bounce is never inferred to Complaint.
 
-The consumer enumerates shards, starts at `AFTER_SEQUENCE_NUMBER` when a
-checkpoint exists, and otherwise uses the configured `LATEST` or `TRIM_HORIZON`
-initial position. It processes records in shard sequence order and advances the
-checkpoint only after `processEmailProviderEvent()` succeeds or after the record
-is durably classified in `EmailProviderIngestionFailure`. Crashing after event
-processing but before checkpoint update is acceptable because provider event
+The decision is made once at parse time and persisted in the typed nullable
+`EmailProviderEvent.suppressionDisposition`, which reconciliation reads back. A
+`BOUNCED` event is therefore never reconstructed as a hard bounce from its event
+type alone, and a null disposition means "no permanent suppression". Provider
+diagnostic text is not persisted: bounce metadata keeps only a bounded
+classification and a diagnostic-code count.
+
+The consumer schedules shards fairly. A manager loop owns discovery and refresh,
+and each round gives every known open shard one bounded slice before any shard
+receives a second, with bounded slice concurrency, so no shard can starve.
+`ListShards` pagination is followed to exhaustion and fails closed rather than
+returning a partial list.
+
+Within a shard, records are processed in sequence order. The checkpoint advances
+only when `processEmailProviderEvent()` succeeds, or when the record is
+deterministically classified as a poison record and the
+`EmailProviderIngestionFailure` row and checkpoint commit in one transaction. A
+processor, database, or unexpected failure never advances the checkpoint and
+never acknowledges the record, so it stays replayable. Crashing after event
+processing but before the checkpoint update is acceptable because provider event
 processing is idempotent; checkpoint advancement before processing is forbidden.
 
+Iterator acquisition uses `AFTER_SEQUENCE_NUMBER` once a sequence checkpoint
+exists. Before that it uses `TRIM_HORIZON` when configured, and for `LATEST` it
+persists a durable `initialReadAt` boundary on first acquisition so a
+reacquisition or restart resumes at `AT_TIMESTAMP` rather than skipping the
+initial window. `initialReadAt` is a read boundary, not a processed-record
+checkpoint.
+
 A PostgreSQL session advisory lock on a dedicated connection enforces
-single-consumer operation across processes. Lock contention fails closed. The
-consumer supports bounded retries for transient stream errors, iterator
-reacquisition, shard refresh, SIGTERM/SIGINT abort, and conservative
-single-process operation.
+single-consumer operation across processes. Lock contention fails closed, an
+error on the lock connection stops the consumer immediately, and a bounded
+liveness probe on that same connection runs each shard-refresh cycle so
+checkpointing cannot continue after the lock is gone. `GetRecords` is paced per
+shard within the documented Data Streams rate limit; transient stream errors use
+bounded exponential backoff with jitter and a bounded consecutive-failure limit;
+`SIGTERM`/`SIGINT` produces a controlled shutdown within an enforced budget.
 
 ## Retention
 

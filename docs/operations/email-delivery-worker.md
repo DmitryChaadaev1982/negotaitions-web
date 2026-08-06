@@ -110,17 +110,55 @@ default and refuses to run unless `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=true`
 and the dedicated `YANDEX_DATA_STREAMS_*` settings are valid. It never calls the
 Postbox sending API and never exposes a public webhook.
 
-The consumer acquires a PostgreSQL session advisory lock before processing,
-loads one checkpoint per stream shard, uses `AFTER_SEQUENCE_NUMBER` after an
-existing checkpoint, and otherwise starts at the configured `LATEST` or
-`TRIM_HORIZON`. Checkpoints advance only after a provider event is processed or
-after a poison record is durably recorded in the sanitized failure ledger.
+The consumer acquires a dedicated PostgreSQL session advisory lock before
+processing. Loss of, or an error on, that connection stops the consumer
+immediately, and a bounded liveness probe on the same connection runs at each
+shard-refresh cycle, so processing can never continue after PostgreSQL has
+released the lock.
+
+Shards are scheduled fairly. A manager loop discovers and refreshes shards, and
+each round gives every known open shard one bounded slice — at most
+`EMAIL_PROVIDER_EVENT_SHARD_SLICE_MAX_POLLS` polls — before any shard gets a
+second slice, with at most `EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY` slices in
+flight. A high-volume shard therefore cannot starve a quiet one. `ListShards`
+pagination is followed to exhaustion and fails closed rather than returning a
+partial shard list.
+
+`GetRecords` is paced per shard at no more than one call per
+`EMAIL_PROVIDER_EVENT_POLL_INTERVAL_MS` (floored at 200 ms for the
+five-per-second-per-shard Data Streams limit), after empty and non-empty
+responses alike. Transient failures back off exponentially with bounded jitter;
+`EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES` consecutive failures stop the
+shard through the retryable exit path.
+
+Checkpoints advance in exactly two cases: the provider event was processed
+successfully, or the record was deterministically classified as a poison record
+and the failure-ledger row plus the checkpoint were committed in one
+transaction. A processor, database, or unexpected error never advances the
+checkpoint and never writes a poison record, so the record stays replayable.
+Replay after a successful process but a failed checkpoint write is safe because
+provider-event processing is idempotent.
+
+Iterator position: `AFTER_SEQUENCE_NUMBER` once a sequence checkpoint exists;
+`TRIM_HORIZON` until then when configured that way; and for `LATEST`, a durable
+`initialReadAt` boundary is persisted on first acquisition so any reacquisition
+or restart before the first checkpoint resumes with `AT_TIMESTAMP` instead of
+silently skipping the initial window.
 
 Poison records store provider, stream, shard, sequence, approximate arrival
-timestamp, payload SHA-256, bounded error code/message, and status. They must not
-store raw payload, recipient email, subject, body, credentials, or provider raw
-responses. Replaying the same poison record is idempotent by
+timestamp, payload SHA-256, an allowlisted error code, a static bounded message
+selected by that code, and status. They never store raw payload, recipient email,
+subject, body, free-form exception text, credentials, or provider raw responses.
+Replaying the same poison record is idempotent by
 provider/stream/shard/sequence.
+
+Shutdown and exit codes: `SIGTERM`/`SIGINT` aborts the consumer, which is then
+awaited for at most `EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS` before a
+sanitized `shutdown_timeout` event and a retryable exit. Exit `0` is a controlled
+stop or disabled ingestion, `78` invalid configuration, `77` authentication or
+authorization failure, and `75` a transient runtime failure. The systemd unit
+lists `78` and `77` in `RestartPreventExitStatus` and bounds restarts with
+`StartLimitIntervalSec`/`StartLimitBurst`, so a terminal fault cannot hot-loop.
 
 The reconciliation sweep supplements ingestion for unmatched already-recorded
 events. It does not consume Data Streams and does not replace the live consumer.
@@ -128,10 +166,23 @@ events. It does not consume Data Streams and does not replace the live consumer.
 ## Logging
 
 Logs may include message id, provider, attempt number, status, redacted
-recipient, error category, and bounded counts. Provider-event consumer logs may
-include counts, shard ids, stream name, sequence numbers, and lag. Logs must not
-include subject/body, full recipient email, raw provider event payloads,
-credentials, tokens, provider raw responses, transcript content, or AI output.
+recipient, error category, and bounded counts. Provider-event consumer logs emit
+stable event codes with bounded fields only: length-limited shard id, sanitized
+error class, attempt counts, checkpoint counts, and lag. Logs must not include
+subject/body, full recipient email, raw provider event payloads, bounce
+`diagnosticCodes`, free-form exception text, credentials, tokens, provider raw
+responses, transcript content, or AI output.
+
+Stable provider-event codes: `provider_event_consumer_started`,
+`provider_event_shard_discovered`, `provider_event_shard_retired`,
+`provider_event_checkpoint_advanced`, `provider_event_poison_record_classified`,
+`provider_event_transient_retry`, `provider_event_retry_exhausted`,
+`provider_event_processor_retry`, `provider_event_processor_retry_exhausted`,
+`provider_event_iterator_reacquired`, `provider_event_lock_lost`,
+`provider_event_terminal_failure`, `provider_event_consumer_stopped`. The CLI
+adds `consumer_disabled`, `consumer_invalid_config`, `shutdown_requested`,
+`shutdown_timeout`, `consumer_stopped`, `consumer_completed`, and
+`consumer_failed`.
 
 ## Production Installation
 
