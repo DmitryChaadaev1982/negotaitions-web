@@ -4,8 +4,8 @@
  * Next rejects a Server Action whose forwarded host does not match the browser
  * Origin unless the origin is explicitly allowed. The production build must
  * therefore trust only the reviewed production hostname; development and
- * managed-test origins are gated behind an explicit build-time switch that is
- * off by default and is never read from browser-controlled input.
+ * managed-test origins are development-only. Production always emits exactly
+ * the reviewed production hostname.
  */
 
 export const PRODUCTION_SERVER_ACTION_ORIGINS = Object.freeze([
@@ -24,30 +24,22 @@ export const LOCAL_SERVER_ACTION_ORIGINS = Object.freeze([
   "127.0.0.1:3100",
 ]);
 
-export const ALLOW_LOCAL_SERVER_ACTION_ORIGINS_ENV =
-  "NEXT_BUILD_ALLOW_LOCAL_SERVER_ACTION_ORIGINS";
-
 export type ServerActionOriginContext = {
   nodeEnv: string | undefined;
-  /** Build-time opt-in only. Must default to off. */
-  allowLocalOrigins: string | undefined;
 };
 
 /**
  * Resolves the allowlist for a build context. Wildcards are never emitted and
- * the production set is returned unchanged unless the explicit build switch is
- * set to the literal string "true".
+ * production ignores every environment override.
  */
 export function resolveServerActionAllowedOrigins(
   context: ServerActionOriginContext,
 ): string[] {
   const isProductionBuild = context.nodeEnv === "production";
-  const localOriginsEnabled =
-    !isProductionBuild || context.allowLocalOrigins?.trim() === "true";
 
-  return localOriginsEnabled
-    ? [...PRODUCTION_SERVER_ACTION_ORIGINS, ...LOCAL_SERVER_ACTION_ORIGINS]
-    : [...PRODUCTION_SERVER_ACTION_ORIGINS];
+  return isProductionBuild
+    ? [...PRODUCTION_SERVER_ACTION_ORIGINS]
+    : [...PRODUCTION_SERVER_ACTION_ORIGINS, ...LOCAL_SERVER_ACTION_ORIGINS];
 }
 
 export function resolveServerActionAllowedOriginsFromEnv(
@@ -55,6 +47,5 @@ export function resolveServerActionAllowedOriginsFromEnv(
 ): string[] {
   return resolveServerActionAllowedOrigins({
     nodeEnv: env.NODE_ENV,
-    allowLocalOrigins: env[ALLOW_LOCAL_SERVER_ACTION_ORIGINS_ENV],
   });
 }

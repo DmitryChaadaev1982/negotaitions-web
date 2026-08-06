@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  ALLOW_LOCAL_SERVER_ACTION_ORIGINS_ENV,
   LOCAL_SERVER_ACTION_ORIGINS,
   PRODUCTION_SERVER_ACTION_ORIGINS,
   resolveServerActionAllowedOrigins,
@@ -19,9 +18,9 @@ const LOCAL_ENTRIES = [
 ];
 
 function productionOrigins(allowLocal?: string): string[] {
+  void allowLocal;
   return resolveServerActionAllowedOrigins({
     nodeEnv: "production",
-    allowLocalOrigins: allowLocal,
   });
 }
 
@@ -46,7 +45,7 @@ test("the production build excludes every local and managed-test origin", () => 
   assert.ok(!origins.some((origin) => origin.startsWith("127.0.0.1")));
 });
 
-test("the local switch is off by default and only the literal \"true\" enables it", () => {
+test("production ignores the removed local-origin switch and similar overrides", () => {
   for (const value of [
     undefined,
     "",
@@ -60,14 +59,15 @@ test("the local switch is off by default and only the literal \"true\" enables i
     "true ",
     "truthy",
   ]) {
-    // A trimmed exact "true" is the only accepted form; "true " trims to "true"
-    // and is therefore expected to enable, everything else must not.
-    const expectEnabled = value?.trim() === "true";
-    const origins = productionOrigins(value);
-    assert.equal(
-      origins.length > PRODUCTION_SERVER_ACTION_ORIGINS.length,
-      expectEnabled,
-      `allowLocalOrigins=${JSON.stringify(value)} produced the wrong allowlist`,
+    assert.deepEqual(productionOrigins(value), ["negotaitions.ru"]);
+    assert.deepEqual(
+      resolveServerActionAllowedOriginsFromEnv({
+        NODE_ENV: "production",
+        NEXT_BUILD_ALLOW_LOCAL_SERVER_ACTION_ORIGINS: value,
+        NEXT_BUILD_ALLOW_LOCAL_SERVER_ACTION_ORIGINS_V2: "true",
+        ALLOW_LOCAL_SERVER_ACTION_ORIGINS: "true",
+      } as NodeJS.ProcessEnv),
+      ["negotaitions.ru"],
     );
   }
 });
@@ -76,7 +76,6 @@ test("development and managed-test builds permit only the exact required local e
   for (const nodeEnv of ["development", "test", undefined]) {
     const origins = resolveServerActionAllowedOrigins({
       nodeEnv,
-      allowLocalOrigins: undefined,
     });
     assert.deepEqual(origins, [
       ...PRODUCTION_SERVER_ACTION_ORIGINS,
@@ -86,20 +85,12 @@ test("development and managed-test builds permit only the exact required local e
   assert.deepEqual([...LOCAL_SERVER_ACTION_ORIGINS], LOCAL_ENTRIES);
 });
 
-test("the explicit production switch yields exactly the development entries", () => {
-  assert.deepEqual(productionOrigins("true"), [
-    ...PRODUCTION_SERVER_ACTION_ORIGINS,
-    ...LOCAL_ENTRIES,
-  ]);
-});
-
 test("no wildcard or deceptive hostname is ever emitted", () => {
   const everyOrigin = [
     ...productionOrigins(),
     ...productionOrigins("true"),
     ...resolveServerActionAllowedOrigins({
       nodeEnv: "development",
-      allowLocalOrigins: undefined,
     }),
   ];
   for (const origin of everyOrigin) {
@@ -122,10 +113,10 @@ test("no wildcard or deceptive hostname is ever emitted", () => {
 
 test("the allowlist is read from the build environment, never from a request", () => {
   const source = readFileSync("lib/config/server-action-origins.ts", "utf8");
-  // Only NODE_ENV and the explicit build switch may be consulted.
+  // Only NODE_ENV may be consulted.
   const envReads = [...source.matchAll(/env(?:\.|\[")([A-Za-z_][A-Za-z0-9_]*)/g)]
     .map((match) => match[1])
-    .filter((name) => name !== "nodeEnv" && name !== "allowLocalOrigins");
+    .filter((name) => name !== "nodeEnv");
   assert.deepEqual(new Set(envReads), new Set(["NODE_ENV"]));
   // No request-scoped input may reach the allowlist.
   for (const forbidden of [
@@ -153,12 +144,11 @@ test("a browser-supplied forwarded host cannot inject trust", () => {
   } as NodeJS.ProcessEnv);
   assert.deepEqual(origins, ["negotaitions.ru"]);
 
-  // The switch is a build-time environment variable, so a forged header-shaped
-  // key cannot enable it either.
+  // The removed switch cannot be forged through a header-shaped key either.
   assert.deepEqual(
     resolveServerActionAllowedOriginsFromEnv({
       NODE_ENV: "production",
-      [`HTTP_${ALLOW_LOCAL_SERVER_ACTION_ORIGINS_ENV}`]: "true",
+      HTTP_NEXT_BUILD_ALLOW_LOCAL_SERVER_ACTION_ORIGINS: "true",
     } as NodeJS.ProcessEnv),
     ["negotaitions.ru"],
   );

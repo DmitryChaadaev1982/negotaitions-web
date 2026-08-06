@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   // Local reverse-tunnel domain for development-only Next dev access.
   allowedDevOrigins: isDevelopment
     ? ["127.0.0.1", "local.negotaitions.ru"]
-    : ["127.0.0.1"],
+    : [],
   experimental: {
     serverActions: {
       allowedOrigins: resolveServerActionAllowedOriginsFromEnv(),
