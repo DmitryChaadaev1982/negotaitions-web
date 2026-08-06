@@ -18,7 +18,6 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/www/negotaitions/app
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=negotiations-email-provider-event-reconciliation

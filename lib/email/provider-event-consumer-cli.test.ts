@@ -230,7 +230,8 @@ test("the consumer unit bounds restarts and never retries terminal exit codes", 
   assert.match(unit, /^RestartPreventExitStatus=78 77$/m);
   assert.match(unit, /^StartLimitIntervalSec=300$/m);
   assert.match(unit, /^StartLimitBurst=5$/m);
-  assert.match(unit, /^TimeoutStopSec=25s$/m);
+  assert.match(unit, /^TimeoutStopSec=30s$/m);
+  assert.equal(/^ReadWritePaths=\/var\/www\/negotaitions\/app$/m.test(unit), false);
   assert.match(unit, /^KillSignal=SIGTERM$/m);
 
   // Existing hardening must be retained.
@@ -250,5 +251,23 @@ test("the consumer unit bounds restarts and never retries terminal exit codes", 
   // TimeoutStopSec must exceed the default application shutdown budget.
   const timeoutStopSec = Number(/^TimeoutStopSec=(\d+)s$/m.exec(unit)?.[1]);
   assert.ok(timeoutStopSec * 1000 > baseProviderEventConfig.shutdownTimeoutMs);
-  assert.ok(timeoutStopSec * 1000 > 15_000);
+  assert.ok(timeoutStopSec * 1000 >= 30_000);
+});
+
+test("provider-event units cannot write to the application tree", () => {
+  for (const file of [
+    "deploy/systemd/negotiations-email-provider-events.service",
+    "deploy/systemd/negotiations-email-provider-event-reconciliation.service",
+  ]) {
+    const unit = readFileSync(path.join(process.cwd(), file), "utf8");
+    assert.equal(
+      /^ReadWritePaths=\/var\/www\/negotaitions\/app$/m.test(unit),
+      false,
+      `${file} grants application-tree write access`,
+    );
+    assert.match(unit, /^ProtectSystem=strict$/m);
+    assert.match(unit, /^ProtectHome=true$/m);
+    assert.match(unit, /^PrivateTmp=true$/m);
+    assert.match(unit, /^NoNewPrivileges=true$/m);
+  }
 });

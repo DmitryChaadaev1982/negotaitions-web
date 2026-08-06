@@ -11,7 +11,11 @@ const parsed = parseArgs({
 });
 
 async function main(): Promise<number> {
-  const [{ getEmailConfig }, { runEmailProviderEventConsumer }, cli] =
+  const [
+    { getEmailConfig },
+    { runEmailProviderEventConsumer, forceCloseActiveProviderEventConsumerResources },
+    cli,
+  ] =
     await Promise.all([
       import("@/lib/email/config"),
       import("@/lib/email/provider-event-consumer"),
@@ -34,9 +38,16 @@ async function main(): Promise<number> {
         else console.log(line);
       },
       onShutdownSignal: (handler) => {
-        process.once("SIGTERM", () => handler("SIGTERM"));
-        process.once("SIGINT", () => handler("SIGINT"));
+        const onTerm = () => handler("SIGTERM");
+        const onInt = () => handler("SIGINT");
+        process.once("SIGTERM", onTerm);
+        process.once("SIGINT", onInt);
+        return () => {
+          process.removeListener("SIGTERM", onTerm);
+          process.removeListener("SIGINT", onInt);
+        };
       },
+      onShutdownTimeout: forceCloseActiveProviderEventConsumerResources,
     },
     { once: Boolean(parsed.values.once) },
   );

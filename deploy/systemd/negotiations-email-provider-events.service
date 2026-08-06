@@ -27,13 +27,12 @@ RestartPreventExitStatus=78 77
 # TimeoutStopSec must exceed EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS (15s
 # default) plus an operational margin so the application-level shutdown budget
 # is the one that fires first.
-TimeoutStopSec=25s
+TimeoutStopSec=30s
 KillSignal=SIGTERM
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/www/negotaitions/app
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=negotiations-email-provider-events

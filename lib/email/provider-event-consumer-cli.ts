@@ -60,7 +60,9 @@ export type ProviderEventConsumerCliDeps = {
   }) => Promise<ProviderEventConsumerCounters>;
   log: ProviderEventConsumerCliLogger;
   /** Registers the shutdown handler for SIGTERM/SIGINT. */
-  onShutdownSignal: (handler: (signalName: string) => void) => void;
+  onShutdownSignal: (handler: (signalName: string) => void) => void | (() => void);
+  /** Force-closes runtime resources after the graceful shutdown budget expires. */
+  onShutdownTimeout?: () => Promise<void>;
   /** Overrides the configured shutdown budget; used by tests. */
   shutdownTimeoutMsOverride?: number;
 };
@@ -98,7 +100,7 @@ export async function runProviderEventConsumerCli(
   const controller = new AbortController();
   let shutdownRequested = false;
 
-  deps.onShutdownSignal((signalName) => {
+  const removeShutdownSignalListener = deps.onShutdownSignal((signalName) => {
     if (shutdownRequested) return;
     shutdownRequested = true;
     deps.log("info", "shutdown_requested", { signal: signalName });
@@ -148,8 +150,12 @@ export async function runProviderEventConsumerCli(
 
   if ("timedOut" in outcome) {
     deps.log("error", "shutdown_timeout", { shutdownTimeoutMs });
+    await deps.onShutdownTimeout?.().catch(() => undefined);
+    removeShutdownSignalListener?.();
     return EXIT_RETRYABLE;
   }
+
+  removeShutdownSignalListener?.();
 
   if (outcome.ok) {
     deps.log("info", "consumer_completed", { ...outcome.counters });

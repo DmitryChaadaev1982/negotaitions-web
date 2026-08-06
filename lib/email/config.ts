@@ -390,7 +390,7 @@ export function getEmailConfig(): EmailConfig {
         "EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS",
         15000,
         1000,
-        120000,
+        20000,
       ),
       shardConcurrency: parseBoundedInteger(
         "EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY",
