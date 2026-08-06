@@ -39,11 +39,18 @@ export type EmailConfig = {
     secretAccessKey: string | null;
     initialPosition: EmailProviderEventInitialPosition;
     recordLimit: number;
+    /** Minimum interval between GetRecords calls for the same shard. */
     pollIntervalMs: number;
     shardRefreshSeconds: number;
     errorBackoffMs: number;
     maxPayloadBytes: number;
     shutdownTimeoutMs: number;
+    /** Number of shard slices the scheduler may run at the same time. */
+    shardConcurrency: number;
+    /** Upper bound on GetRecords calls inside one fair scheduling slice. */
+    shardSliceMaxPolls: number;
+    /** Consecutive transient failures tolerated before the shard fails closed. */
+    maxConsecutiveFailures: number;
   };
   yandexPostbox: {
     region: string;
@@ -384,6 +391,24 @@ export function getEmailConfig(): EmailConfig {
         15000,
         1000,
         120000,
+      ),
+      shardConcurrency: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY",
+        2,
+        1,
+        16,
+      ),
+      shardSliceMaxPolls: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_SHARD_SLICE_MAX_POLLS",
+        4,
+        1,
+        50,
+      ),
+      maxConsecutiveFailures: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES",
+        5,
+        1,
+        50,
       ),
     },
     yandexPostbox: {

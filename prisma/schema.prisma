@@ -211,6 +211,15 @@ enum EmailProviderIngestionFailureStatus {
   IGNORED
 }
 
+/// Durable suppression decision reviewed at provider-event parse time.
+/// NULL means the decision predates Stage 3.13C remediation and must never be
+/// reconstructed as a permanent suppression from eventType alone.
+enum EmailProviderEventSuppressionDisposition {
+  NONE
+  HARD_BOUNCE
+  COMPLAINT
+}
+
 enum ExternalServiceEventSeverity {
   INFO
   WARNING
@@ -1013,6 +1022,7 @@ model EmailProviderEvent {
   reconciliationAttempts Int                            @default(0)
   nextReconcileAt   DateTime?
   reconciliationDeadlineAt DateTime?
+  suppressionDisposition EmailProviderEventSuppressionDisposition?
   metadata          Json?
   processedAt       DateTime?
   retainedUntil     DateTime?
@@ -1036,6 +1046,10 @@ model EmailProviderStreamCheckpoint {
   streamName                      String
   shardId                         String
   lastSuccessfullyHandledSequenceNumber String?
+  /// Durable initial-read boundary captured before the first iterator is used.
+  /// Not a processed-record checkpoint: it only bounds iterator reacquisition so
+  /// a LATEST restart cannot silently skip the initial window.
+  initialReadAt                   DateTime?
   approximateArrivalTimestamp     DateTime?
   lastProcessedProviderEventId    String?
   createdAt                       DateTime @default(now())
@@ -1043,6 +1057,7 @@ model EmailProviderStreamCheckpoint {
 
   @@unique([provider, streamName, shardId])
   @@index([provider, streamName])
+  @@index([streamName, shardId])
   @@index([updatedAt])
 }
 
@@ -1062,6 +1077,7 @@ model EmailProviderIngestionFailure {
 
   @@unique([provider, streamName, shardId, sequenceNumber])
   @@index([payloadSha256])
+  @@index([provider, streamName, shardId])
   @@index([status, createdAt])
 }
 

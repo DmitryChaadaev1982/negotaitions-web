@@ -2,8 +2,8 @@ import type {
   EmailMessageCategory,
   EmailMessageStatus,
   EmailMessageType,
+  EmailProviderEventSuppressionDisposition,
   EmailProviderEventType,
-  EmailSuppressionReason,
 } from "@/app/generated/prisma/client";
 
 export type EmailLocale = "ru" | "en";
@@ -151,5 +151,9 @@ export type NormalizedProviderEventInput = {
   eventType: EmailProviderEventType;
   eventTime: Date;
   metadata?: Record<string, unknown>;
-  suppressionReason?: EmailSuppressionReason | null;
+  /**
+   * Suppression decision reviewed at parse time. It is persisted verbatim so
+   * reconciliation never has to re-derive permanence from eventType alone.
+   */
+  suppressionDisposition?: EmailProviderEventSuppressionDisposition;
 };

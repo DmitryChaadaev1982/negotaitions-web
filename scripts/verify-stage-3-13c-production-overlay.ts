@@ -40,9 +40,24 @@ const STAGE_3_13C_ACCOUNT =
   "20260804170000_stage_3_13c_account_security_email";
 const STAGE_3_13C_REMEDIATION =
   "20260805140000_stage_3_13c_security_remediation";
+const STAGE_3_13C_PROVIDER_EVENTS =
+  "20260806113000_add_email_provider_event_ingestion";
+const STAGE_3_13C_PROVIDER_EVENT_HARDENING =
+  "20260806160000_harden_email_provider_event_ingestion";
 const STAGE_3_13C_PENDING = [
   STAGE_3_13C_ACCOUNT,
   STAGE_3_13C_REMEDIATION,
+  STAGE_3_13C_PROVIDER_EVENTS,
+  STAGE_3_13C_PROVIDER_EVENT_HARDENING,
+] as const;
+/**
+ * The only application tables the pending Stage 3.13C migrations may create.
+ * Anything else appearing after the overlay is an unreviewed schema change.
+ */
+const TABLES_ADDED_BY_STAGE_3_13C_OVERLAY = [
+  "EmailProviderIngestionFailure",
+  "EmailProviderStreamCheckpoint",
+  "PasswordResetToken",
 ] as const;
 const PASSWORD_RESET_INDEXES = [
   "PasswordResetToken_createdAt_idx",
@@ -119,8 +134,9 @@ async function createWorkspace(repoRoot: string): Promise<Workspace> {
       (name) => name <= PRE_STAGE_3_13C,
     );
     assert.ok(migrationNames.includes(PRE_STAGE_3_13C));
-    assert.ok(!migrationNames.includes(STAGE_3_13C_ACCOUNT));
-    assert.ok(!migrationNames.includes(STAGE_3_13C_REMEDIATION));
+    for (const pending of STAGE_3_13C_PENDING) {
+      assert.ok(!migrationNames.includes(pending));
+    }
     for (const name of migrationNames) {
       await cp(
         path.join(repoRoot, "prisma", "migrations", name),
@@ -450,10 +466,98 @@ async function assertStage313cDatabaseInvariants(
     [...STAGE_3_13C_PENDING],
   );
 
+  const providerEvents = await assertProviderEventRemediationIsAdditive(
+    client,
+    schemaName,
+  );
+
+  return {
+    verifiedColumns: columns.rows.length + providerEvents.verifiedColumns,
+    verifiedConstraints: constraints.rows.length,
+    verifiedIndexes: indexRows.rows.length + providerEvents.verifiedIndexes,
+  };
+}
+
+/**
+ * The remediation migration must stay additive: an older runtime that never
+ * writes these columns has to keep working against the newer schema, so each
+ * added column is nullable and carries no default.
+ */
+async function assertProviderEventRemediationIsAdditive(
+  client: pg.Client,
+  schemaName: string,
+) {
+  const columns = await client.query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    udt_name: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+  }>(
+    `SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default
+     FROM information_schema.columns
+     WHERE table_schema = $1
+       AND (
+         (table_name = 'EmailProviderEvent' AND column_name = 'suppressionDisposition')
+         OR
+         (table_name = 'EmailProviderStreamCheckpoint' AND column_name = 'initialReadAt')
+       )
+     ORDER BY table_name, column_name`,
+    [schemaName],
+  );
+  assert.equal(columns.rows.length, 2);
+  for (const row of columns.rows) {
+    assert.equal(row.is_nullable, "YES", `${row.column_name} must be nullable`);
+    assert.equal(row.column_default, null, `${row.column_name} must have no default`);
+  }
+  const disposition = columns.rows.find(
+    (row) => row.column_name === "suppressionDisposition",
+  );
+  assert.equal(disposition?.udt_name, "EmailProviderEventSuppressionDisposition");
+  assert.equal(
+    columns.rows.find((row) => row.column_name === "initialReadAt")?.data_type,
+    "timestamp without time zone",
+  );
+
+  const enumValues = await client.query<{ enumlabel: string }>(
+    `SELECT e.enumlabel
+     FROM pg_enum e
+     JOIN pg_type t ON t.oid = e.enumtypid
+     JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname = $1 AND t.typname = 'EmailProviderEventSuppressionDisposition'
+     ORDER BY e.enumsortorder`,
+    [schemaName],
+  );
+  assert.deepEqual(
+    enumValues.rows.map((row) => row.enumlabel),
+    ["NONE", "HARD_BOUNCE", "COMPLAINT"],
+  );
+
+  const indexes = await client.query<{ indexname: string }>(
+    `SELECT indexname FROM pg_indexes
+     WHERE schemaname = $1
+       AND indexname = ANY($2::text[])
+     ORDER BY indexname`,
+    [
+      schemaName,
+      [
+        "EmailProviderIngestionFailure_provider_streamName_shardId_idx",
+        "EmailProviderStreamCheckpoint_streamName_shardId_idx",
+      ],
+    ],
+  );
+  assert.deepEqual(
+    indexes.rows.map((row) => row.indexname),
+    [
+      "EmailProviderIngestionFailure_provider_streamName_shardId_idx",
+      "EmailProviderStreamCheckpoint_streamName_shardId_idx",
+    ],
+  );
+
   return {
     verifiedColumns: columns.rows.length,
-    verifiedConstraints: constraints.rows.length,
-    verifiedIndexes: indexRows.rows.length,
+    verifiedIndexes: indexes.rows.length,
   };
 }
 
@@ -585,11 +689,16 @@ async function main() {
       stage313bBefore,
     );
     const postTables = await applicationTables(client, schemaName);
+    const addedTables = new Set<string>(TABLES_ADDED_BY_STAGE_3_13C_OVERLAY);
+    // Every pre-existing table survives untouched and only the reviewed tables
+    // are added, so the overlay never drops or renames production tables.
     assert.deepEqual(
-      postTables.filter((name) => name !== "PasswordResetToken"),
+      postTables.filter((name) => !addedTables.has(name)),
       preexistingTables,
     );
-    assert.ok(postTables.includes("PasswordResetToken"));
+    for (const name of TABLES_ADDED_BY_STAGE_3_13C_OVERLAY) {
+      assert.ok(postTables.includes(name), `overlay did not create ${name}`);
+    }
     const indexes = await passwordResetIndexes(client, schemaName);
     assert.deepEqual(indexes, [...PASSWORD_RESET_INDEXES].sort());
     const invariants = await assertStage313cDatabaseInvariants(

@@ -42,9 +42,17 @@ export const LEGACY_PRODUCTION_MIGRATIONS = [
 export const REQUIRED_PRODUCTION_BASELINE =
   "20260627_production_initial_baseline";
 
+/**
+ * The only migrations the production overlay may apply. Both provider-event
+ * migrations are additive: the first adds the ingestion tables, the second adds
+ * nullable remediation columns and indexes, so an older runtime that predates
+ * them keeps working against the newer schema.
+ */
 export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
   "20260804170000_stage_3_13c_account_security_email",
   "20260805140000_stage_3_13c_security_remediation",
+  "20260806113000_add_email_provider_event_ingestion",
+  "20260806160000_harden_email_provider_event_ingestion",
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";
