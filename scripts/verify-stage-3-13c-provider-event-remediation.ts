@@ -170,15 +170,32 @@ async function main() {
     eventId: string;
     providerMessageId: string;
     bounce: Record<string, unknown>;
+    timestamp?: string;
   }) {
     return JSON.stringify({
       eventId: params.eventId,
       eventType: "Bounce",
       mail: {
         messageId: params.providerMessageId,
-        timestamp: new Date().toISOString(),
+        timestamp: params.timestamp ?? new Date().toISOString(),
       },
       bounce: params.bounce,
+    });
+  }
+
+  function complaintPayload(params: {
+    eventId: string;
+    providerMessageId: string;
+    timestamp?: string;
+  }) {
+    return JSON.stringify({
+      eventId: params.eventId,
+      eventType: "Complaint",
+      mail: {
+        messageId: params.providerMessageId,
+        timestamp: params.timestamp ?? new Date().toISOString(),
+      },
+      complaint: { complaintFeedbackType: "abuse" },
     });
   }
 
@@ -355,6 +372,190 @@ async function main() {
   await processEmailProviderEvent(complaintEvent);
   assert.equal((await suppressionsFor(complaintTarget.normalized)).length, 1);
   record("duplicateSuppressionRepairs", 1);
+
+  currentCase = "complaint_replay_upgrades_weaker_suppression";
+  await db.emailSuppression.updateMany({
+    where: { recipientEmailNormalized: complaintTarget.normalized },
+    data: { reason: EmailSuppressionReason.HARD_BOUNCE },
+  });
+  await processEmailProviderEvent(complaintEvent);
+  const repairedComplaint = await suppressionsFor(complaintTarget.normalized);
+  assert.equal(repairedComplaint.length, 1);
+  assert.equal(repairedComplaint[0]?.reason, EmailSuppressionReason.COMPLAINT);
+  record("weakerSuppressionRepairs", 1);
+
+  // A monotonic message decision does not erase independent suppression
+  // evidence. This older bounce stays ignored for EmailMessage but suppresses.
+  currentCase = "older_permanent_bounce_still_suppresses";
+  const olderBounceTarget = await deliverMessage("older-permanent-bounce");
+  await db.emailMessage.update({
+    where: { id: olderBounceTarget.messageId },
+    data: {
+      status: EmailMessageStatus.DELIVERED,
+      lastProviderEventType: EmailProviderEventType.DELIVERED,
+      lastProviderEventTime: new Date("2026-08-06T10:00:00.000Z"),
+      deliveredAt: new Date("2026-08-06T10:00:00.000Z"),
+    },
+  });
+  const olderPermanentBounce = parse(
+    bouncePayload({
+      eventId: `older-permanent-${runId}`,
+      providerMessageId: olderBounceTarget.providerMessageId,
+      timestamp: "2026-08-06T09:00:00.000Z",
+      bounce: { bounceType: "Permanent", bounceSubType: "General" },
+    }),
+  );
+  const olderBounceResult = await processEmailProviderEvent(olderPermanentBounce);
+  assert.equal(
+    olderBounceResult.processingStatus,
+    EmailProviderEventProcessingStatus.IGNORED,
+  );
+  assert.equal(
+    olderBounceResult.resultCode,
+    "OLDER_EVENT_IGNORED_SUPPRESSION_RECONCILED",
+  );
+  const olderBounceMessage = await db.emailMessage.findUniqueOrThrow({
+    where: { id: olderBounceTarget.messageId },
+  });
+  assert.equal(olderBounceMessage.status, EmailMessageStatus.DELIVERED);
+  const olderBounceSuppressions = await suppressionsFor(
+    olderBounceTarget.normalized,
+  );
+  assert.equal(olderBounceSuppressions.length, 1);
+  assert.equal(
+    olderBounceSuppressions[0]?.reason,
+    EmailSuppressionReason.HARD_BOUNCE,
+  );
+  // Duplicate/replay remains idempotent and repairs if the row is removed.
+  await processEmailProviderEvent(olderPermanentBounce);
+  assert.equal((await suppressionsFor(olderBounceTarget.normalized)).length, 1);
+  await db.emailSuppression.deleteMany({
+    where: { recipientEmailNormalized: olderBounceTarget.normalized },
+  });
+  await processEmailProviderEvent(olderPermanentBounce);
+  assert.equal((await suppressionsFor(olderBounceTarget.normalized)).length, 1);
+  record("ignoredPermanentBounceSuppressions", 1);
+
+  currentCase = "hard_bounce_then_complaint_upgrades";
+  const bounceThenComplaint = await deliverMessage("bounce-then-complaint");
+  const firstBounce = parse(
+    bouncePayload({
+      eventId: `precedence-bounce-first-${runId}`,
+      providerMessageId: bounceThenComplaint.providerMessageId,
+      timestamp: "2026-08-06T08:00:00.000Z",
+      bounce: { bounceType: "Permanent", bounceSubType: "General" },
+    }),
+  );
+  const laterComplaint = parse(
+    complaintPayload({
+      eventId: `precedence-complaint-second-${runId}`,
+      providerMessageId: bounceThenComplaint.providerMessageId,
+      timestamp: "2026-08-06T08:05:00.000Z",
+    }),
+  );
+  await processEmailProviderEvent(firstBounce);
+  await processEmailProviderEvent(laterComplaint);
+  await processEmailProviderEvent(laterComplaint);
+  const upgraded = await suppressionsFor(bounceThenComplaint.normalized);
+  assert.equal(upgraded.length, 1);
+  assert.equal(upgraded[0]?.reason, EmailSuppressionReason.COMPLAINT);
+  record("bounceComplaintUpgrades", 1);
+
+  currentCase = "complaint_then_bounce_never_downgrades";
+  const complaintThenBounce = await deliverMessage("complaint-then-bounce");
+  const firstComplaint = parse(
+    complaintPayload({
+      eventId: `precedence-complaint-first-${runId}`,
+      providerMessageId: complaintThenBounce.providerMessageId,
+      timestamp: "2026-08-06T08:00:00.000Z",
+    }),
+  );
+  const laterBounce = parse(
+    bouncePayload({
+      eventId: `precedence-bounce-second-${runId}`,
+      providerMessageId: complaintThenBounce.providerMessageId,
+      timestamp: "2026-08-06T08:05:00.000Z",
+      bounce: { bounceType: "Permanent", bounceSubType: "General" },
+    }),
+  );
+  await processEmailProviderEvent(firstComplaint);
+  await processEmailProviderEvent(laterBounce);
+  const notDowngraded = await suppressionsFor(complaintThenBounce.normalized);
+  assert.equal(notDowngraded.length, 1);
+  assert.equal(notDowngraded[0]?.reason, EmailSuppressionReason.COMPLAINT);
+  record("complaintBounceNoDowngrades", 1);
+
+  currentCase = "concurrent_bounce_complaint_precedence";
+  const concurrentPrecedence = await deliverMessage("concurrent-precedence");
+  const concurrentPermanentBounce = parse(
+    bouncePayload({
+      eventId: `precedence-concurrent-bounce-${runId}`,
+      providerMessageId: concurrentPrecedence.providerMessageId,
+      timestamp: "2026-08-06T08:00:00.000Z",
+      bounce: { bounceType: "Permanent", bounceSubType: "General" },
+    }),
+  );
+  const concurrentPrecedenceComplaint = parse(
+    complaintPayload({
+      eventId: `precedence-concurrent-complaint-${runId}`,
+      providerMessageId: concurrentPrecedence.providerMessageId,
+      timestamp: "2026-08-06T08:00:00.000Z",
+    }),
+  );
+  await Promise.all([
+    processEmailProviderEvent(concurrentPermanentBounce),
+    processEmailProviderEvent(concurrentPrecedenceComplaint),
+  ]);
+  const concurrentFinal = await suppressionsFor(concurrentPrecedence.normalized);
+  assert.equal(concurrentFinal.length, 1);
+  assert.equal(concurrentFinal[0]?.reason, EmailSuppressionReason.COMPLAINT);
+  record("concurrentBounceComplaintPrecedence", 1);
+
+  // A suppression write failure leaves the event replayable and rolls back the
+  // message transition. The disposable verifier schema is restored immediately.
+  currentCase = "suppression_failure_rolls_back_provider_transaction";
+  const rollbackTarget = await deliverMessage("suppression-rollback");
+  const rollbackComplaint = parse(
+    complaintPayload({
+      eventId: `suppression-rollback-${runId}`,
+      providerMessageId: rollbackTarget.providerMessageId,
+    }),
+  );
+  const rollbackBefore = await db.emailMessage.findUniqueOrThrow({
+    where: { id: rollbackTarget.messageId },
+  });
+  const constraintName = `stage313c_suppression_failure_${runId}`;
+  await db.$executeRawUnsafe(
+    `ALTER TABLE "EmailSuppression" ADD CONSTRAINT "${constraintName}" CHECK (false) NOT VALID`,
+  );
+  try {
+    await assert.rejects(() => processEmailProviderEvent(rollbackComplaint));
+  } finally {
+    await db.$executeRawUnsafe(
+      `ALTER TABLE "EmailSuppression" DROP CONSTRAINT "${constraintName}"`,
+    );
+  }
+  const rollbackAfter = await db.emailMessage.findUniqueOrThrow({
+    where: { id: rollbackTarget.messageId },
+  });
+  assert.equal(rollbackAfter.status, rollbackBefore.status);
+  assert.equal(rollbackAfter.lastProviderEventTime, rollbackBefore.lastProviderEventTime);
+  const pendingRollbackEvent = await db.emailProviderEvent.findUniqueOrThrow({
+    where: {
+      provider_providerEventId: {
+        provider: PROVIDER,
+        providerEventId: `suppression-rollback-${runId}`,
+      },
+    },
+  });
+  assert.equal(
+    pendingRollbackEvent.processingStatus,
+    EmailProviderEventProcessingStatus.PENDING,
+  );
+  assert.equal((await suppressionsFor(rollbackTarget.normalized)).length, 0);
+  await processEmailProviderEvent(rollbackComplaint);
+  assert.equal((await suppressionsFor(rollbackTarget.normalized)).length, 1);
+  record("suppressionTransactionRollbacks", 1);
 
   // --- REV2-02/03: row-locked transitions under concurrent delivery ---------
   currentCase = "concurrent_delivery_bounce_serializes";

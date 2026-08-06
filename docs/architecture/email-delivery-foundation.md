@@ -100,7 +100,16 @@ Unsubscribe is only meaningful for product/marketing categories in Stage 3.13B. 
 
 ## Provider Events
 
-Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locks the provider event and matched `EmailMessage` row in one transaction, evaluates the monotonic transition policy against the locked current message state, and commits message transition, provider-event processing state, and any hard-bounce/complaint suppression atomically.
+Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locks the provider event and matched `EmailMessage` row in one transaction, evaluates the monotonic transition policy against the locked current message state, and commits any message transition, provider-event processing state, and required hard-bounce/complaint suppression atomically.
+
+Message-state monotonicity and recipient suppression are independent decisions.
+An older or weaker reviewed permanent bounce can be ignored for
+`EmailMessage.status` while still creating `HARD_BOUNCE` suppression. Complaint
+has deterministic precedence over hard bounce: an active `HARD_BOUNCE` row is
+atomically upgraded to `COMPLAINT`, and a later bounce cannot downgrade it.
+Duplicate/replayed processed or ignored events reconcile a missing or weaker
+required suppression before they succeed, so checkpoint advancement never
+acknowledges an event whose suppression invariant failed.
 
 Unmatched events are stored as `UNMATCHED` and reconciled by `npm run email:events:reconcile` until a bounded deadline. Ignored events retain a stable processing result code/message for audit.
 

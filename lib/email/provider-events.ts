@@ -241,18 +241,30 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
               : message.terminalFailureAt,
         },
       });
-
-      if (suppressionReason) {
-        await createActiveSuppression({
-          recipientEmailNormalized: message.recipientEmailNormalized,
-          reason: suppressionReason,
-          source: EmailSuppressionSource.PROVIDER_EVENT,
-          categoryScope: null,
-          metadata: suppressionMetadata,
-          db: tx,
-        });
-      }
     }
+
+    // Suppression evidence is independent of message-state monotonicity. An old
+    // or weaker permanent event can be ineligible to mutate EmailMessage while
+    // still requiring durable recipient suppression.
+    if (suppressionReason) {
+      await createActiveSuppression({
+        recipientEmailNormalized: message.recipientEmailNormalized,
+        reason: suppressionReason,
+        source: EmailSuppressionSource.PROVIDER_EVENT,
+        categoryScope: null,
+        metadata: suppressionMetadata,
+        db: tx,
+      });
+    }
+
+    const suppressionReconciledWithoutTransition =
+      !decision.apply && suppressionReason !== null;
+    const processingResultCode = suppressionReconciledWithoutTransition
+      ? `${decision.resultCode}_SUPPRESSION_RECONCILED`
+      : decision.resultCode;
+    const processingResultMessage = suppressionReconciledWithoutTransition
+      ? "Message transition was ignored; required suppression was reconciled."
+      : decision.resultMessage;
 
     await tx.emailProviderEvent.update({
       where: { id: event.id },
@@ -261,8 +273,8 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
         processingStatus: decision.apply
           ? EmailProviderEventProcessingStatus.PROCESSED
           : EmailProviderEventProcessingStatus.IGNORED,
-        processingResultCode: decision.resultCode,
-        processingResultMessage: decision.resultMessage,
+        processingResultCode,
+        processingResultMessage,
         processedAt: now,
         nextReconcileAt: null,
       },
@@ -274,7 +286,7 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
       processingStatus: decision.apply
         ? EmailProviderEventProcessingStatus.PROCESSED
         : EmailProviderEventProcessingStatus.IGNORED,
-      resultCode: decision.resultCode,
+      resultCode: processingResultCode,
     };
   });
 }

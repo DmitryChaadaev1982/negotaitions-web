@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
+
 import {
   EmailMessageCategory,
   EmailSuppressionReason,
   EmailSuppressionSource,
+  type EmailSuppression,
   type Prisma,
 } from "@/app/generated/prisma/client";
 import { normalizeEmailAddress } from "@/lib/email/address";
@@ -83,6 +86,89 @@ export async function createActiveSuppression(params: {
     categoryScope,
   };
 
+  if (categoryScope === null) {
+    const metadataJson =
+      params.metadata === undefined ? null : JSON.stringify(params.metadata);
+    const rows = await db.$queryRaw<Array<EmailSuppression & { created: boolean }>>`
+      INSERT INTO "EmailSuppression" (
+        "id",
+        "recipientEmailNormalized",
+        "reason",
+        "source",
+        "categoryScope",
+        "active",
+        "metadata",
+        "createdAt"
+      )
+      VALUES (
+        ${randomUUID()},
+        ${params.recipientEmailNormalized},
+        ${params.reason}::"EmailSuppressionReason",
+        ${params.source}::"EmailSuppressionSource",
+        NULL,
+        true,
+        ${metadataJson}::jsonb,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT ("recipientEmailNormalized")
+        WHERE "active" = true AND "categoryScope" IS NULL
+      DO UPDATE SET
+        "reason" = CASE
+          WHEN "EmailSuppression"."reason" = 'HARD_BOUNCE'
+           AND EXCLUDED."reason" = 'COMPLAINT'
+          THEN EXCLUDED."reason"
+          ELSE "EmailSuppression"."reason"
+        END,
+        "source" = CASE
+          WHEN "EmailSuppression"."reason" = 'HARD_BOUNCE'
+           AND EXCLUDED."reason" = 'COMPLAINT'
+          THEN EXCLUDED."source"
+          ELSE "EmailSuppression"."source"
+        END,
+        "metadata" = CASE
+          WHEN "EmailSuppression"."reason" = 'HARD_BOUNCE'
+           AND EXCLUDED."reason" = 'COMPLAINT'
+          THEN EXCLUDED."metadata"
+          ELSE "EmailSuppression"."metadata"
+        END
+      RETURNING "EmailSuppression".*, (xmax = 0) AS "created"
+    `;
+    const suppression = rows[0];
+    if (!suppression) {
+      throw new Error("Active suppression reconciliation returned no row.");
+    }
+    return {
+      suppression,
+      created: suppression.created,
+    };
+  }
+
+  async function upgradeProviderSuppression() {
+    if (params.reason !== EmailSuppressionReason.COMPLAINT) return null;
+
+    const upgraded = await db.emailSuppression.updateMany({
+      where: {
+        ...where,
+        reason: EmailSuppressionReason.HARD_BOUNCE,
+      },
+      data: {
+        reason: EmailSuppressionReason.COMPLAINT,
+        source: params.source,
+        metadata: params.metadata,
+      },
+    });
+    if (upgraded.count === 0) return null;
+    return db.emailSuppression.findFirstOrThrow({ where });
+  }
+
+  // Provider evidence has deterministic precedence. The conditional update is
+  // atomic, so concurrent complaint/bounce processing cannot downgrade a
+  // complaint or leave a hard bounce after a complaint commits.
+  const upgraded = await upgradeProviderSuppression();
+  if (upgraded) {
+    return { suppression: upgraded, created: false };
+  }
+
   const existing = await db.emailSuppression.findFirst({ where });
   if (existing) {
     return { suppression: existing, created: false };
@@ -106,6 +192,12 @@ export async function createActiveSuppression(params: {
       "code" in error &&
       error.code === "P2002"
     ) {
+      // A concurrent insert may have won after the first upgrade attempt.
+      // Re-run the precedence update before accepting the winning row.
+      const concurrentlyUpgraded = await upgradeProviderSuppression();
+      if (concurrentlyUpgraded) {
+        return { suppression: concurrentlyUpgraded, created: false };
+      }
       const suppression = await db.emailSuppression.findFirst({ where });
       if (suppression) {
         return { suppression, created: false };

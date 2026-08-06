@@ -226,6 +226,14 @@ reconciliation, so a `BOUNCED` event is never reconstructed as a hard bounce
 from its event type alone. A row with a null disposition — one written by an
 older runtime — is treated as "no permanent suppression".
 
+Suppression reconciliation is intentionally independent of whether the locked
+monotonic `EmailMessage` transition applies. An old permanent bounce still
+ensures one active `HARD_BOUNCE` suppression, while complaint atomically
+upgrades an active hard bounce and can never be downgraded by a later bounce.
+Duplicate and replayed events repair a missing or weaker suppression inside the
+same provider-event transaction before the consumer may checkpoint the stream
+record.
+
 Provider-controlled diagnostic text is not persisted. Bounce metadata keeps only
 a bounded classification (`bounceClass`) and a `diagnosticCodeCount`; no email
 address, SMTP response text, or free-form provider string reaches

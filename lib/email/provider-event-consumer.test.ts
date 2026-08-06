@@ -453,6 +453,13 @@ const PROCESSOR_FAILURES: Array<[string, Error]> = [
     name: "PrismaClientKnownRequestError",
     code: "P1008",
   })],
+  [
+    "suppression reconciliation failure",
+    Object.assign(new Error("suppression write rejected"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2004",
+    }),
+  ],
   ["generic unexpected exception", Object.assign(new Error("boom"), { name: "TypeError" })],
 ];
 
