@@ -279,7 +279,7 @@ export async function detectPort3000Owner(deps = {}) {
         [
           "-NoProfile",
           "-Command",
-          "netstat -ano -p tcp | Select-String ':3000' | Select-Object -First 1 | ForEach-Object { $_.Line }",
+          "netstat -ano -p tcp | Select-String ':3000' | Where-Object { $_.Line -match 'LISTENING' } | Select-Object -First 1 | ForEach-Object { $_.Line }",
         ],
         { allowFailure: true },
       );

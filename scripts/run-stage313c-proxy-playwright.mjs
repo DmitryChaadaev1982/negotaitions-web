@@ -14,6 +14,7 @@ async function main() {
     "--mode=managed",
     "--",
     "tests/e2e/stage-3-13c-proxy-and-email-journal.spec.ts",
+    "tests/e2e/stage-3-13c-login-logout.spec.ts",
     "--project=chromium",
   ]);
 
