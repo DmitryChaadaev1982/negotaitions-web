@@ -14,7 +14,9 @@ const nextConfig: NextConfig = {
     : [],
   experimental: {
     serverActions: {
-      allowedOrigins: resolveServerActionAllowedOriginsFromEnv(),
+      allowedOrigins: resolveServerActionAllowedOriginsFromEnv(
+        process.env.NODE_ENV,
+      ),
     },
   },
   serverExternalPackages: ["ffmpeg-static", "fluent-ffmpeg"],

@@ -32,6 +32,9 @@ const ACCESSOR_EXPORTS = new Set([
   "readServerRuntimeSettingRaw",
 ]);
 const DIAGNOSTICS_MODULE = "lib/services/admin-env-display.ts";
+const REVIEWED_DIRECT_ENV_READS: Readonly<Record<string, readonly string[]>> = {
+  "next.config.ts": ["NODE_ENV"],
+};
 
 export const RUNTIME_CONFIG_SCOPE_PATHS = Object.freeze([
   "lib/auth",
@@ -41,6 +44,7 @@ export const RUNTIME_CONFIG_SCOPE_PATHS = Object.freeze([
   "lib/config/provider-runtime.ts",
   "lib/config/server-action-origins.ts",
   "lib/services/admin-env-display.ts",
+  "next.config.ts",
 ]);
 
 function normalizePath(path: string): string {
@@ -99,6 +103,13 @@ function isProcessEnvExpression(node: ts.Node): boolean {
     ts.isStringLiteral(node.argumentExpression) &&
     node.argumentExpression.text === "env"
   );
+}
+
+function directDotEnvironmentKey(node: ts.Node): string | null {
+  const parent = node.parent;
+  return ts.isPropertyAccessExpression(parent) && parent.expression === node
+    ? parent.name.text
+    : null;
 }
 
 function importedAccessorNames(sourceFile: ts.SourceFile): Set<string> {
@@ -185,10 +196,24 @@ export function verifyRuntimeConfiguration(params?: {
 
     function visit(node: ts.Node): void {
       if (isProcessEnvExpression(node)) {
-        issues.push({
-          code: "DIRECT_ENV_ACCESS",
-          ...issueLocation(sourceFile, node),
-        });
+        const key = directDotEnvironmentKey(node);
+        const reviewedKeys = REVIEWED_DIRECT_ENV_READS[fileName] ?? [];
+        const definition = key ? registry[key] : undefined;
+        if (
+          key &&
+          reviewedKeys.includes(key) &&
+          definition?.ownerModules.includes(fileName)
+        ) {
+          const consumers = usage.get(key) ?? new Set<string>();
+          consumers.add(fileName);
+          usage.set(key, consumers);
+        } else {
+          issues.push({
+            code: "DIRECT_ENV_ACCESS",
+            ...issueLocation(sourceFile, node),
+            ...(key ? { key } : {}),
+          });
+        }
       }
 
       if (

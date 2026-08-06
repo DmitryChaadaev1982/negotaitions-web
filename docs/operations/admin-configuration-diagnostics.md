@@ -35,7 +35,10 @@ the secret column. A TypeScript-compiler-API verifier scans the promised auth,
 session, proxy, password-reset, email, worker, retry, retention, Postbox, Data
 Streams, provider-event, and sensitive-payload modules. Direct, bracketed,
 destructured, aliased, dynamic, helper-mediated, unregistered, or unused
-configuration access fails validation.
+configuration access fails validation. The sole reviewed bootstrap exception is
+the literal `process.env.NODE_ENV` read in `next.config.ts`, required before
+Next's application module resolver exists; the verifier permits that exact
+module/key/form and rejects every other direct read.
 
 | Runtime key | Parser/owner | Effective default | Secret | Required condition | Display rule |
 | --- | --- | --- | --- | --- | --- |

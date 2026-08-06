@@ -100,7 +100,7 @@ export const SERVER_RUNTIME_SETTINGS = {
       "lib/auth/client-ip.ts",
       "lib/auth/credential-concurrency.ts",
       "lib/auth/credential-dispatch-fence.ts",
-      "lib/config/server-action-origins.ts",
+      "next.config.ts",
     ],
     parser: {
       category: "enum",

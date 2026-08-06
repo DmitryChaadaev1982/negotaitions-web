@@ -7,7 +7,7 @@ import {
 import {
   readServerRuntimeSettingRaw,
   SERVER_RUNTIME_SETTINGS,
-} from "@/lib/config/server-runtime-settings";
+} from "../config/server-runtime-settings";
 import { normalizeEmailAddress } from "./address";
 
 export const EMAIL_SENSITIVE_PAYLOAD_KEY_ENV =

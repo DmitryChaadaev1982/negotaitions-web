@@ -1,5 +1,3 @@
-import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
-
 /**
  * Server Actions origin allowlist.
  *
@@ -45,9 +43,13 @@ export function resolveServerActionAllowedOrigins(
 }
 
 export function resolveServerActionAllowedOriginsFromEnv(
-  env?: NodeJS.ProcessEnv,
+  envOrNodeEnv: NodeJS.ProcessEnv | string | undefined,
 ): string[] {
+  const nodeEnv =
+    typeof envOrNodeEnv === "string"
+      ? envOrNodeEnv
+      : envOrNodeEnv?.NODE_ENV;
   return resolveServerActionAllowedOrigins({
-    nodeEnv: parseServerRuntimeSetting("NODE_ENV", env) as string,
+    nodeEnv,
   });
 }

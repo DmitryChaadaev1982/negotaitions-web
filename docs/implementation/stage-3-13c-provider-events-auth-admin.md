@@ -123,6 +123,10 @@ modules. It rejects direct dot/bracket access, destructuring, aliases, dynamic
 keys, helper-mediated dynamic reads, unregistered keys, unapproved consumers,
 and unused registry entries. Tests use temporary source strings for every
 rejected access form; fixtures never enter production runtime code.
+`next.config.ts` has the only reviewed direct-read exception:
+`process.env.NODE_ENV`, because Next evaluates it before application TypeScript
+module resolution is available. The AST policy permits only that exact
+module/key/dot-access tuple and still records `NODE_ENV` as a registry consumer.
 
 Effective values come from the same runtime parser the application uses, so a
 defaulted setting reports `using_effective_default` with the real default rather
