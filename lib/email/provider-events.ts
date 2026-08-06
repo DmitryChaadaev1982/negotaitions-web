@@ -5,6 +5,8 @@ import {
   EmailProviderEventType,
   EmailSuppressionReason,
   EmailSuppressionSource,
+  type EmailMessage,
+  type EmailProviderEvent,
   type Prisma,
 } from "@/app/generated/prisma/client";
 import { getEmailConfig } from "@/lib/email/config";
@@ -96,11 +98,12 @@ export async function processEmailProviderEvent(input: NormalizedProviderEventIn
       },
     });
     if (!existing) throw error;
+    const repaired = await reconcileEmailProviderEventById(existing.id, now);
     return {
       created: false,
-      processed: existing.processingStatus === EmailProviderEventProcessingStatus.PROCESSED,
-      messageId: existing.emailMessageId,
-      processingStatus: existing.processingStatus,
+      processed: repaired.processed,
+      messageId: repaired.messageId,
+      processingStatus: repaired.processingStatus,
     };
   }
 
@@ -110,96 +113,113 @@ export async function processEmailProviderEvent(input: NormalizedProviderEventIn
 
 export async function reconcileEmailProviderEventById(eventId: string, now = new Date()) {
   const config = getEmailConfig();
-  const event = await prisma.emailProviderEvent.findUnique({ where: { id: eventId } });
-  if (!event) {
-    return { processed: false, messageId: null, processingStatus: null };
-  }
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe("SET LOCAL statement_timeout = 5000");
+    await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 5000");
 
-  if (event.processingStatus === EmailProviderEventProcessingStatus.PROCESSED) {
-    return {
-      processed: true,
-      messageId: event.emailMessageId,
-      processingStatus: event.processingStatus,
-    };
-  }
+    const eventRows = await tx.$queryRaw<EmailProviderEvent[]>`
+      SELECT *
+        FROM "EmailProviderEvent"
+       WHERE "id" = ${eventId}
+       FOR UPDATE
+    `;
+    const event = eventRows[0];
+    if (!event) {
+      return { processed: false, messageId: null, processingStatus: null };
+    }
 
-  if (!event.providerMessageId) {
-    await prisma.emailProviderEvent.update({
-      where: { id: event.id },
-      data: {
+    if (!event.providerMessageId) {
+      await tx.emailProviderEvent.update({
+        where: { id: event.id },
+        data: {
+          processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+          processingResultCode: "NO_PROVIDER_MESSAGE_ID",
+          processingResultMessage: "Provider event did not include a provider message id.",
+          processedAt: now,
+          nextReconcileAt: null,
+        },
+      });
+      return {
+        processed: false,
+        messageId: null,
         processingStatus: EmailProviderEventProcessingStatus.IGNORED,
-        processingResultCode: "NO_PROVIDER_MESSAGE_ID",
-        processingResultMessage: "Provider event did not include a provider message id.",
-        processedAt: now,
-      },
-    });
-    return {
-      processed: false,
-      messageId: null,
-      processingStatus: EmailProviderEventProcessingStatus.IGNORED,
-    };
-  }
+      };
+    }
 
-  const message = await prisma.emailMessage.findFirst({
-    where: {
-      providerName: event.provider,
-      lastProviderMessageId: event.providerMessageId,
-    },
-  });
+    const messageRows = await tx.$queryRaw<EmailMessage[]>`
+      SELECT *
+        FROM "EmailMessage"
+       WHERE "providerName" = ${event.provider}
+         AND "lastProviderMessageId" = ${event.providerMessageId}
+       FOR UPDATE
+    `;
+    const message = messageRows[0];
 
-  if (!message) {
-    const deadline = event.reconciliationDeadlineAt ?? addSeconds(
-      event.createdAt,
-      config.providerEventReconciliationWindowSeconds,
+    if (!message) {
+      const deadline = event.reconciliationDeadlineAt ?? addSeconds(
+        event.createdAt,
+        config.providerEventReconciliationWindowSeconds,
+      );
+      const expired = now >= deadline;
+      const updated = await tx.emailProviderEvent.update({
+        where: { id: event.id },
+        data: expired
+          ? {
+              processingStatus: EmailProviderEventProcessingStatus.IGNORED,
+              processingResultCode: "RECONCILIATION_EXPIRED",
+              processingResultMessage: "No matching email message was found before the reconciliation window expired.",
+              processedAt: now,
+              nextReconcileAt: null,
+              reconciliationDeadlineAt: deadline,
+            }
+          : {
+              processingStatus: EmailProviderEventProcessingStatus.UNMATCHED,
+              processingResultCode: "UNMATCHED_PROVIDER_MESSAGE",
+              processingResultMessage: "No matching email message exists yet for the provider-qualified id.",
+              nextReconcileAt: addSeconds(now, config.providerEventReconciliationDelaySeconds),
+              reconciliationDeadlineAt: deadline,
+              reconciliationAttempts: { increment: 1 },
+            },
+      });
+      return {
+        processed: false,
+        messageId: null,
+        processingStatus: updated.processingStatus,
+      };
+    }
+
+    const suppressionReason = suppressionReasonForDisposition(
+      event.suppressionDisposition,
     );
-    const expired = now >= deadline;
-    const updated = await prisma.emailProviderEvent.update({
-      where: { id: event.id },
-      data: expired
-        ? {
-            processingStatus: EmailProviderEventProcessingStatus.IGNORED,
-            processingResultCode: "RECONCILIATION_EXPIRED",
-            processingResultMessage: "No matching email message was found before the reconciliation window expired.",
-            processedAt: now,
-            nextReconcileAt: null,
-            reconciliationDeadlineAt: deadline,
-          }
-        : {
-            processingStatus: EmailProviderEventProcessingStatus.UNMATCHED,
-            processingResultCode: "UNMATCHED_PROVIDER_MESSAGE",
-            processingResultMessage: "No matching email message exists yet for the provider-qualified id.",
-            nextReconcileAt: addSeconds(now, config.providerEventReconciliationDelaySeconds),
-            reconciliationDeadlineAt: deadline,
-            reconciliationAttempts: { increment: 1 },
-          },
+    const suppressionMetadata = sanitizeMetadata({
+      provider: event.provider,
+      providerEventId: event.providerEventId,
+      messageId: message.id,
     });
-    return {
-      processed: false,
-      messageId: null,
-      processingStatus: updated.processingStatus,
-    };
-  }
 
-  const decision = evaluateProviderEventTransition({
-    currentStatus: message.status,
-    lastProviderEventTime: message.lastProviderEventTime,
-    eventType: event.eventType,
-    eventTime: event.eventTime,
-  });
+    if (event.processingStatus === EmailProviderEventProcessingStatus.PROCESSED) {
+      if (suppressionReason) {
+        await createActiveSuppression({
+          recipientEmailNormalized: message.recipientEmailNormalized,
+          reason: suppressionReason,
+          source: EmailSuppressionSource.PROVIDER_EVENT,
+          categoryScope: null,
+          metadata: suppressionMetadata,
+          db: tx,
+        });
+      }
+      return {
+        processed: true,
+        messageId: message.id,
+        processingStatus: event.processingStatus,
+      };
+    }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.emailProviderEvent.update({
-      where: { id: event.id },
-      data: {
-        emailMessageId: message.id,
-        processingStatus: decision.apply
-          ? EmailProviderEventProcessingStatus.PROCESSED
-          : EmailProviderEventProcessingStatus.IGNORED,
-        processingResultCode: decision.resultCode,
-        processingResultMessage: decision.resultMessage,
-        processedAt: now,
-        nextReconcileAt: null,
-      },
+    const decision = evaluateProviderEventTransition({
+      currentStatus: message.status,
+      lastProviderEventTime: message.lastProviderEventTime,
+      eventType: event.eventType,
+      eventTime: event.eventTime,
     });
 
     if (decision.apply) {
@@ -221,34 +241,42 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
               : message.terminalFailureAt,
         },
       });
+
+      if (suppressionReason) {
+        await createActiveSuppression({
+          recipientEmailNormalized: message.recipientEmailNormalized,
+          reason: suppressionReason,
+          source: EmailSuppressionSource.PROVIDER_EVENT,
+          categoryScope: null,
+          metadata: suppressionMetadata,
+          db: tx,
+        });
+      }
     }
-  });
 
-  const suppressionReason = suppressionReasonForDisposition(
-    event.suppressionDisposition,
-  );
-  if (decision.apply && suppressionReason) {
-    await createActiveSuppression({
-      recipientEmailNormalized: message.recipientEmailNormalized,
-      reason: suppressionReason,
-      source: EmailSuppressionSource.PROVIDER_EVENT,
-      categoryScope: null,
-      metadata: sanitizeMetadata({
-        provider: event.provider,
-        providerEventId: event.providerEventId,
-        messageId: message.id,
-      }),
+    await tx.emailProviderEvent.update({
+      where: { id: event.id },
+      data: {
+        emailMessageId: message.id,
+        processingStatus: decision.apply
+          ? EmailProviderEventProcessingStatus.PROCESSED
+          : EmailProviderEventProcessingStatus.IGNORED,
+        processingResultCode: decision.resultCode,
+        processingResultMessage: decision.resultMessage,
+        processedAt: now,
+        nextReconcileAt: null,
+      },
     });
-  }
 
-  return {
-    processed: decision.apply,
-    messageId: message.id,
-    processingStatus: decision.apply
-      ? EmailProviderEventProcessingStatus.PROCESSED
-      : EmailProviderEventProcessingStatus.IGNORED,
-    resultCode: decision.resultCode,
-  };
+    return {
+      processed: decision.apply,
+      messageId: message.id,
+      processingStatus: decision.apply
+        ? EmailProviderEventProcessingStatus.PROCESSED
+        : EmailProviderEventProcessingStatus.IGNORED,
+      resultCode: decision.resultCode,
+    };
+  });
 }
 
 export async function runEmailProviderEventReconciliationSweep(params?: {
