@@ -10,57 +10,52 @@ const parsed = parseArgs({
   strict: true,
 });
 
-const controller = new AbortController();
-let shuttingDown = false;
+async function main(): Promise<number> {
+  const [{ getEmailConfig }, { runEmailProviderEventConsumer }, cli] =
+    await Promise.all([
+      import("@/lib/email/config"),
+      import("@/lib/email/provider-event-consumer"),
+      import("@/lib/email/provider-event-consumer-cli"),
+    ]);
 
-function requestShutdown(signalName: NodeJS.Signals) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(
-    JSON.stringify({
-      area: "email_provider_events",
-      event: "shutdown_requested",
-      signal: signalName,
-    }),
+  return cli.runProviderEventConsumerCli(
+    {
+      loadConfig: () => getEmailConfig().providerEventIngestion,
+      run: ({ signal, once }) => runEmailProviderEventConsumer({ signal, once }),
+      log: (level, event, data) => {
+        const line = JSON.stringify({
+          area: "email_provider_events",
+          event,
+          level,
+          ...data,
+        });
+        if (level === "error") console.error(line);
+        else if (level === "warn") console.warn(line);
+        else console.log(line);
+      },
+      onShutdownSignal: (handler) => {
+        process.once("SIGTERM", () => handler("SIGTERM"));
+        process.once("SIGINT", () => handler("SIGINT"));
+      },
+    },
+    { once: Boolean(parsed.values.once) },
   );
-  controller.abort();
 }
 
-process.once("SIGTERM", requestShutdown);
-process.once("SIGINT", requestShutdown);
-
-void import("@/lib/email/provider-event-consumer")
-  .then(({ runEmailProviderEventConsumer }) =>
-    runEmailProviderEventConsumer({
-      signal: controller.signal,
-      once: Boolean(parsed.values.once),
-    }),
-  )
-  .then((result) => {
-    console.log(
-      JSON.stringify({
-        area: "email_provider_events",
-        event: "consumer_completed",
-        ...result,
-      }),
-    );
+main()
+  .then((exitCode) => {
+    process.exitCode = exitCode;
   })
-  .catch((error) => {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String(error.code)
-        : "PROVIDER_EVENT_CONSUMER_FAILED";
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Provider-event consumer failed.";
+  .catch(async () => {
+    const { EXIT_RETRYABLE } = await import(
+      "@/lib/email/provider-event-consumer-cli"
+    );
     console.error(
       JSON.stringify({
         area: "email_provider_events",
-        event: "consumer_failed",
-        code,
-        message,
+        event: "consumer_bootstrap_failed",
+        level: "error",
       }),
     );
-    process.exitCode = 1;
+    process.exitCode = EXIT_RETRYABLE;
   });

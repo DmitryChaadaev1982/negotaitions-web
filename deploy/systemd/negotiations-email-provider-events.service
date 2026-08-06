@@ -3,6 +3,10 @@ Description=NegotAItions email provider-event Data Streams consumer
 # Disabled by default. Enable only during a controlled provider-event canary.
 After=network-online.target
 Wants=network-online.target
+# Bounded restart budget: a repeatedly failing consumer stops instead of
+# hot-looping against Data Streams or PostgreSQL.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,7 +18,16 @@ Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm run email:events:consume
 Restart=on-failure
 RestartSec=10s
-TimeoutStopSec=20s
+# Terminal application exit codes (see lib/email/provider-event-consumer-cli.ts):
+#   78 invalid configuration
+#   77 authentication / authorization failure
+# Neither can be fixed by restarting, so systemd must not retry them.
+RestartPreventExitStatus=78 77
+# Exit code 0 also covers "ingestion disabled by design" and controlled stops.
+# TimeoutStopSec must exceed EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS (15s
+# default) plus an operational margin so the application-level shutdown budget
+# is the one that fires first.
+TimeoutStopSec=25s
 KillSignal=SIGTERM
 NoNewPrivileges=true
 ProtectSystem=strict
