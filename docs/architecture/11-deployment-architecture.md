@@ -21,6 +21,9 @@
   typed registry. Admin diagnostics project from that registry, and an
   AST-based validation gate rejects unregistered or bypassing environment
   access. Registered secrets serialize only presence state with `value: null`.
+- If normal admin-health assembly fails, its outer route catch returns a
+  literal environment-independent unavailable contract; it never resolves or
+  serializes endpoint, webhook override, parser, or exception details.
 
 ## Service Topology (Inferred)
 

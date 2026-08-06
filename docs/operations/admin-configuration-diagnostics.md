@@ -108,3 +108,12 @@ clear disabled/not-applicable status instead.
 Secrets carry no value under any status. There is no masking, prefix, suffix,
 length, or fingerprint: `value` is `null` for every secret descriptor, and the
 reversible `maskSecretValue` helper has been removed.
+
+## Emergency Route Contract
+
+The outer admin-health catch returns one deeply frozen, literal response with
+`ADMIN_HEALTH_UNAVAILABLE` and `RUNTIME_CONFIGURATION_UNAVAILABLE`. It contains
+no webhook state, endpoint, override, parser result, environment value, error
+message, stack, or secret-presence detail. The fallback is deterministic and
+bounded; authorization still runs before diagnostics, and server logging is
+limited to a stable event code, route name, and `error`/`non_error` category.

@@ -139,8 +139,13 @@ Secrets carry state only: `value` is always `null`, with no prefix, suffix,
 length, or fingerprint. The reversible `maskSecretValue` helper and the tests
 that encouraged it are removed (F-20).
 
-The admin health route returns a stable generic message and code instead of an
-internal `error.message`, and logs only sanitized operational context (F-19).
+The outer admin-health catch returns one deeply frozen literal contract. It
+does not invoke configuration, proxy, webhook, provider-event, or environment
+resolvers and contains only `ADMIN_HEALTH_UNAVAILABLE`,
+`RUNTIME_CONFIGURATION_UNAVAILABLE`, empty bounded collections, and zeroed
+usage counters. It omits webhook/endpoint/override state entirely. Server logs
+contain only a stable event code, route name, and bounded `error`/`non_error`
+category; raw exception names/messages and stacks are excluded.
 
 The documented coverage matrix in
 `docs/operations/admin-configuration-diagnostics.md` is asserted equal to the

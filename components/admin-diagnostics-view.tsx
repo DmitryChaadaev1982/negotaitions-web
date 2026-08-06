@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { AdminDiagnosticsEmergencyState } from "@/components/admin-diagnostics-emergency-state";
 import { AdminEmailFoundationPanel } from "@/components/admin-email-foundation-panel";
 import { AdminVoximplantWebhookOverridePanel } from "@/components/admin-voximplant-webhook-override-panel";
 import { Card, CardContent, CardHeader } from "@/components/card";
@@ -128,6 +129,7 @@ type HealthData = {
     storageDownloadedBytes: number;
     recordingsCreated: number;
   };
+  errorCode?: string;
   error?: string;
 };
 
@@ -353,9 +355,10 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
       ) : null}
 
       {loadError ? (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          {loadError}
-        </div>
+        <AdminDiagnosticsEmergencyState
+          errorCode={data?.errorCode ?? "ADMIN_HEALTH_UNAVAILABLE"}
+          message={loadError}
+        />
       ) : null}
 
       {data?.hasRecentServiceErrors ? (
