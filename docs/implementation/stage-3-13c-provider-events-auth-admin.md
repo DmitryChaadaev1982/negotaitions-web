@@ -64,14 +64,14 @@ check against. No cookies, tokens, authorization headers, or bodies are recorded
 ### Allowlist contents
 
 `lib/config/server-action-origins.ts` owns the allowlist and reads only
-`NODE_ENV` and the explicit build switch `ALLOW_LOCAL_SERVER_ACTION_ORIGINS`.
-No request-scoped input reaches it.
+`NODE_ENV`. No request-scoped input and no override environment variable reaches
+production trust decisions.
 
 - Production build: `negotaitions.ru` only.
 - Development and managed-test builds add exactly `local.negotaitions.ru`,
   `localhost:3000`, `localhost:3100`, `127.0.0.1:3000`, `127.0.0.1:3100`.
-- `ALLOW_LOCAL_SERVER_ACTION_ORIGINS` defaults off and only the trimmed literal
-  `true` enables the local entries in a production build.
+- There is no production local-origin override; removed/legacy local-origin
+  variables are ignored.
 - No wildcards. `allowedDevOrigins` remains a dev-server asset setting gated
   behind the development branch and is not Server Action trust.
 
@@ -122,7 +122,9 @@ email-owned descriptors fall back to raw presence checks and report
 `missing_required` or `invalid` instead of collapsing the whole table.
 
 Children of a disabled feature report `not_applicable`, never
-`missing_required`.
+`missing_required`, except `EMAIL_SENSITIVE_PAYLOAD_KEY`: password-reset enqueue
+encrypts sensitive payloads before delivery is enabled, so that key is required
+whenever the application accepts ACTIVE-user password-reset intake.
 
 Secrets carry state only: `value` is always `null`, with no prefix, suffix,
 length, or fingerprint. The reversible `maskSecretValue` helper and the tests
@@ -146,6 +148,9 @@ emitted descriptors, including which keys are secret.
   (`EmailProviderEventSuppressionDisposition`: `NONE`, `HARD_BOUNCE`,
   `COMPLAINT`), the nullable `EmailProviderStreamCheckpoint.initialReadAt`, and
   the indexes the corrected scheduler and checkpoint flow rely on.
+- `20260806183000_add_provider_event_consumer_fencing` (new, additive) adds
+  `EmailProviderConsumerLease`, `EmailProviderStreamCheckpoint.revision`, and
+  nullable checkpoint writer generation/holder fields for durable fencing.
 
 Both added columns are nullable with no default, so a runtime version that never
 writes them keeps working. No column is dropped, renamed, or repurposed.
@@ -278,9 +283,10 @@ Exit codes (`lib/email/provider-event-consumer-cli.ts`):
 
 `deploy/systemd/negotiations-email-provider-events.service` lists `78 77` in
 `RestartPreventExitStatus`, bounds restarts with `StartLimitIntervalSec=300` and
-`StartLimitBurst=5`, keeps `RestartSec=10s`, and sets `TimeoutStopSec=25s` so the
+`StartLimitBurst=5`, keeps `RestartSec=10s`, and sets `TimeoutStopSec=30s` so the
 application shutdown budget fires first. Existing hardening directives are
-retained.
+retained. Provider-event units do not grant write access to
+`/var/www/negotaitions/app`; all runtime state remains in PostgreSQL.
 
 ### Operational visibility
 
@@ -328,12 +334,14 @@ Provider-event settings:
 - `EMAIL_PROVIDER_EVENT_SHARD_SLICE_MAX_POLLS=4`
 - `EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES=5`
 
-Build-time auth switch:
-
-- `ALLOW_LOCAL_SERVER_ACTION_ORIGINS` (default off; only `true` enables local
-  Server Action origins in a production build)
-
 Data Streams credentials are separate from Postbox sending credentials.
+
+### Final Finding Disposition
+
+| Finding | Disposition |
+| --- | --- |
+| F-13 production root cause | Earlier production root cause was not conclusively proven; production-equivalent local proxy behavior was reproduced and production evidence remains an operational verification item. |
+| F-14 production origin trust | Fixed: production `allowedOrigins` contains only `negotaitions.ru`; development-only origins are documented separately; no production local-origin override remains. |
 
 ## Systemd
 

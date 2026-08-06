@@ -111,10 +111,14 @@ and the dedicated `YANDEX_DATA_STREAMS_*` settings are valid. It never calls the
 Postbox sending API and never exposes a public webhook.
 
 The consumer acquires a dedicated PostgreSQL session advisory lock before
-processing. Loss of, or an error on, that connection stops the consumer
-immediately, and a bounded liveness probe on the same connection runs at each
-shard-refresh cycle, so processing can never continue after PostgreSQL has
-released the lock.
+processing. While holding it, the runtime increments the durable
+`EmailProviderConsumerLease` generation and stores a bounded random holder id.
+Every checkpoint, poison-record acknowledgement, and `initialReadAt` write
+verifies that generation/holder and compares the previously loaded checkpoint
+revision before incrementing it. Loss of, or an error on, the lock connection
+stops scheduling immediately; if an old in-flight processor finishes after a
+replacement owner advances the shard, the checkpoint fence rejects the stale
+write and the record is not reported as acknowledged.
 
 Shards are scheduled fairly. A manager loop discovers and refreshes shards, and
 each round gives every known open shard one bounded slice — at most
@@ -133,11 +137,19 @@ shard through the retryable exit path.
 
 Checkpoints advance in exactly two cases: the provider event was processed
 successfully, or the record was deterministically classified as a poison record
-and the failure-ledger row plus the checkpoint were committed in one
-transaction. A processor, database, or unexpected error never advances the
-checkpoint and never writes a poison record, so the record stays replayable.
-Replay after a successful process but a failed checkpoint write is safe because
-provider-event processing is idempotent.
+and the failure-ledger row plus the fenced checkpoint were committed in one
+transaction. A processor, database, ownership-fence, CAS, or unexpected error
+never advances the checkpoint and never writes a poison acknowledgement, so the
+record stays replayable. Replay after a successful process but a failed
+checkpoint write is safe because provider-event processing is idempotent and
+deduplicated.
+
+Provider-event processing and reconciliation use the same locked transaction:
+the provider event row is claimed, the current `EmailMessage` row is locked, the
+monotonic transition is evaluated against that locked state, required
+hard-bounce/complaint suppression is upserted, and only then is the provider
+event marked processed. Duplicate processing repairs a missing required
+suppression before returning success.
 
 Iterator position: `AFTER_SEQUENCE_NUMBER` once a sequence checkpoint exists;
 `TRIM_HORIZON` until then when configured that way; and for `LATEST`, a durable
@@ -154,11 +166,13 @@ provider/stream/shard/sequence.
 
 Shutdown and exit codes: `SIGTERM`/`SIGINT` aborts the consumer, which is then
 awaited for at most `EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS` before a
-sanitized `shutdown_timeout` event and a retryable exit. Exit `0` is a controlled
-stop or disabled ingestion, `78` invalid configuration, `77` authentication or
-authorization failure, and `75` a transient runtime failure. The systemd unit
-lists `78` and `77` in `RestartPreventExitStatus` and bounds restarts with
-`StartLimitIntervalSec`/`StartLimitBurst`, so a terminal fault cannot hot-loop.
+sanitized `shutdown_timeout` event, forced adapter/lock/Prisma cleanup, and a
+retryable exit. Exit `0` is a controlled stop or disabled ingestion, `78`
+invalid configuration, `77` authentication or authorization failure, and `75` a
+transient runtime failure. The systemd unit lists `78` and `77` in
+`RestartPreventExitStatus`, uses `TimeoutStopSec=30s`, removes application-tree
+write access, and bounds restarts with `StartLimitIntervalSec`/`StartLimitBurst`,
+so a terminal fault cannot hot-loop.
 
 The reconciliation sweep supplements ingestion for unmatched already-recorded
 events. It does not consume Data Streams and does not replace the live consumer.

@@ -61,7 +61,7 @@ classification disagrees with this table fails that suite.
 | `EMAIL_REPLY_TO_SUPPORT` | `lib/email/config.ts` | `support@negotaitions.ru` | no | delivery enabled | effective validated reply-to |
 | `EMAIL_REPLY_TO_SECURITY` | `lib/email/config.ts` | `security@negotaitions.ru` | no | delivery enabled | effective validated reply-to |
 | `EMAIL_REPLY_TO_BUSINESS` | `lib/email/config.ts` | `business@negotaitions.ru` | no | delivery enabled | effective validated reply-to |
-| `EMAIL_SENSITIVE_PAYLOAD_KEY` | `lib/email/sensitive-payload.ts` | none | yes | delivery enabled | configured/missing only, value always null |
+| `EMAIL_SENSITIVE_PAYLOAD_KEY` | `lib/email/sensitive-payload.ts` | none | yes | password-reset intake active | configured/missing only, value always null |
 | `YANDEX_POSTBOX_REGION` | `lib/email/config.ts` | `ru-central1` | no | Postbox readiness | effective default when absent |
 | `YANDEX_POSTBOX_ENDPOINT` | `lib/email/config.ts` | `https://postbox.cloud.yandex.net` | no | Postbox readiness | effective default when absent |
 | `YANDEX_POSTBOX_CONFIGURATION_SET` | `lib/email/config.ts` | none | no | only when the chosen Postbox strategy uses it | optional/not applicable, never missing solely due to absence |

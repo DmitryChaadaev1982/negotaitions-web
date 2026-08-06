@@ -17,7 +17,11 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
   parse-time suppression decision.
 - `EmailProviderStreamCheckpoint`: per provider/stream/shard sequence checkpoint
   for live provider-event ingestion, plus a nullable `initialReadAt` durable
-  initial-read boundary used before the first sequence checkpoint exists.
+  initial-read boundary used before the first sequence checkpoint exists,
+  revision CAS metadata, and last-writer generation/holder fields.
+- `EmailProviderConsumerLease`: one durable owner row per provider/stream.
+  Generation increments while the advisory lock is held, and checkpoint writes
+  must match the current generation and holder.
 - `EmailProviderIngestionFailure`: sanitized poison-record ledger keyed by
   provider/stream/shard/sequence. It stores payload SHA-256 and bounded error
   disposition only, never raw payload or recipient/body data.
@@ -96,7 +100,7 @@ Unsubscribe is only meaningful for product/marketing categories in Stage 3.13B. 
 
 ## Provider Events
 
-Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locates a message by provider plus provider message id, applies a monotonic transition policy, and creates suppression records for hard bounce and complaint.
+Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`, `COMPLAINED`, `REJECTED`, `RENDERING_FAILED`, and `UNKNOWN`. The processor deduplicates by provider plus provider event id, locks the provider event and matched `EmailMessage` row in one transaction, evaluates the monotonic transition policy against the locked current message state, and commits message transition, provider-event processing state, and any hard-bounce/complaint suppression atomically.
 
 Unmatched events are stored as `UNMATCHED` and reconciled by `npm run email:events:reconcile` until a bounded deadline. Ignored events retain a stable processing result code/message for audit.
 
@@ -143,6 +147,10 @@ processor, database, or unexpected failure never advances the checkpoint and
 never acknowledges the record, so it stays replayable. Crashing after event
 processing but before the checkpoint update is acceptable because provider event
 processing is idempotent; checkpoint advancement before processing is forbidden.
+Every checkpoint or `initialReadAt` mutation verifies the current durable lease
+generation/holder and compares the previously loaded checkpoint revision before
+incrementing it, so a stale owner or stale same-generation slice cannot regress
+an opaque provider sequence string.
 
 Iterator acquisition uses `AFTER_SEQUENCE_NUMBER` once a sequence checkpoint
 exists. Before that it uses `TRIM_HORIZON` when configured, and for `LATEST` it
@@ -152,13 +160,16 @@ initial window. `initialReadAt` is a read boundary, not a processed-record
 checkpoint.
 
 A PostgreSQL session advisory lock on a dedicated connection enforces
-single-consumer operation across processes. Lock contention fails closed, an
-error on the lock connection stops the consumer immediately, and a bounded
-liveness probe on that same connection runs each shard-refresh cycle so
-checkpointing cannot continue after the lock is gone. `GetRecords` is paced per
-shard within the documented Data Streams rate limit; transient stream errors use
-bounded exponential backoff with jitter and a bounded consecutive-failure limit;
-`SIGTERM`/`SIGINT` produces a controlled shutdown within an enforced budget.
+single-consumer operation across healthy processes. While holding it, the
+consumer increments the durable `EmailProviderConsumerLease` generation and
+stores a random holder id. Lock contention fails closed, an error on the lock
+connection stops the consumer immediately, and a bounded liveness probe on that
+same connection runs each shard-refresh cycle. If an old in-flight processor
+finishes after ownership changes, the checkpoint fence rejects the write.
+`GetRecords` is paced per shard within the documented Data Streams rate limit;
+transient stream errors use bounded exponential backoff with jitter and a
+bounded consecutive-failure limit; `SIGTERM`/`SIGINT` produces a controlled
+shutdown within an enforced budget.
 
 ## Retention
 
