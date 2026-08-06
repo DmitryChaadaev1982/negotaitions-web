@@ -1,6 +1,7 @@
 import {
   EmailMessageStatus,
   EmailProviderEventProcessingStatus,
+  EmailProviderEventSuppressionDisposition,
   EmailProviderEventType,
   EmailSuppressionReason,
   EmailSuppressionSource,
@@ -12,17 +13,25 @@ import { createActiveSuppression } from "@/lib/email/suppression";
 import type { NormalizedProviderEventInput } from "@/lib/email/types";
 import { prisma } from "@/lib/prisma";
 
-function suppressionReasonForEvent(
-  input: NormalizedProviderEventInput,
+/**
+ * Maps the durable, parse-time suppression decision to a suppression reason.
+ *
+ * A missing disposition means the row predates Stage 3.13C remediation. It is
+ * deliberately treated as "no permanent suppression": a BOUNCED event must
+ * never be reconstructed as a hard bounce from its event type alone, because
+ * transient bounces share that event type.
+ */
+export function suppressionReasonForDisposition(
+  disposition: EmailProviderEventSuppressionDisposition | null | undefined,
 ): EmailSuppressionReason | null {
-  if ("suppressionReason" in input) return input.suppressionReason ?? null;
-  if (input.eventType === EmailProviderEventType.BOUNCED) {
-    return EmailSuppressionReason.HARD_BOUNCE;
+  switch (disposition) {
+    case EmailProviderEventSuppressionDisposition.HARD_BOUNCE:
+      return EmailSuppressionReason.HARD_BOUNCE;
+    case EmailProviderEventSuppressionDisposition.COMPLAINT:
+      return EmailSuppressionReason.COMPLAINT;
+    default:
+      return null;
   }
-  if (input.eventType === EmailProviderEventType.COMPLAINED) {
-    return EmailSuppressionReason.COMPLAINT;
-  }
-  return null;
 }
 
 function sanitizeMetadata(
@@ -69,6 +78,9 @@ export async function processEmailProviderEvent(input: NormalizedProviderEventIn
           now,
           config.providerEventReconciliationWindowSeconds,
         ),
+        suppressionDisposition:
+          input.suppressionDisposition ??
+          EmailProviderEventSuppressionDisposition.NONE,
         metadata: sanitizeMetadata(input.metadata),
       },
     });
@@ -212,13 +224,9 @@ export async function reconcileEmailProviderEventById(eventId: string, now = new
     }
   });
 
-  const suppressionReason = suppressionReasonForEvent({
-    provider: event.provider,
-    providerEventId: event.providerEventId,
-    providerMessageId: event.providerMessageId,
-    eventType: event.eventType,
-    eventTime: event.eventTime,
-  });
+  const suppressionReason = suppressionReasonForDisposition(
+    event.suppressionDisposition,
+  );
   if (decision.apply && suppressionReason) {
     await createActiveSuppression({
       recipientEmailNormalized: message.recipientEmailNormalized,

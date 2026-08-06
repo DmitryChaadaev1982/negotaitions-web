@@ -1,6 +1,6 @@
 import {
+  EmailProviderEventSuppressionDisposition,
   EmailProviderEventType,
-  EmailSuppressionReason,
 } from "@/app/generated/prisma/client";
 import type { NormalizedProviderEventInput } from "@/lib/email/types";
 
@@ -10,13 +10,65 @@ export class YandexPostboxProviderEventParseError extends Error {
     message: string,
   ) {
     super(message);
+    this.name = "YandexPostboxProviderEventParseError";
   }
 }
 
 type JsonObject = Record<string, unknown>;
 
 const MAX_STRING_LENGTH = 1024;
-const MAX_ARRAY_LENGTH = 50;
+
+/**
+ * Provider-controlled strings are never persisted verbatim. Each provider field
+ * is reduced to one of these allowlisted tokens so recipient addresses, SMTP
+ * response text, and other attacker-influenced content cannot reach metadata.
+ */
+const BOUNCE_TYPE_TOKENS = ["permanent", "transient", "undetermined"] as const;
+
+const BOUNCE_SUBTYPE_TOKENS = [
+  "undetermined",
+  "general",
+  "noemail",
+  "suppressed",
+  "onaccountsuppressionlist",
+  "mailboxfull",
+  "messagetoolarge",
+  "contentrejected",
+  "messagecontentrejected",
+  "attachmentrejected",
+] as const;
+
+const COMPLAINT_FEEDBACK_TOKENS = [
+  "abuse",
+  "auth-failure",
+  "fraud",
+  "not-spam",
+  "other",
+  "virus",
+] as const;
+
+const SUPPORTED_EVENT_TYPES = [
+  "Send",
+  "Delivery",
+  "DeliveryDelay",
+  "Bounce",
+  "Complaint",
+  "Rendering Failure",
+  "RenderingFailure",
+] as const;
+
+const OTHER_TOKEN = "other";
+const UNSUPPORTED_EVENT_TOKEN = "unsupported";
+
+function allowlistToken(
+  value: string | undefined,
+  allowed: readonly string[],
+  fallback: string,
+): string {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  return allowed.includes(normalized) ? normalized : OTHER_TOKEN;
+}
 
 function asObject(value: unknown, field: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -45,19 +97,15 @@ function boundedString(value: unknown, field: string): string {
   return trimmed;
 }
 
-function boundedOptionalString(value: unknown): string | undefined {
+function optionalRawString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  return trimmed.slice(0, MAX_STRING_LENGTH);
+  return trimmed ? trimmed.slice(0, MAX_STRING_LENGTH) : undefined;
 }
 
-function boundedStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value
-    .slice(0, MAX_ARRAY_LENGTH)
-    .map((item) => boundedOptionalString(item))
-    .filter((item): item is string => Boolean(item));
+function boundedCount(value: unknown, max = 50): number {
+  if (!Array.isArray(value)) return 0;
+  return Math.min(value.length, max);
 }
 
 function parseEventTime(value: unknown): Date {
@@ -72,7 +120,21 @@ function parseEventTime(value: unknown): Date {
   return parsed;
 }
 
-function parseJsonPayload(payload: string | Uint8Array, maxPayloadBytes: number): JsonObject {
+function decodeUtf8Strict(payload: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(payload);
+  } catch {
+    throw new YandexPostboxProviderEventParseError(
+      "INVALID_ENCODING",
+      "Provider event payload is not valid UTF-8.",
+    );
+  }
+}
+
+function parseJsonPayload(
+  payload: string | Uint8Array,
+  maxPayloadBytes: number,
+): JsonObject {
   const bytes =
     typeof payload === "string" ? Buffer.byteLength(payload, "utf8") : payload.byteLength;
   if (bytes > maxPayloadBytes) {
@@ -82,8 +144,7 @@ function parseJsonPayload(payload: string | Uint8Array, maxPayloadBytes: number)
     );
   }
 
-  const text =
-    typeof payload === "string" ? payload : Buffer.from(payload).toString("utf8");
+  const text = typeof payload === "string" ? payload : decodeUtf8Strict(payload);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -100,33 +161,53 @@ function requireObject(root: JsonObject, key: string): JsonObject {
   return asObject(root[key], key);
 }
 
-function classifyBounce(bounce: JsonObject): {
-  suppressionReason: EmailSuppressionReason | null;
-  bounceClass: "permanent" | "transient" | "unknown";
-} {
-  const rawType = boundedOptionalString(bounce.bounceType)?.toLowerCase();
-  const rawSubType = boundedOptionalString(bounce.bounceSubType)?.toLowerCase();
-  if (
-    rawType === "permanent" ||
-    rawType === "hard" ||
-    rawSubType === "general" ||
-    rawSubType === "noemail"
-  ) {
+export type BounceClassification = {
+  bounceClass: "permanent" | "transient" | "undetermined";
+  disposition: EmailProviderEventSuppressionDisposition;
+  bounceTypeToken: string;
+  bounceSubTypeToken: string;
+};
+
+/**
+ * bounceType is authoritative. bounceSubType is recorded for diagnostics only
+ * and can never upgrade a bounce to permanent: `General`, `MailboxFull`,
+ * `MessageTooLarge`, and `ContentRejected` all occur on transient bounces.
+ */
+export function classifyBounce(bounce: JsonObject): BounceClassification {
+  const rawType = optionalRawString(bounce.bounceType)?.toLowerCase();
+  const bounceTypeToken = allowlistToken(rawType, BOUNCE_TYPE_TOKENS, "undetermined");
+  const bounceSubTypeToken = allowlistToken(
+    optionalRawString(bounce.bounceSubType)?.toLowerCase(),
+    BOUNCE_SUBTYPE_TOKENS,
+    "undetermined",
+  );
+
+  if (rawType === "permanent" || rawType === "hard") {
     return {
-      suppressionReason: EmailSuppressionReason.HARD_BOUNCE,
       bounceClass: "permanent",
+      disposition: EmailProviderEventSuppressionDisposition.HARD_BOUNCE,
+      bounceTypeToken: "permanent",
+      bounceSubTypeToken,
     };
   }
-  if (
-    rawType === "transient" ||
-    rawType === "soft" ||
-    rawSubType === "mailboxfull" ||
-    rawSubType === "messagecontentrejected" ||
-    rawSubType === "attachmentrejected"
-  ) {
-    return { suppressionReason: null, bounceClass: "transient" };
+
+  if (rawType === "transient" || rawType === "soft") {
+    return {
+      bounceClass: "transient",
+      disposition: EmailProviderEventSuppressionDisposition.NONE,
+      bounceTypeToken: "transient",
+      bounceSubTypeToken,
+    };
   }
-  return { suppressionReason: null, bounceClass: "unknown" };
+
+  // Undetermined or missing bounceType: no permanent suppression without
+  // explicit durable provider evidence.
+  return {
+    bounceClass: "undetermined",
+    disposition: EmailProviderEventSuppressionDisposition.NONE,
+    bounceTypeToken,
+    bounceSubTypeToken,
+  };
 }
 
 export function parseYandexPostboxProviderEvent(
@@ -141,10 +222,16 @@ export function parseYandexPostboxProviderEvent(
   const eventTime = parseEventTime(mail.timestamp);
 
   const metadata: Record<string, unknown> = {
-    yandexEventType: eventTypeRaw.slice(0, MAX_STRING_LENGTH),
+    yandexEventType: (
+      SUPPORTED_EVENT_TYPES as readonly string[]
+    ).includes(eventTypeRaw)
+      ? eventTypeRaw
+      : UNSUPPORTED_EVENT_TOKEN,
   };
+
   let eventType: EmailProviderEventType;
-  let suppressionReason: EmailSuppressionReason | null | undefined;
+  let suppressionDisposition: EmailProviderEventSuppressionDisposition =
+    EmailProviderEventSuppressionDisposition.NONE;
 
   switch (eventTypeRaw) {
     case "Send":
@@ -161,21 +248,26 @@ export function parseYandexPostboxProviderEvent(
       break;
     case "Bounce": {
       const bounce = requireObject(root, "bounce");
-      const bounceClass = classifyBounce(bounce);
+      const classification = classifyBounce(bounce);
       eventType = EmailProviderEventType.BOUNCED;
-      suppressionReason = bounceClass.suppressionReason;
-      metadata.bounceClass = bounceClass.bounceClass;
-      metadata.bounceType = boundedOptionalString(bounce.bounceType);
-      metadata.bounceSubType = boundedOptionalString(bounce.bounceSubType);
-      metadata.diagnosticCodes = boundedStringArray(bounce.diagnosticCodes);
+      suppressionDisposition = classification.disposition;
+      metadata.bounceClass = classification.bounceClass;
+      metadata.bounceTypeToken = classification.bounceTypeToken;
+      metadata.bounceSubTypeToken = classification.bounceSubTypeToken;
+      // Only the count survives. Diagnostic codes routinely embed recipient
+      // addresses and raw SMTP responses and are never persisted.
+      metadata.diagnosticCodeCount = boundedCount(bounce.diagnosticCodes);
       break;
     }
     case "Complaint": {
       const complaint = requireObject(root, "complaint");
       eventType = EmailProviderEventType.COMPLAINED;
-      suppressionReason = EmailSuppressionReason.COMPLAINT;
-      metadata.complaintFeedbackType = boundedOptionalString(
-        complaint.complaintFeedbackType,
+      suppressionDisposition =
+        EmailProviderEventSuppressionDisposition.COMPLAINT;
+      metadata.complaintFeedbackTypeToken = allowlistToken(
+        optionalRawString(complaint.complaintFeedbackType),
+        COMPLAINT_FEEDBACK_TOKENS,
+        "undetermined",
       );
       break;
     }
@@ -197,6 +289,6 @@ export function parseYandexPostboxProviderEvent(
     eventType,
     eventTime,
     metadata,
-    ...(suppressionReason !== undefined ? { suppressionReason } : {}),
+    suppressionDisposition,
   };
 }
