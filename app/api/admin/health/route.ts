@@ -10,6 +10,8 @@ import { apiRequireAdminUser } from "@/lib/auth/api-guards";
 import { getVoximplantRecordingWebhookUrlState, buildVoximplantRecordingWebhookUrlStateWithoutDb } from "@/lib/voximplant/recording-webhook-url";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const emptyUsage = {
   livekitRecordingMinutes: 0,
@@ -61,7 +63,7 @@ export async function GET() {
         resolvedAt: event.resolvedAt?.toISOString() ?? null,
       })),
       usage,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("[GET /api/admin/health]", error);
 
@@ -77,7 +79,7 @@ export async function GET() {
             ? error.message
             : "Unable to load admin diagnostics.",
       },
-      { status: 200 },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

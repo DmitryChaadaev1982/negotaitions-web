@@ -84,9 +84,22 @@ type HealthData = {
       group: string;
       items: Array<{
         key: string;
+        area: string;
+        status:
+          | "configured"
+          | "using_effective_default"
+          | "disabled_by_design"
+          | "not_applicable"
+          | "missing_required"
+          | "invalid";
+        valueSource: "environment" | "default" | "derived" | "not_applicable";
         configured: boolean;
         isSecret: boolean;
         value: string | null;
+        applicable: boolean;
+        required: boolean;
+        consumer: string;
+        explanation: string;
       }>;
     }>;
   };
@@ -125,33 +138,46 @@ function formatBytes(bytes: number) {
 }
 
 function EnvValueRow({
-  label,
-  configured,
-  value,
+  item,
 }: {
-  label: string;
-  configured: boolean;
-  value: string | null;
+  item: NonNullable<HealthData["config"]["envGroups"]>[number]["items"][number];
 }) {
-  const { t } = useI18n();
+  const statusLabel: Record<typeof item.status, string> = {
+    configured: "configured",
+    using_effective_default: "default",
+    disabled_by_design: "disabled by design",
+    not_applicable: "not applicable",
+    missing_required: "missing required",
+    invalid: "invalid",
+  };
+  const good =
+    item.status === "configured" ||
+    item.status === "using_effective_default" ||
+    item.status === "disabled_by_design" ||
+    item.status === "not_applicable";
 
   return (
     <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm text-slate-300">{label}</span>
+        <span className="text-sm text-slate-300">{item.key}</span>
         <span
           className={
-            configured
+            good
               ? "text-xs font-medium text-emerald-400"
               : "text-xs font-medium text-amber-400"
           }
         >
-          {configured ? t("admin.configured") : t("admin.missing")}
+          {statusLabel[item.status]}
         </span>
       </div>
       <p className="mt-2 break-all font-mono text-xs text-slate-400">
-        {value ?? "—"}
+        {item.isSecret ? "secret value not serialized" : item.value ?? "-"}
       </p>
+      <p className="mt-1 text-xs text-slate-500">
+        source: {item.valueSource}; required: {item.required ? "yes" : "no"};
+        applicable: {item.applicable ? "yes" : "no"}
+      </p>
+      <p className="mt-1 text-xs text-slate-500">{item.explanation}</p>
     </div>
   );
 }
@@ -360,9 +386,7 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
                       {group.items.map((item) => (
                         <EnvValueRow
                           key={`${groupKey}-${item.key}`}
-                          label={item.key}
-                          configured={item.configured}
-                          value={item.value}
+                          item={item}
                         />
                       ))}
                     </div>
@@ -382,9 +406,7 @@ export function AdminDiagnosticsView({ mode = "all" }: AdminDiagnosticsViewProps
                       {group.items.map((item) => (
                         <EnvValueRow
                           key={`${groupKey}-${item.key}`}
-                          label={item.key}
-                          configured={item.configured}
-                          value={item.value}
+                          item={item}
                         />
                       ))}
                     </div>
