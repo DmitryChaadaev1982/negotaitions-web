@@ -13,6 +13,11 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
 - `EmailDeliveryAttempt`: sanitized provider attempt ledger.
 - `EmailSuppression`: active/lifted suppression policy records.
 - `EmailProviderEvent`: provider-neutral event ledger with provider event deduplication.
+- `EmailProviderStreamCheckpoint`: per provider/stream/shard sequence checkpoint
+  for live provider-event ingestion.
+- `EmailProviderIngestionFailure`: sanitized poison-record ledger keyed by
+  provider/stream/shard/sequence. It stores payload SHA-256 and bounded error
+  disposition only, never raw payload or recipient/body data.
 - `PasswordResetToken`: hash-only, expiring, revocable account-recovery token
   used by Stage 3.13C.
 
@@ -92,7 +97,40 @@ Provider events are normalized to `ACCEPTED`, `DELIVERED`, `DELAYED`, `BOUNCED`,
 
 Unmatched events are stored as `UNMATCHED` and reconciled by `npm run email:events:reconcile` until a bounded deadline. Ignored events retain a stable processing result code/message for audit.
 
-No public webhook route is added in Stage 3.13B. Yandex Cloud Postbox event ingestion is deferred until the real Data Streams/EventRouter path is configured.
+Stage 3.13C adds a disabled-by-default Yandex Data Streams consumer; it does not
+add a public webhook route. Yandex Postbox events are parsed by
+`lib/email/yandex-postbox-provider-event-parser.ts` and then handed to the
+provider-neutral `processEmailProviderEvent()` path.
+
+Mappings:
+
+- `Send` -> `ACCEPTED`
+- `Delivery` -> `DELIVERED`
+- `DeliveryDelay` -> `DELAYED`
+- `Bounce` -> `BOUNCED`
+- `Complaint` -> `COMPLAINED`
+- `Rendering Failure` / `RenderingFailure` -> `RENDERING_FAILED`
+- unsupported events -> `UNKNOWN`, recorded/ignored without mutating message
+  state.
+
+Permanent bounces request the existing hard-bounce suppression policy.
+Transient bounces explicitly do not create hard-bounce suppression. Complaints
+request the existing complaint suppression policy. Bounce is never inferred to
+Complaint.
+
+The consumer enumerates shards, starts at `AFTER_SEQUENCE_NUMBER` when a
+checkpoint exists, and otherwise uses the configured `LATEST` or `TRIM_HORIZON`
+initial position. It processes records in shard sequence order and advances the
+checkpoint only after `processEmailProviderEvent()` succeeds or after the record
+is durably classified in `EmailProviderIngestionFailure`. Crashing after event
+processing but before checkpoint update is acceptable because provider event
+processing is idempotent; checkpoint advancement before processing is forbidden.
+
+A PostgreSQL session advisory lock on a dedicated connection enforces
+single-consumer operation across processes. Lock contention fails closed. The
+consumer supports bounded retries for transient stream errors, iterator
+reacquisition, shard refresh, SIGTERM/SIGINT abort, and conservative
+single-process operation.
 
 ## Retention
 
@@ -117,6 +155,10 @@ Cleanup is bounded, idempotent, and supports dry-run.
   never creates a provider, and clears sensitive fields on cancellation.
 - Normal worker and retention timers plus the manual canary systemd unit remain
   disabled repository templates; this stage does not install or enable them.
+- `email:events:consume` runs the disabled-by-default Data Streams consumer.
+  It refuses to run when `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`.
+- `email:events:reconcile` remains a bounded unmatched-event reconciliation
+  sweep. It does not replace live ingestion and does not consume Data Streams.
 
 ## Observability
 

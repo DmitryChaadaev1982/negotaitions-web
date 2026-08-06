@@ -65,6 +65,9 @@ suppression, notification, and local-preview contracts.
 - Session/event ownership and visibility filters.
 - Password reset anti-enumeration, token lifecycle, and auth-session revocation.
 - Trusted-proxy client IP identity for process-local password-reset limits.
+- Login/logout Server Actions allow only the reviewed public/local origins in
+  `next.config.ts` so Next's forwarded-host CSRF protection remains enabled
+  behind nginx.
 - Permanent Admin → Email journal authorization, masking, and audited reveal.
 - Local fake-email preview authorization and production-denial guards.
 

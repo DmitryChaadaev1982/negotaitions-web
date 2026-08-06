@@ -23,6 +23,10 @@
 - nginx reverse proxy fronts Node.js app runtime.
 - systemd unit starts single app process for POC stability.
 - App process uses PostgreSQL, object storage, Voximplant APIs, and Yandex APIs.
+- Email provider-event ingestion is a separate disabled-by-default systemd
+  service (`negotiations-email-provider-events.service`) with its own Data
+  Streams credentials and PostgreSQL advisory single-consumer lock. It has no
+  dependency on the email delivery worker.
 
 ## Build/Deploy Model
 
@@ -36,6 +40,9 @@
   `docs/operations/deployment-runbook.md` and
   `docs/audits/stage-3-13c-proxy-readiness/`.
 - Application start command binds `127.0.0.1` via `next start -H 127.0.0.1`.
+- Next Server Actions behind nginx require the approved origin allowlist in
+  `next.config.ts`; this fixes login/logout forwarded-host validation without
+  weakening same-origin checks.
 
 ## Source Notes
 

@@ -7,6 +7,8 @@
 - Yandex Object Storage (recording object storage).
 - Yandex SpeechKit (transcription and speaker labeling).
 - Yandex AI / YandexGPT-compatible model endpoint usage (analysis and transcript enhancement paths).
+- Yandex Cloud Postbox (email sending through SES-compatible API when enabled).
+- Yandex Data Streams (disabled-by-default Postbox provider-event ingestion).
 - Yandex infrastructure VM runtime hosting app process.
 
 ## Roles By System
@@ -21,6 +23,16 @@
   - Optional transcript enhancement in configured flows.
 - PostgreSQL:
   - Source of truth for domain, runtime, and processing states.
+- Yandex Postbox:
+  - Sends password-reset/account-security mail only when delivery is explicitly
+    enabled.
+  - Provider-event subscription should emit only Send, Delivery, DeliveryDelay,
+    Bounce, Complaint, and Rendering Failure during Stage 3.13C canary.
+- Yandex Data Streams:
+  - Kinesis-compatible consumer source for Postbox provider events.
+  - Requires dedicated consumer static-key credentials; do not reuse Postbox
+    sending credentials.
+  - No public webhook route is part of this architecture.
 - Object storage:
   - Recording file persistence and retrieval for processing.
 

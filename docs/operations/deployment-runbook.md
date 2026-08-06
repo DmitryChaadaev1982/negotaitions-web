@@ -21,6 +21,10 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
   `TRUSTED_PROXY_ENABLED=true`. See
   `docs/audits/stage-3-13c-proxy-readiness/` and
   `deploy/nginx/trusted-client-ip-snippet.conf`.
+- Provider-event ingestion, when approved later, runs as a separate
+  disabled-by-default `negotiations-email-provider-events.service` using
+  dedicated Data Streams credentials and a PostgreSQL advisory single-consumer
+  lock. It is not part of the app service and has no delivery-worker dependency.
 
 ### Future nginx activation (not executed in Stage 3.13C)
 
@@ -90,6 +94,8 @@ password-reset dispatch with PostgreSQL **session** advisory locks
   password-reset backlog quarantine.
 - Keep the normal worker stopped for the canary. The canary must select exactly
   one eligible `EmailMessage` through the manual systemd unit.
+- Keep provider-event ingestion disabled until the Data Streams subscription,
+  dedicated credentials, checkpoints, and sanitized failure ledger are reviewed.
 - Do not enable the worker timer until that one message is accepted and the
   operational review passes.
 

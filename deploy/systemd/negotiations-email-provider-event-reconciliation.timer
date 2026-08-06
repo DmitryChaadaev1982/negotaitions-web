@@ -1,0 +1,15 @@
+[Unit]
+Description=Run NegotAItions email provider-event reconciliation periodically
+# Disabled by default. Reconciliation supplements ingestion and should be
+# enabled only after the provider-event consumer has been canary-validated.
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=negotiations-email-provider-event-reconciliation.service
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable until provider-event ingestion is operationally approved.

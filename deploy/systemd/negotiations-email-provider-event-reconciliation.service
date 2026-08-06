@@ -1,0 +1,29 @@
+[Unit]
+Description=NegotAItions email provider-event reconciliation sweep
+# Reconciliation handles unmatched already-ingested events; it does not consume
+# Data Streams and does not replace the live ingestion service.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:events:reconcile
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-provider-event-reconciliation
+
+[Install]
+# WantedBy=timers.target
+# DO NOT enable directly — activate via the companion timer only after ingestion
+# has been validated.

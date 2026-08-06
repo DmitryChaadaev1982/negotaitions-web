@@ -11,6 +11,8 @@ npm run email:delivery:sweep -- --limit 10
 npm run email:delivery:canary -- --message-id <EmailMessage-ID>
 npm run email:backlog:quarantine -- --batch-size 100
 npm run email:backlog:quarantine -- --apply --batch-size 100
+npm run email:events:consume
+npm run email:events:consume -- --once
 npm run email:events:reconcile
 npm run email:retention:dry-run
 npm run email:retention:cleanup
@@ -100,16 +102,44 @@ npm run email:events:reconcile
 
 Expired unmatched events become `IGNORED` with a stable processing result. The sweep is bounded and idempotent.
 
+## Provider Event Ingestion
+
+`email:events:consume` reads Yandex Cloud Postbox events from Yandex Data
+Streams using the Kinesis-compatible AWS SDK v3 client. It is disabled by
+default and refuses to run unless `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=true`
+and the dedicated `YANDEX_DATA_STREAMS_*` settings are valid. It never calls the
+Postbox sending API and never exposes a public webhook.
+
+The consumer acquires a PostgreSQL session advisory lock before processing,
+loads one checkpoint per stream shard, uses `AFTER_SEQUENCE_NUMBER` after an
+existing checkpoint, and otherwise starts at the configured `LATEST` or
+`TRIM_HORIZON`. Checkpoints advance only after a provider event is processed or
+after a poison record is durably recorded in the sanitized failure ledger.
+
+Poison records store provider, stream, shard, sequence, approximate arrival
+timestamp, payload SHA-256, bounded error code/message, and status. They must not
+store raw payload, recipient email, subject, body, credentials, or provider raw
+responses. Replaying the same poison record is idempotent by
+provider/stream/shard/sequence.
+
+The reconciliation sweep supplements ingestion for unmatched already-recorded
+events. It does not consume Data Streams and does not replace the live consumer.
+
 ## Logging
 
-Logs may include message id, provider, attempt number, status, redacted recipient, error category, and counts. Logs must not include subject/body, full recipient email, credentials, tokens, provider raw responses, transcript content, or AI output.
+Logs may include message id, provider, attempt number, status, redacted
+recipient, error category, and bounded counts. Provider-event consumer logs may
+include counts, shard ids, stream name, sequence numbers, and lag. Logs must not
+include subject/body, full recipient email, raw provider event payloads,
+credentials, tokens, provider raw responses, transcript content, or AI output.
 
 ## Production Installation
 
-Do not install or activate it in Stage 3.13C-F. Committed systemd templates use
-`/etc/negotaitions/env.production`; worker/retention timers and manual
-canary/quarantine units remain disabled. The normal worker must remain stopped
-during the isolated canary.
+Do not activate worker or provider-event units during local Stage 3.13C work.
+Committed systemd templates use `/etc/negotaitions/env.production`;
+worker/retention timers, manual canary/quarantine units, provider-event
+consumer, and provider-event reconciliation timer remain disabled. The normal
+worker must remain stopped during the isolated canary.
 
 The local fake-provider procedure is documented in
 `stage-3-13c-local-email-testing.md`. The preview must remain disabled in

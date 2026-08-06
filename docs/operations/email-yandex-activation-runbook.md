@@ -1,6 +1,7 @@
 # Yandex 360, Postbox, and DNS Activation Runbook
 
-This runbook is for a future activation stage. Do not run write steps during Stage 3.13B.
+This runbook is for a future activation stage. Do not run write steps during
+local Stage 3.13C implementation.
 
 ## Owner/Admin Steps
 
@@ -20,8 +21,16 @@ This runbook is for a future activation stage. Do not run write steps during Sta
 4. Assign minimal Postbox send/configuration roles required by the chosen API path.
 5. Create static access credentials or the approved secret mechanism.
 6. Store credentials in the existing production secret-storage pattern.
-7. Configure a Postbox configuration set for delivery/bounce/complaint events.
-8. Create or select the Data Streams/EventRouter target for provider events.
+7. Create/select a Yandex Data Streams stream for provider events.
+8. Create a dedicated provider-event consumer service account/static key. Do not
+   reuse Postbox sending credentials.
+9. Assign least privilege needed to read the stream, including `yds.viewer` or
+   the reviewed equivalent for shard/record reads.
+10. Configure a Postbox configuration set for delivery/bounce/complaint events.
+11. Add an enabled Data Streams subscription for only these Stage 3.13C event
+    types: Send, Delivery, DeliveryDelay, Bounce, Complaint, Rendering Failure.
+12. Do not enable open or click tracking in this stage.
+13. Bind the configuration to the reviewed sending identity.
 
 ## DNS Changes
 
@@ -105,21 +114,32 @@ Do not activate Postbox during remediation. Future controlled activation:
        the application **first**, then revert the nginx proxy configuration and
        reload. Reverting nginx while the application still trusts the header
        would leave forwarding headers browser-controlled.
-10. Install disabled-by-default units from `deploy/systemd/`:
+10. Stage provider-event consumer env with
+    `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`, dedicated
+    `YANDEX_DATA_STREAMS_*` credentials, the approved HTTPS Yandex Data Streams
+    endpoint, stream name, and conservative polling/checkpoint defaults. Never
+    print secret values.
+11. Install disabled-by-default units from `deploy/systemd/`:
     - `negotiations-email-worker.service` + `.timer`
     - `negotiations-email-retention.service` + `.timer`
     - `negotiations-email-canary@.service`
     - the two manual backlog-quarantine services
+    - `negotiations-email-provider-events.service`
+    - `negotiations-email-provider-event-reconciliation.service` + `.timer`
     Use `EnvironmentFile=/etc/negotaitions/env.production` (not the app `.env`).
-11. Configure the reviewed Postbox provider credentials while delivery remains
+12. Enable provider-event ingestion only for a controlled canary, then verify
+    Send and Delivery ingestion, checkpoint advancement, event ledger updates,
+    and absence of raw payload/recipient data in the failure ledger. Keep the
+    normal delivery worker disabled until this review passes.
+13. Configure the reviewed Postbox provider credentials while delivery remains
     disabled; run one disabled sweep to confirm no-op.
-12. Select exactly one eligible `EmailMessage` id. Set delivery enabled in the
+14. Select exactly one eligible `EmailMessage` id. Set delivery enabled in the
     controlled production env, keep the normal worker/timer stopped, and start
     only `negotiations-email-canary@<EmailMessage-ID>.service`. The command
     refuses missing/invalid ids and has no general-sweep fallback.
-13. Confirm exactly one claim and one provider acceptance. Treat
+15. Confirm exactly one claim and one provider acceptance. Treat
     `ACCEPTED_BY_PROVIDER` as acceptance, not end-user `DELIVERED`.
-14. Only then enable the normal worker timer. Watch sanitized queue counts,
+16. Only then enable the normal worker timer. Watch sanitized queue counts,
     bounces, and complaints.
 
 ## Worker Installation Sketch
@@ -128,12 +148,16 @@ Committed templates live under `deploy/systemd/`. Do not enable in Stage 3.13C.
 
 ## Rollback
 
-1. Set `EMAIL_DELIVERY_ENABLED=false`.
-2. Stop/disable the email worker timer first.
-3. Leave the outbox intact for inspection.
-4. Do not delete suppressions during incident response.
-5. Revoke or rotate provider credentials if compromised.
-6. Revert DNS only after confirming replacement mail routing.
+1. Disable the delivery worker timer.
+2. Set `EMAIL_DELIVERY_ENABLED=false`.
+3. Stop `negotiations-email-provider-events.service`.
+4. Set `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`.
+5. Preserve checkpoints, event ledger, failure ledger, outbox rows, and
+   suppressions for inspection.
+6. Do not delete or rewind provider-event checkpoints during incident response.
+7. Revoke or rotate compromised Data Streams or Postbox credentials.
+8. Do not revert to pre-remediation runtime after real reset-email traffic.
+9. Revert DNS only after confirming replacement mail routing.
 
 After real password-reset traffic begins on the remediated runtime, rollback to
 pre-remediation code is **not** a normal safe rollback. Keep old runtime stopped,

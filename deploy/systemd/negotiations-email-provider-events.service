@@ -1,0 +1,31 @@
+[Unit]
+Description=NegotAItions email provider-event Data Streams consumer
+# Disabled by default. Enable only during a controlled provider-event canary.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run email:events:consume
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/www/negotaitions/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=negotiations-email-provider-events
+
+[Install]
+# WantedBy=multi-user.target
+# DO NOT enable until Data Streams subscription, dedicated credentials, and
+# EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=true are approved for canary.

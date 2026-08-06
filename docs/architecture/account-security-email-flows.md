@@ -217,6 +217,31 @@ distributed rate limiter and Stage 3.13C-P does not add Redis or infrastructure.
 Durable per-account checks continue to work across instances; unknown-address
 and per-IP limits remain process-local residual risk.
 
+## Login/logout behind trusted proxy
+
+Login and logout use Next Server Actions. Next validates forwarded Server
+Action requests before application code runs: when `x-forwarded-host` is
+present, the browser `Origin` host must either match that forwarded host or be
+present in `serverActions.allowedOrigins`.
+
+Production regression root cause: after trusted-proxy/nginx activation, Server
+Action requests carried a reviewed forwarded host while the browser origin seen
+by Next did not match that value in some deployment/test paths. Next aborted
+with `Invalid Server Actions request`, producing the generic error page before
+`loginUser()` or `logoutUser()` could create/delete sessions.
+
+Corrected contract:
+
+- nginx still owns and overwrites forwarded headers;
+- application same-origin and trusted-client-IP protections remain enabled;
+- `next.config.ts` declares only approved Server Action origins:
+  `negotaitions.ru`, `local.negotaitions.ru`, `127.0.0.1:3000`, and
+  `localhost:3000`;
+- login redirects only to safe internal return URLs;
+- logout remains idempotent because `destroyUserSession()` deletes by hashed
+  cookie token with `deleteMany`, then clears the cookie even if the durable row
+  is absent or expired.
+
 ## Suppression
 
 Suppression is checked in `enqueueEmail` and again after worker claim.
