@@ -172,7 +172,10 @@ export type FakeStore = ProviderEventConsumerStore & {
     payloadSha256: string;
   }>;
   initialReadAtCalls: Array<{ shardId: string; initialReadAt: Date }>;
-  state: Map<string, { sequence: string | null; initialReadAt: Date | null }>;
+  state: Map<
+    string,
+    { sequence: string | null; initialReadAt: Date | null; revision: bigint }
+  >;
 };
 
 export function makeFakeStore(options?: {
@@ -180,11 +183,15 @@ export function makeFakeStore(options?: {
   failCheckpoint?: (params: { shardId: string; sequenceNumber: string }) => Error | void;
   failPoisonRecord?: (params: { shardId: string; sequenceNumber: string }) => Error | void;
 }): FakeStore {
-  const state = new Map<string, { sequence: string | null; initialReadAt: Date | null }>();
+  const state = new Map<
+    string,
+    { sequence: string | null; initialReadAt: Date | null; revision: bigint }
+  >();
   for (const [shardId, seed] of Object.entries(options?.seed ?? {})) {
     state.set(shardId, {
       sequence: seed.sequence ?? null,
       initialReadAt: seed.initialReadAt ?? null,
+      revision: BigInt(0),
     });
   }
 
@@ -195,7 +202,7 @@ export function makeFakeStore(options?: {
   function entry(shardId: string) {
     let value = state.get(shardId);
     if (!value) {
-      value = { sequence: null, initialReadAt: null };
+      value = { sequence: null, initialReadAt: null, revision: BigInt(0) };
       state.set(shardId, value);
     }
     return value;
@@ -213,6 +220,7 @@ export function makeFakeStore(options?: {
       return {
         lastSuccessfullyHandledSequenceNumber: value.sequence,
         initialReadAt: value.initialReadAt,
+        revision: value.revision,
       };
     },
 
@@ -222,7 +230,10 @@ export function makeFakeStore(options?: {
         initialReadAt: params.initialReadAt,
       });
       const value = entry(params.shardId);
-      if (!value.initialReadAt) value.initialReadAt = params.initialReadAt;
+      if (!value.initialReadAt) {
+        value.initialReadAt = params.initialReadAt;
+        value.revision += BigInt(1);
+      }
       return value.initialReadAt;
     },
 
@@ -250,7 +261,9 @@ export function makeFakeStore(options?: {
           payloadSha256: params.payloadSha256,
         });
       }
-      entry(params.shardId).sequence = params.sequenceNumber;
+      const checkpoint = entry(params.shardId);
+      checkpoint.sequence = params.sequenceNumber;
+      checkpoint.revision += BigInt(1);
       checkpoints.push({
         shardId: params.shardId,
         sequenceNumber: params.sequenceNumber,
@@ -263,7 +276,9 @@ export function makeFakeStore(options?: {
         sequenceNumber: params.sequenceNumber,
       });
       if (failure) throw failure;
-      entry(params.shardId).sequence = params.sequenceNumber;
+      const checkpoint = entry(params.shardId);
+      checkpoint.sequence = params.sequenceNumber;
+      checkpoint.revision += BigInt(1);
       checkpoints.push({
         shardId: params.shardId,
         sequenceNumber: params.sequenceNumber,
@@ -273,7 +288,7 @@ export function makeFakeStore(options?: {
 }
 
 export function makeFakeLock(): {
-  acquire: () => Promise<ProviderEventConsumerLock>;
+  acquire: (params?: { provider: string; streamName: string }) => Promise<ProviderEventConsumerLock>;
   released: () => boolean;
   loseLock: (error: Error) => void;
   livenessCalls: () => number;
@@ -288,7 +303,11 @@ export function makeFakeLock(): {
     loseLock(error) {
       for (const listener of listeners) listener(error);
     },
-    acquire: async () => ({
+    acquire: async (params?: { provider: string; streamName: string }) => ({
+      provider: params?.provider ?? "yandex_postbox",
+      streamName: params?.streamName ?? "postbox-events",
+      generation: BigInt(1),
+      holderId: "fake-holder",
       onLost(listener) {
         listeners.push(listener);
       },

@@ -1045,6 +1045,7 @@ model EmailProviderStreamCheckpoint {
   provider                        String
   streamName                      String
   shardId                         String
+  revision                        BigInt   @default(0)
   lastSuccessfullyHandledSequenceNumber String?
   /// Durable initial-read boundary captured before the first iterator is used.
   /// Not a processed-record checkpoint: it only bounds iterator reacquisition so
@@ -1052,12 +1053,27 @@ model EmailProviderStreamCheckpoint {
   initialReadAt                   DateTime?
   approximateArrivalTimestamp     DateTime?
   lastProcessedProviderEventId    String?
+  lastWriterGeneration            BigInt?
+  lastWriterHolderId              String?
   createdAt                       DateTime @default(now())
   updatedAt                       DateTime @updatedAt
 
   @@unique([provider, streamName, shardId])
   @@index([provider, streamName])
   @@index([streamName, shardId])
+  @@index([updatedAt])
+}
+
+model EmailProviderConsumerLease {
+  id         String   @id @default(cuid())
+  provider   String
+  streamName String
+  generation BigInt   @default(0)
+  holderId   String
+  acquiredAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([provider, streamName])
   @@index([updatedAt])
 }
 

@@ -48,6 +48,34 @@ async function withDatabaseUrl<T>(
   }
 }
 
+async function ensureLeaseTable(url: string): Promise<void> {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "EmailProviderConsumerLease" (
+        "id" TEXT PRIMARY KEY,
+        "provider" TEXT NOT NULL,
+        "streamName" TEXT NOT NULL,
+        "generation" BIGINT NOT NULL DEFAULT 0,
+        "holderId" TEXT NOT NULL,
+        "acquiredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "EmailProviderConsumerLease_provider_streamName_key"
+        ON "EmailProviderConsumerLease"("provider", "streamName")
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "EmailProviderConsumerLease_updatedAt_idx"
+        ON "EmailProviderConsumerLease"("updatedAt")
+    `);
+  } finally {
+    await client.end();
+  }
+}
+
 async function tryAcquireFromSeparateConnection(url: string): Promise<boolean> {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -81,7 +109,7 @@ test("the session lock never borrows a Prisma pool connection", () => {
     "export async function acquireProviderEventConsumerLock",
   );
   assert.ok(start >= 0, "lock acquisition function not found");
-  const acquireBody = source.slice(start, source.indexOf("\n}", start) + 2);
+  const acquireBody = source.slice(start, start + 10_000);
   assert.match(acquireBody, /new PgClient\(/);
   assert.equal(
     /\bprisma\b/.test(acquireBody),
@@ -95,6 +123,7 @@ test("a second connection cannot acquire the lock until the first releases", asy
   if (!url) return t.skip(SKIP_REASON);
 
   await withDatabaseUrl(url, async () => {
+    await ensureLeaseTable(url);
     const lock = await acquireProviderEventConsumerLock();
     try {
       assert.equal(await tryAcquireFromSeparateConnection(url), false);
@@ -119,6 +148,7 @@ test("release is idempotent", async (t) => {
   if (!url) return t.skip(SKIP_REASON);
 
   await withDatabaseUrl(url, async () => {
+    await ensureLeaseTable(url);
     const lock = await acquireProviderEventConsumerLock();
     await lock.release();
     await lock.release();
@@ -130,6 +160,7 @@ test("liveness succeeds while held and does not reacquire the lock", async (t) =
   if (!url) return t.skip(SKIP_REASON);
 
   await withDatabaseUrl(url, async () => {
+    await ensureLeaseTable(url);
     const lock = await acquireProviderEventConsumerLock();
     const assertAlive = lock.assertAlive;
     assert.ok(assertAlive, "the production lock must expose a liveness probe");
@@ -151,6 +182,7 @@ test("forced termination of the lock connection stops the consumer", async (t) =
   if (!url) return t.skip(SKIP_REASON);
 
   await withDatabaseUrl(url, async () => {
+    await ensureLeaseTable(url);
     const lock = await acquireProviderEventConsumerLock();
     const assertAlive = lock.assertAlive;
     const onLost = lock.onLost;

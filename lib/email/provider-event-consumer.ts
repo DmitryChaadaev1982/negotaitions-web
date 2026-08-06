@@ -12,6 +12,7 @@ import { Client as PgClient } from "pg";
 import {
   EmailProviderIngestionFailureStatus,
   EmailProviderEventProcessingStatus,
+  type Prisma,
 } from "@/app/generated/prisma/client";
 import { getEmailConfig, type EmailConfig } from "@/lib/email/config";
 import { logEmailEvent } from "@/lib/email/observability";
@@ -52,21 +53,29 @@ export type ProviderEventStreamAdapter = {
     iteratorType: ProviderEventShardIteratorType;
     startingSequenceNumber?: string;
     timestamp?: Date;
+    signal?: AbortSignal;
   }): Promise<string | null>;
   getRecords(params: {
     shardIterator: string;
     limit: number;
+    signal?: AbortSignal;
   }): Promise<{
     records: ProviderEventStreamRecord[];
     nextShardIterator: string | null;
     millisBehindLatest?: number;
   }>;
+  destroy?(): void | Promise<void>;
 };
 
 export type ProviderEventConsumerLock = {
   release(): Promise<void>;
+  forceClose?: () => Promise<void>;
   /** PostgreSQL backend pid of the dedicated lock session, for diagnostics. */
   backendPid?: number;
+  provider: string;
+  streamName: string;
+  generation: bigint;
+  holderId: string;
   /**
    * Bounded liveness probe on the same dedicated connection that holds the
    * advisory lock. Must never reacquire the lock.
@@ -79,6 +88,7 @@ export type ProviderEventConsumerLock = {
 export type ProviderEventCheckpoint = {
   lastSuccessfullyHandledSequenceNumber: string | null;
   initialReadAt?: Date | null;
+  revision: bigint;
 };
 
 export type ProviderEventShardKey = {
@@ -94,7 +104,12 @@ export type ProviderEventConsumerStore = {
    * checkpoint yet and returns the effective value. Idempotent.
    */
   ensureInitialReadAt?: (
-    params: ProviderEventShardKey & { initialReadAt: Date },
+    params: ProviderEventShardKey & {
+      initialReadAt: Date;
+      owner: ProviderEventConsumerOwner;
+      expectedRevision: bigint | null;
+      signal?: AbortSignal;
+    },
   ) => Promise<Date>;
   /**
    * Atomically records a deterministic poison record and advances the
@@ -107,6 +122,9 @@ export type ProviderEventConsumerStore = {
       payloadSha256: string;
       errorCode: string;
       sanitizedErrorMessage: string;
+      owner: ProviderEventConsumerOwner;
+      expectedRevision: bigint | null;
+      signal?: AbortSignal;
     },
   ): Promise<void>;
   advanceCheckpoint(
@@ -114,8 +132,18 @@ export type ProviderEventConsumerStore = {
       sequenceNumber: string;
       approximateArrivalTimestamp?: Date;
       providerEventId?: string | null;
+      owner: ProviderEventConsumerOwner;
+      expectedRevision: bigint | null;
+      signal?: AbortSignal;
     },
   ): Promise<void>;
+};
+
+export type ProviderEventConsumerOwner = {
+  provider: string;
+  streamName: string;
+  generation: bigint;
+  holderId: string;
 };
 
 export type ProviderEventConsumerCounters = {
@@ -154,6 +182,16 @@ export class ProviderEventConsumerError extends Error {
   }
 }
 
+export class ProviderEventCheckpointFenceError extends ProviderEventConsumerError {
+  constructor(
+    readonly fenceCode: "FENCE_LOST" | "CHECKPOINT_CONFLICT",
+    message = "Provider-event checkpoint ownership fence rejected the write.",
+  ) {
+    super(fenceCode, message, "retryable");
+    this.name = "ProviderEventCheckpointFenceError";
+  }
+}
+
 const PROVIDER = "yandex_postbox";
 export const PROVIDER_EVENT_CONSUMER_LOCK_KEY =
   "negotaitions:email-provider-event-consumer:yandex-postbox";
@@ -161,7 +199,15 @@ export const MAX_SHARD_PAGES = 100;
 export const MAX_BACKOFF_MS = 60_000;
 const MAX_TRACKED_SHARDS = 1_000;
 const LOCK_LIVENESS_STATEMENT_TIMEOUT_MS = 5_000;
+const CHECKPOINT_STATEMENT_TIMEOUT_MS = 5_000;
+const HOLDER_ID_BYTES = 18;
+const FORCED_DISCONNECT_TIMEOUT_MS = 5_000;
 const MAX_LOGGED_IDENTIFIER_LENGTH = 128;
+
+const activeRuntimeResources = new Set<{
+  adapter: ProviderEventStreamAdapter;
+  lock: ProviderEventConsumerLock;
+}>();
 
 /**
  * Deterministic ingestion failures. Only these may be acknowledged as poison
@@ -285,6 +331,28 @@ export function computeBackoffDelayMs(
   return Math.round(jitterFloor + random() * jitterFloor);
 }
 
+async function boundedPrismaDisconnect(): Promise<void> {
+  await Promise.race([
+    prisma.$disconnect().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, FORCED_DISCONNECT_TIMEOUT_MS).unref?.();
+    }),
+  ]);
+}
+
+export async function forceCloseActiveProviderEventConsumerResources(): Promise<void> {
+  const resources = [...activeRuntimeResources];
+  await Promise.all(
+    resources.map(async ({ adapter, lock }) => {
+      await Promise.all([
+        Promise.resolve(adapter.destroy?.()).catch(() => undefined),
+        Promise.resolve(lock.forceClose?.()).catch(() => undefined),
+      ]);
+    }),
+  );
+  await boundedPrismaDisconnect();
+}
+
 /**
  * Follows NextToken until exhausted, deduplicating shard ids and bounding both
  * page count and per-page retries. Never returns a partial list silently.
@@ -352,6 +420,7 @@ export async function collectShardPages(params: {
 
 export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapter {
   private readonly client: KinesisClient;
+  private readonly retryBaseMs: number;
 
   constructor(config: ProviderEventIngestionConfig) {
     if (!config.endpoint || !config.accessKeyId || !config.secretAccessKey) {
@@ -369,6 +438,7 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
         secretAccessKey: config.secretAccessKey,
       },
     });
+    this.retryBaseMs = config.errorBackoffMs;
   }
 
   async listShards(
@@ -377,6 +447,8 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
   ): Promise<ProviderEventStreamShard[]> {
     return collectShardPages({
       signal: options?.signal,
+      onTransientRetry: (attempt) =>
+        abortableSleep(computeBackoffDelayMs(attempt, this.retryBaseMs), options?.signal),
       fetchPage: async (nextToken) => {
         const output = await this.client.send(
           new ListShardsCommand(
@@ -403,6 +475,7 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
     iteratorType: ProviderEventShardIteratorType;
     startingSequenceNumber?: string;
     timestamp?: Date;
+    signal?: AbortSignal;
   }): Promise<string | null> {
     const output = await this.client.send(
       new GetShardIteratorCommand({
@@ -412,16 +485,18 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
         StartingSequenceNumber: params.startingSequenceNumber,
         Timestamp: params.timestamp,
       }),
+      { abortSignal: params.signal },
     );
     return output.ShardIterator ?? null;
   }
 
-  async getRecords(params: { shardIterator: string; limit: number }) {
+  async getRecords(params: { shardIterator: string; limit: number; signal?: AbortSignal }) {
     const output = await this.client.send(
       new GetRecordsCommand({
         ShardIterator: params.shardIterator,
         Limit: params.limit,
       }),
+      { abortSignal: params.signal },
     );
     return {
       records: (output.Records ?? []).flatMap((record) =>
@@ -439,6 +514,87 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
       millisBehindLatest: output.MillisBehindLatest,
     };
   }
+
+  destroy() {
+    this.client.destroy();
+  }
+}
+
+type ConsumerTx = Prisma.TransactionClient;
+
+function assertNotAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw abortError();
+}
+
+async function setBoundedTransactionTimeout(tx: ConsumerTx): Promise<void> {
+  await tx.$executeRawUnsafe(
+    `SET LOCAL statement_timeout = ${CHECKPOINT_STATEMENT_TIMEOUT_MS}`,
+  );
+  await tx.$executeRawUnsafe(
+    `SET LOCAL lock_timeout = ${CHECKPOINT_STATEMENT_TIMEOUT_MS}`,
+  );
+}
+
+async function assertLeaseHeld(
+  tx: ConsumerTx,
+  owner: ProviderEventConsumerOwner,
+): Promise<void> {
+  const rows = await tx.$queryRaw<
+    Array<{ generation: bigint; holderId: string }>
+  >`SELECT "generation", "holderId"
+      FROM "EmailProviderConsumerLease"
+     WHERE "provider" = ${owner.provider}
+       AND "streamName" = ${owner.streamName}
+     FOR UPDATE`;
+  const lease = rows[0];
+  if (
+    !lease ||
+    lease.generation !== owner.generation ||
+    lease.holderId !== owner.holderId
+  ) {
+    throw new ProviderEventCheckpointFenceError("FENCE_LOST");
+  }
+}
+
+async function loadCheckpointForUpdate(
+  tx: ConsumerTx,
+  key: ProviderEventShardKey,
+): Promise<
+  | {
+      id: string;
+      revision: bigint;
+      initialReadAt: Date | null;
+      lastSuccessfullyHandledSequenceNumber: string | null;
+    }
+  | null
+> {
+  const rows = await tx.$queryRaw<
+    Array<{
+      id: string;
+      revision: bigint;
+      initialReadAt: Date | null;
+      lastSuccessfullyHandledSequenceNumber: string | null;
+    }>
+  >`SELECT "id",
+           "revision",
+           "initialReadAt",
+           "lastSuccessfullyHandledSequenceNumber"
+      FROM "EmailProviderStreamCheckpoint"
+     WHERE "provider" = ${key.provider}
+       AND "streamName" = ${key.streamName}
+       AND "shardId" = ${key.shardId}
+     FOR UPDATE`;
+  return rows[0] ?? null;
+}
+
+function assertExpectedRevision(
+  checkpoint: { revision: bigint } | null,
+  expectedRevision: bigint | null,
+) {
+  const actualRevision = checkpoint?.revision ?? null;
+  if (actualRevision !== expectedRevision) {
+    throw new ProviderEventCheckpointFenceError("CHECKPOINT_CONFLICT");
+  }
 }
 
 export const prismaProviderEventConsumerStore: ProviderEventConsumerStore = {
@@ -454,43 +610,51 @@ export const prismaProviderEventConsumerStore: ProviderEventConsumerStore = {
       select: {
         lastSuccessfullyHandledSequenceNumber: true,
         initialReadAt: true,
+        revision: true,
       },
     });
   },
 
   async ensureInitialReadAt(params) {
-    const existing = await prisma.emailProviderStreamCheckpoint.upsert({
-      where: {
-        provider_streamName_shardId: {
-          provider: params.provider,
-          streamName: params.streamName,
-          shardId: params.shardId,
-        },
-      },
-      create: {
-        provider: params.provider,
-        streamName: params.streamName,
-        shardId: params.shardId,
-        initialReadAt: params.initialReadAt,
-      },
-      update: {},
-      select: { initialReadAt: true },
-    });
-    if (existing.initialReadAt) return existing.initialReadAt;
+    assertNotAborted(params.signal);
+    return prisma.$transaction(async (tx) => {
+      assertNotAborted(params.signal);
+      await setBoundedTransactionTimeout(tx);
+      await assertLeaseHeld(tx, params.owner);
+      const checkpoint = await loadCheckpointForUpdate(tx, params);
+      assertExpectedRevision(checkpoint, params.expectedRevision);
+      if (checkpoint?.initialReadAt) return checkpoint.initialReadAt;
 
-    // Row predates this migration; backfill the boundary once.
-    const updated = await prisma.emailProviderStreamCheckpoint.update({
-      where: {
-        provider_streamName_shardId: {
-          provider: params.provider,
-          streamName: params.streamName,
-          shardId: params.shardId,
+      if (!checkpoint) {
+        const created = await tx.emailProviderStreamCheckpoint.create({
+          data: {
+            provider: params.provider,
+            streamName: params.streamName,
+            shardId: params.shardId,
+            initialReadAt: params.initialReadAt,
+            revision: BigInt(1),
+            lastWriterGeneration: params.owner.generation,
+            lastWriterHolderId: params.owner.holderId,
+          },
+          select: { initialReadAt: true },
+        });
+        return created.initialReadAt ?? params.initialReadAt;
+      }
+
+      // Row predates this migration or was created by an older disabled runtime;
+      // backfill the boundary exactly once under the ownership fence.
+      const updated = await tx.emailProviderStreamCheckpoint.update({
+        where: { id: checkpoint.id },
+        data: {
+          initialReadAt: params.initialReadAt,
+          revision: { increment: 1 },
+          lastWriterGeneration: params.owner.generation,
+          lastWriterHolderId: params.owner.holderId,
         },
-      },
-      data: { initialReadAt: params.initialReadAt },
-      select: { initialReadAt: true },
+        select: { initialReadAt: true },
+      });
+      return updated.initialReadAt ?? params.initialReadAt;
     });
-    return updated.initialReadAt ?? params.initialReadAt;
   },
 
   async recordPoisonRecord(params) {
@@ -499,8 +663,15 @@ export const prismaProviderEventConsumerStore: ProviderEventConsumerStore = {
       streamName: params.streamName,
       shardId: params.shardId,
     };
-    await prisma.$transaction([
-      prisma.emailProviderIngestionFailure.upsert({
+    assertNotAborted(params.signal);
+    await prisma.$transaction(async (tx) => {
+      assertNotAborted(params.signal);
+      await setBoundedTransactionTimeout(tx);
+      await assertLeaseHeld(tx, params.owner);
+      const checkpoint = await loadCheckpointForUpdate(tx, key);
+      assertExpectedRevision(checkpoint, params.expectedRevision);
+
+      await tx.emailProviderIngestionFailure.upsert({
         where: {
           provider_streamName_shardId_sequenceNumber: {
             ...key,
@@ -522,20 +693,33 @@ export const prismaProviderEventConsumerStore: ProviderEventConsumerStore = {
           errorCode: params.errorCode.slice(0, 80),
           sanitizedErrorMessage: params.sanitizedErrorMessage.slice(0, 500),
         },
-      }),
-      prisma.emailProviderStreamCheckpoint.upsert({
-        where: { provider_streamName_shardId: key },
-        create: {
-          ...key,
+      });
+
+      if (!checkpoint) {
+        await tx.emailProviderStreamCheckpoint.create({
+          data: {
+            ...key,
+            revision: BigInt(1),
+            lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
+            approximateArrivalTimestamp: params.approximateArrivalTimestamp,
+            lastWriterGeneration: params.owner.generation,
+            lastWriterHolderId: params.owner.holderId,
+          },
+        });
+        return;
+      }
+
+      await tx.emailProviderStreamCheckpoint.update({
+        where: { id: checkpoint.id },
+        data: {
           lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
           approximateArrivalTimestamp: params.approximateArrivalTimestamp,
+          revision: { increment: 1 },
+          lastWriterGeneration: params.owner.generation,
+          lastWriterHolderId: params.owner.holderId,
         },
-        update: {
-          lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
-          approximateArrivalTimestamp: params.approximateArrivalTimestamp,
-        },
-      }),
-    ]);
+      });
+    });
   },
 
   async advanceCheckpoint(params) {
@@ -544,24 +728,48 @@ export const prismaProviderEventConsumerStore: ProviderEventConsumerStore = {
       streamName: params.streamName,
       shardId: params.shardId,
     };
-    await prisma.emailProviderStreamCheckpoint.upsert({
-      where: { provider_streamName_shardId: key },
-      create: {
-        ...key,
-        lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
-        approximateArrivalTimestamp: params.approximateArrivalTimestamp,
-        lastProcessedProviderEventId: params.providerEventId ?? null,
-      },
-      update: {
-        lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
-        approximateArrivalTimestamp: params.approximateArrivalTimestamp,
-        lastProcessedProviderEventId: params.providerEventId ?? null,
-      },
+    assertNotAborted(params.signal);
+    await prisma.$transaction(async (tx) => {
+      assertNotAborted(params.signal);
+      await setBoundedTransactionTimeout(tx);
+      await assertLeaseHeld(tx, params.owner);
+      const checkpoint = await loadCheckpointForUpdate(tx, key);
+      assertExpectedRevision(checkpoint, params.expectedRevision);
+
+      if (!checkpoint) {
+        await tx.emailProviderStreamCheckpoint.create({
+          data: {
+            ...key,
+            revision: BigInt(1),
+            lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
+            approximateArrivalTimestamp: params.approximateArrivalTimestamp,
+            lastProcessedProviderEventId: params.providerEventId ?? null,
+            lastWriterGeneration: params.owner.generation,
+            lastWriterHolderId: params.owner.holderId,
+          },
+        });
+        return;
+      }
+
+      await tx.emailProviderStreamCheckpoint.update({
+        where: { id: checkpoint.id },
+        data: {
+          lastSuccessfullyHandledSequenceNumber: params.sequenceNumber,
+          approximateArrivalTimestamp: params.approximateArrivalTimestamp,
+          lastProcessedProviderEventId: params.providerEventId ?? null,
+          revision: { increment: 1 },
+          lastWriterGeneration: params.owner.generation,
+          lastWriterHolderId: params.owner.holderId,
+        },
+      });
     });
   },
 };
 
-export async function acquireProviderEventConsumerLock(): Promise<ProviderEventConsumerLock> {
+export async function acquireProviderEventConsumerLock(params?: {
+  provider?: string;
+  streamName?: string;
+}): Promise<ProviderEventConsumerLock> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new ProviderEventConsumerError(
@@ -571,10 +779,16 @@ export async function acquireProviderEventConsumerLock(): Promise<ProviderEventC
     );
   }
 
+  const provider = params?.provider ?? PROVIDER;
+  const streamName =
+    params?.streamName ??
+    process.env.YANDEX_DATA_STREAMS_STREAM_NAME?.trim() ??
+    "postbox-events";
   const client = new PgClient({ connectionString });
   const listeners: Array<(error: Error) => void> = [];
   let lost: Error | null = null;
   let released = false;
+  let connected = false;
 
   const markLost = (error: Error) => {
     if (lost) return;
@@ -589,86 +803,135 @@ export async function acquireProviderEventConsumerLock(): Promise<ProviderEventC
     if (!released) markLost(new Error("lock connection ended"));
   });
 
-  await client.connect();
-  await client.query(
-    `SET statement_timeout = ${LOCK_LIVENESS_STATEMENT_TIMEOUT_MS}`,
-  );
-
-  const result = await client.query<{ acquired: boolean }>(
-    "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
-    [PROVIDER_EVENT_CONSUMER_LOCK_KEY],
-  );
-  if (!result.rows[0]?.acquired) {
-    released = true;
-    await client.end().catch(() => undefined);
-    throw new ProviderEventConsumerError(
-      "CONSUMER_LOCK_HELD",
-      "Another provider-event consumer already holds the advisory lock.",
-      "lock_contention",
+  try {
+    await client.connect();
+    connected = true;
+    await client.query(
+      `SET statement_timeout = ${LOCK_LIVENESS_STATEMENT_TIMEOUT_MS}`,
     );
-  }
 
-  const backend = await client.query<{ pid: number }>(
-    "SELECT pg_backend_pid()::int AS pid",
-  );
+    const result = await client.query<{ acquired: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+      [PROVIDER_EVENT_CONSUMER_LOCK_KEY],
+    );
+    if (!result.rows[0]?.acquired) {
+      throw new ProviderEventConsumerError(
+        "CONSUMER_LOCK_HELD",
+        "Another provider-event consumer already holds the advisory lock.",
+        "lock_contention",
+      );
+    }
 
-  return {
-    backendPid: backend.rows[0]?.pid,
+    const holderId = crypto.randomBytes(HOLDER_ID_BYTES).toString("base64url");
+    const leaseId = crypto.randomUUID();
+    const lease = await client.query<{ generation: string | bigint }>(
+      `INSERT INTO "EmailProviderConsumerLease"
+         ("id", "provider", "streamName", "generation", "holderId", "acquiredAt", "updatedAt")
+       VALUES ($1, $2, $3, 1, $4, NOW(), NOW())
+       ON CONFLICT ("provider", "streamName")
+       DO UPDATE SET
+         "generation" = "EmailProviderConsumerLease"."generation" + 1,
+         "holderId" = EXCLUDED."holderId",
+         "acquiredAt" = NOW(),
+         "updatedAt" = NOW()
+       RETURNING "generation"`,
+      [leaseId, provider, streamName, holderId],
+    );
+    const generation = BigInt(lease.rows[0]?.generation ?? 0);
+    if (generation < BigInt(1)) {
+      throw new ProviderEventConsumerError(
+        "CONSUMER_LEASE_ACQUIRE_FAILED",
+        "Provider-event durable consumer lease was not acquired.",
+        "retryable",
+      );
+    }
 
-    onLost(listener) {
-      listeners.push(listener);
-      if (lost) listener(lost);
-    },
+    const backend = await client.query<{ pid: number }>(
+      "SELECT pg_backend_pid()::int AS pid",
+    );
 
-    async assertAlive() {
-      if (lost) {
-        throw new ProviderEventConsumerError(
-          "CONSUMER_LOCK_LOST",
-          "The dedicated advisory-lock connection was lost.",
-          "retryable",
-        );
-      }
-      let held = 0;
-      try {
-        // Observes the existing lock without reacquiring it; a reentrant
-        // pg_try_advisory_lock would succeed even after the lock was released.
-        const liveness = await client.query<{ held: number }>(
-          `SELECT count(*)::int AS held
+    return {
+      backendPid: backend.rows[0]?.pid,
+      provider,
+      streamName,
+      generation,
+      holderId,
+
+      onLost(listener) {
+        listeners.push(listener);
+        if (lost) listener(lost);
+      },
+
+      async assertAlive() {
+        if (lost) {
+          throw new ProviderEventConsumerError(
+            "CONSUMER_LOCK_LOST",
+            "The dedicated advisory-lock connection was lost.",
+            "retryable",
+          );
+        }
+        let held = 0;
+        try {
+          // Observes the existing lock without reacquiring it; a reentrant
+          // pg_try_advisory_lock would succeed even after the lock was released.
+          const liveness = await client.query<{ held: number }>(
+            `SELECT count(*)::int AS held
              FROM pg_locks
             WHERE locktype = 'advisory'
               AND granted
               AND pid = pg_backend_pid()`,
-        );
-        held = liveness.rows[0]?.held ?? 0;
-      } catch (error) {
-        markLost(error instanceof Error ? error : new Error("liveness query failed"));
-        throw new ProviderEventConsumerError(
-          "CONSUMER_LOCK_LOST",
-          "The advisory-lock liveness probe failed.",
-          "retryable",
-        );
-      }
-      if (held < 1) {
-        markLost(new Error("advisory lock no longer held"));
-        throw new ProviderEventConsumerError(
-          "CONSUMER_LOCK_LOST",
-          "PostgreSQL no longer reports the provider-event advisory lock.",
-          "retryable",
-        );
-      }
-    },
+          );
+          held = liveness.rows[0]?.held ?? 0;
+        } catch (error) {
+          markLost(error instanceof Error ? error : new Error("liveness query failed"));
+          throw new ProviderEventConsumerError(
+            "CONSUMER_LOCK_LOST",
+            "The advisory-lock liveness probe failed.",
+            "retryable",
+          );
+        }
+        if (held < 1) {
+          markLost(new Error("advisory lock no longer held"));
+          throw new ProviderEventConsumerError(
+            "CONSUMER_LOCK_LOST",
+            "PostgreSQL no longer reports the provider-event advisory lock.",
+            "retryable",
+          );
+        }
+      },
 
-    async release() {
-      if (released) return;
-      released = true;
+      async forceClose() {
+        released = true;
+        const rawClient = client as unknown as {
+          connection?: { stream?: { destroy?: () => void } };
+        };
+        rawClient.connection?.stream?.destroy?.();
+        await client.end().catch(() => undefined);
+      },
+
+      async release() {
+        if (released) return;
+        released = true;
+        await client
+          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
+            PROVIDER_EVENT_CONSUMER_LOCK_KEY,
+          ])
+          .catch(() => undefined);
+        await client.end().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    released = true;
+    if (connected) {
       await client
         .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
           PROVIDER_EVENT_CONSUMER_LOCK_KEY,
         ])
         .catch(() => undefined);
       await client.end().catch(() => undefined);
-    },
-  };
+    }
+    throw error;
+  }
 }
 
 type ParseOutcome =
@@ -707,6 +970,7 @@ type ShardState = {
   closed: boolean;
   iterator: string | null;
   iteratorLoaded: boolean;
+  checkpointRevision: bigint | null;
   retired: boolean;
   consecutiveFailures: number;
   nextPollAtMs: number;
@@ -717,7 +981,10 @@ export async function runEmailProviderEventConsumer(options?: {
   config?: ProviderEventIngestionConfig;
   store?: ProviderEventConsumerStore;
   processor?: typeof processEmailProviderEvent;
-  acquireLock?: () => Promise<ProviderEventConsumerLock>;
+  acquireLock?: (params: {
+    provider: string;
+    streamName: string;
+  }) => Promise<ProviderEventConsumerLock>;
   signal?: AbortSignal;
   once?: boolean;
   now?: () => Date;
@@ -765,7 +1032,18 @@ export async function runEmailProviderEventConsumer(options?: {
   const adapter = options?.adapter ?? new YandexDataStreamsKinesisAdapter(config);
   const store = options?.store ?? prismaProviderEventConsumerStore;
   const processor = options?.processor ?? processEmailProviderEvent;
-  const lock = await (options?.acquireLock ?? acquireProviderEventConsumerLock)();
+  const lock = await (options?.acquireLock ?? acquireProviderEventConsumerLock)({
+    provider: PROVIDER,
+    streamName,
+  });
+  const runtimeResource = { adapter, lock };
+  activeRuntimeResources.add(runtimeResource);
+  const owner: ProviderEventConsumerOwner = {
+    provider: lock.provider,
+    streamName: lock.streamName,
+    generation: lock.generation,
+    holderId: lock.holderId,
+  };
 
   // Internal controller so a fatal fault stops every in-flight shard slice
   // without waiting for the caller's signal.
@@ -815,7 +1093,9 @@ export async function runEmailProviderEventConsumer(options?: {
   }
 
   async function acquireIterator(shard: ShardState): Promise<void> {
+    assertNotAborted(signal);
     const checkpoint = await store.loadCheckpoint(shardKey(shard.shardId));
+    shard.checkpointRevision = checkpoint?.revision ?? null;
     const sequence = checkpoint?.lastSuccessfullyHandledSequenceNumber ?? null;
 
     if (sequence) {
@@ -824,6 +1104,7 @@ export async function runEmailProviderEventConsumer(options?: {
         shardId: shard.shardId,
         iteratorType: "AFTER_SEQUENCE_NUMBER",
         startingSequenceNumber: sequence,
+        signal,
       });
       return;
     }
@@ -833,6 +1114,7 @@ export async function runEmailProviderEventConsumer(options?: {
         streamName,
         shardId: shard.shardId,
         iteratorType: "TRIM_HORIZON",
+        signal,
       });
       return;
     }
@@ -846,6 +1128,7 @@ export async function runEmailProviderEventConsumer(options?: {
         shardId: shard.shardId,
         iteratorType: "AT_TIMESTAMP",
         timestamp: existingBoundary,
+        signal,
       });
       return;
     }
@@ -855,16 +1138,22 @@ export async function runEmailProviderEventConsumer(options?: {
       (await store.ensureInitialReadAt?.({
         ...shardKey(shard.shardId),
         initialReadAt: boundary,
+        owner,
+        expectedRevision: shard.checkpointRevision,
+        signal,
       })) ?? boundary;
+    const reloaded = await store.loadCheckpoint(shardKey(shard.shardId));
+    shard.checkpointRevision = reloaded?.revision ?? shard.checkpointRevision;
 
     shard.iterator = await adapter.getShardIterator(
       effective.getTime() === boundary.getTime()
-        ? { streamName, shardId: shard.shardId, iteratorType: "LATEST" }
+        ? { streamName, shardId: shard.shardId, iteratorType: "LATEST", signal }
         : {
             streamName,
             shardId: shard.shardId,
             iteratorType: "AT_TIMESTAMP",
             timestamp: effective,
+            signal,
           },
     );
   }
@@ -918,7 +1207,9 @@ export async function runEmailProviderEventConsumer(options?: {
     shard: ShardState,
     record: ProviderEventStreamRecord,
   ): Promise<void> {
+    assertNotAborted(signal);
     const parsed = parseRecord(record.data, config.maxPayloadBytes);
+    const expectedRevision = shard.checkpointRevision;
 
     if (!parsed.ok) {
       // Deterministic: ledger row and checkpoint commit atomically.
@@ -930,9 +1221,13 @@ export async function runEmailProviderEventConsumer(options?: {
           payloadSha256: payloadSha256(record.data),
           errorCode: parsed.code,
           sanitizedErrorMessage: parsed.message,
+          owner,
+          expectedRevision,
+          signal,
         });
       } catch (error) {
         if (isAbortError(error)) throw error;
+        if (error instanceof ProviderEventCheckpointFenceError) throw error;
         // The transaction covers both rows, so no checkpoint was written.
         throw new ProviderEventConsumerError(
           "INGESTION_FAILURE_LEDGER_WRITE_FAILED",
@@ -942,6 +1237,7 @@ export async function runEmailProviderEventConsumer(options?: {
       }
       counters.ingestionFailures += 1;
       counters.checkpointsAdvanced += 1;
+      shard.checkpointRevision = (expectedRevision ?? BigInt(0)) + BigInt(1);
       logEmailEvent("warn", "provider_event_poison_record_classified", {
         shardId: boundedIdentifier(shard.shardId),
         errorCode: parsed.code,
@@ -996,9 +1292,13 @@ export async function runEmailProviderEventConsumer(options?: {
         sequenceNumber: record.sequenceNumber,
         approximateArrivalTimestamp: record.approximateArrivalTimestamp,
         providerEventId: parsed.normalized.providerEventId,
+        owner,
+        expectedRevision,
+        signal,
       });
     } catch (error) {
       if (isAbortError(error)) throw error;
+      if (error instanceof ProviderEventCheckpointFenceError) throw error;
       // The processor already committed. Replay is safe because provider-event
       // creation is deduplicated on (provider, providerEventId).
       throw new ProviderEventConsumerError(
@@ -1008,6 +1308,7 @@ export async function runEmailProviderEventConsumer(options?: {
       );
     }
     counters.checkpointsAdvanced += 1;
+    shard.checkpointRevision = (expectedRevision ?? BigInt(0)) + BigInt(1);
   }
 
   /**
@@ -1061,6 +1362,7 @@ export async function runEmailProviderEventConsumer(options?: {
         batch = await adapter.getRecords({
           shardIterator: shard.iterator,
           limit: config.recordLimit,
+          signal,
         });
       } catch (error) {
         if (isAbortError(error)) return;
@@ -1156,6 +1458,7 @@ export async function runEmailProviderEventConsumer(options?: {
         iteratorLoaded: false,
         retired: false,
         consecutiveFailures: 0,
+        checkpointRevision: null,
         nextPollAtMs: 0,
       });
       counters.shardsDiscovered += 1;
@@ -1240,6 +1543,7 @@ export async function runEmailProviderEventConsumer(options?: {
   } finally {
     options?.signal?.removeEventListener("abort", externalAbort);
     if (!runController.signal.aborted) runController.abort();
+    activeRuntimeResources.delete(runtimeResource);
     await lock.release();
   }
 }

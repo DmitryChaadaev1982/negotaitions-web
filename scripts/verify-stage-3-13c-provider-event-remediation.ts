@@ -80,6 +80,7 @@ async function main() {
     providerModule,
     workerModule,
     providerEvents,
+    providerConsumer,
     parserModule,
     generated,
   ] = await Promise.all([
@@ -88,6 +89,7 @@ async function main() {
     import("@/lib/email/provider"),
     import("@/lib/email/worker"),
     import("@/lib/email/provider-events"),
+    import("@/lib/email/provider-event-consumer"),
     import("@/lib/email/yandex-postbox-provider-event-parser"),
     import("@/app/generated/prisma/client"),
   ]);
@@ -100,6 +102,11 @@ async function main() {
     processEmailProviderEvent,
     runEmailProviderEventReconciliationSweep,
   } = providerEvents;
+  const {
+    acquireProviderEventConsumerLock,
+    prismaProviderEventConsumerStore,
+    ProviderEventCheckpointFenceError,
+  } = providerConsumer;
   const { parseYandexPostboxProviderEvent } = parserModule;
   const {
     EmailMessageCategory,
@@ -328,6 +335,7 @@ async function main() {
     }),
   );
   await processEmailProviderEvent(complaintEvent);
+  await processEmailProviderEvent(complaintEvent);
   const complaintSuppressions = await suppressionsFor(
     complaintTarget.normalized,
   );
@@ -337,6 +345,117 @@ async function main() {
     EmailSuppressionReason.COMPLAINT,
   );
   record("complaintSuppressions", complaintSuppressions.length);
+
+  // A processed event with a missing required suppression is repaired on
+  // duplicate processing before success is reported.
+  currentCase = "duplicate_repairs_missing_suppression";
+  await db.emailSuppression.deleteMany({
+    where: { recipientEmailNormalized: complaintTarget.normalized },
+  });
+  await processEmailProviderEvent(complaintEvent);
+  assert.equal((await suppressionsFor(complaintTarget.normalized)).length, 1);
+  record("duplicateSuppressionRepairs", 1);
+
+  // --- REV2-02/03: row-locked transitions under concurrent delivery ---------
+  currentCase = "concurrent_delivery_bounce_serializes";
+  const concurrentBounce = await deliverMessage("concurrent-bounce");
+  const deliveryEvent = parse(
+    JSON.stringify({
+      eventId: `delivery-concurrent-${runId}`,
+      eventType: "Delivery",
+      mail: {
+        messageId: concurrentBounce.providerMessageId,
+        timestamp: "2026-08-06T08:00:00.000Z",
+      },
+      delivery: {},
+    }),
+  );
+  const bounceEvent = parse(
+    bouncePayload({
+      eventId: `bounce-concurrent-${runId}`,
+      providerMessageId: concurrentBounce.providerMessageId,
+      bounce: { bounceType: "Permanent", bounceSubType: "General" },
+    }),
+  );
+  await Promise.all([
+    processEmailProviderEvent(deliveryEvent),
+    processEmailProviderEvent(bounceEvent),
+  ]);
+  const bouncedMessage = await db.emailMessage.findUniqueOrThrow({
+    where: { id: concurrentBounce.messageId },
+  });
+  assert.equal(bouncedMessage.status, EmailMessageStatus.BOUNCED);
+  assert.equal((await suppressionsFor(concurrentBounce.normalized)).length, 1);
+  record("concurrentDeliveryBounceSerialized", 1);
+
+  currentCase = "concurrent_delivery_complaint_serializes";
+  const concurrentComplaint = await deliverMessage("concurrent-complaint");
+  const deliveryForComplaint = parse(
+    JSON.stringify({
+      eventId: `delivery-complaint-${runId}`,
+      eventType: "Delivery",
+      mail: {
+        messageId: concurrentComplaint.providerMessageId,
+        timestamp: "2026-08-06T08:00:00.000Z",
+      },
+      delivery: {},
+    }),
+  );
+  const complaintConcurrent = parse(
+    JSON.stringify({
+      eventId: `complaint-concurrent-${runId}`,
+      eventType: "Complaint",
+      mail: {
+        messageId: concurrentComplaint.providerMessageId,
+        timestamp: "2026-08-06T08:05:00.000Z",
+      },
+      complaint: { complaintFeedbackType: "abuse" },
+    }),
+  );
+  await Promise.all([
+    processEmailProviderEvent(deliveryForComplaint),
+    processEmailProviderEvent(complaintConcurrent),
+  ]);
+  const complainedMessage = await db.emailMessage.findUniqueOrThrow({
+    where: { id: concurrentComplaint.messageId },
+  });
+  assert.equal(complainedMessage.status, EmailMessageStatus.COMPLAINED);
+  assert.equal((await suppressionsFor(concurrentComplaint.normalized)).length, 1);
+  record("concurrentDeliveryComplaintSerialized", 1);
+
+  currentCase = "older_delay_cannot_overwrite_delivery";
+  const delayedTarget = await deliverMessage("delayed-delivered");
+  const olderDelay = parse(
+    JSON.stringify({
+      eventId: `delay-older-${runId}`,
+      eventType: "DeliveryDelay",
+      mail: {
+        messageId: delayedTarget.providerMessageId,
+        timestamp: "2026-08-06T08:00:00.000Z",
+      },
+      deliveryDelay: {},
+    }),
+  );
+  const newerDelivery = parse(
+    JSON.stringify({
+      eventId: `delivery-newer-${runId}`,
+      eventType: "Delivery",
+      mail: {
+        messageId: delayedTarget.providerMessageId,
+        timestamp: "2026-08-06T08:05:00.000Z",
+      },
+      delivery: {},
+    }),
+  );
+  await Promise.all([
+    processEmailProviderEvent(newerDelivery),
+    processEmailProviderEvent(olderDelay),
+  ]);
+  const deliveredMessage = await db.emailMessage.findUniqueOrThrow({
+    where: { id: delayedTarget.messageId },
+  });
+  assert.equal(deliveredMessage.status, EmailMessageStatus.DELIVERED);
+  record("olderDelayIgnored", 1);
 
   // --- F-17 / F-11: no provider-controlled text anywhere in the database ---
   currentCase = "no_pii_in_persisted_rows";
@@ -396,6 +515,157 @@ async function main() {
   }
   record("allowlistedLedgerMessages", allowedMessages.size);
 
+  // --- REV2-01: durable checkpoint fencing ---------------------------------
+  currentCase = "durable_checkpoint_fencing";
+  const fencedStream = `fenced-${runId}`;
+  const lockA = await acquireProviderEventConsumerLock({
+    provider: PROVIDER,
+    streamName: fencedStream,
+  });
+  const ownerA = {
+    provider: lockA.provider,
+    streamName: lockA.streamName,
+    generation: lockA.generation,
+    holderId: lockA.holderId,
+  };
+  await lockA.release();
+
+  const lockB = await acquireProviderEventConsumerLock({
+    provider: PROVIDER,
+    streamName: fencedStream,
+  });
+  const ownerB = {
+    provider: lockB.provider,
+    streamName: lockB.streamName,
+    generation: lockB.generation,
+    holderId: lockB.holderId,
+  };
+  assert.equal(ownerB.generation > ownerA.generation, true);
+  try {
+    await prismaProviderEventConsumerStore.advanceCheckpoint({
+      provider: PROVIDER,
+      streamName: fencedStream,
+      shardId: "shard-stale",
+      sequenceNumber: "200",
+      owner: ownerB,
+      expectedRevision: null,
+    });
+    await assert.rejects(
+      () =>
+        prismaProviderEventConsumerStore.advanceCheckpoint({
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-stale",
+          sequenceNumber: "100",
+          owner: ownerA,
+          expectedRevision: null,
+        }),
+      (error: unknown) =>
+        error instanceof ProviderEventCheckpointFenceError &&
+        error.fenceCode === "FENCE_LOST",
+    );
+    const stored = await db.emailProviderStreamCheckpoint.findUniqueOrThrow({
+      where: {
+        provider_streamName_shardId: {
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-stale",
+        },
+      },
+    });
+    assert.equal(stored.lastSuccessfullyHandledSequenceNumber, "200");
+
+    const firstRead = await prismaProviderEventConsumerStore.loadCheckpoint({
+      provider: PROVIDER,
+      streamName: fencedStream,
+      shardId: "shard-stale",
+    });
+    assert.ok(firstRead);
+    await prismaProviderEventConsumerStore.advanceCheckpoint({
+      provider: PROVIDER,
+      streamName: fencedStream,
+      shardId: "shard-stale",
+      sequenceNumber: "300",
+      owner: ownerB,
+      expectedRevision: firstRead.revision,
+    });
+    await assert.rejects(
+      () =>
+        prismaProviderEventConsumerStore.advanceCheckpoint({
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-stale",
+          sequenceNumber: "250",
+          owner: ownerB,
+          expectedRevision: firstRead.revision,
+        }),
+      (error: unknown) =>
+        error instanceof ProviderEventCheckpointFenceError &&
+        error.fenceCode === "CHECKPOINT_CONFLICT",
+    );
+    const afterCas = await db.emailProviderStreamCheckpoint.findUniqueOrThrow({
+      where: {
+        provider_streamName_shardId: {
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-stale",
+        },
+      },
+    });
+    assert.equal(afterCas.lastSuccessfullyHandledSequenceNumber, "300");
+
+    const ensureInitialReadAt =
+      prismaProviderEventConsumerStore.ensureInitialReadAt;
+    assert.ok(
+      ensureInitialReadAt,
+      "Prisma provider event consumer store must support fenced initialReadAt writes.",
+    );
+
+    await ensureInitialReadAt({
+      provider: PROVIDER,
+      streamName: fencedStream,
+      shardId: "shard-initial",
+      initialReadAt: new Date(),
+      owner: ownerB,
+      expectedRevision: null,
+    });
+    await assert.rejects(
+      () =>
+        ensureInitialReadAt({
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-initial",
+          initialReadAt: new Date(Date.now() + 1000),
+          owner: ownerA,
+          expectedRevision: null,
+        }),
+      (error: unknown) =>
+        error instanceof ProviderEventCheckpointFenceError &&
+        error.fenceCode === "FENCE_LOST",
+    );
+
+    await assert.rejects(
+      () =>
+        prismaProviderEventConsumerStore.recordPoisonRecord({
+          provider: PROVIDER,
+          streamName: fencedStream,
+          shardId: "shard-poison",
+          sequenceNumber: "poison-100",
+          payloadSha256: "0".repeat(64),
+          errorCode: "MALFORMED_JSON",
+          sanitizedErrorMessage: "Provider event payload was not valid JSON.",
+          owner: ownerA,
+          expectedRevision: null,
+        }),
+      (error: unknown) =>
+        error instanceof ProviderEventCheckpointFenceError &&
+        error.fenceCode === "FENCE_LOST",
+    );
+  } finally {
+    await lockB.release();
+  }
+  record("fencedCheckpointWrites", 4);
+
   // --- Additive schema fields behave as designed ---------------------------
   currentCase = "additive_schema_fields";
   const checkpoint = await db.emailProviderStreamCheckpoint.create({
@@ -407,16 +677,49 @@ async function main() {
   });
   // Nullable by design: an older runtime that never writes it keeps working.
   assert.equal(checkpoint.initialReadAt, null);
+  assert.equal(checkpoint.revision, BigInt(0));
+  assert.equal(checkpoint.lastWriterGeneration, null);
+  assert.equal(checkpoint.lastWriterHolderId, null);
   const boundary = new Date();
   const updated = await db.emailProviderStreamCheckpoint.update({
     where: { id: checkpoint.id },
-    data: { initialReadAt: boundary },
+    data: {
+      initialReadAt: boundary,
+      revision: { increment: 1 },
+      lastWriterGeneration: BigInt(1),
+      lastWriterHolderId: `holder-${runId}`,
+    },
   });
   assert.equal(updated.initialReadAt?.getTime(), boundary.getTime());
+  assert.equal(updated.revision, BigInt(1));
+  assert.equal(updated.lastWriterGeneration, BigInt(1));
+  const lease = await db.emailProviderConsumerLease.upsert({
+    where: {
+      provider_streamName: {
+        provider: "yandex_postbox",
+        streamName: `verify-${runId}`,
+      },
+    },
+    create: {
+      provider: "yandex_postbox",
+      streamName: `verify-${runId}`,
+      generation: BigInt(1),
+      holderId: `holder-${runId}`,
+    },
+    update: {
+      generation: { increment: 1 },
+      holderId: `holder-${runId}-next`,
+    },
+  });
+  assert.ok(lease.generation >= BigInt(1));
+  await db.emailProviderConsumerLease.delete({
+    where: { id: lease.id },
+  });
   await db.emailProviderStreamCheckpoint.delete({
     where: { id: checkpoint.id },
   });
-  record("additiveCheckpointFields", 1);
+  record("additiveCheckpointFields", 4);
+  record("additiveConsumerLease", 1);
 }
 
 async function cleanup() {
@@ -428,6 +731,9 @@ async function cleanup() {
     where: { streamName: { contains: runId } },
   });
   await prisma.emailProviderStreamCheckpoint.deleteMany({
+    where: { streamName: { contains: runId } },
+  });
+  await prisma.emailProviderConsumerLease.deleteMany({
     where: { streamName: { contains: runId } },
   });
   if (ownedEmails.length > 0) {

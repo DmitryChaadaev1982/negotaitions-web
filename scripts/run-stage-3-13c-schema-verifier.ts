@@ -22,6 +22,9 @@ const COORDINATION_LOCK_LABEL_PREFIX =
 const REQUIRED_STAGE313C_MIGRATIONS = [
   "20260804170000_stage_3_13c_account_security_email",
   "20260805140000_stage_3_13c_security_remediation",
+  "20260806113000_add_email_provider_event_ingestion",
+  "20260806160000_harden_email_provider_event_ingestion",
+  "20260806183000_add_provider_event_consumer_fencing",
 ] as const;
 const ALLOWED_CHILD_NAME_KEYS = new Set([
   "reason",
@@ -602,7 +605,7 @@ async function main() {
     ok: true,
     counts: {
       migrationHistoryRows,
-      stage313cMigrationsVerified: 2,
+      stage313cMigrationsVerified: REQUIRED_STAGE313C_MIGRATIONS.length,
       applicationTablesVerified: verifiedTables,
       protectedSchemasUnchanged: 1,
       coordinationLocksReleased: 1,

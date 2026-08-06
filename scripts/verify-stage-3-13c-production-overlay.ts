@@ -44,17 +44,21 @@ const STAGE_3_13C_PROVIDER_EVENTS =
   "20260806113000_add_email_provider_event_ingestion";
 const STAGE_3_13C_PROVIDER_EVENT_HARDENING =
   "20260806160000_harden_email_provider_event_ingestion";
+const STAGE_3_13C_PROVIDER_EVENT_FENCING =
+  "20260806183000_add_provider_event_consumer_fencing";
 const STAGE_3_13C_PENDING = [
   STAGE_3_13C_ACCOUNT,
   STAGE_3_13C_REMEDIATION,
   STAGE_3_13C_PROVIDER_EVENTS,
   STAGE_3_13C_PROVIDER_EVENT_HARDENING,
+  STAGE_3_13C_PROVIDER_EVENT_FENCING,
 ] as const;
 /**
  * The only application tables the pending Stage 3.13C migrations may create.
  * Anything else appearing after the overlay is an unreviewed schema change.
  */
 const TABLES_ADDED_BY_STAGE_3_13C_OVERLAY = [
+  "EmailProviderConsumerLease",
   "EmailProviderIngestionFailure",
   "EmailProviderStreamCheckpoint",
   "PasswordResetToken",
@@ -501,16 +505,24 @@ async function assertProviderEventRemediationIsAdditive(
        AND (
          (table_name = 'EmailProviderEvent' AND column_name = 'suppressionDisposition')
          OR
-         (table_name = 'EmailProviderStreamCheckpoint' AND column_name = 'initialReadAt')
+         (table_name = 'EmailProviderStreamCheckpoint' AND column_name IN (
+           'initialReadAt',
+           'revision',
+           'lastWriterGeneration',
+           'lastWriterHolderId'
+         ))
        )
      ORDER BY table_name, column_name`,
     [schemaName],
   );
-  assert.equal(columns.rows.length, 2);
-  for (const row of columns.rows) {
+  assert.equal(columns.rows.length, 5);
+  for (const row of columns.rows.filter((column) => column.column_name !== "revision")) {
     assert.equal(row.is_nullable, "YES", `${row.column_name} must be nullable`);
     assert.equal(row.column_default, null, `${row.column_name} must have no default`);
   }
+  const revision = columns.rows.find((row) => row.column_name === "revision");
+  assert.equal(revision?.is_nullable, "NO");
+  assert.match(revision?.column_default ?? "", /0/);
   const disposition = columns.rows.find(
     (row) => row.column_name === "suppressionDisposition",
   );
@@ -542,6 +554,8 @@ async function assertProviderEventRemediationIsAdditive(
     [
       schemaName,
       [
+        "EmailProviderConsumerLease_provider_streamName_key",
+        "EmailProviderConsumerLease_updatedAt_idx",
         "EmailProviderIngestionFailure_provider_streamName_shardId_idx",
         "EmailProviderStreamCheckpoint_streamName_shardId_idx",
       ],
@@ -550,6 +564,8 @@ async function assertProviderEventRemediationIsAdditive(
   assert.deepEqual(
     indexes.rows.map((row) => row.indexname),
     [
+      "EmailProviderConsumerLease_provider_streamName_key",
+      "EmailProviderConsumerLease_updatedAt_idx",
       "EmailProviderIngestionFailure_provider_streamName_shardId_idx",
       "EmailProviderStreamCheckpoint_streamName_shardId_idx",
     ],
