@@ -151,5 +151,5 @@ export type NormalizedProviderEventInput = {
   eventType: EmailProviderEventType;
   eventTime: Date;
   metadata?: Record<string, unknown>;
-  suppressionReason?: EmailSuppressionReason;
+  suppressionReason?: EmailSuppressionReason | null;
 };

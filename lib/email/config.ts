@@ -5,6 +5,7 @@ export type EmailProviderName = "disabled" | "yandex_postbox" | "fake";
 
 export type EmailSenderKey = "no-reply" | "notifications" | "invitations";
 export type EmailReplyToKey = "support" | "security" | "business";
+export type EmailProviderEventInitialPosition = "LATEST" | "TRIM_HORIZON";
 
 export type EmailConfig = {
   deliveryEnabled: boolean;
@@ -29,6 +30,21 @@ export type EmailConfig = {
   providerEventRetentionDays: number;
   bounceComplaintRetentionDays: number;
   adminTestEnabled: boolean;
+  providerEventIngestion: {
+    enabled: boolean;
+    endpoint: string | null;
+    region: string;
+    streamName: string | null;
+    accessKeyId: string | null;
+    secretAccessKey: string | null;
+    initialPosition: EmailProviderEventInitialPosition;
+    recordLimit: number;
+    pollIntervalMs: number;
+    shardRefreshSeconds: number;
+    errorBackoffMs: number;
+    maxPayloadBytes: number;
+    shutdownTimeoutMs: number;
+  };
   yandexPostbox: {
     region: string;
     endpoint: string;
@@ -51,6 +67,11 @@ function parseBoundedInteger(
     throw new Error(`Invalid ${key}. Expected integer between ${min} and ${max}.`);
   }
   return parsed;
+}
+
+function readOptionalString(key: string): string | null {
+  const value = process.env[key]?.trim();
+  return value ? value : null;
 }
 
 function parseProvider(): EmailProviderName {
@@ -115,11 +136,85 @@ function readOptionalSecret(key: string): string | null {
   return value ? value : null;
 }
 
+function parseProviderEventInitialPosition(): EmailProviderEventInitialPosition {
+  const raw =
+    process.env.EMAIL_PROVIDER_EVENT_INITIAL_POSITION?.trim().toUpperCase() ||
+    "LATEST";
+  if (raw === "LATEST" || raw === "TRIM_HORIZON") return raw;
+  throw new Error(
+    "Invalid EMAIL_PROVIDER_EVENT_INITIAL_POSITION. Allowed: LATEST, TRIM_HORIZON.",
+  );
+}
+
+function parseDataStreamsEndpoint(enabled: boolean): string | null {
+  const raw = readOptionalString("YANDEX_DATA_STREAMS_ENDPOINT");
+  if (!raw) {
+    if (enabled) {
+      throw new Error(
+        "YANDEX_DATA_STREAMS_ENDPOINT is required when provider-event ingestion is enabled.",
+      );
+    }
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Invalid YANDEX_DATA_STREAMS_ENDPOINT.");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname !== "" && url.pathname !== "/")
+  ) {
+    throw new Error(
+      "YANDEX_DATA_STREAMS_ENDPOINT must be an HTTPS origin without credentials, path, query, or fragment.",
+    );
+  }
+  const approvedHosts = new Set(["yds.serverless.yandexcloud.net"]);
+  if (!approvedHosts.has(url.hostname)) {
+    throw new Error("YANDEX_DATA_STREAMS_ENDPOINT must be an approved Yandex Data Streams endpoint.");
+  }
+  return url.origin;
+}
+
+function parseDataStreamsStreamName(enabled: boolean): string | null {
+  const streamName = readOptionalString("YANDEX_DATA_STREAMS_STREAM_NAME");
+  if (!streamName) {
+    if (enabled) {
+      throw new Error(
+        "YANDEX_DATA_STREAMS_STREAM_NAME is required when provider-event ingestion is enabled.",
+      );
+    }
+    return null;
+  }
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(streamName)) {
+    throw new Error(
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Expected 1..128 characters: letters, digits, underscore, dot, colon, or hyphen.",
+    );
+  }
+  return streamName;
+}
+
 export function getEmailConfig(): EmailConfig {
   const deliveryEnabled = getEnvBoolean("EMAIL_DELIVERY_ENABLED", false);
+  const providerEventIngestionEnabled = getEnvBoolean(
+    "EMAIL_PROVIDER_EVENT_INGESTION_ENABLED",
+    false,
+  );
   const provider = parseProvider();
   const yandexAccessKeyId = readOptionalSecret("YANDEX_POSTBOX_ACCESS_KEY_ID");
   const yandexSecretAccessKey = readOptionalSecret("YANDEX_POSTBOX_SECRET_ACCESS_KEY");
+  const dataStreamsAccessKeyId = readOptionalSecret(
+    "YANDEX_DATA_STREAMS_ACCESS_KEY_ID",
+  );
+  const dataStreamsSecretAccessKey = readOptionalSecret(
+    "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
+  );
 
   if (deliveryEnabled && provider === "disabled") {
     throw new Error("EMAIL_PROVIDER must not be disabled when EMAIL_DELIVERY_ENABLED=true.");
@@ -128,6 +223,13 @@ export function getEmailConfig(): EmailConfig {
     if (!yandexAccessKeyId || !yandexSecretAccessKey) {
       throw new Error(
         "Missing Yandex Postbox credentials for enabled email delivery.",
+      );
+    }
+  }
+  if (providerEventIngestionEnabled) {
+    if (!dataStreamsAccessKeyId || !dataStreamsSecretAccessKey) {
+      throw new Error(
+        "Missing Yandex Data Streams credentials for enabled provider-event ingestion.",
       );
     }
   }
@@ -239,6 +341,51 @@ export function getEmailConfig(): EmailConfig {
       3650,
     ),
     adminTestEnabled: getEnvBoolean("EMAIL_ADMIN_TEST_ENABLED", false),
+    providerEventIngestion: {
+      enabled: providerEventIngestionEnabled,
+      endpoint: parseDataStreamsEndpoint(providerEventIngestionEnabled),
+      region: readOptionalString("YANDEX_DATA_STREAMS_REGION") ?? "ru-central1",
+      streamName: parseDataStreamsStreamName(providerEventIngestionEnabled),
+      accessKeyId: dataStreamsAccessKeyId,
+      secretAccessKey: dataStreamsSecretAccessKey,
+      initialPosition: parseProviderEventInitialPosition(),
+      recordLimit: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_RECORD_LIMIT",
+        100,
+        1,
+        1000,
+      ),
+      pollIntervalMs: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_POLL_INTERVAL_MS",
+        1000,
+        200,
+        5000,
+      ),
+      shardRefreshSeconds: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_SHARD_REFRESH_SECONDS",
+        60,
+        10,
+        3600,
+      ),
+      errorBackoffMs: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_ERROR_BACKOFF_MS",
+        2000,
+        100,
+        60000,
+      ),
+      maxPayloadBytes: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_MAX_PAYLOAD_BYTES",
+        262144,
+        1024,
+        1048576,
+      ),
+      shutdownTimeoutMs: parseBoundedInteger(
+        "EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS",
+        15000,
+        1000,
+        120000,
+      ),
+    },
     yandexPostbox: {
       region: process.env.YANDEX_POSTBOX_REGION?.trim() || "ru-central1",
       endpoint:

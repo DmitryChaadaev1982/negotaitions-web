@@ -205,6 +205,12 @@ enum EmailProviderEventProcessingStatus {
   FAILED
 }
 
+enum EmailProviderIngestionFailureStatus {
+  RECORDED
+  RESOLVED
+  IGNORED
+}
+
 enum ExternalServiceEventSeverity {
   INFO
   WARNING
@@ -1022,6 +1028,41 @@ model EmailProviderEvent {
   @@index([processingStatus, createdAt])
   @@index([processingStatus, nextReconcileAt])
   @@index([retainedUntil])
+}
+
+model EmailProviderStreamCheckpoint {
+  id                              String   @id @default(cuid())
+  provider                        String
+  streamName                      String
+  shardId                         String
+  lastSuccessfullyHandledSequenceNumber String?
+  approximateArrivalTimestamp     DateTime?
+  lastProcessedProviderEventId    String?
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+
+  @@unique([provider, streamName, shardId])
+  @@index([provider, streamName])
+  @@index([updatedAt])
+}
+
+model EmailProviderIngestionFailure {
+  id                          String   @id @default(cuid())
+  provider                    String
+  streamName                  String
+  shardId                     String
+  sequenceNumber              String
+  approximateArrivalTimestamp DateTime?
+  payloadSha256               String
+  errorCode                   String
+  sanitizedErrorMessage       String   @db.Text
+  status                      EmailProviderIngestionFailureStatus @default(RECORDED)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@unique([provider, streamName, shardId, sequenceNumber])
+  @@index([payloadSha256])
+  @@index([status, createdAt])
 }
 
 model UsageCounter {

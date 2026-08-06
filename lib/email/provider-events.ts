@@ -15,7 +15,7 @@ import { prisma } from "@/lib/prisma";
 function suppressionReasonForEvent(
   input: NormalizedProviderEventInput,
 ): EmailSuppressionReason | null {
-  if (input.suppressionReason) return input.suppressionReason;
+  if ("suppressionReason" in input) return input.suppressionReason ?? null;
   if (input.eventType === EmailProviderEventType.BOUNCED) {
     return EmailSuppressionReason.HARD_BOUNCE;
   }
