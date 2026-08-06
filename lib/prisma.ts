@@ -2,6 +2,10 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 
 import { PrismaClient } from "@/app/generated/prisma/client";
+import {
+  parseServerRuntimeSetting,
+  readServerRuntimeSettingRaw,
+} from "@/lib/config/server-runtime-settings";
 import { extractPrismaSchema } from "@/lib/prisma-connection-string";
 
 const globalForPrisma = globalThis as unknown as {
@@ -12,7 +16,7 @@ const globalForPrisma = globalThis as unknown as {
 const PRISMA_CLIENT_VERSION = "20260629200500-add-video-provider-identity";
 
 function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = readServerRuntimeSettingRaw("DATABASE_URL");
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set");
   }
@@ -33,7 +37,7 @@ export const prisma =
     ? globalForPrisma.prisma
     : createPrismaClient();
 
-if (process.env.NODE_ENV !== "production") {
+if (parseServerRuntimeSetting("NODE_ENV") !== "production") {
   globalForPrisma.prisma = prisma;
   globalForPrisma.prismaClientVersion = PRISMA_CLIENT_VERSION;
 }

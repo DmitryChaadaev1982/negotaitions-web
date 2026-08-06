@@ -79,9 +79,10 @@
     "test:stage313c:high-remediation-r2": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/email/sensitive-payload.test.ts\" \"lib/auth/credential-concurrency.remediation.test.ts\"",
     "verify:stage313c:high-remediation-r2": "tsx scripts/run-stage-3-13c-schema-verifier.ts --verifier high-remediation-r2",
     "test:stage313c:test-database-harness": "node --import tsx --test \"scripts/stage-3-13c-test-database.test.ts\"",
-    "test:stage313c:final-remediation": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/auth/reset-fragment.test.ts\" \"lib/email/final-remediation.test.ts\" \"lib/email/sensitive-payload.test.ts\"",
+    "test:stage313c:final-remediation": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/auth/reset-fragment.test.ts\" \"lib/email/final-remediation.test.ts\" \"lib/email/sensitive-payload.test.ts\" \"lib/services/admin-env-display.test.ts\" \"lib/config/server-runtime-settings.test.ts\" && npm run verify:runtime-config",
     "verify:stage313c:final-remediation": "tsx scripts/run-stage-3-13c-schema-verifier.ts --verifier final-remediation",
     "verify:stage313c:trusted-proxy": "tsx scripts/verify-stage-3-13c-trusted-proxy-activation.ts",
+    "verify:runtime-config": "tsx scripts/verify-runtime-config-drift.ts",
     "verify:stage313c:provider-events": "tsx scripts/run-stage-3-13c-schema-verifier.ts --verifier provider-events",
     "test:stage313c:provider-events": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/email/yandex-postbox-provider-event-parser.test.ts\" \"lib/email/provider-event-consumer.test.ts\" \"lib/email/provider-event-consumer-shards.test.ts\" \"lib/email/provider-event-consumer-cli.test.ts\" \"lib/email/provider-event-consumer-lock.pg.test.ts\" && npm run verify:stage313c:provider-events",
     "test:stage313c:auth-origins": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/config/server-action-origins.test.ts\" \"lib/auth/return-url.test.ts\" \"lib/services/admin-env-display.test.ts\""

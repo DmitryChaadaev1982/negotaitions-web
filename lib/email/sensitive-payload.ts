@@ -4,9 +4,14 @@ import {
   hashPasswordResetToken,
   isPasswordResetTokenShape,
 } from "../auth/password-reset-token";
+import {
+  readServerRuntimeSettingRaw,
+  SERVER_RUNTIME_SETTINGS,
+} from "@/lib/config/server-runtime-settings";
 import { normalizeEmailAddress } from "./address";
 
-export const EMAIL_SENSITIVE_PAYLOAD_KEY_ENV = "EMAIL_SENSITIVE_PAYLOAD_KEY";
+export const EMAIL_SENSITIVE_PAYLOAD_KEY_ENV =
+  SERVER_RUNTIME_SETTINGS.EMAIL_SENSITIVE_PAYLOAD_KEY.key;
 export const EMAIL_SENSITIVE_PAYLOAD_VERSION = 1 as const;
 export const EMAIL_SENSITIVE_PAYLOAD_AAD_VERSION = 1 as const;
 export const EMAIL_SENSITIVE_PAYLOAD_PURPOSE = "PASSWORD_RESET" as const;
@@ -101,9 +106,11 @@ function parseKey(raw: string | undefined): Buffer {
  * Fail closed when absent/malformed.
  */
 export function resolveSensitivePayloadKey(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): Buffer {
-  return parseKey(env[EMAIL_SENSITIVE_PAYLOAD_KEY_ENV]);
+  return parseKey(
+    readServerRuntimeSettingRaw("EMAIL_SENSITIVE_PAYLOAD_KEY", env) ?? undefined,
+  );
 }
 
 /**
@@ -128,7 +135,7 @@ export function encodeSensitivePayloadAad(binding: SensitivePayloadBinding): Buf
 export function encryptSensitivePayload(
   payload: PasswordResetSensitivePayload,
   binding: SensitivePayloadBinding,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): EncryptedSensitivePayload {
   if (
     payload.tokenId !== binding.tokenId ||
@@ -153,7 +160,7 @@ export function encryptSensitivePayload(
 export function decryptSensitivePayload(
   input: EncryptedSensitivePayload,
   binding: SensitivePayloadBinding,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): PasswordResetSensitivePayload {
   const key = resolveSensitivePayloadKey(env);
   if (!isCanonicalBase64(input.ciphertext) || !isCanonicalBase64(input.nonce, 12)) {

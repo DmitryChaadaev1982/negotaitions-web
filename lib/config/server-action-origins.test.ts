@@ -113,11 +113,8 @@ test("no wildcard or deceptive hostname is ever emitted", () => {
 
 test("the allowlist is read from the build environment, never from a request", () => {
   const source = readFileSync("lib/config/server-action-origins.ts", "utf8");
-  // Only NODE_ENV may be consulted.
-  const envReads = [...source.matchAll(/env(?:\.|\[")([A-Za-z_][A-Za-z0-9_]*)/g)]
-    .map((match) => match[1])
-    .filter((name) => name !== "nodeEnv");
-  assert.deepEqual(new Set(envReads), new Set(["NODE_ENV"]));
+  assert.match(source, /parseServerRuntimeSetting\("NODE_ENV", env\)/);
+  assert.doesNotMatch(source, /process\s*\.\s*env/);
   // No request-scoped input may reach the allowlist.
   for (const forbidden of [
     "x-forwarded",

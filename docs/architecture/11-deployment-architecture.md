@@ -17,6 +17,10 @@
 
 - `.env.production` is runtime secret material and must not be committed.
 - Secret values must remain outside repository docs and code.
+- Stage 3.13C auth/email/provider-event runtime settings are defined by one
+  typed registry. Admin diagnostics project from that registry, and an
+  AST-based validation gate rejects unregistered or bypassing environment
+  access. Registered secrets serialize only presence state with `value: null`.
 
 ## Service Topology (Inferred)
 

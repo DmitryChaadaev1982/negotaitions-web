@@ -1,3 +1,5 @@
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
+
 /**
  * Bounded response-time floor for public forgot-password intake.
  *
@@ -8,26 +10,18 @@
 
 export type TimingFloorSleeper = (ms: number) => Promise<void>;
 
-const DEFAULT_FLOOR_MS = 180;
-const MAX_FLOOR_MS = 400;
-
 function defaultSleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function getForgotPasswordTimingFloorMs(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): number {
-  const raw = env.PASSWORD_RESET_RESPONSE_FLOOR_MS?.trim();
-  if (!raw) return DEFAULT_FLOOR_MS;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_FLOOR_MS) {
-    throw new Error(
-      `Invalid PASSWORD_RESET_RESPONSE_FLOOR_MS. Expected integer 0..${MAX_FLOOR_MS}.`,
-    );
-  }
-  return parsed;
+  return parseServerRuntimeSetting(
+    "PASSWORD_RESET_RESPONSE_FLOOR_MS",
+    env,
+  ) as number;
 }
 
 export async function withResponseTimingFloor<T>(params: {

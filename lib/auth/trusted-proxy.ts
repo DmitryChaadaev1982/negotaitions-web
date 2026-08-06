@@ -1,3 +1,5 @@
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
+
 /**
  * Trusted reverse-proxy configuration.
  *
@@ -12,13 +14,10 @@
 export const TRUSTED_CLIENT_IP_HEADER = "x-negotaitions-client-ip";
 
 export function isTrustedProxyEnabled(
-  env: Record<string, string | undefined> = process.env,
+  env?: Record<string, string | undefined>,
 ): boolean {
-  const raw = env.TRUSTED_PROXY_ENABLED?.trim().toLowerCase();
-  if (!raw) return false;
-  if (["true", "1", "yes", "on"].includes(raw)) return true;
-  if (["false", "0", "no", "off"].includes(raw)) return false;
-  throw new Error(
-    'Invalid TRUSTED_PROXY_ENABLED. Allowed: true, false, 1, 0, yes, no, on, off.',
-  );
+  return parseServerRuntimeSetting(
+    "TRUSTED_PROXY_ENABLED",
+    env,
+  ) as boolean;
 }

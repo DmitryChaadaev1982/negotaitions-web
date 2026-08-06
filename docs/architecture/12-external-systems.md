@@ -59,6 +59,9 @@
 ## Security Note
 
 - No credentials, tokens, private keys, or secret env values are documented here.
+- Postbox and Data Streams credentials are independently classified by the
+  typed server runtime-setting registry. Administrative diagnostics derive
+  from that classification and always serialize secret values as `null`.
 
 ## Source Notes
 

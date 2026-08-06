@@ -109,11 +109,20 @@ normalization can change the target origin.
 
 ## Admin Diagnostics
 
-`lib/services/admin-env-display.ts` exposes a typed descriptor registry for the
-in-scope runtime settings. Each descriptor names the runtime file that consumes
-the key, and the test suite asserts two-way set equality against the expected
-key set, so adding a runtime setting without a descriptor, or keeping a
-descriptor for a key nothing reads, fails the build.
+`lib/config/server-runtime-settings.ts` is the typed source of truth for every
+in-scope runtime setting: owner modules, parser category, defaults,
+bounds/enums, secret classification, feature applicability/required
+conditions, and safe diagnostic metadata. `lib/services/admin-env-display.ts`
+projects descriptors directly from that registry rather than maintaining a
+parallel key list.
+
+`scripts/verify-runtime-config-drift.ts` uses the TypeScript compiler API over
+the real auth/session, proxy/client-identity, password-reset, email, Postbox,
+worker/retry/retention, provider-event, Data Streams, and sensitive-payload
+modules. It rejects direct dot/bracket access, destructuring, aliases, dynamic
+keys, helper-mediated dynamic reads, unregistered keys, unapproved consumers,
+and unused registry entries. Tests use temporary source strings for every
+rejected access form; fixtures never enter production runtime code.
 
 Effective values come from the same runtime parser the application uses, so a
 defaulted setting reports `using_effective_default` with the real default rather

@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "pg";
+import {
+  parseServerRuntimeSetting,
+  readServerRuntimeSettingRaw,
+  SERVER_RUNTIME_SETTINGS,
+} from "@/lib/config/server-runtime-settings";
 
 /**
  * Session-level PostgreSQL advisory lock fencing credential mutations against
@@ -14,10 +19,9 @@ import { Client } from "pg";
 
 const FENCE_NAMESPACE = "negotaitions:credential-dispatch-v1:";
 export const CREDENTIAL_DISPATCH_FENCE_TIMEOUT_ENV =
-  "CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS";
-export const DEFAULT_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS = 5_000;
-const MIN_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS = 50;
-const MAX_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS = 30_000;
+  SERVER_RUNTIME_SETTINGS.CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS.key;
+export const DEFAULT_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS =
+  SERVER_RUNTIME_SETTINGS.CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS.parser.defaultValue;
 const INITIAL_BACKOFF_MS = 25;
 const MAX_BACKOFF_MS = 100;
 
@@ -44,7 +48,7 @@ let fenceHooks: CredentialDispatchFenceHooks = {};
 export function setCredentialDispatchFenceHooksForTests(
   hooks: CredentialDispatchFenceHooks,
 ): void {
-  if (process.env.NODE_ENV === "production") {
+  if (parseServerRuntimeSetting("NODE_ENV") === "production") {
     throw new Error(
       "Credential dispatch fence test hooks are unavailable in production.",
     );
@@ -65,7 +69,8 @@ export function credentialDispatchAdvisoryKeys(userId: string): [number, number]
 }
 
 function resolveConnectionString(explicit?: string): string {
-  const connectionString = explicit ?? process.env.DATABASE_URL;
+  const connectionString =
+    explicit ?? readServerRuntimeSettingRaw("DATABASE_URL");
   if (!connectionString) {
     throw new Error("DATABASE_URL is required for credential dispatch fence.");
   }
@@ -73,21 +78,20 @@ function resolveConnectionString(explicit?: string): string {
 }
 
 export function resolveCredentialDispatchFenceTimeoutMs(
-  value = process.env[CREDENTIAL_DISPATCH_FENCE_TIMEOUT_ENV],
+  value?: string,
 ): number {
-  const trimmed = value?.trim();
-  if (!trimmed) return DEFAULT_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS;
-  const parsed = Number(trimmed);
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < MIN_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS ||
-    parsed > MAX_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS
-  ) {
+  try {
+    return parseServerRuntimeSetting(
+      "CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS",
+      value === undefined
+        ? undefined
+        : { CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS: value },
+    ) as number;
+  } catch {
     throw new CredentialDispatchFenceError(
       "CREDENTIAL_DISPATCH_FENCE_CONFIGURATION",
     );
   }
-  return parsed;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

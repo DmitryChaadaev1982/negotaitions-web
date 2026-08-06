@@ -1,5 +1,7 @@
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
+
 export function parseAdminEmails(): string[] {
-  const raw = process.env.ADMIN_EMAILS ?? "";
+  const raw = parseServerRuntimeSetting("ADMIN_EMAILS") as string;
   return raw
     .split(",")
     .map((e) => e.trim().toLowerCase())

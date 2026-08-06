@@ -14,6 +14,7 @@ import {
   EmailProviderEventProcessingStatus,
   type Prisma,
 } from "@/app/generated/prisma/client";
+import { readServerRuntimeSettingRaw } from "@/lib/config/server-runtime-settings";
 import { getEmailConfig, type EmailConfig } from "@/lib/email/config";
 import { logEmailEvent } from "@/lib/email/observability";
 import { processEmailProviderEvent } from "@/lib/email/provider-events";
@@ -770,7 +771,7 @@ export async function acquireProviderEventConsumerLock(params?: {
   provider?: string;
   streamName?: string;
 }): Promise<ProviderEventConsumerLock> {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = readServerRuntimeSettingRaw("DATABASE_URL");
   if (!connectionString) {
     throw new ProviderEventConsumerError(
       "DATABASE_URL_MISSING",
@@ -782,7 +783,7 @@ export async function acquireProviderEventConsumerLock(params?: {
   const provider = params?.provider ?? PROVIDER;
   const streamName =
     params?.streamName ??
-    process.env.YANDEX_DATA_STREAMS_STREAM_NAME?.trim() ??
+    readServerRuntimeSettingRaw("YANDEX_DATA_STREAMS_STREAM_NAME") ??
     "postbox-events";
   const client = new PgClient({ connectionString });
   const listeners: Array<(error: Error) => void> = [];

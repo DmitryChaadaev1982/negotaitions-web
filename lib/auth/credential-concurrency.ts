@@ -1,3 +1,5 @@
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
+
 /**
  * Credential-generation concurrency helpers for linearizable password mutations.
  *
@@ -41,7 +43,7 @@ let activeHooks: CredentialMutationHooks = {};
 export function setCredentialMutationHooksForTests(
   hooks: CredentialMutationHooks,
 ): void {
-  if (process.env.NODE_ENV === "production") {
+  if (parseServerRuntimeSetting("NODE_ENV") === "production") {
     throw new Error(
       "Credential mutation test hooks are unavailable in production.",
     );

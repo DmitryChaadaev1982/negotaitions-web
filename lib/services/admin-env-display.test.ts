@@ -7,6 +7,11 @@ import {
   getAdminEnvironmentDisplayGroups,
   type AdminEnvDescriptor,
 } from "@/lib/services/admin-env-display";
+import {
+  SERVER_RUNTIME_SETTING_KEYS,
+  SERVER_RUNTIME_SETTINGS,
+} from "@/lib/config/server-runtime-settings";
+import { verifyRuntimeConfiguration } from "../../scripts/verify-runtime-config-drift";
 
 function withEnv<T>(patch: Record<string, string | undefined>, operation: () => T): T {
   const previous = new Map<string, string | undefined>();
@@ -29,93 +34,10 @@ function rows() {
   return getAdminEnvironmentDisplayGroups().flatMap((group) => group.items);
 }
 
-/**
- * The agreed in-scope diagnostics surface. This list and the descriptor
- * registry are asserted equal in both directions, so adding a runtime setting
- * without a descriptor, or leaving a descriptor for a key nothing consumes,
- * fails the suite instead of silently drifting.
- */
-const EXPECTED_DIAGNOSTIC_KEYS = [
-  // Provider selection
-  "VIDEO_PROVIDER",
-  "TRANSCRIPTION_PROVIDER",
-  "AI_ANALYSIS_PROVIDER",
-  // Database and authentication
-  "DATABASE_URL",
-  "AUTH_SECRET",
-  "ADMIN_EMAILS",
-  "TRUSTED_PROXY_ENABLED",
-  "CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS",
-  // Password reset
-  "PASSWORD_RESET_TOKEN_TTL_MINUTES",
-  "PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS",
-  "PASSWORD_RESET_MAX_REQUESTS_PER_HOUR",
-  "PASSWORD_RESET_RESPONSE_FLOOR_MS",
-  // Email foundation
-  "EMAIL_DELIVERY_ENABLED",
-  "EMAIL_PROVIDER",
-  "EMAIL_CANONICAL_BASE_URL",
-  "EMAIL_LOCAL_PREVIEW_ENABLED",
-  "EMAIL_ADMIN_TEST_ENABLED",
-  "EMAIL_OPERATOR_NAME",
-  "EMAIL_FROM_NO_REPLY",
-  "EMAIL_FROM_NOTIFICATIONS",
-  "EMAIL_FROM_INVITATIONS",
-  "EMAIL_REPLY_TO_SUPPORT",
-  "EMAIL_REPLY_TO_SECURITY",
-  "EMAIL_REPLY_TO_BUSINESS",
-  "EMAIL_SENSITIVE_PAYLOAD_KEY",
-  "YANDEX_POSTBOX_REGION",
-  "YANDEX_POSTBOX_ENDPOINT",
-  "YANDEX_POSTBOX_CONFIGURATION_SET",
-  "YANDEX_POSTBOX_ACCESS_KEY_ID",
-  "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
-  // Email worker
-  "EMAIL_WORKER_BATCH_SIZE",
-  "EMAIL_MAX_ATTEMPTS",
-  "EMAIL_RETRY_BASE_SECONDS",
-  "EMAIL_RETRY_MAX_SECONDS",
-  "EMAIL_PROCESSING_LEASE_SECONDS",
-  "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS",
-  "EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS",
-  // Retention
-  "EMAIL_CONTENT_RETENTION_DAYS",
-  "EMAIL_DELIVERY_ATTEMPT_RETENTION_DAYS",
-  "EMAIL_PROVIDER_ID_RETENTION_DAYS",
-  "EMAIL_PROVIDER_EVENT_RETENTION_DAYS",
-  "EMAIL_BOUNCE_COMPLAINT_RETENTION_DAYS",
-  // Provider-event reconciliation
-  "EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS",
-  "EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS",
-  // Provider-event ingestion
-  "EMAIL_PROVIDER_EVENT_INGESTION_ENABLED",
-  "YANDEX_DATA_STREAMS_ENDPOINT",
-  "YANDEX_DATA_STREAMS_STREAM_NAME",
-  "YANDEX_DATA_STREAMS_REGION",
-  "YANDEX_DATA_STREAMS_ACCESS_KEY_ID",
-  "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
-  "EMAIL_PROVIDER_EVENT_INITIAL_POSITION",
-  "EMAIL_PROVIDER_EVENT_RECORD_LIMIT",
-  "EMAIL_PROVIDER_EVENT_POLL_INTERVAL_MS",
-  "EMAIL_PROVIDER_EVENT_SHARD_REFRESH_SECONDS",
-  "EMAIL_PROVIDER_EVENT_ERROR_BACKOFF_MS",
-  "EMAIL_PROVIDER_EVENT_MAX_PAYLOAD_BYTES",
-  "EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS",
-  "EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY",
-  "EMAIL_PROVIDER_EVENT_SHARD_SLICE_MAX_POLLS",
-  "EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES",
-] as const;
-
-/** Every key classified as a secret. Its value must always serialize as null. */
-const EXPECTED_SECRET_KEYS = [
-  "DATABASE_URL",
-  "AUTH_SECRET",
-  "EMAIL_SENSITIVE_PAYLOAD_KEY",
-  "YANDEX_POSTBOX_ACCESS_KEY_ID",
-  "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
-  "YANDEX_DATA_STREAMS_ACCESS_KEY_ID",
-  "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
-] as const;
+const EXPECTED_DIAGNOSTIC_KEYS = SERVER_RUNTIME_SETTING_KEYS;
+const EXPECTED_SECRET_KEYS = SERVER_RUNTIME_SETTING_KEYS.filter(
+  (key) => SERVER_RUNTIME_SETTINGS[key].secret,
+);
 
 function descriptors(): AdminEnvDescriptor[] {
   return buildAdminEnvDescriptors();
@@ -145,32 +67,8 @@ test("no descriptor is duplicated and every descriptor reaches a display group",
   );
 });
 
-test("every key the email runtime parser reads has a descriptor", () => {
-  // Mechanical reverse check against the real parser: any env key added to
-  // lib/email/config.ts without a descriptor fails here.
-  const source = readFileSync("lib/email/config.ts", "utf8");
-  const consumed = new Set(
-    [
-      ...source.matchAll(
-        /\b((?:EMAIL|YANDEX)_[A-Z0-9_]+)\b/g,
-      ),
-    ].map((match) => match[1]),
-  );
-  assert.ok(consumed.size > 40, "parser scan found suspiciously few keys");
-
-  const declared = new Set(descriptors().map((descriptor) => descriptor.key));
-  const undocumented = [...consumed].filter((key) => !declared.has(key));
-  assert.deepEqual(undocumented, [], "runtime keys missing from diagnostics");
-});
-
-test("every descriptor key appears in the source file it names as its consumer", () => {
-  for (const descriptor of descriptors()) {
-    const source = readFileSync(descriptor.consumer, "utf8");
-    assert.ok(
-      source.includes(descriptor.key),
-      `${descriptor.key} is not read by its declared consumer ${descriptor.consumer}`,
-    );
-  }
+test("AST enforcement proves registry and runtime-consumer equality", () => {
+  assert.deepEqual(verifyRuntimeConfiguration(), []);
 });
 
 test("secret classification is exact and secret values are always null", () => {

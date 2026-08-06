@@ -7,6 +7,7 @@ import {
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
 import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
 import { prisma } from "@/lib/prisma";
 
 import { isAdmin, parseAdminEmails } from "./admin";
@@ -111,7 +112,7 @@ async function writeUserSessionCookie(params: {
   cookieStore.set(COOKIE_NAME, params.token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: parseServerRuntimeSetting("NODE_ENV") === "production",
     path: "/",
     expires: params.expiresAt,
   });
@@ -121,7 +122,7 @@ async function writeUserSessionCookie(params: {
 export function setUserSessionCookieWriterForTests(
   writer: UserSessionCookieWriter,
 ): void {
-  if (process.env.NODE_ENV === "production") {
+  if (parseServerRuntimeSetting("NODE_ENV") === "production") {
     throw new Error("Session cookie test hook is unavailable in production.");
   }
   userSessionCookieWriterForTests = writer;

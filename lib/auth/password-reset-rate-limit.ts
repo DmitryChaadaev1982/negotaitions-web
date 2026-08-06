@@ -1,5 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 
+import { readServerRuntimeSettingRaw } from "@/lib/config/server-runtime-settings";
+
 const WINDOW_MS = 60 * 60 * 1000;
 const FALLBACK_HMAC_KEY = randomBytes(32);
 
@@ -111,7 +113,7 @@ export function consumePasswordResetAttempt(params: {
     clientIpFingerprint: params.clientIpFingerprint,
     // AUTH_SECRET is unused when a fingerprint is supplied. Kept only for the
     // deprecated rawIp path used by focused unit tests.
-    hmacSecret: process.env.AUTH_SECRET,
+    hmacSecret: readServerRuntimeSettingRaw("AUTH_SECRET"),
   });
 }
 

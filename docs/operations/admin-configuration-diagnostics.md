@@ -28,18 +28,21 @@ The browser component renders only this bounded model. It never enumerates
 
 ## Coverage Matrix
 
-The table below is the authoritative diagnostics scope. It is asserted equal —
-in both directions, including the secret column — to the descriptors emitted by
-`buildAdminEnvDescriptors()` in
-`lib/services/admin-env-display.test.ts`. A runtime key added without a
-descriptor, a descriptor without a documented row, or a secret whose
-classification disagrees with this table fails that suite.
+The typed registry in `lib/config/server-runtime-settings.ts` is the executable
+source of truth. Administrative descriptors are projected directly from it.
+The table below is asserted equal to the registry in both directions, including
+the secret column. A TypeScript-compiler-API verifier scans the promised auth,
+session, proxy, password-reset, email, worker, retry, retention, Postbox, Data
+Streams, provider-event, and sensitive-payload modules. Direct, bracketed,
+destructured, aliased, dynamic, helper-mediated, unregistered, or unused
+configuration access fails validation.
 
 | Runtime key | Parser/owner | Effective default | Secret | Required condition | Display rule |
 | --- | --- | --- | --- | --- | --- |
-| `VIDEO_PROVIDER` | `lib/env.ts` | runtime-selected provider | no | always | derived effective provider |
-| `TRANSCRIPTION_PROVIDER` | `lib/env.ts` | runtime-selected provider | no | always | derived effective provider |
-| `AI_ANALYSIS_PROVIDER` | `lib/env.ts` | runtime-selected provider | no | always | derived effective provider |
+| `NODE_ENV` | typed runtime registry | `development` | no | never | effective bounded runtime mode |
+| `VIDEO_PROVIDER` | `lib/config/provider-runtime.ts` | `livekit` | no | always | derived effective provider |
+| `TRANSCRIPTION_PROVIDER` | `lib/config/provider-runtime.ts` | `openai` | no | always | derived effective provider |
+| `AI_ANALYSIS_PROVIDER` | `lib/config/provider-runtime.ts` | `openai` | no | always | derived effective provider |
 | `DATABASE_URL` | `lib/prisma.ts` | none | yes | always | configured/missing only, value always null |
 | `AUTH_SECRET` | `lib/auth/client-ip.ts` | none | yes | always | configured/missing only, value always null |
 | `ADMIN_EMAILS` | `lib/auth/admin.ts` | empty list | no | never (empty is valid) | `configured list` or `empty list`, never the addresses |

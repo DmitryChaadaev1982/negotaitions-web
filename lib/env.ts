@@ -1,4 +1,10 @@
-import type { VideoProvider } from "@/lib/voximplant/types";
+export {
+  getAiAnalysisProvider,
+  getTranscriptionProvider,
+  getVideoProvider,
+  type AiAnalysisProvider,
+  type TranscriptionProvider,
+} from "@/lib/config/provider-runtime";
 
 /**
  * Safe boolean env-var parser.
@@ -31,8 +37,6 @@ export const autoTranscribeAfterRecording = getEnvBoolean(
   false,
 );
 
-export type AiAnalysisProvider = "openai" | "yandex";
-export type TranscriptionProvider = "openai" | "yandex_speechkit";
 export type YandexSpeechKitContainerType = "MP3" | "WAV" | "OGG_OPUS";
 export type VoximplantAudioProcessingProfile = "speech" | "raw_diagnostic";
 export type PauseProcessingMode =
@@ -52,21 +56,6 @@ export type VoximplantServerStopMode =
   | "disabled"
   | "prefer_server_with_relay_fallback"
   | "prefer_server_no_relay_fallback";
-
-export function getVideoProvider(): VideoProvider {
-  const raw = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
-  return raw === "voximplant" ? "voximplant" : "livekit";
-}
-
-export function getAiAnalysisProvider(): AiAnalysisProvider {
-  const raw = process.env.AI_ANALYSIS_PROVIDER?.trim().toLowerCase();
-  return raw === "yandex" ? "yandex" : "openai";
-}
-
-export function getTranscriptionProvider(): TranscriptionProvider {
-  const raw = process.env.TRANSCRIPTION_PROVIDER?.trim().toLowerCase();
-  return raw === "yandex_speechkit" ? "yandex_speechkit" : "openai";
-}
 
 export function isYandexAiConfigured(): boolean {
   return Boolean(

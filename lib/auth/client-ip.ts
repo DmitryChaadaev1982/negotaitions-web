@@ -5,6 +5,10 @@ import {
   isTrustedProxyEnabled,
   TRUSTED_CLIENT_IP_HEADER,
 } from "@/lib/auth/trusted-proxy";
+import {
+  parseServerRuntimeSetting,
+  readServerRuntimeSettingRaw,
+} from "@/lib/config/server-runtime-settings";
 
 /**
  * Central client-IP identity helper.
@@ -88,17 +92,20 @@ export function getTrustedClientIdentity(
     hmacSecret?: string | null;
   },
 ): TrustedClientIdentity {
-  const env = options?.env ?? process.env;
-  const secret = options?.hmacSecret ?? env.AUTH_SECRET;
+  const secret =
+    options?.hmacSecret ??
+    readServerRuntimeSettingRaw("AUTH_SECRET", options?.env);
   if (!secret?.trim()) {
-    if ((env.NODE_ENV ?? process.env.NODE_ENV) === "production") {
+    if (
+      parseServerRuntimeSetting("NODE_ENV", options?.env) === "production"
+    ) {
       throw new Error("AUTH_SECRET is required for trusted client identity in production.");
     }
   }
 
   let trustedEnabled = false;
   try {
-    trustedEnabled = isTrustedProxyEnabled(env);
+    trustedEnabled = isTrustedProxyEnabled(options?.env);
   } catch {
     return {
       fingerprint: fingerprintClientIpValue(UNKNOWN_CLIENT_IP_BUCKET, secret),

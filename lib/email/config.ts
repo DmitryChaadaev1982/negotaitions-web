@@ -1,4 +1,4 @@
-import { getEnvBoolean } from "@/lib/env";
+import { parseServerRuntimeSetting } from "@/lib/config/server-runtime-settings";
 import { validateEmailAddress } from "@/lib/email/address";
 
 export type EmailProviderName = "disabled" | "yandex_postbox" | "fake";
@@ -61,37 +61,12 @@ export type EmailConfig = {
   };
 };
 
-function parseBoundedInteger(
-  key: string,
-  defaultValue: number,
-  min: number,
-  max: number,
-): number {
-  const raw = process.env[key]?.trim();
-  if (!raw) return defaultValue;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
-    throw new Error(`Invalid ${key}. Expected integer between ${min} and ${max}.`);
-  }
-  return parsed;
-}
-
-function readOptionalString(key: string): string | null {
-  const value = process.env[key]?.trim();
-  return value ? value : null;
-}
-
 function parseProvider(): EmailProviderName {
-  const raw = process.env.EMAIL_PROVIDER?.trim().toLowerCase() || "disabled";
-  if (raw === "disabled" || raw === "yandex_postbox" || raw === "fake") {
-    return raw;
-  }
-  throw new Error("Invalid EMAIL_PROVIDER. Allowed: disabled, yandex_postbox, fake.");
+  return parseServerRuntimeSetting("EMAIL_PROVIDER") as EmailProviderName;
 }
 
 function parseCanonicalBaseUrl(): string {
-  const raw =
-    process.env.EMAIL_CANONICAL_BASE_URL?.trim() || "https://negotaitions.ru";
+  const raw = parseServerRuntimeSetting("EMAIL_CANONICAL_BASE_URL") as string;
   let url: URL;
   try {
     url = new URL(raw);
@@ -113,7 +88,8 @@ function parseCanonicalBaseUrl(): string {
   }
 
   const origin = url.origin;
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction =
+    parseServerRuntimeSetting("NODE_ENV") === "production";
   const approvedProduction = "https://negotaitions.ru";
   const approvedLocal = "https://local.negotaitions.ru";
 
@@ -138,23 +114,16 @@ function parseCanonicalBaseUrl(): string {
   );
 }
 
-function readOptionalSecret(key: string): string | null {
-  const value = process.env[key]?.trim();
-  return value ? value : null;
-}
-
 function parseProviderEventInitialPosition(): EmailProviderEventInitialPosition {
-  const raw =
-    process.env.EMAIL_PROVIDER_EVENT_INITIAL_POSITION?.trim().toUpperCase() ||
-    "LATEST";
-  if (raw === "LATEST" || raw === "TRIM_HORIZON") return raw;
-  throw new Error(
-    "Invalid EMAIL_PROVIDER_EVENT_INITIAL_POSITION. Allowed: LATEST, TRIM_HORIZON.",
-  );
+  return parseServerRuntimeSetting(
+    "EMAIL_PROVIDER_EVENT_INITIAL_POSITION",
+  ) as EmailProviderEventInitialPosition;
 }
 
 function parseDataStreamsEndpoint(enabled: boolean): string | null {
-  const raw = readOptionalString("YANDEX_DATA_STREAMS_ENDPOINT");
+  const raw = parseServerRuntimeSetting("YANDEX_DATA_STREAMS_ENDPOINT") as
+    | string
+    | null;
   if (!raw) {
     if (enabled) {
       throw new Error(
@@ -190,7 +159,9 @@ function parseDataStreamsEndpoint(enabled: boolean): string | null {
 }
 
 function parseDataStreamsStreamName(enabled: boolean): string | null {
-  const streamName = readOptionalString("YANDEX_DATA_STREAMS_STREAM_NAME");
+  const streamName = parseServerRuntimeSetting(
+    "YANDEX_DATA_STREAMS_STREAM_NAME",
+  ) as string | null;
   if (!streamName) {
     if (enabled) {
       throw new Error(
@@ -208,20 +179,25 @@ function parseDataStreamsStreamName(enabled: boolean): string | null {
 }
 
 export function getEmailConfig(): EmailConfig {
-  const deliveryEnabled = getEnvBoolean("EMAIL_DELIVERY_ENABLED", false);
-  const providerEventIngestionEnabled = getEnvBoolean(
+  const deliveryEnabled = parseServerRuntimeSetting(
+    "EMAIL_DELIVERY_ENABLED",
+  ) as boolean;
+  const providerEventIngestionEnabled = parseServerRuntimeSetting(
     "EMAIL_PROVIDER_EVENT_INGESTION_ENABLED",
-    false,
-  );
+  ) as boolean;
   const provider = parseProvider();
-  const yandexAccessKeyId = readOptionalSecret("YANDEX_POSTBOX_ACCESS_KEY_ID");
-  const yandexSecretAccessKey = readOptionalSecret("YANDEX_POSTBOX_SECRET_ACCESS_KEY");
-  const dataStreamsAccessKeyId = readOptionalSecret(
+  const yandexAccessKeyId = parseServerRuntimeSetting(
+    "YANDEX_POSTBOX_ACCESS_KEY_ID",
+  ) as string | null;
+  const yandexSecretAccessKey = parseServerRuntimeSetting(
+    "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
+  ) as string | null;
+  const dataStreamsAccessKeyId = parseServerRuntimeSetting(
     "YANDEX_DATA_STREAMS_ACCESS_KEY_ID",
-  );
-  const dataStreamsSecretAccessKey = readOptionalSecret(
+  ) as string | null;
+  const dataStreamsSecretAccessKey = parseServerRuntimeSetting(
     "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
-  );
+  ) as string | null;
 
   if (deliveryEnabled && provider === "disabled") {
     throw new Error("EMAIL_PROVIDER must not be disabled when EMAIL_DELIVERY_ENABLED=true.");
@@ -241,24 +217,15 @@ export function getEmailConfig(): EmailConfig {
     }
   }
 
-  const processingLeaseSeconds = parseBoundedInteger(
+  const processingLeaseSeconds = parseServerRuntimeSetting(
     "EMAIL_PROCESSING_LEASE_SECONDS",
-    600,
-    60,
-    7200,
-  );
-  const providerRequestTimeoutMs = parseBoundedInteger(
+  ) as number;
+  const providerRequestTimeoutMs = parseServerRuntimeSetting(
     "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS",
-    30000,
-    1000,
-    600000,
-  );
-  const providerRequestSafetyMarginSeconds = parseBoundedInteger(
+  ) as number;
+  const providerRequestSafetyMarginSeconds = parseServerRuntimeSetting(
     "EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS",
-    30,
-    5,
-    600,
-  );
+  ) as number;
   if (
     providerRequestTimeoutMs >=
     (processingLeaseSeconds - providerRequestSafetyMarginSeconds) * 1000
@@ -270,156 +237,115 @@ export function getEmailConfig(): EmailConfig {
 
   return {
     deliveryEnabled,
-    localPreviewEnabled: getEnvBoolean("EMAIL_LOCAL_PREVIEW_ENABLED", false),
+    localPreviewEnabled: parseServerRuntimeSetting(
+      "EMAIL_LOCAL_PREVIEW_ENABLED",
+    ) as boolean,
     provider,
     canonicalBaseUrl: parseCanonicalBaseUrl(),
     from: {
       "no-reply": validateEmailAddress(
-        process.env.EMAIL_FROM_NO_REPLY ?? "no-reply@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_FROM_NO_REPLY") as string,
         "EMAIL_FROM_NO_REPLY",
       ),
       notifications: validateEmailAddress(
-        process.env.EMAIL_FROM_NOTIFICATIONS ?? "notifications@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_FROM_NOTIFICATIONS") as string,
         "EMAIL_FROM_NOTIFICATIONS",
       ),
       invitations: validateEmailAddress(
-        process.env.EMAIL_FROM_INVITATIONS ?? "invitations@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_FROM_INVITATIONS") as string,
         "EMAIL_FROM_INVITATIONS",
       ),
     },
     replyTo: {
       support: validateEmailAddress(
-        process.env.EMAIL_REPLY_TO_SUPPORT ?? "support@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_REPLY_TO_SUPPORT") as string,
         "EMAIL_REPLY_TO_SUPPORT",
       ),
       security: validateEmailAddress(
-        process.env.EMAIL_REPLY_TO_SECURITY ?? "security@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_REPLY_TO_SECURITY") as string,
         "EMAIL_REPLY_TO_SECURITY",
       ),
       business: validateEmailAddress(
-        process.env.EMAIL_REPLY_TO_BUSINESS ?? "business@negotaitions.ru",
+        parseServerRuntimeSetting("EMAIL_REPLY_TO_BUSINESS") as string,
         "EMAIL_REPLY_TO_BUSINESS",
       ),
     },
-    operatorName:
-      process.env.EMAIL_OPERATOR_NAME?.trim() || "Чаадаев Дмитрий Владимирович",
-    workerBatchSize: parseBoundedInteger("EMAIL_WORKER_BATCH_SIZE", 25, 1, 500),
-    maxAttempts: parseBoundedInteger("EMAIL_MAX_ATTEMPTS", 5, 1, 20),
-    retryBaseSeconds: parseBoundedInteger("EMAIL_RETRY_BASE_SECONDS", 60, 10, 3600),
-    retryMaxSeconds: parseBoundedInteger("EMAIL_RETRY_MAX_SECONDS", 43200, 60, 86400),
+    operatorName: parseServerRuntimeSetting("EMAIL_OPERATOR_NAME") as string,
+    workerBatchSize: parseServerRuntimeSetting("EMAIL_WORKER_BATCH_SIZE") as number,
+    maxAttempts: parseServerRuntimeSetting("EMAIL_MAX_ATTEMPTS") as number,
+    retryBaseSeconds: parseServerRuntimeSetting("EMAIL_RETRY_BASE_SECONDS") as number,
+    retryMaxSeconds: parseServerRuntimeSetting("EMAIL_RETRY_MAX_SECONDS") as number,
     processingLeaseSeconds,
     providerRequestTimeoutMs,
     providerRequestSafetyMarginSeconds,
-    providerEventReconciliationWindowSeconds: parseBoundedInteger(
+    providerEventReconciliationWindowSeconds: parseServerRuntimeSetting(
       "EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS",
-      86400,
-      60,
-      604800,
-    ),
-    providerEventReconciliationDelaySeconds: parseBoundedInteger(
+    ) as number,
+    providerEventReconciliationDelaySeconds: parseServerRuntimeSetting(
       "EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS",
-      60,
-      5,
-      3600,
-    ),
-    contentRetentionDays: parseBoundedInteger("EMAIL_CONTENT_RETENTION_DAYS", 90, 1, 3650),
-    deliveryAttemptRetentionDays: parseBoundedInteger(
+    ) as number,
+    contentRetentionDays: parseServerRuntimeSetting(
+      "EMAIL_CONTENT_RETENTION_DAYS",
+    ) as number,
+    deliveryAttemptRetentionDays: parseServerRuntimeSetting(
       "EMAIL_DELIVERY_ATTEMPT_RETENTION_DAYS",
-      365,
-      1,
-      3650,
-    ),
-    providerIdRetentionDays: parseBoundedInteger(
+    ) as number,
+    providerIdRetentionDays: parseServerRuntimeSetting(
       "EMAIL_PROVIDER_ID_RETENTION_DAYS",
-      365,
-      1,
-      3650,
-    ),
-    providerEventRetentionDays: parseBoundedInteger(
+    ) as number,
+    providerEventRetentionDays: parseServerRuntimeSetting(
       "EMAIL_PROVIDER_EVENT_RETENTION_DAYS",
-      730,
-      1,
-      3650,
-    ),
-    bounceComplaintRetentionDays: parseBoundedInteger(
+    ) as number,
+    bounceComplaintRetentionDays: parseServerRuntimeSetting(
       "EMAIL_BOUNCE_COMPLAINT_RETENTION_DAYS",
-      730,
-      1,
-      3650,
-    ),
-    adminTestEnabled: getEnvBoolean("EMAIL_ADMIN_TEST_ENABLED", false),
+    ) as number,
+    adminTestEnabled: parseServerRuntimeSetting(
+      "EMAIL_ADMIN_TEST_ENABLED",
+    ) as boolean,
     providerEventIngestion: {
       enabled: providerEventIngestionEnabled,
       endpoint: parseDataStreamsEndpoint(providerEventIngestionEnabled),
-      region: readOptionalString("YANDEX_DATA_STREAMS_REGION") ?? "ru-central1",
+      region: parseServerRuntimeSetting("YANDEX_DATA_STREAMS_REGION") as string,
       streamName: parseDataStreamsStreamName(providerEventIngestionEnabled),
       accessKeyId: dataStreamsAccessKeyId,
       secretAccessKey: dataStreamsSecretAccessKey,
       initialPosition: parseProviderEventInitialPosition(),
-      recordLimit: parseBoundedInteger(
+      recordLimit: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_RECORD_LIMIT",
-        100,
-        1,
-        1000,
-      ),
-      pollIntervalMs: parseBoundedInteger(
+      ) as number,
+      pollIntervalMs: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_POLL_INTERVAL_MS",
-        1000,
-        200,
-        5000,
-      ),
-      shardRefreshSeconds: parseBoundedInteger(
+      ) as number,
+      shardRefreshSeconds: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_SHARD_REFRESH_SECONDS",
-        60,
-        10,
-        3600,
-      ),
-      errorBackoffMs: parseBoundedInteger(
+      ) as number,
+      errorBackoffMs: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_ERROR_BACKOFF_MS",
-        2000,
-        100,
-        60000,
-      ),
-      maxPayloadBytes: parseBoundedInteger(
+      ) as number,
+      maxPayloadBytes: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_MAX_PAYLOAD_BYTES",
-        262144,
-        1024,
-        1048576,
-      ),
-      shutdownTimeoutMs: parseBoundedInteger(
+      ) as number,
+      shutdownTimeoutMs: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_SHUTDOWN_TIMEOUT_MS",
-        15000,
-        1000,
-        20000,
-      ),
-      shardConcurrency: parseBoundedInteger(
+      ) as number,
+      shardConcurrency: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY",
-        2,
-        1,
-        16,
-      ),
-      shardSliceMaxPolls: parseBoundedInteger(
+      ) as number,
+      shardSliceMaxPolls: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_SHARD_SLICE_MAX_POLLS",
-        4,
-        1,
-        50,
-      ),
-      maxConsecutiveFailures: parseBoundedInteger(
+      ) as number,
+      maxConsecutiveFailures: parseServerRuntimeSetting(
         "EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES",
-        5,
-        1,
-        50,
-      ),
+      ) as number,
     },
     yandexPostbox: {
-      region: process.env.YANDEX_POSTBOX_REGION?.trim() || "ru-central1",
-      endpoint:
-        process.env.YANDEX_POSTBOX_ENDPOINT?.trim() ||
-        "https://postbox.cloud.yandex.net",
+      region: parseServerRuntimeSetting("YANDEX_POSTBOX_REGION") as string,
+      endpoint: parseServerRuntimeSetting("YANDEX_POSTBOX_ENDPOINT") as string,
       accessKeyId: yandexAccessKeyId,
       secretAccessKey: yandexSecretAccessKey,
-      configurationSetName:
-        process.env.YANDEX_POSTBOX_CONFIGURATION_SET?.trim() || null,
+      configurationSetName: parseServerRuntimeSetting(
+        "YANDEX_POSTBOX_CONFIGURATION_SET",
+      ) as string | null,
     },
   };
 }
