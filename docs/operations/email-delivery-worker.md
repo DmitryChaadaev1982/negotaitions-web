@@ -202,9 +202,31 @@ adds `consumer_disabled`, `consumer_invalid_config`, `shutdown_requested`,
 
 Do not activate worker or provider-event units during local Stage 3.13C work.
 Committed systemd templates use `/etc/negotaitions/env.production`;
-worker/retention timers, manual canary/quarantine units, provider-event
-consumer, and provider-event reconciliation timer remain disabled. The normal
-worker must remain stopped during the isolated canary.
+worker/retention timers and manual canary/quarantine units remain disabled. The
+provider-event consumer service and provider-event reconciliation timer are
+persistable through explicit `systemctl enable` commands after controlled
+validation; installing their templates does not enable them. The reconciliation
+service remains a timer-triggered oneshot and must not be enabled directly. The
+normal worker must remain stopped during the isolated canary.
+
+Production standalone ops scripts consume env already injected by systemd. With
+`NODE_ENV=production`, they do not load the application `.env.production`; keep
+that app env file protected as `600 deploy:deploy` and do not make it readable to
+`www-data`.
+
+Before starting or restarting provider-event, delivery, retention, canary,
+quarantine, or maintenance workers after deployment, run the repository-owned
+permission normalizer after checkout/install/Prisma generation:
+
+```shell
+npm run ops:runtime-permissions:check
+npm run ops:runtime-permissions:apply
+```
+
+The normalizer only covers tracked non-secret runtime files, their required
+parent directories, the `app/generated` parent traversal directory, and
+`app/generated/prisma`. It must not be replaced by broad `chmod -R`, and secret
+env files remain mode `600`.
 
 The local fake-provider procedure is documented in
 `stage-3-13c-local-email-testing.md`. The preview must remain disabled in

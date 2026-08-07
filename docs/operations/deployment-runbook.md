@@ -81,6 +81,39 @@ password-reset dispatch with PostgreSQL **session** advisory locks
 
 - `.env.production` is runtime secret material and must never be committed.
 - Keep secret values in server-side secure storage and service environment wiring only.
+- Production operational workers receive env through
+  `/etc/negotaitions/env.production` via systemd `EnvironmentFile=`.
+  Standalone ops scripts do not load the application `.env.production` when
+  `NODE_ENV=production`; missing injected settings fail through normal runtime
+  config validation.
+- Keep application `.env.production` and `/etc/negotaitions/env.production`
+  mode `600`. Do not make either file readable by `www-data`.
+- Secret creation/staging may use `umask 077` and explicit `600`; do not run the
+  whole application deployment under a broad restrictive umask.
+
+## Runtime Permission Normalization
+
+After operations that can recreate filesystem modes, normalize only the
+repository-owned runtime artifacts that systemd workers need to read:
+
+1. checkout / fast-forward the repository;
+2. install dependencies as required by the deployment plan;
+3. run Prisma generation (`npm run prisma:generate` or the deployment's
+   equivalent);
+4. run `npm run ops:runtime-permissions:check`;
+5. run `npm run ops:runtime-permissions:apply` if check reports drift;
+6. restart/start application or worker systemd units only after the apply step.
+
+The normalizer uses Git index metadata for tracked files and touches only
+tracked non-secret regular files, parent source directories needed for traversal,
+the `app/generated` parent traversal directory, and `app/generated/prisma`.
+Generated Prisma must be normalized after every Prisma generation because that
+tree is ignored by Git.
+
+Never replace this with `chmod -R` across the repository. The normalizer must not
+modify `.env`, `.env.*`, `.git/`, `node_modules/`, `/etc/`, backup files,
+credential files, or unrelated untracked data. It fails closed if a symlink is
+found inside `app/generated/prisma`.
 
 ## Stage 3.13C-F account-security deployment boundary
 
@@ -96,6 +129,9 @@ password-reset dispatch with PostgreSQL **session** advisory locks
   one eligible `EmailMessage` through the manual systemd unit.
 - Keep provider-event ingestion disabled until the Data Streams subscription,
   dedicated credentials, checkpoints, and sanitized failure ledger are reviewed.
+- Run runtime permission normalization after checkout/install/Prisma generation
+  and before starting provider-event, delivery, retention, or maintenance
+  workers.
 - Do not enable the worker timer until that one message is accepted and the
   operational review passes.
 

@@ -378,7 +378,7 @@ HTTP/1.1 path under production Node.js runtime behavior.
 
 ## Systemd
 
-Disabled-by-default templates:
+Templates:
 
 - `deploy/systemd/negotiations-email-provider-events.service`
 - `deploy/systemd/negotiations-email-provider-event-reconciliation.service`
@@ -386,6 +386,39 @@ Disabled-by-default templates:
 
 Reconciliation supplements ingestion for unmatched provider events. It does not
 replace the Data Streams consumer.
+
+The provider-event consumer service is persistable through
+`WantedBy=multi-user.target`, and the reconciliation timer is persistable through
+`WantedBy=timers.target`. Installing the templates does not enable them. The
+reconciliation service remains a timer-triggered oneshot and is not enabled
+directly.
+
+Production operational scripts run from systemd with
+`EnvironmentFile=/etc/negotaitions/env.production` and `NODE_ENV=production`.
+They skip application `.env.production` loading in production, so the app env
+file can remain protected as `600 deploy:deploy`.
+
+Runtime deployments must run `npm run ops:runtime-permissions:check` and, when
+needed, `npm run ops:runtime-permissions:apply` after checkout/install/Prisma
+generation and before worker starts. The normalizer covers only tracked
+non-secret runtime files, required parent directories, and
+`app/generated/prisma` plus the `app/generated` parent traversal directory;
+broad repository `chmod -R` is prohibited.
+
+### Controlled Activation Evidence
+
+Production at SHA `699aeaf9d40409f9f7d29bf21bdefa8380759461` completed the
+provider-event live canary: Postbox accepted the message, Yandex Data Streams
+emitted provider events, the live consumer ingested them, the parser produced
+internal `ACCEPTED` and `DELIVERED` events, both were persisted to PostgreSQL,
+the checkpoint advanced by 2, ingestion failures stayed at 0, and the consumer
+remained active/running with `NRestarts=0`.
+
+The reconciliation one-shot scanned 2 events, processed 0, left 2 unmatched by
+design for direct-provider canary events without outbox rows, ignored 0, set
+`reconciliationAttempts=2`, populated `nextReconcileAt`, set a reconciliation
+deadline about 24 hours after ingestion, recorded
+`UNMATCHED_PROVIDER_MESSAGE`, and left suppression as `NONE`.
 
 ## Manual Yandex Prerequisites
 
