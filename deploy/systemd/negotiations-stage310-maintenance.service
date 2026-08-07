@@ -7,6 +7,7 @@ Type=oneshot
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/negotaitions/app
+EnvironmentFile=/etc/negotaitions/env.production
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm run maintenance:stage310 -- --task all
 TimeoutStartSec=180
