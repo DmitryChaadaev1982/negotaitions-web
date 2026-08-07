@@ -39,28 +39,35 @@ export type AiAnalysisErrorCode =
   | "NETWORK_ERROR"
   | "PROVIDER_HTTP_ERROR"
   | "PROVIDER_RATE_LIMIT"
+  | "PROVIDER_LIFECYCLE_ERROR"
   | "MODEL_EMPTY_OUTPUT"
   | "MODEL_INVALID_OUTPUT"
   | "MODEL_SCHEMA_VALIDATION_ERROR"
   | "INTERNAL_ERROR"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "OWNERSHIP_LOST";
 
 export type AiAnalysisProviderName = "openai" | "yandex";
 
 export type AiAnalysisCallMetric = {
-  attemptNumber: number;
-  callNumber: number;
-  purpose: "primary" | "compact_json_retry" | "depth_retry";
+  operationAttemptNumber: number;
+  generationCallNumber: number;
+  purpose: "primary" | "compact_fallback" | "optional_depth";
   model: string;
   durationMs: number;
+  generationPostDurationMs: number;
+  pollingDurationMs: number;
   promptChars: number;
+  instructionChars: number;
+  inputChars: number;
   estimatedInputTokens: number;
   maxOutputTokens: number;
   responseLength: number;
   httpStatus: number | null;
   providerStatus: string | null;
   responseIdPresent: boolean;
-  pollingAttemptCount: number;
+  pollingRequestCount: number;
+  retrievalRetryCount: number;
   errorClass: AiAnalysisErrorCode | null;
 };
 
@@ -68,16 +75,54 @@ export type AiAnalysisRunMetrics = {
   provider: AiAnalysisProviderName;
   model: string;
   totalDurationMs: number;
+  preProviderDurationMs: number;
+  generationPostDurationMs: number;
+  pollingDurationMs: number;
+  parsingValidationDurationMs: number;
+  optionalDepthDurationMs: number;
   promptChars: number;
+  estimatedPromptTokens: number;
+  instructionChars: number;
+  inputChars: number;
   estimatedInputTokens: number;
-  modelCallCount: number;
-  retryCount: number;
-  maxAttempts: number;
-  timeoutMs: number;
+  outputSchemaInstructionChars: number;
+  primaryMaxOutputTokensConfigured: number;
+  operationAttemptCount: number;
+  outerRetryCount: number;
+  maxOperationAttempts: number;
+  generationCallCount: number;
+  compactFallbackCount: number;
+  optionalDepthCallCount: number;
+  pollingRequestCount: number;
+  retrievalRetryCount: number;
+  operationTimeoutMs: number;
+  httpTimeoutMs: number;
+  responsePollTimeoutMs: number;
+  optionalDepthOutcome:
+    | "not_needed"
+    | "improved"
+    | "failed"
+    | "invalid"
+    | "not_improved"
+    | "skipped_deadline";
+  optionalDepthFailureClass: AiAnalysisErrorCode | null;
   responseLength: number;
   outputChars: number;
   errorClass: AiAnalysisErrorCode | null;
   calls: AiAnalysisCallMetric[];
+};
+
+export type AiAnalysisExecutionOptions = {
+  signal?: AbortSignal;
+  /**
+   * Fenced durable lease checkpoint. False means another operation owns the
+   * analysis and all local work must stop without terminalizing.
+   */
+  renewLease?: (checkpoint: string) => Promise<boolean>;
+  monotonicNow?: () => number;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  fetch?: typeof fetch;
+  operationStartedAtMonotonic?: number;
 };
 
 export class AiAnalysisProviderError extends Error {
@@ -86,6 +131,7 @@ export class AiAnalysisProviderError extends Error {
   readonly model: string | null;
   readonly httpStatus: number | null;
   readonly retryable: boolean;
+  readonly allowsRegeneration: boolean;
   readonly userMessage: string;
   readonly diagnostics: Record<string, unknown>;
   metrics?: AiAnalysisRunMetrics;
@@ -98,6 +144,7 @@ export class AiAnalysisProviderError extends Error {
     model?: string | null;
     httpStatus?: number | null;
     retryable?: boolean;
+    allowsRegeneration?: boolean;
     diagnostics?: Record<string, unknown>;
     cause?: unknown;
   }) {
@@ -108,6 +155,8 @@ export class AiAnalysisProviderError extends Error {
     this.model = params.model ?? null;
     this.httpStatus = params.httpStatus ?? null;
     this.retryable = params.retryable ?? false;
+    this.allowsRegeneration =
+      params.allowsRegeneration ?? (params.retryable ?? false);
     this.userMessage = params.userMessage ?? defaultAiAnalysisUserMessage(params.code);
     this.diagnostics = params.diagnostics ?? {};
   }
@@ -125,6 +174,8 @@ function defaultAiAnalysisUserMessage(code: AiAnalysisErrorCode): string {
       return "AI provider rate limit reached. Please try again later.";
     case "PROVIDER_HTTP_ERROR":
       return "AI provider returned an error. Please try again later.";
+    case "PROVIDER_LIFECYCLE_ERROR":
+      return "AI provider did not complete the analysis successfully. Please retry.";
     case "MODEL_EMPTY_OUTPUT":
       return "AI provider returned an empty analysis. Please retry.";
     case "MODEL_INVALID_OUTPUT":
@@ -133,6 +184,8 @@ function defaultAiAnalysisUserMessage(code: AiAnalysisErrorCode): string {
       return "AI provider returned analysis that failed validation. Please retry.";
     case "CANCELLED":
       return "AI analysis was cancelled.";
+    case "OWNERSHIP_LOST":
+      return "AI analysis ownership changed.";
     default:
       return "AI analysis failed. Please retry.";
   }
@@ -144,6 +197,7 @@ export function classifyAiAnalysisError(error: unknown): {
   model: string | null;
   httpStatus: number | null;
   retryable: boolean;
+  allowsRegeneration: boolean;
   userMessage: string;
   diagnostics: Record<string, unknown>;
   metrics?: AiAnalysisRunMetrics;
@@ -155,6 +209,7 @@ export function classifyAiAnalysisError(error: unknown): {
       model: error.model,
       httpStatus: error.httpStatus,
       retryable: error.retryable,
+      allowsRegeneration: error.allowsRegeneration,
       userMessage: error.userMessage,
       diagnostics: error.diagnostics,
       metrics: error.metrics,
@@ -181,10 +236,11 @@ export function classifyAiAnalysisError(error: unknown): {
     model: null,
     httpStatus: null,
     retryable: false,
+    allowsRegeneration: false,
     userMessage: defaultAiAnalysisUserMessage(code),
     diagnostics: {
-      name: error instanceof Error ? error.name : "UnknownError",
-      message,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      messageLength: message.length,
     },
   };
 }
@@ -206,15 +262,15 @@ function parseBoundedIntegerEnv(
   return Math.max(min, Math.min(max, Math.round(parsed)));
 }
 
-function getAiAnalysisMaxAttempts(): number {
+export function getAiAnalysisMaxAttempts(): number {
   return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_ATTEMPTS", 2, 1, 3);
 }
 
-function getAiAnalysisHttpTimeoutMs(): number {
+export function getAiAnalysisHttpTimeoutMs(): number {
   return parseBoundedIntegerEnv("AI_ANALYSIS_HTTP_TIMEOUT_MS", 45_000, 5_000, 120_000);
 }
 
-function getAiAnalysisResponsePollTimeoutMs(): number {
+export function getAiAnalysisResponsePollTimeoutMs(): number {
   return parseBoundedIntegerEnv(
     "AI_ANALYSIS_RESPONSE_POLL_TIMEOUT_MS",
     150_000,
@@ -223,8 +279,45 @@ function getAiAnalysisResponsePollTimeoutMs(): number {
   );
 }
 
-function getAiAnalysisResponsePollIntervalMs(): number {
+export function getAiAnalysisResponsePollIntervalMs(): number {
   return parseBoundedIntegerEnv("AI_ANALYSIS_RESPONSE_POLL_INTERVAL_MS", 1_500, 250, 10_000);
+}
+
+export function getAiAnalysisOperationTimeoutMs(): number {
+  return parseBoundedIntegerEnv(
+    "AI_ANALYSIS_OPERATION_TIMEOUT_MS",
+    600_000,
+    120_000,
+    1_200_000,
+  );
+}
+
+export function getAiAnalysisMaxPollRequests(): number {
+  return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_POLL_REQUESTS", 100, 1, 200);
+}
+
+export function getAiAnalysisPerformanceModel() {
+  const maxOperationAttempts = getAiAnalysisMaxAttempts();
+  const maxPrimaryGenerationPosts = maxOperationAttempts;
+  const maxCompactFallbackCalls = 1;
+  const maxOptionalDepthCalls = 1;
+  const maxGenerationPosts =
+    maxPrimaryGenerationPosts +
+    maxCompactFallbackCalls +
+    maxOptionalDepthCalls;
+  return {
+    beforeReviewTheoreticalWorstCaseMs: 24 * 60_000,
+    maxOperationAttempts,
+    maxPrimaryGenerationPosts,
+    maxCompactFallbackCalls,
+    maxOptionalDepthCalls,
+    maxGenerationPosts,
+    maxPollingRequests:
+      maxGenerationPosts * getAiAnalysisMaxPollRequests(),
+    perResponsePollTimeoutMs: getAiAnalysisResponsePollTimeoutMs(),
+    operationTimeoutMs: getAiAnalysisOperationTimeoutMs(),
+    theoreticalDefaultWorstCaseMs: getAiAnalysisOperationTimeoutMs(),
+  };
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -249,8 +342,85 @@ function isNetworkLikeError(error: unknown): boolean {
   );
 }
 
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+function monotonicNow(options?: AiAnalysisExecutionOptions): number {
+  return options?.monotonicNow?.() ?? performance.now();
+}
+
+async function abortableDelay(
+  ms: number,
+  options?: AiAnalysisExecutionOptions,
+): Promise<void> {
+  if (ms <= 0) return;
+  if (options?.signal?.aborted) {
+    throw new AiAnalysisProviderError({
+      code: "CANCELLED",
+      provider: "yandex",
+      message: "AI analysis request was cancelled.",
+      diagnostics: { cancellationSource: "request" },
+      allowsRegeneration: false,
+    });
+  }
+  if (options?.sleep) {
+    await options.sleep(ms, options.signal);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(finish, ms);
+    const signal = options?.signal;
+    function finish() {
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timeout);
+      resolve();
+    }
+    function onAbort() {
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timeout);
+      reject(
+        new AiAnalysisProviderError({
+          code: "CANCELLED",
+          provider: "yandex",
+          message: "AI analysis request was cancelled.",
+          diagnostics: { cancellationSource: "request" },
+          allowsRegeneration: false,
+        }),
+      );
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function executionCheckpoint(params: {
+  options?: AiAnalysisExecutionOptions;
+  provider: AiAnalysisProviderName;
+  model: string;
+  checkpoint: string;
+}): Promise<void> {
+  if (params.options?.signal?.aborted) {
+    throw new AiAnalysisProviderError({
+      code: "CANCELLED",
+      provider: params.provider,
+      model: params.model,
+      message: "AI analysis request was cancelled.",
+      diagnostics: {
+        cancellationSource: "request",
+        checkpoint: params.checkpoint,
+      },
+      allowsRegeneration: false,
+    });
+  }
+  if (
+    params.options?.renewLease &&
+    !(await params.options.renewLease(params.checkpoint))
+  ) {
+    throw new AiAnalysisProviderError({
+      code: "OWNERSHIP_LOST",
+      provider: params.provider,
+      model: params.model,
+      message: "AI analysis ownership lease was lost.",
+      diagnostics: { checkpoint: params.checkpoint },
+      allowsRegeneration: false,
+    });
+  }
 }
 
 // ── Output schema ──────────────────────────────────────────────────────────
@@ -420,6 +590,43 @@ Section quality targets:
 JSON constraints:
 - strict JSON only, no markdown fences, no comments, no trailing commas.
 - include all required fields; when uncertain use cautious wording or empty arrays.`;
+
+const YANDEX_ANALYSIS_SCHEMA_DESCRIPTION = `Respond with a JSON object matching this TypeScript type exactly:
+{
+  executiveSummary: string;
+  overallScore: number; // integer 0-100 for negotiation skill quality, not just deal reached
+  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
+  evidenceQuality: { transcriptQuality: "LOW"|"MEDIUM"|"HIGH"; speakerAttributionQuality: "LOW"|"MEDIUM"|"HIGH"; notesQuality: "LOW"|"MEDIUM"|"HIGH"; comment: string; }; // explain reliability and limits specifically
+  scores: { preparation: number; structure: number; questionQuality: number; activeListening: number; argumentation: number; objectionHandling: number; emotionalControl: number; valueCreation: number; closing: number; };
+  roleObjectivesAnalysis: Array<{ participantName: string; roleName: string; objectiveProgress: string; evidence: string; score: number; }>; // include leverage used/missed and concession quality in objectiveProgress/evidence text
+  strengths: Array<{ title: string; evidence: string; whyItMatters: string; recommendation: string; }>;
+  improvementAreas: Array<{ title: string; evidence: string; risk: string; recommendation: string; practiceExercise: string; }>;
+  detectedTactics: Array<{ name: string; usedBy: string; evidence: string; effectiveness: string; counterMove: string; }>; // include tactic risk in effectiveness/counterMove text
+  questionsAnalysis: { goodQuestions: Array<{ question: string; usedBy: string; whyGood: string; }>; missedQuestions: Array<{ suggestedQuestion: string; whyItMattered: string; }>; diagnosticQualityComment: string; }; // missed question text must specify role + what answer would change
+  listeningAndReframing: { goodExamples: string[]; missedOpportunities: string[]; comment: string; }; // missed opportunities should include improved phrase + why it works
+  valueCreationAnalysis: { createdOptions: string[]; missedOptions: string[]; tradeOffsDiscussed: string[]; comment: string; }; // separate created value vs left on table in arrays/comment
+  nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>; // exercise text must include success criterion and next negotiation application
+  facilitatorDebriefQuestions: string[]; // 4-6 facilitator-grade questions
+  oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; }; // concise coach-style
+  participantPersonalFeedback: Array<{ participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // role-specific, actionable
+}`;
+
+export function getYandexAnalysisStaticProfile(language = "en") {
+  const languageInstruction =
+    language === "ru" || language === "RU"
+      ? "Respond in Russian language."
+      : "Respond in English language.";
+  const baseInstructions = `${SYSTEM_PROMPT}\n\n${languageInstruction}\n\n${YANDEX_COACHING_REQUIREMENTS}\n\n${YANDEX_ANALYSIS_SCHEMA_DESCRIPTION}`;
+  return {
+    outputSchemaInstructionChars:
+      YANDEX_ANALYSIS_SCHEMA_DESCRIPTION.length,
+    coachingInstructionChars: YANDEX_COACHING_REQUIREMENTS.length,
+    systemInstructionChars: SYSTEM_PROMPT.length,
+    languageInstructionChars: languageInstruction.length,
+    baseInstructionChars: baseInstructions.length,
+    primaryMaxOutputTokensConfigured: getYandexAiMaxOutputTokens(),
+  };
+}
 
 // ── Mock response ──────────────────────────────────────────────────────────
 
@@ -686,13 +893,16 @@ export function createMockAnalysisOutput(language: string): NegotiationAnalysisO
 async function runOpenAiNegotiationAnalysis(
   prompt: string,
   language: string,
+  options?: AiAnalysisExecutionOptions,
 ): Promise<{
   output: NegotiationAnalysisOutput;
   rawOutput: unknown;
   model: string;
   metrics: AiAnalysisRunMetrics;
 }> {
-  const startedAt = Date.now();
+  const providerAdapterStartedAt = monotonicNow(options);
+  const startedAt =
+    options?.operationStartedAtMonotonic ?? providerAdapterStartedAt;
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new AiAnalysisProviderError({
@@ -735,26 +945,56 @@ async function runOpenAiNegotiationAnalysis(
     nextSteps: string[]; // 2-3 personalized, actionable next steps for this participant's development
   }>; // one entry per negotiating participant (exclude facilitators and observers)
 }`;
+  const instructions = `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${schemaDescription}`;
+  const instructionChars = instructions.length;
+  const inputChars = prompt.length + instructionChars;
 
   let completion: Awaited<ReturnType<typeof client.chat.completions.create>>;
-  const callStartedAt = Date.now();
+  const callStartedAt = monotonicNow(options);
   try {
-    completion = await client.chat.completions.create({
+    await executionCheckpoint({
+      options,
+      provider: "openai",
       model,
-      response_format: { type: "json_object" },
-      temperature: 0.3,
-      messages: [
-        {
-          role: "system",
-          content: `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${schemaDescription}`,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      checkpoint: "before_generation_post",
+    });
+    completion = await client.chat.completions.create(
+      {
+        model,
+        response_format: { type: "json_object" },
+        temperature: 0.3,
+        messages: [
+          {
+            role: "system",
+            content: instructions,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      },
+      { signal: options?.signal },
+    );
+    await executionCheckpoint({
+      options,
+      provider: "openai",
+      model,
+      checkpoint: "after_generation_response",
     });
   } catch (error) {
+    if (options?.signal?.aborted) {
+      throw new AiAnalysisProviderError({
+        code: "CANCELLED",
+        provider: "openai",
+        model,
+        message: "OpenAI analysis request was cancelled by the caller.",
+        retryable: false,
+        allowsRegeneration: false,
+        diagnostics: { cancellationSource: "request" },
+        cause: error,
+      });
+    }
     if (isAbortLikeError(error)) {
       throw new AiAnalysisProviderError({
         code: "NETWORK_TIMEOUT",
@@ -780,20 +1020,27 @@ async function runOpenAiNegotiationAnalysis(
 
   const rawContent = completion.choices[0]?.message?.content ?? "";
   const finalModel = completion.model ?? model;
+  const generationPostDurationMs =
+    monotonicNow(options) - callStartedAt;
   const callMetric: AiAnalysisCallMetric = {
-    attemptNumber: 1,
-    callNumber: 1,
+    operationAttemptNumber: 1,
+    generationCallNumber: 1,
     purpose: "primary",
     model: finalModel,
-    durationMs: Date.now() - callStartedAt,
+    durationMs: generationPostDurationMs,
+    generationPostDurationMs,
+    pollingDurationMs: 0,
     promptChars: prompt.length,
-    estimatedInputTokens: estimateTokensFromChars(prompt.length),
+    instructionChars,
+    inputChars,
+    estimatedInputTokens: estimateTokensFromChars(inputChars),
     maxOutputTokens: 0,
     responseLength: rawContent.length,
     httpStatus: null,
     providerStatus: completion.choices[0]?.finish_reason ?? null,
     responseIdPresent: false,
-    pollingAttemptCount: 0,
+    pollingRequestCount: 0,
+    retrievalRetryCount: 0,
     errorClass: null,
   };
 
@@ -813,13 +1060,37 @@ async function runOpenAiNegotiationAnalysis(
     error.metrics = {
       provider: "openai",
       model: finalModel,
-      totalDurationMs: Date.now() - startedAt,
+      totalDurationMs: monotonicNow(options) - startedAt,
+      preProviderDurationMs: callStartedAt - startedAt,
+      generationPostDurationMs: callMetric.generationPostDurationMs,
+      pollingDurationMs: 0,
+      parsingValidationDurationMs: Math.max(
+        0,
+        monotonicNow(options) -
+          callStartedAt -
+          callMetric.generationPostDurationMs,
+      ),
+      optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedInputTokens: estimateTokensFromChars(prompt.length),
-      modelCallCount: 1,
-      retryCount: 0,
-      maxAttempts: 1,
-      timeoutMs: 0,
+      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      instructionChars,
+      inputChars,
+      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      outputSchemaInstructionChars: schemaDescription.length,
+      primaryMaxOutputTokensConfigured: 0,
+      operationAttemptCount: 1,
+      outerRetryCount: 0,
+      maxOperationAttempts: 1,
+      generationCallCount: 1,
+      compactFallbackCount: 0,
+      optionalDepthCallCount: 0,
+      pollingRequestCount: 0,
+      retrievalRetryCount: 0,
+      operationTimeoutMs: 0,
+      httpTimeoutMs: 0,
+      responsePollTimeoutMs: 0,
+      optionalDepthOutcome: "not_needed",
+      optionalDepthFailureClass: null,
       responseLength: rawContent.length,
       outputChars: 0,
       errorClass: "MODEL_INVALID_OUTPUT",
@@ -846,13 +1117,37 @@ async function runOpenAiNegotiationAnalysis(
     error.metrics = {
       provider: "openai",
       model: finalModel,
-      totalDurationMs: Date.now() - startedAt,
+      totalDurationMs: monotonicNow(options) - startedAt,
+      preProviderDurationMs: callStartedAt - startedAt,
+      generationPostDurationMs: callMetric.generationPostDurationMs,
+      pollingDurationMs: 0,
+      parsingValidationDurationMs: Math.max(
+        0,
+        monotonicNow(options) -
+          callStartedAt -
+          callMetric.generationPostDurationMs,
+      ),
+      optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedInputTokens: estimateTokensFromChars(prompt.length),
-      modelCallCount: 1,
-      retryCount: 0,
-      maxAttempts: 1,
-      timeoutMs: 0,
+      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      instructionChars,
+      inputChars,
+      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      outputSchemaInstructionChars: schemaDescription.length,
+      primaryMaxOutputTokensConfigured: 0,
+      operationAttemptCount: 1,
+      outerRetryCount: 0,
+      maxOperationAttempts: 1,
+      generationCallCount: 1,
+      compactFallbackCount: 0,
+      optionalDepthCallCount: 0,
+      pollingRequestCount: 0,
+      retrievalRetryCount: 0,
+      operationTimeoutMs: 0,
+      httpTimeoutMs: 0,
+      responsePollTimeoutMs: 0,
+      optionalDepthOutcome: "not_needed",
+      optionalDepthFailureClass: null,
       responseLength: rawContent.length,
       outputChars: JSON.stringify(parsed).length,
       errorClass: "MODEL_SCHEMA_VALIDATION_ERROR",
@@ -868,13 +1163,37 @@ async function runOpenAiNegotiationAnalysis(
     metrics: {
       provider: "openai",
       model: finalModel,
-      totalDurationMs: Date.now() - startedAt,
+      totalDurationMs: monotonicNow(options) - startedAt,
+      preProviderDurationMs: callStartedAt - startedAt,
+      generationPostDurationMs: callMetric.generationPostDurationMs,
+      pollingDurationMs: 0,
+      parsingValidationDurationMs: Math.max(
+        0,
+        monotonicNow(options) -
+          callStartedAt -
+          callMetric.generationPostDurationMs,
+      ),
+      optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedInputTokens: estimateTokensFromChars(prompt.length),
-      modelCallCount: 1,
-      retryCount: 0,
-      maxAttempts: 1,
-      timeoutMs: 0,
+      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      instructionChars,
+      inputChars,
+      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      outputSchemaInstructionChars: schemaDescription.length,
+      primaryMaxOutputTokensConfigured: 0,
+      operationAttemptCount: 1,
+      outerRetryCount: 0,
+      maxOperationAttempts: 1,
+      generationCallCount: 1,
+      compactFallbackCount: 0,
+      optionalDepthCallCount: 0,
+      pollingRequestCount: 0,
+      retrievalRetryCount: 0,
+      operationTimeoutMs: 0,
+      httpTimeoutMs: 0,
+      responsePollTimeoutMs: 0,
+      optionalDepthOutcome: "not_needed",
+      optionalDepthFailureClass: null,
       responseLength: rawContent.length,
       outputChars: JSON.stringify(validated.data).length,
       errorClass: null,
@@ -979,7 +1298,9 @@ function countSentences(input: string): number {
     .filter(Boolean).length;
 }
 
-function assessAnalysisDepth(output: NegotiationAnalysisOutput): string[] {
+export function getAnalysisDepthIssues(
+  output: NegotiationAnalysisOutput,
+): string[] {
   const issues: string[] = [];
 
   const summarySentences = countSentences(output.executiveSummary);
@@ -1130,17 +1451,52 @@ async function fetchTextWithTimeout(
     provider: AiAnalysisProviderName;
     model: string;
     purpose: string;
+    options?: AiAnalysisExecutionOptions;
   },
 ): Promise<{ response: Response; text: string; durationMs: number }> {
+  if (params.options?.signal?.aborted) {
+    throw new AiAnalysisProviderError({
+      code: "CANCELLED",
+      provider: params.provider,
+      model: params.model,
+      message: `${params.purpose} was cancelled by the caller.`,
+      diagnostics: { cancellationSource: "request", purpose: params.purpose },
+      allowsRegeneration: false,
+    });
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const startedAt = Date.now();
+  let localTimeoutFired = false;
+  const timeout = setTimeout(() => {
+    localTimeoutFired = true;
+    controller.abort();
+  }, Math.max(1, timeoutMs));
+  const parentSignal = params.options?.signal;
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  const startedAt = monotonicNow(params.options);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const fetchImpl = params.options?.fetch ?? fetch;
+    const response = await fetchImpl(url, { ...init, signal: controller.signal });
     const text = await response.text();
-    return { response, text, durationMs: Date.now() - startedAt };
+    return {
+      response,
+      text,
+      durationMs: monotonicNow(params.options) - startedAt,
+    };
   } catch (error) {
-    if (isAbortLikeError(error)) {
+    if (parentSignal?.aborted) {
+      throw new AiAnalysisProviderError({
+        code: "CANCELLED",
+        provider: params.provider,
+        model: params.model,
+        message: `${params.purpose} was cancelled by the caller.`,
+        retryable: false,
+        allowsRegeneration: false,
+        diagnostics: { cancellationSource: "request", purpose: params.purpose },
+        cause: error,
+      });
+    }
+    if (localTimeoutFired || isAbortLikeError(error)) {
       throw new AiAnalysisProviderError({
         code: "NETWORK_TIMEOUT",
         provider: params.provider,
@@ -1165,60 +1521,225 @@ async function fetchTextWithTimeout(
     throw error;
   } finally {
     clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
   }
 }
 
-async function pollYandexResponseUntilOutput(params: {
+export type YandexResponseLifecycle =
+  | { kind: "nonterminal"; status: "queued" | "in_progress" }
+  | { kind: "success"; status: "completed" }
+  | {
+      kind: "failure";
+      status: "failed" | "cancelled" | "incomplete";
+      providerErrorCode: string | null;
+      incompleteReason: string | null;
+    }
+  | { kind: "unknown"; status: string | null };
+
+function boundedProviderCode(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const bounded = value.trim().replace(/[^A-Za-z0-9_.:-]/g, "").slice(0, 80);
+  return bounded || null;
+}
+
+export function classifyYandexResponseLifecycle(
+  envelope: Record<string, unknown>,
+): YandexResponseLifecycle {
+  const status =
+    typeof envelope.status === "string"
+      ? envelope.status.trim().toLowerCase()
+      : null;
+  if (status === "queued" || status === "in_progress") {
+    return { kind: "nonterminal", status };
+  }
+  if (status === "completed") {
+    return { kind: "success", status };
+  }
+  if (status === "failed" || status === "cancelled" || status === "incomplete") {
+    const providerError = toRecord(envelope.error);
+    const incompleteDetails = toRecord(envelope.incomplete_details);
+    return {
+      kind: "failure",
+      status,
+      providerErrorCode:
+        boundedProviderCode(providerError?.code) ??
+        boundedProviderCode(providerError?.type),
+      incompleteReason: boundedProviderCode(incompleteDetails?.reason),
+    };
+  }
+  return {
+    kind: "unknown",
+    status: boundedProviderCode(status),
+  };
+}
+
+function yandexLifecycleError(params: {
+  lifecycle: YandexResponseLifecycle;
+  modelName: string;
+  responseIdPresent: boolean;
+  pollingRequestCount: number;
+}): AiAnalysisProviderError {
+  if (params.lifecycle.kind === "failure") {
+    return new AiAnalysisProviderError({
+      code: "PROVIDER_LIFECYCLE_ERROR",
+      provider: "yandex",
+      model: params.modelName,
+      message: `Yandex AI response reached terminal non-success status ${params.lifecycle.status}.`,
+      retryable: params.lifecycle.status !== "failed",
+      allowsRegeneration: false,
+      diagnostics: {
+        providerStatus: params.lifecycle.status,
+        providerErrorCode: params.lifecycle.providerErrorCode,
+        incompleteReason: params.lifecycle.incompleteReason,
+        responseIdPresent: params.responseIdPresent,
+        pollingRequestCount: params.pollingRequestCount,
+      },
+    });
+  }
+  return new AiAnalysisProviderError({
+    code: "PROVIDER_LIFECYCLE_ERROR",
+    provider: "yandex",
+    model: params.modelName,
+    message: "Yandex AI response returned an unsupported lifecycle status.",
+    retryable: false,
+    allowsRegeneration: false,
+    diagnostics: {
+      providerStatus:
+        params.lifecycle.kind === "unknown" ? params.lifecycle.status : null,
+      responseIdPresent: params.responseIdPresent,
+      pollingRequestCount: params.pollingRequestCount,
+    },
+  });
+}
+
+function yandexPollDeadlineError(params: {
+  modelName: string;
+  providerStatus: string | null;
+  pollingRequestCount: number;
+  retrievalRetryCount: number;
+  pollTimeoutMs: number;
+  maxPollRequestsReached: boolean;
+}): AiAnalysisProviderError {
+  return new AiAnalysisProviderError({
+    code: "NETWORK_TIMEOUT",
+    provider: "yandex",
+    model: params.modelName,
+    message: "Yandex AI response retrieval did not complete before its deadline.",
+    retryable: true,
+    allowsRegeneration: false,
+    diagnostics: {
+      timeoutScope: "known_response_poll",
+      pollTimeoutMs: params.pollTimeoutMs,
+      providerStatus: params.providerStatus,
+      responseIdPresent: true,
+      pollingRequestCount: params.pollingRequestCount,
+      retrievalRetryCount: params.retrievalRetryCount,
+      maxPollRequestsReached: params.maxPollRequestsReached,
+    },
+  });
+}
+
+async function pollYandexResponseUntilTerminal(params: {
   baseUrl: string;
   responseId: string;
   headers: HeadersInit;
   modelName: string;
-  timeoutMs: number;
+  deadline: number;
+  pollTimeoutMs: number;
+  options?: AiAnalysisExecutionOptions;
+  recordParsingValidationDuration?: (durationMs: number) => void;
 }): Promise<{
-  envelope: Record<string, unknown> | null;
+  envelope: Record<string, unknown>;
   outputText: string;
   outputFieldDetected: YandexOutputFieldDetected;
   rawOutputCharCount: number;
   providerStatus: string | null;
-  pollingAttemptCount: number;
+  pollingRequestCount: number;
+  retrievalRetryCount: number;
 }> {
-  const startedAt = Date.now();
-  let pollingAttemptCount = 0;
+  let pollingRequestCount = 0;
+  let retrievalRetryCount = 0;
   let providerStatus: string | null = null;
-  let outputFieldDetected: YandexOutputFieldDetected = "none";
-  let rawOutputCharCount = 0;
 
-  while (Date.now() - startedAt < params.timeoutMs) {
-    pollingAttemptCount += 1;
-    const { response, text } = await fetchTextWithTimeout(
-      `${params.baseUrl}/responses/${encodeURIComponent(params.responseId)}`,
-      { method: "GET", headers: params.headers },
-      Math.min(getAiAnalysisHttpTimeoutMs(), params.timeoutMs),
-      {
-        provider: "yandex",
-        model: params.modelName,
-        purpose: "Yandex AI response polling request",
-      },
-    );
+  while (pollingRequestCount < getAiAnalysisMaxPollRequests()) {
+    await executionCheckpoint({
+      options: params.options,
+      provider: "yandex",
+      model: params.modelName,
+      checkpoint: "before_known_response_get",
+    });
+    const remaining = params.deadline - monotonicNow(params.options);
+    if (remaining <= 0) break;
+    pollingRequestCount += 1;
+
+    let response: Response;
+    let text: string;
+    try {
+      ({ response, text } = await fetchTextWithTimeout(
+        `${params.baseUrl}/responses/${encodeURIComponent(params.responseId)}`,
+        { method: "GET", headers: params.headers },
+        Math.max(1, Math.min(getAiAnalysisHttpTimeoutMs(), remaining)),
+        {
+          provider: "yandex",
+          model: params.modelName,
+          purpose: "Yandex AI response polling request",
+          options: params.options,
+        },
+      ));
+    } catch (error) {
+      const classified = classifyAiAnalysisError(error);
+      if (
+        classified.code === "CANCELLED" ||
+        classified.code === "OWNERSHIP_LOST"
+      ) {
+        throw error;
+      }
+      if (!classified.retryable) throw error;
+      retrievalRetryCount += 1;
+      const retryRemaining = params.deadline - monotonicNow(params.options);
+      const backoffMs = Math.min(
+        getAiAnalysisResponsePollIntervalMs() * retrievalRetryCount,
+        5_000,
+      );
+      if (retryRemaining <= backoffMs) break;
+      await abortableDelay(backoffMs, params.options);
+      continue;
+    }
+
     if (!response.ok) {
       const code: AiAnalysisErrorCode =
         response.status === 429 ? "PROVIDER_RATE_LIMIT" : "PROVIDER_HTTP_ERROR";
-      throw new AiAnalysisProviderError({
-        code,
-        provider: "yandex",
-        model: params.modelName,
-        httpStatus: response.status,
-        message: `Yandex AI polling failed with HTTP ${response.status} (bodyLength=${text.length}).`,
-        retryable: response.status === 429 || response.status >= 500,
-        diagnostics: {
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable) {
+        throw new AiAnalysisProviderError({
+          code,
+          provider: "yandex",
+          model: params.modelName,
           httpStatus: response.status,
-          bodyLength: text.length,
-          responseIdPresent: true,
-        },
-      });
+          message: `Yandex AI response retrieval failed with HTTP ${response.status}.`,
+          retryable: false,
+          allowsRegeneration: false,
+          diagnostics: {
+            httpStatus: response.status,
+            bodyLength: text.length,
+            responseIdPresent: true,
+            pollingRequestCount,
+          },
+        });
+      }
+      retrievalRetryCount += 1;
+      const retryRemaining = params.deadline - monotonicNow(params.options);
+      const backoffMs = Math.min(
+        getAiAnalysisResponsePollIntervalMs() * retrievalRetryCount,
+        5_000,
+      );
+      if (retryRemaining <= backoffMs) break;
+      await abortableDelay(backoffMs, params.options);
+      continue;
     }
 
     let envelope: Record<string, unknown>;
+    const parsingStartedAt = monotonicNow(params.options);
     try {
       envelope = JSON.parse(text) as Record<string, unknown>;
     } catch {
@@ -1226,61 +1747,79 @@ async function pollYandexResponseUntilOutput(params: {
         code: "MODEL_INVALID_OUTPUT",
         provider: "yandex",
         model: params.modelName,
-        message: `Yandex AI polling returned non-JSON envelope (bodyLength=${text.length}).`,
+        message: "Yandex AI response retrieval returned a non-JSON envelope.",
         retryable: false,
-        diagnostics: { bodyLength: text.length, responseIdPresent: true },
+        allowsRegeneration: false,
+        diagnostics: {
+          bodyLength: text.length,
+          responseIdPresent: true,
+          pollingRequestCount,
+        },
       });
+    } finally {
+      params.recordParsingValidationDuration?.(
+        monotonicNow(params.options) - parsingStartedAt,
+      );
     }
 
-    const status = envelope.status;
-    providerStatus = typeof status === "string" ? status : null;
-    const extraction = extractYandexOutputText(envelope);
-    outputFieldDetected = extraction.outputFieldDetected;
-    rawOutputCharCount = extraction.rawOutputCharCount;
-    if (extraction.text) {
+    await executionCheckpoint({
+      options: params.options,
+      provider: "yandex",
+      model: params.modelName,
+      checkpoint: "after_known_response_get",
+    });
+    const lifecycle = classifyYandexResponseLifecycle(envelope);
+    providerStatus = lifecycle.status;
+    if (lifecycle.kind === "success") {
+      const extraction = extractYandexOutputText(envelope);
       return {
         envelope,
         outputText: extraction.text,
-        outputFieldDetected,
-        rawOutputCharCount,
+        outputFieldDetected: extraction.outputFieldDetected,
+        rawOutputCharCount: extraction.rawOutputCharCount,
         providerStatus,
-        pollingAttemptCount,
+        pollingRequestCount,
+        retrievalRetryCount,
       };
     }
-
-    if (status === "failed" || status === "cancelled" || status === "incomplete") {
-      return {
-        envelope,
-        outputText: "",
-        outputFieldDetected,
-        rawOutputCharCount,
-        providerStatus,
-        pollingAttemptCount,
-      };
+    if (lifecycle.kind !== "nonterminal") {
+      throw yandexLifecycleError({
+        lifecycle,
+        modelName: params.modelName,
+        responseIdPresent: true,
+        pollingRequestCount,
+      });
     }
 
-    await delay(getAiAnalysisResponsePollIntervalMs());
+    const sleepRemaining = params.deadline - monotonicNow(params.options);
+    const intervalMs = getAiAnalysisResponsePollIntervalMs();
+    if (sleepRemaining <= intervalMs) break;
+    await abortableDelay(intervalMs, params.options);
   }
 
-  return {
-    envelope: null,
-    outputText: "",
-    outputFieldDetected,
-    rawOutputCharCount,
+  throw yandexPollDeadlineError({
+    modelName: params.modelName,
     providerStatus,
-    pollingAttemptCount,
-  };
+    pollingRequestCount,
+    retrievalRetryCount,
+    pollTimeoutMs: params.pollTimeoutMs,
+    maxPollRequestsReached:
+      pollingRequestCount >= getAiAnalysisMaxPollRequests(),
+  });
 }
 async function runYandexNegotiationAnalysis(
   prompt: string,
   language: string,
+  options?: AiAnalysisExecutionOptions,
 ): Promise<{
   output: NegotiationAnalysisOutput;
   rawOutput: unknown;
   model: string;
   metrics: AiAnalysisRunMetrics;
 }> {
-  const runStartedAt = Date.now();
+  const providerAdapterStartedAt = monotonicNow(options);
+  const runStartedAt =
+    options?.operationStartedAtMonotonic ?? providerAdapterStartedAt;
   const folderId = process.env.YANDEX_FOLDER_ID?.trim();
   const apiKey = process.env.YANDEX_API_KEY?.trim();
   if (!folderId || !apiKey) {
@@ -1305,25 +1844,8 @@ async function runYandexNegotiationAnalysis(
       ? "Respond in Russian language."
       : "Respond in English language.";
 
-  const schemaDescription = `Respond with a JSON object matching this TypeScript type exactly:
-{
-  executiveSummary: string;
-  overallScore: number; // integer 0-100 for negotiation skill quality, not just deal reached
-  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
-  evidenceQuality: { transcriptQuality: "LOW"|"MEDIUM"|"HIGH"; speakerAttributionQuality: "LOW"|"MEDIUM"|"HIGH"; notesQuality: "LOW"|"MEDIUM"|"HIGH"; comment: string; }; // explain reliability and limits specifically
-  scores: { preparation: number; structure: number; questionQuality: number; activeListening: number; argumentation: number; objectionHandling: number; emotionalControl: number; valueCreation: number; closing: number; };
-  roleObjectivesAnalysis: Array<{ participantName: string; roleName: string; objectiveProgress: string; evidence: string; score: number; }>; // include leverage used/missed and concession quality in objectiveProgress/evidence text
-  strengths: Array<{ title: string; evidence: string; whyItMatters: string; recommendation: string; }>;
-  improvementAreas: Array<{ title: string; evidence: string; risk: string; recommendation: string; practiceExercise: string; }>;
-  detectedTactics: Array<{ name: string; usedBy: string; evidence: string; effectiveness: string; counterMove: string; }>; // include tactic risk in effectiveness/counterMove text
-  questionsAnalysis: { goodQuestions: Array<{ question: string; usedBy: string; whyGood: string; }>; missedQuestions: Array<{ suggestedQuestion: string; whyItMattered: string; }>; diagnosticQualityComment: string; }; // missed question text must specify role + what answer would change
-  listeningAndReframing: { goodExamples: string[]; missedOpportunities: string[]; comment: string; }; // missed opportunities should include improved phrase + why it works
-  valueCreationAnalysis: { createdOptions: string[]; missedOptions: string[]; tradeOffsDiscussed: string[]; comment: string; }; // separate created value vs left on table in arrays/comment
-  nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>; // exercise text must include success criterion and next negotiation application
-  facilitatorDebriefQuestions: string[]; // 4-6 facilitator-grade questions
-  oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; }; // concise coach-style
-  participantPersonalFeedback: Array<{ participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // role-specific, actionable
-}`;
+  const schemaDescription = YANDEX_ANALYSIS_SCHEMA_DESCRIPTION;
+  const baseInstructions = `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${YANDEX_COACHING_REQUIREMENTS}\n\n${schemaDescription}`;
 
   const headers: HeadersInit = {
     Authorization: `Api-Key ${safeApiKey}`,
@@ -1332,13 +1854,23 @@ async function runYandexNegotiationAnalysis(
     "x-data-logging-enabled": "false",
   };
   const promptChars = prompt.length;
-  const estimatedInputTokens = estimateTokensFromChars(promptChars);
+  const estimatedPromptTokens = estimateTokensFromChars(promptChars);
+  const instructionChars = baseInstructions.length;
+  const inputChars = promptChars + instructionChars;
+  const estimatedInputTokens = estimateTokensFromChars(inputChars);
   const calls: AiAnalysisCallMetric[] = [];
-  const maxAttempts = getAiAnalysisMaxAttempts();
-  const timeoutMs = getAiAnalysisHttpTimeoutMs() + getAiAnalysisResponsePollTimeoutMs();
+  const maxOperationAttempts = getAiAnalysisMaxAttempts();
+  const operationTimeoutMs = getAiAnalysisOperationTimeoutMs();
+  const operationDeadline = runStartedAt + operationTimeoutMs;
+  let operationAttemptCount = 0;
+  let firstProviderRequestStartedAt: number | null = null;
+  let parsingValidationDurationMs = 0;
+  let optionalDepthDurationMs = 0;
+  let optionalDepthOutcome: AiAnalysisRunMetrics["optionalDepthOutcome"] =
+    "not_needed";
+  let optionalDepthFailureClass: AiAnalysisErrorCode | null = null;
 
   function buildMetrics(params: {
-    retryCount: number;
     responseLength?: number;
     outputChars?: number;
     errorClass?: AiAnalysisErrorCode | null;
@@ -1346,18 +1878,66 @@ async function runYandexNegotiationAnalysis(
     return {
       provider: "yandex",
       model: modelName,
-      totalDurationMs: Date.now() - runStartedAt,
+      totalDurationMs: monotonicNow(options) - runStartedAt,
+      preProviderDurationMs: Math.max(
+        0,
+        (firstProviderRequestStartedAt ?? providerAdapterStartedAt) -
+          runStartedAt,
+      ),
+      generationPostDurationMs: calls.reduce(
+        (total, call) => total + call.generationPostDurationMs,
+        0,
+      ),
+      pollingDurationMs: calls.reduce(
+        (total, call) => total + call.pollingDurationMs,
+        0,
+      ),
+      parsingValidationDurationMs,
+      optionalDepthDurationMs,
       promptChars,
+      estimatedPromptTokens,
+      instructionChars,
+      inputChars,
       estimatedInputTokens,
-      modelCallCount: calls.length,
-      retryCount: params.retryCount,
-      maxAttempts,
-      timeoutMs,
+      outputSchemaInstructionChars: schemaDescription.length,
+      primaryMaxOutputTokensConfigured: maxOutputTokens,
+      operationAttemptCount,
+      outerRetryCount: Math.max(0, operationAttemptCount - 1),
+      maxOperationAttempts,
+      generationCallCount: calls.length,
+      compactFallbackCount: calls.filter(
+        (call) => call.purpose === "compact_fallback",
+      ).length,
+      optionalDepthCallCount: calls.filter(
+        (call) => call.purpose === "optional_depth",
+      ).length,
+      pollingRequestCount: calls.reduce(
+        (total, call) => total + call.pollingRequestCount,
+        0,
+      ),
+      retrievalRetryCount: calls.reduce(
+        (total, call) => total + call.retrievalRetryCount,
+        0,
+      ),
+      operationTimeoutMs,
+      httpTimeoutMs: getAiAnalysisHttpTimeoutMs(),
+      responsePollTimeoutMs: getAiAnalysisResponsePollTimeoutMs(),
+      optionalDepthOutcome,
+      optionalDepthFailureClass,
       responseLength: params.responseLength ?? 0,
       outputChars: params.outputChars ?? 0,
       errorClass: params.errorClass ?? null,
       calls: [...calls],
     };
+  }
+
+  function measureParsingValidation<T>(operation: () => T): T {
+    const startedAt = monotonicNow(options);
+    try {
+      return operation();
+    } finally {
+      parsingValidationDurationMs += monotonicNow(options) - startedAt;
+    }
   }
 
   async function requestModelOutput(params: {
@@ -1373,26 +1953,63 @@ async function runYandexNegotiationAnalysis(
     const depthInstruction = params.depthRetryReason
       ? `\n\nYour previous output was too shallow. Fix these quality gaps while keeping strict JSON schema:\n- ${params.depthRetryReason}`
       : "";
-    const callStartedAt = Date.now();
+    const instructions = `${baseInstructions}${compactInstruction}${depthInstruction}`;
+    const callInstructionChars = instructions.length;
+    const callInputChars = promptChars + callInstructionChars;
+
+    await executionCheckpoint({
+      options,
+      provider: "yandex",
+      model: modelName,
+      checkpoint: `before_${params.purpose}_generation_post`,
+    });
+    const remainingBeforePost = operationDeadline - monotonicNow(options);
+    if (remainingBeforePost <= 0) {
+      throw new AiAnalysisProviderError({
+        code: "NETWORK_TIMEOUT",
+        provider: "yandex",
+        model: modelName,
+        message: "Yandex AI analysis operation deadline was exhausted.",
+        retryable: true,
+        allowsRegeneration: false,
+        diagnostics: {
+          timeoutScope: "operation",
+          operationTimeoutMs,
+          generationCallCount: calls.length,
+        },
+      });
+    }
+
+    const callStartedAt = monotonicNow(options);
     const callMetric: AiAnalysisCallMetric = {
-      attemptNumber: params.attemptNumber,
-      callNumber: calls.length + 1,
+      operationAttemptNumber: params.attemptNumber,
+      generationCallNumber: calls.length + 1,
       purpose: params.purpose,
       model: modelName,
       durationMs: 0,
+      generationPostDurationMs: 0,
+      pollingDurationMs: 0,
       promptChars,
-      estimatedInputTokens,
+      instructionChars: callInstructionChars,
+      inputChars: callInputChars,
+      estimatedInputTokens: estimateTokensFromChars(callInputChars),
       maxOutputTokens: params.tokenLimit,
       responseLength: 0,
       httpStatus: null,
       providerStatus: null,
       responseIdPresent: false,
-      pollingAttemptCount: 0,
+      pollingRequestCount: 0,
+      retrievalRetryCount: 0,
       errorClass: null,
     };
 
     try {
-      const { response, text } = await fetchTextWithTimeout(
+      firstProviderRequestStartedAt ??= monotonicNow(options);
+      const {
+        response,
+        text,
+        durationMs: generationPostDurationMs,
+      } = await fetchTextWithTimeout(
         `${baseUrl}/responses`,
         {
           method: "POST",
@@ -1401,17 +2018,22 @@ async function runYandexNegotiationAnalysis(
             model: modelUri,
             temperature: 0.2,
             max_output_tokens: params.tokenLimit,
-            instructions: `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${YANDEX_COACHING_REQUIREMENTS}\n\n${schemaDescription}${compactInstruction}${depthInstruction}`,
+            instructions,
             input: prompt,
           }),
         },
-        getAiAnalysisHttpTimeoutMs(),
+        Math.max(
+          1,
+          Math.min(getAiAnalysisHttpTimeoutMs(), remainingBeforePost),
+        ),
         {
           provider: "yandex",
           model: modelName,
           purpose: "Yandex AI analysis request",
+          options,
         },
       );
+      callMetric.generationPostDurationMs = generationPostDurationMs;
       callMetric.httpStatus = response.status;
       if (!response.ok) {
         const code: AiAnalysisErrorCode =
@@ -1422,7 +2044,7 @@ async function runYandexNegotiationAnalysis(
           provider: "yandex",
           model: modelName,
           httpStatus: response.status,
-          message: `Yandex AI request failed with HTTP ${response.status} (bodyLength=${text.length}).`,
+          message: `Yandex AI request failed with HTTP ${response.status}.`,
           retryable: response.status === 429 || response.status >= 500,
           diagnostics: { httpStatus: response.status, bodyLength: text.length },
         });
@@ -1430,14 +2052,16 @@ async function runYandexNegotiationAnalysis(
 
       let envelope: Record<string, unknown>;
       try {
-        envelope = JSON.parse(text) as Record<string, unknown>;
+        envelope = measureParsingValidation(
+          () => JSON.parse(text) as Record<string, unknown>,
+        );
       } catch {
         callMetric.errorClass = "MODEL_INVALID_OUTPUT";
         throw new AiAnalysisProviderError({
           code: "MODEL_INVALID_OUTPUT",
           provider: "yandex",
           model: modelName,
-          message: `Yandex AI analysis returned non-JSON envelope (bodyLength=${text.length}).`,
+          message: "Yandex AI analysis returned a non-JSON envelope.",
           retryable: false,
           diagnostics: { bodyLength: text.length },
         });
@@ -1447,36 +2071,77 @@ async function runYandexNegotiationAnalysis(
         typeof envelope.id === "string" && envelope.id.trim()
           ? envelope.id.trim()
           : null;
-      const initialStatus = typeof envelope.status === "string" ? envelope.status : null;
-      let output = extractYandexOutputText(envelope);
+      const initialLifecycle = classifyYandexResponseLifecycle(envelope);
       callMetric.responseIdPresent = Boolean(responseId);
-      callMetric.providerStatus = initialStatus;
+      callMetric.providerStatus = initialLifecycle.status;
 
-      if (
-        !output.text &&
-        responseId &&
-        initialStatus !== "completed" &&
-        initialStatus !== "failed" &&
-        initialStatus !== "cancelled" &&
-        initialStatus !== "incomplete"
-      ) {
-        const polled = await pollYandexResponseUntilOutput({
-          baseUrl,
-          responseId,
-          headers,
-          modelName,
-          timeoutMs: getAiAnalysisResponsePollTimeoutMs(),
-        });
-        callMetric.pollingAttemptCount = polled.pollingAttemptCount;
-        callMetric.providerStatus = polled.providerStatus ?? callMetric.providerStatus;
-        if (polled.envelope) {
-          envelope = polled.envelope;
+      await executionCheckpoint({
+        options,
+        provider: "yandex",
+        model: modelName,
+        checkpoint: `after_${params.purpose}_generation_response`,
+      });
+
+      let output: ReturnType<typeof extractYandexOutputText>;
+      if (initialLifecycle.kind === "nonterminal") {
+        if (!responseId) {
+          throw new AiAnalysisProviderError({
+            code: "PROVIDER_LIFECYCLE_ERROR",
+            provider: "yandex",
+            model: modelName,
+            message:
+              "Yandex AI returned a nonterminal response without a response ID.",
+            retryable: false,
+            allowsRegeneration: false,
+            diagnostics: {
+              providerStatus: initialLifecycle.status,
+              responseIdPresent: false,
+            },
+          });
         }
+        const pollTimeoutMs = getAiAnalysisResponsePollTimeoutMs();
+        const pollingStartedAt = monotonicNow(options);
+        let polled: Awaited<
+          ReturnType<typeof pollYandexResponseUntilTerminal>
+        >;
+        try {
+          polled = await pollYandexResponseUntilTerminal({
+            baseUrl,
+            responseId,
+            headers,
+            modelName,
+            deadline: Math.min(
+              operationDeadline,
+              monotonicNow(options) + pollTimeoutMs,
+            ),
+            pollTimeoutMs,
+            options,
+            recordParsingValidationDuration: (durationMs) => {
+              parsingValidationDurationMs += durationMs;
+            },
+          });
+        } finally {
+          callMetric.pollingDurationMs +=
+            monotonicNow(options) - pollingStartedAt;
+        }
+        callMetric.pollingRequestCount = polled.pollingRequestCount;
+        callMetric.retrievalRetryCount = polled.retrievalRetryCount;
+        callMetric.providerStatus = polled.providerStatus ?? callMetric.providerStatus;
+        envelope = polled.envelope;
         output = {
           text: polled.outputText,
           outputFieldDetected: polled.outputFieldDetected,
           rawOutputCharCount: polled.rawOutputCharCount,
         };
+      } else if (initialLifecycle.kind === "success") {
+        output = extractYandexOutputText(envelope);
+      } else {
+        throw yandexLifecycleError({
+          lifecycle: initialLifecycle,
+          modelName,
+          responseIdPresent: Boolean(responseId),
+          pollingRequestCount: 0,
+        });
       }
 
       callMetric.responseLength = output.rawOutputCharCount;
@@ -1486,167 +2151,261 @@ async function runYandexNegotiationAnalysis(
           code: "MODEL_EMPTY_OUTPUT",
           provider: "yandex",
           model: modelName,
-          message: `Yandex AI analysis failed: empty model output (model=${modelName}, responseLength=0).`,
+          message: "Yandex AI completed successfully but returned empty model output.",
           retryable: true,
+          allowsRegeneration: false,
           diagnostics: {
             responseIdPresent: Boolean(responseId),
             providerStatus: callMetric.providerStatus,
             outputFieldDetected: output.outputFieldDetected,
-            pollingAttemptCount: callMetric.pollingAttemptCount,
+            pollingRequestCount: callMetric.pollingRequestCount,
           },
         });
       }
 
-      const { cleaned, fencesRemoved } = stripMarkdownJsonFences(output.text);
-      if (fencesRemoved) {
-        console.warn(
-          `[AI analysis] Yandex response required markdown fence cleanup (model=${modelName}, responseLength=${output.rawOutputCharCount}).`,
-        );
-      }
+      const { cleaned } = stripMarkdownJsonFences(output.text);
       callMetric.responseLength = cleaned.length;
       return { envelope, cleaned, responseLength: cleaned.length };
     } catch (error) {
       if (error instanceof AiAnalysisProviderError) {
         callMetric.errorClass = error.code;
+        const pollingRequestCount = error.diagnostics.pollingRequestCount;
+        const retrievalRetryCount = error.diagnostics.retrievalRetryCount;
+        if (typeof pollingRequestCount === "number") {
+          callMetric.pollingRequestCount = pollingRequestCount;
+        }
+        if (typeof retrievalRetryCount === "number") {
+          callMetric.retrievalRetryCount = retrievalRetryCount;
+        }
       }
       throw error;
     } finally {
-      callMetric.durationMs = Date.now() - callStartedAt;
+      callMetric.durationMs = monotonicNow(options) - callStartedAt;
       calls.push(callMetric);
     }
   }
 
-  let lastError: unknown = null;
-  for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber += 1) {
+  type ModelOutputResult = Awaited<ReturnType<typeof requestModelOutput>>;
+
+  function attachMetricsAndThrow(error: unknown): never {
+    const classified = classifyAiAnalysisError(error);
+    const providerError =
+      error instanceof AiAnalysisProviderError
+        ? error
+        : new AiAnalysisProviderError({
+            code: classified.code,
+            provider: "yandex",
+            model: modelName,
+            message: "Yandex AI analysis failed.",
+            retryable: false,
+            allowsRegeneration: false,
+            cause: error,
+          });
+    providerError.metrics = buildMetrics({ errorClass: providerError.code });
+    throw providerError;
+  }
+
+  function invalidOutputError(requestResult: ModelOutputResult) {
+    const truncated = looksPossiblyTruncatedJson(requestResult.cleaned);
+    return new AiAnalysisProviderError({
+      code: "MODEL_INVALID_OUTPUT",
+      provider: "yandex",
+      model: modelName,
+      message: truncated
+        ? "Yandex AI analysis returned truncated or invalid JSON."
+        : "Yandex AI analysis returned invalid JSON.",
+      retryable: false,
+      allowsRegeneration: false,
+      diagnostics: {
+        responseLength: requestResult.cleaned.length,
+        outputCondition: truncated ? "truncated_or_invalid" : "invalid",
+      },
+    });
+  }
+
+  function validateOutput(parsed: unknown): NegotiationAnalysisOutput {
+    const validated = NegotiationAnalysisOutputSchema.safeParse(parsed);
+    if (!validated.success) {
+      const issuePaths = validated.error.issues
+        .slice(0, 5)
+        .map((issue) => issue.path.join("."));
+      throw new AiAnalysisProviderError({
+        code: "MODEL_SCHEMA_VALIDATION_ERROR",
+        provider: "yandex",
+        model: modelName,
+        message: "Yandex AI response failed schema validation.",
+        retryable: false,
+        allowsRegeneration: false,
+        diagnostics: {
+          issueCount: validated.error.issues.length,
+          issuePaths,
+        },
+      });
+    }
+    return validated.data;
+  }
+
+  let baseRequest: ModelOutputResult | null = null;
+  let baseOutput: NegotiationAnalysisOutput | null = null;
+  let primaryTruncated = false;
+
+  for (
+    let attemptNumber = 1;
+    attemptNumber <= maxOperationAttempts;
+    attemptNumber += 1
+  ) {
+    operationAttemptCount = attemptNumber;
     try {
-      let requestResult = await requestModelOutput({
+      const requestResult = await requestModelOutput({
         attemptNumber,
         tokenLimit: maxOutputTokens,
         purpose: "primary",
       });
-      let parsed = tryParseJsonWithRecovery(requestResult.cleaned);
-
-      if (!parsed && looksPossiblyTruncatedJson(requestResult.cleaned)) {
-        const retryTokens = Math.max(maxOutputTokens, 6500);
-        console.warn(
-          `[AI analysis] Retrying Yandex analysis with compact JSON mode (model=${modelName}, max_output_tokens=${retryTokens}).`,
-        );
-        requestResult = await requestModelOutput({
-          attemptNumber,
-          tokenLimit: retryTokens,
-          purpose: "compact_json_retry",
-          compactJsonMode: true,
-        });
-        parsed = tryParseJsonWithRecovery(requestResult.cleaned);
-      }
-
-      if (!parsed) {
-        const responseLength = requestResult.cleaned.length;
-        const kind = looksPossiblyTruncatedJson(requestResult.cleaned)
-          ? "truncated/invalid JSON"
-          : "invalid JSON";
-        throw new AiAnalysisProviderError({
-          code: "MODEL_INVALID_OUTPUT",
-          provider: "yandex",
-          model: modelName,
-          message: `Yandex AI analysis failed: ${kind} (model=${modelName}, responseLength=${responseLength}).`,
-          retryable: false,
-          diagnostics: { responseLength, kind },
-        });
-      }
-
-      const validated = NegotiationAnalysisOutputSchema.safeParse(parsed);
-      if (!validated.success) {
-        const issues = validated.error.issues
-          .slice(0, 3)
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ");
-        throw new AiAnalysisProviderError({
-          code: "MODEL_SCHEMA_VALIDATION_ERROR",
-          provider: "yandex",
-          model: modelName,
-          message: `Yandex AI response failed schema validation: ${issues}`,
-          retryable: false,
-          diagnostics: { issues },
-        });
-      }
-
-      let selectedOutput = validated.data;
-      const depthIssues = assessAnalysisDepth(selectedOutput);
-      if (depthIssues.length > 0) {
-        const retryTokens = Math.max(maxOutputTokens, 7000);
-        console.warn(
-          `[AI analysis] Retrying Yandex analysis for deeper coaching output (model=${modelName}, issues=${depthIssues.length}).`,
-        );
-        const depthRetry = await requestModelOutput({
-          attemptNumber,
-          tokenLimit: retryTokens,
-          purpose: "depth_retry",
-          depthRetryReason: depthIssues.slice(0, 6).join("\n- "),
-        });
-        const reparsed = tryParseJsonWithRecovery(depthRetry.cleaned);
-        if (reparsed) {
-          const revalidated = NegotiationAnalysisOutputSchema.safeParse(reparsed);
-          if (revalidated.success) {
-            selectedOutput = revalidated.data;
-            requestResult = depthRetry;
-          }
-        }
-      }
-
-      return {
-        output: selectedOutput,
-        rawOutput: requestResult.envelope,
-        model: modelName,
-        metrics: buildMetrics({
-          retryCount: attemptNumber - 1,
-          responseLength: requestResult.responseLength,
-          outputChars: JSON.stringify(selectedOutput).length,
-          errorClass: null,
-        }),
-      };
-    } catch (error) {
-      lastError = error;
-      const classified = classifyAiAnalysisError(error);
-      const retryable = classified.retryable && attemptNumber < maxAttempts;
-      if (!retryable) {
-        if (error instanceof AiAnalysisProviderError) {
-          error.metrics = buildMetrics({
-            retryCount: attemptNumber - 1,
-            errorClass: error.code,
-          });
-        }
-        throw error;
-      }
-      console.warn(
-        `[AI analysis] Retrying Yandex analysis after transient failure (model=${modelName}, attempt=${attemptNumber}, errorClass=${classified.code}).`,
+      const parsed = measureParsingValidation(() =>
+        tryParseJsonWithRecovery(requestResult.cleaned),
       );
-      await delay(500 * attemptNumber);
+      if (!parsed) {
+        if (looksPossiblyTruncatedJson(requestResult.cleaned)) {
+          baseRequest = requestResult;
+          primaryTruncated = true;
+          break;
+        }
+        throw invalidOutputError(requestResult);
+      }
+      baseRequest = requestResult;
+      baseOutput = measureParsingValidation(() => validateOutput(parsed));
+      break;
+    } catch (error) {
+      const classified = classifyAiAnalysisError(error);
+      const mayCreateAnotherPrimary =
+        classified.retryable &&
+        classified.allowsRegeneration &&
+        attemptNumber < maxOperationAttempts;
+      if (!mayCreateAnotherPrimary) {
+        attachMetricsAndThrow(error);
+      }
+      const backoffMs = 500 * attemptNumber;
+      if (operationDeadline - monotonicNow(options) <= backoffMs) {
+        attachMetricsAndThrow(error);
+      }
+      await abortableDelay(backoffMs, options);
     }
   }
 
-  const classified = classifyAiAnalysisError(lastError);
-  const error =
-    lastError instanceof AiAnalysisProviderError
-      ? lastError
-      : new AiAnalysisProviderError({
-          code: classified.code,
-          provider: "yandex",
-          model: modelName,
-          message: "Yandex AI analysis failed.",
-          retryable: false,
-          cause: lastError,
+  if (!baseOutput && primaryTruncated) {
+    try {
+      await executionCheckpoint({
+        options,
+        provider: "yandex",
+        model: modelName,
+        checkpoint: "before_compact_fallback",
+      });
+      const compactResult = await requestModelOutput({
+        attemptNumber: operationAttemptCount,
+        tokenLimit: Math.max(maxOutputTokens, 6_500),
+        purpose: "compact_fallback",
+        compactJsonMode: true,
+      });
+      const parsed = measureParsingValidation(() =>
+        tryParseJsonWithRecovery(compactResult.cleaned),
+      );
+      if (!parsed) throw invalidOutputError(compactResult);
+      baseRequest = compactResult;
+      baseOutput = measureParsingValidation(() => validateOutput(parsed));
+    } catch (error) {
+      attachMetricsAndThrow(error);
+    }
+  }
+
+  if (!baseOutput || !baseRequest) {
+    attachMetricsAndThrow(
+      new AiAnalysisProviderError({
+        code: "INTERNAL_ERROR",
+        provider: "yandex",
+        model: modelName,
+        message: "Yandex AI analysis ended without a mandatory result.",
+        allowsRegeneration: false,
+      }),
+    );
+  }
+
+  let selectedOutput = baseOutput;
+  let selectedRequest = baseRequest;
+  const depthIssues = getAnalysisDepthIssues(baseOutput);
+  if (depthIssues.length > 0) {
+    const optionalDepthStartedAt = monotonicNow(options);
+    await executionCheckpoint({
+      options,
+      provider: "yandex",
+      model: modelName,
+      checkpoint: "before_optional_depth",
+    });
+    if (operationDeadline - monotonicNow(options) <= 0) {
+      optionalDepthOutcome = "skipped_deadline";
+      optionalDepthFailureClass = "NETWORK_TIMEOUT";
+    } else {
+      try {
+        const depthResult = await requestModelOutput({
+          attemptNumber: operationAttemptCount,
+          tokenLimit: Math.max(maxOutputTokens, 7_000),
+          purpose: "optional_depth",
+          depthRetryReason: depthIssues.slice(0, 6).join("\n- "),
         });
-  error.metrics = buildMetrics({
-    retryCount: Math.max(0, maxAttempts - 1),
-    errorClass: error.code,
-  });
-  throw error;
+        const reparsed = measureParsingValidation(() =>
+          tryParseJsonWithRecovery(depthResult.cleaned),
+        );
+        if (!reparsed) {
+          optionalDepthOutcome = "invalid";
+          optionalDepthFailureClass = "MODEL_INVALID_OUTPUT";
+        } else {
+          const revalidated = measureParsingValidation(() =>
+            NegotiationAnalysisOutputSchema.safeParse(reparsed),
+          );
+          if (!revalidated.success) {
+            optionalDepthOutcome = "invalid";
+            optionalDepthFailureClass = "MODEL_SCHEMA_VALIDATION_ERROR";
+          } else if (
+            getAnalysisDepthIssues(revalidated.data).length < depthIssues.length
+          ) {
+            optionalDepthOutcome = "improved";
+            selectedOutput = revalidated.data;
+            selectedRequest = depthResult;
+          } else {
+            optionalDepthOutcome = "not_improved";
+          }
+        }
+      } catch (error) {
+        const classified = classifyAiAnalysisError(error);
+        if (
+          classified.code === "CANCELLED" ||
+          classified.code === "OWNERSHIP_LOST"
+        ) {
+          attachMetricsAndThrow(error);
+        }
+        optionalDepthOutcome = "failed";
+        optionalDepthFailureClass = classified.code;
+      }
+    }
+    optionalDepthDurationMs =
+      monotonicNow(options) - optionalDepthStartedAt;
+  }
+
+  return {
+    output: selectedOutput,
+    rawOutput: selectedRequest.envelope,
+    model: modelName,
+    metrics: buildMetrics({
+      responseLength: selectedRequest.responseLength,
+      outputChars: JSON.stringify(selectedOutput).length,
+      errorClass: null,
+    }),
+  };
 }
 
 export async function runNegotiationAnalysis(
   prompt: string,
   language: string,
+  options?: AiAnalysisExecutionOptions,
 ): Promise<{
   output: NegotiationAnalysisOutput;
   rawOutput: unknown;
@@ -1658,5 +2417,5 @@ export async function runNegotiationAnalysis(
     openai: runOpenAiNegotiationAnalysis,
     yandex: runYandexNegotiationAnalysis,
   };
-  return providers[provider](prompt, language);
+  return providers[provider](prompt, language, options);
 }

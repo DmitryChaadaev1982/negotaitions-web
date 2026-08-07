@@ -8,13 +8,13 @@ import {
   ExternalServiceEventSeverity,
   ParticipantType,
   Prisma,
-  TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import {
   buildAnalysisPrompt,
   buildSessionAnalysisContext,
 } from "@/lib/ai/session-analysis-context";
 import {
+  AiAnalysisProviderError,
   classifyAiAnalysisError,
   createMockAnalysisOutput,
   isAiAnalysisConfiguredForSelectedProvider,
@@ -22,6 +22,18 @@ import {
   type AiAnalysisErrorCode,
   type AiAnalysisRunMetrics,
 } from "@/lib/ai/negotiation-analysis";
+import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
+import {
+  claimAiAnalysisRun,
+  completeAiAnalysisRun,
+  failAiAnalysisRun,
+  renewAiAnalysisLease,
+  type AiAnalysisRunOwner,
+} from "@/lib/ai/analysis-operation";
+import {
+  executeOwnedAnalysis,
+  type OwnedAnalysisFailure,
+} from "@/lib/ai/analysis-orchestration";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
@@ -31,7 +43,6 @@ import {
   isAiAnalysisMockMode,
 } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
-import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 import { getAiAnalysisProvider } from "@/lib/env";
 
 export const runtime = "nodejs";
@@ -50,113 +61,6 @@ const schema = z.object({
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
-
-const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
-  AiAnalysisStatus.QUEUED,
-  AiAnalysisStatus.ANALYZING,
-]);
-
-type ClaimedAnalysisRun =
-  | {
-      state: "claimed";
-      analysis: {
-        id: string;
-        status: AiAnalysisStatus;
-      };
-    }
-  | {
-      state: "active";
-      analysis: {
-        id: string;
-        status: AiAnalysisStatus;
-      };
-    };
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  );
-}
-
-async function claimAiAnalysisRun(params: {
-  sessionId: string;
-  transcriptId: string;
-  transcriptRetranscribeCount: number;
-  language: string;
-  now: Date;
-}): Promise<ClaimedAnalysisRun> {
-  const existing = await prisma.aiAnalysis.findUnique({
-    where: { sessionId: params.sessionId },
-    select: { id: true, status: true },
-  });
-
-  if (existing && ACTIVE_AI_STATUSES.has(existing.status)) {
-    return { state: "active", analysis: existing };
-  }
-
-  const claimExisting = async (analysisId: string) => {
-    const claimed = await prisma.aiAnalysis.updateMany({
-      where: {
-        id: analysisId,
-        status: { notIn: [AiAnalysisStatus.QUEUED, AiAnalysisStatus.ANALYZING] },
-      },
-      data: {
-        transcriptId: params.transcriptId,
-        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
-        status: AiAnalysisStatus.ANALYZING,
-        language: params.language,
-        startedAt: params.now,
-        completedAt: null,
-        errorMessage: null,
-      },
-    });
-    if (claimed.count === 0) {
-      const active = await prisma.aiAnalysis.findUniqueOrThrow({
-        where: { id: analysisId },
-        select: { id: true, status: true },
-      });
-      return { state: "active", analysis: active } satisfies ClaimedAnalysisRun;
-    }
-    const analysis = await prisma.aiAnalysis.findUniqueOrThrow({
-      where: { id: analysisId },
-      select: { id: true, status: true },
-    });
-    return { state: "claimed", analysis } satisfies ClaimedAnalysisRun;
-  };
-
-  if (existing) {
-    return claimExisting(existing.id);
-  }
-
-  try {
-    const analysis = await prisma.aiAnalysis.create({
-      data: {
-        sessionId: params.sessionId,
-        transcriptId: params.transcriptId,
-        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
-        status: AiAnalysisStatus.ANALYZING,
-        language: params.language,
-        startedAt: params.now,
-        errorMessage: null,
-      },
-      select: { id: true, status: true },
-    });
-    return { state: "claimed", analysis };
-  } catch (error) {
-    if (!isUniqueConstraintError(error)) {
-      throw error;
-    }
-    const raced = await prisma.aiAnalysis.findUniqueOrThrow({
-      where: { sessionId: params.sessionId },
-      select: { id: true, status: true },
-    });
-    if (ACTIVE_AI_STATUSES.has(raced.status)) {
-      return { state: "active", analysis: raced };
-    }
-    return claimExisting(raced.id);
-  }
-}
 
 function mapAiAnalysisErrorCodeToExternalServiceCode(
   code: AiAnalysisErrorCode,
@@ -193,28 +97,57 @@ function buildAiAnalysisLogPayload(params: {
     metrics: params.metrics
       ? {
           totalDurationMs: params.metrics.totalDurationMs,
+          preProviderDurationMs: params.metrics.preProviderDurationMs,
+          generationPostDurationMs:
+            params.metrics.generationPostDurationMs,
+          pollingDurationMs: params.metrics.pollingDurationMs,
+          parsingValidationDurationMs:
+            params.metrics.parsingValidationDurationMs,
+          optionalDepthDurationMs: params.metrics.optionalDepthDurationMs,
           promptChars: params.metrics.promptChars,
+          estimatedPromptTokens: params.metrics.estimatedPromptTokens,
+          instructionChars: params.metrics.instructionChars,
+          inputChars: params.metrics.inputChars,
           estimatedInputTokens: params.metrics.estimatedInputTokens,
-          modelCallCount: params.metrics.modelCallCount,
-          retryCount: params.metrics.retryCount,
-          maxAttempts: params.metrics.maxAttempts,
-          timeoutMs: params.metrics.timeoutMs,
+          outputSchemaInstructionChars:
+            params.metrics.outputSchemaInstructionChars,
+          primaryMaxOutputTokensConfigured:
+            params.metrics.primaryMaxOutputTokensConfigured,
+          operationAttemptCount: params.metrics.operationAttemptCount,
+          outerRetryCount: params.metrics.outerRetryCount,
+          maxOperationAttempts: params.metrics.maxOperationAttempts,
+          generationCallCount: params.metrics.generationCallCount,
+          compactFallbackCount: params.metrics.compactFallbackCount,
+          optionalDepthCallCount: params.metrics.optionalDepthCallCount,
+          pollingRequestCount: params.metrics.pollingRequestCount,
+          retrievalRetryCount: params.metrics.retrievalRetryCount,
+          operationTimeoutMs: params.metrics.operationTimeoutMs,
+          httpTimeoutMs: params.metrics.httpTimeoutMs,
+          responsePollTimeoutMs: params.metrics.responsePollTimeoutMs,
+          optionalDepthOutcome: params.metrics.optionalDepthOutcome,
+          optionalDepthFailureClass:
+            params.metrics.optionalDepthFailureClass,
           responseLength: params.metrics.responseLength,
           outputChars: params.metrics.outputChars,
           calls: params.metrics.calls.map((call) => ({
-            attemptNumber: call.attemptNumber,
-            callNumber: call.callNumber,
+            operationAttemptNumber: call.operationAttemptNumber,
+            generationCallNumber: call.generationCallNumber,
             purpose: call.purpose,
             model: call.model,
             durationMs: call.durationMs,
+            generationPostDurationMs: call.generationPostDurationMs,
+            pollingDurationMs: call.pollingDurationMs,
             promptChars: call.promptChars,
+            instructionChars: call.instructionChars,
+            inputChars: call.inputChars,
             estimatedInputTokens: call.estimatedInputTokens,
             maxOutputTokens: call.maxOutputTokens,
             responseLength: call.responseLength,
             httpStatus: call.httpStatus,
             providerStatus: call.providerStatus,
             responseIdPresent: call.responseIdPresent,
-            pollingAttemptCount: call.pollingAttemptCount,
+            pollingRequestCount: call.pollingRequestCount,
+            retrievalRetryCount: call.retrievalRetryCount,
             errorClass: call.errorClass,
           })),
         }
@@ -223,6 +156,7 @@ function buildAiAnalysisLogPayload(params: {
 }
 
 export async function POST(request: Request, context: RouteContext) {
+  const operationStartedAtMonotonic = performance.now();
   const { sessionId } = await context.params;
 
   let body: unknown;
@@ -299,6 +233,8 @@ export async function POST(request: Request, context: RouteContext) {
     select: {
       id: true,
       status: true,
+      text: true,
+      diarizedText: true,
       language: true,
       hasSpeakerDiarization: true,
       speakerMappingStatus: true,
@@ -314,14 +250,31 @@ export async function POST(request: Request, context: RouteContext) {
     },
   });
 
-  if (!transcript || transcript.status !== TranscriptStatus.COMPLETED) {
+  if (!transcript) {
+    return NextResponse.json(
+      { error: "Transcript must be completed before running AI analysis." },
+      { status: 400 },
+    );
+  }
+  const readiness = evaluateAiAnalysisReadiness(transcript);
+  if (readiness.reason === "TRANSCRIPT_NOT_COMPLETED") {
     return NextResponse.json(
       { error: "Transcript must be completed before running AI analysis." },
       { status: 400 },
     );
   }
 
-  if (transcript.hasSpeakerDiarization && !isSpeakerMappingReadyForAnalysis(transcript)) {
+  if (readiness.reason === "TRANSCRIPT_CONTENT_EMPTY") {
+    return NextResponse.json(
+      {
+        error: "Transcript must contain usable text before running AI analysis.",
+        errorCode: "TRANSCRIPT_CONTENT_EMPTY",
+      },
+      { status: 422 },
+    );
+  }
+
+  if (readiness.reason === "SPEAKER_MAPPING_REQUIRED") {
     return NextResponse.json(
       {
         error: "Confirm speaker mapping before AI analysis.",
@@ -329,22 +282,6 @@ export async function POST(request: Request, context: RouteContext) {
         speakerMappingStatus: transcript.speakerMappingStatus,
       },
       { status: 422 },
-    );
-  }
-
-  const existingAnalysis = await prisma.aiAnalysis.findUnique({
-    where: { sessionId },
-    select: { id: true, status: true },
-  });
-
-  if (existingAnalysis && ACTIVE_AI_STATUSES.has(existingAnalysis.status)) {
-    return NextResponse.json(
-      {
-        error: "An AI analysis is already in progress.",
-        analysisId: existingAnalysis.id,
-        status: existingAnalysis.status,
-      },
-      { status: 409 },
     );
   }
 
@@ -373,29 +310,25 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (isAiAnalysisMockMode()) {
-    return await processMockAnalysis(sessionId, claimedRun.analysis.id, analysisLanguage);
+    return await processMockAnalysis(
+      sessionId,
+      claimedRun.owner,
+      analysisLanguage,
+    );
   }
 
-  return await processRealAnalysis(sessionId, claimedRun.analysis.id, analysisLanguage);
-}
-
-async function failAnalysis(
-  analysisId: string,
-  errorMessage: string,
-): Promise<void> {
-  await prisma.aiAnalysis.update({
-    where: { id: analysisId },
-    data: {
-      status: AiAnalysisStatus.FAILED,
-      errorMessage,
-      completedAt: new Date(),
-    },
-  });
+  return await processRealAnalysis(
+    sessionId,
+    claimedRun.owner,
+    analysisLanguage,
+    request.signal,
+    operationStartedAtMonotonic,
+  );
 }
 
 async function processMockAnalysis(
   sessionId: string,
-  analysisId: string,
+  owner: AiAnalysisRunOwner,
   language: string,
 ) {
   const simulatedError = getMockExternalServiceError();
@@ -422,143 +355,269 @@ async function processMockAnalysis(
           ? ExternalServiceErrorCode.BILLING_LIMIT
           : ExternalServiceErrorCode.QUOTA_EXCEEDED;
 
-    await logExternalServiceEvent({
-      service: ExternalService.OPENAI,
-      severity: ExternalServiceEventSeverity.ERROR,
-      errorCode,
-      title: "AI analysis failed (mock)",
-      message: errorMsg,
-      sessionId,
+    const terminalized = await failAiAnalysisRun({
+      owner,
+      errorMessage: errorMsg,
     });
-
-    await failAnalysis(analysisId, errorMsg);
+    if (!terminalized) {
+      return NextResponse.json(
+        { error: "AI analysis ownership changed." },
+        { status: 409 },
+      );
+    }
+    try {
+      await logExternalServiceEvent({
+        service: ExternalService.OPENAI,
+        severity: ExternalServiceEventSeverity.ERROR,
+        errorCode,
+        title: "AI analysis failed (mock)",
+        message: errorMsg,
+        sessionId,
+      });
+    } catch {
+      // The durable FAILED state is authoritative; mock logging is best-effort.
+    }
     return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 
   const mockOutput = createMockAnalysisOutput(language);
-
-  const saved = await prisma.aiAnalysis.update({
-    where: { id: analysisId },
-    data: {
-      status: AiAnalysisStatus.COMPLETED,
+  const completedAt = new Date();
+  const terminalized = await completeAiAnalysisRun({
+    owner,
+    completedAt,
+    fields: {
       model: "mock-analysis",
       executiveSummary: mockOutput.executiveSummary,
       overallScore: mockOutput.overallScore,
-      analysisJson: mockOutput as object,
+      analysisJson: mockOutput as Prisma.InputJsonValue,
       rawModelOutput: { mock: true },
-      completedAt: new Date(),
-      errorMessage: null,
     },
   });
+  if (!terminalized) {
+    return NextResponse.json(
+      { error: "AI analysis ownership changed." },
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({
-    analysisId: saved.id,
-    status: saved.status,
-    executiveSummary: saved.executiveSummary,
-    overallScore: saved.overallScore,
-    completedAt: saved.completedAt?.toISOString() ?? null,
+    analysisId: owner.analysisId,
+    status: AiAnalysisStatus.COMPLETED,
+    executiveSummary: mockOutput.executiveSummary,
+    overallScore: mockOutput.overallScore,
+    completedAt: completedAt.toISOString(),
   });
 }
 
 async function processRealAnalysis(
   sessionId: string,
-  analysisId: string,
+  initialOwner: AiAnalysisRunOwner,
   language: string,
+  signal: AbortSignal,
+  operationStartedAtMonotonic: number,
 ) {
   const provider = getAiAnalysisProvider();
-  try {
-    const analysisContext = await buildSessionAnalysisContext(sessionId);
-    if (!analysisContext) {
-      await failAnalysis(analysisId, "Session not found during analysis.");
-      return NextResponse.json({ error: "Session not found." }, { status: 404 });
-    }
+  let owner = initialOwner;
+  const completion = { completedAt: null as Date | null };
 
-    const prompt = buildAnalysisPrompt(analysisContext);
+  const renewLease = async (checkpoint: string): Promise<boolean> => {
+    void checkpoint;
+    const renewed = await renewAiAnalysisLease({ owner });
+    if (!renewed) return false;
+    owner = renewed;
+    return true;
+  };
 
-    const { output, rawOutput, model, metrics } = await runNegotiationAnalysis(
-      prompt,
-      language,
-    );
-
-    const saved = await prisma.aiAnalysis.update({
-      where: { id: analysisId },
-      data: {
-        status: AiAnalysisStatus.COMPLETED,
-        model,
-        executiveSummary: output.executiveSummary,
-        overallScore: output.overallScore,
-        analysisJson: output as Prisma.InputJsonValue,
-        rawModelOutput: {
-          providerEnvelope: rawOutput as Prisma.InputJsonValue,
-          diagnostics: {
-            totalDurationMs: metrics.totalDurationMs,
-            promptChars: metrics.promptChars,
-            estimatedInputTokens: metrics.estimatedInputTokens,
-            modelCallCount: metrics.modelCallCount,
-            retryCount: metrics.retryCount,
-            responseLength: metrics.responseLength,
-            outputChars: metrics.outputChars,
-          },
-        } as Prisma.InputJsonValue,
-        completedAt: new Date(),
-        errorMessage: null,
-      },
-    });
-
-    console.info("[AI analysis] completed", {
-      sessionId,
-      analysisId,
-      provider,
-      model,
-      durationMs: metrics.totalDurationMs,
-      promptChars: metrics.promptChars,
-      estimatedInputTokens: metrics.estimatedInputTokens,
-      modelCallCount: metrics.modelCallCount,
-      retryCount: metrics.retryCount,
-      responseLength: metrics.responseLength,
-      outputChars: metrics.outputChars,
-      finalStatus: saved.status,
-    });
-
-    return NextResponse.json({
-      analysisId: saved.id,
-      status: saved.status,
-      executiveSummary: saved.executiveSummary,
-      overallScore: saved.overallScore,
-      completedAt: saved.completedAt?.toISOString() ?? null,
-    });
-  } catch (error) {
-    const classifiedAiError = classifyAiAnalysisError(error);
-    const userMessage = classifiedAiError.userMessage;
-    const detailedMessage =
-      error instanceof Error ? error.message : "AI analysis failed.";
-
-    await logExternalServiceEvent({
-      service: provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
-      severity: ExternalServiceEventSeverity.ERROR,
-      errorCode: mapAiAnalysisErrorCodeToExternalServiceCode(classifiedAiError.code),
-      title: `AI analysis failed: ${classifiedAiError.code}`,
-      message: userMessage,
-      rawError: buildAiAnalysisLogPayload({
-        errorClass: classifiedAiError.code,
-        provider,
-        model: classifiedAiError.model,
-        httpStatus: classifiedAiError.httpStatus,
-        retryable: classifiedAiError.retryable,
-        metrics: classifiedAiError.metrics,
-        diagnostics: {
-          ...classifiedAiError.diagnostics,
-          detail: detailedMessage,
+  const result = await executeOwnedAnalysis({
+    run: async () => {
+      if (!(await renewLease("before_context_load"))) {
+        throw new AiAnalysisProviderError({
+          code: "OWNERSHIP_LOST",
+          provider,
+          message: "AI analysis ownership was lost before context loading.",
+          allowsRegeneration: false,
+        });
+      }
+      const analysisContext = await buildSessionAnalysisContext(sessionId);
+      if (!analysisContext) {
+        throw new AiAnalysisProviderError({
+          code: "INTERNAL_ERROR",
+          provider,
+          message: "Session not found during analysis.",
+          userMessage: "Session not found.",
+          allowsRegeneration: false,
+        });
+      }
+      const prompt = buildAnalysisPrompt(analysisContext);
+      return runNegotiationAnalysis(prompt, language, {
+        signal,
+        renewLease,
+        operationStartedAtMonotonic,
+      });
+    },
+    complete: async ({ output, rawOutput, model, metrics }) => {
+      if (signal.aborted) {
+        throw new AiAnalysisProviderError({
+          code: "CANCELLED",
+          provider,
+          model,
+          message: "AI analysis request was cancelled before terminalization.",
+          diagnostics: { cancellationSource: "request" },
+          allowsRegeneration: false,
+        });
+      }
+      if (!(await renewLease("before_success_terminalization"))) {
+        return false;
+      }
+      completion.completedAt = new Date();
+      return completeAiAnalysisRun({
+        owner,
+        completedAt: completion.completedAt,
+        fields: {
+          model,
+          executiveSummary: output.executiveSummary,
+          overallScore: output.overallScore,
+          analysisJson: output as Prisma.InputJsonValue,
+          rawModelOutput: {
+            providerEnvelope: rawOutput as Prisma.InputJsonValue,
+            diagnostics: {
+              totalDurationMs: metrics.totalDurationMs,
+              preProviderDurationMs: metrics.preProviderDurationMs,
+              generationPostDurationMs: metrics.generationPostDurationMs,
+              pollingDurationMs: metrics.pollingDurationMs,
+              parsingValidationDurationMs:
+                metrics.parsingValidationDurationMs,
+              optionalDepthDurationMs: metrics.optionalDepthDurationMs,
+              promptChars: metrics.promptChars,
+              estimatedPromptTokens: metrics.estimatedPromptTokens,
+              instructionChars: metrics.instructionChars,
+              inputChars: metrics.inputChars,
+              estimatedInputTokens: metrics.estimatedInputTokens,
+              outputSchemaInstructionChars:
+                metrics.outputSchemaInstructionChars,
+              primaryMaxOutputTokensConfigured:
+                metrics.primaryMaxOutputTokensConfigured,
+              operationAttemptCount: metrics.operationAttemptCount,
+              outerRetryCount: metrics.outerRetryCount,
+              generationCallCount: metrics.generationCallCount,
+              compactFallbackCount: metrics.compactFallbackCount,
+              optionalDepthCallCount: metrics.optionalDepthCallCount,
+              pollingRequestCount: metrics.pollingRequestCount,
+              retrievalRetryCount: metrics.retrievalRetryCount,
+              optionalDepthOutcome: metrics.optionalDepthOutcome,
+              optionalDepthFailureClass: metrics.optionalDepthFailureClass,
+              responseLength: metrics.responseLength,
+              outputChars: metrics.outputChars,
+            },
+          } as Prisma.InputJsonValue,
         },
+      });
+    },
+    fail: (failure: OwnedAnalysisFailure) =>
+      failAiAnalysisRun({
+        owner,
+        errorMessage: failure.userMessage,
       }),
-      sessionId,
-    });
+    classifyFailure: (error) => {
+      const classified = classifyAiAnalysisError(error);
+      return {
+        errorClass: classified.code,
+        userMessage: classified.userMessage,
+        originalError: error,
+      };
+    },
+    isOwnershipLost: (error) =>
+      classifyAiAnalysisError(error).code === "OWNERSHIP_LOST",
+    observeSuccess: ({ model, metrics }) => {
+      console.info("[AI analysis] completed", {
+        sessionId,
+        analysisId: owner.analysisId,
+        provider,
+        model,
+        totalDurationMs: metrics.totalDurationMs,
+        preProviderDurationMs: metrics.preProviderDurationMs,
+        generationPostDurationMs: metrics.generationPostDurationMs,
+        pollingDurationMs: metrics.pollingDurationMs,
+        parsingValidationDurationMs: metrics.parsingValidationDurationMs,
+        optionalDepthDurationMs: metrics.optionalDepthDurationMs,
+        promptChars: metrics.promptChars,
+        estimatedPromptTokens: metrics.estimatedPromptTokens,
+        instructionChars: metrics.instructionChars,
+        inputChars: metrics.inputChars,
+        estimatedInputTokens: metrics.estimatedInputTokens,
+        outputSchemaInstructionChars: metrics.outputSchemaInstructionChars,
+        primaryMaxOutputTokensConfigured:
+          metrics.primaryMaxOutputTokensConfigured,
+        operationAttemptCount: metrics.operationAttemptCount,
+        outerRetryCount: metrics.outerRetryCount,
+        generationCallCount: metrics.generationCallCount,
+        compactFallbackCount: metrics.compactFallbackCount,
+        optionalDepthCallCount: metrics.optionalDepthCallCount,
+        pollingRequestCount: metrics.pollingRequestCount,
+        retrievalRetryCount: metrics.retrievalRetryCount,
+        optionalDepthOutcome: metrics.optionalDepthOutcome,
+        optionalDepthFailureClass: metrics.optionalDepthFailureClass,
+        finalStatus: AiAnalysisStatus.COMPLETED,
+      });
+    },
+    observeFailure: async (failure) => {
+      const classified = classifyAiAnalysisError(failure.originalError);
+      await logExternalServiceEvent({
+        service:
+          provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
+        severity: ExternalServiceEventSeverity.ERROR,
+        errorCode: mapAiAnalysisErrorCodeToExternalServiceCode(classified.code),
+        title: `AI analysis failed: ${classified.code}`,
+        message: classified.userMessage,
+        rawError: buildAiAnalysisLogPayload({
+          errorClass: classified.code,
+          provider,
+          model: classified.model,
+          httpStatus: classified.httpStatus,
+          retryable: classified.retryable,
+          metrics: classified.metrics,
+          diagnostics: classified.diagnostics,
+        }),
+        sessionId,
+      });
+    },
+    observeInstrumentationFailure: (phase) => {
+      try {
+        console.warn("[AI analysis] observability failed", {
+          sessionId,
+          analysisId: owner.analysisId,
+          phase,
+        });
+      } catch {
+        // Durable analysis state is already terminal.
+      }
+    },
+  });
 
-    await failAnalysis(analysisId, userMessage);
-
+  if (result.state === "ownership_lost") {
     return NextResponse.json(
-      { error: userMessage, errorClass: classifiedAiError.code },
-      { status: 500 },
+      {
+        error: "AI analysis ownership changed.",
+        errorClass: "OWNERSHIP_LOST",
+      },
+      { status: 409 },
     );
   }
+  if (result.state === "failed") {
+    return NextResponse.json(
+      {
+        error: result.failure.userMessage,
+        errorClass: result.failure.errorClass,
+      },
+      { status: result.failure.errorClass === "CANCELLED" ? 499 : 500 },
+    );
+  }
+
+  return NextResponse.json({
+    analysisId: owner.analysisId,
+    status: AiAnalysisStatus.COMPLETED,
+    executiveSummary: result.value.output.executiveSummary,
+    overallScore: result.value.output.overallScore,
+    completedAt: completion.completedAt?.toISOString() ?? null,
+  });
 }

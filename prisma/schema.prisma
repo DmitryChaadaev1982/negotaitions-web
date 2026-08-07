@@ -848,6 +848,10 @@ model AiAnalysis {
   // Tracks which retranscribeCount version of the transcript this analysis was built on
   transcriptRetranscribeCount Int              @default(0)
   status                      AiAnalysisStatus @default(QUEUED)
+  // Durable owner fence for the current/most recent analysis operation.
+  runToken                    String?
+  // Active ANALYZING ownership is renewable until this timestamp.
+  leaseExpiresAt              DateTime?
   model                  String?
   language               String?
   executiveSummary       String?          @db.Text
@@ -868,6 +872,8 @@ model AiAnalysis {
   updatedAt              DateTime         @updatedAt
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([status, leaseExpiresAt])
 }
 
 model ExternalServiceEvent {

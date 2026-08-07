@@ -18,6 +18,15 @@ type TranscriptForMappingReadiness = {
 export function isSpeakerMappingReadyForAnalysis(
   transcript: TranscriptForMappingReadiness,
 ): boolean {
+  // Explicit operator-review states are authoritative even if legacy metadata
+  // has an inconsistent diarization flag.
+  if (
+    transcript.speakerMappingStatus === "REQUIRED" ||
+    transcript.speakerMappingStatus === "NEEDS_REVIEW"
+  ) {
+    return false;
+  }
+
   if (!transcript.hasSpeakerDiarization) {
     return true;
   }
@@ -56,15 +65,6 @@ export function isSpeakerMappingReadyForAnalysis(
   );
   if (spokenSegments.length === 0) {
     return true;
-  }
-
-  // Manual mapping flow persists CONFIRMED status, so a REQUIRED/REVIEW state must
-  // still block AI even if partial mappedParticipantId values are present.
-  if (
-    transcript.speakerMappingStatus === "REQUIRED" ||
-    transcript.speakerMappingStatus === "NEEDS_REVIEW"
-  ) {
-    return false;
   }
 
   return spokenSegments.every((segment) => Boolean(segment.mappedParticipantId));

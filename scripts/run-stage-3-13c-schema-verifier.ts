@@ -25,6 +25,7 @@ const REQUIRED_STAGE313C_MIGRATIONS = [
   "20260806113000_add_email_provider_event_ingestion",
   "20260806160000_harden_email_provider_event_ingestion",
   "20260806183000_add_provider_event_consumer_fencing",
+  "20260807190000_harden_ai_analysis_operation_lifecycle",
 ] as const;
 const ALLOWED_CHILD_NAME_KEYS = new Set([
   "reason",
@@ -41,6 +42,7 @@ const VERIFIERS = {
   "high-remediation-r2": "scripts/verify-stage-3-13c-high-remediation-r2.ts",
   "final-remediation": "scripts/verify-stage-3-13c-final-remediation.ts",
   "provider-events": "scripts/verify-stage-3-13c-provider-event-remediation.ts",
+  "ai-analysis": "scripts/verify-stage-3-13d-ai-migration.ts",
 } as const;
 
 type VerifierName = keyof typeof VERIFIERS;

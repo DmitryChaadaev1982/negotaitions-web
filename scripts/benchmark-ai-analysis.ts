@@ -2,7 +2,11 @@ import { performance } from "node:perf_hooks";
 
 import {
   createMockAnalysisOutput,
+  getAnalysisDepthIssues,
+  getAiAnalysisPerformanceModel,
+  getYandexAnalysisStaticProfile,
   getYandexAiModel,
+  NegotiationAnalysisOutputSchema,
 } from "@/lib/ai/negotiation-analysis";
 import {
   buildAnalysisPrompt,
@@ -104,25 +108,128 @@ async function main() {
   const startedAt = performance.now();
   const prompt = buildAnalysisPrompt(context);
   const promptBuiltAt = performance.now();
-  const output = createMockAnalysisOutput(context.session.caseLanguage.toLowerCase());
+  const baseOutput = createMockAnalysisOutput(
+    context.session.caseLanguage.toLowerCase(),
+  );
+  const output = {
+    ...baseOutput,
+    executiveSummary:
+      "The parties exchanged priorities and constraints. They created a conditional package across price, delivery, and support. The structure produced a workable agreement while preserving room for sharper diagnostic questions. Future practice should focus on explicit reciprocal concessions.",
+    strengths: [
+      ...baseOutput.strengths,
+      { ...baseOutput.strengths[0]!, title: "Conditional packaging" },
+    ],
+    improvementAreas: [
+      ...baseOutput.improvementAreas,
+      { ...baseOutput.improvementAreas[0]!, title: "Question sequencing" },
+      { ...baseOutput.improvementAreas[0]!, title: "Reciprocal concessions" },
+    ],
+    detectedTactics: [
+      ...baseOutput.detectedTactics,
+      { ...baseOutput.detectedTactics[0]!, name: "Conditional trade" },
+    ],
+    nextTrainingFocus: [
+      ...baseOutput.nextTrainingFocus,
+      { ...baseOutput.nextTrainingFocus[0]!, focusArea: "Question sequencing" },
+    ],
+    facilitatorDebriefQuestions: [
+      ...baseOutput.facilitatorDebriefQuestions,
+      "Which concession should have been conditional?",
+    ],
+  };
+  const validationStartedAt = performance.now();
+  const validated = NegotiationAnalysisOutputSchema.parse(output);
+  const validationFinishedAt = performance.now();
   const finishedAt = performance.now();
-  const outputText = JSON.stringify(output);
+  const outputText = JSON.stringify(validated);
   const promptChars = prompt.length;
+  const performanceModel = getAiAnalysisPerformanceModel();
+  const staticProfile = getYandexAnalysisStaticProfile(
+    context.session.caseLanguage,
+  );
+  const depthIssues = getAnalysisDepthIssues(validated);
+  const baseInputChars = promptChars + staticProfile.baseInstructionChars;
 
   const report = {
     mode: "deterministic-local",
     providerCallsMade: 0,
     model: process.env.AI_ANALYSIS_PROVIDER === "yandex" ? getYandexAiModel() : "mock-analysis",
     totalWallClockMs: Math.round(finishedAt - startedAt),
+    successfulNormalPath: {
+      assumption: "primary response is completed, schema-valid, and depth-complete",
+      generationPosts: depthIssues.length === 0 ? 1 : 2,
+      primaryGenerationPosts: 1,
+      compactFallbackCalls: 0,
+      optionalDepthCalls: depthIssues.length === 0 ? 0 : 1,
+      depthIssueCount: depthIssues.length,
+      promptChars,
+      estimatedPromptTokens: estimateTokensFromChars(promptChars),
+      baseInstructionChars: staticProfile.baseInstructionChars,
+      baseInputChars,
+      estimatedInputTokens: estimateTokensFromChars(baseInputChars),
+      outputSchemaInstructionChars:
+        staticProfile.outputSchemaInstructionChars,
+      coachingInstructionChars: staticProfile.coachingInstructionChars,
+      systemInstructionChars: staticProfile.systemInstructionChars,
+      languageInstructionChars:
+        staticProfile.languageInstructionChars,
+      primaryMaxOutputTokensConfigured:
+        staticProfile.primaryMaxOutputTokensConfigured,
+      syntheticOutputChars: outputText.length,
+      preProviderLocalWorkMs: Math.round(promptBuiltAt - startedAt),
+      generationPostDurationMs: null,
+      pollingDurationMs: null,
+      parsingSchemaValidationMs:
+        validationFinishedAt - validationStartedAt,
+      optionalDepthDurationMs: null,
+      providerTotalDurationMs: null,
+    },
     promptBuildMs: Math.round(promptBuiltAt - startedAt),
-    modelCalls: 0,
+    generationCallCount: 0,
     perCallDurationMs: [] as number[],
     promptChars,
-    estimatedInputTokens: estimateTokensFromChars(promptChars),
+    estimatedPromptTokens: estimateTokensFromChars(promptChars),
+    baseInstructionChars: staticProfile.baseInstructionChars,
+    inputChars: baseInputChars,
+    estimatedInputTokens: estimateTokensFromChars(baseInputChars),
     outputChars: outputText.length,
-    retryCount: 0,
-    timeoutMs: null,
+    operationAttemptCount: 0,
+    outerRetryCount: 0,
+    compactFallbackCount: 0,
+    optionalDepthCallCount: 0,
+    pollingRequestCount: 0,
+    operationTimeoutMs: performanceModel.operationTimeoutMs,
     errorClass: null,
+    theoreticalPerformanceModel: {
+      beforeReviewWorstCaseMs:
+        performanceModel.beforeReviewTheoreticalWorstCaseMs,
+      afterRemediationWorstCaseMs:
+        performanceModel.theoreticalDefaultWorstCaseMs,
+      maxOperationAttempts: performanceModel.maxOperationAttempts,
+      maxGenerationPosts: performanceModel.maxGenerationPosts,
+      maxPrimaryGenerationPosts:
+        performanceModel.maxPrimaryGenerationPosts,
+      maxCompactFallbackCalls:
+        performanceModel.maxCompactFallbackCalls,
+      maxOptionalDepthCalls: performanceModel.maxOptionalDepthCalls,
+      maxPollingRequests: performanceModel.maxPollingRequests,
+      perResponsePollTimeoutMs:
+        performanceModel.perResponsePollTimeoutMs,
+      removedMultiplicativePath:
+        "compact fallback and optional depth no longer run inside every outer attempt",
+    },
+    safeNormalPathOptimizationsApplied: [
+      "provider base instructions are constructed once per operation",
+      "compact generation remains exclusive to truncated JSON fallback",
+      "optional depth is skipped when the primary output already satisfies depth criteria",
+      "parsing and schema-validation timing is measured separately",
+    ],
+    liveBenchmarkCandidates: [
+      "right-size max output tokens from observed output-token percentiles",
+      "deduplicate overlapping coaching and schema prose",
+      "tune polling interval from Yandex lifecycle latency and rate-limit evidence",
+      "measure how often valid primary output still triggers optional depth",
+    ],
   };
 
   console.log(JSON.stringify(report, null, 2));

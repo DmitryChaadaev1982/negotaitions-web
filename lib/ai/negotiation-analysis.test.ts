@@ -3,28 +3,28 @@ import test from "node:test";
 
 import {
   AiAnalysisProviderError,
+  classifyYandexResponseLifecycle,
   createMockAnalysisOutput,
+  getAiAnalysisPerformanceModel,
   runNegotiationAnalysis,
+  type AiAnalysisExecutionOptions,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
+import { yandexResponseLifecycleFixtures as fixtures } from "@/lib/ai/fixtures/yandex-response-lifecycle";
 
 const ORIGINAL_ENV = { ...process.env };
-const ORIGINAL_FETCH = globalThis.fetch;
-
-function restoreEnvAndFetch() {
-  process.env = { ...ORIGINAL_ENV };
-  globalThis.fetch = ORIGINAL_FETCH;
-}
 
 function configureYandexEnv() {
   process.env.AI_ANALYSIS_PROVIDER = "yandex";
-  process.env.YANDEX_FOLDER_ID = "test-folder";
-  process.env.YANDEX_API_KEY = "test-key";
+  process.env.YANDEX_FOLDER_ID = "synthetic-folder";
+  process.env.YANDEX_API_KEY = "synthetic-key";
   process.env.YANDEX_AI_MODEL = "deepseek-v4-flash";
   process.env.AI_ANALYSIS_MAX_ATTEMPTS = "2";
   process.env.AI_ANALYSIS_HTTP_TIMEOUT_MS = "5000";
   process.env.AI_ANALYSIS_RESPONSE_POLL_TIMEOUT_MS = "10000";
   process.env.AI_ANALYSIS_RESPONSE_POLL_INTERVAL_MS = "250";
+  process.env.AI_ANALYSIS_MAX_POLL_REQUESTS = "100";
+  process.env.AI_ANALYSIS_OPERATION_TIMEOUT_MS = "120000";
 }
 
 function validAnalysisOutput(): NegotiationAnalysisOutput {
@@ -74,7 +74,7 @@ function validAnalysisOutput(): NegotiationAnalysisOutput {
       {
         focusArea: "Question sequencing",
         why: "Better questions would reveal trade priorities earlier.",
-        exercise: "Run a five-minute drill with three diagnostic questions before proposals.",
+        exercise: "Run a drill with three diagnostic questions before proposals.",
       },
     ],
     facilitatorDebriefQuestions: [
@@ -91,112 +91,409 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
-function yandexEnvelope(output: unknown) {
+function controlledRuntime() {
+  let now = 0;
   return {
-    id: "resp-test",
-    status: "completed",
-    output_text: JSON.stringify(output),
+    monotonicNow: () => now,
+    sleep: async (ms: number, signal?: AbortSignal) => {
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      now += ms;
+    },
+    get now() {
+      return now;
+    },
   };
 }
 
+function runWithFetch(
+  fetchImpl: typeof fetch,
+  options: Omit<AiAnalysisExecutionOptions, "fetch"> = {},
+) {
+  return runNegotiationAnalysis("Synthetic transcript", "en", {
+    fetch: fetchImpl,
+    ...options,
+  });
+}
+
 test.afterEach(() => {
-  restoreEnvAndFetch();
+  process.env = { ...ORIGINAL_ENV };
 });
 
-test("Yandex analysis succeeds with sanitized metrics", async () => {
+test("lifecycle classifier covers only documented production states", () => {
+  assert.equal(classifyYandexResponseLifecycle(fixtures.queued).kind, "nonterminal");
+  assert.equal(
+    classifyYandexResponseLifecycle(fixtures.inProgress).kind,
+    "nonterminal",
+  );
+  assert.equal(
+    classifyYandexResponseLifecycle(fixtures.completed("{}")).kind,
+    "success",
+  );
+  assert.equal(classifyYandexResponseLifecycle(fixtures.failed).kind, "failure");
+  assert.equal(classifyYandexResponseLifecycle(fixtures.cancelled).kind, "failure");
+  assert.equal(classifyYandexResponseLifecycle(fixtures.incomplete).kind, "failure");
+  assert.equal(classifyYandexResponseLifecycle(fixtures.unknown).kind, "unknown");
+});
+
+test("direct completed success returns explicit metrics", async () => {
   configureYandexEnv();
-  globalThis.fetch = (async () => jsonResponse(yandexEnvelope(validAnalysisOutput()))) as typeof fetch;
+  const result = await runWithFetch(
+    (async () =>
+      jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      )) as typeof fetch,
+  );
 
-  const result = await runNegotiationAnalysis("Synthetic transcript", "en");
-
-  assert.equal(result.model, "deepseek-v4-flash");
   assert.equal(result.output.overallScore, 72);
-  assert.equal(result.metrics.provider, "yandex");
-  assert.equal(result.metrics.modelCallCount, 1);
-  assert.equal(result.metrics.promptChars, "Synthetic transcript".length);
-  assert.equal(result.metrics.errorClass, null);
-});
-
-test("Yandex analysis retries a transient timeout and removes VPN guidance", async () => {
-  configureYandexEnv();
-  let calls = 0;
-  globalThis.fetch = (async () => {
-    calls += 1;
-    if (calls === 1) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-    return jsonResponse(yandexEnvelope(validAnalysisOutput()));
-  }) as typeof fetch;
-
-  const result = await runNegotiationAnalysis("Synthetic transcript", "en");
-
-  assert.equal(calls, 2);
-  assert.equal(result.metrics.retryCount, 1);
-  assert.equal(result.metrics.calls[0]?.errorClass, "NETWORK_TIMEOUT");
-});
-
-test("Yandex analysis exhausts retryable timeout without VPN guidance", async () => {
-  configureYandexEnv();
-  globalThis.fetch = (async () => {
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }) as typeof fetch;
-
-  await assert.rejects(
-    () => runNegotiationAnalysis("Synthetic transcript", "en"),
-    (error) => {
-      assert.ok(error instanceof AiAnalysisProviderError);
-      assert.equal(error.code, "NETWORK_TIMEOUT");
-      assert.equal(error.userMessage.includes("VPN"), false);
-      assert.equal(error.metrics?.retryCount, 1);
-      return true;
-    },
+  assert.equal(result.metrics.operationAttemptCount, 1);
+  assert.equal(result.metrics.outerRetryCount, 0);
+  assert.equal(result.metrics.generationCallCount, 1);
+  assert.equal(result.metrics.compactFallbackCount, 0);
+  assert.equal(result.metrics.optionalDepthCallCount, 0);
+  assert.equal(result.metrics.pollingRequestCount, 0);
+  assert.ok(result.metrics.preProviderDurationMs >= 0);
+  assert.ok(result.metrics.generationPostDurationMs >= 0);
+  assert.ok(result.metrics.pollingDurationMs >= 0);
+  assert.ok(result.metrics.parsingValidationDurationMs >= 0);
+  assert.equal(result.metrics.optionalDepthDurationMs, 0);
+  assert.ok(result.metrics.outputSchemaInstructionChars > 1_000);
+  assert.equal(result.metrics.primaryMaxOutputTokensConfigured, 6_000);
+  assert.ok(
+    result.metrics.estimatedInputTokens >
+      result.metrics.estimatedPromptTokens,
+  );
+  assert.equal(
+    result.metrics.inputChars,
+    result.metrics.promptChars + result.metrics.instructionChars,
+  );
+  const primaryCall = result.metrics.calls[0];
+  assert.ok(primaryCall);
+  assert.equal(
+    primaryCall.inputChars,
+    primaryCall.promptChars + primaryCall.instructionChars,
   );
 });
 
-test("Yandex asynchronous response is polled instead of treated as empty output", async () => {
+test("completed success without response ID is accepted without retrieval", async () => {
   configureYandexEnv();
-  const requests: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
-    requests.push(url);
-    if (url.endsWith("/responses")) {
-      return jsonResponse({ id: "resp-pending", status: "in_progress", output: [] });
-    }
-    return jsonResponse(yandexEnvelope(validAnalysisOutput()));
-  }) as typeof fetch;
-
-  const result = await runNegotiationAnalysis("Synthetic transcript", "en");
-
+  const result = await runWithFetch(
+    (async () =>
+      jsonResponse({
+        status: "completed",
+        output_text: JSON.stringify(validAnalysisOutput()),
+      })) as typeof fetch,
+  );
   assert.equal(result.output.overallScore, 72);
-  assert.equal(result.metrics.modelCallCount, 1);
-  assert.equal(result.metrics.calls[0]?.responseIdPresent, true);
-  assert.equal(result.metrics.calls[0]?.pollingAttemptCount, 1);
-  assert.equal(requests.some((url) => url.includes("/responses/resp-pending")), true);
+  assert.equal(result.metrics.calls[0]?.responseIdPresent, false);
 });
 
-test("Yandex empty terminal model output is classified", async () => {
+test("compact fallback is a semantic call, not an outer retry", async () => {
   configureYandexEnv();
-  globalThis.fetch = (async () =>
-    jsonResponse({ id: "resp-empty", status: "completed", output: [] })) as typeof fetch;
+  let posts = 0;
+  const result = await runWithFetch(
+    (async () => {
+      posts += 1;
+      return posts === 1
+        ? jsonResponse(fixtures.completed('{"executiveSummary":'))
+        : jsonResponse(
+            fixtures.completed(JSON.stringify(validAnalysisOutput())),
+          );
+    }) as typeof fetch,
+  );
 
+  assert.equal(posts, 2);
+  assert.equal(result.metrics.operationAttemptCount, 1);
+  assert.equal(result.metrics.outerRetryCount, 0);
+  assert.equal(result.metrics.compactFallbackCount, 1);
+  assert.deepEqual(
+    result.metrics.calls.map((call) => call.purpose),
+    ["primary", "compact_fallback"],
+  );
+});
+
+test("transient pre-ID failure performs one explicit outer retry", async () => {
+  configureYandexEnv();
+  let posts = 0;
+  const result = await runWithFetch(
+    (async () => {
+      posts += 1;
+      if (posts === 1) throw new TypeError("synthetic network failure");
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+    controlledRuntime(),
+  );
+
+  assert.equal(posts, 2);
+  assert.equal(result.metrics.operationAttemptCount, 2);
+  assert.equal(result.metrics.outerRetryCount, 1);
+  assert.equal(result.metrics.generationCallCount, 2);
+  assert.equal(result.metrics.calls[0]?.errorClass, "NETWORK_ERROR");
+});
+
+test("in-progress partial text is ignored until completed retrieval", async () => {
+  configureYandexEnv();
+  const methods: string[] = [];
+  const result = await runWithFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      if (init?.method === "POST") {
+        return jsonResponse(fixtures.inProgressWithPartialText);
+      }
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+    controlledRuntime(),
+  );
+
+  assert.equal(result.output.overallScore, 72);
+  assert.deepEqual(methods, ["POST", "GET"]);
+  assert.equal(result.metrics.generationCallCount, 1);
+  assert.equal(result.metrics.pollingRequestCount, 1);
+});
+
+for (const [name, fixture] of [
+  ["failed", fixtures.failed],
+  ["cancelled", fixtures.cancelled],
+  ["incomplete", fixtures.incomplete],
+] as const) {
+  test(`${name} lifecycle does not collapse into MODEL_EMPTY_OUTPUT`, async () => {
+    configureYandexEnv();
+    await assert.rejects(
+      () =>
+        runWithFetch(
+          (async () => jsonResponse(fixture)) as typeof fetch,
+          controlledRuntime(),
+        ),
+      (error) => {
+        assert.ok(error instanceof AiAnalysisProviderError);
+        assert.equal(error.code, "PROVIDER_LIFECYCLE_ERROR");
+        assert.equal(error.diagnostics.providerStatus, name);
+        return true;
+      },
+    );
+  });
+}
+
+test("completed empty output is MODEL_EMPTY_OUTPUT", async () => {
+  configureYandexEnv();
   await assert.rejects(
-    () => runNegotiationAnalysis("Synthetic transcript", "en"),
+    () =>
+      runWithFetch(
+        (async () => jsonResponse(fixtures.completedEmpty)) as typeof fetch,
+      ),
     (error) => {
       assert.ok(error instanceof AiAnalysisProviderError);
       assert.equal(error.code, "MODEL_EMPTY_OUTPUT");
-      assert.equal(error.retryable, true);
-      assert.equal(error.metrics?.errorClass, "MODEL_EMPTY_OUTPUT");
       return true;
     },
   );
 });
 
-test("Yandex invalid structured response is schema validation, not config missing", async () => {
+test("poll deadline is a timeout and does not regenerate", async () => {
   configureYandexEnv();
-  globalThis.fetch = (async () => jsonResponse(yandexEnvelope({ executiveSummary: "too small" }))) as typeof fetch;
-
+  const runtime = controlledRuntime();
+  let posts = 0;
+  let gets = 0;
   await assert.rejects(
-    () => runNegotiationAnalysis("Synthetic transcript", "en"),
+    () =>
+      runWithFetch(
+        (async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === "POST") {
+            posts += 1;
+            return jsonResponse(fixtures.inProgress);
+          }
+          gets += 1;
+          return jsonResponse(fixtures.inProgress);
+        }) as typeof fetch,
+        runtime,
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "NETWORK_TIMEOUT");
+      assert.equal(error.diagnostics.timeoutScope, "known_response_poll");
+      assert.equal(error.allowsRegeneration, false);
+      return true;
+    },
+  );
+  assert.equal(posts, 1);
+  assert.ok(gets > 1);
+  assert.ok(runtime.now <= 10_000);
+});
+
+test("transient poll failure retries GET on the same known response ID", async () => {
+  configureYandexEnv();
+  const requestedUrls: string[] = [];
+  let gets = 0;
+  let posts = 0;
+  const result = await runWithFetch(
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts += 1;
+        return jsonResponse(fixtures.inProgress);
+      }
+      gets += 1;
+      requestedUrls.push(url);
+      if (gets === 1) throw new TypeError("synthetic transient network failure");
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+    controlledRuntime(),
+  );
+
+  assert.equal(posts, 1);
+  assert.equal(gets, 2);
+  assert.equal(new Set(requestedUrls).size, 1);
+  assert.equal(
+    requestedUrls[0]?.endsWith("/responses/resp_synthetic_in_progress"),
+    true,
+  );
+  assert.equal(result.metrics.retrievalRetryCount, 1);
+});
+
+test("unknown lifecycle status terminates immediately and boundedly", async () => {
+  configureYandexEnv();
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => {
+          calls += 1;
+          return jsonResponse(fixtures.unknown);
+        }) as typeof fetch,
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "PROVIDER_LIFECYCLE_ERROR");
+      assert.equal(error.diagnostics.providerStatus, "synthetic_future_state");
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("nonterminal response without ID fails deterministically", async () => {
+  configureYandexEnv();
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => jsonResponse(fixtures.nonterminalWithoutId)) as typeof fetch,
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "PROVIDER_LIFECYCLE_ERROR");
+      assert.equal(error.diagnostics.responseIdPresent, false);
+      return true;
+    },
+  );
+});
+
+test("request cancellation stops local processing", async () => {
+  configureYandexEnv();
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => {
+          calls += 1;
+          controller.abort();
+          throw new DOMException("Aborted", "AbortError");
+        }) as typeof fetch,
+        { signal: controller.signal },
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "CANCELLED");
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("ownership loss after provider response stops terminal processing", async () => {
+  configureYandexEnv();
+  let renewals = 0;
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () =>
+          jsonResponse(
+            fixtures.completed(JSON.stringify(validAnalysisOutput())),
+          )) as typeof fetch,
+        {
+          renewLease: async () => {
+            renewals += 1;
+            return renewals === 1;
+          },
+        },
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "OWNERSHIP_LOST");
+      return true;
+    },
+  );
+  assert.equal(renewals, 2);
+});
+
+test("valid primary survives failed optional depth", async () => {
+  configureYandexEnv();
+  const base = createMockAnalysisOutput("en");
+  let posts = 0;
+  const result = await runWithFetch(
+    (async () => {
+      posts += 1;
+      if (posts === 1) {
+        return jsonResponse(fixtures.completed(JSON.stringify(base)));
+      }
+      return jsonResponse({ error: "synthetic" }, 503);
+    }) as typeof fetch,
+    controlledRuntime(),
+  );
+
+  assert.equal(posts, 2);
+  assert.deepEqual(result.output, base);
+  assert.equal(result.metrics.optionalDepthCallCount, 1);
+  assert.equal(result.metrics.optionalDepthOutcome, "failed");
+  assert.equal(result.metrics.optionalDepthFailureClass, "PROVIDER_HTTP_ERROR");
+  assert.equal(result.metrics.outerRetryCount, 0);
+});
+
+test("valid primary survives invalid optional depth", async () => {
+  configureYandexEnv();
+  const base = createMockAnalysisOutput("en");
+  let posts = 0;
+  const result = await runWithFetch(
+    (async () => {
+      posts += 1;
+      return posts === 1
+        ? jsonResponse(fixtures.completed(JSON.stringify(base)))
+        : jsonResponse(fixtures.completed("not-json"));
+    }) as typeof fetch,
+  );
+
+  assert.deepEqual(result.output, base);
+  assert.equal(result.metrics.optionalDepthOutcome, "invalid");
+  assert.equal(result.metrics.optionalDepthFailureClass, "MODEL_INVALID_OUTPUT");
+});
+
+test("invalid schema is not misclassified as missing configuration", async () => {
+  configureYandexEnv();
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () =>
+          jsonResponse(
+            fixtures.completed(JSON.stringify({ executiveSummary: "small" })),
+          )) as typeof fetch,
+      ),
     (error) => {
       assert.ok(error instanceof AiAnalysisProviderError);
       assert.equal(error.code, "MODEL_SCHEMA_VALIDATION_ERROR");
@@ -205,17 +502,32 @@ test("Yandex invalid structured response is schema validation, not config missin
   );
 });
 
-test("Yandex missing configuration is classified as config missing", async () => {
+test("missing configuration remains explicit", async () => {
   configureYandexEnv();
   delete process.env.YANDEX_API_KEY;
-
   await assert.rejects(
-    () => runNegotiationAnalysis("Synthetic transcript", "en"),
+    () =>
+      runWithFetch(
+        (async () => {
+          throw new Error("fetch must not run");
+        }) as typeof fetch,
+      ),
     (error) => {
       assert.ok(error instanceof AiAnalysisProviderError);
       assert.equal(error.code, "CONFIG_MISSING");
-      assert.equal(error.retryable, false);
       return true;
     },
   );
+});
+
+test("performance model removes compact/depth multiplication", () => {
+  configureYandexEnv();
+  const model = getAiAnalysisPerformanceModel();
+  assert.equal(model.beforeReviewTheoreticalWorstCaseMs, 1_440_000);
+  assert.equal(model.maxOperationAttempts, 2);
+  assert.equal(model.maxGenerationPosts, 4);
+  assert.equal(model.maxCompactFallbackCalls, 1);
+  assert.equal(model.maxOptionalDepthCalls, 1);
+  assert.equal(model.maxPollingRequests, 400);
+  assert.equal(model.theoreticalDefaultWorstCaseMs, 120_000);
 });

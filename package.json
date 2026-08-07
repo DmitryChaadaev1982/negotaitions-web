@@ -87,7 +87,8 @@
     "verify:runtime-config": "tsx scripts/verify-runtime-config-drift.ts",
     "verify:stage313c:provider-events": "tsx scripts/run-stage-3-13c-schema-verifier.ts --verifier provider-events",
     "test:stage313c:provider-events": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/email/yandex-postbox-provider-event-parser.test.ts\" \"lib/email/provider-event-consumer.test.ts\" \"lib/email/provider-event-consumer-shards.test.ts\" \"lib/email/provider-event-consumer-cli.test.ts\" \"lib/email/provider-event-consumer-lock.pg.test.ts\" && npm run verify:stage313c:provider-events",
-    "test:stage313c:auth-origins": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/config/server-action-origins.test.ts\" \"lib/auth/return-url.test.ts\" \"lib/services/admin-env-display.test.ts\""
+    "test:stage313c:auth-origins": "node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test \"lib/config/server-action-origins.test.ts\" \"lib/auth/return-url.test.ts\" \"lib/services/admin-env-display.test.ts\"",
+    "verify:stage313d:ai-migration": "tsx scripts/run-stage-3-13c-schema-verifier.ts --verifier ai-analysis"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

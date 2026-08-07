@@ -9,6 +9,8 @@ import {
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
+import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
+import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import {
   getAnalysisForFacilitator,
@@ -16,17 +18,13 @@ import {
   getAnalysisForParticipant,
 } from "@/lib/analysis-visibility";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
-import {
-  isAiAnalysisOutdated,
-  isSpeakerMappingReadyForAnalysis,
-} from "@/lib/transcription/speaker-mapping-readiness";
+import { isAiAnalysisOutdated } from "@/lib/transcription/speaker-mapping-readiness";
 import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
 import {
-  ACTIVE_AI_STATUSES,
   ACTIVE_TRANSCRIPT_STATUSES,
   computeShouldPoll,
   isStaleStartingRecording,
@@ -233,6 +231,9 @@ export async function GET(request: Request, context: RouteContext) {
           sharedAt: true,
           sharedBy: true,
           transcriptRetranscribeCount: true,
+          runToken: true,
+          leaseExpiresAt: true,
+          updatedAt: true,
         },
       },
       event: {
@@ -351,9 +352,8 @@ export async function GET(request: Request, context: RouteContext) {
     processingMetadata: transcript?.processingMetadata ?? null,
   });
 
-  const transcriptHasText = Boolean(
-    transcript?.text?.trim() || transcript?.diarizedText?.trim(),
-  );
+  const aiAnalysisReadiness = evaluateAiAnalysisReadiness(transcript);
+  const transcriptHasText = aiAnalysisReadiness.hasUsableContent;
   const hasRunningTranscription =
     transcriptEnhancementStatus === "IN_PROGRESS" ||
     (transcriptStatus !== null && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus));
@@ -378,14 +378,17 @@ export async function GET(request: Request, context: RouteContext) {
 
   const transcriptCompleted =
     transcriptStatus === TranscriptStatus.COMPLETED && transcriptHasText;
-  const hasRunningAiAnalysis = aiStatus !== null && ACTIVE_AI_STATUSES.has(aiStatus);
+  const hasRunningAiAnalysis =
+    aiStatus === AiAnalysisStatus.QUEUED ||
+    (aiStatus === AiAnalysisStatus.ANALYZING &&
+      Boolean(aiAnalysis && isAiAnalysisRunLeaseActive(aiAnalysis)));
 
   const speakerMappingReady = transcript
-    ? isSpeakerMappingReadyForAnalysis(transcript)
+    ? aiAnalysisReadiness.speakerMappingReady
     : true;
 
   const speakerMappingRequired =
-    Boolean(transcript?.hasSpeakerDiarization) && !speakerMappingReady;
+    Boolean(transcript) && !speakerMappingReady;
 
   const analysisOutdated = isAiAnalysisOutdated(
     transcript?.retranscribeCount,
@@ -394,23 +397,23 @@ export async function GET(request: Request, context: RouteContext) {
 
   const canRunAiAnalysis =
     isFacilitator &&
-    transcriptCompleted &&
+    aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
-    speakerMappingReady &&
     (aiStatus === null ||
       aiStatus === AiAnalysisStatus.FAILED ||
+      aiStatus === AiAnalysisStatus.ANALYZING ||
       analysisOutdated);
   const canRetryAiAnalysis =
     isFacilitator &&
-    transcriptCompleted &&
-    aiStatus === AiAnalysisStatus.FAILED &&
+    aiAnalysisReadiness.ready &&
+    (aiStatus === AiAnalysisStatus.FAILED ||
+      aiStatus === AiAnalysisStatus.ANALYZING) &&
     !hasRunningAiAnalysis &&
     speakerMappingReady;
   const canRerunAiAnalysis =
     isFacilitator &&
-    transcriptCompleted &&
+    aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
-    speakerMappingReady &&
     aiStatus === AiAnalysisStatus.COMPLETED;
   const canShareAiAnalysis =
     isFacilitator && aiStatus === AiAnalysisStatus.COMPLETED;
@@ -458,7 +461,7 @@ export async function GET(request: Request, context: RouteContext) {
   );
 
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
-    aiStatus,
+    hasRunningAiAnalysis ? aiStatus : null,
     transcriptStatus,
     transcriptHasText,
   );
@@ -470,7 +473,7 @@ export async function GET(request: Request, context: RouteContext) {
     recordingHasFileKey,
     transcriptStatus,
     transcriptEnhancementStatus === "IN_PROGRESS",
-    aiStatus,
+    hasRunningAiAnalysis ? aiStatus : null,
     isParticipantOrObserver,
     transcriptHasText,
     hasRunningTranscription,
