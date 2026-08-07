@@ -11,5 +11,6 @@ Persistent=true
 Unit=negotiations-email-provider-event-reconciliation.service
 
 [Install]
-# WantedBy=timers.target
+WantedBy=timers.target
 # DO NOT enable until provider-event ingestion is operationally approved.
+# Installing this template does not enable the timer.

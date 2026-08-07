@@ -38,6 +38,7 @@ StandardError=journal
 SyslogIdentifier=negotiations-email-provider-events
 
 [Install]
-# WantedBy=multi-user.target
-# DO NOT enable until Data Streams subscription, dedicated credentials, and
-# EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=true are approved for canary.
+WantedBy=multi-user.target
+# DO NOT enable until Data Streams subscription, dedicated credentials,
+# EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=true, and controlled canary validation
+# have been approved. Installing this template does not enable the unit.

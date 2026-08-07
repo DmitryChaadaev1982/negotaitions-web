@@ -244,14 +244,35 @@ test("the consumer unit bounds restarts and never retries terminal exit codes", 
     assert.match(unit, new RegExp(`^${directive}$`, "m"), `missing ${directive}`);
   }
 
-  // Disabled by default: the Install target stays commented out.
-  assert.match(unit, /^# WantedBy=multi-user\.target$/m);
-  assert.equal(/^WantedBy=/m.test(unit), false);
+  // Persistable by explicit operator action after controlled validation.
+  assert.match(unit, /^WantedBy=multi-user\.target$/m);
 
   // TimeoutStopSec must exceed the default application shutdown budget.
   const timeoutStopSec = Number(/^TimeoutStopSec=(\d+)s$/m.exec(unit)?.[1]);
   assert.ok(timeoutStopSec * 1000 > baseProviderEventConfig.shutdownTimeoutMs);
   assert.ok(timeoutStopSec * 1000 >= 30_000);
+});
+
+test("provider-event reconciliation timer is persistable but service is not directly enabled", () => {
+  const service = readFileSync(
+    path.join(
+      process.cwd(),
+      "deploy/systemd/negotiations-email-provider-event-reconciliation.service",
+    ),
+    "utf8",
+  );
+  const timer = readFileSync(
+    path.join(
+      process.cwd(),
+      "deploy/systemd/negotiations-email-provider-event-reconciliation.timer",
+    ),
+    "utf8",
+  );
+
+  assert.match(timer, /^WantedBy=timers\.target$/m);
+  assert.equal(/^WantedBy=/m.test(service), false);
+  assert.match(service, /^Type=oneshot$/m);
+  assert.match(timer, /^Unit=negotiations-email-provider-event-reconciliation\.service$/m);
 });
 
 test("provider-event units cannot write to the application tree", () => {
