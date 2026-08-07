@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import https from "node:https";
 import test from "node:test";
 
+import { KinesisClient } from "@aws-sdk/client-kinesis";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { EmailProviderEventProcessingStatus } from "@/app/generated/prisma/client";
 import {
   ProviderEventConsumerError,
+  YandexDataStreamsKinesisAdapter,
   runEmailProviderEventConsumer,
 } from "@/lib/email/provider-event-consumer";
 import {
@@ -48,6 +52,24 @@ function stopWhen(predicate: () => boolean): AbortController {
 function config(overrides: Partial<ProviderEventConfig> = {}): ProviderEventConfig {
   return { ...baseProviderEventConfig, ...overrides };
 }
+
+test("Yandex adapter pins explicit NodeHttpHandler with HTTPS HTTP/1.1 settings", async () => {
+  const adapter = new YandexDataStreamsKinesisAdapter(config());
+  const client = (adapter as unknown as { client: KinesisClient }).client;
+  const requestHandler = client.config.requestHandler;
+  assert.ok(requestHandler instanceof NodeHttpHandler);
+
+  const resolvedConfig = await (
+    requestHandler as unknown as {
+      configProvider: Promise<{ httpsAgent?: https.Agent }>;
+    }
+  ).configProvider;
+  assert.ok(resolvedConfig.httpsAgent instanceof https.Agent);
+  assert.equal(resolvedConfig.httpsAgent?.options.keepAlive, false);
+  assert.equal(resolvedConfig.httpsAgent?.options.minVersion, "TLSv1.2");
+
+  adapter.destroy();
+});
 
 test("uses initial position without checkpoint and AFTER_SEQUENCE_NUMBER with checkpoint", async () => {
   const withoutCheckpoint = makeFakeAdapter({

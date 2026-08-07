@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import https from "node:https";
 
 import {
   GetRecordsCommand,
@@ -7,6 +8,7 @@ import {
   ListShardsCommand,
   type ShardIteratorType,
 } from "@aws-sdk/client-kinesis";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { Client as PgClient } from "pg";
 
 import {
@@ -431,6 +433,15 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
         "invalid_config",
       );
     }
+    // Yandex Data Streams returned ERR_HTTP2_ERROR under the production runtime
+    // with the SDK default transport; this explicit handler keeps a verified
+    // HTTPS HTTP/1.1 path for this adapter only.
+    const requestHandler = new NodeHttpHandler({
+      httpsAgent: new https.Agent({
+        keepAlive: false,
+        minVersion: "TLSv1.2",
+      }),
+    });
     this.client = new KinesisClient({
       endpoint: config.endpoint,
       region: config.region,
@@ -438,6 +449,7 @@ export class YandexDataStreamsKinesisAdapter implements ProviderEventStreamAdapt
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
       },
+      requestHandler,
     });
     this.retryBaseMs = config.errorBackoffMs;
   }

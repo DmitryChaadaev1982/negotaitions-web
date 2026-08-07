@@ -362,6 +362,12 @@ Provider-event settings:
 
 Data Streams credentials are separate from Postbox sending credentials.
 
+Runtime transport requirement: the provider-event consumer's
+`YandexDataStreamsKinesisAdapter` must use an explicit Smithy
+`NodeHttpHandler` backed by a Node `https.Agent` (`keepAlive=false`,
+`minVersion=TLSv1.2`) so Data Streams traffic stays on the validated HTTPS
+HTTP/1.1 path under production Node.js runtime behavior.
+
 ### Final Finding Disposition
 
 | Finding | Disposition |
