@@ -226,13 +226,38 @@ function classifyFfmpegError(error: unknown): ClassifiedError {
 
 function classifyAppError(error: unknown): ClassifiedError {
   const text = normalizeErrorText(error);
+  const lower = text.toLowerCase();
+
+  let errorCode: ExternalServiceErrorCode = ExternalServiceErrorCode.UNKNOWN;
+  let title = "Application error";
+  let message = text || "Application error.";
+
+  if (
+    containsAny(lower, ["configuration is missing", "config missing", "not configured"]) ||
+    (containsAny(lower, ["api key", "folder_id", "folder id"]) &&
+      containsAny(lower, ["missing", "not configured"]))
+  ) {
+    errorCode = ExternalServiceErrorCode.CONFIG_MISSING;
+    title = "Application configuration error";
+    message = text || "Application configuration error.";
+  } else if (containsAny(lower, ["timeout", "timed out", "aborterror"])) {
+    errorCode = ExternalServiceErrorCode.NETWORK_ERROR;
+    title = "Application network timeout";
+    message = text || "Network timeout.";
+  } else if (
+    containsAny(lower, ["network", "fetch failed", "enotfound", "econnreset", "econnrefused"])
+  ) {
+    errorCode = ExternalServiceErrorCode.NETWORK_ERROR;
+    title = "Application network error";
+    message = text || "Network error.";
+  }
 
   return {
     service: ExternalService.APP,
     severity: ExternalServiceEventSeverity.ERROR,
-    errorCode: ExternalServiceErrorCode.CONFIG_MISSING,
-    title: "Application configuration error",
-    message: text || "Application configuration error.",
+    errorCode,
+    title,
+    message,
     rawError: sanitizeRawError(error),
   };
 }

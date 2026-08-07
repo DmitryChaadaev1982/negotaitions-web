@@ -78,11 +78,11 @@ export function resolveTranscriptProcessingStage(
     | "FAILED"
     | "SKIPPED",
 ): string {
-  if (enhancementStatus === "IN_PROGRESS") {
-    return "enhancing";
-  }
   if (transcriptStatus === TranscriptStatus.COMPLETED) {
     return transcriptHasText ? "ready" : "not_started";
+  }
+  if (enhancementStatus === "IN_PROGRESS") {
+    return "enhancing";
   }
   if (transcriptStatus === TranscriptStatus.FAILED) {
     return "failed";

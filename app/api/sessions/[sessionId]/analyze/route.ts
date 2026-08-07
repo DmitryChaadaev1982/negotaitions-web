@@ -7,6 +7,7 @@ import {
   ExternalServiceErrorCode,
   ExternalServiceEventSeverity,
   ParticipantType,
+  Prisma,
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import {
@@ -14,14 +15,16 @@ import {
   buildSessionAnalysisContext,
 } from "@/lib/ai/session-analysis-context";
 import {
+  classifyAiAnalysisError,
   createMockAnalysisOutput,
   isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
+  type AiAnalysisErrorCode,
+  type AiAnalysisRunMetrics,
 } from "@/lib/ai/negotiation-analysis";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
-import { classifyExternalServiceError } from "@/lib/services/error-classifier";
 import { logExternalServiceEvent } from "@/lib/services/external-service-events";
 import {
   getMockExternalServiceError,
@@ -52,6 +55,172 @@ const ACTIVE_AI_STATUSES = new Set<AiAnalysisStatus>([
   AiAnalysisStatus.QUEUED,
   AiAnalysisStatus.ANALYZING,
 ]);
+
+type ClaimedAnalysisRun =
+  | {
+      state: "claimed";
+      analysis: {
+        id: string;
+        status: AiAnalysisStatus;
+      };
+    }
+  | {
+      state: "active";
+      analysis: {
+        id: string;
+        status: AiAnalysisStatus;
+      };
+    };
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
+
+async function claimAiAnalysisRun(params: {
+  sessionId: string;
+  transcriptId: string;
+  transcriptRetranscribeCount: number;
+  language: string;
+  now: Date;
+}): Promise<ClaimedAnalysisRun> {
+  const existing = await prisma.aiAnalysis.findUnique({
+    where: { sessionId: params.sessionId },
+    select: { id: true, status: true },
+  });
+
+  if (existing && ACTIVE_AI_STATUSES.has(existing.status)) {
+    return { state: "active", analysis: existing };
+  }
+
+  const claimExisting = async (analysisId: string) => {
+    const claimed = await prisma.aiAnalysis.updateMany({
+      where: {
+        id: analysisId,
+        status: { notIn: [AiAnalysisStatus.QUEUED, AiAnalysisStatus.ANALYZING] },
+      },
+      data: {
+        transcriptId: params.transcriptId,
+        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+        status: AiAnalysisStatus.ANALYZING,
+        language: params.language,
+        startedAt: params.now,
+        completedAt: null,
+        errorMessage: null,
+      },
+    });
+    if (claimed.count === 0) {
+      const active = await prisma.aiAnalysis.findUniqueOrThrow({
+        where: { id: analysisId },
+        select: { id: true, status: true },
+      });
+      return { state: "active", analysis: active } satisfies ClaimedAnalysisRun;
+    }
+    const analysis = await prisma.aiAnalysis.findUniqueOrThrow({
+      where: { id: analysisId },
+      select: { id: true, status: true },
+    });
+    return { state: "claimed", analysis } satisfies ClaimedAnalysisRun;
+  };
+
+  if (existing) {
+    return claimExisting(existing.id);
+  }
+
+  try {
+    const analysis = await prisma.aiAnalysis.create({
+      data: {
+        sessionId: params.sessionId,
+        transcriptId: params.transcriptId,
+        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+        status: AiAnalysisStatus.ANALYZING,
+        language: params.language,
+        startedAt: params.now,
+        errorMessage: null,
+      },
+      select: { id: true, status: true },
+    });
+    return { state: "claimed", analysis };
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) {
+      throw error;
+    }
+    const raced = await prisma.aiAnalysis.findUniqueOrThrow({
+      where: { sessionId: params.sessionId },
+      select: { id: true, status: true },
+    });
+    if (ACTIVE_AI_STATUSES.has(raced.status)) {
+      return { state: "active", analysis: raced };
+    }
+    return claimExisting(raced.id);
+  }
+}
+
+function mapAiAnalysisErrorCodeToExternalServiceCode(
+  code: AiAnalysisErrorCode,
+): ExternalServiceErrorCode {
+  switch (code) {
+    case "CONFIG_MISSING":
+      return ExternalServiceErrorCode.CONFIG_MISSING;
+    case "NETWORK_TIMEOUT":
+    case "NETWORK_ERROR":
+      return ExternalServiceErrorCode.NETWORK_ERROR;
+    case "PROVIDER_RATE_LIMIT":
+      return ExternalServiceErrorCode.RATE_LIMIT;
+    default:
+      return ExternalServiceErrorCode.UNKNOWN;
+  }
+}
+
+function buildAiAnalysisLogPayload(params: {
+  errorClass: AiAnalysisErrorCode;
+  provider: string;
+  model: string | null;
+  httpStatus: number | null;
+  retryable: boolean;
+  metrics?: AiAnalysisRunMetrics;
+  diagnostics: Record<string, unknown>;
+}) {
+  return {
+    errorClass: params.errorClass,
+    provider: params.provider,
+    model: params.model,
+    httpStatus: params.httpStatus,
+    retryable: params.retryable,
+    diagnostics: params.diagnostics,
+    metrics: params.metrics
+      ? {
+          totalDurationMs: params.metrics.totalDurationMs,
+          promptChars: params.metrics.promptChars,
+          estimatedInputTokens: params.metrics.estimatedInputTokens,
+          modelCallCount: params.metrics.modelCallCount,
+          retryCount: params.metrics.retryCount,
+          maxAttempts: params.metrics.maxAttempts,
+          timeoutMs: params.metrics.timeoutMs,
+          responseLength: params.metrics.responseLength,
+          outputChars: params.metrics.outputChars,
+          calls: params.metrics.calls.map((call) => ({
+            attemptNumber: call.attemptNumber,
+            callNumber: call.callNumber,
+            purpose: call.purpose,
+            model: call.model,
+            durationMs: call.durationMs,
+            promptChars: call.promptChars,
+            estimatedInputTokens: call.estimatedInputTokens,
+            maxOutputTokens: call.maxOutputTokens,
+            responseLength: call.responseLength,
+            httpStatus: call.httpStatus,
+            providerStatus: call.providerStatus,
+            responseIdPresent: call.responseIdPresent,
+            pollingAttemptCount: call.pollingAttemptCount,
+            errorClass: call.errorClass,
+          })),
+        }
+      : null,
+  };
+}
 
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
@@ -184,38 +353,30 @@ export async function POST(request: Request, context: RouteContext) {
 
   const now = new Date();
 
-  const analysis = await prisma.aiAnalysis.upsert({
-    where: { sessionId },
-    create: {
-      sessionId,
-      transcriptId: transcript.id,
-      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
-      status: AiAnalysisStatus.QUEUED,
-      language: analysisLanguage,
-      startedAt: now,
-      errorMessage: null,
-    },
-    update: {
-      transcriptId: transcript.id,
-      transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
-      status: AiAnalysisStatus.QUEUED,
-      language: analysisLanguage,
-      startedAt: now,
-      completedAt: null,
-      errorMessage: null,
-    },
+  const claimedRun = await claimAiAnalysisRun({
+    sessionId,
+    transcriptId: transcript.id,
+    transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
+    language: analysisLanguage,
+    now,
   });
 
-  await prisma.aiAnalysis.update({
-    where: { id: analysis.id },
-    data: { status: AiAnalysisStatus.ANALYZING },
-  });
-
-  if (isAiAnalysisMockMode()) {
-    return await processMockAnalysis(sessionId, analysis.id, analysisLanguage);
+  if (claimedRun.state === "active") {
+    return NextResponse.json(
+      {
+        error: "An AI analysis is already in progress.",
+        analysisId: claimedRun.analysis.id,
+        status: claimedRun.analysis.status,
+      },
+      { status: 409 },
+    );
   }
 
-  return await processRealAnalysis(sessionId, analysis.id, analysisLanguage);
+  if (isAiAnalysisMockMode()) {
+    return await processMockAnalysis(sessionId, claimedRun.analysis.id, analysisLanguage);
+  }
+
+  return await processRealAnalysis(sessionId, claimedRun.analysis.id, analysisLanguage);
 }
 
 async function failAnalysis(
@@ -314,7 +475,7 @@ async function processRealAnalysis(
 
     const prompt = buildAnalysisPrompt(analysisContext);
 
-    const { output, rawOutput, model } = await runNegotiationAnalysis(
+    const { output, rawOutput, model, metrics } = await runNegotiationAnalysis(
       prompt,
       language,
     );
@@ -326,11 +487,37 @@ async function processRealAnalysis(
         model,
         executiveSummary: output.executiveSummary,
         overallScore: output.overallScore,
-        analysisJson: output as object,
-        rawModelOutput: rawOutput as object,
+        analysisJson: output as Prisma.InputJsonValue,
+        rawModelOutput: {
+          providerEnvelope: rawOutput as Prisma.InputJsonValue,
+          diagnostics: {
+            totalDurationMs: metrics.totalDurationMs,
+            promptChars: metrics.promptChars,
+            estimatedInputTokens: metrics.estimatedInputTokens,
+            modelCallCount: metrics.modelCallCount,
+            retryCount: metrics.retryCount,
+            responseLength: metrics.responseLength,
+            outputChars: metrics.outputChars,
+          },
+        } as Prisma.InputJsonValue,
         completedAt: new Date(),
         errorMessage: null,
       },
+    });
+
+    console.info("[AI analysis] completed", {
+      sessionId,
+      analysisId,
+      provider,
+      model,
+      durationMs: metrics.totalDurationMs,
+      promptChars: metrics.promptChars,
+      estimatedInputTokens: metrics.estimatedInputTokens,
+      modelCallCount: metrics.modelCallCount,
+      retryCount: metrics.retryCount,
+      responseLength: metrics.responseLength,
+      outputChars: metrics.outputChars,
+      finalStatus: saved.status,
     });
 
     return NextResponse.json({
@@ -341,35 +528,37 @@ async function processRealAnalysis(
       completedAt: saved.completedAt?.toISOString() ?? null,
     });
   } catch (error) {
-    const errorMessage =
+    const classifiedAiError = classifyAiAnalysisError(error);
+    const userMessage = classifiedAiError.userMessage;
+    const detailedMessage =
       error instanceof Error ? error.message : "AI analysis failed.";
-
-    const classified = classifyExternalServiceError(
-      provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
-      error,
-      "ai_analysis",
-    );
-
-    const isJsonValidationError =
-      errorMessage.includes("schema validation") ||
-      errorMessage.includes("non-JSON response");
 
     await logExternalServiceEvent({
       service: provider === "yandex" ? ExternalService.APP : ExternalService.OPENAI,
       severity: ExternalServiceEventSeverity.ERROR,
-      errorCode: isJsonValidationError
-        ? ExternalServiceErrorCode.UNKNOWN
-        : classified.errorCode,
-      title: isJsonValidationError
-        ? "AI analysis: invalid model response"
-        : "AI analysis failed",
-      message: errorMessage,
-      rawError: isJsonValidationError ? { validationError: errorMessage } : classified.rawError,
+      errorCode: mapAiAnalysisErrorCodeToExternalServiceCode(classifiedAiError.code),
+      title: `AI analysis failed: ${classifiedAiError.code}`,
+      message: userMessage,
+      rawError: buildAiAnalysisLogPayload({
+        errorClass: classifiedAiError.code,
+        provider,
+        model: classifiedAiError.model,
+        httpStatus: classifiedAiError.httpStatus,
+        retryable: classifiedAiError.retryable,
+        metrics: classifiedAiError.metrics,
+        diagnostics: {
+          ...classifiedAiError.diagnostics,
+          detail: detailedMessage,
+        },
+      }),
       sessionId,
     });
 
-    await failAnalysis(analysisId, errorMessage);
+    await failAnalysis(analysisId, userMessage);
 
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json(
+      { error: userMessage, errorClass: classifiedAiError.code },
+      { status: 500 },
+    );
   }
 }

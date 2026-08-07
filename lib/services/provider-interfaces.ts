@@ -1,4 +1,5 @@
 import type {
+  AiAnalysisRunMetrics,
   NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
 import type {
@@ -14,6 +15,7 @@ export interface AnalysisProvider {
     output: NegotiationAnalysisOutput;
     rawOutput: unknown;
     model: string;
+    metrics?: AiAnalysisRunMetrics;
   }>;
 }
 

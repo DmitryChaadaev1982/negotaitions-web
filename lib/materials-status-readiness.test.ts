@@ -16,7 +16,7 @@ import {
   STALE_RECORDING_STARTING_TIMEOUT_SECONDS,
 } from "@/lib/materials-status-readiness";
 
-test("raw transcript ready while enhancement pending", () => {
+test("raw transcript remains ready while enhancement is pending", () => {
   const stage = resolveTranscriptProcessingStage(
     TranscriptStatus.COMPLETED,
     RecordingStatus.COMPLETED,
@@ -25,7 +25,7 @@ test("raw transcript ready while enhancement pending", () => {
     "IN_PROGRESS",
   );
 
-  assert.equal(stage, "enhancing");
+  assert.equal(stage, "ready");
   assert.equal(
     computeShouldPoll(
       RecordingStatus.COMPLETED,
