@@ -36,13 +36,17 @@ Install and validation steps (server-side, disabled-first):
 1. Copy both files into `/etc/systemd/system/`.
 2. `sudo systemctl daemon-reload`
 3. `sudo systemd-analyze verify /etc/systemd/system/negotiations-stage310-maintenance.service /etc/systemd/system/negotiations-stage310-maintenance.timer`
-4. Keep timer disabled initially: `sudo systemctl disable --now negotiations-stage310-maintenance.timer`
-5. Run one-shot manually: `sudo systemctl start negotiations-stage310-maintenance.service`
-6. Inspect result: `journalctl -u negotiations-stage310-maintenance.service -n 200 --no-pager`
-7. If one-shot is healthy, enable/start timer:
+4. After the last checkout/dependency-install/Prisma-generate operation, run
+   `npm run ops:runtime-permissions:apply` from `/var/www/negotaitions/app`.
+5. Run `npm run ops:runtime-permissions:check` and do not start the one-shot or
+   timer unless it succeeds.
+6. Keep timer disabled initially: `sudo systemctl disable --now negotiations-stage310-maintenance.timer`
+7. Run one-shot manually: `sudo systemctl start negotiations-stage310-maintenance.service`
+8. Inspect result: `journalctl -u negotiations-stage310-maintenance.service -n 200 --no-pager`
+9. If one-shot is healthy, enable/start timer:
    - `sudo systemctl enable negotiations-stage310-maintenance.timer`
    - `sudo systemctl start negotiations-stage310-maintenance.timer`
-8. Check next execution: `systemctl list-timers | rg negotiations-stage310-maintenance`
+10. Check next execution: `systemctl list-timers | rg negotiations-stage310-maintenance`
 
 Disable/rollback steps:
 
@@ -60,6 +64,12 @@ The app can be rolled back without dropping Stage 3.10 additive schema objects.
 
 - Do not expose maintenance operations via public unauthenticated HTTP endpoint.
 - Do not run against production until checkpoint review approves rollout.
+- The systemd service receives production settings from
+  `/etc/negotaitions/env.production`; do not make the application
+  `.env.production` readable by `www-data`.
+- Runtime permissions must be normalized after checkout/install/Prisma
+  generation and before starting `negotiations-stage310-maintenance.service` or
+  its timer.
 - `--dry-run` mode performs inspection only, without writes.
 - Timer can be disabled independently from application service.
 - Concurrent worker runs are tolerated by DB-level claim/update guards; stop-operation and connection-expiry claims are idempotent.

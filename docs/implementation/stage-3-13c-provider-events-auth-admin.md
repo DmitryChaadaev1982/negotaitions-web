@@ -398,12 +398,15 @@ Production operational scripts run from systemd with
 They skip application `.env.production` loading in production, so the app env
 file can remain protected as `600 deploy:deploy`.
 
-Runtime deployments must run `npm run ops:runtime-permissions:check` and, when
-needed, `npm run ops:runtime-permissions:apply` after checkout/install/Prisma
-generation and before worker starts. The normalizer covers only tracked
-non-secret runtime files, required parent directories, and
+Runtime deployments must run `npm run ops:runtime-permissions:apply` and then
+`npm run ops:runtime-permissions:check` after checkout/install/Prisma generation
+and before the app or any worker starts. The normalizer covers only explicitly
+allowlisted tracked runtime files, required parent directories, and
 `app/generated/prisma` plus the `app/generated` parent traversal directory;
-broad repository `chmod -R` is prohibited.
+broad repository `chmod -R` is prohibited. Linux uses no-follow descriptor chmod
+for the final mutation; platforms without that support rely on the deployment
+tree not being concurrently replaced during the narrow chmod window after
+fail-closed validation.
 
 ### Controlled Activation Evidence
 
@@ -438,12 +441,16 @@ deadline about 24 hours after ingestion, recorded
 13. Verify checkpoint and event/failure ledgers.
 14. Only then activate the normal email worker.
 
-Rollback order: disable delivery worker timer, set
-`EMAIL_DELIVERY_ENABLED=false`, stop the provider-event consumer, set
-`EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`, preserve checkpoints/event
-ledger/failure ledger/suppressions, never delete or rewind checkpoints during
-incident response, revoke compromised Data Streams credentials, and do not
-revert to pre-remediation runtime after real reset-email traffic.
+Provider-event rollback order: disable/stop
+`negotiations-email-provider-event-reconciliation.timer`, disable/stop
+`negotiations-email-provider-events.service`, set
+`EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false` where ingestion rollback is
+required, validate `systemctl is-enabled`/`is-active` states and journals,
+preserve checkpoints/event ledger/failure ledger/suppressions, never delete or
+rewind checkpoints during incident response, revoke compromised Data Streams
+credentials, and do not revert to pre-remediation runtime after real reset-email
+traffic. Disable normal email-delivery units only when delivery rollback is in
+scope.
 
 ## Verification
 

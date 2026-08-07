@@ -219,14 +219,17 @@ quarantine, or maintenance workers after deployment, run the repository-owned
 permission normalizer after checkout/install/Prisma generation:
 
 ```shell
-npm run ops:runtime-permissions:check
 npm run ops:runtime-permissions:apply
+npm run ops:runtime-permissions:check
 ```
 
-The normalizer only covers tracked non-secret runtime files, their required
-parent directories, the `app/generated` parent traversal directory, and
+The normalizer only covers explicitly allowlisted tracked runtime files, their
+required parent directories, the `app/generated` parent traversal directory, and
 `app/generated/prisma`. It must not be replaced by broad `chmod -R`, and secret
-env files remain mode `600`.
+env files remain mode `600`. On Linux it uses no-follow descriptor chmod for the
+final mutation; on platforms without that support, deployment assumes the
+already-validated tree is not concurrently replaced during the narrow chmod
+window.
 
 The local fake-provider procedure is documented in
 `stage-3-13c-local-email-testing.md`. The preview must remain disabled in

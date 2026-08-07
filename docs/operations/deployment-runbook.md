@@ -100,20 +100,26 @@ repository-owned runtime artifacts that systemd workers need to read:
 2. install dependencies as required by the deployment plan;
 3. run Prisma generation (`npm run prisma:generate` or the deployment's
    equivalent);
-4. run `npm run ops:runtime-permissions:check`;
-5. run `npm run ops:runtime-permissions:apply` if check reports drift;
-6. restart/start application or worker systemd units only after the apply step.
+4. run `npm run ops:runtime-permissions:apply`;
+5. run `npm run ops:runtime-permissions:check`;
+6. restart/start application or worker systemd units only after both commands
+   succeed.
 
 The normalizer uses Git index metadata for tracked files and touches only
-tracked non-secret regular files, parent source directories needed for traversal,
-the `app/generated` parent traversal directory, and `app/generated/prisma`.
-Generated Prisma must be normalized after every Prisma generation because that
-tree is ignored by Git.
+the explicitly allowlisted runtime source files, parent source directories
+needed for traversal, the `app/generated` parent traversal directory, and
+`app/generated/prisma`. Generated Prisma must be normalized after every Prisma
+generation because that tree is ignored by Git.
 
 Never replace this with `chmod -R` across the repository. The normalizer must not
 modify `.env`, `.env.*`, `.git/`, `node_modules/`, `/etc/`, backup files,
 credential files, or unrelated untracked data. It fails closed if a symlink is
 found inside `app/generated/prisma`.
+
+The implementation uses no-follow descriptor chmod where the Node/Linux runtime
+supports it. Other platforms retain fail-closed pre/post validation and assume
+the deployment tree is not concurrently replaced by a privileged actor during
+the single-file chmod window.
 
 ## Stage 3.13C-F account-security deployment boundary
 
@@ -178,17 +184,21 @@ The overlay must refuse empty, development, or mismatched databases. Do not manu
 ## Stage 3.10 Release Order (Exact)
 
 1. Confirm backups and rollback owner.
-2. Stage code at `/var/www/negotaitions/app`.
+2. Stage code at `/var/www/negotaitions/app` and install dependencies if the
+   deployment plan requires it.
 3. Apply migration (`npx prisma migrate deploy`).
-4. Verify migration status (`npx prisma migrate status`).
-5. Restart `negotaitions-poc`.
-6. Run smoke (`npm run test:e2e:smoke` and browser smoke subset as applicable).
-7. Run backfill dry-run + first bounded batch.
-8. Verify counters (`npm run maintenance:stage310 -- --task verify-backfill`).
-9. Continue bounded backfill with cursor resume.
-10. Deploy Vox scenario manually and run disposable provider canary.
-11. Install maintenance units disabled, run manual one-shot.
-12. Enable timer only after one-shot review.
+4. Verify migration status (`npx prisma migrate status`) and run Prisma
+   generation if the deployment did not already do so.
+5. Run `npm run ops:runtime-permissions:apply`.
+6. Run `npm run ops:runtime-permissions:check`.
+7. Restart `negotaitions-poc` only after runtime permission check succeeds.
+8. Run smoke (`npm run test:e2e:smoke` and browser smoke subset as applicable).
+9. Run backfill dry-run + first bounded batch.
+10. Verify counters (`npm run maintenance:stage310 -- --task verify-backfill`).
+11. Continue bounded backfill with cursor resume.
+12. Deploy Vox scenario manually and run disposable provider canary.
+13. Install maintenance units disabled, run manual one-shot.
+14. Enable timer only after one-shot review.
 
 ## Vox scenario rollout safety (manual, non-automatic)
 

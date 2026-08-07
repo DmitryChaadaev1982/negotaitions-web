@@ -59,3 +59,20 @@ FINAL-05 remains open and is not fixed.
 
 The obsolete-name fixtures are intentionally unchanged in this iteration.
 FINAL-06 remains open and is not fixed.
+
+## L-01 — Non-production ops static imports can read config before bootstrap
+
+- Severity: Low
+- Status: DEFERRED
+- Affected scope: local/non-production static import ordering in some ops
+  scripts.
+- Original review description: static imports can evaluate configuration before
+  `bootstrapOperationalEnv()` loads local env in non-production execution.
+- Production status: not a production blocker after the systemd units inject
+  `/etc/negotaitions/env.production` and migrated ops scripts skip app env
+  loading under `NODE_ENV=production`.
+- Recommended future correction: convert remaining affected non-production
+  entrypoints to bootstrap before dynamic imports, or add a narrowly scoped
+  local-env bootstrap harness.
+
+L-01 is intentionally unchanged in this Medium-blocker remediation.

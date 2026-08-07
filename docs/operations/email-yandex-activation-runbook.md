@@ -77,15 +77,21 @@ Do not activate Postbox during remediation. Future controlled activation:
 5. Install `EMAIL_SENSITIVE_PAYLOAD_KEY` (32-byte base64) separately from
    `AUTH_SECRET`. Never print the value. Do not accept ACTIVE password-reset
    requests until this key is installed.
-6. Start the new application runtime only after steps 2–5. Keep the normal
+6. After checkout/fast-forward, dependency installation, and Prisma generation,
+   normalize runtime permissions before starting the app or any worker:
+   `npm run ops:runtime-permissions:apply`, then
+   `npm run ops:runtime-permissions:check`. Do not use broad `chmod -R`, do not
+   modify `.git/` or `node_modules/`, and keep `.env.production` plus
+   `/etc/negotaitions/env.production` at mode `600`.
+7. Start the new application runtime only after steps 2–6. Keep the normal
    email worker stopped.
-7. Run template validation and retention dry-run.
-8. Review stale/legacy password-reset backlog while delivery remains disabled:
+8. Run template validation and retention dry-run.
+9. Review stale/legacy password-reset backlog while delivery remains disabled:
    start `negotiations-email-backlog-quarantine.service` (dry-run), review only
    sanitized counts, then manually start
    `negotiations-email-backlog-quarantine-apply.service` in bounded batches.
    Repeat dry-run until no stale/legacy rows remain.
-9. **nginx trusted-proxy gate.** Complete this before any Postbox
+10. **nginx trusted-proxy gate.** Complete this before any Postbox
    configuration or canary. Abuse controls bucket per client IP, so activating
    delivery while proxy trust is unverified is not permitted. Command detail
    lives in `docs/operations/deployment-runbook.md`
@@ -114,7 +120,7 @@ Do not activate Postbox during remediation. Future controlled activation:
        the application **first**, then revert the nginx proxy configuration and
        reload. Reverting nginx while the application still trusts the header
        would leave forwarding headers browser-controlled.
-10. Stage provider-event consumer env with
+11. Stage provider-event consumer env with
     `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`, dedicated
     `YANDEX_DATA_STREAMS_*` credentials, the approved HTTPS Yandex Data Streams
     endpoint, and stream name in the approved form
@@ -122,12 +128,6 @@ Do not activate Postbox during remediation. Future controlled activation:
     leaf stream name when that deployment mode applies), plus conservative
     polling/checkpoint defaults. Never
     print secret values.
-11. After checkout/fast-forward, dependency installation, and Prisma generation,
-    run runtime permission normalization before any worker start:
-    `npm run ops:runtime-permissions:check`, then
-    `npm run ops:runtime-permissions:apply` if drift is reported. Do not use
-    broad `chmod -R`, do not modify `.git/` or `node_modules/`, and keep
-    `.env.production` plus `/etc/negotaitions/env.production` at mode `600`.
 12. Install units from `deploy/systemd/` without enabling them:
     - `negotiations-email-worker.service` + `.timer`
     - `negotiations-email-retention.service` + `.timer`
@@ -167,17 +167,23 @@ Do not activate Postbox during remediation. Future controlled activation:
 
 ## Worker Installation Sketch
 
-Committed templates live under `deploy/systemd/`. Do not enable in Stage 3.13C.
+Committed templates live under `deploy/systemd/`. Install templates disabled
+first. Provider-event consumer persistence and the reconciliation timer are
+enabled only after manual canary validation and explicit production approval.
 
 ## Rollback
 
-1. Disable the delivery worker timer.
-2. Set `EMAIL_DELIVERY_ENABLED=false`.
-3. Stop `negotiations-email-provider-events.service`.
-4. Disable provider-event persistence when rolling back the operational
-   activation: `sudo systemctl disable --now negotiations-email-provider-events.service`
-   and `sudo systemctl disable --now negotiations-email-provider-event-reconciliation.timer`.
-5. Set `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`.
+1. Disable and stop the provider-event reconciliation timer:
+   `sudo systemctl disable --now negotiations-email-provider-event-reconciliation.timer`.
+2. Disable and stop the provider-event consumer:
+   `sudo systemctl disable --now negotiations-email-provider-events.service`.
+3. Set `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false` where rollback requires
+   ingestion deactivation.
+4. Validate provider-event state with `systemctl is-enabled`,
+   `systemctl is-active`, and journal review. The reconciliation service remains
+   a timer-triggered oneshot and is not directly enabled or disabled.
+5. If delivery rollback is also in scope, disable the delivery worker timer and
+   set `EMAIL_DELIVERY_ENABLED=false`.
 6. Preserve checkpoints, event ledger, failure ledger, outbox rows, and
    suppressions for inspection.
 7. Do not delete or rewind provider-event checkpoints during incident response.
