@@ -1,6 +1,6 @@
-import { loadEnvConfig } from "@next/env";
 import { parseArgs } from "node:util";
 
+import { bootstrapOperationalEnv } from "@/lib/operational-env";
 import {
   runVoximplantCallbackNonceCleanup,
   runRecordingStopDeliverySweep,
@@ -9,7 +9,7 @@ import {
   verifyRoomLifecycleBackfill,
 } from "@/lib/stage-3-10-maintenance";
 
-loadEnvConfig(process.cwd());
+bootstrapOperationalEnv();
 
 type TaskName =
   | "all"

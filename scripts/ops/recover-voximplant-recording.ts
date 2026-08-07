@@ -1,4 +1,3 @@
-import { loadEnvConfig } from "@next/env";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { parseArgs } from "node:util";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -7,10 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { RecordingStatus } from "@/app/generated/prisma/client";
+import { bootstrapOperationalEnv } from "@/lib/operational-env";
 import { prisma } from "@/lib/prisma";
 import { getS3Client, getS3Config } from "@/lib/storage/s3";
 
-loadEnvConfig(process.cwd());
+bootstrapOperationalEnv();
 
 type CliValues = {
   sessionId?: string;

@@ -1,7 +1,8 @@
-import { loadEnvConfig } from "@next/env";
 import { parseArgs } from "node:util";
 
-loadEnvConfig(process.cwd());
+import { bootstrapOperationalEnv } from "@/lib/operational-env";
+
+bootstrapOperationalEnv();
 
 const parsed = parseArgs({
   options: {

@@ -1,6 +1,6 @@
-import { loadEnvConfig } from "@next/env";
+import { bootstrapOperationalEnv } from "@/lib/operational-env";
 
-loadEnvConfig(process.cwd());
+bootstrapOperationalEnv();
 
 async function main(): Promise<void> {
   const { parsePasswordResetQuarantineArguments } = await import(
