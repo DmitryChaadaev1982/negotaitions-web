@@ -48,6 +48,12 @@
 
 Do **not** `git checkout <sha>` on production: that leaves the repo in detached HEAD. Use a named rollback branch from the pre-hotfix commit (explicitly approved), then build and restart.
 
+**Current safety amendment:** these retained commands must not restart a
+`www-data` runtime until permission apply/check succeeds after the final
+checkout/install/generation operation. Any approved rollback commit or bundle
+used now must include the runtime permission normalizer; otherwise stop and
+prepare a reviewed bundle rather than substituting `chmod -R`.
+
 ```bash
 set -euo pipefail
 
@@ -67,6 +73,8 @@ git switch -c "$ROLLBACK_BRANCH" "$PRE_HOTFIX_SHA"
 
 npm ci
 npm run build
+npm run ops:runtime-permissions:apply
+npm run ops:runtime-permissions:check
 sudo systemctl restart negotaitions-poc
 
 systemctl is-active negotaitions-poc
@@ -101,6 +109,8 @@ git pull --ff-only origin deploy/yandex-poc
 
 npm ci
 npm run build
+npm run ops:runtime-permissions:apply
+npm run ops:runtime-permissions:check
 sudo systemctl restart negotaitions-poc
 
 systemctl is-active negotaitions-poc

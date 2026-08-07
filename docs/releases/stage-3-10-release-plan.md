@@ -21,27 +21,32 @@
 1. Confirm DB + server backup snapshots are complete.
 2. Confirm rollback owner, on-call monitor, and deploy owner.
 3. Stage/pull release code on server.
-4. Apply Prisma migration.
-5. Verify migration status.
-6. Restart app service (`negotaitions-poc`).
-7. Run HTTP/app smoke.
-8. Run maintenance backfill dry-run.
-9. Run first bounded backfill batch.
-10. Verify lifecycle counters + invalid combinations.
-11. Continue bounded backfill batches to completion.
-12. Deploy the exact tested Vox scenario manually (paste workflow), keep prior
+4. Run the release dependency install, Prisma generation, and build:
+   `npm ci`, `npx prisma generate`, then `npm run build`.
+5. After those mode-recreating operations, run
+   `npm run ops:runtime-permissions:apply` followed by
+   `npm run ops:runtime-permissions:check`.
+6. Apply Prisma migration.
+7. Verify migration status.
+8. Restart app service (`negotaitions-poc`).
+9. Run HTTP/app smoke.
+10. Run maintenance backfill dry-run.
+11. Run first bounded backfill batch.
+12. Verify lifecycle counters + invalid combinations.
+13. Continue bounded backfill batches to completion.
+14. Deploy the exact tested Vox scenario manually (paste workflow), keep prior
     version ready, and verify marker
     `main-room-server-stop-2026-07-28-rc6` plus SHA-256
     `D9324A97E7CEC42DDC2515AF04F467ABFF9364BB01CEB37FF04623149DE6AAE5`.
-13. Run a disposable provider canary while server-stop mode remains
+15. Run a disposable provider canary while server-stop mode remains
     `disabled`, then enable the approved `prefer_server_*` mode, restart, and
     run the terminal-stop canary.
-14. Copy systemd maintenance unit files, `daemon-reload`, keep timer disabled.
-15. Run one-shot maintenance manually.
-16. Inspect journal and command JSON.
-17. Enable timer.
-18. Run manual multi-browser/device canaries.
-19. Complete post-deploy checklist and explicit go/no-go signoff.
+16. Copy systemd maintenance unit files, `daemon-reload`, keep timer disabled.
+17. Run one-shot maintenance manually.
+18. Inspect journal and command JSON.
+19. Enable timer.
+20. Run manual multi-browser/device canaries.
+21. Complete post-deploy checklist and explicit go/no-go signoff.
 
 ## Stop/Go Criteria
 

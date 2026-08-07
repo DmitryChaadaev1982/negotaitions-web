@@ -194,3 +194,89 @@ test("Stage 3.10 maintenance runbook normalizes before systemd start", () => {
   assert.ok(checkIndex > applyIndex, "maintenance runbook checks after apply");
   assert.ok(startIndex > checkIndex, "maintenance service starts after normalization");
 });
+
+test("legacy deployment and rollback sequences normalize before runtime restart", () => {
+  const releasePlan = readFileSync(
+    path.join(process.cwd(), "docs/releases/stage-3-10-release-plan.md"),
+    "utf8",
+  );
+  const releaseApply = releasePlan.indexOf("npm run ops:runtime-permissions:apply");
+  const releaseCheck = releasePlan.indexOf("npm run ops:runtime-permissions:check");
+  const releaseRestart = releasePlan.indexOf("Restart app service (`negotaitions-poc`)");
+  assert.ok(releaseApply > releasePlan.indexOf("Stage/pull release code"));
+  assert.ok(releaseCheck > releaseApply);
+  assert.ok(releaseRestart > releaseCheck);
+
+  const rollbackPlan = readFileSync(
+    path.join(process.cwd(), "docs/releases/stage-3-10-rollback-plan.md"),
+    "utf8",
+  );
+  const rollbackApply = rollbackPlan.indexOf("npm run ops:runtime-permissions:apply");
+  const rollbackCheck = rollbackPlan.indexOf("npm run ops:runtime-permissions:check");
+  const rollbackRestart = rollbackPlan.indexOf("Restart `negotaitions-poc`");
+  assert.ok(rollbackApply > rollbackPlan.indexOf("Restore prior application"));
+  assert.ok(rollbackCheck > rollbackApply);
+  assert.ok(rollbackRestart > rollbackCheck);
+  assert.equal(rollbackPlan.includes("chmod -R"), true);
+  assert.match(rollbackPlan, /do not substitute\s+`chmod -R`/);
+});
+
+test("Voximplant deployment runtime starts only after normalization", () => {
+  const runbook = readFileSync(
+    path.join(process.cwd(), "docs/voximplant/yandex-deployment-runbook.md"),
+    "utf8",
+  );
+  const buildSection = runbook.slice(
+    runbook.indexOf("## 2) Build and runtime commands"),
+    runbook.indexOf("## 3) Database migration commands"),
+  );
+  const applyIndex = buildSection.indexOf("npm run ops:runtime-permissions:apply");
+  const checkIndex = buildSection.indexOf("npm run ops:runtime-permissions:check");
+  const startIndex = buildSection.indexOf("npm run start");
+  assert.ok(applyIndex > buildSection.indexOf("npx prisma generate"));
+  assert.ok(checkIndex > applyIndex);
+  assert.ok(startIndex > checkIndex);
+});
+
+test("historical Stage 3.10 rollback blocks fail closed before restart", () => {
+  const plan = readFileSync(
+    path.join(
+      process.cwd(),
+      "docs/audits/stage-3-10-production-debrief-hotfix/production-canary-plan.md",
+    ),
+    "utf8",
+  );
+  const rollback = plan.slice(
+    plan.indexOf("```bash", plan.indexOf("## Rollback")),
+    plan.indexOf("### Recovery back"),
+  );
+  const recovery = plan.slice(plan.indexOf("```bash", plan.indexOf("### Recovery back")));
+
+  for (const [label, block] of [
+    ["rollback", rollback],
+    ["recovery", recovery],
+  ] as const) {
+    const applyIndex = block.indexOf("npm run ops:runtime-permissions:apply");
+    const checkIndex = block.indexOf("npm run ops:runtime-permissions:check");
+    const restartIndex = block.indexOf("sudo systemctl restart negotaitions-poc");
+    assert.ok(applyIndex > block.indexOf("npm run build"), `${label} applies after build`);
+    assert.ok(checkIndex > applyIndex, `${label} checks after apply`);
+    assert.ok(restartIndex > checkIndex, `${label} restarts after normalization`);
+  }
+});
+
+test("provider-event unit distinguishes manual canary start from enablement", () => {
+  const unit = readFileSync(
+    path.join(
+      process.cwd(),
+      "deploy/systemd/negotiations-email-provider-events.service",
+    ),
+    "utf8",
+  );
+  assert.match(unit, /Installed disabled\. Start manually for the controlled canary/);
+  assert.match(unit, /enable only\s+# after canary validation and explicit production approval/);
+  assert.equal(
+    unit.includes("Enable only during a controlled provider-event canary"),
+    false,
+  );
+});

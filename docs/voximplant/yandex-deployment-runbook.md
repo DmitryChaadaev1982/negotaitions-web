@@ -30,6 +30,8 @@ $env:PLAYWRIGHT_PORT="3000"
 npm ci
 npx prisma generate
 npm run build
+npm run ops:runtime-permissions:apply
+npm run ops:runtime-permissions:check
 npm run start
 ```
 
@@ -42,6 +44,8 @@ Standard production procedure:
 ```bash
 npx prisma migrate deploy
 npx prisma generate
+npm run ops:runtime-permissions:apply
+npm run ops:runtime-permissions:check
 ```
 
 ## 4) Safe env template (no secrets)
@@ -169,7 +173,10 @@ NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
 - Keep deploy aligned with checkpoint tags:
   - `checkpoint/vox-room-parity-stage-1`
   - `checkpoint/vox-event-lobby-stage-2`
-- For regression rollback, redeploy previous stable image and env snapshot.
+- For regression rollback, redeploy the previous approved stable image and env
+  snapshot, then run runtime-permission apply/check after its final
+  checkout/install/Prisma generation and before restarting the runtime. The
+  rollback bundle must include the normalizer; do not substitute `chmod -R`.
 - If transcription quality regresses, return to `standard` profile and re-run A/B procedure.
 - For transcript enhancement rollout rollback, switch `TRANSCRIPT_ENHANCEMENT_MODE=single` and restart service.
 

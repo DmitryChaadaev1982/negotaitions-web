@@ -1,6 +1,7 @@
 [Unit]
 Description=NegotAItions email provider-event Data Streams consumer
-# Disabled by default. Enable only during a controlled provider-event canary.
+# Installed disabled. Start manually for the controlled canary; enable only
+# after canary validation and explicit production approval.
 After=network-online.target
 Wants=network-online.target
 # Bounded restart budget: a repeatedly failing consumer stops instead of

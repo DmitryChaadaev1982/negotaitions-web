@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 
 import {
   applyRuntimePermissionPlan,
   assertGeneratedPrismaArtifactAllowed,
   assertResolvedLocationInsideRoot,
+  buildRuntimePermissionPlan,
   isRuntimePermissionExcludedPath,
   isTrackedRuntimePermissionPath,
   modeForPermissionPlanning,
@@ -71,16 +75,88 @@ async function tryCreateSymlink(
   }
 }
 
+function collectOpsRuntimeSourceDependencies(repoRoot: string): string[] {
+  const config = ts.readConfigFile(
+    path.join(repoRoot, "tsconfig.json"),
+    ts.sys.readFile,
+  );
+  assert.equal(config.error, undefined, "tsconfig.json must be readable");
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, repoRoot);
+  const queue = readdirSync(path.join(repoRoot, "scripts/ops"))
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => path.join(repoRoot, "scripts/ops", name));
+  const seen = new Set<string>();
+
+  while (queue.length > 0) {
+    const absolutePath = path.resolve(queue.shift() as string);
+    if (seen.has(absolutePath)) continue;
+    seen.add(absolutePath);
+
+    const source = readFileSync(absolutePath, "utf8");
+    for (const imported of ts.preProcessFile(source, true, true).importedFiles) {
+      const specifier = imported.fileName;
+      if (
+        specifier.startsWith("node:") ||
+        (!specifier.startsWith(".") && !specifier.startsWith("@/"))
+      ) {
+        continue;
+      }
+      const resolved = ts.resolveModuleName(
+        specifier,
+        absolutePath,
+        parsed.options,
+        ts.sys,
+      ).resolvedModule;
+      assert.ok(
+        resolved,
+        `Could not resolve ${specifier} imported by ${absolutePath}`,
+      );
+      const dependency = path.resolve(resolved.resolvedFileName);
+      const relative = path.relative(repoRoot, dependency);
+      if (
+        !relative.startsWith("..") &&
+        !path.isAbsolute(relative) &&
+        !relative.includes(`${path.sep}node_modules${path.sep}`) &&
+        !dependency.endsWith(".d.ts")
+      ) {
+        queue.push(dependency);
+      }
+    }
+  }
+
+  return [...seen]
+    .map((absolutePath) =>
+      path.relative(repoRoot, absolutePath).replaceAll("\\", "/"),
+    )
+    .sort();
+}
+
 test("tracked runtime allowlist selects only production ops surface", () => {
   assert.equal(isTrackedRuntimePermissionPath("scripts/ops/email-provider-event-consumer.ts"), true);
   assert.equal(isTrackedRuntimePermissionPath("lib/operational-env.ts"), true);
-  assert.equal(isTrackedRuntimePermissionPath("lib/auth/credential-concurrency.ts"), true);
+  assert.equal(isTrackedRuntimePermissionPath("lib/auth/credential-dispatch-fence.ts"), true);
   assert.equal(isTrackedRuntimePermissionPath("package.json"), true);
   assert.equal(isTrackedRuntimePermissionPath("tsconfig.json"), true);
 
   assert.equal(isTrackedRuntimePermissionPath("docs/operations/deployment-runbook.md"), false);
   assert.equal(isTrackedRuntimePermissionPath("app/page.tsx"), false);
+  assert.equal(isTrackedRuntimePermissionPath("lib/i18n/server.ts"), false);
+  assert.equal(isTrackedRuntimePermissionPath("lib/livekit-client-setup.ts"), false);
+  assert.equal(isTrackedRuntimePermissionPath("lib/auth/credential-concurrency.ts"), false);
   assert.equal(isTrackedRuntimePermissionPath("lib/runtime-permissions.test.ts"), false);
+});
+
+test("tracked runtime allowlist covers every operational source dependency", () => {
+  const repoRoot = process.cwd();
+  const dependencies = collectOpsRuntimeSourceDependencies(repoRoot);
+  for (const dependency of dependencies) {
+    if (dependency.startsWith("app/generated/prisma/")) continue;
+    assert.equal(
+      isTrackedRuntimePermissionPath(dependency),
+      true,
+      dependency,
+    );
+  }
 });
 
 test("100644 tracked runtime file at 0600 is selected for runtime read permission", () => {
@@ -114,10 +190,14 @@ test("tracked unrelated files and secrets are not selected", () => {
 
 test("reviewed source names containing credential remain selectable", () => {
   const planned = planTrackedFilePermission(
-    tracked("lib/auth/credential-concurrency.ts", "100644"),
+    tracked("lib/auth/credential-dispatch-fence.ts", "100644"),
     0o600,
   );
-  assert.equal(planned?.path, "lib/auth/credential-concurrency.ts");
+  assert.equal(planned?.path, "lib/auth/credential-dispatch-fence.ts");
+  assert.equal(
+    isRuntimePermissionExcludedPath("lib/auth/credential-concurrency.ts"),
+    false,
+  );
 });
 
 test("secret and private-key path patterns are excluded from mutation", () => {
@@ -208,6 +288,40 @@ test("generated Prisma directories are restricted to known output directories", 
 test("Windows directory mode planning treats traverse as an emulated boundary", () => {
   assert.equal(modeForPermissionPlanning(0o600, "directory", "win32") & 0o111, 0o111);
   assert.equal(modeForPermissionPlanning(0o600, "directory", "linux"), 0o600);
+});
+
+test("generated Prisma normalization includes app traversal ancestry", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows does not expose POSIX chmod mode semantics reliably.");
+    return;
+  }
+  await withTempRepo(async (repoRoot) => {
+    execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
+    const appPath = path.join(repoRoot, "app");
+    const generatedPath = path.join(appPath, "generated");
+    const prismaPath = path.join(generatedPath, "prisma");
+    await writeMode(path.join(prismaPath, "client.ts"), "export {}", 0o600);
+    await chmod(appPath, 0o700);
+    await chmod(generatedPath, 0o700);
+    await chmod(prismaPath, 0o700);
+
+    const plan = await buildRuntimePermissionPlan(repoRoot);
+    assert.ok(
+      plan.actions.some(
+        (candidate) =>
+          candidate.source === "generated-prisma-directory" &&
+          candidate.path === "app",
+      ),
+    );
+    await applyRuntimePermissionPlan(repoRoot, plan.actions, "apply");
+    assert.equal((await lstat(appPath)).mode & 0o777, 0o701);
+    assert.equal((await lstat(generatedPath)).mode & 0o777, 0o701);
+    assert.equal((await lstat(prismaPath)).mode & 0o777, 0o701);
+    assert.equal((await lstat(path.join(prismaPath, "client.ts"))).mode & 0o777, 0o604);
+
+    const stablePlan = await buildRuntimePermissionPlan(repoRoot);
+    assert.equal(stablePlan.actions.length, 0);
+  });
 });
 
 test("realpath containment rejects resolved escapes", async () => {

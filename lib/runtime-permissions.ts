@@ -76,12 +76,86 @@ export class RuntimePermissionError extends Error {
   }
 }
 
-const GENERATED_PRISMA_PARENT = "app/generated";
+const GENERATED_PRISMA_ANCESTORS = ["app", "app/generated"] as const;
 const GENERATED_PRISMA_ROOT = "app/generated/prisma";
 const OTHER_READ = 0o004;
 const OTHER_EXECUTE = 0o001;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 const ROOT_RUNTIME_FILES = new Set(["package.json", "tsconfig.json"]);
+// Reviewed transitive source dependencies of scripts/ops/*.ts. Keep this list
+// explicit: selecting all of lib/** would make unrelated application source
+// world-readable during a restrictive production deployment.
+const LIB_RUNTIME_SOURCE_FILES = new Set([
+  "lib/audio/config.ts",
+  "lib/auth/credential-dispatch-fence.ts",
+  "lib/auth/password-reset-token.ts",
+  "lib/config/provider-runtime.ts",
+  "lib/config/server-runtime-settings.ts",
+  "lib/email/address.ts",
+  "lib/email/canary.ts",
+  "lib/email/config.ts",
+  "lib/email/observability.ts",
+  "lib/email/operational-cli.ts",
+  "lib/email/password-reset-dispatch.ts",
+  "lib/email/provider-error-classification.ts",
+  "lib/email/provider-event-consumer-cli.ts",
+  "lib/email/provider-event-consumer.ts",
+  "lib/email/provider-event-policy.ts",
+  "lib/email/provider-events.ts",
+  "lib/email/provider.ts",
+  "lib/email/renderer.ts",
+  "lib/email/retention.ts",
+  "lib/email/sensitive-payload.ts",
+  "lib/email/suppression.ts",
+  "lib/email/templates.ts",
+  "lib/email/types.ts",
+  "lib/email/worker.ts",
+  "lib/email/yandex-postbox-provider-event-parser.ts",
+  "lib/env.ts",
+  "lib/livekit-egress.ts",
+  "lib/livekit-participant-metadata.ts",
+  "lib/livekit.ts",
+  "lib/operational-env.ts",
+  "lib/prisma-connection-string.ts",
+  "lib/prisma-production-migration-overlay.ts",
+  "lib/prisma.ts",
+  "lib/recording-stop-delivery-policy.ts",
+  "lib/recording/provider.ts",
+  "lib/room-provider/types.ts",
+  "lib/runtime-permissions.ts",
+  "lib/services/error-classifier.ts",
+  "lib/services/external-service-events.ts",
+  "lib/services/usage-counters.ts",
+  "lib/session-empty-room-reconciliation.ts",
+  "lib/session-room-occupancy-policy.ts",
+  "lib/session-room-occupancy.ts",
+  "lib/sql-utc-wall-clock.ts",
+  "lib/stage-3-10-maintenance-utils.ts",
+  "lib/stage-3-10-maintenance.ts",
+  "lib/storage/s3.ts",
+  "lib/test-mode.ts",
+  "lib/voximplant/conference-name.ts",
+  "lib/voximplant/config.ts",
+  "lib/voximplant/provider-fault-simulation.ts",
+  "lib/voximplant/recording-control-signature.ts",
+  "lib/voximplant/recording-dispatch-contract.ts",
+  "lib/voximplant/recording-dispatch.ts",
+  "lib/voximplant/recording-webhook-url-resolve.ts",
+  "lib/voximplant/recording-webhook-url.ts",
+  "lib/voximplant/scenario-messages.ts",
+  "lib/voximplant/server-stop-callback-signature.ts",
+  "lib/voximplant/server-stop-client.ts",
+  "lib/voximplant/server-stop-config.ts",
+  "lib/voximplant/server-stop-replay.ts",
+  "lib/voximplant/types.ts",
+]);
+const LIB_RUNTIME_SOURCE_DIRECTORIES = new Set([
+  "lib",
+  ...[...LIB_RUNTIME_SOURCE_FILES].flatMap((repoPath) => {
+    const parts = repoPath.split("/");
+    return parts.slice(1, -1).map((_, index) => parts.slice(0, index + 2).join("/"));
+  }),
+]);
 const GENERATED_PRISMA_ROOT_FILES = new Set([
   "browser.ts",
   "client.ts",
@@ -161,11 +235,19 @@ function isTestSourcePath(repoPath: string): boolean {
   );
 }
 
-function isReviewedRuntimeSourcePath(repoPath: string): boolean {
+function isSourceCodePath(repoPath: string): boolean {
   if (!hasRuntimeSourceExtension(repoPath) || isTestSourcePath(repoPath)) {
     return false;
   }
   return isPathWithin(repoPath, "scripts/ops") || isPathWithin(repoPath, "lib");
+}
+
+function isReviewedRuntimeSourcePath(repoPath: string): boolean {
+  if (!hasRuntimeSourceExtension(repoPath) || isTestSourcePath(repoPath)) {
+    return false;
+  }
+  return isPathWithin(repoPath, "scripts/ops") ||
+    LIB_RUNTIME_SOURCE_FILES.has(repoPath);
 }
 
 export function isTrackedRuntimePermissionPath(repoPath: string): boolean {
@@ -180,8 +262,7 @@ export function isTrackedRuntimePermissionDirectory(repoPath: string): boolean {
     normalized === "scripts" ||
     normalized === "scripts/ops" ||
     normalized.startsWith("scripts/ops/") ||
-    normalized === "lib" ||
-    normalized.startsWith("lib/")
+    LIB_RUNTIME_SOURCE_DIRECTORIES.has(normalized)
   );
 }
 
@@ -239,7 +320,7 @@ export function isRuntimePermissionExcludedPath(repoPath: string): boolean {
   }
   if (hasBackupOrTemporaryMarker(lowerBasename)) return true;
   if (hasSensitiveCredentialMarker(normalized)) {
-    return !isReviewedRuntimeSourcePath(normalized);
+    return !isSourceCodePath(normalized);
   }
 
   return lowerPath.startsWith("etc/");
@@ -342,7 +423,7 @@ export function assertGeneratedPrismaArtifactAllowed(
 ): void {
   const normalized = normalizeRepoPath(repoPath);
   if (
-    normalized !== GENERATED_PRISMA_PARENT &&
+    !GENERATED_PRISMA_ANCESTORS.some((ancestor) => ancestor === normalized) &&
     normalized !== GENERATED_PRISMA_ROOT &&
     !normalized.startsWith(`${GENERATED_PRISMA_ROOT}/`)
   ) {
@@ -360,7 +441,7 @@ export function assertGeneratedPrismaArtifactAllowed(
   if (type === "missing") return;
 
   const allowedDirectories = new Set([
-    GENERATED_PRISMA_PARENT,
+    ...GENERATED_PRISMA_ANCESTORS,
     GENERATED_PRISMA_ROOT,
     `${GENERATED_PRISMA_ROOT}/internal`,
     `${GENERATED_PRISMA_ROOT}/models`,
@@ -631,14 +712,21 @@ async function collectGeneratedPrismaActions(
   repoRoot: string,
   summary: RuntimePermissionSummary,
 ): Promise<RuntimePermissionAction[]> {
-  const parentStatus = await inspectRuntimePath(repoRoot, GENERATED_PRISMA_PARENT, {
-    allowedRootRepoPath: GENERATED_PRISMA_PARENT,
-  });
-  try {
-    assertGeneratedPrismaArtifactAllowed(GENERATED_PRISMA_PARENT, parentStatus.type);
-  } catch (error) {
-    summary.generatedPrismaSymlinksRejected += 1;
-    throw error;
+  const ancestorStatuses: Array<{
+    repoPath: (typeof GENERATED_PRISMA_ANCESTORS)[number];
+    status: RuntimePathInspection;
+  }> = [];
+  for (const repoPath of GENERATED_PRISMA_ANCESTORS) {
+    const status = await inspectRuntimePath(repoRoot, repoPath, {
+      allowedRootRepoPath: repoPath,
+    });
+    try {
+      assertGeneratedPrismaArtifactAllowed(repoPath, status.type);
+    } catch (error) {
+      summary.generatedPrismaSymlinksRejected += 1;
+      throw error;
+    }
+    ancestorStatuses.push({ repoPath, status });
   }
 
   const rootStatus = await inspectRuntimePath(repoRoot, GENERATED_PRISMA_ROOT, {
@@ -654,16 +742,17 @@ async function collectGeneratedPrismaActions(
   }
 
   const actions: RuntimePermissionAction[] = [];
-  if (parentStatus.type === "directory") {
+  for (const { repoPath, status } of ancestorStatuses) {
+    if (status.type !== "directory") continue;
     summary.generatedPrismaDirectoriesChecked += 1;
-    const parentAction = planDirectoryTraversePermission(
-      GENERATED_PRISMA_PARENT,
-      parentStatus.mode,
+    const ancestorAction = planDirectoryTraversePermission(
+      repoPath,
+      status.mode,
       "generated-prisma-directory",
     );
-    if (parentAction) {
+    if (ancestorAction) {
       summary.generatedPrismaDirectoriesNeedingChange += 1;
-      actions.push(attachInspection(parentAction, parentStatus));
+      actions.push(attachInspection(ancestorAction, status));
     }
   }
 
@@ -671,10 +760,7 @@ async function collectGeneratedPrismaActions(
   while (queue.length > 0) {
     const repoPath = queue.shift() as string;
     const status = await inspectRuntimePath(repoRoot, repoPath, {
-      allowedRootRepoPath:
-        repoPath === GENERATED_PRISMA_PARENT
-          ? GENERATED_PRISMA_PARENT
-          : GENERATED_PRISMA_ROOT,
+      allowedRootRepoPath: GENERATED_PRISMA_ROOT,
     });
     try {
       assertGeneratedPrismaArtifactAllowed(repoPath, status.type);
@@ -778,12 +864,12 @@ function allowedRootForAction(action: RuntimePermissionAction): string | undefin
   if (
     action.source === "generated-prisma-file" ||
     (action.source === "generated-prisma-directory" &&
-      action.path !== GENERATED_PRISMA_PARENT)
+      !GENERATED_PRISMA_ANCESTORS.some((ancestor) => ancestor === action.path))
   ) {
     return GENERATED_PRISMA_ROOT;
   }
   if (action.source === "generated-prisma-directory") {
-    return GENERATED_PRISMA_PARENT;
+    return action.path;
   }
   return undefined;
 }
