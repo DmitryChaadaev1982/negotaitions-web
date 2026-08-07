@@ -1,6 +1,7 @@
 [Unit]
 Description=Run NegotAItions email retention cleanup daily
-# Disabled by default. To enable:
+# Installed disabled by default. Enable only after retention dry-run passes,
+# retention windows/configuration are valid, and explicit approval is given:
 #   systemctl enable --now negotiations-email-retention.timer
 
 [Timer]
@@ -12,5 +13,4 @@ Persistent=true
 Unit=negotiations-email-retention.service
 
 [Install]
-# WantedBy=timers.target
-# DO NOT enable until email delivery is active and retention windows are reviewed.
+WantedBy=timers.target

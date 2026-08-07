@@ -133,6 +133,56 @@ test("systemd production ops units inject approved production environment", () =
   );
 });
 
+test("email delivery and retention timers are persistable while services stay static", () => {
+  const readUnit = (file: string) =>
+    readFileSync(path.join(process.cwd(), "deploy/systemd", file), "utf8");
+  const workerService = readUnit("negotiations-email-worker.service");
+  const workerTimer = readUnit("negotiations-email-worker.timer");
+  const retentionService = readUnit("negotiations-email-retention.service");
+  const retentionTimer = readUnit("negotiations-email-retention.timer");
+
+  assert.match(workerTimer, /^WantedBy=timers\.target$/m);
+  assert.match(retentionTimer, /^WantedBy=timers\.target$/m);
+  assert.equal(/^WantedBy=/m.test(workerService), false);
+  assert.equal(/^WantedBy=/m.test(retentionService), false);
+
+  assert.match(workerService, /^After=negotaitions-poc\.service$/m);
+  assert.equal(workerService.includes("negotiations-app.service"), false);
+  assert.match(workerService, /^EnvironmentFile=\/etc\/negotaitions\/env\.production$/m);
+  assert.match(workerService, /^User=www-data$/m);
+  assert.match(workerService, /^Group=www-data$/m);
+  assert.match(retentionService, /^EnvironmentFile=\/etc\/negotaitions\/env\.production$/m);
+  assert.match(retentionService, /^User=www-data$/m);
+  assert.match(retentionService, /^Group=www-data$/m);
+
+  for (const [file, unit] of [
+    ["worker service", workerService],
+    ["retention service", retentionService],
+  ] as const) {
+    for (const directive of [
+      "NoNewPrivileges=true",
+      "ProtectSystem=strict",
+      "ProtectHome=true",
+      "PrivateTmp=true",
+      "ReadWritePaths=/var/www/negotaitions/app",
+    ]) {
+      assert.match(unit, new RegExp(`^${directive}$`, "m"), `${file} missing ${directive}`);
+    }
+  }
+
+  assert.match(workerTimer, /^OnBootSec=1min$/m);
+  assert.match(workerTimer, /^OnUnitActiveSec=1min$/m);
+  assert.match(workerTimer, /^RandomizedDelaySec=10s$/m);
+  assert.match(workerTimer, /^Persistent=true$/m);
+  assert.match(workerTimer, /^Unit=negotiations-email-worker\.service$/m);
+
+  assert.match(retentionTimer, /^OnBootSec=30min$/m);
+  assert.match(retentionTimer, /^OnCalendar=daily$/m);
+  assert.match(retentionTimer, /^RandomizedDelaySec=1800s$/m);
+  assert.match(retentionTimer, /^Persistent=true$/m);
+  assert.match(retentionTimer, /^Unit=negotiations-email-retention\.service$/m);
+});
+
 test("activation runbook normalizes permissions before worker starts", () => {
   const runbook = readFileSync(
     path.join(process.cwd(), "docs/operations/email-yandex-activation-runbook.md"),
@@ -145,7 +195,9 @@ test("activation runbook normalizes permissions before worker starts", () => {
     "sudo systemctl start negotiations-email-provider-events.service",
   );
   const canaryIndex = runbook.indexOf("negotiations-email-canary@<EmailMessage-ID>.service");
-  const workerTimerIndex = runbook.indexOf("Only then enable the normal worker timer");
+  const workerTimerIndex = runbook.indexOf(
+    "sudo systemctl enable --now negotiations-email-worker.timer",
+  );
 
   assert.ok(applyIndex > 0, "runtime permission apply command is documented");
   assert.ok(checkIndex > applyIndex, "runtime permission check follows apply");

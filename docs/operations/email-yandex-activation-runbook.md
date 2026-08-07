@@ -162,8 +162,17 @@ Do not activate Postbox during remediation. Future controlled activation:
     refuses missing/invalid ids and has no general-sweep fallback.
 18. Confirm exactly one claim and one provider acceptance. Treat
     `ACCEPTED_BY_PROVIDER` as acceptance, not end-user `DELIVERED`.
-19. Only then enable the normal worker timer. Watch sanitized queue counts,
-    bounces, and complaints.
+19. Only after the provider/outbox production canary passes and explicit
+    approval is recorded, persist the normal worker timer. Do not enable
+    `negotiations-email-worker.service` directly; it remains a timer-triggered
+    static oneshot ordered after `negotaitions-poc.service`.
+    `sudo systemctl enable --now negotiations-email-worker.timer`
+20. Run `npm run email:retention:dry-run`, verify retention windows and
+    configuration, and only after explicit approval persist retention cleanup.
+    Do not enable `negotiations-email-retention.service` directly.
+    `sudo systemctl enable --now negotiations-email-retention.timer`
+21. Watch sanitized queue counts, bounces, complaints, retention counts, and
+    journals.
 
 ## Worker Installation Sketch
 
@@ -183,13 +192,16 @@ enabled only after manual canary validation and explicit production approval.
    `systemctl is-active`, and journal review. The reconciliation service remains
    a timer-triggered oneshot and is not directly enabled or disabled.
 5. If delivery rollback is also in scope, disable the delivery worker timer and
-   set `EMAIL_DELIVERY_ENABLED=false`.
-6. Preserve checkpoints, event ledger, failure ledger, outbox rows, and
+   set `EMAIL_DELIVERY_ENABLED=false`:
+   `sudo systemctl disable --now negotiations-email-worker.timer`.
+6. If retention rollback is also in scope, disable the retention timer:
+   `sudo systemctl disable --now negotiations-email-retention.timer`.
+7. Preserve checkpoints, event ledger, failure ledger, outbox rows, and
    suppressions for inspection.
-7. Do not delete or rewind provider-event checkpoints during incident response.
-8. Revoke or rotate compromised Data Streams or Postbox credentials.
-9. Do not revert to pre-remediation runtime after real reset-email traffic.
-10. Revert DNS only after confirming replacement mail routing.
+8. Do not delete or rewind provider-event checkpoints during incident response.
+9. Revoke or rotate compromised Data Streams or Postbox credentials.
+10. Do not revert to pre-remediation runtime after real reset-email traffic.
+11. Revert DNS only after confirming replacement mail routing.
 
 After real password-reset traffic begins on the remediated runtime, rollback to
 pre-remediation code is **not** a normal safe rollback. Keep old runtime stopped,

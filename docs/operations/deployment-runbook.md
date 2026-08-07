@@ -133,6 +133,16 @@ the single-file chmod window.
   password-reset backlog quarantine.
 - Keep the normal worker stopped for the canary. The canary must select exactly
   one eligible `EmailMessage` through the manual systemd unit.
+- The normal delivery service orders after `negotaitions-poc.service` and
+  remains static; persist background delivery only with
+  `sudo systemctl enable --now negotiations-email-worker.timer` after the
+  provider/outbox production canary passes and approval is explicit. Roll back
+  with `sudo systemctl disable --now negotiations-email-worker.timer`.
+- Run `npm run email:retention:dry-run` and verify retention windows before
+  persisting retention with
+  `sudo systemctl enable --now negotiations-email-retention.timer`. Roll back
+  with `sudo systemctl disable --now negotiations-email-retention.timer`. Do not
+  enable `negotiations-email-retention.service` directly.
 - Keep provider-event ingestion disabled until the Data Streams subscription,
   dedicated credentials, checkpoints, and sanitized failure ledger are reviewed.
 - Run runtime permission normalization after checkout/install/Prisma generation

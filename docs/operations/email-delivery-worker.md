@@ -201,13 +201,42 @@ adds `consumer_disabled`, `consumer_invalid_config`, `shutdown_requested`,
 ## Production Installation
 
 Do not activate worker or provider-event units during local Stage 3.13C work.
-Committed systemd templates use `/etc/negotaitions/env.production`;
-worker/retention timers and manual canary/quarantine units remain disabled. The
-provider-event consumer service and provider-event reconciliation timer are
+Committed systemd templates use `/etc/negotaitions/env.production`. Installing
+templates does not enable anything by itself. The normal delivery service is a
+static oneshot triggered by `negotiations-email-worker.timer`; do not enable
+`negotiations-email-worker.service` directly. The service orders after
+`negotaitions-poc.service` and `network-online.target`, but it does not require
+or start the application service.
+
+The normal worker must remain stopped during the isolated provider/outbox
+production canary. The canary uses
+`negotiations-email-canary@<EmailMessage-ID>.service`, not the normal worker
+timer. After the provider/outbox production canary passes and activation is
+explicitly approved, persist delivery with:
+
+```shell
+sudo systemctl enable --now negotiations-email-worker.timer
+```
+
+Rollback disables the timer without enabling or disabling the static service:
+
+```shell
+sudo systemctl disable --now negotiations-email-worker.timer
+```
+
+Retention cleanup is also timer-triggered. Run `npm run email:retention:dry-run`
+first and verify retention windows/configuration before approved persistent
+activation:
+
+```shell
+sudo systemctl enable --now negotiations-email-retention.timer
+sudo systemctl disable --now negotiations-email-retention.timer
+```
+
+The provider-event consumer service and provider-event reconciliation timer are
 persistable through explicit `systemctl enable` commands after controlled
-validation; installing their templates does not enable them. The reconciliation
-service remains a timer-triggered oneshot and must not be enabled directly. The
-normal worker must remain stopped during the isolated canary.
+validation. The reconciliation service remains a timer-triggered oneshot and
+must not be enabled directly.
 
 Production standalone ops scripts consume env already injected by systemd. With
 `NODE_ENV=production`, they do not load the application `.env.production`; keep

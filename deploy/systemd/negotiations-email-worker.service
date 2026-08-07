@@ -5,8 +5,8 @@ Description=NegotAItions email delivery worker sweep
 # and configuring the provider in /etc/negotaitions/env.production.
 After=network-online.target
 Wants=network-online.target
-# Recommend running after the main app is healthy.
-After=negotiations-app.service
+# Run sweeps only after the production app unit ordering point.
+After=negotaitions-poc.service
 
 [Service]
 Type=oneshot

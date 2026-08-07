@@ -48,6 +48,12 @@ npm run email:retention:dry-run
 npm run email:retention:cleanup
 ```
 
+Production retention is timer-triggered. The service remains static and is not
+enabled directly; after dry-run passes, retention windows/configuration are
+valid, and activation is explicitly approved, persist cleanup with
+`sudo systemctl enable --now negotiations-email-retention.timer`. Roll back with
+`sudo systemctl disable --now negotiations-email-retention.timer`.
+
 If retention rules conflict, content minimization should happen earlier while suppression/event semantics follow the longer retention window.
 
 ## Admin journal reveal

@@ -201,8 +201,10 @@ Cleanup is bounded, idempotent, and supports dry-run.
 - `email:backlog:quarantine` is dry-run by default, requires `--apply` to
   mutate, uses a strict 1..500 batch, handles password-reset messages only,
   never creates a provider, and clears sensitive fields on cancellation.
-- Normal worker and retention timers plus the manual canary systemd unit remain
-  disabled repository templates; this stage does not install or enable them.
+- Normal worker and retention services remain static systemd oneshots. Their
+  timers are installed disabled by default and become persistable only after the
+  provider/outbox production canary or retention dry-run prerequisites pass and
+  explicit activation approval is recorded.
 - `email:events:consume` runs the disabled-by-default Data Streams consumer.
   It refuses to run when `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`.
 - `email:events:reconcile` remains a bounded unmatched-event reconciliation

@@ -1,6 +1,8 @@
 [Unit]
 Description=Run NegotAItions email delivery worker every minute
-# Disabled by default. To enable:
+# Installed disabled by default. The controlled production canary uses
+# negotiations-email-canary@<id>.service, not this normal worker timer.
+# After a successful production canary and explicit approval, enable with:
 #   systemctl enable --now negotiations-email-worker.timer
 
 [Timer]
@@ -11,5 +13,4 @@ Persistent=true
 Unit=negotiations-email-worker.service
 
 [Install]
-# WantedBy=timers.target
-# DO NOT enable until email delivery is fully activated and canary sweeps pass.
+WantedBy=timers.target
