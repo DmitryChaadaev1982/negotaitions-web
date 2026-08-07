@@ -158,7 +158,14 @@ function parseDataStreamsEndpoint(enabled: boolean): string | null {
   return url.origin;
 }
 
-function parseDataStreamsStreamName(enabled: boolean): string | null {
+const SIMPLE_DATA_STREAMS_STREAM_NAME_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+const DATA_STREAMS_RESOURCE_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+const DATA_STREAMS_FULL_PATH_MAX_LENGTH = 512;
+
+function parseDataStreamsStreamName(
+  enabled: boolean,
+  expectedRegion: string,
+): string | null {
   const streamName = parseServerRuntimeSetting(
     "YANDEX_DATA_STREAMS_STREAM_NAME",
   ) as string | null;
@@ -170,11 +177,61 @@ function parseDataStreamsStreamName(enabled: boolean): string | null {
     }
     return null;
   }
-  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(streamName)) {
+  if (SIMPLE_DATA_STREAMS_STREAM_NAME_RE.test(streamName)) {
+    return streamName;
+  }
+
+  const rejectsPathMeta =
+    streamName.includes("?") ||
+    streamName.includes("#") ||
+    streamName.includes("://") ||
+    streamName.includes("\\");
+  if (
+    !streamName.startsWith("/") ||
+    streamName.length > DATA_STREAMS_FULL_PATH_MAX_LENGTH ||
+    rejectsPathMeta
+  ) {
     throw new Error(
-      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Expected 1..128 characters: letters, digits, underscore, dot, colon, or hyphen.",
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Expected either a simple 1..128 stream name (letters, digits, underscore, dot, colon, hyphen) or a full Yandex stream path '/<region>/<folder-id>/<database-id>/<stream-name>'.",
     );
   }
+
+  const components = streamName.split("/");
+  if (components.length !== 5) {
+    throw new Error(
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Full stream path must be exactly '/<region>/<folder-id>/<database-id>/<stream-name>'.",
+    );
+  }
+
+  const [, region, folderId, databaseId, streamLeaf] = components;
+  if (
+    !region ||
+    !folderId ||
+    !databaseId ||
+    !streamLeaf ||
+    folderId.includes("..") ||
+    databaseId.includes("..") ||
+    streamLeaf.includes("..")
+  ) {
+    throw new Error(
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Full stream path contains malformed components.",
+    );
+  }
+  if (region !== expectedRegion) {
+    throw new Error(
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Stream path region must match YANDEX_DATA_STREAMS_REGION.",
+    );
+  }
+  if (
+    !DATA_STREAMS_RESOURCE_ID_RE.test(folderId) ||
+    !DATA_STREAMS_RESOURCE_ID_RE.test(databaseId) ||
+    !SIMPLE_DATA_STREAMS_STREAM_NAME_RE.test(streamLeaf)
+  ) {
+    throw new Error(
+      "Invalid YANDEX_DATA_STREAMS_STREAM_NAME. Full stream path components must use safe identifiers, and stream-name must be 1..128 characters: letters, digits, underscore, dot, colon, or hyphen.",
+    );
+  }
+
   return streamName;
 }
 
@@ -234,6 +291,9 @@ export function getEmailConfig(): EmailConfig {
       "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS must be shorter than EMAIL_PROCESSING_LEASE_SECONDS minus EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS.",
     );
   }
+  const dataStreamsRegion = parseServerRuntimeSetting(
+    "YANDEX_DATA_STREAMS_REGION",
+  ) as string;
 
   return {
     deliveryEnabled,
@@ -305,8 +365,11 @@ export function getEmailConfig(): EmailConfig {
     providerEventIngestion: {
       enabled: providerEventIngestionEnabled,
       endpoint: parseDataStreamsEndpoint(providerEventIngestionEnabled),
-      region: parseServerRuntimeSetting("YANDEX_DATA_STREAMS_REGION") as string,
-      streamName: parseDataStreamsStreamName(providerEventIngestionEnabled),
+      region: dataStreamsRegion,
+      streamName: parseDataStreamsStreamName(
+        providerEventIngestionEnabled,
+        dataStreamsRegion,
+      ),
       accessKeyId: dataStreamsAccessKeyId,
       secretAccessKey: dataStreamsSecretAccessKey,
       initialPosition: parseProviderEventInitialPosition(),

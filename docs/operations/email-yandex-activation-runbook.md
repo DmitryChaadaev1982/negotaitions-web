@@ -117,7 +117,10 @@ Do not activate Postbox during remediation. Future controlled activation:
 10. Stage provider-event consumer env with
     `EMAIL_PROVIDER_EVENT_INGESTION_ENABLED=false`, dedicated
     `YANDEX_DATA_STREAMS_*` credentials, the approved HTTPS Yandex Data Streams
-    endpoint, stream name, and conservative polling/checkpoint defaults. Never
+    endpoint, and stream name in the approved form
+    `/ru-central1/<folder-id>/<database-id>/<stream-name>` (or a reviewed simple
+    leaf stream name when that deployment mode applies), plus conservative
+    polling/checkpoint defaults. Never
     print secret values.
 11. Install disabled-by-default units from `deploy/systemd/`:
     - `negotiations-email-worker.service` + `.timer`

@@ -15,6 +15,9 @@ import { doesSuppressionApply } from "@/lib/email/suppression";
 import { getTemplateKeys, getTemplateLocales, loadTemplate, validateTemplateRegistry } from "@/lib/email/templates";
 import { calculateRetryAt } from "@/lib/email/worker";
 
+const PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME =
+  "/ru-central1/b1gfciimoqrcnngfno6a/etneeqovfthv26r9bkhb/negotaitions-postbox-events-prod";
+
 function withEnv<T>(patch: Record<string, string | undefined>, fn: () => T): T {
   const previous = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(patch)) {
@@ -161,6 +164,91 @@ test("email config defaults are disabled and validates bounds", () => {
       },
       () => getEmailConfig(),
     ),
+  );
+});
+
+test("provider-event stream name accepts simple names and Yandex full stream paths", () => {
+  const simple = withEnv(
+    {
+      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+      YANDEX_DATA_STREAMS_REGION: "ru-central1",
+      YANDEX_DATA_STREAMS_STREAM_NAME: "postbox-events",
+    },
+    () => getEmailConfig().providerEventIngestion.streamName,
+  );
+  assert.equal(simple, "postbox-events");
+
+  const fullPath = withEnv(
+    {
+      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+      YANDEX_DATA_STREAMS_REGION: "ru-central1",
+      YANDEX_DATA_STREAMS_STREAM_NAME: PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME,
+    },
+    () => getEmailConfig().providerEventIngestion.streamName,
+  );
+  assert.equal(fullPath, PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME);
+});
+
+test("provider-event stream name rejects malformed path-like values", () => {
+  const invalidValues = [
+    "https://yds.serverless.yandexcloud.net/ru-central1/folder/database/stream",
+    "/ru-central1/folder/database/stream/extra",
+    "/ru-central1/folder/database/../stream",
+    "/ru-central1//database/stream",
+    "/ru-central1/folder/database/stream?x=1",
+    "/ru-central1/folder/database/stream#frag",
+    "/ru-central1/folder/database/",
+  ];
+
+  for (const streamName of invalidValues) {
+    assert.throws(
+      () =>
+        withEnv(
+          {
+            EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+            YANDEX_DATA_STREAMS_REGION: "ru-central1",
+            YANDEX_DATA_STREAMS_STREAM_NAME: streamName,
+          },
+          () => getEmailConfig(),
+        ),
+      /Invalid YANDEX_DATA_STREAMS_STREAM_NAME/,
+      streamName,
+    );
+  }
+});
+
+test("getEmailConfig accepts production-shaped full stream path when ingestion is disabled", () => {
+  const config = withEnv(
+    {
+      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+      YANDEX_DATA_STREAMS_REGION: "ru-central1",
+      YANDEX_DATA_STREAMS_STREAM_NAME: PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME,
+    },
+    () => getEmailConfig(),
+  );
+  assert.equal(config.providerEventIngestion.enabled, false);
+  assert.equal(
+    config.providerEventIngestion.streamName,
+    PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME,
+  );
+});
+
+test("getEmailConfig accepts production-shaped full stream path when ingestion is enabled", () => {
+  const config = withEnv(
+    {
+      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "true",
+      YANDEX_DATA_STREAMS_ENDPOINT: "https://yds.serverless.yandexcloud.net",
+      YANDEX_DATA_STREAMS_REGION: "ru-central1",
+      YANDEX_DATA_STREAMS_STREAM_NAME: PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME,
+      YANDEX_DATA_STREAMS_ACCESS_KEY_ID: "fake-access-key",
+      YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY: "fake-secret-key",
+    },
+    () => getEmailConfig(),
+  );
+  assert.equal(config.providerEventIngestion.enabled, true);
+  assert.equal(
+    config.providerEventIngestion.streamName,
+    PRODUCTION_SHAPED_DATA_STREAMS_STREAM_NAME,
   );
 });
 
