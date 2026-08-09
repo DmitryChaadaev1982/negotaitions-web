@@ -20,7 +20,8 @@ function fixtureSetting(
       key,
       featureArea: "Fixture",
       ownerModules: ["fixture.ts"],
-      parser: { category: "string", defaultValue: null },
+      parser: { category: "string" },
+      classification: "deployment",
       secret: false,
       applicability: "always",
       required: "never",
@@ -85,11 +86,35 @@ test("registry validation rejects an unclassified secret", () => {
   const malformed = fixtureSetting();
   malformed.FIXTURE_SETTING = {
     ...malformed.FIXTURE_SETTING,
-    parser: { category: "secret", defaultValue: null },
+    parser: { category: "secret" },
     secret: undefined as unknown as boolean,
   };
   const issues = validateRuntimeSettingRegistry(malformed);
   assert.ok(issues.some((issue) => issue.code === "INVALID_REGISTRY_ENTRY"));
+});
+
+test("registry validation rejects deployment defaults and test scaffolding", () => {
+  const withDefault = fixtureSetting();
+  withDefault.FIXTURE_SETTING = {
+    ...withDefault.FIXTURE_SETTING,
+    parser: { category: "string", defaultValue: "production-shaped-value" },
+  };
+  assert.ok(
+    validateRuntimeSettingRegistry(withDefault).some(
+      (issue) => issue.code === "INVALID_REGISTRY_ENTRY",
+    ),
+  );
+
+  const testOnly = fixtureSetting();
+  testOnly.FIXTURE_SETTING = {
+    ...testOnly.FIXTURE_SETTING,
+    classification: "test_scaffolding",
+  };
+  assert.ok(
+    validateRuntimeSettingRegistry(testOnly).some(
+      (issue) => issue.code === "INVALID_REGISTRY_ENTRY",
+    ),
+  );
 });
 
 test("AST verifier accepts a registered literal accessor read", () => {

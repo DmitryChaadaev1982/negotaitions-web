@@ -17,6 +17,7 @@ import {
   Stage313cTestDatabaseRefusal,
   STAGE313C_VERIFIER_APPLICATION_NAME,
 } from "./stage-3-13c-test-database";
+import { applyStage313cTestRuntimeEnv } from "./stage-3-13c-test-runtime";
 
 class VerifierRefusal extends Error {
   constructor(public readonly code: string) {
@@ -47,11 +48,9 @@ try {
 
 process.env.DATABASE_URL = databaseUrl;
 process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = randomBytes(32).toString("base64");
-process.env.EMAIL_DELIVERY_ENABLED = "true";
-process.env.EMAIL_PROVIDER = "fake";
-process.env.EMAIL_CANONICAL_BASE_URL = "https://local.negotaitions.ru";
-process.env.EMAIL_LOCAL_PREVIEW_ENABLED = "false";
-process.env.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = "10";
+applyStage313cTestRuntimeEnv({
+  PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: "10",
+});
 delete process.env.YANDEX_POSTBOX_ACCESS_KEY_ID;
 delete process.env.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
 

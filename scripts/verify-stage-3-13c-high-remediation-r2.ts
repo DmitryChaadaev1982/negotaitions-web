@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
 import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
+import { applyStage313cTestRuntimeEnv } from "./stage-3-13c-test-runtime";
 
 try {
   assertApprovedStage313cVerifierChildEnvironment(process.env);
@@ -22,19 +23,9 @@ try {
 const runKey = randomBytes(32).toString("base64");
 process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = runKey;
 
-for (const key of [
-  "EMAIL_ADMIN_TEST_ENABLED",
-  "YANDEX_POSTBOX_ACCESS_KEY_ID",
-  "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
-] as const) {
-  delete process.env[key];
-}
-Object.assign(process.env, {
-  EMAIL_DELIVERY_ENABLED: "true",
-  EMAIL_PROVIDER: "fake",
-  EMAIL_CANONICAL_BASE_URL: "https://local.negotaitions.ru",
-  EMAIL_LOCAL_PREVIEW_ENABLED: "false",
-});
+applyStage313cTestRuntimeEnv();
+delete process.env.YANDEX_POSTBOX_ACCESS_KEY_ID;
+delete process.env.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
 
 const runMarker = `stage313c_r2_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 const ownedUserIds: string[] = [];

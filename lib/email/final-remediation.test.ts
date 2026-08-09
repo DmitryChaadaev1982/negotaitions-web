@@ -5,7 +5,6 @@ import test from "node:test";
 
 import {
   CredentialDispatchFenceError,
-  DEFAULT_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS,
   resolveCredentialDispatchFenceTimeoutMs,
 } from "@/lib/auth/credential-dispatch-fence";
 import {
@@ -64,9 +63,9 @@ test("password-reset provider recipient rejects replacement and malformed identi
 });
 
 test("credential dispatch timeout configuration is bounded and fails closed", () => {
-  assert.equal(
-    resolveCredentialDispatchFenceTimeoutMs(""),
-    DEFAULT_CREDENTIAL_DISPATCH_FENCE_TIMEOUT_MS,
+  assert.throws(
+    () => resolveCredentialDispatchFenceTimeoutMs(""),
+    CredentialDispatchFenceError,
   );
   assert.equal(resolveCredentialDispatchFenceTimeoutMs("50"), 50);
   assert.equal(resolveCredentialDispatchFenceTimeoutMs("30000"), 30_000);

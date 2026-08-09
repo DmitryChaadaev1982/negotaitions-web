@@ -53,8 +53,9 @@ export type EmailConfig = {
     maxConsecutiveFailures: number;
   };
   yandexPostbox: {
-    region: string;
-    endpoint: string;
+    region: string | null;
+    endpoint: string | null;
+    allowedSenders: readonly string[];
     accessKeyId: string | null;
     secretAccessKey: string | null;
     configurationSetName: string | null;
@@ -118,6 +119,49 @@ function parseProviderEventInitialPosition(): EmailProviderEventInitialPosition 
   return parseServerRuntimeSetting(
     "EMAIL_PROVIDER_EVENT_INITIAL_POSITION",
   ) as EmailProviderEventInitialPosition;
+}
+
+function parsePostboxAllowedSenders(): string[] {
+  const raw = parseServerRuntimeSetting("YANDEX_POSTBOX_ALLOWED_SENDERS") as
+    | string
+    | null;
+  if (!raw) return [];
+  const senders = raw
+    .split(",")
+    .map((value) =>
+      validateEmailAddress(value.trim(), "YANDEX_POSTBOX_ALLOWED_SENDERS"),
+    )
+    .filter(Boolean);
+  if (senders.length === 0) {
+    throw new Error("YANDEX_POSTBOX_ALLOWED_SENDERS must not be empty.");
+  }
+  return [...new Set(senders.map((value) => value.toLowerCase()))];
+}
+
+function parsePostboxEndpoint(): string | null {
+  const raw = parseServerRuntimeSetting("YANDEX_POSTBOX_ENDPOINT") as
+    | string
+    | null;
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Invalid YANDEX_POSTBOX_ENDPOINT.");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname !== "" && url.pathname !== "/")
+  ) {
+    throw new Error(
+      "YANDEX_POSTBOX_ENDPOINT must be an HTTPS origin without credentials, path, query, or fragment.",
+    );
+  }
+  return url.origin;
 }
 
 function parseDataStreamsEndpoint(enabled: boolean): string | null {
@@ -243,6 +287,11 @@ export function getEmailConfig(): EmailConfig {
     "EMAIL_PROVIDER_EVENT_INGESTION_ENABLED",
   ) as boolean;
   const provider = parseProvider();
+  const yandexRegion = parseServerRuntimeSetting("YANDEX_POSTBOX_REGION") as
+    | string
+    | null;
+  const yandexEndpoint = parsePostboxEndpoint();
+  const yandexAllowedSenders = parsePostboxAllowedSenders();
   const yandexAccessKeyId = parseServerRuntimeSetting(
     "YANDEX_POSTBOX_ACCESS_KEY_ID",
   ) as string | null;
@@ -260,9 +309,14 @@ export function getEmailConfig(): EmailConfig {
     throw new Error("EMAIL_PROVIDER must not be disabled when EMAIL_DELIVERY_ENABLED=true.");
   }
   if (deliveryEnabled && provider === "yandex_postbox") {
-    if (!yandexAccessKeyId || !yandexSecretAccessKey) {
+    if (
+      !yandexRegion ||
+      !yandexEndpoint ||
+      !yandexAccessKeyId ||
+      !yandexSecretAccessKey
+    ) {
       throw new Error(
-        "Missing Yandex Postbox credentials for enabled email delivery.",
+        "Missing required Yandex Postbox runtime configuration for enabled email delivery.",
       );
     }
   }
@@ -294,6 +348,31 @@ export function getEmailConfig(): EmailConfig {
   const dataStreamsRegion = parseServerRuntimeSetting(
     "YANDEX_DATA_STREAMS_REGION",
   ) as string;
+  const from = {
+    "no-reply": validateEmailAddress(
+      parseServerRuntimeSetting("EMAIL_FROM_NO_REPLY") as string,
+      "EMAIL_FROM_NO_REPLY",
+    ),
+    notifications: validateEmailAddress(
+      parseServerRuntimeSetting("EMAIL_FROM_NOTIFICATIONS") as string,
+      "EMAIL_FROM_NOTIFICATIONS",
+    ),
+    invitations: validateEmailAddress(
+      parseServerRuntimeSetting("EMAIL_FROM_INVITATIONS") as string,
+      "EMAIL_FROM_INVITATIONS",
+    ),
+  };
+  if (
+    deliveryEnabled &&
+    provider === "yandex_postbox" &&
+    Object.values(from).some(
+      (sender) => !yandexAllowedSenders.includes(sender.toLowerCase()),
+    )
+  ) {
+    throw new Error(
+      "Every EMAIL_FROM_* address must be present in YANDEX_POSTBOX_ALLOWED_SENDERS when Postbox delivery is enabled.",
+    );
+  }
 
   return {
     deliveryEnabled,
@@ -302,20 +381,7 @@ export function getEmailConfig(): EmailConfig {
     ) as boolean,
     provider,
     canonicalBaseUrl: parseCanonicalBaseUrl(),
-    from: {
-      "no-reply": validateEmailAddress(
-        parseServerRuntimeSetting("EMAIL_FROM_NO_REPLY") as string,
-        "EMAIL_FROM_NO_REPLY",
-      ),
-      notifications: validateEmailAddress(
-        parseServerRuntimeSetting("EMAIL_FROM_NOTIFICATIONS") as string,
-        "EMAIL_FROM_NOTIFICATIONS",
-      ),
-      invitations: validateEmailAddress(
-        parseServerRuntimeSetting("EMAIL_FROM_INVITATIONS") as string,
-        "EMAIL_FROM_INVITATIONS",
-      ),
-    },
+    from,
     replyTo: {
       support: validateEmailAddress(
         parseServerRuntimeSetting("EMAIL_REPLY_TO_SUPPORT") as string,
@@ -402,8 +468,9 @@ export function getEmailConfig(): EmailConfig {
       ) as number,
     },
     yandexPostbox: {
-      region: parseServerRuntimeSetting("YANDEX_POSTBOX_REGION") as string,
-      endpoint: parseServerRuntimeSetting("YANDEX_POSTBOX_ENDPOINT") as string,
+      region: yandexRegion,
+      endpoint: yandexEndpoint,
+      allowedSenders: yandexAllowedSenders,
       accessKeyId: yandexAccessKeyId,
       secretAccessKey: yandexSecretAccessKey,
       configurationSetName: parseServerRuntimeSetting(

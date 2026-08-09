@@ -5,6 +5,7 @@ import {
   getSanitizedE2eDatabaseDescriptor,
   resolveE2eDatabaseUrl,
 } from "../tests/e2e/helpers/e2e-database";
+import { applyStage313cTestRuntimeEnv } from "./stage-3-13c-test-runtime";
 
 let expectedDatabase: string;
 try {
@@ -30,6 +31,13 @@ try {
  * the in-memory fake and every provider event is a locally constructed payload.
  */
 
+applyStage313cTestRuntimeEnv({
+  EMAIL_ADMIN_TEST_ENABLED: "true",
+  EMAIL_CANONICAL_BASE_URL: "https://negotaitions.ru",
+  EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS: "3600",
+  EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS: "5",
+});
+
 for (const key of [
   "YANDEX_POSTBOX_ACCESS_KEY_ID",
   "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
@@ -38,18 +46,6 @@ for (const key of [
 ]) {
   delete process.env[key];
 }
-
-Object.assign(process.env, {
-  EMAIL_DELIVERY_ENABLED: "true",
-  EMAIL_PROVIDER: "fake",
-  EMAIL_ADMIN_TEST_ENABLED: "true",
-  EMAIL_CANONICAL_BASE_URL: "https://negotaitions.ru",
-  EMAIL_LOCAL_PREVIEW_ENABLED: "false",
-  EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS: "3600",
-  // Lowest value the runtime parser accepts; the unmatched-bounce case forces
-  // nextReconcileAt into the past explicitly, so the delay is not load-bearing.
-  EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS: "5",
-});
 
 /** Provider label the Postbox stream parser emits on every provider event. */
 const PROVIDER = "yandex_postbox";

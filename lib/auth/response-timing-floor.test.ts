@@ -26,12 +26,15 @@ function withEnv<T>(
   }
 }
 
-test("getForgotPasswordTimingFloorMs returns default 180 when env absent", () => {
-  const ms = withEnv(
-    { PASSWORD_RESET_RESPONSE_FLOOR_MS: undefined },
-    () => getForgotPasswordTimingFloorMs({}),
+test("getForgotPasswordTimingFloorMs fails closed when env is absent", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        { PASSWORD_RESET_RESPONSE_FLOOR_MS: undefined },
+        () => getForgotPasswordTimingFloorMs({}),
+      ),
+    /Missing required runtime setting: PASSWORD_RESET_RESPONSE_FLOOR_MS/,
   );
-  assert.equal(ms, 180);
 });
 
 test("getForgotPasswordTimingFloorMs honours valid overrides", () => {

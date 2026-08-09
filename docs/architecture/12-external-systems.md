@@ -26,6 +26,10 @@
 - Yandex Postbox:
   - Sends password-reset/account-security mail only when delivery is explicitly
     enabled.
+  - The verified production sender policy allows
+    `no-reply@negotaitions.ru`, `notifications@negotaitions.ru`, and
+    `invitations@negotaitions.ru`; all application sender roles must resolve to
+    that explicit allowlist.
   - Provider-event subscription should emit only Send, Delivery, DeliveryDelay,
     Bounce, Complaint, and Rendering Failure during Stage 3.13C canary.
 - Yandex Data Streams:
@@ -62,6 +66,8 @@
 - Postbox and Data Streams credentials are independently classified by the
   typed server runtime-setting registry. Administrative diagnostics derive
   from that classification and always serialize secret values as `null`.
+- Control-plane identifiers and the sender/template matrix are recorded in
+  `email-runtime-and-yandex-cloud.md` without credentials.
 
 ## Source Notes
 

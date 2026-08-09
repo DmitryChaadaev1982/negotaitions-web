@@ -55,8 +55,8 @@ export class YandexPostboxEmailProvider implements EmailProvider {
   constructor(config = getEmailConfig()) {
     const { accessKeyId, secretAccessKey, region, endpoint, configurationSetName } =
       config.yandexPostbox;
-    if (!accessKeyId || !secretAccessKey) {
-      throw new Error("Missing Yandex Postbox credentials.");
+    if (!region || !endpoint || !accessKeyId || !secretAccessKey) {
+      throw new Error("Missing required Yandex Postbox runtime configuration.");
     }
     this.configurationSetName = configurationSetName;
     this.requestTimeoutMs = config.providerRequestTimeoutMs;

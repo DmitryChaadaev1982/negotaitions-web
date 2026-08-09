@@ -20,7 +20,7 @@ test.describe("admin diagnostics env display", () => {
     expect(JSON.stringify(groups)).not.toMatch(/\*{2,}/);
   });
 
-  test("defaulted runtime values are shown as defaults, not missing", async () => {
+  test("missing deployment values are visible and never restored from defaults", async () => {
     const previous = new Map<string, string | undefined>();
     for (const key of [
       "PASSWORD_RESET_TOKEN_TTL_MINUTES",
@@ -36,27 +36,29 @@ test.describe("admin diagnostics env display", () => {
       const groups = getAdminEnvironmentDisplayGroups();
       const rows = groups.flatMap((group) => group.items);
       expect(rows.find((row) => row.key === "PASSWORD_RESET_TOKEN_TTL_MINUTES")).toMatchObject({
-        status: "using_effective_default",
-        value: "30",
-        valueSource: "default",
+        status: "missing_required",
+        value: null,
+        valueSource: "missing",
       });
       expect(rows.find((row) => row.key === "PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS")).toMatchObject({
-        status: "using_effective_default",
-        value: "60",
-        valueSource: "default",
+        status: "missing_required",
+        value: null,
+        valueSource: "missing",
       });
       expect(rows.find((row) => row.key === "PASSWORD_RESET_MAX_REQUESTS_PER_HOUR")).toMatchObject({
-        status: "using_effective_default",
-        value: "5",
-        valueSource: "default",
+        status: "missing_required",
+        value: null,
+        valueSource: "missing",
       });
       expect(rows.find((row) => row.key === "YANDEX_POSTBOX_REGION")).toMatchObject({
-        status: "using_effective_default",
-        value: "ru-central1",
+        status: "not_applicable",
+        value: null,
+        valueSource: "not_applicable",
       });
       expect(rows.find((row) => row.key === "YANDEX_POSTBOX_ENDPOINT")).toMatchObject({
-        status: "using_effective_default",
-        value: "https://postbox.cloud.yandex.net",
+        status: "not_applicable",
+        value: null,
+        valueSource: "not_applicable",
       });
     } finally {
       for (const [key, value] of previous) {
@@ -70,7 +72,7 @@ test.describe("admin diagnostics env display", () => {
     const previous = new Map<string, string | undefined>();
     for (const [key, value] of Object.entries({
       TRUSTED_PROXY_ENABLED: "true",
-      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: undefined,
+      EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
       YANDEX_DATA_STREAMS_ACCESS_KEY_ID: "access-key-value",
       YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY: "secret-key-value",
       YANDEX_POSTBOX_CONFIGURATION_SET: undefined,

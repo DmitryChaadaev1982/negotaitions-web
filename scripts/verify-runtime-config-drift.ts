@@ -156,7 +156,13 @@ export function validateRuntimeSettingRegistry(
       typeof definition.secret !== "boolean" ||
       !definition.ownerModules?.length ||
       !definition.diagnostics?.description ||
-      (definition.parser.category === "secret") !== definition.secret
+      (definition.parser.category === "secret") !== definition.secret ||
+      definition.classification === "test_scaffolding" ||
+      (definition.classification === "deployment" &&
+        "defaultValue" in definition.parser) ||
+      (definition.classification === "intrinsic" &&
+        (!("defaultValue" in definition.parser) ||
+          definition.parser.defaultValue === undefined))
     ) {
       issues.push({
         code: "INVALID_REGISTRY_ENTRY",

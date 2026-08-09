@@ -40,20 +40,17 @@ test("password reset tokens are opaque 32-byte values stored by hash", () => {
   assert.equal(isPasswordResetTokenShape("not-a-token"), false);
 });
 
-test("password reset config has bounded secure defaults", () => {
-  const defaults = withEnv(
-    {
-      PASSWORD_RESET_TOKEN_TTL_MINUTES: undefined,
-      PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: undefined,
-      PASSWORD_RESET_MAX_REQUESTS_PER_HOUR: undefined,
-    },
-    () => getPasswordResetConfig(),
-  );
-  assert.deepEqual(defaults, {
-    ttlMinutes: 30,
-    cooldownSeconds: 60,
-    maxPerAccountPerHour: 5,
-  });
+test("password reset config requires explicit bounded values", () => {
+  for (const key of [
+    "PASSWORD_RESET_TOKEN_TTL_MINUTES",
+    "PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS",
+    "PASSWORD_RESET_MAX_REQUESTS_PER_HOUR",
+  ]) {
+    assert.throws(
+      () => withEnv({ [key]: undefined }, () => getPasswordResetConfig()),
+      new RegExp(`Missing required runtime setting: ${key}`),
+    );
+  }
   assert.deepEqual(
     withEnv(
       {

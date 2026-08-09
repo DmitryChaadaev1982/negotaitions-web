@@ -91,7 +91,7 @@ test("missing production provider-event env fails validation instead of loading 
 
       assert.throws(
         () => getEmailConfig(),
-        /Missing Yandex Data Streams credentials for enabled provider-event ingestion\./,
+        /Missing required runtime setting: YANDEX_DATA_STREAMS_ACCESS_KEY_ID/,
       );
     },
   );

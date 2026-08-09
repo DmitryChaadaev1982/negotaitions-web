@@ -58,6 +58,24 @@ test("descriptor keys and the in-scope runtime key set are equal in both directi
   assert.equal(actual.size, EXPECTED_DIAGNOSTIC_KEYS.length);
 });
 
+test("deployment settings have no parser default or intrinsic diagnostics source", () => {
+  const byKey = new Map(descriptors().map((descriptor) => [descriptor.key, descriptor]));
+  for (const key of SERVER_RUNTIME_SETTING_KEYS) {
+    const definition = SERVER_RUNTIME_SETTINGS[key];
+    if (definition.classification !== "deployment") continue;
+    assert.equal(
+      "defaultValue" in definition.parser,
+      false,
+      `${key} retained a deployment fallback`,
+    );
+    assert.notEqual(
+      byKey.get(key)?.valueSource,
+      "intrinsic",
+      `${key} reported an intrinsic/default source`,
+    );
+  }
+});
+
 test("no descriptor is duplicated and every descriptor reaches a display group", () => {
   const keys = descriptors().map((descriptor) => descriptor.key);
   assert.equal(new Set(keys).size, keys.length, "duplicate descriptor key");
@@ -123,12 +141,10 @@ test("the reversible masking helper is gone", async () => {
   assert.equal(source.includes("maskSecretValue"), false);
 });
 
-test("admin diagnostics report effective defaults instead of missing raw env", () => {
+test("admin diagnostics report missing deployment settings without restoring defaults", () => {
   const items = withEnv(
     {
       PASSWORD_RESET_TOKEN_TTL_MINUTES: undefined,
-      PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: undefined,
-      PASSWORD_RESET_MAX_REQUESTS_PER_HOUR: undefined,
       YANDEX_POSTBOX_REGION: undefined,
       YANDEX_POSTBOX_ENDPOINT: undefined,
       EMAIL_PROVIDER: "disabled",
@@ -138,49 +154,32 @@ test("admin diagnostics report effective defaults instead of missing raw env", (
   );
 
   const ttl = items.find((item) => item.key === "PASSWORD_RESET_TOKEN_TTL_MINUTES");
-  assert.equal(ttl?.status, "using_effective_default");
-  assert.equal(ttl?.value, "30");
-  assert.equal(
-    items.find((item) => item.key === "YANDEX_POSTBOX_REGION")?.value,
-    "ru-central1",
-  );
-  assert.equal(
-    items.find((item) => item.key === "YANDEX_POSTBOX_ENDPOINT")?.value,
-    "https://postbox.cloud.yandex.net",
-  );
+  assert.equal(ttl?.status, "missing_required");
+  assert.equal(ttl?.valueSource, "missing");
+  assert.equal(ttl?.value, null);
+  for (const key of ["YANDEX_POSTBOX_REGION", "YANDEX_POSTBOX_ENDPOINT"]) {
+    const item = items.find((row) => row.key === key);
+    assert.equal(item?.status, "not_applicable");
+    assert.equal(item?.valueSource, "not_applicable");
+    assert.equal(item?.value, null);
+  }
 });
 
-test("defaults shown by diagnostics come from the runtime parser", async () => {
-  const { getEmailConfig } = await import("@/lib/email/config");
+test("removed operational defaults cannot reappear through parser or diagnostics", () => {
   const items = withEnv(
     {
       EMAIL_WORKER_BATCH_SIZE: undefined,
-      EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY: undefined,
-      EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES: undefined,
+      EMAIL_FROM_NOTIFICATIONS: undefined,
     },
-    () => {
-      const config = getEmailConfig();
-      return {
-        rows: rows(),
-        workerBatchSize: config.workerBatchSize,
-        shardConcurrency: config.providerEventIngestion.shardConcurrency,
-        maxConsecutiveFailures:
-          config.providerEventIngestion.maxConsecutiveFailures,
-      };
-    },
+    rows,
   );
 
-  const valueOf = (key: string) =>
-    items.rows.find((item) => item.key === key)?.value;
-  assert.equal(valueOf("EMAIL_WORKER_BATCH_SIZE"), String(items.workerBatchSize));
-  assert.equal(
-    valueOf("EMAIL_PROVIDER_EVENT_SHARD_CONCURRENCY"),
-    String(items.shardConcurrency),
-  );
-  assert.equal(
-    valueOf("EMAIL_PROVIDER_EVENT_MAX_CONSECUTIVE_FAILURES"),
-    String(items.maxConsecutiveFailures),
-  );
+  for (const key of ["EMAIL_WORKER_BATCH_SIZE", "EMAIL_FROM_NOTIFICATIONS"]) {
+    const item = items.find((row) => row.key === key);
+    assert.equal(item?.status, "missing_required");
+    assert.equal(item?.valueSource, "missing");
+    assert.equal(item?.value, null);
+  }
 });
 
 test("disabled feature children are not reported as missing required", () => {
@@ -196,6 +195,7 @@ test("disabled feature children are not reported as missing required", () => {
       EMAIL_SENSITIVE_PAYLOAD_KEY: undefined,
       YANDEX_POSTBOX_ACCESS_KEY_ID: undefined,
       YANDEX_POSTBOX_SECRET_ACCESS_KEY: undefined,
+      YANDEX_POSTBOX_ALLOWED_SENDERS: undefined,
     },
     rows,
   );
@@ -212,6 +212,10 @@ test("disabled feature children are not reported as missing required", () => {
     "YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY",
     "YANDEX_POSTBOX_ACCESS_KEY_ID",
     "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
+    "YANDEX_POSTBOX_REGION",
+    "YANDEX_POSTBOX_ENDPOINT",
+    "YANDEX_POSTBOX_CONFIGURATION_SET",
+    "YANDEX_POSTBOX_ALLOWED_SENDERS",
   ]) {
     const item = items.find((row) => row.key === key);
     assert.equal(
@@ -277,6 +281,36 @@ test("required children are reported missing once the feature is enabled", () =>
     const item = items.find((row) => row.key === key);
     assert.equal(item?.status, "missing_required", `${key} was not required`);
     assert.equal(item?.required, true);
+  }
+});
+
+test("all Postbox runtime requirements become visible only when delivery uses Postbox", () => {
+  const items = withEnv(
+    {
+      EMAIL_DELIVERY_ENABLED: "true",
+      EMAIL_PROVIDER: "yandex_postbox",
+      YANDEX_POSTBOX_REGION: undefined,
+      YANDEX_POSTBOX_ENDPOINT: undefined,
+      YANDEX_POSTBOX_ACCESS_KEY_ID: undefined,
+      YANDEX_POSTBOX_SECRET_ACCESS_KEY: undefined,
+      YANDEX_POSTBOX_ALLOWED_SENDERS: undefined,
+    },
+    rows,
+  );
+
+  for (const key of [
+    "YANDEX_POSTBOX_REGION",
+    "YANDEX_POSTBOX_ENDPOINT",
+    "YANDEX_POSTBOX_ACCESS_KEY_ID",
+    "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
+    "YANDEX_POSTBOX_ALLOWED_SENDERS",
+  ]) {
+    const item = items.find((row) => row.key === key);
+    assert.equal(item?.status, "missing_required", `${key} was not required`);
+    assert.equal(item?.valueSource, "missing");
+    assert.equal(item?.required, true);
+    assert.equal(item?.applicable, true);
+    assert.equal(item?.value, null);
   }
 });
 

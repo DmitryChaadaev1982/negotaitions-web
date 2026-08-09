@@ -115,21 +115,27 @@ test("renderer rejects missing, unknown, and unsafe URL variables", () => {
   );
 });
 
-test("email config defaults are disabled and validates bounds", () => {
-  const config = withEnv(
-    {
-      EMAIL_DELIVERY_ENABLED: undefined,
-      EMAIL_LOCAL_PREVIEW_ENABLED: undefined,
-      EMAIL_PROVIDER: undefined,
-      EMAIL_CANONICAL_BASE_URL: undefined,
-      EMAIL_MAX_ATTEMPTS: undefined,
-    },
-    () => getEmailConfig(),
-  );
-  assert.equal(config.deliveryEnabled, false);
-  assert.equal(config.localPreviewEnabled, false);
-  assert.equal(config.provider, "disabled");
-  assert.equal(config.maxAttempts, 5);
+test("email config requires explicit deployment settings and validates bounds", () => {
+  for (const key of [
+    "EMAIL_DELIVERY_ENABLED",
+    "EMAIL_LOCAL_PREVIEW_ENABLED",
+    "EMAIL_PROVIDER",
+    "EMAIL_CANONICAL_BASE_URL",
+    "EMAIL_FROM_NO_REPLY",
+    "EMAIL_FROM_NOTIFICATIONS",
+    "EMAIL_FROM_INVITATIONS",
+    "EMAIL_REPLY_TO_SUPPORT",
+    "EMAIL_REPLY_TO_SECURITY",
+    "EMAIL_REPLY_TO_BUSINESS",
+    "EMAIL_OPERATOR_NAME",
+    "EMAIL_MAX_ATTEMPTS",
+  ]) {
+    assert.throws(
+      () => withEnv({ [key]: undefined }, () => getEmailConfig()),
+      new RegExp(`Missing required runtime setting: ${key}`),
+    );
+  }
+
   assert.equal(
     withEnv({ EMAIL_LOCAL_PREVIEW_ENABLED: "true" }, () => getEmailConfig())
       .localPreviewEnabled,
@@ -159,12 +165,125 @@ test("email config defaults are disabled and validates bounds", () => {
       {
         EMAIL_DELIVERY_ENABLED: "true",
         EMAIL_PROVIDER: "yandex_postbox",
+        EMAIL_FROM_NO_REPLY: "no-reply@negotaitions.ru",
+        EMAIL_FROM_NOTIFICATIONS: "notifications@negotaitions.ru",
+        EMAIL_FROM_INVITATIONS: "invitations@negotaitions.ru",
+        YANDEX_POSTBOX_REGION: "ru-central1",
+        YANDEX_POSTBOX_ENDPOINT: "https://postbox.cloud.yandex.net",
+        YANDEX_POSTBOX_ALLOWED_SENDERS:
+          "no-reply@negotaitions.ru,notifications@negotaitions.ru,invitations@negotaitions.ru",
         YANDEX_POSTBOX_ACCESS_KEY_ID: undefined,
         YANDEX_POSTBOX_SECRET_ACCESS_KEY: undefined,
       },
       () => getEmailConfig(),
     ),
   );
+});
+
+test("Postbox endpoint and region fail closed only when Postbox delivery is enabled", () => {
+  const disabled = withEnv(
+    {
+      EMAIL_DELIVERY_ENABLED: "false",
+      EMAIL_PROVIDER: "disabled",
+      YANDEX_POSTBOX_REGION: undefined,
+      YANDEX_POSTBOX_ENDPOINT: undefined,
+      YANDEX_POSTBOX_ACCESS_KEY_ID: undefined,
+      YANDEX_POSTBOX_SECRET_ACCESS_KEY: undefined,
+    },
+    () => getEmailConfig(),
+  );
+  assert.equal(disabled.yandexPostbox.region, null);
+  assert.equal(disabled.yandexPostbox.endpoint, null);
+  assert.equal(disabled.yandexPostbox.accessKeyId, null);
+  assert.equal(disabled.yandexPostbox.secretAccessKey, null);
+
+  const enabledBase = {
+    EMAIL_DELIVERY_ENABLED: "true",
+    EMAIL_PROVIDER: "yandex_postbox",
+    EMAIL_FROM_NO_REPLY: "no-reply@negotaitions.ru",
+    EMAIL_FROM_NOTIFICATIONS: "notifications@negotaitions.ru",
+    EMAIL_FROM_INVITATIONS: "invitations@negotaitions.ru",
+    YANDEX_POSTBOX_REGION: "ru-central1",
+    YANDEX_POSTBOX_ENDPOINT: "https://postbox.cloud.yandex.net",
+    YANDEX_POSTBOX_ALLOWED_SENDERS:
+      "no-reply@negotaitions.ru,notifications@negotaitions.ru,invitations@negotaitions.ru",
+    YANDEX_POSTBOX_ACCESS_KEY_ID: "test-access-key",
+    YANDEX_POSTBOX_SECRET_ACCESS_KEY: "test-secret-key",
+  };
+  for (const key of ["YANDEX_POSTBOX_REGION", "YANDEX_POSTBOX_ENDPOINT"]) {
+    assert.throws(
+      () =>
+        withEnv(
+          { ...enabledBase, [key]: undefined },
+          () => getEmailConfig(),
+        ),
+      new RegExp(`Missing required runtime setting: ${key}`),
+    );
+  }
+});
+
+test("Postbox delivery rejects sender roles outside the verified allowlist", () => {
+  assert.throws(
+    () =>
+      withEnv(
+        {
+          EMAIL_DELIVERY_ENABLED: "true",
+          EMAIL_PROVIDER: "yandex_postbox",
+          EMAIL_FROM_NO_REPLY: "no-reply@negotaitions.ru",
+          EMAIL_FROM_NOTIFICATIONS: "marketing@negotaitions.ru",
+          EMAIL_FROM_INVITATIONS: "invitations@negotaitions.ru",
+          YANDEX_POSTBOX_REGION: "ru-central1",
+          YANDEX_POSTBOX_ENDPOINT: "https://postbox.cloud.yandex.net",
+          YANDEX_POSTBOX_ALLOWED_SENDERS:
+            "no-reply@negotaitions.ru,notifications@negotaitions.ru,invitations@negotaitions.ru",
+          YANDEX_POSTBOX_ACCESS_KEY_ID: "test-access-key",
+          YANDEX_POSTBOX_SECRET_ACCESS_KEY: "test-secret-key",
+        },
+        () => getEmailConfig(),
+      ),
+    /Every EMAIL_FROM_\* address must be present/,
+  );
+});
+
+test("every production template sender role resolves to its verified Postbox sender", () => {
+  const config = withEnv(
+    {
+      EMAIL_DELIVERY_ENABLED: "true",
+      EMAIL_PROVIDER: "yandex_postbox",
+      EMAIL_FROM_NO_REPLY: "no-reply@negotaitions.ru",
+      EMAIL_FROM_NOTIFICATIONS: "notifications@negotaitions.ru",
+      EMAIL_FROM_INVITATIONS: "invitations@negotaitions.ru",
+      YANDEX_POSTBOX_REGION: "ru-central1",
+      YANDEX_POSTBOX_ENDPOINT: "https://postbox.cloud.yandex.net",
+      YANDEX_POSTBOX_ALLOWED_SENDERS:
+        "no-reply@negotaitions.ru,notifications@negotaitions.ru,invitations@negotaitions.ru",
+      YANDEX_POSTBOX_CONFIGURATION_SET: "negotiations-production-events",
+      YANDEX_POSTBOX_ACCESS_KEY_ID: "test-access-key",
+      YANDEX_POSTBOX_SECRET_ACCESS_KEY: "test-secret-key",
+    },
+    () => getEmailConfig(),
+  );
+
+  for (const locale of getTemplateLocales()) {
+    for (const key of getTemplateKeys()) {
+      const template = loadTemplate(key, locale);
+      const fromAddress = config.from[template.metadata.defaultSender];
+      const expectedByRole = {
+        "no-reply": "no-reply@negotaitions.ru",
+        notifications: "notifications@negotaitions.ru",
+        invitations: "invitations@negotaitions.ru",
+      } as const;
+      assert.equal(
+        fromAddress,
+        expectedByRole[template.metadata.defaultSender],
+        `${locale}/${key}`,
+      );
+      assert.ok(
+        config.yandexPostbox.allowedSenders.includes(fromAddress),
+        `${locale}/${key} uses an unverified sender`,
+      );
+    }
+  }
 });
 
 test("provider-event stream name accepts simple names and Yandex full stream paths", () => {

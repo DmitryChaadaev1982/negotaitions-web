@@ -83,9 +83,15 @@ The selected production transport is Yandex Cloud Postbox via the AWS SES v2 com
 
 Providers:
 
-- `disabled`: default no-send mode.
+- `disabled`: explicit no-send mode.
 - `fake`: tests only.
 - `yandex_postbox`: production adapter, inactive unless configured.
+
+Postbox delivery also requires an explicit environment-owned sender allowlist.
+Every `EMAIL_FROM_*` role must resolve to an address in that allowlist before a
+provider client can be created. The verified production policy currently
+allows the `no-reply`, `notifications`, and `invitations` addresses documented
+in `email-runtime-and-yandex-cloud.md`.
 
 The `fake` provider may be inspected through the Stage 3.13C local preview only
 when the exact development guards in `account-security-email-flows.md` hold.
@@ -182,7 +188,7 @@ shutdown within an enforced budget.
 
 ## Retention
 
-Defaults are env-controlled:
+Retention windows are required environment configuration:
 
 - Subject/body/recipient content: 90 days for terminal messages.
 - Delivery attempts: 365 days.

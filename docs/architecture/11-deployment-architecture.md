@@ -21,6 +21,10 @@
   typed registry. Admin diagnostics project from that registry, and an
   AST-based validation gate rejects unregistered or bypassing environment
   access. Registered secrets serialize only presence state with `value: null`.
+- Registry deployment settings have no application defaults. The web
+  `.env.production` and `/etc/negotaitions/env.production` must explicitly
+  supply their applicable values and remain aligned as documented in
+  `email-runtime-and-yandex-cloud.md`.
 - If normal admin-health assembly fails, its outer route catch returns a
   literal environment-independent unavailable contract; it never resolves or
   serializes endpoint, webhook override, parser, or exception details.

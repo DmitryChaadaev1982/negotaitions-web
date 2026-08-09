@@ -101,10 +101,8 @@ test("origin with trailing-dot hostname is rejected", () => {
   assert.ok(canonicalBaseUrlThrows("https://negotaitions.ru."));
 });
 
-test("empty string URL falls back to the approved default origin", () => {
-  // Empty / absent env triggers default "https://negotaitions.ru" which is approved.
-  // This is intentional: misconfigured env falls back safely to the production origin.
-  assert.ok(canonicalBaseUrlAccepted(""));
+test("empty string URL fails closed instead of restoring an origin", () => {
+  assert.ok(canonicalBaseUrlThrows(""));
 });
 
 test("not-a-URL string is rejected", () => {

@@ -1,9 +1,9 @@
 import {
   parseServerRuntimeSetting,
   readServerRuntimeSettingRaw,
+  runtimeSettingConditionMatches,
   SERVER_RUNTIME_SETTING_KEYS,
   SERVER_RUNTIME_SETTINGS,
-  type RuntimeSettingCondition,
   type ServerRuntimeSetting,
 } from "@/lib/config/server-runtime-settings";
 import { getEmailConfig } from "@/lib/email/config";
@@ -13,12 +13,18 @@ export type AdminEnvDisplayItem = {
   area: string;
   status:
     | "configured"
-    | "using_effective_default"
+    | "using_intrinsic_default"
     | "disabled_by_design"
     | "not_applicable"
+    | "unconfigured_optional"
     | "missing_required"
     | "invalid";
-  valueSource: "environment" | "default" | "derived" | "not_applicable";
+  valueSource:
+    | "environment"
+    | "missing"
+    | "intrinsic"
+    | "derived"
+    | "not_applicable";
   configured: boolean;
   isSecret: boolean;
   value: string | null;
@@ -47,11 +53,6 @@ export type AdminEnvDescriptor = {
   required?: boolean;
 };
 
-type RuntimeConditionContext = {
-  deliveryUsesPostbox: boolean;
-  providerEventIngestion: boolean;
-};
-
 function safeParse(key: (typeof SERVER_RUNTIME_SETTING_KEYS)[number]): {
   ok: boolean;
   value: string | number | boolean | null;
@@ -60,22 +61,6 @@ function safeParse(key: (typeof SERVER_RUNTIME_SETTING_KEYS)[number]): {
     return { ok: true, value: parseServerRuntimeSetting(key) };
   } catch {
     return { ok: false, value: null };
-  }
-}
-
-function conditionMatches(
-  condition: RuntimeSettingCondition,
-  context: RuntimeConditionContext,
-): boolean {
-  switch (condition) {
-    case "always":
-      return true;
-    case "never":
-      return false;
-    case "postbox_delivery":
-      return context.deliveryUsesPostbox;
-    case "provider_event_ingestion":
-      return context.providerEventIngestion;
   }
 }
 
@@ -94,14 +79,13 @@ function featureDisabled(
 
 function descriptorFor(
   definition: ServerRuntimeSetting,
-  context: RuntimeConditionContext,
   emailConfigValid: boolean,
 ): AdminEnvDescriptor {
   const key = definition.key as (typeof SERVER_RUNTIME_SETTING_KEYS)[number];
   const raw = readServerRuntimeSettingRaw(key);
   const parsed = safeParse(key);
-  const applicable = conditionMatches(definition.applicability, context);
-  const required = conditionMatches(definition.required, context);
+  const applicable = runtimeSettingConditionMatches(definition.applicability);
+  const required = runtimeSettingConditionMatches(definition.required);
   const emailOwned = definition.ownerModules.includes("lib/email/config.ts");
   const customRuntimeValid = !emailOwned || emailConfigValid;
 
@@ -112,22 +96,22 @@ function descriptorFor(
     valueSource = "not_applicable";
   } else if (required && !raw) {
     status = "missing_required";
-    valueSource = "environment";
+    valueSource = "missing";
   } else if (!parsed.ok || !customRuntimeValid) {
     status = "invalid";
-    valueSource = raw ? "environment" : "default";
-  } else if (
-    key === "YANDEX_POSTBOX_CONFIGURATION_SET" &&
-    parsed.value === null
-  ) {
-    status = "not_applicable";
-    valueSource = "not_applicable";
+    valueSource = raw ? "environment" : "missing";
   } else if (featureDisabled(key, parsed.value)) {
     status = "disabled_by_design";
-    valueSource = raw ? "environment" : "default";
+    valueSource = "environment";
+  } else if (!raw && definition.classification === "intrinsic") {
+    status = "using_intrinsic_default";
+    valueSource = "intrinsic";
+  } else if (!raw) {
+    status = "unconfigured_optional";
+    valueSource = "missing";
   } else {
-    status = raw ? "configured" : "using_effective_default";
-    valueSource = raw ? "environment" : "default";
+    status = "configured";
+    valueSource = "environment";
   }
 
   let value: string | number | boolean | null = parsed.value;
@@ -163,16 +147,6 @@ function descriptorFor(
  * There is no second key, secret, default, bounds, enum, or ownership list.
  */
 export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
-  const deliveryEnabled = safeParse("EMAIL_DELIVERY_ENABLED").value === true;
-  const provider = safeParse("EMAIL_PROVIDER").value;
-  const providerEventIngestion =
-    safeParse("EMAIL_PROVIDER_EVENT_INGESTION_ENABLED").value === true;
-  const context: RuntimeConditionContext = {
-    deliveryUsesPostbox:
-      deliveryEnabled && provider === "yandex_postbox",
-    providerEventIngestion,
-  };
-
   let emailConfigValid = true;
   try {
     getEmailConfig();
@@ -181,7 +155,7 @@ export function buildAdminEnvDescriptors(): AdminEnvDescriptor[] {
   }
 
   return SERVER_RUNTIME_SETTING_KEYS.map((key) =>
-    descriptorFor(SERVER_RUNTIME_SETTINGS[key], context, emailConfigValid),
+    descriptorFor(SERVER_RUNTIME_SETTINGS[key], emailConfigValid),
   );
 }
 
@@ -191,9 +165,7 @@ function toItem(descriptor: AdminEnvDescriptor): AdminEnvDisplayItem {
     area: descriptor.area,
     status: descriptor.status,
     valueSource: descriptor.valueSource,
-    configured:
-      descriptor.status === "configured" ||
-      descriptor.status === "using_effective_default",
+    configured: descriptor.valueSource === "environment",
     isSecret: descriptor.isSecret,
     value: descriptor.isSecret
       ? null

@@ -88,12 +88,18 @@ type HealthData = {
         area: string;
         status:
           | "configured"
-          | "using_effective_default"
+          | "using_intrinsic_default"
           | "disabled_by_design"
           | "not_applicable"
+          | "unconfigured_optional"
           | "missing_required"
           | "invalid";
-        valueSource: "environment" | "default" | "derived" | "not_applicable";
+        valueSource:
+          | "environment"
+          | "missing"
+          | "intrinsic"
+          | "derived"
+          | "not_applicable";
         configured: boolean;
         isSecret: boolean;
         value: string | null;
@@ -146,17 +152,19 @@ function EnvValueRow({
 }) {
   const statusLabel: Record<typeof item.status, string> = {
     configured: "configured",
-    using_effective_default: "default",
+    using_intrinsic_default: "intrinsic default",
     disabled_by_design: "disabled by design",
     not_applicable: "not applicable",
+    unconfigured_optional: "optional / unconfigured",
     missing_required: "missing required",
     invalid: "invalid",
   };
   const good =
     item.status === "configured" ||
-    item.status === "using_effective_default" ||
+    item.status === "using_intrinsic_default" ||
     item.status === "disabled_by_design" ||
-    item.status === "not_applicable";
+    item.status === "not_applicable" ||
+    item.status === "unconfigured_optional";
 
   return (
     <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">

@@ -128,9 +128,10 @@ rejected access form; fixtures never enter production runtime code.
 module resolution is available. The AST policy permits only that exact
 module/key/dot-access tuple and still records `NODE_ENV` as a registry consumer.
 
-Effective values come from the same runtime parser the application uses, so a
-defaulted setting reports `using_effective_default` with the real default rather
-than a missing status. When `getEmailConfig()` cannot parse the environment, the
+Effective values come from the same runtime parser the application uses.
+Deployment settings have no code defaults: absent applicable values report
+`missing_required` with source `missing`. Only an intrinsic setting may report
+`using_intrinsic_default`. When `getEmailConfig()` cannot parse the environment,
 email-owned descriptors fall back to raw presence checks and report
 `missing_required` or `invalid` instead of collapsing the whole table.
 

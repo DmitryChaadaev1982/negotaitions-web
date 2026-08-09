@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 
 import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
+import { applyStage313cTestRuntimeEnv } from "./stage-3-13c-test-runtime";
 
 let expectedSchema: string;
 try {
@@ -12,52 +13,14 @@ try {
   process.exit(1);
 }
 
-const RESET_TO_DEFAULT = [
-  "EMAIL_ADMIN_TEST_ENABLED",
-  "EMAIL_BOUNCE_COMPLAINT_RETENTION_DAYS",
-  "EMAIL_CONTENT_RETENTION_DAYS",
-  "EMAIL_DELIVERY_ATTEMPT_RETENTION_DAYS",
-  "EMAIL_FROM_INVITATIONS",
-  "EMAIL_FROM_NO_REPLY",
-  "EMAIL_FROM_NOTIFICATIONS",
-  "EMAIL_MAX_ATTEMPTS",
-  "EMAIL_OPERATOR_NAME",
-  "EMAIL_PROCESSING_LEASE_SECONDS",
-  "EMAIL_PROVIDER_EVENT_RECONCILIATION_DELAY_SECONDS",
-  "EMAIL_PROVIDER_EVENT_RECONCILIATION_WINDOW_SECONDS",
-  "EMAIL_PROVIDER_EVENT_RETENTION_DAYS",
-  "EMAIL_PROVIDER_ID_RETENTION_DAYS",
-  "EMAIL_PROVIDER_REQUEST_SAFETY_MARGIN_SECONDS",
-  "EMAIL_PROVIDER_REQUEST_TIMEOUT_MS",
-  "EMAIL_REPLY_TO_BUSINESS",
-  "EMAIL_REPLY_TO_SECURITY",
-  "EMAIL_REPLY_TO_SUPPORT",
-  "EMAIL_RETRY_BASE_SECONDS",
-  "EMAIL_RETRY_MAX_SECONDS",
-  "EMAIL_WORKER_BATCH_SIZE",
-  "PASSWORD_RESET_MAX_REQUESTS_PER_HOUR",
-  "PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS",
-  "PASSWORD_RESET_TOKEN_TTL_MINUTES",
-  "YANDEX_POSTBOX_ACCESS_KEY_ID",
-  "YANDEX_POSTBOX_CONFIGURATION_SET",
-  "YANDEX_POSTBOX_ENDPOINT",
-  "YANDEX_POSTBOX_REGION",
-  "YANDEX_POSTBOX_SECRET_ACCESS_KEY",
-] as const;
-
-for (const key of RESET_TO_DEFAULT) delete process.env[key];
+applyStage313cTestRuntimeEnv({ EMAIL_LOCAL_PREVIEW_ENABLED: "true" });
+delete process.env.YANDEX_POSTBOX_ACCESS_KEY_ID;
+delete process.env.YANDEX_POSTBOX_SECRET_ACCESS_KEY;
 
 // Generate a run-specific AEAD key; never printed.
 if (!process.env.EMAIL_SENSITIVE_PAYLOAD_KEY) {
   process.env.EMAIL_SENSITIVE_PAYLOAD_KEY = randomBytes(32).toString("base64");
 }
-
-Object.assign(process.env, {
-  EMAIL_DELIVERY_ENABLED: "true",
-  EMAIL_PROVIDER: "fake",
-  EMAIL_CANONICAL_BASE_URL: "https://local.negotaitions.ru",
-  EMAIL_LOCAL_PREVIEW_ENABLED: "true",
-});
 
 const runMarker = `stage313c_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 const ownedUserIds: string[] = [];

@@ -42,7 +42,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 - Deployment and external systems
   - Code: `lib/env.ts`, `lib/config.ts`, `lib/config/server-runtime-settings.ts`, `lib/config/provider-runtime.ts`, `lib/storage/s3.ts`, `lib/services/admin-env-display.ts`, `lib/services/admin-health-route-handler.ts`, `components/admin-diagnostics-emergency-state.tsx`, `app/api/admin/health/route.ts`, `scripts/verify-runtime-config-drift.ts`, `scripts/ops/email-*.ts`, `scripts/ops/password-reset-backlog-quarantine.ts`, `deploy/systemd/negotiations-email-*`
-  - Docs: `11-deployment-architecture.md`, `12-external-systems.md`, `docs/operations/admin-configuration-diagnostics.md`
+  - Docs: `11-deployment-architecture.md`, `12-external-systems.md`, `email-runtime-and-yandex-cloud.md`, `docs/operations/admin-configuration-diagnostics.md`
   - Tests: `tests/e2e/admin-diagnostics-env.spec.ts`, `app/api/admin/health/route.test.ts`, `lib/services/admin-health-emergency-ui.test.ts`, `lib/services/admin-env-display.test.ts`, `lib/config/server-runtime-settings.test.ts`
 
 ## Required Doc-Update Rule
