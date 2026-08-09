@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import pg from "pg";
@@ -8,31 +9,43 @@ import {
   PROVIDER_EVENT_CONSUMER_LOCK_KEY,
   ProviderEventConsumerError,
 } from "@/lib/email/provider-event-consumer";
-import { resolveApprovedStage313cTestDatabase } from "../../scripts/stage-3-13c-test-database";
+import {
+  getSanitizedE2eDatabaseDescriptor,
+  isE2eDatabaseConfigured,
+  resolveE2eDatabaseUrl,
+} from "../../tests/e2e/helpers/e2e-database";
 
 /**
- * Advisory-lock integration tests against a real, disposable local PostgreSQL.
+ * Advisory-lock integration tests against the canonical E2E PostgreSQL.
  *
- * These tests need no schema and create no rows: they only exercise session
- * advisory locks. They therefore reuse the repository's approved disposable
- * database gate (`STAGE313C_TEST_DATABASE_URL` plus explicit approval) so a
- * plain `npm run test:unit` never touches the development database, and they
- * skip when that gate is not satisfied.
+ * These tests use separate connections to the same database to exercise
+ * production session advisory locks. `E2E_DATABASE_URL` is the only accepted
+ * input; `DATABASE_URL` is set process-locally only while production code runs.
  */
 const SKIP_REASON =
-  "approved disposable PostgreSQL not configured (STAGE313C_TEST_DATABASE_*)";
+  "canonical E2E PostgreSQL not configured (E2E_DATABASE_URL)";
+const REQUIRE_REAL_POSTGRES =
+  process.env.STAGE313C_PROVIDER_EVENT_LOCK_TEST_REQUIRED === "true";
+const RUN_ID = `stage313c-lock-${randomUUID()}`;
 
 function resolveDbUrl(): string | null {
-  try {
-    return resolveApprovedStage313cTestDatabase(process.env).baseDatabaseUrl;
-  } catch {
+  if (!isE2eDatabaseConfigured()) {
+    if (REQUIRE_REAL_POSTGRES) {
+      return resolveE2eDatabaseUrl();
+    }
     return null;
   }
+  const url = resolveE2eDatabaseUrl();
+  const descriptor = getSanitizedE2eDatabaseDescriptor(url);
+  console.log(
+    `[stage313c-lock-db] host=${descriptor.normalizedHost} port=${descriptor.port} database=${descriptor.database}`,
+  );
+  return url;
 }
 
 /**
- * The production code reads DATABASE_URL, so point it at the disposable
- * database for the duration of the test and restore it afterwards.
+ * The production code reads DATABASE_URL, so point it at E2E_DATABASE_URL for
+ * the duration of the test and restore it afterwards.
  */
 async function withDatabaseUrl<T>(
   url: string,
@@ -48,29 +61,37 @@ async function withDatabaseUrl<T>(
   }
 }
 
-async function ensureLeaseTable(url: string): Promise<void> {
+async function assertLeaseTableExists(url: string): Promise<void> {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS "EmailProviderConsumerLease" (
-        "id" TEXT PRIMARY KEY,
-        "provider" TEXT NOT NULL,
-        "streamName" TEXT NOT NULL,
-        "generation" BIGINT NOT NULL DEFAULT 0,
-        "holderId" TEXT NOT NULL,
-        "acquiredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS "EmailProviderConsumerLease_provider_streamName_key"
-        ON "EmailProviderConsumerLease"("provider", "streamName")
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS "EmailProviderConsumerLease_updatedAt_idx"
-        ON "EmailProviderConsumerLease"("updatedAt")
-    `);
+    const result = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'EmailProviderConsumerLease'
+       ) AS exists`,
+    );
+    assert.equal(
+      result.rows[0]?.exists,
+      true,
+      "E2E database must already contain EmailProviderConsumerLease",
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+async function cleanupLeaseRows(url: string, streamName: string): Promise<void> {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    await client.query(
+      `DELETE FROM "EmailProviderConsumerLease"
+       WHERE "provider" = $1 AND "streamName" = $2`,
+      ["yandex_postbox", streamName],
+    );
   } finally {
     await client.end();
   }
@@ -121,15 +142,17 @@ test("the session lock never borrows a Prisma pool connection", () => {
 test("a second connection cannot acquire the lock until the first releases", async (t) => {
   const url = resolveDbUrl();
   if (!url) return t.skip(SKIP_REASON);
+  const streamName = `${RUN_ID}-contention`;
 
   await withDatabaseUrl(url, async () => {
-    await ensureLeaseTable(url);
-    const lock = await acquireProviderEventConsumerLock();
+    await assertLeaseTableExists(url);
+    await cleanupLeaseRows(url, streamName);
+    const lock = await acquireProviderEventConsumerLock({ streamName });
     try {
       assert.equal(await tryAcquireFromSeparateConnection(url), false);
 
       await assert.rejects(
-        () => acquireProviderEventConsumerLock(),
+        () => acquireProviderEventConsumerLock({ streamName }),
         (error: unknown) =>
           error instanceof ProviderEventConsumerError &&
           error.code === "CONSUMER_LOCK_HELD" &&
@@ -140,28 +163,37 @@ test("a second connection cannot acquire the lock until the first releases", asy
     }
 
     assert.equal(await tryAcquireFromSeparateConnection(url), true);
+    await cleanupLeaseRows(url, streamName);
   });
 });
 
 test("release is idempotent", async (t) => {
   const url = resolveDbUrl();
   if (!url) return t.skip(SKIP_REASON);
+  const streamName = `${RUN_ID}-idempotent`;
 
   await withDatabaseUrl(url, async () => {
-    await ensureLeaseTable(url);
-    const lock = await acquireProviderEventConsumerLock();
-    await lock.release();
-    await lock.release();
+    await assertLeaseTableExists(url);
+    await cleanupLeaseRows(url, streamName);
+    try {
+      const lock = await acquireProviderEventConsumerLock({ streamName });
+      await lock.release();
+      await lock.release();
+    } finally {
+      await cleanupLeaseRows(url, streamName);
+    }
   });
 });
 
 test("liveness succeeds while held and does not reacquire the lock", async (t) => {
   const url = resolveDbUrl();
   if (!url) return t.skip(SKIP_REASON);
+  const streamName = `${RUN_ID}-liveness`;
 
   await withDatabaseUrl(url, async () => {
-    await ensureLeaseTable(url);
-    const lock = await acquireProviderEventConsumerLock();
+    await assertLeaseTableExists(url);
+    await cleanupLeaseRows(url, streamName);
+    const lock = await acquireProviderEventConsumerLock({ streamName });
     const assertAlive = lock.assertAlive;
     assert.ok(assertAlive, "the production lock must expose a liveness probe");
     try {
@@ -174,16 +206,19 @@ test("liveness succeeds while held and does not reacquire the lock", async (t) =
       await lock.release();
     }
     assert.equal(await tryAcquireFromSeparateConnection(url), true);
+    await cleanupLeaseRows(url, streamName);
   });
 });
 
 test("forced termination of the lock connection stops the consumer", async (t) => {
   const url = resolveDbUrl();
   if (!url) return t.skip(SKIP_REASON);
+  const streamName = `${RUN_ID}-termination`;
 
   await withDatabaseUrl(url, async () => {
-    await ensureLeaseTable(url);
-    const lock = await acquireProviderEventConsumerLock();
+    await assertLeaseTableExists(url);
+    await cleanupLeaseRows(url, streamName);
+    const lock = await acquireProviderEventConsumerLock({ streamName });
     const assertAlive = lock.assertAlive;
     const onLost = lock.onLost;
     assert.ok(assertAlive && onLost, "the production lock must expose liveness hooks");
@@ -220,5 +255,6 @@ test("forced termination of the lock connection stops the consumer", async (t) =
     assert.ok(lostError || livenessFailed, "lock loss was not detected");
     await lock.release();
     assert.equal(await tryAcquireFromSeparateConnection(url), true);
+    await cleanupLeaseRows(url, streamName);
   });
 });

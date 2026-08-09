@@ -93,7 +93,6 @@ Additional verification:
 
 ```powershell
 npm run test:stage313c:remediation
-npm run verify:stage313c:remediation
 npm run verify:stage313c:trusted-proxy
 ```
 
@@ -107,12 +106,13 @@ npm run test:unit
 npm run test:stage313c
 npm run test:stage313c:proxy
 npm run test:stage313c:email-journal
-npm run verify:stage313c:integration
+npm run test:stage313c:provider-events
 npm run verify:stage313c:proxy
 npm run verify:stage313c:email-journal
 ```
 
-The integration verifier refuses non-local/production-like database targets.
+Provider-event PostgreSQL checks use the canonical E2E database and refuse the
+normal development database.
 The focused Playwright suite covers public response parity, database effects,
 browser reset/login/session behavior, registration notification recipient
 selection, and local preview authorization/list/reveal boundaries.

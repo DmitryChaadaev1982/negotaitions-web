@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
-import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
+import {
+  getSanitizedE2eDatabaseDescriptor,
+  resolveE2eDatabaseUrl,
+} from "../tests/e2e/helpers/e2e-database";
 
-let expectedSchema: string;
+let expectedDatabase: string;
 try {
-  expectedSchema =
-    assertApprovedStage313cVerifierChildEnvironment(process.env).schemaName;
+  const e2eUrl = resolveE2eDatabaseUrl();
+  process.env.DATABASE_URL = e2eUrl;
+  expectedDatabase = getSanitizedE2eDatabaseDescriptor(e2eUrl).database;
 } catch {
   console.error(JSON.stringify({ ok: false, counts: { safetyRefusals: 1 } }));
   process.exit(1);
@@ -15,7 +19,7 @@ try {
 /**
  * Stage 3.13C provider-event remediation verifier.
  *
- * Proves against a real disposable PostgreSQL schema that:
+ * Proves against the canonical E2E PostgreSQL database that:
  *   F-03 the parse-time bounce classification survives persistence and
  *        reconciliation, so a transient bounce never becomes a hard-bounce
  *        suppression and an unmatched transient bounce stays unsuppressed;
@@ -118,11 +122,14 @@ async function main() {
     EmailSuppressionReason,
   } = generated;
 
-  currentCase = "prisma_search_path";
-  const searchPath = await db.$queryRaw<{ schema_name: string | null }[]>`
-    SELECT current_schema() AS schema_name
+  currentCase = "prisma_database_identity";
+  const identity = await db.$queryRaw<
+    { database_name: string; schema_name: string | null }[]
+  >`
+    SELECT current_database() AS database_name, current_schema() AS schema_name
   `;
-  assert.equal(searchPath[0]?.schema_name, expectedSchema);
+  assert.equal(identity[0]?.database_name, expectedDatabase);
+  assert.equal(identity[0]?.schema_name, "public");
 
   const recipientFor = (label: string) =>
     `stage313c-pe-${label}-${runId}@example.invalid`;
@@ -660,9 +667,15 @@ async function main() {
 
   // --- F-17 / F-11: no provider-controlled text anywhere in the database ---
   currentCase = "no_pii_in_persisted_rows";
-  const storedEvents = await db.emailProviderEvent.findMany();
-  const storedFailures = await db.emailProviderIngestionFailure.findMany();
-  const storedSuppressions = await db.emailSuppression.findMany();
+  const storedEvents = await db.emailProviderEvent.findMany({
+    where: { providerEventId: { contains: runId } },
+  });
+  const storedFailures = await db.emailProviderIngestionFailure.findMany({
+    where: { streamName: { contains: runId } },
+  });
+  const storedSuppressions = await db.emailSuppression.findMany({
+    where: { recipientEmailNormalized: { in: ownedEmails } },
+  });
   const persisted = JSON.stringify({
     events: storedEvents.map((event) => ({
       metadata: event.metadata,
@@ -955,9 +968,24 @@ async function run() {
   try {
     await main();
     succeeded = true;
-  } catch {
+    } catch (error) {
     // Deliberately swallowed: only the sanitized case label is reported so no
     // exception text can reach the harness output.
+      const errorName =
+        error instanceof Error
+          ? error.name.replace(/[^A-Za-z0-9_]/g, "").slice(0, 60)
+          : typeof error;
+      counts[`error_${errorName || "unknown"}`] = 1;
+      if (error instanceof Error) {
+        const messageToken = error.message
+          .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "[email]")
+          .replace(/[a-f0-9]{16,}/gi, "[hex]")
+          .replace(/[^A-Za-z0-9_ .:-]/g, "")
+          .slice(0, 160);
+        if (messageToken) {
+          originalError(JSON.stringify({ ok: false, diagnostic: messageToken }));
+        }
+      }
     process.exitCode = 1;
   } finally {
     try {

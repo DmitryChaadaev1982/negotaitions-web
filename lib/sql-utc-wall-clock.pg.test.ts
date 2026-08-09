@@ -6,13 +6,19 @@ import pg from "pg";
 import { decideFinishRoomLifecycle } from "@/lib/session-room-occupancy-policy";
 import { evaluateDebriefAutoCloseEligibility } from "@/lib/session-room-occupancy-policy";
 import { RoomLifecycle } from "@/app/generated/prisma/client";
+import {
+  assertIsolatedE2eDatabase,
+  isE2eDatabaseConfigured,
+} from "../tests/e2e/helpers/e2e-database";
 
 /**
  * Dual-timezone PostgreSQL regression for the Stage 3.10 occupancy clock bug.
- * Requires E2E_DATABASE_URL or DATABASE_URL. Skips otherwise.
+ * Requires E2E_DATABASE_URL. DATABASE_URL is deliberately not accepted so this
+ * regression cannot run against the normal development database.
  */
 function resolveDbUrl(): string | null {
-  return process.env.E2E_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || null;
+  if (!isE2eDatabaseConfigured()) return null;
+  return assertIsolatedE2eDatabase();
 }
 
 async function withClient<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {

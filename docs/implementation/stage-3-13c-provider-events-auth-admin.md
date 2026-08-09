@@ -454,19 +454,17 @@ scope.
 
 ## Verification
 
-Local, disposable-database only. No production resources, Postbox API, Data
-Streams API, email sends, or Yandex control-plane APIs are part of this
-implementation.
+Local E2E-database only. No production resources, Postbox API, Data Streams
+API, email sends, or Yandex control-plane APIs are part of this implementation.
 
 - `npm run test:unit` — full unit suite including the scheduler, pagination,
   checkpoint/failure-model, pacing, iterator-boundary, CLI exit-code,
   origin-allowlist, return-URL, and diagnostics drift tests.
 - `npm run test:stage313c:provider-events` — provider-event unit suites plus the
-  DB-backed provider-event remediation verifier.
-- `npm run verify:stage313c:overlay` — production-overlay additive migration
-  verification.
+  DB-backed provider-event remediation verifier against `E2E_DATABASE_URL`.
 - `npm run test:stage313c:proxy` — proxy and login/logout browser suites,
   including the production-equivalent proxy harness.
 - `lib/email/provider-event-consumer-lock.pg.test.ts` — advisory-lock contention
-  and liveness against a real disposable PostgreSQL. Gated on the approved
-  disposable-database environment and skipped otherwise.
+  and liveness against the canonical E2E PostgreSQL database. The focused
+  provider-events runner requires `E2E_DATABASE_URL`, injects it as
+  `DATABASE_URL` only for the child process, and refuses the development DB.

@@ -41,7 +41,6 @@ const VERIFIERS = {
   remediation: "scripts/verify-stage-3-13c-remediation.ts",
   "high-remediation-r2": "scripts/verify-stage-3-13c-high-remediation-r2.ts",
   "final-remediation": "scripts/verify-stage-3-13c-final-remediation.ts",
-  "provider-events": "scripts/verify-stage-3-13c-provider-event-remediation.ts",
   "ai-analysis": "scripts/verify-stage-3-13d-ai-migration.ts",
 } as const;
 

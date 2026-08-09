@@ -1,37 +1,33 @@
 # Stage 3.13C Local Email Testing
 
-This procedure uses one approved persistent local PostgreSQL test database, one
-verifier-owned schema, and the in-memory fake provider. It does not require
-Postbox credentials and must not be used for production.
+This procedure uses the canonical automated-test PostgreSQL database and the
+in-memory fake provider. It does not require Postbox credentials and must not be
+used for production.
 
-## 1. Approve the persistent test database
+## 1. Use the canonical test database
 
-Provisioning the PostgreSQL instance is outside the verifier. Reuse the
-approved local test instance; do not create a database or container per run.
-The database name must be test-like and must not contain a production marker.
+Use the existing E2E database for all automated PostgreSQL checks. Do not create
+or start a Stage 3.13C-specific PostgreSQL container, database, or schema.
 
 Set these values manually in the repository's ignored `.env`. Never print or
-commit the URL, and do not create `.env.local` for the verifier:
+commit URLs with credentials:
 
 ```dotenv
-STAGE313C_TEST_DATABASE_URL=<approved-local-test-url>
-STAGE313C_TEST_DATABASE_APPROVED=true
-STAGE313C_TEST_SCHEMA=stage3_13c_final_remediation
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/negotiations
+E2E_DATABASE_URL=postgresql://<user>:<password>@localhost:5433/negotiations_e2e
 ```
 
-The five PostgreSQL verifier commands load `.env` with the project env loader.
-They never fall back to runtime `DATABASE_URL`. The wrapper derives a
-process-local schema-scoped URL only for migration and child-verifier
-processes; it does not edit `.env`.
+`5432/negotiations` is for normal development only. Automated PostgreSQL,
+integration, advisory-lock, and Playwright E2E tests use
+`5433/negotiations_e2e`. Provider-event test runners inject
+`DATABASE_URL=E2E_DATABASE_URL` only into their child process because the
+production locking code reads `DATABASE_URL`.
 
-## 2. Verifier schema lifecycle
+## 2. Database safety
 
-Each command acquires one bounded database advisory lock, proves that any
-existing `stage3_13c_final_remediation` schema carries the verifier ownership
-marker, drops and recreates only that schema, applies the required migrations,
-runs with an explicit search path, proves row and advisory-lock cleanup, and
-releases the coordination lock. `public`, other schemas, shared rows,
-extensions, roles, and the database itself are never destructive targets.
+The E2E database must already have the current schema. These checks do not run
+Prisma migrations, do not mutate schema, and do not reset databases. Test data
+uses run-specific identifiers and cleanup deletes only rows created by the run.
 
 ## 3. Start the application and local HTTPS route
 
@@ -92,27 +88,23 @@ without a provider attempt. A marketing unsubscribe must not suppress it.
 
 ## 6. Automated focused checks
 
-Run the schema safety unit test, then the PostgreSQL verifiers sequentially:
+Run the focused checks sequentially:
 
 ```powershell
-npm run test:stage313c:test-database-harness
-npm run verify:stage313c:integration
-npm run verify:stage313c:overlay
-npm run verify:stage313c:remediation
-npm run verify:stage313c:high-remediation-r2
-npm run verify:stage313c:final-remediation
+npm run test:e2e:db:check
+npm run test:stage313c:provider-events
+npm run test:stage313c
 ```
 
-Every command refuses missing approval, an incorrect schema, a non-local or
-production-like target, a base URL containing a schema override, or a child
-URL not derived by the wrapper. Output is restricted to test names, counters,
-opaque IDs, the approved schema name, and migration identifiers.
+The provider-event PostgreSQL lock test refuses a missing or unsafe
+`E2E_DATABASE_URL`, including accidental `localhost:5432/negotiations`. Output
+prints sanitized host, port, and database identity, plus test counters.
 
 ## 7. Cleanup
 
-Retain the persistent test database. It is acceptable to retain the empty,
-marked verifier schema for reuse. Do not drop the database. Remove or rotate
-the three ignored `.env` values manually only when the approval is withdrawn.
+Retain both local databases. Do not drop or reset either database as part of
+this procedure. Remove or rotate ignored `.env` values manually only when local
+configuration changes.
 
 ## Production prerequisites
 

@@ -36,10 +36,10 @@ This document maps High and Medium findings to remediations on
   `ACCEPTANCE_UNKNOWN` messages clear recoverable payload immediately.
 - Isolated one-message canary and dry-run-by-default bounded backlog quarantine
   commands are committed. No service or timer is enabled.
-- All PostgreSQL verifiers require `STAGE313C_TEST_DATABASE_URL`, explicit
-  approval, and the exact persistent verifier schema. The wrapper never falls
-  back to runtime `DATABASE_URL`; it recreates only the marked schema,
-  exercises runtime races/provider boundaries, and proves cleanup.
+- Current automated PostgreSQL provider-event and advisory-lock checks use the
+  canonical `E2E_DATABASE_URL` database on `localhost:5433/negotiations_e2e`.
+  The retired `STAGE313C_TEST_DATABASE_URL` verifier-schema flow must not be
+  used for routine local validation.
 
 ## Stage 3.13C-H nonblocking hardening
 
@@ -117,13 +117,11 @@ processes stopped, and forward-fix on the additive schema.
 ## Commands
 
 ```powershell
-npm run test:stage313c:test-database-harness
+npm run test:e2e:db:check
+npm run test:stage313c:provider-events
 npm run test:stage313c:high-remediation-r2
-npm run verify:stage313c:high-remediation-r2
 npm run test:stage313c:remediation
-npm run verify:stage313c:remediation
 npm run test:stage313c:final-remediation
-npm run verify:stage313c:final-remediation
 ```
 
 ## Decision target

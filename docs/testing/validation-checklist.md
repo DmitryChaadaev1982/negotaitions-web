@@ -19,10 +19,8 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:stage313c:email-journal` (journal unit + managed browser/API checks)
 - `npm run verify:stage313c:proxy`
 - `npm run verify:stage313c:email-journal`
-- `npm run test:stage313c:test-database-harness`
-- `npm run verify:stage313c:integration` (approved persistent local PostgreSQL
-  schema: token, suppression, concurrency, session-revocation, and notification
-  checks)
+- `npm run test:stage313c:provider-events` (provider-event unit, PostgreSQL
+  advisory-lock, and DB-backed verifier checks against `E2E_DATABASE_URL`)
 - `node --import tsx --test lib/services/yandex-transcript-enhancement.test.ts` (targeted chunked enhancement unit coverage)
 - `node --import tsx --test lib/services/transcript-enhancement-persistence.test.ts` (targeted enhancement/ingestion persistence safety)
 - `node --import tsx --test lib/env.transcript-enhancement.test.ts` (transcript enhancement env parsing, including output mode)
@@ -82,9 +80,9 @@ Sequential requirement:
 - `test:e2e:full` is environment-sensitive and DB-mutating; it is not currently the default deploy gate.
 - `test:stage313c` uses the same managed Playwright mode and must not overlap
   another managed browser suite.
-- Stage 3.13C PostgreSQL verifiers require explicit approval and recreate only
-  the marked `stage3_13c_final_remediation` schema inside the persistent local
-  test database. They refuse runtime `DATABASE_URL` fallback.
+- Stage 3.13C provider-event PostgreSQL lock tests use the canonical
+  `E2E_DATABASE_URL` database and inject `DATABASE_URL=E2E_DATABASE_URL` only
+  into the test child process. They refuse the normal development database.
 - `test:all` remains a broad legacy/full-suite command for compatibility, not the recommended routine deploy gate.
 
 ## Smoke Suite Guardrails (Phase 2)
@@ -149,7 +147,8 @@ Notes:
 - DB mutation safety must run through `tests/e2e/helpers/db.ts` and `tests/e2e/helpers/e2e-database.ts`.
 - `E2E_DATABASE_URL` is mandatory for Playwright tests; do not fall back to `DATABASE_URL` or `TEST_DATABASE_URL`.
 - Development database: `DATABASE_URL` -> `localhost:5432/negotiations`.
-- Automated E2E database: `E2E_DATABASE_URL` -> `localhost:5433/negotiations_e2e`.
+- Automated PostgreSQL, integration, lock, and E2E database:
+  `E2E_DATABASE_URL` -> `localhost:5433/negotiations_e2e`.
 - Playwright overrides `DATABASE_URL` only for its managed Next.js process; manual `npm run dev` stays on the development database.
 - Run read-only preflight: `npm run test:e2e:db:check`.
 - Docker E2E service: `postgres_e2e` (`negotiations_postgres_e2e`, port `5433`).

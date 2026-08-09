@@ -72,6 +72,18 @@ suppression, notification, and local-preview contracts.
 - Permanent Admin → Email journal authorization, masking, and audited reveal.
 - Local fake-email preview authorization and production-denial guards.
 
+## Automated PostgreSQL Test Topology
+
+- Normal development uses `DATABASE_URL` on `localhost:5432/negotiations`.
+- Automated PostgreSQL, provider-event advisory-lock, integration, and
+  Playwright E2E tests use `E2E_DATABASE_URL` on
+  `localhost:5433/negotiations_e2e`.
+- Provider-event lock tests inject `DATABASE_URL=E2E_DATABASE_URL` only for the
+  child process under test because production lock acquisition reads
+  `DATABASE_URL`. The tests refuse the development database and use
+  run-specific durable lease identifiers while exercising the production
+  session advisory-lock key with separate PostgreSQL connections.
+
 ## Source Notes
 
 - `app/actions/events.ts`
