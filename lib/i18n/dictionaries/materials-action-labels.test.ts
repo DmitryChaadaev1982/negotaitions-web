@@ -13,11 +13,11 @@ test("materials destination actions use generic RU and EN labels", () => {
 });
 
 test("AI publication and administrative action labels remain specific", () => {
-  assert.equal(ru.room.runAiAnalysis, "Запустить AI-разбор");
+  assert.equal(ru.room.runAiAnalysis, "Запустить ИИ-разбор");
   assert.equal(en.room.runAiAnalysis, "Run AI analysis");
   assert.equal(ru.room.shareWithParticipants, "Опубликовать для участников");
   assert.equal(en.room.shareWithParticipants, "Share with participants");
-  assert.equal(ru.room.aiAnalysisNotShared, "AI-разбор пока не опубликован фасилитатором.");
+  assert.equal(ru.room.aiAnalysisNotShared, "ИИ-разбор пока не опубликован фасилитатором.");
   assert.equal(en.room.aiAnalysisNotShared, "AI analysis has not been shared yet.");
 });
 

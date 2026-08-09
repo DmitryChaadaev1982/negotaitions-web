@@ -7,21 +7,36 @@ import {
   runPlaywrightInMode,
 } from "../agent-tooling/run-playwright-mode-lib.mjs";
 
-test("managed mode rejects occupied port", async () => {
+test("managed mode rejects occupied E2E port", async () => {
   await assert.rejects(
     () =>
       preparePlaywrightMode("managed", {
-        detectPort3000Owner: async () => ({
+        detectManagedPortOwner: async () => ({
           status: "occupied",
           pid: 42,
           processName: "node.exe",
-          commandLine: "next dev",
+          commandLine: "next dev -p 3100",
         }),
       }),
     (error) =>
       error instanceof PlaywrightModeError &&
-      error.code === "MANAGED_SERVER_PORT_CONFLICT",
+      error.code === "MANAGED_SERVER_PORT_CONFLICT" &&
+      String(error.message).includes("Port 3100"),
   );
+});
+
+test("managed mode ignores occupied normal dev port", async () => {
+  const result = await preparePlaywrightMode("managed", {
+    detectManagedPortOwner: async () => ({ status: "free" }),
+    detectPort3000Owner: async () => ({
+      status: "occupied",
+      pid: 99,
+      processName: "node.exe",
+      commandLine: "next dev",
+    }),
+  });
+
+  assert.equal(result.environment.PLAYWRIGHT_SERVER_MODE, "managed");
 });
 
 test("live mode rejects unavailable server", async () => {
@@ -84,7 +99,7 @@ test("playwright arguments are forwarded unchanged", async () => {
     ["--mode=managed", "--", "tests/e2e/event-completion.spec.ts", "--project=chromium", "--grep", "@smoke"],
     {
       dryRun: true,
-      detectPort3000Owner: async () => ({ status: "free" }),
+      detectManagedPortOwner: async () => ({ status: "free" }),
     },
   );
   assert.deepEqual(result.args, [
@@ -120,7 +135,7 @@ test("live mode disables playwright webServer via env contract", async () => {
 test("managed mode enables playwright webServer via env contract", async () => {
   const result = await runPlaywrightInMode(["--mode=managed", "--", "--list"], {
     dryRun: true,
-    detectPort3000Owner: async () => ({ status: "free" }),
+    detectManagedPortOwner: async () => ({ status: "free" }),
   });
   assert.equal(result.environment.PLAYWRIGHT_SERVER_MODE, "managed");
 });

@@ -815,11 +815,17 @@ export const en = {
     transcriptionDownloading: "Downloading recording for transcription.",
     transcriptionCompressing: "Preparing audio for transcription.",
     transcriptionInProgress: "Transcription is in progress.",
+    transcriptEnhancement: "Transcript AI enhancement",
     transcriptEnhancementInProgress: "Transcript is ready. AI enhancement is running...",
+    transcriptReadyEnhancementInProgress: "Transcript is ready. AI enhancement is running...",
     transcriptEnhancementCompleted: "AI enhancement completed.",
     transcriptEnhancementFailed: "Transcript is ready, but AI enhancement failed.",
+    transcriptEnhancementFailedUsingBase:
+      "AI enhancement was not completed. The base transcript is being used.",
+    transcriptEnhancementNotStarted: "AI enhancement is not started.",
     transcriptEnhancementSkipped: "Transcript is ready. AI enhancement was skipped.",
     runTranscriptEnhancement: "Improve transcript",
+    retryTranscriptEnhancement: "Retry AI enhancement",
     transcriptEnhancementRecommended:
       "System recommends running additional transcript quality enhancement.",
     transcriptEnhancementMayTakeTime:
@@ -839,6 +845,8 @@ export const en = {
     twoPassLowConfidenceSegments: "Low-confidence segments",
     qualityEnhancementFailedWarning:
       "Transcript quality enhancement failed. Using base diarized transcript.",
+    speakerMapping: "Speaker mapping",
+    speakerMappingReady: "Speaker mapping is ready.",
     aiAnalysis: "AI analysis",
     waitingForTranscript: "Waiting for transcript readiness.",
     transcriptReadyForAnalysis: "Transcript is ready. AI analysis can be started.",

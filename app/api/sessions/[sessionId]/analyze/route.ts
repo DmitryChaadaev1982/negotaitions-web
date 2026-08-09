@@ -27,6 +27,7 @@ import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
   failAiAnalysisRun,
+  persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
   type AiAnalysisRunOwner,
 } from "@/lib/ai/analysis-operation";
@@ -453,6 +454,18 @@ async function processRealAnalysis(
         signal,
         renewLease,
         operationStartedAtMonotonic,
+        existingProviderResponseId: owner.providerResponseId,
+        persistProviderResponseId: async (providerResponseId) => {
+          const persisted = await persistAiAnalysisProviderResponseId({
+            owner,
+            providerResponseId,
+          });
+          if (!persisted) {
+            return false;
+          }
+          owner = persisted;
+          return true;
+        },
       });
     },
     complete: async ({ output, rawOutput, model, metrics }) => {

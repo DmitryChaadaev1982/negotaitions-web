@@ -24,9 +24,10 @@ import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
+import { isExternalServicesMockMode } from "@/lib/test-mode";
 import {
-  ACTIVE_TRANSCRIPT_STATUSES,
   computeShouldPoll,
+  hasRunningRawTranscription,
   isStaleStartingRecording,
   resolveMaterialsNextPollMs,
   isRecordingReadyForTranscription,
@@ -311,11 +312,15 @@ export async function GET(request: Request, context: RouteContext) {
     !fileKeyNormalization.containsRawUrl &&
     !fileKeyNormalization.containsEncodedUrl
   ) {
-    try {
-      const head = await headObject(fileKeyNormalization.normalizedKey);
-      storageObjectExists = head.exists;
-    } catch {
-      storageObjectExists = null;
+    if (isExternalServicesMockMode()) {
+      storageObjectExists = true;
+    } else {
+      try {
+        const head = await headObject(fileKeyNormalization.normalizedKey);
+        storageObjectExists = head.exists;
+      } catch {
+        storageObjectExists = null;
+      }
     }
   }
 
@@ -354,9 +359,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   const aiAnalysisReadiness = evaluateAiAnalysisReadiness(transcript);
   const transcriptHasText = aiAnalysisReadiness.hasUsableContent;
-  const hasRunningTranscription =
-    transcriptEnhancementStatus === "IN_PROGRESS" ||
-    (transcriptStatus !== null && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus));
+  const hasRunningTranscription = hasRunningRawTranscription(transcriptStatus);
+  const hasRunningTranscriptEnhancement =
+    transcriptEnhancementStatus === "IN_PROGRESS";
 
   const canViewRecording = true;
   // Phase 5 observer transcript decision (Part 7):
@@ -461,7 +466,7 @@ export async function GET(request: Request, context: RouteContext) {
   );
 
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
-    hasRunningAiAnalysis ? aiStatus : null,
+    aiStatus,
     transcriptStatus,
     transcriptHasText,
   );
@@ -472,7 +477,7 @@ export async function GET(request: Request, context: RouteContext) {
     recordingStatus,
     recordingHasFileKey,
     transcriptStatus,
-    transcriptEnhancementStatus === "IN_PROGRESS",
+    hasRunningTranscriptEnhancement,
     hasRunningAiAnalysis ? aiStatus : null,
     isParticipantOrObserver,
     transcriptHasText,
@@ -500,6 +505,13 @@ export async function GET(request: Request, context: RouteContext) {
     Boolean(recording?.fileKey);
 
   const canStopTranscription = canRunTranscription && hasRunningTranscription;
+  const canRetryTranscriptEnhancement =
+    isFacilitator &&
+    transcriptCompleted &&
+    transcriptHasText &&
+    !hasRunningTranscriptEnhancement &&
+    (transcriptEnhancementStatus === "FAILED" ||
+      transcriptEnhancementStatus === "PARTIAL");
 
   // Re-run is allowed when a completed transcript exists and recording is available
   const canRerunTranscription =
@@ -685,6 +697,8 @@ export async function GET(request: Request, context: RouteContext) {
                 skipReason:
                   (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
                     .skipReason as string | undefined) ?? null,
+                inProgress: hasRunningTranscriptEnhancement,
+                canRetry: canRetryTranscriptEnhancement,
               }
             : null,
         }

@@ -158,6 +158,6 @@ test("invalid-result message is localized in RU and EN dictionaries", () => {
   );
   assert.equal(
     ru.sessionMaterials.aiAnalysisInvalidResult,
-    "Результат AI-разбора некорректен. Запустите анализ повторно.",
+    "Результат ИИ-разбора некорректен. Запустите анализ повторно.",
   );
 });

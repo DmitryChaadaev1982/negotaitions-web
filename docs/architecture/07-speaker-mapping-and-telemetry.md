@@ -22,6 +22,8 @@ Map diarized transcript speakers (for example `speaker_1`) to actual session par
   - normalized windows preserve telemetry source preference (remote stream first, local mic fallback).
 - Select one-to-one mapping candidate with margin/confidence constraints.
 - Expose suggested mapping for facilitator confirmation.
+- Persist auto-suggestion diagnostics in transcript metadata so materials status
+  can show stable localized failure reasons such as `no_audio_activity`.
 - Persist mapping and mapping status transitions in transcript record.
 
 ## Key Modules

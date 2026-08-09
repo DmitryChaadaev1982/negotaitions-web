@@ -912,9 +912,14 @@ export async function suggestSpeakerMapping(
   }
 
   if (sourceSelection.selectedTelemetrySource === "NONE") {
+    const unavailableReason =
+      remote.candidate.reason === "no_audio_activity" &&
+      local.candidate.reason === "no_audio_activity"
+        ? "no_audio_activity"
+        : unifiedDecision.fallbackReason ?? "no_reliable_telemetry_source";
+
     return buildUnavailableSuggestion({
-      reason:
-        unifiedDecision.fallbackReason ?? "no_reliable_telemetry_source",
+      reason: unavailableReason,
       telemetryQuality: remote.suggestion.telemetryQuality,
       telemetryHealth: remote.suggestion.telemetryHealth,
       selectedWindowStrategy: "provider_raw_windows",

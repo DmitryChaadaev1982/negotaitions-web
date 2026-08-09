@@ -18,7 +18,6 @@ if (isExplicitMode && !["managed", "live"].includes(explicitModeRaw)) {
 const legacyExternalBaseUrl =
   process.env.PLAYWRIGHT_BASE_URL?.trim() ||
   process.env.BASE_URL?.trim() ||
-  process.env.APP_URL?.trim() ||
   "";
 
 const managedMode = explicitModeRaw === "managed";
@@ -63,13 +62,14 @@ export default defineConfig({
     ? {
         command: `npx next dev -p ${port}`,
         url: localBaseUrl,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: false,
         timeout: 120_000,
         env: buildE2eServerEnvironment({
           APP_URL: localBaseUrl,
           BASE_URL: localBaseUrl,
           PLAYWRIGHT_BASE_URL: localBaseUrl,
           NEXT_PUBLIC_APP_URL: localBaseUrl,
+          NEXT_DIST_DIR: ".next-e2e",
           EMAIL_PROVIDER: "fake",
           EMAIL_DELIVERY_ENABLED: "true",
           EMAIL_ADMIN_TEST_ENABLED:

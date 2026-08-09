@@ -8,6 +8,7 @@ import {
 } from "@/app/generated/prisma/client";
 import {
   computeShouldPoll,
+  hasRunningRawTranscription,
   isStaleStartingRecording,
   MATERIALS_POLL_INTERVAL_DEFAULT_MS,
   MATERIALS_POLL_INTERVAL_FAST_STARTING_MS,
@@ -35,7 +36,7 @@ test("raw transcript remains ready while enhancement is pending", () => {
       null,
       false,
       true,
-      true,
+      false,
       true,
       true,
       false,
@@ -43,6 +44,24 @@ test("raw transcript remains ready while enhancement is pending", () => {
     ),
     true,
   );
+});
+
+test("enhancement running does not make raw transcription cancellable", () => {
+  assert.equal(hasRunningRawTranscription(TranscriptStatus.COMPLETED), false);
+  assert.equal(hasRunningRawTranscription(TranscriptStatus.TRANSCRIBING), true);
+
+  const shouldPoll = computeShouldPoll(
+    RecordingStatus.COMPLETED,
+    true,
+    TranscriptStatus.COMPLETED,
+    true,
+    null,
+    false,
+    true,
+    hasRunningRawTranscription(TranscriptStatus.COMPLETED),
+  );
+
+  assert.equal(shouldPoll, true);
 });
 
 test("enhancement completed reaches terminal ready stage", () => {

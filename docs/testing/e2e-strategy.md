@@ -257,9 +257,11 @@ Intentionally not covered in Phase 2 smoke:
 ## Base URL and Web Server
 
 - With no external base URL env set, Playwright starts local web server automatically from config.
-- Setting external `PLAYWRIGHT_BASE_URL`, `BASE_URL`, or `APP_URL` suppresses Playwright `webServer` startup.
-- Documentation and runbooks should assume this current behavior.
-- Deterministic local config explicitly pins base URL to `http://127.0.0.1:3100` and does not route tests via shell-provided `APP_URL`, `BASE_URL`, `NEXT_PUBLIC_APP_URL`, or `PLAYWRIGHT_BASE_URL`.
+- Setting external `PLAYWRIGHT_BASE_URL` or `BASE_URL` suppresses Playwright `webServer` startup.
+- `APP_URL` configures the application runtime and must not by itself route deterministic E2E traffic through the reverse tunnel or normal development app.
+- Managed deterministic local config explicitly pins base URL to `http://127.0.0.1:3100` and does not route tests via shell-provided `APP_URL`, `BASE_URL`, `NEXT_PUBLIC_APP_URL`, or `PLAYWRIGHT_BASE_URL`.
+- Managed local runs require port `3100` to be free. A normal development server on port `3000` is a separate runtime and is not an E2E target.
+- Managed local runs set `NEXT_DIST_DIR=.next-e2e`, keeping the E2E Next dev server's lock/build output separate from the normal development server's `.next` directory.
 
 ## Key E2E Coverage Areas
 

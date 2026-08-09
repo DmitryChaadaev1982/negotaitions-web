@@ -47,6 +47,7 @@ export type AiAnalysisRunOwner = {
   analysisId: string;
   runToken: string;
   leaseExpiresAt: Date;
+  providerResponseId: string | null;
 };
 
 type AiAnalysisOperationRow = {
@@ -54,6 +55,7 @@ type AiAnalysisOperationRow = {
   status: AiAnalysisStatus;
   runToken: string | null;
   leaseExpiresAt: Date | null;
+  providerResponseId: string | null;
   updatedAt: Date;
 };
 
@@ -105,6 +107,11 @@ export type AiAnalysisOperationStore = {
     now: Date,
     leaseExpiresAt: Date,
   ): Promise<boolean>;
+  persistProviderResponseId(params: {
+    owner: AiAnalysisRunOwner;
+    providerResponseId: string;
+    now: Date;
+  }): Promise<boolean>;
   complete(params: {
     owner: AiAnalysisRunOwner;
     completedAt: Date;
@@ -134,6 +141,7 @@ export function createPrismaAiAnalysisOperationStore(
     status: true,
     runToken: true,
     leaseExpiresAt: true,
+    providerResponseId: true,
     updatedAt: true,
   } as const;
 
@@ -155,6 +163,7 @@ export function createPrismaAiAnalysisOperationStore(
             language: params.language,
             runToken: params.runToken,
             leaseExpiresAt: params.leaseExpiresAt,
+            providerResponseId: null,
             startedAt: params.now,
             completedAt: null,
             errorMessage: null,
@@ -182,6 +191,7 @@ export function createPrismaAiAnalysisOperationStore(
           language: params.language,
           runToken: params.runToken,
           leaseExpiresAt: params.leaseExpiresAt,
+          providerResponseId: params.expected.providerResponseId,
           startedAt: params.now,
           completedAt: null,
           errorMessage: null,
@@ -204,6 +214,23 @@ export function createPrismaAiAnalysisOperationStore(
       });
       return renewed.count === 1;
     },
+    async persistProviderResponseId(params) {
+      const persisted = await client.aiAnalysis.updateMany({
+        where: {
+          id: params.owner.analysisId,
+          status: AiAnalysisStatus.ANALYZING,
+          runToken: params.owner.runToken,
+          leaseExpiresAt: {
+            equals: params.owner.leaseExpiresAt,
+            gt: params.now,
+          },
+        },
+        data: {
+          providerResponseId: params.providerResponseId,
+        },
+      });
+      return persisted.count === 1;
+    },
     async complete(params) {
       const completed = await client.aiAnalysis.updateMany({
         where: {
@@ -220,6 +247,8 @@ export function createPrismaAiAnalysisOperationStore(
           analysisJson: params.fields.analysisJson,
           rawModelOutput: params.fields.rawModelOutput,
           completedAt: params.completedAt,
+          providerResponseId:
+            params.owner.providerResponseId ?? undefined,
           errorMessage: null,
         },
       });
@@ -294,7 +323,12 @@ export async function claimAiAnalysisRun(params: {
       if (created) {
         return {
           state: "claimed",
-          owner: { analysisId: created.id, runToken, leaseExpiresAt },
+          owner: {
+            analysisId: created.id,
+            runToken,
+            leaseExpiresAt,
+            providerResponseId: created.providerResponseId,
+          },
           recoveredStaleRun: false,
         };
       }
@@ -327,7 +361,12 @@ export async function claimAiAnalysisRun(params: {
     if (claimed) {
       return {
         state: "claimed",
-        owner: { analysisId: existing.id, runToken, leaseExpiresAt },
+        owner: {
+          analysisId: existing.id,
+          runToken,
+          leaseExpiresAt,
+          providerResponseId: existing.providerResponseId,
+        },
         recoveredStaleRun: existing.status === AiAnalysisStatus.ANALYZING,
       };
     }
@@ -360,6 +399,24 @@ export async function renewAiAnalysisLease(params: {
   );
   const renewed = await store.renew(params.owner, now, leaseExpiresAt);
   return renewed ? { ...params.owner, leaseExpiresAt } : null;
+}
+
+export async function persistAiAnalysisProviderResponseId(params: {
+  owner: AiAnalysisRunOwner;
+  providerResponseId: string;
+  now?: Date;
+  store?: AiAnalysisOperationStore;
+}): Promise<AiAnalysisRunOwner | null> {
+  const now = params.now ?? new Date();
+  const persisted = await (params.store ?? createPrismaAiAnalysisOperationStore())
+    .persistProviderResponseId({
+      owner: params.owner,
+      providerResponseId: params.providerResponseId,
+      now,
+    });
+  return persisted
+    ? { ...params.owner, providerResponseId: params.providerResponseId }
+    : null;
 }
 
 export async function completeAiAnalysisRun(params: {

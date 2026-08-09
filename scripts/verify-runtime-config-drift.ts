@@ -33,7 +33,7 @@ const ACCESSOR_EXPORTS = new Set([
 ]);
 const DIAGNOSTICS_MODULE = "lib/services/admin-env-display.ts";
 const REVIEWED_DIRECT_ENV_READS: Readonly<Record<string, readonly string[]>> = {
-  "next.config.ts": ["NODE_ENV"],
+  "next.config.ts": ["NODE_ENV", "NEXT_DIST_DIR"],
 };
 
 export const RUNTIME_CONFIG_SCOPE_PATHS = Object.freeze([
@@ -202,11 +202,13 @@ export function verifyRuntimeConfiguration(params?: {
         if (
           key &&
           reviewedKeys.includes(key) &&
-          definition?.ownerModules.includes(fileName)
+          (!definition || definition.ownerModules.includes(fileName))
         ) {
-          const consumers = usage.get(key) ?? new Set<string>();
-          consumers.add(fileName);
-          usage.set(key, consumers);
+          if (definition) {
+            const consumers = usage.get(key) ?? new Set<string>();
+            consumers.add(fileName);
+            usage.set(key, consumers);
+          }
         } else {
           issues.push({
             code: "DIRECT_ENV_ACCESS",

@@ -6,6 +6,7 @@ import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
   failAiAnalysisRun,
+  persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
   type AiAnalysisOperationStore,
   type AiAnalysisRunOwner,
@@ -36,6 +37,7 @@ function createMemoryStore(initial: Row | null = null) {
         status: AiAnalysisStatus.ANALYZING,
         runToken: params.runToken,
         leaseExpiresAt: params.leaseExpiresAt,
+        providerResponseId: null,
         updatedAt: params.now,
       };
       return { ...row };
@@ -57,6 +59,7 @@ function createMemoryStore(initial: Row | null = null) {
         status: AiAnalysisStatus.ANALYZING,
         runToken: params.runToken,
         leaseExpiresAt: params.leaseExpiresAt,
+        providerResponseId: row.providerResponseId,
         updatedAt: params.now,
       };
       return true;
@@ -75,6 +78,22 @@ function createMemoryStore(initial: Row | null = null) {
         return false;
       }
       row = { ...row, leaseExpiresAt, updatedAt: leaseExpiresAt };
+      return true;
+    },
+    async persistProviderResponseId(params) {
+      trace.push(`response:${params.owner.runToken}:${params.providerResponseId}`);
+      if (
+        !row ||
+        row.id !== params.owner.analysisId ||
+        row.status !== AiAnalysisStatus.ANALYZING ||
+        row.runToken !== params.owner.runToken ||
+        !row.leaseExpiresAt ||
+        row.leaseExpiresAt.getTime() !== params.owner.leaseExpiresAt.getTime() ||
+        row.leaseExpiresAt.getTime() <= params.now.getTime()
+      ) {
+        return false;
+      }
+      row = { ...row, providerResponseId: params.providerResponseId };
       return true;
     },
     async complete(params) {
@@ -196,12 +215,14 @@ test("expired stale claim is recoverable with a new token", async () => {
     status: AiAnalysisStatus.ANALYZING,
     runToken: "old-token",
     leaseExpiresAt: new Date(startedAt.getTime() + 180_000),
+    providerResponseId: "resp-recoverable",
     updatedAt: startedAt,
   });
   const expiredOwner: AiAnalysisRunOwner = {
     analysisId: "analysis-1",
     runToken: "old-token",
     leaseExpiresAt: new Date(startedAt.getTime() + 180_000),
+    providerResponseId: "resp-recoverable",
   };
   const takeoverAt = new Date(startedAt.getTime() + 180_001);
 
@@ -223,6 +244,7 @@ test("expired stale claim is recoverable with a new token", async () => {
   assert.equal(recovered.state, "claimed");
   assert.equal(recovered.state === "claimed" && recovered.recoveredStaleRun, true);
   assert.equal(memory.row?.runToken, "new-token");
+  assert.equal(memory.row?.providerResponseId, "resp-recoverable");
 });
 
 test("old token success, failure, and renewal are fenced after takeover", async () => {
@@ -231,12 +253,14 @@ test("old token success, failure, and renewal are fenced after takeover", async 
     analysisId: "analysis-1",
     runToken: "old-token",
     leaseExpiresAt: new Date(startedAt.getTime() + 180_000),
+    providerResponseId: null,
   };
   const memory = createMemoryStore({
     id: oldOwner.analysisId,
     status: AiAnalysisStatus.ANALYZING,
     runToken: oldOwner.runToken,
     leaseExpiresAt: oldOwner.leaseExpiresAt,
+    providerResponseId: null,
     updatedAt: startedAt,
   });
   await claimAiAnalysisRun({
@@ -272,6 +296,38 @@ test("old token success, failure, and renewal are fenced after takeover", async 
   );
   assert.equal(memory.row?.runToken, "new-token");
   assert.equal(memory.row?.status, AiAnalysisStatus.ANALYZING);
+});
+
+test("provider response ID persistence is fenced by current run token and lease", async () => {
+  const memory = createMemoryStore();
+  const now = new Date("2026-08-07T12:00:00.000Z");
+  const claimed = await claimAiAnalysisRun({
+    ...claimInput,
+    now,
+    runToken: "token-a",
+    store: memory.store,
+  });
+  assert.equal(claimed.state, "claimed");
+  if (claimed.state !== "claimed") return;
+
+  const persisted = await persistAiAnalysisProviderResponseId({
+    owner: claimed.owner,
+    providerResponseId: "resp_a",
+    now: new Date(now.getTime() + 1_000),
+    store: memory.store,
+  });
+  assert.ok(persisted);
+  assert.equal(persisted.providerResponseId, "resp_a");
+  assert.equal(memory.row?.providerResponseId, "resp_a");
+
+  const stalePersisted = await persistAiAnalysisProviderResponseId({
+    owner: { ...claimed.owner, runToken: "stale-token" },
+    providerResponseId: "resp_stale",
+    now: new Date(now.getTime() + 2_000),
+    store: memory.store,
+  });
+  assert.equal(stalePersisted, null);
+  assert.equal(memory.row?.providerResponseId, "resp_a");
 });
 
 test("normal FAILED operation can be manually retried", async () => {
@@ -311,6 +367,7 @@ test("legacy null-ownership ANALYZING row has grace then stale recovery", async 
     status: AiAnalysisStatus.ANALYZING,
     runToken: null,
     leaseExpiresAt: null,
+    providerResponseId: null,
     updatedAt,
   });
 

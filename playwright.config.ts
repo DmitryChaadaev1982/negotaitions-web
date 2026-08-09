@@ -8,7 +8,6 @@ const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
 const envBaseUrl =
   process.env.PLAYWRIGHT_BASE_URL?.trim() ||
   process.env.BASE_URL?.trim() ||
-  process.env.APP_URL?.trim() ||
   "";
 const fallbackBaseUrl = `http://127.0.0.1:${port}`;
 const resolvedBaseUrl = envBaseUrl || fallbackBaseUrl;
@@ -47,10 +46,14 @@ export default defineConfig({
     : {
         command: `npx next dev -p ${port}`,
         url: fallbackBaseUrl,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: false,
         timeout: 120_000,
         env: buildE2eServerEnvironment({
           APP_URL: fallbackBaseUrl,
+          BASE_URL: fallbackBaseUrl,
+          PLAYWRIGHT_BASE_URL: fallbackBaseUrl,
+          NEXT_PUBLIC_APP_URL: fallbackBaseUrl,
+          NEXT_DIST_DIR: ".next-e2e",
           EMAIL_PROVIDER: "fake",
           EMAIL_DELIVERY_ENABLED: "true",
           EMAIL_ADMIN_TEST_ENABLED:

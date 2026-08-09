@@ -52,6 +52,8 @@ type MaterialsStatusResponse = {
       reasons: string[];
       error: string | null;
       skipReason?: string | null;
+      inProgress?: boolean;
+      canRetry?: boolean;
     } | null;
   };
   aiAnalysis: {
@@ -127,6 +129,22 @@ const aiStageKeys: Record<string, TranslationKey> = {
   analyzing: "sessionMaterials.aiAnalysisAnalyzing",
   ready: "sessionMaterials.aiAnalysisReady",
   failed: "sessionMaterials.aiAnalysisFailed",
+};
+
+const enhancementStageKeys: Record<string, TranslationKey> = {
+  NOT_STARTED: "sessionMaterials.transcriptEnhancementNotStarted",
+  QUEUED: "sessionMaterials.transcriptReadyEnhancementInProgress",
+  IN_PROGRESS: "sessionMaterials.transcriptReadyEnhancementInProgress",
+  COMPLETED: "sessionMaterials.transcriptEnhancementCompleted",
+  PARTIAL: "sessionMaterials.transcriptEnhancementFailedUsingBase",
+  FAILED: "sessionMaterials.transcriptEnhancementFailedUsingBase",
+  SKIPPED: "sessionMaterials.transcriptEnhancementSkipped",
+};
+
+const speakerMappingStageKeys: Record<string, TranslationKey> = {
+  ready: "sessionMaterials.speakerMappingReady",
+  required: "room.confirmSpeakerMappingBeforeAi",
+  not_available: "sessionMaterials.waitingForTranscript",
 };
 
 function stageTone(stage: string): string {
@@ -316,13 +334,28 @@ export function SessionPostProcessingPanel({
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canStop;
   const canRerunTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canRerun;
-  const canRunTranscriptEnhancement =
+  const enhancement = transcript?.enhancement ?? null;
+  const enhancementRunning =
+    Boolean(enhancement?.inProgress) ||
+    enhancement?.status === "QUEUED" ||
+    enhancement?.status === "IN_PROGRESS";
+  const enhancementFailedOrPartial =
+    enhancement?.status === "FAILED" || enhancement?.status === "PARTIAL";
+  const enhancementCompleted = enhancement?.status === "COMPLETED";
+  const canStartTranscriptEnhancement =
     isFacilitator &&
     !readOnly &&
-    transcript?.enhancement?.available &&
-    (transcript?.processingStage === "ready" ||
-      transcript?.processingStage === "enhancing");
-  const enhancementRunning = transcript?.enhancement?.status === "IN_PROGRESS";
+    enhancement?.available &&
+    transcript?.processingStage === "ready" &&
+    !enhancementRunning &&
+    (enhancement?.status === "NOT_STARTED" || enhancement?.status === "SKIPPED");
+  const canRetryTranscriptEnhancement =
+    isFacilitator &&
+    !readOnly &&
+    Boolean(enhancement?.canRetry) &&
+    !enhancementRunning;
+  const canRunTranscriptEnhancement =
+    canStartTranscriptEnhancement || canRetryTranscriptEnhancement;
   const canStartAi = isFacilitator && !readOnly && ai?.canStart;
   const canRetryAi = isFacilitator && !readOnly && ai?.canRetry;
   const canRerunAi = isFacilitator && !readOnly && ai?.canRerun;
@@ -545,9 +578,10 @@ export function SessionPostProcessingPanel({
 
   const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
   const aiStage = ai?.processingStage ?? "waiting_for_transcript";
-  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing", "enhancing"].includes(transcriptionStage);
+  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing"].includes(transcriptionStage);
   const aiActive = ["queued", "analyzing"].includes(aiStage);
   const transcriptionDone = transcriptionStage === "ready";
+  const enhancementDone = enhancementCompleted || enhancementFailedOrPartial;
   const aiDone = aiStage === "ready";
   const aiStatusMessageKey: TranslationKey | null = (() => {
     switch (aiRenderState.stage) {
@@ -612,22 +646,6 @@ export function SessionPostProcessingPanel({
                 {rerunBusy ? t("common.loading") : t("sessionMaterials.rerunTranscription")}
               </SecondaryButton>
             ) : null}
-            {canRunTranscriptEnhancement ? (
-              <SecondaryButton
-                disabled={
-                  enhancementBusy ||
-                  enhancementRunning ||
-                  transcriptionBusy ||
-                  rerunBusy
-                }
-                onClick={() => void handleRunTranscriptEnhancement()}
-                data-testid="post-processing-run-transcript-enhancement-button"
-              >
-                {enhancementBusy || enhancementRunning
-                  ? t("sessionMaterials.transcriptEnhancementInProgress")
-                  : t("sessionMaterials.runTranscriptEnhancement")}
-              </SecondaryButton>
-            ) : null}
             {canStopTranscription ? (
               <SecondaryButton
                 disabled={stopTranscriptionBusy}
@@ -671,42 +689,60 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-2 text-xs text-rose-400">{rerunError}</p> : null}
-        {transcript?.enhancement?.status === "IN_PROGRESS" ? (
-          <p className="mt-2 text-xs text-violet-300">
-            {t("sessionMaterials.transcriptEnhancementInProgress")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "COMPLETED" ||
-        transcript?.enhancement?.status === "PARTIAL" ? (
-          <p className="mt-2 text-xs text-emerald-300">
-            {t("sessionMaterials.transcriptEnhancementCompleted")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "FAILED" ? (
-          <p className="mt-2 text-xs text-amber-300">
-            {t("sessionMaterials.transcriptEnhancementFailed")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "SKIPPED" ? (
-          <p className="mt-2 text-xs text-slate-300">
-            {t("sessionMaterials.transcriptEnhancementSkipped")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.suggested ? (
-          <p className="mt-2 text-xs text-violet-300">
-            {t("sessionMaterials.transcriptEnhancementRecommended")}
-          </p>
-        ) : null}
       </div>
 
-      {/* ── Step 2: AI Analysis ── */}
+      {/* ── Step 2: Transcript enhancement ── */}
+      {transcriptionDone && enhancement?.available ? (
+        <div
+          id="step-enhancement"
+          className={`rounded-lg border px-4 py-3 transition-colors
+            ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
+        >
+          <div className="flex flex-wrap items-start gap-3">
+            <StepBadge step={2} done={enhancementDone} active={enhancementRunning} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-slate-200">
+                {t("sessionMaterials.transcriptEnhancement")}
+              </p>
+              <p className="text-xs text-slate-500">
+                {enhancementRunning
+                  ? t("sessionMaterials.transcriptReadyEnhancementInProgress")
+                  : enhancementCompleted
+                    ? t("sessionMaterials.transcriptEnhancementCompleted")
+                    : enhancementFailedOrPartial
+                      ? t("sessionMaterials.transcriptEnhancementFailedUsingBase")
+                      : enhancement?.suggested
+                        ? t("sessionMaterials.transcriptEnhancementRecommended")
+                        : t("sessionMaterials.transcriptEnhancementNotStarted")}
+              </p>
+            </div>
+            <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
+              {canRunTranscriptEnhancement ? (
+                <SecondaryButton
+                  disabled={enhancementBusy || enhancementRunning}
+                  onClick={() => void handleRunTranscriptEnhancement()}
+                  data-testid="post-processing-run-transcript-enhancement-button"
+                >
+                  {enhancementBusy || enhancementRunning
+                    ? t("sessionMaterials.transcriptEnhancementInProgress")
+                    : canRetryTranscriptEnhancement
+                      ? t("sessionMaterials.retryTranscriptEnhancement")
+                      : t("sessionMaterials.runTranscriptEnhancement")}
+                </SecondaryButton>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Step 3: AI Analysis ── */}
       <div
         id="step-ai"
         className={`rounded-lg border px-4 py-3 transition-colors
           ${aiActive ? "border-violet-500/30 bg-violet-950/10" : aiDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
         <div className="flex flex-wrap items-start gap-3">
-          <StepBadge step={2} done={aiDone} active={aiActive} />
+          <StepBadge step={3} done={aiDone} active={aiActive} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
             <p className="text-xs text-slate-500">
@@ -754,7 +790,7 @@ export function SessionPostProcessingPanel({
         ) : null}
       </div>
 
-      {/* ── Step 3: Share with participants ── */}
+      {/* ── Step 4: Share with participants ── */}
       {aiDone ? (
         <div
           id="step-share"
@@ -762,7 +798,7 @@ export function SessionPostProcessingPanel({
             ${aiShared ? "border-emerald-500/30 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
         >
           <div className="flex flex-wrap items-center gap-3">
-            <StepBadge step={3} done={aiShared} active={false} />
+            <StepBadge step={4} done={aiShared} active={false} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-slate-200">{t("room.shareWithParticipants")}</p>
               <p className="text-xs text-slate-500">
@@ -825,23 +861,6 @@ export function SessionPostProcessingPanel({
                   : t("sessionMaterials.rerunTranscription")}
               </SecondaryButton>
             ) : null}
-            {canRunTranscriptEnhancement ? (
-              <SecondaryButton
-                disabled={
-                  enhancementBusy ||
-                  enhancementRunning ||
-                  transcriptionBusy ||
-                  rerunBusy
-                }
-                onClick={() => void handleRunTranscriptEnhancement()}
-                data-testid="post-processing-run-transcript-enhancement-button"
-                className="w-full text-xs"
-              >
-                {enhancementBusy || enhancementRunning
-                  ? t("sessionMaterials.transcriptEnhancementInProgress")
-                  : t("sessionMaterials.runTranscriptEnhancement")}
-              </SecondaryButton>
-            ) : null}
             {canStopTranscription ? (
               <SecondaryButton
                 disabled={stopTranscriptionBusy}
@@ -874,41 +893,59 @@ export function SessionPostProcessingPanel({
           </div>
         ) : null}
         {rerunError ? <p className="mt-1 text-xs text-rose-400">{rerunError}</p> : null}
-        {transcript?.enhancement?.status === "IN_PROGRESS" ? (
-          <p className="mt-1 text-xs text-violet-300">
-            {t("sessionMaterials.transcriptEnhancementInProgress")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "COMPLETED" ||
-        transcript?.enhancement?.status === "PARTIAL" ? (
-          <p className="mt-1 text-xs text-emerald-300">
-            {t("sessionMaterials.transcriptEnhancementCompleted")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "FAILED" ? (
-          <p className="mt-1 text-xs text-amber-300">
-            {t("sessionMaterials.transcriptEnhancementFailed")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.status === "SKIPPED" ? (
-          <p className="mt-1 text-xs text-slate-300">
-            {t("sessionMaterials.transcriptEnhancementSkipped")}
-          </p>
-        ) : null}
-        {transcript?.enhancement?.suggested ? (
-          <p className="mt-1 text-xs text-violet-300">
-            {t("sessionMaterials.transcriptEnhancementRecommended")}
-          </p>
-        ) : null}
       </div>
 
-      {/* Step 2: AI Analysis */}
+      {/* Step 2: Transcript enhancement */}
+      {transcriptionDone && enhancement?.available ? (
+        <div
+          className={`rounded-lg border px-3 py-2.5 transition-colors
+            ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
+        >
+          <div className="flex flex-wrap items-start gap-2">
+            <StepBadge step={2} done={enhancementDone} active={enhancementRunning} />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-200">
+                {t("sessionMaterials.transcriptEnhancement")}
+              </p>
+              <p className="text-xs text-slate-500">
+                {enhancementRunning
+                  ? t("sessionMaterials.transcriptReadyEnhancementInProgress")
+                  : enhancementCompleted
+                    ? t("sessionMaterials.transcriptEnhancementCompleted")
+                    : enhancementFailedOrPartial
+                      ? t("sessionMaterials.transcriptEnhancementFailedUsingBase")
+                      : enhancement?.suggested
+                        ? t("sessionMaterials.transcriptEnhancementRecommended")
+                        : t("sessionMaterials.transcriptEnhancementNotStarted")}
+              </p>
+            </div>
+            <div className="flex w-full flex-col gap-2 pt-2 sm:ml-auto sm:w-56 sm:pt-0">
+              {canRunTranscriptEnhancement ? (
+                <SecondaryButton
+                  disabled={enhancementBusy || enhancementRunning}
+                  onClick={() => void handleRunTranscriptEnhancement()}
+                  data-testid="post-processing-run-transcript-enhancement-button"
+                  className="w-full text-xs"
+                >
+                  {enhancementBusy || enhancementRunning
+                    ? t("sessionMaterials.transcriptEnhancementInProgress")
+                    : canRetryTranscriptEnhancement
+                      ? t("sessionMaterials.retryTranscriptEnhancement")
+                      : t("sessionMaterials.runTranscriptEnhancement")}
+                </SecondaryButton>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Step 3: AI Analysis */}
       <div
         className={`rounded-lg border px-3 py-2.5 transition-colors
           ${aiActive ? "border-violet-500/30 bg-violet-950/10" : aiDone ? "border-emerald-500/20 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
       >
         <div className="flex flex-wrap items-start gap-2">
-          <StepBadge step={2} done={aiDone} active={aiActive} />
+          <StepBadge step={3} done={aiDone} active={aiActive} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
             <p className="text-xs text-slate-500">
@@ -945,14 +982,14 @@ export function SessionPostProcessingPanel({
         ) : null}
       </div>
 
-      {/* Step 3: Share */}
+      {/* Step 4: Share */}
       {aiDone ? (
         <div
           className={`rounded-lg border px-3 py-2.5 transition-colors
             ${aiShared ? "border-emerald-500/30 bg-emerald-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
         >
           <div className="flex items-center gap-2">
-            <StepBadge step={3} done={aiShared} active={false} />
+            <StepBadge step={4} done={aiShared} active={false} />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-slate-200">{t("room.shareWithParticipants")}</p>
               <p className="text-xs text-slate-500">
@@ -989,7 +1026,7 @@ export function SessionPostProcessingPanel({
       className={
         isSidebar
           ? "space-y-2"
-          : "grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3"
+          : "grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-5"
       }
       data-testid="post-processing-status-strip"
     >
@@ -1002,6 +1039,22 @@ export function SessionPostProcessingPanel({
         title={t("sessionMaterials.transcription")}
         stage={transcript?.processingStage ?? "waiting_for_recording"}
         stageKeys={transcriptionStageKeys}
+      />
+      <StatusPill
+        title={t("sessionMaterials.transcriptEnhancement")}
+        stage={enhancement?.status ?? "NOT_STARTED"}
+        stageKeys={enhancementStageKeys}
+      />
+      <StatusPill
+        title={t("sessionMaterials.speakerMapping")}
+        stage={
+          transcript?.speakerMappingRequired
+            ? "required"
+            : transcript?.processingStage === "ready"
+              ? "ready"
+              : "not_available"
+        }
+        stageKeys={speakerMappingStageKeys}
       />
       <StatusPill
         title={t("sessionMaterials.aiAnalysis")}

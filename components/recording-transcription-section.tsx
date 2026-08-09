@@ -1921,7 +1921,7 @@ export function RecordingTranscriptionSection({
 
             {/* Plain transcript: only shown when no diarized content is available.
                 When speaker diarization is active, the diarized view above is the source of truth. */}
-            {diarizedTurns.length === 0 ? (
+            {diarizedTurns.length === 0 && transcriptText.trim().length > 0 ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-sm font-medium text-slate-300">

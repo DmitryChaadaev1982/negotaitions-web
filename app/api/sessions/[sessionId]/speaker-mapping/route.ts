@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
+import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   resolveRoomParticipantFromParsedBody,
@@ -37,6 +37,12 @@ function summarizeMappingValues(mapping: Record<string, string | null>) {
     },
     {},
   );
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 async function getSpeakerMappingCandidates(sessionId: string, transcript: {
@@ -255,6 +261,24 @@ export async function POST(request: Request, context: RouteContext) {
   // ── Suggest automatically ────────────────────────────────────────────────
   if (suggestAutomatically) {
     const suggestion = await suggestSpeakerMapping(sessionId, transcript);
+    const metadata = asRecord(transcript.processingMetadata);
+    await prisma.transcript.update({
+      where: { id: transcript.id },
+      data: {
+        processingMetadata: {
+          ...metadata,
+          mappingSuggestion: {
+            candidateMapping: suggestion.mapping,
+            confidence: suggestion.confidence,
+            reason: suggestion.available
+              ? "auto_suggested"
+              : `unavailable:${suggestion.unavailableReason ?? "unknown"}`,
+            unavailableReason: suggestion.unavailableReason,
+            telemetryQuality: suggestion.telemetryQuality,
+          },
+        } satisfies Prisma.InputJsonValue,
+      },
+    });
 
     return NextResponse.json({
       suggestedMapping: suggestion.mapping,

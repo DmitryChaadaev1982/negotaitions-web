@@ -159,7 +159,7 @@ test("direct completed success returns explicit metrics", async () => {
   assert.ok(result.metrics.parsingValidationDurationMs >= 0);
   assert.equal(result.metrics.optionalDepthDurationMs, 0);
   assert.ok(result.metrics.outputSchemaInstructionChars > 1_000);
-  assert.equal(result.metrics.primaryMaxOutputTokensConfigured, 6_000);
+  assert.equal(result.metrics.primaryMaxOutputTokensConfigured, 8_000);
   assert.ok(
     result.metrics.estimatedInputTokens >
       result.metrics.estimatedPromptTokens,
@@ -189,49 +189,122 @@ test("completed success without response ID is accepted without retrieval", asyn
   assert.equal(result.metrics.calls[0]?.responseIdPresent, false);
 });
 
-test("compact fallback is a semantic call, not an outer retry", async () => {
+test("Yandex analysis request body uses background reasoning-none contract", async () => {
   configureYandexEnv();
-  let posts = 0;
+  let requestBody: Record<string, unknown> | null = null;
   const result = await runWithFetch(
-    (async () => {
-      posts += 1;
-      return posts === 1
-        ? jsonResponse(fixtures.completed('{"executiveSummary":'))
-        : jsonResponse(
-            fixtures.completed(JSON.stringify(validAnalysisOutput())),
-          );
-    }) as typeof fetch,
-  );
-
-  assert.equal(posts, 2);
-  assert.equal(result.metrics.operationAttemptCount, 1);
-  assert.equal(result.metrics.outerRetryCount, 0);
-  assert.equal(result.metrics.compactFallbackCount, 1);
-  assert.deepEqual(
-    result.metrics.calls.map((call) => call.purpose),
-    ["primary", "compact_fallback"],
-  );
-});
-
-test("transient pre-ID failure performs one explicit outer retry", async () => {
-  configureYandexEnv();
-  let posts = 0;
-  const result = await runWithFetch(
-    (async () => {
-      posts += 1;
-      if (posts === 1) throw new TypeError("synthetic network failure");
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return jsonResponse(
         fixtures.completed(JSON.stringify(validAnalysisOutput())),
       );
     }) as typeof fetch,
-    controlledRuntime(),
   );
 
-  assert.equal(posts, 2);
-  assert.equal(result.metrics.operationAttemptCount, 2);
-  assert.equal(result.metrics.outerRetryCount, 1);
-  assert.equal(result.metrics.generationCallCount, 2);
-  assert.equal(result.metrics.calls[0]?.errorClass, "NETWORK_ERROR");
+  assert.equal(result.output.overallScore, 72);
+  assert.equal(requestBody?.model, "gpt://synthetic-folder/deepseek-v4-flash");
+  assert.deepEqual(requestBody?.reasoning, { effort: "none" });
+  assert.equal(requestBody?.background, true);
+  assert.equal(requestBody?.temperature, 0.2);
+  assert.equal(requestBody?.max_output_tokens, 8000);
+  assert.equal(Object.hasOwn(requestBody ?? {}, "stream"), false);
+  assert.equal(Object.hasOwn(requestBody ?? {}, "reasoning_effort"), false);
+});
+
+test("existing provider response ID is retrieved before any new generation POST", async () => {
+  configureYandexEnv();
+  const methods: string[] = [];
+  const urls: string[] = [];
+  const result = await runWithFetch(
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      urls.push(String(input));
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+    {
+      existingProviderResponseId: "resp_existing",
+    },
+  );
+
+  assert.equal(result.output.overallScore, 72);
+  assert.deepEqual(methods, ["GET"]);
+  assert.equal(urls[0]?.endsWith("/responses/resp_existing"), true);
+  assert.equal(result.metrics.generationCallCount, 1);
+  assert.equal(result.metrics.calls[0]?.responseIdPresent, true);
+});
+
+test("provider response ID is persisted before long polling continues", async () => {
+  configureYandexEnv();
+  const events: string[] = [];
+  const result = await runWithFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        events.push("post");
+        return jsonResponse(fixtures.inProgress);
+      }
+      events.push("get");
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+    {
+      ...controlledRuntime(),
+      persistProviderResponseId: async (providerResponseId) => {
+        events.push(`persist:${providerResponseId}`);
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result.output.overallScore, 72);
+  assert.deepEqual(events, ["post", "persist:resp_synthetic_in_progress", "get"]);
+});
+
+test("invalid accepted primary output does not create compact fallback generation", async () => {
+  configureYandexEnv();
+  let posts = 0;
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => {
+          posts += 1;
+          return jsonResponse(fixtures.completed('{"executiveSummary":'));
+        }) as typeof fetch,
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "MODEL_INVALID_OUTPUT");
+      assert.equal(error.allowsRegeneration, false);
+      return true;
+    },
+  );
+
+  assert.equal(posts, 1);
+});
+
+test("acceptance-unknown POST transport failure does not retry generation", async () => {
+  configureYandexEnv();
+  let posts = 0;
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => {
+          posts += 1;
+          throw new TypeError("synthetic network failure");
+        }) as typeof fetch,
+        controlledRuntime(),
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "NETWORK_ERROR");
+      assert.equal(error.allowsRegeneration, false);
+      return true;
+    },
+  );
+
+  assert.equal(posts, 1);
 });
 
 test("in-progress partial text is ignored until completed retrieval", async () => {
@@ -323,6 +396,30 @@ test("poll deadline is a timeout and does not regenerate", async () => {
   assert.equal(posts, 1);
   assert.ok(gets > 1);
   assert.ok(runtime.now <= 10_000);
+});
+
+test("configured max poll count no longer terminates valid operation", async () => {
+  configureYandexEnv();
+  process.env.AI_ANALYSIS_MAX_POLL_REQUESTS = "5";
+  process.env.AI_ANALYSIS_RESPONSE_POLL_TIMEOUT_MS = "30000";
+  const runtime = controlledRuntime();
+  let gets = 0;
+  const result = await runWithFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return jsonResponse(fixtures.inProgress);
+      }
+      gets += 1;
+      return gets <= 100
+        ? jsonResponse(fixtures.inProgress)
+        : jsonResponse(fixtures.completed(JSON.stringify(validAnalysisOutput())));
+    }) as typeof fetch,
+    runtime,
+  );
+
+  assert.equal(result.output.overallScore, 72);
+  assert.equal(gets, 101);
+  assert.equal(result.metrics.pollingRequestCount, 101);
 });
 
 test("transient poll failure retries GET on the same known response ID", async () => {
@@ -443,7 +540,7 @@ test("ownership loss after provider response stops terminal processing", async (
   assert.equal(renewals, 2);
 });
 
-test("valid primary survives failed optional depth", async () => {
+test("valid primary result does not trigger optional depth generation", async () => {
   configureYandexEnv();
   const base = createMockAnalysisOutput("en");
   let posts = 0;
@@ -458,15 +555,14 @@ test("valid primary survives failed optional depth", async () => {
     controlledRuntime(),
   );
 
-  assert.equal(posts, 2);
+  assert.equal(posts, 1);
   assert.deepEqual(result.output, base);
-  assert.equal(result.metrics.optionalDepthCallCount, 1);
-  assert.equal(result.metrics.optionalDepthOutcome, "failed");
-  assert.equal(result.metrics.optionalDepthFailureClass, "PROVIDER_HTTP_ERROR");
+  assert.equal(result.metrics.optionalDepthCallCount, 0);
+  assert.equal(result.metrics.optionalDepthOutcome, "not_needed");
   assert.equal(result.metrics.outerRetryCount, 0);
 });
 
-test("valid primary survives invalid optional depth", async () => {
+test("valid primary remains terminal success without optional depth validation", async () => {
   configureYandexEnv();
   const base = createMockAnalysisOutput("en");
   let posts = 0;
@@ -480,8 +576,9 @@ test("valid primary survives invalid optional depth", async () => {
   );
 
   assert.deepEqual(result.output, base);
-  assert.equal(result.metrics.optionalDepthOutcome, "invalid");
-  assert.equal(result.metrics.optionalDepthFailureClass, "MODEL_INVALID_OUTPUT");
+  assert.equal(posts, 1);
+  assert.equal(result.metrics.optionalDepthOutcome, "not_needed");
+  assert.equal(result.metrics.optionalDepthFailureClass, null);
 });
 
 test("invalid schema is not misclassified as missing configuration", async () => {
@@ -524,10 +621,10 @@ test("performance model removes compact/depth multiplication", () => {
   configureYandexEnv();
   const model = getAiAnalysisPerformanceModel();
   assert.equal(model.beforeReviewTheoreticalWorstCaseMs, 1_440_000);
-  assert.equal(model.maxOperationAttempts, 2);
-  assert.equal(model.maxGenerationPosts, 4);
-  assert.equal(model.maxCompactFallbackCalls, 1);
-  assert.equal(model.maxOptionalDepthCalls, 1);
-  assert.equal(model.maxPollingRequests, 400);
+  assert.equal(model.maxOperationAttempts, 1);
+  assert.equal(model.maxGenerationPosts, 1);
+  assert.equal(model.maxCompactFallbackCalls, 0);
+  assert.equal(model.maxOptionalDepthCalls, 0);
+  assert.equal(model.maxPollingRequests, 40);
   assert.equal(model.theoreticalDefaultWorstCaseMs, 120_000);
 });

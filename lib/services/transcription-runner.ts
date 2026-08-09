@@ -249,6 +249,7 @@ export async function runMockTranscription(
 
   const mockStrategy = getTranscriptionStrategy();
   const isTwoPass = mockStrategy === "diarize_plus_quality";
+  const mockInputSizeBytes = 1024;
 
   const saved = await prisma.transcript.update({
     where: { id: transcriptId },
@@ -269,6 +270,17 @@ export async function runMockTranscription(
       diarizationProvider: "mock-transcription",
       speakerMapping: Prisma.JsonNull,
       speakerMappingStatus: "REQUIRED",
+      processingMetadata: {
+        transcriptionProvider: "mock",
+        audioTranscriptionMaxFileMb: 25,
+        originalSizeBytes: mockInputSizeBytes,
+        thresholdBytes: 25 * 1024 * 1024,
+        transcriptionInputSizeBytes: mockInputSizeBytes,
+        preprocessingSkipped: true,
+        preprocessingTriggered: false,
+        preprocessingTriggerReason: "mock_recording",
+        selectedInputForSpeechKit: "original",
+      },
       completedAt: new Date(),
       strategy: mockStrategy,
       diarizationPassStatus: "COMPLETED",

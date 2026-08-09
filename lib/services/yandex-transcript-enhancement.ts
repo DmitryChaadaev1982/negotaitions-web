@@ -5,7 +5,6 @@ import {
   getTranscriptEnhancementChunkTimeoutMs,
   getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementMode,
-  getYandexTranscriptEnhancementFallbackModel,
   getYandexTranscriptEnhancementMaxOutputTokens,
   getYandexTranscriptEnhancementModel,
   type TranscriptEnhancementMode,
@@ -19,7 +18,8 @@ const CHUNK_CONTEXT_NEIGHBORS = 1;
 const CATASTROPHIC_SHRINK_MIN_SOURCE_CHARS = 40;
 const CATASTROPHIC_SHRINK_RATIO = 0.35;
 const CATASTROPHIC_SHRINK_MIN_REMOVED_CHARS = 30;
-const EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK = 3;
+const EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK = 2;
+const TRANSCRIPT_ENHANCEMENT_RETRY_HARD_MAX_OUTPUT_TOKENS = 6000;
 const TRANSCRIPT_ENHANCEMENT_SCHEMA_NAME = "transcript_enhancement_segments";
 const TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION = "v1";
 
@@ -839,6 +839,7 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
         model: `gpt://${folderId}/${modelName}`,
         temperature: 0,
         max_output_tokens: maxTokens,
+        reasoning: { effort: "none" },
         instructions:
           outputMode === "json_schema"
             ? "Return valid JSON that satisfies the provided schema."
@@ -1133,6 +1134,33 @@ function classifyChunkError(error: unknown): { category: string; retryable: bool
   return { category: "request_failed", retryable: false };
 }
 
+function resolveSingleEscalatedMaxOutputTokens(params: {
+  currentCap: number;
+  hardMax: number;
+  tokensUsed?: number;
+}): number | null {
+  const nextCap = Math.min(
+    params.hardMax,
+    Math.max(
+      1600,
+      params.currentCap + 1,
+      Math.ceil(params.currentCap * 2),
+      params.tokensUsed ? Math.ceil(params.tokensUsed * 2) : 0,
+    ),
+  );
+  return nextCap > params.currentCap ? nextCap : null;
+}
+
+function resolveRetryHardMaxOutputTokens(currentCap: number, configuredMax: number): number {
+  return Math.max(
+    configuredMax,
+    Math.min(
+      TRANSCRIPT_ENHANCEMENT_RETRY_HARD_MAX_OUTPUT_TOKENS,
+      Math.ceil(currentCap * 2),
+    ),
+  );
+}
+
 async function runSingleShotEnhancement(params: {
   segments: TranscriptEnhancementInputSegment[];
   apiKey: string;
@@ -1147,6 +1175,8 @@ async function runSingleShotEnhancement(params: {
     resolveDynamicMaxOutputTokens(segments);
   const startedAt = Date.now();
 
+  let currentMaxOutputTokens = maxOutputTokens;
+  let automaticEscalationUsed = false;
   let { envelope, outputText, tokensUsed } = await requestEnhancement({
     apiKey,
     folderId,
@@ -1161,9 +1191,16 @@ async function runSingleShotEnhancement(params: {
   });
 
   if (!outputText) {
-    for (let attempt = 0; attempt < 2 && !outputText; attempt += 1) {
-      const retryTokens = Math.max(1600, Math.min(maxTokensFromEnv, tokensUsed * 2));
-      if (retryTokens <= tokensUsed) break;
+    const retryTokens = resolveSingleEscalatedMaxOutputTokens({
+      currentCap: currentMaxOutputTokens,
+      hardMax: resolveRetryHardMaxOutputTokens(
+        currentMaxOutputTokens,
+        maxTokensFromEnv,
+      ),
+      tokensUsed,
+    });
+    if (retryTokens) {
+      automaticEscalationUsed = true;
       const retryResult = await requestEnhancement({
         apiKey,
         folderId,
@@ -1176,6 +1213,7 @@ async function runSingleShotEnhancement(params: {
           buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
         outputMode,
       });
+      currentMaxOutputTokens = retryTokens;
       envelope = retryResult.envelope;
       outputText = retryResult.outputText;
       tokensUsed = retryResult.tokensUsed;
@@ -1189,9 +1227,18 @@ async function runSingleShotEnhancement(params: {
 
   let parsed = parseEnhancementPayload(outputText);
   if (!parsed) {
-    for (let attempt = 0; attempt < 3 && !parsed; attempt += 1) {
-      const strictRetryTokens = Math.max(1600, Math.min(maxTokensFromEnv, tokensUsed * 2));
-      if (strictRetryTokens <= tokensUsed && attempt > 0) break;
+    const strictRetryTokens = automaticEscalationUsed
+      ? null
+      : resolveSingleEscalatedMaxOutputTokens({
+          currentCap: currentMaxOutputTokens,
+          hardMax: resolveRetryHardMaxOutputTokens(
+            currentMaxOutputTokens,
+            maxTokensFromEnv,
+          ),
+          tokensUsed,
+        });
+    if (strictRetryTokens) {
+      automaticEscalationUsed = true;
       const strictRetry = await requestEnhancement({
         apiKey,
         folderId,
@@ -1205,6 +1252,7 @@ async function runSingleShotEnhancement(params: {
         strictJsonMode: true,
         outputMode,
       });
+      currentMaxOutputTokens = strictRetryTokens;
       outputText = strictRetry.outputText;
       tokensUsed = strictRetry.tokensUsed;
       parsed = parseEnhancementPayload(outputText);
@@ -1297,8 +1345,6 @@ async function runChunkedEnhancement(params: {
   const perChunkTimeoutMs = getTranscriptEnhancementChunkTimeoutMs();
   const chunkResults: ChunkExecutionResult[] = new Array(chunks.length);
   const chunkQueuedAt = chunks.map(() => new Date().toISOString());
-  const fallbackModel =
-    outputMode === "legacy" ? getYandexTranscriptEnhancementFallbackModel() : null;
   const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();
 
   let workerCursor = 0;
@@ -1306,15 +1352,15 @@ async function runChunkedEnhancement(params: {
 
   async function processChunk(chunk: EnhancementChunk): Promise<ChunkExecutionResult> {
     const { maxOutputTokens } = resolveDynamicMaxOutputTokens(chunk.targets);
-    const strictRetryMaxTokens = Math.max(
-      maxOutputTokens,
-      Math.min(maxTokensFromEnv, Math.max(1600, maxOutputTokens * 2)),
-    );
+    const strictRetryMaxTokens = resolveSingleEscalatedMaxOutputTokens({
+      currentCap: maxOutputTokens,
+      hardMax: resolveRetryHardMaxOutputTokens(maxOutputTokens, maxTokensFromEnv),
+    });
     const schema = buildChunkSchemaJsonSchema(chunk);
     const schemaName = `${TRANSCRIPT_ENHANCEMENT_SCHEMA_NAME}_${TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION}`;
     const expectedSchemaKeys = chunk.targets.map((segment) => String(segment.index));
     const attemptPlan: Array<{
-      attemptType: "primary_initial" | "primary_strict_retry" | "fallback_model_retry";
+      attemptType: "primary_initial" | "primary_strict_retry";
       model: string;
       maxTokens: number;
       strictJsonMode: boolean;
@@ -1330,14 +1376,18 @@ async function runChunkedEnhancement(params: {
             fallbackTriggered: false,
             fallbackReason: null,
           },
-          {
-            attemptType: "primary_strict_retry",
-            model: modelName,
-            maxTokens: strictRetryMaxTokens,
-            strictJsonMode: true,
-            fallbackTriggered: false,
-            fallbackReason: null,
-          },
+          ...(strictRetryMaxTokens
+            ? [
+                {
+                  attemptType: "primary_strict_retry" as const,
+                  model: modelName,
+                  maxTokens: strictRetryMaxTokens,
+                  strictJsonMode: true,
+                  fallbackTriggered: false,
+                  fallbackReason: null,
+                },
+              ]
+            : []),
         ]
       : [
           {
@@ -1348,23 +1398,15 @@ async function runChunkedEnhancement(params: {
             fallbackTriggered: false,
             fallbackReason: null,
           },
-          {
-            attemptType: "primary_strict_retry",
-            model: modelName,
-            maxTokens: strictRetryMaxTokens,
-            strictJsonMode: true,
-            fallbackTriggered: false,
-            fallbackReason: null,
-          },
-          ...(fallbackModel && fallbackModel !== modelName
+          ...(strictRetryMaxTokens
             ? [
                 {
-                  attemptType: "fallback_model_retry" as const,
-                  model: fallbackModel,
+                  attemptType: "primary_strict_retry" as const,
+                  model: modelName,
                   maxTokens: strictRetryMaxTokens,
                   strictJsonMode: true,
-                  fallbackTriggered: true,
-                  fallbackReason: "empty_output",
+                  fallbackTriggered: false,
+                  fallbackReason: null,
                 },
               ]
             : []),
@@ -1568,7 +1610,7 @@ async function runChunkedEnhancement(params: {
               errorCategory: null,
               warnings: [],
               primaryModel: modelName,
-              fallbackModel: fallbackModel ?? null,
+              fallbackModel: null,
               attempts,
               outputMode,
               schemaName,
@@ -1692,7 +1734,7 @@ async function runChunkedEnhancement(params: {
             errorCategory: null,
             warnings: validated.warnings,
             primaryModel: modelName,
-            fallbackModel: fallbackModel ?? null,
+            fallbackModel: null,
             attempts,
             outputMode,
           };
@@ -1773,7 +1815,7 @@ async function runChunkedEnhancement(params: {
       errorCategory: lastErrorCategory ?? "empty_output",
       warnings: [],
       primaryModel: modelName,
-      fallbackModel: fallbackModel ?? null,
+      fallbackModel: null,
       attempts,
       outputMode,
       schemaName: structuredOutputEnabled ? schemaName : null,
@@ -1883,7 +1925,7 @@ async function runChunkedEnhancement(params: {
       mode: "chunked",
       model: modelName,
       primaryModel: modelName,
-      fallbackModel: fallbackModel ?? null,
+      fallbackModel: null,
       fallbackTriggered: fallbackTriggeredAny,
       fallbackReason: fallbackReasons.size > 0 ? Array.from(fallbackReasons).join(",") : null,
       outputMode,

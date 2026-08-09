@@ -1,7 +1,15 @@
-import { detectPort3000Owner, git, probeHttpHealth, resolveGitCommonDir, runCommand } from "./common.mjs";
+import {
+  detectPort3000Owner,
+  detectPortOwner,
+  git,
+  probeHttpHealth,
+  resolveGitCommonDir,
+  runCommand,
+} from "./common.mjs";
 import { classifyPlaywrightMode, resolveServerOwnership } from "./agent-preflight-lib.mjs";
 
 const LIVE_URL = "http://localhost:3000";
+const MANAGED_PORT = 3100;
 const LOCAL_CONFIG = "playwright.local.config.ts";
 
 export class PlaywrightModeError extends Error {
@@ -32,10 +40,31 @@ function ensureValidMode(mode) {
 export async function preparePlaywrightMode(mode, deps = {}) {
   ensureValidMode(mode);
   const cwd = deps.cwd ?? process.cwd();
-  const detectPort = deps.detectPort3000Owner ?? detectPort3000Owner;
+  const detectLivePort = deps.detectPort3000Owner ?? detectPort3000Owner;
+  const detectManagedPort =
+    deps.detectManagedPortOwner ?? ((options) => detectPortOwner(MANAGED_PORT, options));
   const healthProbe = deps.probeHttpHealth ?? probeHttpHealth;
   const gitFn = deps.git ?? git;
-  const portStatus = await detectPort({ runCommand: deps.runCommand });
+
+  if (mode === "managed") {
+    const managedPortStatus = await detectManagedPort({ runCommand: deps.runCommand });
+    if (managedPortStatus.status !== "free") {
+      throw new PlaywrightModeError(
+        "MANAGED_SERVER_PORT_CONFLICT",
+        managedPortStatus.status === "occupied"
+          ? `Port ${MANAGED_PORT} is occupied by PID ${managedPortStatus.pid ?? "unknown"} (${managedPortStatus.processName ?? "unknown-process"}).`
+          : `Could not verify that port ${MANAGED_PORT} is free.`,
+      );
+    }
+    return {
+      mode,
+      environment: {
+        PLAYWRIGHT_SERVER_MODE: "managed",
+      },
+    };
+  }
+
+  const portStatus = await detectLivePort({ runCommand: deps.runCommand });
   const health = await healthProbe(LIVE_URL, 2_500);
   const currentWorktree =
     deps.currentWorktree ?? (await gitFn(["rev-parse", "--show-toplevel"], { cwd }));
@@ -54,23 +83,6 @@ export async function preparePlaywrightMode(mode, deps = {}) {
     health,
     ownership,
   });
-
-  if (mode === "managed") {
-    if (portStatus.status !== "free") {
-      throw new PlaywrightModeError(
-        "MANAGED_SERVER_PORT_CONFLICT",
-        portStatus.status === "occupied"
-          ? `Port 3000 is occupied by PID ${portStatus.pid ?? "unknown"} (${portStatus.processName ?? "unknown-process"}).`
-          : "Could not verify that port 3000 is free.",
-      );
-    }
-    return {
-      mode,
-      environment: {
-        PLAYWRIGHT_SERVER_MODE: "managed",
-      },
-    };
-  }
 
   if (!health.ok) {
     throw new PlaywrightModeError(

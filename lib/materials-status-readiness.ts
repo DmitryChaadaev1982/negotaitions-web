@@ -63,6 +63,12 @@ export function isRecordingReadyForTranscription(
   return status === RecordingStatus.COMPLETED || status === RecordingStatus.STOPPED;
 }
 
+export function hasRunningRawTranscription(
+  transcriptStatus: TranscriptStatus | null,
+): boolean {
+  return transcriptStatus !== null && ACTIVE_TRANSCRIPT_STATUSES.has(transcriptStatus);
+}
+
 export function resolveTranscriptProcessingStage(
   transcriptStatus: TranscriptStatus | null,
   recordingStatus: RecordingStatus | null,

@@ -16,11 +16,11 @@ export function getYandexAiModel(): string {
 
 export function getYandexAiMaxOutputTokens(): number {
   const raw = Number.parseInt(
-    process.env.YANDEX_AI_MAX_OUTPUT_TOKENS?.trim() || "6000",
+    process.env.YANDEX_AI_MAX_OUTPUT_TOKENS?.trim() || "8000",
     10,
   );
   if (!Number.isFinite(raw)) {
-    return 6000;
+    return 8000;
   }
   return Math.max(4000, raw);
 }
@@ -123,6 +123,8 @@ export type AiAnalysisExecutionOptions = {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   fetch?: typeof fetch;
   operationStartedAtMonotonic?: number;
+  existingProviderResponseId?: string | null;
+  persistProviderResponseId?: (providerResponseId: string) => Promise<boolean>;
 };
 
 export class AiAnalysisProviderError extends Error {
@@ -165,29 +167,29 @@ export class AiAnalysisProviderError extends Error {
 function defaultAiAnalysisUserMessage(code: AiAnalysisErrorCode): string {
   switch (code) {
     case "CONFIG_MISSING":
-      return "AI analysis provider is not configured.";
+      return "Провайдер ИИ-разбора не настроен.";
     case "NETWORK_TIMEOUT":
-      return "AI provider timed out while generating analysis. Please retry.";
+      return "Не удалось завершить ИИ-разбор вовремя. Повторите попытку.";
     case "NETWORK_ERROR":
-      return "AI provider network request failed. Please retry.";
+      return "Не удалось связаться с провайдером ИИ-разбора. Повторите попытку.";
     case "PROVIDER_RATE_LIMIT":
-      return "AI provider rate limit reached. Please try again later.";
+      return "Провайдер ИИ-разбора временно ограничил запросы. Повторите попытку позже.";
     case "PROVIDER_HTTP_ERROR":
-      return "AI provider returned an error. Please try again later.";
+      return "Провайдер ИИ-разбора вернул ошибку. Повторите попытку позже.";
     case "PROVIDER_LIFECYCLE_ERROR":
-      return "AI provider did not complete the analysis successfully. Please retry.";
+      return "ИИ-разбор не был завершён успешно. Повторите попытку.";
     case "MODEL_EMPTY_OUTPUT":
-      return "AI provider returned an empty analysis. Please retry.";
+      return "ИИ-разбор не был сформирован полностью. Повторите попытку.";
     case "MODEL_INVALID_OUTPUT":
-      return "AI provider returned an invalid analysis format. Please retry.";
+      return "ИИ-разбор вернулся в некорректном формате. Повторите попытку.";
     case "MODEL_SCHEMA_VALIDATION_ERROR":
-      return "AI provider returned analysis that failed validation. Please retry.";
+      return "ИИ-разбор не прошёл проверку формата. Повторите попытку.";
     case "CANCELLED":
-      return "AI analysis was cancelled.";
+      return "ИИ-разбор был отменён.";
     case "OWNERSHIP_LOST":
-      return "AI analysis ownership changed.";
+      return "ИИ-разбор уже выполняется в другом процессе.";
     default:
-      return "AI analysis failed. Please retry.";
+      return "ИИ-разбор не выполнен. Повторите попытку.";
   }
 }
 
@@ -263,19 +265,19 @@ function parseBoundedIntegerEnv(
 }
 
 export function getAiAnalysisMaxAttempts(): number {
-  return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_ATTEMPTS", 2, 1, 3);
+  return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_ATTEMPTS", 1, 1, 1);
 }
 
 export function getAiAnalysisHttpTimeoutMs(): number {
-  return parseBoundedIntegerEnv("AI_ANALYSIS_HTTP_TIMEOUT_MS", 45_000, 5_000, 120_000);
+  return parseBoundedIntegerEnv("AI_ANALYSIS_HTTP_TIMEOUT_MS", 20_000, 5_000, 120_000);
 }
 
 export function getAiAnalysisResponsePollTimeoutMs(): number {
   return parseBoundedIntegerEnv(
     "AI_ANALYSIS_RESPONSE_POLL_TIMEOUT_MS",
-    150_000,
+    300_000,
     10_000,
-    240_000,
+    600_000,
   );
 }
 
@@ -293,18 +295,21 @@ export function getAiAnalysisOperationTimeoutMs(): number {
 }
 
 export function getAiAnalysisMaxPollRequests(): number {
-  return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_POLL_REQUESTS", 100, 1, 200);
+  return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_POLL_REQUESTS", 100, 1, 10_000);
 }
 
 export function getAiAnalysisPerformanceModel() {
   const maxOperationAttempts = getAiAnalysisMaxAttempts();
   const maxPrimaryGenerationPosts = maxOperationAttempts;
-  const maxCompactFallbackCalls = 1;
-  const maxOptionalDepthCalls = 1;
+  const maxCompactFallbackCalls = 0;
+  const maxOptionalDepthCalls = 0;
   const maxGenerationPosts =
     maxPrimaryGenerationPosts +
     maxCompactFallbackCalls +
     maxOptionalDepthCalls;
+  const maxPollingRequestsPerGeneration = Math.ceil(
+    getAiAnalysisResponsePollTimeoutMs() / getAiAnalysisResponsePollIntervalMs(),
+  );
   return {
     beforeReviewTheoreticalWorstCaseMs: 24 * 60_000,
     maxOperationAttempts,
@@ -312,8 +317,7 @@ export function getAiAnalysisPerformanceModel() {
     maxCompactFallbackCalls,
     maxOptionalDepthCalls,
     maxGenerationPosts,
-    maxPollingRequests:
-      maxGenerationPosts * getAiAnalysisMaxPollRequests(),
+    maxPollingRequests: maxGenerationPosts * maxPollingRequestsPerGeneration,
     perResponsePollTimeoutMs: getAiAnalysisResponsePollTimeoutMs(),
     operationTimeoutMs: getAiAnalysisOperationTimeoutMs(),
     theoreticalDefaultWorstCaseMs: getAiAnalysisOperationTimeoutMs(),
@@ -610,6 +614,8 @@ const YANDEX_ANALYSIS_SCHEMA_DESCRIPTION = `Respond with a JSON object matching 
   oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; }; // concise coach-style
   participantPersonalFeedback: Array<{ participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // role-specific, actionable
 }`;
+
+const YANDEX_POLL_MAX_TRANSIENT_GET_ERRORS = 20;
 
 export function getYandexAnalysisStaticProfile(language = "en") {
   const languageInstruction =
@@ -1452,6 +1458,7 @@ async function fetchTextWithTimeout(
     model: string;
     purpose: string;
     options?: AiAnalysisExecutionOptions;
+    acceptanceUnknownOnFailure?: boolean;
   },
 ): Promise<{ response: Response; text: string; durationMs: number }> {
   if (params.options?.signal?.aborted) {
@@ -1503,6 +1510,7 @@ async function fetchTextWithTimeout(
         model: params.model,
         message: `${params.purpose} timed out after ${timeoutMs}ms.`,
         retryable: true,
+        allowsRegeneration: !params.acceptanceUnknownOnFailure,
         diagnostics: { timeoutMs, purpose: params.purpose },
         cause: error,
       });
@@ -1514,6 +1522,7 @@ async function fetchTextWithTimeout(
         model: params.model,
         message: `${params.purpose} failed due to a network error.`,
         retryable: true,
+        allowsRegeneration: !params.acceptanceUnknownOnFailure,
         diagnostics: { purpose: params.purpose },
         cause: error,
       });
@@ -1661,7 +1670,7 @@ async function pollYandexResponseUntilTerminal(params: {
   let retrievalRetryCount = 0;
   let providerStatus: string | null = null;
 
-  while (pollingRequestCount < getAiAnalysisMaxPollRequests()) {
+  while (true) {
     await executionCheckpoint({
       options: params.options,
       provider: "yandex",
@@ -1696,6 +1705,16 @@ async function pollYandexResponseUntilTerminal(params: {
       }
       if (!classified.retryable) throw error;
       retrievalRetryCount += 1;
+      if (retrievalRetryCount >= YANDEX_POLL_MAX_TRANSIENT_GET_ERRORS) {
+        throw yandexPollDeadlineError({
+          modelName: params.modelName,
+          providerStatus,
+          pollingRequestCount,
+          retrievalRetryCount,
+          pollTimeoutMs: params.pollTimeoutMs,
+          maxPollRequestsReached: false,
+        });
+      }
       const retryRemaining = params.deadline - monotonicNow(params.options);
       const backoffMs = Math.min(
         getAiAnalysisResponsePollIntervalMs() * retrievalRetryCount,
@@ -1728,6 +1747,16 @@ async function pollYandexResponseUntilTerminal(params: {
         });
       }
       retrievalRetryCount += 1;
+      if (retrievalRetryCount >= YANDEX_POLL_MAX_TRANSIENT_GET_ERRORS) {
+        throw yandexPollDeadlineError({
+          modelName: params.modelName,
+          providerStatus,
+          pollingRequestCount,
+          retrievalRetryCount,
+          pollTimeoutMs: params.pollTimeoutMs,
+          maxPollRequestsReached: false,
+        });
+      }
       const retryRemaining = params.deadline - monotonicNow(params.options);
       const backoffMs = Math.min(
         getAiAnalysisResponsePollIntervalMs() * retrievalRetryCount,
@@ -1803,8 +1832,7 @@ async function pollYandexResponseUntilTerminal(params: {
     pollingRequestCount,
     retrievalRetryCount,
     pollTimeoutMs: params.pollTimeoutMs,
-    maxPollRequestsReached:
-      pollingRequestCount >= getAiAnalysisMaxPollRequests(),
+    maxPollRequestsReached: false,
   });
 }
 async function runYandexNegotiationAnalysis(
@@ -1860,6 +1888,8 @@ async function runYandexNegotiationAnalysis(
   const estimatedInputTokens = estimateTokensFromChars(inputChars);
   const calls: AiAnalysisCallMetric[] = [];
   const maxOperationAttempts = getAiAnalysisMaxAttempts();
+  const maxCompactFallbackCalls = 0;
+  const maxOptionalDepthCalls = 0;
   const operationTimeoutMs = getAiAnalysisOperationTimeoutMs();
   const operationDeadline = runStartedAt + operationTimeoutMs;
   let operationAttemptCount = 0;
@@ -2005,6 +2035,60 @@ async function runYandexNegotiationAnalysis(
 
     try {
       firstProviderRequestStartedAt ??= monotonicNow(options);
+      const existingProviderResponseId =
+        params.purpose === "primary" && calls.length === 0
+          ? (options?.existingProviderResponseId?.trim() || null)
+          : null;
+      if (existingProviderResponseId) {
+        callMetric.responseIdPresent = true;
+        const pollTimeoutMs = getAiAnalysisResponsePollTimeoutMs();
+        const pollingStartedAt = monotonicNow(options);
+        let polled: Awaited<ReturnType<typeof pollYandexResponseUntilTerminal>>;
+        try {
+          polled = await pollYandexResponseUntilTerminal({
+            baseUrl,
+            responseId: existingProviderResponseId,
+            headers,
+            modelName,
+            deadline: Math.min(
+              operationDeadline,
+              monotonicNow(options) + pollTimeoutMs,
+            ),
+            pollTimeoutMs,
+            options,
+            recordParsingValidationDuration: (durationMs) => {
+              parsingValidationDurationMs += durationMs;
+            },
+          });
+        } finally {
+          callMetric.pollingDurationMs +=
+            monotonicNow(options) - pollingStartedAt;
+        }
+        callMetric.pollingRequestCount = polled.pollingRequestCount;
+        callMetric.retrievalRetryCount = polled.retrievalRetryCount;
+        callMetric.providerStatus = polled.providerStatus;
+        callMetric.responseLength = polled.rawOutputCharCount;
+        if (!polled.outputText) {
+          callMetric.errorClass = "MODEL_EMPTY_OUTPUT";
+          throw new AiAnalysisProviderError({
+            code: "MODEL_EMPTY_OUTPUT",
+            provider: "yandex",
+            model: modelName,
+            message: "Yandex AI completed successfully but returned empty model output.",
+            retryable: true,
+            allowsRegeneration: false,
+            diagnostics: {
+              responseIdPresent: true,
+              providerStatus: callMetric.providerStatus,
+              outputFieldDetected: polled.outputFieldDetected,
+              pollingRequestCount: callMetric.pollingRequestCount,
+            },
+          });
+        }
+        const { cleaned } = stripMarkdownJsonFences(polled.outputText);
+        callMetric.responseLength = cleaned.length;
+        return { envelope: polled.envelope, cleaned, responseLength: cleaned.length };
+      }
       const {
         response,
         text,
@@ -2018,6 +2102,8 @@ async function runYandexNegotiationAnalysis(
             model: modelUri,
             temperature: 0.2,
             max_output_tokens: params.tokenLimit,
+            reasoning: { effort: "none" },
+            background: true,
             instructions,
             input: prompt,
           }),
@@ -2031,6 +2117,7 @@ async function runYandexNegotiationAnalysis(
           model: modelName,
           purpose: "Yandex AI analysis request",
           options,
+          acceptanceUnknownOnFailure: true,
         },
       );
       callMetric.generationPostDurationMs = generationPostDurationMs;
@@ -2075,11 +2162,25 @@ async function runYandexNegotiationAnalysis(
       callMetric.responseIdPresent = Boolean(responseId);
       callMetric.providerStatus = initialLifecycle.status;
 
+      if (responseId && options?.persistProviderResponseId) {
+        const persisted = await options.persistProviderResponseId(responseId);
+        if (!persisted) {
+          throw new AiAnalysisProviderError({
+            code: "OWNERSHIP_LOST",
+            provider: "yandex",
+            model: modelName,
+            message: "AI analysis ownership lease was lost while persisting provider response ID.",
+            diagnostics: { checkpoint: "persist_provider_response_id" },
+            allowsRegeneration: false,
+          });
+        }
+      }
+
       await executionCheckpoint({
         options,
         provider: "yandex",
         model: modelName,
-        checkpoint: `after_${params.purpose}_generation_response`,
+        checkpoint: `after_${params.purpose}_provider_response_id`,
       });
 
       let output: ReturnType<typeof extractYandexOutputText>;
@@ -2292,7 +2393,7 @@ async function runYandexNegotiationAnalysis(
     }
   }
 
-  if (!baseOutput && primaryTruncated) {
+  if (!baseOutput && primaryTruncated && maxCompactFallbackCalls > 0) {
     try {
       await executionCheckpoint({
         options,
@@ -2317,6 +2418,10 @@ async function runYandexNegotiationAnalysis(
     }
   }
 
+  if (!baseOutput && primaryTruncated && baseRequest) {
+    attachMetricsAndThrow(invalidOutputError(baseRequest));
+  }
+
   if (!baseOutput || !baseRequest) {
     attachMetricsAndThrow(
       new AiAnalysisProviderError({
@@ -2332,7 +2437,7 @@ async function runYandexNegotiationAnalysis(
   let selectedOutput = baseOutput;
   let selectedRequest = baseRequest;
   const depthIssues = getAnalysisDepthIssues(baseOutput);
-  if (depthIssues.length > 0) {
+  if (depthIssues.length > 0 && maxOptionalDepthCalls > 0) {
     const optionalDepthStartedAt = monotonicNow(options);
     await executionCheckpoint({
       options,

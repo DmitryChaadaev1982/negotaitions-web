@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, test } from "@playwright/test";
+import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
 
 import {
   cleanupE2eData,
@@ -6,10 +6,12 @@ import {
   clearTranscript,
   countTranscripts,
   createAudioActivity,
+  createRoomConnectionForParticipant,
   createCompletedTranscript,
   createDiarizedTranscript,
   createE2eCase,
   createE2eEvent,
+  createUserSessionCookie,
   getAiAnalysis,
   getEventParticipants,
   getExternalServiceEvent,
@@ -20,6 +22,7 @@ import {
   getTranscriptStatus,
   getTranscriptText,
   participantByName,
+  upsertRecordingForSession,
   updateRecordingCompleted,
 } from "./helpers/db";
 
@@ -36,6 +39,11 @@ async function createAssignedSession(request: APIRequestContext) {
   const [buyerRole, sellerRole] = negotiationCase.roles;
 
   if (!buyerRole || !sellerRole) throw new Error("E2E case roles were not created.");
+  if (!dmitry.userId) {
+    throw new Error("Assigned E2E session requires Dmitry to be account-bound as event host.");
+  }
+
+  const hostAuthCookie = await createUserSessionCookie(dmitry.userId);
 
   const assignmentDraft = {
     facilitatorEventParticipantId: dmitry.id,
@@ -48,21 +56,37 @@ async function createAssignedSession(request: APIRequestContext) {
     negotiationDurationMinutes: 15,
   };
 
-  await request.patch(`/api/events/${event.id}/host`, {
+  const patchResponse = await request.patch(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostAuthCookie },
     data: {
       hostToken: event.hostToken,
       selectedCaseId: negotiationCase.id,
       assignmentDraft,
     },
   });
+  if (!patchResponse.ok()) {
+    throw new Error(
+      `Failed to configure assigned E2E session (${patchResponse.status()}): ${await patchResponse.text()}`,
+    );
+  }
 
   const createResponse = await request.post(`/api/events/${event.id}/host`, {
+    headers: { Cookie: hostAuthCookie },
     data: { hostToken: event.hostToken },
   });
-  expect(createResponse.ok()).toBeTruthy();
+  if (!createResponse.ok()) {
+    throw new Error(
+      `Failed to create assigned E2E session (${createResponse.status()}): ${await createResponse.text()}`,
+    );
+  }
   const body = (await createResponse.json()) as { session: { id: string } };
 
   const session = await getSession(body.session.id);
+  await upsertRecordingForSession({
+    sessionId: session.id,
+    status: "NOT_STARTED",
+    provider: "LIVEKIT_CLOUD",
+  });
 
   return {
     event,
@@ -77,14 +101,118 @@ async function createAssignedSession(request: APIRequestContext) {
 async function control(
   request: APIRequestContext,
   sessionId: string,
-  joinToken: string,
+  participant: { id: string; userId: string | null },
   action: string,
 ) {
+  if (!participant.userId) {
+    throw new Error(`Session control ${action} requires an account-bound participant.`);
+  }
+  const authCookie = await createUserSessionCookie(participant.userId);
   const response = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken, action },
+    headers: { Cookie: authCookie },
+    data: { participantId: participant.id, action },
   });
-  expect(response.ok()).toBeTruthy();
+  if (!response.ok()) {
+    throw new Error(
+      `Session control ${action} failed (${response.status()}): ${await response.text()}`,
+    );
+  }
   return response.json();
+}
+
+type AccountBoundParticipant = {
+  id: string;
+  userId: string | null;
+  joinToken?: string;
+  type?: string;
+};
+
+async function authCookieFor(participant: AccountBoundParticipant) {
+  if (!participant.userId) {
+    throw new Error("Authenticated room API request requires an account-bound participant.");
+  }
+  return createUserSessionCookie(participant.userId);
+}
+
+async function roomApiGet(
+  request: APIRequestContext,
+  url: string,
+  participant: AccountBoundParticipant,
+) {
+  return request.get(url, {
+    headers: { Cookie: await authCookieFor(participant) },
+  });
+}
+
+async function roomApiPost(
+  request: APIRequestContext,
+  url: string,
+  participant: AccountBoundParticipant,
+  data: Record<string, unknown> = {},
+) {
+  return request.post(url, {
+    headers: { Cookie: await authCookieFor(participant) },
+    data: { participantId: participant.id, ...data },
+  });
+}
+
+async function roomApiPostWithJoinToken(
+  request: APIRequestContext,
+  url: string,
+  participant: AccountBoundParticipant,
+  data: Record<string, unknown> = {},
+) {
+  if (!participant.joinToken) {
+    throw new Error("Join-token API request requires a participant join token.");
+  }
+  return request.post(url, {
+    headers: { Cookie: await authCookieFor(participant) },
+    data: { joinToken: participant.joinToken, ...data },
+  });
+}
+
+function materialsStatusUrl(sessionId: string, participant: AccountBoundParticipant) {
+  return `/api/sessions/${sessionId}/materials/status?participantId=${participant.id}`;
+}
+
+function speakerMappingUrl(sessionId: string, participant: AccountBoundParticipant) {
+  return `/api/sessions/${sessionId}/speaker-mapping?participantId=${participant.id}`;
+}
+
+function expectMockTranscriptText(text: string | null) {
+  expect(text).toContain("Mock speaker 1");
+}
+
+async function seedSpeakerMappingCandidates(
+  sessionId: string,
+  participants: AccountBoundParticipant[],
+) {
+  for (const participant of participants) {
+    if (!participant.userId || !participant.type) {
+      throw new Error("Speaker mapping candidate requires account-bound participant with type.");
+    }
+    await createRoomConnectionForParticipant({
+      sessionId,
+      userId: participant.userId,
+      role: participant.type,
+    });
+  }
+}
+
+async function authenticatePageAs(page: Page, participant: { userId: string | null }) {
+  if (!participant.userId) {
+    throw new Error("Browser join flow requires an account-bound participant.");
+  }
+  const authCookie = await createUserSessionCookie(participant.userId);
+  await page.context().addCookies([
+    {
+      name: "auth_session",
+      value: authCookie.replace("auth_session=", ""),
+      url: test.info().project.use.baseURL ?? "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
 }
 
 test.beforeAll(async () => {
@@ -105,20 +233,22 @@ test("Test 1 — Materials page shows processing dashboard after session finish"
   request,
   page,
 }) => {
-  const { session, facilitator, igor } = await createAssignedSession(request);
+  const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  await page.goto(`/join/${igor.joinToken}`);
+  await authenticatePageAs(page, facilitator);
+  await page.goto(`/join/${facilitator.joinToken}`);
 
-  await expect(
-    page.getByTestId("processing-dashboard"),
-  ).toBeVisible({ timeout: 5000 });
-  await expect(page.getByTestId("recording-section")).toBeVisible();
-  await expect(page.getByTestId("transcript-section")).toBeVisible();
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible();
+  await expect(page.getByTestId("account-materials-page")).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(page.getByTestId("account-recording-section")).toBeVisible();
+  await expect(page.getByTestId("account-transcript-section")).toBeVisible();
+  await expect(page.getByTestId("account-ai-analysis-section")).toBeVisible();
+  await expect(page.getByTestId("session-post-processing-panel")).toBeVisible();
 });
 
 test("Test 2 — Materials status API returns recording state after finish", async ({
@@ -126,16 +256,18 @@ test("Test 2 — Materials status API returns recording state after finish", asy
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   const recording = await getRecordingBySession(session.id);
   expect(recording).not.toBeNull();
   expect(recording?.status).toBe("COMPLETED");
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   expect(statusResponse.ok()).toBeTruthy();
 
@@ -163,23 +295,20 @@ test("Test 3 — Transcription flow via new endpoint: QUEUED → COMPLETED", asy
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   const recording = await getRecordingBySession(session.id);
   expect(recording?.status).toBe("COMPLETED");
 
   expect(await countTranscripts(session.id)).toBe(0);
 
-  const transcribeResponse = await request.post(
+  const transcribeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    {
-      data: {
-        joinToken: facilitator.joinToken,
-        language: "auto",
-      },
-    },
+    facilitator,
+    { language: "auto" },
   );
   expect(transcribeResponse.ok()).toBeTruthy();
 
@@ -189,20 +318,22 @@ test("Test 3 — Transcription flow via new endpoint: QUEUED → COMPLETED", asy
   };
 
   expect(transcribeBody.status).toBe("COMPLETED");
-  expect(transcribeBody.text).toContain("Mock transcript");
+  expectMockTranscriptText(transcribeBody.text);
 
   const transcriptStatus = await getTranscriptStatus(session.id);
   expect(transcriptStatus?.status).toBe("COMPLETED");
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const statusBody = (await statusResponse.json()) as {
     transcription: { status: string; processingStage: string; text: string | null };
   };
   expect(statusBody.transcription.status).toBe("COMPLETED");
   expect(statusBody.transcription.processingStage).toBe("ready");
-  expect(statusBody.transcription.text).toContain("Mock transcript");
+  expectMockTranscriptText(statusBody.transcription.text);
 });
 
 test("Test 4 — Failed transcription marks status FAILED and logs ExternalServiceEvent", async ({
@@ -210,9 +341,9 @@ test("Test 4 — Failed transcription marks status FAILED and logs ExternalServi
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await updateRecordingCompleted(session.id);
 
@@ -220,11 +351,11 @@ test("Test 4 — Failed transcription marks status FAILED and logs ExternalServi
     data: { error: "OPENAI_QUOTA_EXCEEDED" },
   });
 
-  const transcribeResponse = await request.post(
+  const transcribeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    {
-      data: { joinToken: facilitator.joinToken, language: "auto" },
-    },
+    facilitator,
+    { language: "auto" },
   );
   expect(transcribeResponse.ok()).toBeFalsy();
 
@@ -232,8 +363,10 @@ test("Test 4 — Failed transcription marks status FAILED and logs ExternalServi
   expect(transcriptStatus?.status).toBe("FAILED");
   expect(transcriptStatus?.errorMessage).toBeTruthy();
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const statusBody = (await statusResponse.json()) as {
     transcription: { status: string; canRetry: boolean; processingStage: string };
@@ -261,40 +394,44 @@ test("Test 5 — Multi-session isolation: Session 1 transcript not visible in Se
   const facilitator1 = event1.facilitator;
   const facilitator2 = event2.facilitator;
 
-  await control(request, session1Id, facilitator1.joinToken, "SKIP_PREPARATION");
-  await control(request, session1Id, facilitator1.joinToken, "START");
-  await control(request, session1Id, facilitator1.joinToken, "FINISH");
+  await control(request, session1Id, facilitator1, "SKIP_PREPARATION");
+  await control(request, session1Id, facilitator1, "START");
+  await control(request, session1Id, facilitator1, "FINISH");
 
-  await control(request, session2Id, facilitator2.joinToken, "SKIP_PREPARATION");
-  await control(request, session2Id, facilitator2.joinToken, "START");
-  await control(request, session2Id, facilitator2.joinToken, "FINISH");
+  await control(request, session2Id, facilitator2, "SKIP_PREPARATION");
+  await control(request, session2Id, facilitator2, "START");
+  await control(request, session2Id, facilitator2, "FINISH");
 
   await updateRecordingCompleted(session1Id);
 
-  const transcribeResponse1 = await request.post(
+  const transcribeResponse1 = await roomApiPost(
+    request,
     `/api/sessions/${session1Id}/materials/transcribe`,
-    {
-      data: { joinToken: facilitator1.joinToken, language: "auto" },
-    },
+    facilitator1,
+    { language: "auto" },
   );
   expect(transcribeResponse1.ok()).toBeTruthy();
 
   const transcriptText = await getTranscriptText(session1Id);
-  expect(transcriptText).toContain("Mock transcript");
+  expectMockTranscriptText(transcriptText);
 
   expect(await countTranscripts(session2Id)).toBe(0);
 
-  const status1 = await request.get(
-    `/api/sessions/${session1Id}/materials/status?joinToken=${facilitator1.joinToken}`,
+  const status1 = await roomApiGet(
+    request,
+    materialsStatusUrl(session1Id, facilitator1),
+    facilitator1,
   );
   const body1 = (await status1.json()) as {
     transcription: { processingStage: string; text: string | null };
   };
   expect(body1.transcription.processingStage).toBe("ready");
-  expect(body1.transcription.text).toContain("Mock transcript");
+  expectMockTranscriptText(body1.transcription.text);
 
-  const status2 = await request.get(
-    `/api/sessions/${session2Id}/materials/status?joinToken=${facilitator2.joinToken}`,
+  const status2 = await roomApiGet(
+    request,
+    materialsStatusUrl(session2Id, facilitator2),
+    facilitator2,
   );
   const body2 = (await status2.json()) as {
     transcription: { processingStage: string; text: string | null };
@@ -302,8 +439,10 @@ test("Test 5 — Multi-session isolation: Session 1 transcript not visible in Se
   expect(body2.transcription.processingStage).toBe("not_started");
   expect(body2.transcription.text).toBeNull();
 
-  const wrongTokenResponse = await request.get(
-    `/api/sessions/${session1Id}/materials/status?joinToken=${facilitator2.joinToken}`,
+  const wrongTokenResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session1Id, facilitator2),
+    facilitator2,
   );
   expect(wrongTokenResponse.status()).toBe(403);
 });
@@ -313,28 +452,32 @@ test("Test 6 — Existing transcript preserved on failed retry", async ({
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await updateRecordingCompleted(session.id);
 
-  const firstTranscribe = await request.post(
+  const firstTranscribe = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(firstTranscribe.ok()).toBeTruthy();
 
   const originalText = await getTranscriptText(session.id);
-  expect(originalText).toContain("Mock transcript");
+  expectMockTranscriptText(originalText);
 
   await request.post("/api/test/mock-external-service", {
     data: { error: "OPENAI_QUOTA_EXCEEDED" },
   });
 
-  const failedRetry = await request.post(
+  const failedRetry = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(failedRetry.ok()).toBeFalsy();
 
@@ -351,21 +494,23 @@ test("Test 7 — Recording refresh status endpoint accessible to facilitator", a
 }) => {
   const { session, facilitator, igor } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  const refreshResponse = await request.post(
+  const refreshResponse = await roomApiPostWithJoinToken(
+    request,
     `/api/sessions/${session.id}/recording/refresh-status`,
-    { data: { joinToken: facilitator.joinToken } },
+    facilitator,
   );
   expect(refreshResponse.ok()).toBeTruthy();
   const refreshBody = (await refreshResponse.json()) as { recording: { status: string } };
   expect(refreshBody.recording.status).toBeTruthy();
 
-  const participantRefresh = await request.post(
+  const participantRefresh = await roomApiPostWithJoinToken(
+    request,
     `/api/sessions/${session.id}/recording/refresh-status`,
-    { data: { joinToken: igor.joinToken } },
+    igor,
   );
   expect(participantRefresh.status()).toBe(403);
 });
@@ -375,14 +520,16 @@ test("Test 8 — Duplicate transcription prevented (409 on concurrent second cal
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
   await updateRecordingCompleted(session.id);
 
-  const firstTranscribe = await request.post(
+  const firstTranscribe = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(firstTranscribe.ok()).toBeTruthy();
 
@@ -392,9 +539,11 @@ test("Test 8 — Duplicate transcription prevented (409 on concurrent second cal
   // start a fresh job only if the transcript was cleared first. Here the transcript
   // exists as COMPLETED (mock mode completes synchronously), so canStartTranscription
   // is false → the endpoint should return 400 (recording/transcript already complete).
-  const secondTranscribe = await request.post(
+  const secondTranscribe = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   // 409 = transcript in active state; 400 = recording not ready (unlikely here);
   // 200 would mean a duplicate was allowed — that must not happen.
@@ -411,18 +560,20 @@ test("Test 9 — External event diagnostics recorded for failed storage download
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
   await updateRecordingCompleted(session.id);
 
   await request.post("/api/test/mock-external-service", {
     data: { error: "YANDEX_STORAGE_DOWNLOAD_FAILED" },
   });
 
-  const transcribeResponse = await request.post(
+  const transcribeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(transcribeResponse.ok()).toBeFalsy();
 
@@ -443,14 +594,16 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await createCompletedTranscript(session.id);
 
-  const statusBefore = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusBefore = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const bodyBefore = (await statusBefore.json()) as {
     aiAnalysis: { canStart: boolean; processingStage: string };
@@ -458,9 +611,11 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   expect(bodyBefore.aiAnalysis.canStart).toBe(true);
   expect(bodyBefore.aiAnalysis.processingStage).toBe("not_started");
 
-  const analyzeResponse = await request.post(
+  const analyzeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
+    facilitator,
+    { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
   const analyzeBody = (await analyzeResponse.json()) as {
@@ -477,8 +632,10 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   expect(dbAnalysis?.executiveSummary).toBeTruthy();
   expect(dbAnalysis?.overallScore).toBeGreaterThanOrEqual(0);
 
-  const statusAfter = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusAfter = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const bodyAfter = (await statusAfter.json()) as {
     aiAnalysis: {
@@ -497,10 +654,12 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   expect(bodyAfter.aiAnalysis.analysisJson).not.toBeNull();
   expect(bodyAfter.processing.shouldPoll).toBe(false);
 
+  await authenticatePageAs(page, facilitator);
   await page.goto(`/join/${facilitator.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-section")).toBeVisible({
+  await expect(page.getByTestId("account-ai-analysis-section")).toBeVisible({
     timeout: 5000,
   });
+  await expect(page.getByTestId("session-post-processing-panel")).toBeVisible();
   await expect(page.getByTestId("ai-report")).toBeVisible({ timeout: 8000 });
   await expect(page.getByTestId("executive-summary")).toBeVisible();
   await expect(page.getByTestId("overall-score")).toBeVisible();
@@ -511,12 +670,14 @@ test("AI Test 2 — AI analysis unavailable without transcript", async ({
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const body = (await statusResponse.json()) as {
     aiAnalysis: { canStart: boolean; processingStage: string };
@@ -524,9 +685,11 @@ test("AI Test 2 — AI analysis unavailable without transcript", async ({
   expect(body.aiAnalysis.canStart).toBe(false);
   expect(body.aiAnalysis.processingStage).toBe("waiting_for_transcript");
 
-  const analyzeResponse = await request.post(
+  const analyzeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
+    facilitator,
+    { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeFalsy();
   expect(analyzeResponse.status()).toBe(400);
@@ -537,9 +700,9 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await createCompletedTranscript(session.id);
 
@@ -547,9 +710,11 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
     data: { error: "OPENAI_AI_ANALYSIS_FAILED" },
   });
 
-  const analyzeResponse = await request.post(
+  const analyzeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
+    facilitator,
+    { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeFalsy();
 
@@ -561,8 +726,10 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
   expect(dbAnalysis?.status).toBe("FAILED");
   expect(dbAnalysis?.errorMessage).toBeTruthy();
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const statusBody = (await statusResponse.json()) as {
     aiAnalysis: {
@@ -589,20 +756,24 @@ test("AI Test 4 — Participant does not see facilitator-only analysis", async (
 }) => {
   const { session, facilitator, igor } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await createCompletedTranscript(session.id);
 
-  const analyzeResponse = await request.post(
+  const analyzeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/analyze`,
-    { data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true } },
+    facilitator,
+    { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
 
-  const facilitatorStatus = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const facilitatorStatus = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const facilitatorBody = (await facilitatorStatus.json()) as {
     aiAnalysis: { analysisJson: unknown; canView: boolean };
@@ -612,8 +783,10 @@ test("AI Test 4 — Participant does not see facilitator-only analysis", async (
   expect(facilitatorBody.aiAnalysis.canView).toBe(true);
   expect(facilitatorBody.aiAnalysis.analysisJson).not.toBeNull();
 
-  const participantStatus = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+  const participantStatus = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, igor),
+    igor,
   );
   const participantBody = (await participantStatus.json()) as {
     aiAnalysis: {
@@ -640,24 +813,28 @@ test("AI Test 5 — Multi-session isolation: Session 1 analysis not visible in S
   const facilitator1 = event1.facilitator;
   const facilitator2 = event2.facilitator;
 
-  await control(request, session1Id, facilitator1.joinToken, "SKIP_PREPARATION");
-  await control(request, session1Id, facilitator1.joinToken, "START");
-  await control(request, session1Id, facilitator1.joinToken, "FINISH");
+  await control(request, session1Id, facilitator1, "SKIP_PREPARATION");
+  await control(request, session1Id, facilitator1, "START");
+  await control(request, session1Id, facilitator1, "FINISH");
 
-  await control(request, session2Id, facilitator2.joinToken, "SKIP_PREPARATION");
-  await control(request, session2Id, facilitator2.joinToken, "START");
-  await control(request, session2Id, facilitator2.joinToken, "FINISH");
+  await control(request, session2Id, facilitator2, "SKIP_PREPARATION");
+  await control(request, session2Id, facilitator2, "START");
+  await control(request, session2Id, facilitator2, "FINISH");
 
   await createCompletedTranscript(session1Id);
 
-  const analyzeResponse = await request.post(
+  const analyzeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session1Id}/analyze`,
-    { data: { joinToken: facilitator1.joinToken, aiProcessingConfirmed: true } },
+    facilitator1,
+    { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
 
-  const session1Status = await request.get(
-    `/api/sessions/${session1Id}/materials/status?joinToken=${facilitator1.joinToken}`,
+  const session1Status = await roomApiGet(
+    request,
+    materialsStatusUrl(session1Id, facilitator1),
+    facilitator1,
   );
   const body1 = (await session1Status.json()) as {
     aiAnalysis: { status: string; processingStage: string; analysisJson: unknown };
@@ -666,8 +843,10 @@ test("AI Test 5 — Multi-session isolation: Session 1 analysis not visible in S
   expect(body1.aiAnalysis.processingStage).toBe("ready");
   expect(body1.aiAnalysis.analysisJson).not.toBeNull();
 
-  const session2Status = await request.get(
-    `/api/sessions/${session2Id}/materials/status?joinToken=${facilitator2.joinToken}`,
+  const session2Status = await roomApiGet(
+    request,
+    materialsStatusUrl(session2Id, facilitator2),
+    facilitator2,
   );
   const body2 = (await session2Status.json()) as {
     aiAnalysis: { status: string; processingStage: string; analysisJson: unknown };
@@ -689,15 +868,17 @@ test("Test 10 — AUTO_TRANSCRIBE disabled: status API returns autoTranscribeEna
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   const recording = await getRecordingBySession(session.id);
   expect(recording?.status).toBe("COMPLETED");
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   expect(statusResponse.ok()).toBeTruthy();
 
@@ -722,9 +903,9 @@ test("Test 11 — AUTO_TRANSCRIBE disabled: no transcript is created automatical
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   const recording = await getRecordingBySession(session.id);
   expect(recording?.status).toBe("COMPLETED");
@@ -739,17 +920,19 @@ test("Test 12 — Manual transcription works when AUTO_TRANSCRIBE is disabled", 
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   const recording = await getRecordingBySession(session.id);
   expect(recording?.status).toBe("COMPLETED");
 
   // Manually start transcription
-  const transcribeResponse = await request.post(
+  const transcribeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(transcribeResponse.ok()).toBeTruthy();
 
@@ -760,8 +943,10 @@ test("Test 12 — Manual transcription works when AUTO_TRANSCRIBE is disabled", 
   expect(text).toBeTruthy();
 
   // After manual transcription completes, canStart is false
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const body = (await statusResponse.json()) as {
     transcription: { canStart: boolean; processingStage: string };
@@ -777,21 +962,25 @@ test("Test 13 — Duplicate job prevention: second transcription POST rejected w
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
   await updateRecordingCompleted(session.id);
 
-  const first = await request.post(
+  const first = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(first.ok()).toBeTruthy();
 
   // Second call must be rejected (transcript already COMPLETED in mock mode = canStart=false)
-  const second = await request.post(
+  const second = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    { data: { joinToken: facilitator.joinToken, language: "auto" } },
+    facilitator,
+    { language: "auto" },
   );
   expect(second.status()).not.toBe(200);
 
@@ -804,12 +993,14 @@ test("Test 14 — String 'false' is parsed as false: getEnvBoolean safety check 
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   const body = (await statusResponse.json()) as {
     processing: { autoTranscribeEnabled: boolean };
@@ -824,23 +1015,22 @@ test("Test 15 — Transcription metadata includes preprocessing decision fields"
   request,
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  const transcribeResponse = await request.post(
+  const transcribeResponse = await roomApiPost(
+    request,
     `/api/sessions/${session.id}/materials/transcribe`,
-    {
-      data: {
-        joinToken: facilitator.joinToken,
-        language: "auto",
-      },
-    },
+    facilitator,
+    { language: "auto" },
   );
   expect(transcribeResponse.ok()).toBeTruthy();
 
-  const statusResponse = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusResponse = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   expect(statusResponse.ok()).toBeTruthy();
   const statusBody = (await statusResponse.json()) as {
@@ -863,34 +1053,43 @@ test("Test 15 — Transcription metadata includes preprocessing decision fields"
 test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping required", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, igor } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   // Transcription via mock produces hasSpeakerDiarization=true, speakerMappingStatus=REQUIRED
-  await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
-    data: { joinToken: facilitator.joinToken, language: "auto" },
-  });
+  await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/materials/transcribe`,
+    facilitator,
+    { language: "auto" },
+  );
+  await seedSpeakerMappingCandidates(session.id, [facilitator, igor]);
 
   // AI analysis must be blocked
-  const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
-  });
+  const analyzeRes = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/analyze`,
+    facilitator,
+    { aiProcessingConfirmed: true },
+  );
   expect(analyzeRes.status()).toBe(422);
   const analyzeBody = (await analyzeRes.json()) as { errorCode: string };
   expect(analyzeBody.errorCode).toBe("SPEAKER_MAPPING_REQUIRED");
 
   // Confirm mapping via speaker-mapping API
-  const confirmRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
-    data: {
-      joinToken: facilitator.joinToken,
-      mapping: { speaker_1: facilitator.id },
+  const confirmRes = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/speaker-mapping`,
+    facilitator,
+    {
+      mapping: { speaker_1: facilitator.id, speaker_2: igor.id },
       confirm: true,
       applyToTranscript: false,
     },
-  });
+  );
   expect(confirmRes.ok()).toBeTruthy();
   const confirmBody = (await confirmRes.json()) as { confirmed: boolean };
   expect(confirmBody.confirmed).toBe(true);
@@ -899,9 +1098,12 @@ test("Speaker Mapping Test 1 — AI analysis blocked when speaker mapping requir
   expect(mappingStatus?.speakerMappingStatus).toBe("CONFIRMED");
 
   // AI analysis must now be allowed
-  const analyzeAfterConfirm = await request.post(`/api/sessions/${session.id}/analyze`, {
-    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
-  });
+  const analyzeAfterConfirm = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/analyze`,
+    facilitator,
+    { aiProcessingConfirmed: true },
+  );
   expect(analyzeAfterConfirm.ok()).toBeTruthy();
 
   await clearAiAnalysis(session.id);
@@ -913,27 +1115,35 @@ test("Speaker Mapping Test 2 — Participant cannot edit speaker mapping", async
 }) => {
   const { session, facilitator, igor } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
-  await request.post(`/api/sessions/${session.id}/materials/transcribe`, {
-    data: { joinToken: facilitator.joinToken, language: "auto" },
-  });
+  await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/materials/transcribe`,
+    facilitator,
+    { language: "auto" },
+  );
+  await seedSpeakerMappingCandidates(session.id, [facilitator, igor]);
 
   // Participant POST should be forbidden
-  const postRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
-    data: {
-      joinToken: igor.joinToken,
+  const postRes = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/speaker-mapping`,
+    igor,
+    {
       mapping: { speaker_1: igor.id },
       confirm: true,
     },
-  });
+  );
   expect(postRes.status()).toBe(403);
 
   // Participant GET returns canEdit: false
-  const getRes = await request.get(
-    `/api/sessions/${session.id}/speaker-mapping?joinToken=${igor.joinToken}`,
+  const getRes = await roomApiGet(
+    request,
+    speakerMappingUrl(session.id, igor),
+    igor,
   );
   expect(getRes.ok()).toBeTruthy();
   const getBody = (await getRes.json()) as { canEdit: boolean };
@@ -945,24 +1155,25 @@ test("Speaker Mapping Test 2 — Participant cannot edit speaker mapping", async
 test("Speaker Mapping Test 3 — Automatic mapping unavailable without audio activity", async ({
   request,
 }) => {
-  const { session, facilitator } = await createAssignedSession(request);
+  const { session, facilitator, igor } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await createDiarizedTranscript(session.id, [
     { speakerLabel: "speaker_1", startSeconds: 0, endSeconds: 10, text: "Hello from speaker 1." },
     { speakerLabel: "speaker_2", startSeconds: 10, endSeconds: 20, text: "Hello from speaker 2." },
   ]);
+  await seedSpeakerMappingCandidates(session.id, [facilitator, igor]);
 
   // No audio activity — automatic mapping should report unavailable
-  const suggestRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
-    data: {
-      joinToken: facilitator.joinToken,
-      suggestAutomatically: true,
-    },
-  });
+  const suggestRes = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/speaker-mapping`,
+    facilitator,
+    { suggestAutomatically: true },
+  );
   expect(suggestRes.ok()).toBeTruthy();
   const suggestBody = (await suggestRes.json()) as {
     available: boolean;
@@ -971,8 +1182,10 @@ test("Speaker Mapping Test 3 — Automatic mapping unavailable without audio act
   expect(suggestBody.available).toBe(false);
   expect(suggestBody.unavailableReason).toBe("no_audio_activity");
 
-  const statusRes = await request.get(
-    `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
+  const statusRes = await roomApiGet(
+    request,
+    materialsStatusUrl(session.id, facilitator),
+    facilitator,
   );
   expect(statusRes.ok()).toBeTruthy();
   const statusBody = (await statusRes.json()) as {
@@ -998,32 +1211,35 @@ test("Speaker Mapping Test 4 — Automatic mapping suggestion with mock audio ac
 }) => {
   const { session, facilitator, igor, alex } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-  await control(request, session.id, facilitator.joinToken, "START");
-  await control(request, session.id, facilitator.joinToken, "FINISH");
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
 
   await createDiarizedTranscript(session.id, [
     { speakerLabel: "speaker_1", startSeconds: 0, endSeconds: 10, text: "Hello from speaker 1." },
     { speakerLabel: "speaker_2", startSeconds: 10, endSeconds: 20, text: "Hello from speaker 2." },
   ]);
+  await seedSpeakerMappingCandidates(session.id, [igor, alex]);
 
   // Seed audio activity matching segments
-  await createAudioActivity(session.id, igor.id, 0, 10);
-  await createAudioActivity(session.id, alex.id, 10, 20);
+  await createAudioActivity(session.id, igor.id, 0, 5, "VOX_REMOTE_STREAM_ACTIVITY");
+  await createAudioActivity(session.id, igor.id, 5, 10, "VOX_REMOTE_STREAM_ACTIVITY");
+  await createAudioActivity(session.id, alex.id, 10, 15, "VOX_REMOTE_STREAM_ACTIVITY");
+  await createAudioActivity(session.id, alex.id, 15, 20, "VOX_REMOTE_STREAM_ACTIVITY");
 
-  const suggestRes = await request.post(`/api/sessions/${session.id}/speaker-mapping`, {
-    data: {
-      joinToken: facilitator.joinToken,
-      suggestAutomatically: true,
-    },
-  });
+  const suggestRes = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/speaker-mapping`,
+    facilitator,
+    { suggestAutomatically: true },
+  );
   expect(suggestRes.ok()).toBeTruthy();
   const suggestBody = (await suggestRes.json()) as {
     available: boolean;
     suggestedMapping: Record<string, string>;
     confidence: Record<string, number>;
   };
-  expect(suggestBody.available).toBe(true);
+  expect(suggestBody.available, JSON.stringify(suggestBody)).toBe(true);
   expect(suggestBody.suggestedMapping["speaker_1"]).toBe(igor.id);
   expect(suggestBody.suggestedMapping["speaker_2"]).toBe(alex.id);
   expect(suggestBody.confidence["speaker_1"]).toBeGreaterThanOrEqual(0.6);
@@ -1039,23 +1255,32 @@ test("Speaker Mapping Test 5 — Multi-session isolation: mapping from Session 1
   const sess2 = await createAssignedSession(request);
 
   for (const { session, facilitator } of [sess1, sess2]) {
-    await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
-    await control(request, session.id, facilitator.joinToken, "START");
-    await control(request, session.id, facilitator.joinToken, "FINISH");
+    await control(request, session.id, facilitator, "SKIP_PREPARATION");
+    await control(request, session.id, facilitator, "START");
+    await control(request, session.id, facilitator, "FINISH");
   }
 
   // Transcribe and confirm mapping only in session 1
-  await request.post(`/api/sessions/${sess1.session.id}/materials/transcribe`, {
-    data: { joinToken: sess1.facilitator.joinToken, language: "auto" },
-  });
-  await request.post(`/api/sessions/${sess1.session.id}/speaker-mapping`, {
-    data: {
-      joinToken: sess1.facilitator.joinToken,
-      mapping: { speaker_1: sess1.facilitator.id },
+  await roomApiPost(
+    request,
+    `/api/sessions/${sess1.session.id}/materials/transcribe`,
+    sess1.facilitator,
+    { language: "auto" },
+  );
+  await seedSpeakerMappingCandidates(sess1.session.id, [
+    sess1.facilitator,
+    sess1.igor,
+  ]);
+  await roomApiPost(
+    request,
+    `/api/sessions/${sess1.session.id}/speaker-mapping`,
+    sess1.facilitator,
+    {
+      mapping: { speaker_1: sess1.facilitator.id, speaker_2: sess1.igor.id },
       confirm: true,
       applyToTranscript: false,
     },
-  });
+  );
 
   const status1 = await getSpeakerMappingStatus(sess1.session.id);
   expect(status1?.speakerMappingStatus).toBe("CONFIRMED");

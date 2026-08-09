@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import { createHash, randomBytes } from "node:crypto";
+
 import { hash } from "bcryptjs";
 import { Pool } from "pg";
 
@@ -105,6 +107,7 @@ export type E2eCase = {
 export type E2eEventParticipant = {
   id: string;
   eventId: string;
+  userId: string | null;
   displayName: string;
   participantToken: string;
   isHost: boolean;
@@ -124,6 +127,7 @@ export type E2eEvent = {
 export type E2eSessionParticipant = {
   id: string;
   sessionId: string;
+  userId: string | null;
   displayName: string;
   type: "PARTICIPANT" | "OBSERVER" | "FACILITATOR";
   joinToken: string;
@@ -254,6 +258,17 @@ export async function createActiveUser(input?: {
   );
 
   return { id: userId, email, password };
+}
+
+export async function createUserSessionCookie(userId: string) {
+  const rawToken = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  await query(
+    `INSERT INTO "UserSession" ("id", "userId", "sessionTokenHash", "expiresAt", "createdAt")
+     VALUES (gen_random_uuid(), $1, $2, NOW() + INTERVAL '1 day', NOW())`,
+    [userId, tokenHash],
+  );
+  return `auth_session=${rawToken}`;
 }
 
 export async function getUserPreferredLocale(email: string) {
@@ -428,26 +443,58 @@ export async function createE2eEvent(input?: {
   const title = input?.title ?? e2eName(`E2E Club Event ${suffix}`);
   const hostToken = `host-${suffix}`;
   const publicJoinCode = `e2e-${suffix}`;
+  const participantPasswordHash = input?.withParticipants
+    ? await hashE2ePassword()
+    : null;
+  const participantUsers = input?.withParticipants
+    ? {
+        dmitry: await createActiveUser({
+          email: e2eEmail(`dmitry-${suffix}`),
+          passwordHash: participantPasswordHash ?? undefined,
+        }),
+        igor: await createActiveUser({
+          email: e2eEmail(`igor-${suffix}`),
+          passwordHash: participantPasswordHash ?? undefined,
+        }),
+        alex: await createActiveUser({
+          email: e2eEmail(`alex-${suffix}`),
+          passwordHash: participantPasswordHash ?? undefined,
+        }),
+        serg: await createActiveUser({
+          email: e2eEmail(`serg-${suffix}`),
+          passwordHash: participantPasswordHash ?? undefined,
+        }),
+      }
+    : null;
 
   await query(
     `INSERT INTO "TrainingEvent"
        ("id", "title", "description", "status", "publicJoinCode", "hostToken",
-        "lobbyRoomName", "estimatedEventDurationSeconds", "updatedAt")
-     VALUES ($1, $2, 'E2E event description', 'LOBBY_OPEN', $3, $4, $5, 5400, NOW())`,
-    [eventId, title, publicJoinCode, hostToken, `event-lobby-e2e-${suffix}`],
+        "hostUserId", "facilitatorUserId", "lobbyRoomName",
+        "estimatedEventDurationSeconds", "updatedAt")
+     VALUES ($1, $2, 'E2E event description', 'LOBBY_OPEN', $3, $4, $5, $6, $7, 5400, NOW())`,
+    [
+      eventId,
+      title,
+      publicJoinCode,
+      hostToken,
+      participantUsers?.dmitry.id ?? null,
+      participantUsers?.dmitry.id ?? null,
+      `event-lobby-e2e-${suffix}`,
+    ],
   );
 
   if (input?.withParticipants) {
     await query(
       `INSERT INTO "EventParticipant"
-        ("id", "eventId", "displayName", "participantToken", "preference",
+        ("id", "eventId", "userId", "displayName", "participantToken", "preference",
          "isHost", "wantsToPlay", "wantsToObserve", "wantsToFacilitate",
          "joinedAt", "lastSeenAt", "updatedAt")
        VALUES
-        ($1, $5, 'Dmitry', $6, 'FACILITATE', true, false, false, true, NOW(), NOW(), NOW()),
-        ($2, $5, 'Igor', $7, 'PLAY', false, true, false, false, NOW(), NOW(), NOW()),
-        ($3, $5, 'Alex', $8, 'PLAY', false, true, false, false, NOW(), NOW(), NOW()),
-        ($4, $5, 'Serg', $9, 'OBSERVE', false, false, true, false, NOW(), NOW(), NOW())`,
+        ($1, $5, $10, 'Dmitry', $6, 'FACILITATE', true, false, false, true, NOW(), NOW(), NOW()),
+        ($2, $5, $11, 'Igor', $7, 'PLAY', false, true, false, false, NOW(), NOW(), NOW()),
+        ($3, $5, $12, 'Alex', $8, 'PLAY', false, true, false, false, NOW(), NOW(), NOW()),
+        ($4, $5, $13, 'Serg', $9, 'OBSERVE', false, false, true, false, NOW(), NOW(), NOW())`,
       [
         id("ep"),
         id("ep"),
@@ -458,6 +505,10 @@ export async function createE2eEvent(input?: {
         `igor-${suffix}`,
         `alex-${suffix}`,
         `serg-${suffix}`,
+        participantUsers?.dmitry.id,
+        participantUsers?.igor.id,
+        participantUsers?.alex.id,
+        participantUsers?.serg.id,
       ],
     );
   }
@@ -476,7 +527,7 @@ export async function createE2eEvent(input?: {
 
 export async function getEventParticipants(eventId: string) {
   return query<E2eEventParticipant>(
-    `SELECT "id", "eventId", "displayName", "participantToken", "isHost",
+    `SELECT "id", "eventId", "userId", "displayName", "participantToken", "isHost",
             "assignedSessionId", "assignedSessionParticipantId"
      FROM "EventParticipant"
      WHERE "eventId" = $1
@@ -583,6 +634,23 @@ export async function getRoomConnectionByConnectionId(connectionId: string) {
   )[0] ?? null;
 }
 
+export async function createRoomConnectionForParticipant(input: {
+  sessionId: string;
+  userId: string;
+  role: string;
+  connectionId?: string;
+}) {
+  const connectionId = input.connectionId ?? id("conn");
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id", "sessionId", "userId", "connectionId", "leaseVersion", "role", "expiresAt", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, 1, $5::"ParticipantType", NOW() + INTERVAL '30 minutes', NOW() - INTERVAL '5 minutes', NOW())
+     ON CONFLICT ("connectionId") DO NOTHING`,
+    [id("room-conn"), input.sessionId, input.userId, connectionId, input.role],
+  );
+  return connectionId;
+}
+
 export async function expireRoomConnection(connectionId: string) {
   await query(
     `UPDATE "SessionRoomConnection"
@@ -651,7 +719,7 @@ export async function getSession(sessionId: string): Promise<E2eSession> {
   );
 
   const participants = await query<E2eSessionParticipant & { roleId: string | null; roleName: string | null }>(
-    `SELECT p."id", p."sessionId", p."displayName", p."type", p."joinToken", p."notes",
+    `SELECT p."id", p."sessionId", p."userId", p."displayName", p."type", p."joinToken", p."notes",
             p."sessionRoleId", r."id" AS "roleId", r."name" AS "roleName"
      FROM "SessionParticipant" p
      LEFT JOIN "SessionRole" r ON r."id" = p."sessionRoleId"
@@ -871,21 +939,42 @@ export async function createAudioActivity(
   sessionParticipantId: string,
   startedOffsetSeconds: number,
   endedOffsetSeconds: number,
+  source = "LIVEKIT_ACTIVE_SPEAKER",
 ) {
-  const now = new Date();
+  const recording = (
+    await query<{ startedAt: Date | string | null }>(
+      `SELECT "startedAt" FROM "Recording" WHERE "sessionId" = $1`,
+      [sessionId],
+    )
+  )[0];
+  const baseTime =
+    recording?.startedAt != null ? new Date(recording.startedAt) : new Date();
+  const startedAt = new Date(baseTime.getTime() + startedOffsetSeconds * 1000);
+  const endedAt = new Date(baseTime.getTime() + endedOffsetSeconds * 1000);
+
+  await query(
+    `UPDATE "Recording"
+     SET "startedAt" = COALESCE("startedAt", $2),
+         "endedAt" = GREATEST(COALESCE("endedAt", $3), $3),
+         "updatedAt" = NOW()
+     WHERE "sessionId" = $1`,
+    [sessionId, baseTime, endedAt],
+  );
+
   await query(
     `INSERT INTO "SessionParticipantAudioActivity"
        ("id", "sessionId", "sessionParticipantId", "startedAt", "endedAt",
-        "startedOffsetSeconds", "endedOffsetSeconds", "source", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'LIVEKIT_ACTIVE_SPEAKER', NOW())`,
+       "startedOffsetSeconds", "endedOffsetSeconds", "source", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
     [
       id("activity"),
       sessionId,
       sessionParticipantId,
-      now,
-      now,
+      startedAt,
+      endedAt,
       startedOffsetSeconds,
       endedOffsetSeconds,
+      source,
     ],
   );
 }

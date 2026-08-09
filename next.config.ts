@@ -6,8 +6,10 @@ import { resolveServerActionAllowedOriginsFromEnv } from "./lib/config/server-ac
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const isDevelopment = process.env.NODE_ENV !== "production";
+const distDir = process.env.NEXT_DIST_DIR?.trim() || undefined;
 
 const nextConfig: NextConfig = {
+  distDir,
   // Local reverse-tunnel domain for development-only Next dev access.
   allowedDevOrigins: isDevelopment
     ? ["127.0.0.1", "local.negotaitions.ru"]

@@ -11,7 +11,8 @@ provider request.
 - Existing terminal or `QUEUED` rows are claimed with a compare-and-swap on
   the row identity and prior state.
 - An `ANALYZING` row can be taken over only after its lease expires.
-- Renewal and terminal updates require `(id, ANALYZING, runToken)`.
+- Provider response ID, renewal, and terminal updates require
+  `(id, ANALYZING, runToken)` plus the active lease value where applicable.
 - A retry gets a new token. An old process therefore cannot renew or write a
   success/failure after takeover.
 - A normal failure is terminal `FAILED` and is immediately retryable.
@@ -23,12 +24,11 @@ This compatibility grace is only a transition rule for null ownership; new
 runs never use timestamps as their ownership identity.
 
 The default renewable lease is 180 seconds
-(`AI_ANALYSIS_LEASE_DURATION_MS`, bounded 150–600 seconds). It exceeds the
-largest permitted individual provider HTTP timeout (120 seconds) with a
-safety margin. Renewal happens before/after generation requests, around every
-known-response GET, before semantic fallback/depth work, and before success
-terminalization. Renewal also compares the prior lease value and refuses to
-revive an already expired lease, so an expired claim remains recoverable.
+(`AI_ANALYSIS_LEASE_DURATION_MS`, bounded 150–600 seconds). Renewal happens
+before context loading, immediately after provider acceptance, around every
+known-response GET, and before terminalization. Renewal also compares the
+prior lease value and refuses to revive an already expired lease, so an
+expired claim remains recoverable.
 
 ## Yandex Responses lifecycle contract
 
@@ -55,55 +55,54 @@ A nonterminal response must include `id`; otherwise retrieval is impossible
 and the call ends deterministically. A completed response does not require an
 ID because no retrieval is needed.
 
+For Yandex background responses, the accepted response ID is persisted to
+`AiAnalysis.providerResponseId` immediately after the background POST returns
+and before long polling. Only the current fenced owner may persist that ID. If
+a route/process retries while an active operation already has a recoverable
+ID, the adapter retrieves that same response before any new POST. Yandex
+generation requests are treated as non-idempotent; the application does not
+rely on `Idempotency-Key` to make duplicate generation safe.
+
 Once an ID is known, transient GET/network/429/5xx failures retry retrieval of
 that same ID within both the response deadline and operation deadline. The
 operation never creates another generation for that known response. Terminal
 non-success and retrieval deadline exhaustion end the operation; a later
-manual application retry may create a new generation.
+explicit application retry may create a new generation only after the durable
+operation is terminal.
 
 Synthetic fixtures for every relied-on state are in
 `lib/ai/fixtures/yandex-response-lifecycle.ts`.
 
 ## Retry and wall-clock model
 
-Defaults:
+Wave 1 defaults:
 
-- operation attempts: 2
-- HTTP timeout: 45 seconds
-- per-known-response polling deadline: 150 seconds
+- operation attempts: 1
+- POST acceptance HTTP timeout: 20 seconds
+- per-known-response polling deadline: 300 seconds
 - poll interval: 1.5 seconds
-- maximum GETs per known response: 100
 - whole provider operation deadline: 600 seconds
+- effective Yandex analysis `max_output_tokens`: 8000
 
 The call tree is:
 
-1. Primary generation, retried once only when no provider response ID was
-   obtained and the transport/HTTP failure explicitly permits regeneration.
-2. One compact JSON fallback only after a completed primary produced
-   truncated JSON.
-3. One optional depth call only after a schema-valid mandatory result exists.
+1. One background primary generation POST.
+2. Persist `providerResponseId` if the provider accepted the response.
+3. Repeated GET of the same response until a terminal lifecycle state or
+   elapsed-time deadline.
+4. Schema validation and fenced terminalization.
 
-Compact fallback and optional depth are not outer retries. Optional depth
-never triggers another primary attempt and cannot discard the valid base
-result on timeout, provider failure, empty/invalid output, schema failure, or
-no measured depth improvement.
-
-Maximum generation POSTs are therefore 4 (2 primary + 1 compact + 1 depth).
-Maximum configured GET count is 400, additionally constrained by the
-per-response and 600-second whole-operation deadlines. The deterministic
-provider wall-clock bound is 600 seconds, down from the approximately
-24-minute pre-remediation composition where every outer attempt could contain
-primary, compact, and depth calls and polling could overshoot by a full HTTP
-timeout.
+Wave 1 intentionally disables automatic compact fallback and optional depth
+generation. The arbitrary provider GET count ceiling is no longer a primary
+termination mechanism; elapsed deadlines are authoritative. Retryable GET
+transport errors remain bounded, but they do not create a second generation.
+A POST transport failure before a response ID is classified as
+acceptance-unknown and does not blindly retry generation.
 
 ## Normal successful path
 
-A completed, schema-valid primary result that satisfies all depth checks uses
-exactly one generation POST. It does not use compact fallback or optional
-depth. Compact generation is reachable only when a completed mandatory
-response is truncated/invalid in the recoverable JSON shape. Optional depth is
-reachable only after mandatory schema validity and only when the deterministic
-depth checks find a quality gap.
+A completed, schema-valid primary result uses exactly one generation POST. It
+does not use compact fallback or optional depth in Wave 1.
 
 Runtime metrics separate:
 
@@ -123,15 +122,33 @@ synthetic depth-complete result to verify the one-POST path without a provider
 call. It must not be interpreted as observed Yandex latency or as a typical
 production output percentile.
 
-Low-risk, semantics-preserving changes in this remediation are limited to:
+Low-risk, semantics-preserving changes in Wave 1 are limited to:
 
-- constructing identical base provider instructions once per operation;
-- preventing compact/depth work from being multiplied by outer retries;
-- skipping optional depth when primary already meets the existing criteria;
-- preserving a valid mandatory result when optional depth is unusable;
-- avoiding regeneration once a provider response ID is known.
+- adding `reasoning: { effort: "none" }` and `background: true` to the
+  Yandex DeepSeek analysis request;
+- persisting and recovering `providerResponseId`;
+- using wall-clock polling deadlines instead of a 100-GET ceiling;
+- avoiding automatic regeneration once a provider response ID may have been
+  accepted;
+- keeping transcript enhancement optional for analysis readiness.
 
-The following require the later controlled live-provider benchmark and are
-not changed here: max-output-token right-sizing, removal of overlapping
-prompt/schema prose, polling-interval tuning, and any change to the depth
-criteria or model.
+The August 2026 regression is strongly indicated to have been caused by the
+provider defaulting DeepSeek V4 Flash to large internal reasoning. For the
+two production Yandex DeepSeek calls in this product, analysis and transcript
+enhancement, the request invariant is:
+
+```json
+{
+  "reasoning": {
+    "effort": "none"
+  }
+}
+```
+
+Do not replace it with flat `reasoning_effort`, `reasoningOptions`, or
+provider-specific thinking flags.
+
+The following require later waves and are not changed here: background
+`stream=true` delivery, progressive section rendering, token-aware larger
+chunk packing, oversized single-utterance splitting, automatic mapping
+parallelism, and `processingMetadata` race remediation.

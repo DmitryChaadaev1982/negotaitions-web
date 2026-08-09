@@ -852,6 +852,8 @@ model AiAnalysis {
   runToken                    String?
   // Active ANALYZING ownership is renewable until this timestamp.
   leaseExpiresAt              DateTime?
+  // Provider-side Responses API generation ID used to recover accepted background runs.
+  providerResponseId          String?
   model                  String?
   language               String?
   executiveSummary       String?          @db.Text

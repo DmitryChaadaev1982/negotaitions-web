@@ -257,7 +257,7 @@ export async function probeHttpHealth(url, timeoutMs = 2_500) {
   }
 }
 
-export async function detectPort3000Owner(deps = {}) {
+export async function detectPortOwner(port = 3000, deps = {}) {
   const platform = deps.platform ?? process.platform;
   const runner = deps.runCommand ?? runCommand;
 
@@ -267,7 +267,7 @@ export async function detectPort3000Owner(deps = {}) {
       [
         "-NoProfile",
         "-Command",
-        "Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess | ConvertTo-Json -Compress",
+        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess | ConvertTo-Json -Compress`,
       ],
       { allowFailure: true },
     );
@@ -279,7 +279,7 @@ export async function detectPort3000Owner(deps = {}) {
         [
           "-NoProfile",
           "-Command",
-          "netstat -ano -p tcp | Select-String ':3000' | Where-Object { $_.Line -match 'LISTENING' } | Select-Object -First 1 | ForEach-Object { $_.Line }",
+          `netstat -ano -p tcp | Select-String ':${port}' | Where-Object { $_.Line -match 'LISTENING' } | Select-Object -First 1 | ForEach-Object { $_.Line }`,
         ],
         { allowFailure: true },
       );
@@ -364,7 +364,7 @@ export async function detectPort3000Owner(deps = {}) {
     return { status: "occupied", pid, processName, commandLine, executablePath };
   }
 
-  const lsof = await runner("lsof", ["-nP", "-iTCP:3000", "-sTCP:LISTEN"], {
+  const lsof = await runner("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"], {
     allowFailure: true,
   });
   const lines = lsof.stdout.split(/\r?\n/).map((line) => line.trim());
@@ -382,7 +382,7 @@ export async function detectPort3000Owner(deps = {}) {
     };
   }
 
-  const ss = await runner("ss", ["-lptn", "sport = :3000"], { allowFailure: true });
+  const ss = await runner("ss", ["-lptn", `sport = :${port}`], { allowFailure: true });
   if (lsof.code !== 0 && ss.code !== 0) {
     return { status: "unknown", pid: null, processName: null, commandLine: null };
   }
@@ -405,6 +405,10 @@ export async function detectPort3000Owner(deps = {}) {
     commandLine,
     executablePath: null,
   };
+}
+
+export async function detectPort3000Owner(deps = {}) {
+  return detectPortOwner(3000, deps);
 }
 
 async function readUnixCommandLine(pid, runner) {

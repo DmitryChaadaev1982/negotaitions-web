@@ -241,6 +241,12 @@ test("json_schema mode sends Responses API text.format schema payload", async ()
         assert.equal(result.meta?.outputMode, "json_schema");
         const seenBody = seenBodies.at(-1);
         assert.ok(seenBody, "Expected provider request body");
+        assert.equal(seenBody.model, "gpt://test-folder/deepseek-v4-flash");
+        assert.equal(seenBody.temperature, 0);
+        assert.deepEqual(seenBody.reasoning, { effort: "none" });
+        assert.equal(Object.hasOwn(seenBody, "reasoning_effort"), false);
+        assert.equal(Object.hasOwn(seenBody, "reasoningOptions"), false);
+        assert.equal(typeof seenBody.max_output_tokens, "number");
         const text = seenBody["text"] as Record<string, unknown>;
         const format = text?.format as Record<string, unknown>;
         assert.equal(format?.type, "json_schema");
@@ -661,8 +667,11 @@ test("json_schema mode treats terminal incomplete as failed without polling", as
     async () => {
       const originalFetch = global.fetch;
       const seenUrls: string[] = [];
+      const seenMaxOutputTokens: number[] = [];
       global.fetch = (async (url: string, init?: RequestInit) => {
         seenUrls.push(`${init?.method ?? "GET"} ${url}`);
+        const body = parseFetchBody(init);
+        seenMaxOutputTokens.push(Number(body.max_output_tokens));
         return new Response(
           JSON.stringify({
             id: "resp-incomplete",
@@ -677,6 +686,8 @@ test("json_schema mode treats terminal incomplete as failed without polling", as
         const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "incomplete"));
         assert.equal(result.meta?.overallStatus, "FAILED");
         assert.equal(seenUrls.some((url) => url.includes("/responses/resp-incomplete")), false);
+        assert.equal(seenMaxOutputTokens.length, 2);
+        assert.equal(seenMaxOutputTokens[1] > seenMaxOutputTokens[0], true);
       } finally {
         global.fetch = originalFetch;
       }
@@ -730,7 +741,7 @@ test("primary strict retry succeeds after initial empty output", async () => {
   );
 });
 
-test("fallback model succeeds after primary empty attempts", async () => {
+test("configured fallback model is ignored; strict retry keeps DeepSeek model", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -747,7 +758,7 @@ test("fallback model succeeds after primary empty attempts", async () => {
       let call = 0;
       global.fetch = (async () => {
         call += 1;
-        if (call <= 2) {
+        if (call === 1) {
           return new Response(JSON.stringify({ status: "completed", output_text: "" }), {
             status: 200,
           });
@@ -757,8 +768,8 @@ test("fallback model succeeds after primary empty attempts", async () => {
             status: "completed",
             output_text: JSON.stringify({
               segments: [
-                { index: 0, cleanedText: "fallback модель исправила сегмент 0 безопасно" },
-                { index: 1, cleanedText: "fallback модель исправила сегмент 1 безопасно" },
+                { index: 0, cleanedText: "strict retry исправил сегмент 0 безопасно" },
+                { index: 1, cleanedText: "strict retry исправил сегмент 1 безопасно" },
               ],
               globalWarnings: [],
             }),
@@ -769,8 +780,9 @@ test("fallback model succeeds after primary empty attempts", async () => {
       try {
         const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "fallback-ok"));
         assert.equal(result.meta?.overallStatus, "COMPLETED");
-        assert.equal(result.meta?.fallbackTriggered, true);
-        assert.equal(result.meta?.perChunk[0]?.modelUsed, "yandexgpt-lite/latest");
+        assert.equal(result.meta?.fallbackTriggered, false);
+        assert.equal(result.meta?.perChunk[0]?.modelUsed, "deepseek-v4-flash");
+        assert.equal(result.meta?.perChunk[0]?.fallbackModel, null);
       } finally {
         global.fetch = originalFetch;
       }
@@ -778,7 +790,7 @@ test("fallback model succeeds after primary empty attempts", async () => {
   );
 });
 
-test("primary and fallback empty outputs end in FAILED_FALLBACK and preserve original", async () => {
+test("primary empty outputs end in FAILED_FALLBACK and preserve original", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -903,7 +915,7 @@ test("telemetry marks validation stage when payload validates JSON but fails sem
   );
 });
 
-test("retry plan stays bounded to three attempts per chunk", async () => {
+test("retry plan stays bounded to two attempts per chunk", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -926,8 +938,8 @@ test("retry plan stays bounded to three attempts per chunk", async () => {
       }) as typeof fetch;
       try {
         const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "bounded"));
-        assert.equal(result.meta?.perChunk[0]?.attemptCount, 3);
-        assert.equal(calls, 3);
+        assert.equal(result.meta?.perChunk[0]?.attemptCount, 2);
+        assert.equal(calls, 2);
       } finally {
         global.fetch = originalFetch;
       }

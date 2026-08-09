@@ -357,7 +357,7 @@ export function AccountSessionMaterialsView({
         {/* Left column — recording + transcript + notes */}
         <div className="space-y-6 lg:col-span-2">
           {/* Recording */}
-          <GlassCard>
+          <GlassCard data-testid="account-recording-section">
             <GlassCardHeader>
               <p className="font-semibold text-slate-100">{t("sessionMaterials.recording")}</p>
             </GlassCardHeader>
@@ -367,7 +367,7 @@ export function AccountSessionMaterialsView({
           </GlassCard>
 
           {/* Transcript */}
-          <GlassCard>
+          <GlassCard data-testid="account-transcript-section">
             <GlassCardHeader>
               <p className="font-semibold text-slate-100">{t("recording.transcript")}</p>
             </GlassCardHeader>
@@ -400,14 +400,16 @@ export function AccountSessionMaterialsView({
           </GlassCard>
 
           {/* AI analysis / debrief — visible once facilitator shares the report */}
-          <SessionPostProcessingPanel
-            sessionId={sessionId}
-            roomAuth={{ type: "account", participantId }}
-            variant="page"
-            participantType={participantType}
-            showNavigation={false}
-            eventLobbyUrl={event && event.status !== "COMPLETED" ? event.lobbyUrl : undefined}
-          />
+          <div data-testid="account-ai-analysis-section">
+            <SessionPostProcessingPanel
+              sessionId={sessionId}
+              roomAuth={{ type: "account", participantId }}
+              variant="page"
+              participantType={participantType}
+              showNavigation={false}
+              eventLobbyUrl={event && event.status !== "COMPLETED" ? event.lobbyUrl : undefined}
+            />
+          </div>
         </div>
 
         {/* Right column — role briefing + roster + event */}
