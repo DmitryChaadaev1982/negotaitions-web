@@ -56,7 +56,16 @@ type AiAnalysisOperationRow = {
   runToken: string | null;
   leaseExpiresAt: Date | null;
   providerResponseId: string | null;
+  transcriptId: string | null;
+  transcriptRetranscribeCount: number;
+  language: string | null;
   updatedAt: Date;
+};
+
+export type AiAnalysisInputIdentity = {
+  transcriptId: string;
+  transcriptRetranscribeCount: number;
+  language: string;
 };
 
 export type AiAnalysisClaimResult =
@@ -101,6 +110,7 @@ export type AiAnalysisOperationStore = {
     runToken: string;
     now: Date;
     leaseExpiresAt: Date;
+    providerResponseId: string | null;
   }): Promise<boolean>;
   renew(
     owner: AiAnalysisRunOwner,
@@ -121,6 +131,7 @@ export type AiAnalysisOperationStore = {
     owner: AiAnalysisRunOwner;
     completedAt: Date;
     errorMessage: string;
+    clearProviderResponseId: boolean;
   }): Promise<boolean>;
 };
 
@@ -142,6 +153,9 @@ export function createPrismaAiAnalysisOperationStore(
     runToken: true,
     leaseExpiresAt: true,
     providerResponseId: true,
+    transcriptId: true,
+    transcriptRetranscribeCount: true,
+    language: true,
     updatedAt: true,
   } as const;
 
@@ -191,7 +205,7 @@ export function createPrismaAiAnalysisOperationStore(
           language: params.language,
           runToken: params.runToken,
           leaseExpiresAt: params.leaseExpiresAt,
-          providerResponseId: params.expected.providerResponseId,
+          providerResponseId: params.providerResponseId,
           startedAt: params.now,
           completedAt: null,
           errorMessage: null,
@@ -247,8 +261,7 @@ export function createPrismaAiAnalysisOperationStore(
           analysisJson: params.fields.analysisJson,
           rawModelOutput: params.fields.rawModelOutput,
           completedAt: params.completedAt,
-          providerResponseId:
-            params.owner.providerResponseId ?? undefined,
+          providerResponseId: null,
           errorMessage: null,
         },
       });
@@ -266,11 +279,42 @@ export function createPrismaAiAnalysisOperationStore(
           leaseExpiresAt: null,
           errorMessage: params.errorMessage,
           completedAt: params.completedAt,
+          ...(params.clearProviderResponseId
+            ? { providerResponseId: null }
+            : {}),
         },
       });
       return failed.count === 1;
     },
   };
+}
+
+/**
+ * `providerResponseId` is a live-recovery pointer, not an execution history
+ * record: it is only meaningful while the recorded background generation can
+ * still produce the analysis this row is supposed to hold. A generation is only
+ * recoverable for the exact analysis input it was created for, so a claim for a
+ * different transcript version or language must start a new generation instead
+ * of adopting the recorded one.
+ */
+export function resolveRecoverableProviderResponseId(params: {
+  existing: Pick<
+    AiAnalysisOperationRow,
+    | "providerResponseId"
+    | "transcriptId"
+    | "transcriptRetranscribeCount"
+    | "language"
+  >;
+  identity: AiAnalysisInputIdentity;
+}): string | null {
+  const recorded = params.existing.providerResponseId?.trim();
+  if (!recorded) return null;
+  const sameInput =
+    params.existing.transcriptId === params.identity.transcriptId &&
+    params.existing.transcriptRetranscribeCount ===
+      params.identity.transcriptRetranscribeCount &&
+    params.existing.language === params.identity.language;
+  return sameInput ? recorded : null;
 }
 
 export function isAiAnalysisRunLeaseActive(
@@ -349,6 +393,14 @@ export async function claimAiAnalysisRun(params: {
       };
     }
 
+    const providerResponseId = resolveRecoverableProviderResponseId({
+      existing,
+      identity: {
+        transcriptId: params.transcriptId,
+        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+        language: params.language,
+      },
+    });
     const claimed = await store.tryClaimExisting({
       expected: existing,
       transcriptId: params.transcriptId,
@@ -357,6 +409,7 @@ export async function claimAiAnalysisRun(params: {
       runToken,
       now,
       leaseExpiresAt,
+      providerResponseId,
     });
     if (claimed) {
       return {
@@ -365,7 +418,7 @@ export async function claimAiAnalysisRun(params: {
           analysisId: existing.id,
           runToken,
           leaseExpiresAt,
-          providerResponseId: existing.providerResponseId,
+          providerResponseId,
         },
         recoveredStaleRun: existing.status === AiAnalysisStatus.ANALYZING,
       };
@@ -435,12 +488,19 @@ export async function completeAiAnalysisRun(params: {
 export async function failAiAnalysisRun(params: {
   owner: AiAnalysisRunOwner;
   errorMessage: string;
+  /**
+   * True when the recorded provider generation can no longer produce a usable
+   * result, so a later explicit retry must create a new generation instead of
+   * retrieving the exhausted one forever.
+   */
+  clearProviderResponseId?: boolean;
   completedAt?: Date;
   store?: AiAnalysisOperationStore;
 }): Promise<boolean> {
   return (params.store ?? createPrismaAiAnalysisOperationStore()).fail({
     owner: params.owner,
     errorMessage: params.errorMessage,
+    clearProviderResponseId: params.clearProviderResponseId ?? false,
     completedAt: params.completedAt ?? new Date(),
   });
 }

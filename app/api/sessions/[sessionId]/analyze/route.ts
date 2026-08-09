@@ -15,6 +15,7 @@ import {
 } from "@/lib/ai/session-analysis-context";
 import {
   AiAnalysisProviderError,
+  canRecoverProviderResponseAfterFailure,
   classifyAiAnalysisError,
   createMockAnalysisOutput,
   isAiAnalysisConfiguredForSelectedProvider,
@@ -530,6 +531,9 @@ async function processRealAnalysis(
       failAiAnalysisRun({
         owner,
         errorMessage: failure.userMessage,
+        clearProviderResponseId: !canRecoverProviderResponseAfterFailure(
+          classifyAiAnalysisError(failure.originalError).code,
+        ),
       }),
     classifyFailure: (error) => {
       const classified = classifyAiAnalysisError(error);

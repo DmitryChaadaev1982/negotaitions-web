@@ -30,9 +30,9 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/diarization-speaker-mapping.spec.ts`, `lib/transcription/mapping-ui-presentation.test.ts`
 
 - AI analysis and debrief
-  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/session-analysis-context.ts`
-  - Docs: `08-ai-analysis-and-debrief.md`
-  - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`
+  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/session-analysis-context.ts`
+  - Docs: `08-ai-analysis-and-debrief.md`, `ai-analysis-operation-lifecycle.md`
+  - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`, `lib/ai/analysis-operation.test.ts`, `lib/ai/negotiation-analysis.test.ts`
 
 - Security and access control
   - Code: `lib/auth/**`, `lib/auth/client-ip.ts`, `lib/auth/credential-concurrency.ts`, `lib/auth/credential-dispatch-fence.ts`, `lib/auth/user-row-lock.ts`, `lib/auth/registration.ts`, `lib/auth/authenticated-password-change.ts`, `lib/auth/admin-account-status.ts`, `lib/auth/account-security-error-messages.ts`, `lib/auth/reset-fragment.ts`, `lib/auth/response-timing-floor.ts`, `lib/prisma.ts`, `lib/prisma-connection-string.ts`, `lib/email/rendered-content-guards.ts`, `lib/email/account-security.ts`, `lib/email/admin-journal.ts`, `lib/email/sensitive-payload.ts`, `lib/email/password-reset-dispatch.ts`, `lib/email/canary.ts`, `lib/email/operational-cli.ts`, `lib/email/local-preview.ts`, `lib/email/provider-event-consumer.ts`, `lib/email/yandex-postbox-provider-event-parser.ts`, `app/api/auth/forgot-password/route.ts`, `app/api/admin/email-journal/**`, `app/api/admin/email-preview/route.ts`, `app/(app)/admin/email/**`, `app/api/events/**`, `app/api/sessions/**`, `lib/room-participant-resolver.ts`

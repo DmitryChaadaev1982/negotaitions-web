@@ -247,6 +247,33 @@ export function classifyAiAnalysisError(error: unknown): {
   };
 }
 
+/**
+ * Whether an accepted background generation may still produce a usable result
+ * after this failure, so a later re-entry can retrieve that same response
+ * instead of creating a new generation.
+ *
+ * Codes that only appear once a response was retrieved and judged unusable
+ * exhaust the recorded generation: retrieving it again can never succeed, and
+ * treating it as recoverable would make every later retry replay the same
+ * terminal outcome. Everything else keeps the recorded generation, because
+ * abandoning a generation that is still running is what creates duplicates.
+ */
+export function canRecoverProviderResponseAfterFailure(
+  code: AiAnalysisErrorCode,
+): boolean {
+  switch (code) {
+    case "PROVIDER_LIFECYCLE_ERROR":
+    case "PROVIDER_HTTP_ERROR":
+    case "PROVIDER_RATE_LIMIT":
+    case "MODEL_EMPTY_OUTPUT":
+    case "MODEL_INVALID_OUTPUT":
+    case "MODEL_SCHEMA_VALIDATION_ERROR":
+      return false;
+    default:
+      return true;
+  }
+}
+
 function estimateTokensFromChars(chars: number): number {
   return Math.ceil(chars / 4);
 }

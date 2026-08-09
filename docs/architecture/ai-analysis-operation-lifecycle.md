@@ -73,6 +73,47 @@ operation is terminal.
 Synthetic fixtures for every relied-on state are in
 `lib/ai/fixtures/yandex-response-lifecycle.ts`.
 
+## Recovery eligibility of a recorded generation
+
+A recorded `providerResponseId` is a recovery hint, not a permanent property of
+the session. It survives only while retrieving it again can still produce the
+result the current request needs.
+
+Terminalization decides whether the recorded generation outlives the run:
+
+- Success clears it. A completed generation has already been persisted as
+  `analysisJson`, so an explicit user retry must produce a new generation
+  instead of re-serving the previous response.
+- A failure whose provider-side generation can still yield a usable result
+  keeps it. Retrieval deadline exhaustion, local abort, ownership loss, and
+  acceptance-unknown POST transport failures fall in this group: the background
+  response may still be running, so the next re-entry must resume the same
+  generation rather than start a second one.
+- A failure that proves the generation is exhausted clears it. Terminal
+  lifecycle non-success (`failed`, `cancelled`, `incomplete`), unknown status,
+  provider HTTP/rate-limit rejection, and retrieved-but-unusable output
+  (`MODEL_EMPTY_OUTPUT`, `MODEL_INVALID_OUTPUT`,
+  `MODEL_SCHEMA_VALIDATION_ERROR`) fall in this group. Keeping the ID here
+  would make every later retry re-retrieve the same doomed response, so the
+  session could never be analyzed again.
+
+The single policy point is
+`canRecoverProviderResponseAfterFailure(code)` in `lib/ai/negotiation-analysis.ts`;
+the analyze route derives `clearProviderResponseId` from it, and the fenced
+`fail` write applies it.
+
+Re-claiming an existing row also revalidates the recorded ID against the input
+it was generated from. `AiAnalysis` stores the `transcriptId`,
+`transcriptRetranscribeCount`, and `language` of the run that recorded the ID,
+and `resolveRecoverableProviderResponseId` reuses the ID only when all three
+still match the incoming request. A retranscribe or a language change therefore
+drops the ID and forces a new generation, because retrieving the old response
+would return an analysis of text the user no longer has.
+
+Clearing an ID never causes duplicate generation on its own: it happens only on
+a fenced terminal write by the current owner, after which no polling path for
+that ID remains active.
+
 ## Retry and wall-clock model
 
 Wave 1 defaults:
@@ -130,6 +171,8 @@ Low-risk, semantics-preserving changes in Wave 1 are limited to:
 - using wall-clock polling deadlines instead of a 100-GET ceiling;
 - avoiding automatic regeneration once a provider response ID may have been
   accepted;
+- releasing a recorded response ID on success and on exhausted-generation
+  failures so an explicit retry is never wedged;
 - keeping transcript enhancement optional for analysis readiness.
 
 The August 2026 regression is strongly indicated to have been caused by the

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AiAnalysisProviderError,
+  canRecoverProviderResponseAfterFailure,
   classifyYandexResponseLifecycle,
   createMockAnalysisOutput,
   getAiAnalysisPerformanceModel,
@@ -612,6 +613,65 @@ test("missing configuration remains explicit", async () => {
     (error) => {
       assert.ok(error instanceof AiAnalysisProviderError);
       assert.equal(error.code, "CONFIG_MISSING");
+      return true;
+    },
+  );
+});
+
+test("retrieved-and-unusable outcomes exhaust the recorded generation", () => {
+  for (const code of [
+    "PROVIDER_LIFECYCLE_ERROR",
+    "PROVIDER_HTTP_ERROR",
+    "PROVIDER_RATE_LIMIT",
+    "MODEL_EMPTY_OUTPUT",
+    "MODEL_INVALID_OUTPUT",
+    "MODEL_SCHEMA_VALIDATION_ERROR",
+  ] as const) {
+    assert.equal(canRecoverProviderResponseAfterFailure(code), false, code);
+  }
+  for (const code of [
+    "NETWORK_TIMEOUT",
+    "NETWORK_ERROR",
+    "CANCELLED",
+    "CONFIG_MISSING",
+    "INTERNAL_ERROR",
+    "OWNERSHIP_LOST",
+  ] as const) {
+    assert.equal(canRecoverProviderResponseAfterFailure(code), true, code);
+  }
+});
+
+test("terminal lifecycle failure classifies as an exhausted generation", async () => {
+  configureYandexEnv();
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () => jsonResponse(fixtures.incomplete)) as typeof fetch,
+        controlledRuntime(),
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(canRecoverProviderResponseAfterFailure(error.code), false);
+      return true;
+    },
+  );
+});
+
+test("poll deadline classifies as a still-recoverable generation", async () => {
+  configureYandexEnv();
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async (_input: RequestInfo | URL, init?: RequestInit) =>
+          jsonResponse(
+            init?.method === "POST" ? fixtures.inProgress : fixtures.inProgress,
+          )) as typeof fetch,
+        controlledRuntime(),
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "NETWORK_TIMEOUT");
+      assert.equal(canRecoverProviderResponseAfterFailure(error.code), true);
       return true;
     },
   );

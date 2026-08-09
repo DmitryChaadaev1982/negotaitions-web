@@ -38,6 +38,9 @@ function createMemoryStore(initial: Row | null = null) {
         runToken: params.runToken,
         leaseExpiresAt: params.leaseExpiresAt,
         providerResponseId: null,
+        transcriptId: params.transcriptId,
+        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+        language: params.language,
         updatedAt: params.now,
       };
       return { ...row };
@@ -59,7 +62,10 @@ function createMemoryStore(initial: Row | null = null) {
         status: AiAnalysisStatus.ANALYZING,
         runToken: params.runToken,
         leaseExpiresAt: params.leaseExpiresAt,
-        providerResponseId: row.providerResponseId,
+        providerResponseId: params.providerResponseId,
+        transcriptId: params.transcriptId,
+        transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+        language: params.language,
         updatedAt: params.now,
       };
       return true;
@@ -110,6 +116,7 @@ function createMemoryStore(initial: Row | null = null) {
         ...row,
         status: AiAnalysisStatus.COMPLETED,
         leaseExpiresAt: null,
+        providerResponseId: null,
         updatedAt: params.completedAt,
       };
       return true;
@@ -128,6 +135,9 @@ function createMemoryStore(initial: Row | null = null) {
         ...row,
         status: AiAnalysisStatus.FAILED,
         leaseExpiresAt: null,
+        providerResponseId: params.clearProviderResponseId
+          ? null
+          : row.providerResponseId,
         updatedAt: params.completedAt,
       };
       return true;
@@ -216,6 +226,9 @@ test("expired stale claim is recoverable with a new token", async () => {
     runToken: "old-token",
     leaseExpiresAt: new Date(startedAt.getTime() + 180_000),
     providerResponseId: "resp-recoverable",
+    transcriptId: claimInput.transcriptId,
+    transcriptRetranscribeCount: claimInput.transcriptRetranscribeCount,
+    language: claimInput.language,
     updatedAt: startedAt,
   });
   const expiredOwner: AiAnalysisRunOwner = {
@@ -245,6 +258,10 @@ test("expired stale claim is recoverable with a new token", async () => {
   assert.equal(recovered.state === "claimed" && recovered.recoveredStaleRun, true);
   assert.equal(memory.row?.runToken, "new-token");
   assert.equal(memory.row?.providerResponseId, "resp-recoverable");
+  assert.equal(
+    recovered.state === "claimed" && recovered.owner.providerResponseId,
+    "resp-recoverable",
+  );
 });
 
 test("old token success, failure, and renewal are fenced after takeover", async () => {
@@ -261,6 +278,9 @@ test("old token success, failure, and renewal are fenced after takeover", async 
     runToken: oldOwner.runToken,
     leaseExpiresAt: oldOwner.leaseExpiresAt,
     providerResponseId: null,
+    transcriptId: claimInput.transcriptId,
+    transcriptRetranscribeCount: claimInput.transcriptRetranscribeCount,
+    language: claimInput.language,
     updatedAt: startedAt,
   });
   await claimAiAnalysisRun({
@@ -330,6 +350,145 @@ test("provider response ID persistence is fenced by current run token and lease"
   assert.equal(memory.row?.providerResponseId, "resp_a");
 });
 
+async function claimAndRecordResponse(
+  memory: ReturnType<typeof createMemoryStore>,
+  now: Date,
+  runToken: string,
+  providerResponseId: string,
+) {
+  const claimed = await claimAiAnalysisRun({
+    ...claimInput,
+    now,
+    runToken,
+    store: memory.store,
+  });
+  assert.equal(claimed.state, "claimed");
+  if (claimed.state !== "claimed") throw new Error("claim failed");
+  const owner = await persistAiAnalysisProviderResponseId({
+    owner: claimed.owner,
+    providerResponseId,
+    now: new Date(now.getTime() + 1_000),
+    store: memory.store,
+  });
+  assert.ok(owner);
+  return owner;
+}
+
+test("exhausted provider generation is cleared so an explicit retry regenerates", async () => {
+  const memory = createMemoryStore();
+  const now = new Date("2026-08-07T12:00:00.000Z");
+  const owner = await claimAndRecordResponse(memory, now, "token-a", "resp_terminal");
+
+  assert.equal(
+    await failAiAnalysisRun({
+      owner,
+      errorMessage: "Provider lifecycle failure.",
+      clearProviderResponseId: true,
+      store: memory.store,
+    }),
+    true,
+  );
+  assert.equal(memory.row?.providerResponseId, null);
+
+  const retried = await claimAiAnalysisRun({
+    ...claimInput,
+    now: new Date(now.getTime() + 2_000),
+    runToken: "token-b",
+    store: memory.store,
+  });
+  assert.equal(retried.state, "claimed");
+  assert.equal(
+    retried.state === "claimed" && retried.owner.providerResponseId,
+    null,
+  );
+});
+
+test("recoverable failure keeps the accepted generation for the next re-entry", async () => {
+  const memory = createMemoryStore();
+  const now = new Date("2026-08-07T12:00:00.000Z");
+  const owner = await claimAndRecordResponse(memory, now, "token-a", "resp_alive");
+
+  assert.equal(
+    await failAiAnalysisRun({
+      owner,
+      errorMessage: "Retrieval deadline exhausted.",
+      store: memory.store,
+    }),
+    true,
+  );
+  assert.equal(memory.row?.providerResponseId, "resp_alive");
+
+  const retried = await claimAiAnalysisRun({
+    ...claimInput,
+    now: new Date(now.getTime() + 2_000),
+    runToken: "token-b",
+    store: memory.store,
+  });
+  assert.equal(
+    retried.state === "claimed" && retried.owner.providerResponseId,
+    "resp_alive",
+  );
+});
+
+test("successful terminalization releases the recorded generation", async () => {
+  const memory = createMemoryStore();
+  const now = new Date("2026-08-07T12:00:00.000Z");
+  const owner = await claimAndRecordResponse(memory, now, "token-a", "resp_done");
+
+  assert.equal(
+    await completeAiAnalysisRun({
+      owner,
+      fields: successFields,
+      store: memory.store,
+    }),
+    true,
+  );
+  assert.equal(memory.row?.providerResponseId, null);
+
+  const rerun = await claimAiAnalysisRun({
+    ...claimInput,
+    now: new Date(now.getTime() + 2_000),
+    runToken: "token-b",
+    store: memory.store,
+  });
+  assert.equal(rerun.state === "claimed" && rerun.owner.providerResponseId, null);
+});
+
+for (const [name, changedInput] of [
+  ["retranscribed transcript", { transcriptId: "transcript-2", transcriptRetranscribeCount: 1 }],
+  ["different analysis language", { language: "ru" }],
+] as const) {
+  test(`recorded generation is not reused for a ${name}`, async () => {
+    const startedAt = new Date("2026-08-07T12:00:00.000Z");
+    const memory = createMemoryStore({
+      id: "analysis-1",
+      status: AiAnalysisStatus.ANALYZING,
+      runToken: "old-token",
+      leaseExpiresAt: new Date(startedAt.getTime() + 180_000),
+      providerResponseId: "resp-other-input",
+      transcriptId: claimInput.transcriptId,
+      transcriptRetranscribeCount: claimInput.transcriptRetranscribeCount,
+      language: claimInput.language,
+      updatedAt: startedAt,
+    });
+
+    const claimed = await claimAiAnalysisRun({
+      ...claimInput,
+      ...changedInput,
+      now: new Date(startedAt.getTime() + 180_001),
+      runToken: "new-token",
+      store: memory.store,
+    });
+
+    assert.equal(claimed.state, "claimed");
+    assert.equal(
+      claimed.state === "claimed" && claimed.owner.providerResponseId,
+      null,
+    );
+    assert.equal(memory.row?.providerResponseId, null);
+  });
+}
+
 test("normal FAILED operation can be manually retried", async () => {
   const memory = createMemoryStore();
   const now = new Date("2026-08-07T12:00:00.000Z");
@@ -368,6 +527,9 @@ test("legacy null-ownership ANALYZING row has grace then stale recovery", async 
     runToken: null,
     leaseExpiresAt: null,
     providerResponseId: null,
+    transcriptId: claimInput.transcriptId,
+    transcriptRetranscribeCount: claimInput.transcriptRetranscribeCount,
+    language: claimInput.language,
     updatedAt,
   });
 
