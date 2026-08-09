@@ -43,10 +43,11 @@ export const REQUIRED_PRODUCTION_BASELINE =
   "20260627_production_initial_baseline";
 
 /**
- * The only migrations the production overlay may apply. The provider-event
- * migrations are additive: they add ingestion tables, nullable remediation
- * columns/indexes, and durable fencing metadata, so an older disabled runtime
- * that predates them keeps working against the newer schema.
+ * The Stage 3.13C migrations explicitly approved for the production overlay.
+ * The provider-event migrations are additive: they add ingestion tables,
+ * nullable remediation columns/indexes, and durable fencing metadata, so an
+ * older disabled runtime that predates them keeps working against the newer
+ * schema.
  */
 export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
   "20260804170000_stage_3_13c_account_security_email",
@@ -54,6 +55,24 @@ export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
   "20260806113000_add_email_provider_event_ingestion",
   "20260806160000_harden_email_provider_event_ingestion",
   "20260806183000_add_provider_event_consumer_fencing",
+] as const;
+
+/**
+ * The Stage 3.13D additive AI-analysis migrations explicitly approved for the
+ * production overlay.
+ */
+export const EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS = [
+  "20260807190000_harden_ai_analysis_operation_lifecycle",
+  "20260808210000_add_ai_analysis_provider_response_id",
+] as const;
+
+/**
+ * The complete, explicit production pending-migration allowlist. Keep this as
+ * a union of stage-specific lists so future migrations cannot pass implicitly.
+ */
+export const EXPECTED_PRODUCTION_PENDING_MIGRATIONS = [
+  ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+  ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";
@@ -388,14 +407,14 @@ export function validateMigrationHistoryRows(
 
   const unexpectedPending = pendingActiveMigrations.filter(
     (name) =>
-      !EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS.includes(
-        name as (typeof EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS)[number],
+      !EXPECTED_PRODUCTION_PENDING_MIGRATIONS.includes(
+        name as (typeof EXPECTED_PRODUCTION_PENDING_MIGRATIONS)[number],
       ),
   );
   if (unexpectedPending.length > 0) {
     throw new PrismaProductionOverlayError(
       "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
-      `Only the Stage 3.13C account-security migration may be pending through this overlay: ${unexpectedPending.join(", ")}`,
+      `Only explicitly approved production migrations may be pending through this overlay: ${unexpectedPending.join(", ")}`,
     );
   }
 

@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 
 import pg from "pg";
 
+import { EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS } from "@/lib/prisma-production-migration-overlay";
 import { assertApprovedStage313cVerifierChildEnvironment } from "./stage-3-13c-test-database";
-
-const MIGRATION_NAME =
-  "20260807190000_harden_ai_analysis_operation_lifecycle";
 
 async function main() {
   const approved = assertApprovedStage313cVerifierChildEnvironment(process.env);
@@ -23,7 +21,7 @@ async function main() {
        FROM information_schema.columns
        WHERE table_schema = $1
          AND table_name = 'AiAnalysis'
-         AND column_name IN ('runToken', 'leaseExpiresAt')
+         AND column_name IN ('runToken', 'leaseExpiresAt', 'providerResponseId')
        ORDER BY column_name`,
       [approved.schemaName],
     );
@@ -31,6 +29,7 @@ async function main() {
       columns.rows,
       [
         { column_name: "leaseExpiresAt", is_nullable: "YES" },
+        { column_name: "providerResponseId", is_nullable: "YES" },
         { column_name: "runToken", is_nullable: "YES" },
       ],
     );
@@ -45,27 +44,31 @@ async function main() {
     );
     assert.equal(indexes.rowCount, 1);
 
-    const migration = await client.query<{ count: string }>(
-      `SELECT COUNT(*) AS count
+    const migrations = await client.query<{ migration_name: string }>(
+      `SELECT migration_name
        FROM "${approved.schemaName}"."_prisma_migrations"
-       WHERE migration_name = $1
+       WHERE migration_name = ANY($1::text[])
          AND finished_at IS NOT NULL
-         AND rolled_back_at IS NULL`,
-      [MIGRATION_NAME],
+         AND rolled_back_at IS NULL
+       ORDER BY migration_name`,
+      [[...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS]],
     );
-    assert.equal(Number(migration.rows[0]?.count ?? 0), 1);
+    assert.deepEqual(
+      migrations.rows.map((row) => row.migration_name),
+      [...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS],
+    );
 
     return {
       ok: true,
       counts: {
-        nullableOwnershipColumns: columns.rowCount ?? 0,
+        nullableAiAnalysisColumns: columns.rowCount ?? 0,
         ownershipIndexes: indexes.rowCount ?? 0,
-        migrationRows: Number(migration.rows[0]?.count ?? 0),
+        migrationRows: migrations.rowCount ?? 0,
       },
       cases: [
         "additive-nullable-columns",
         "lease-index",
-        "migration-history",
+        "stage-3-13d-migration-history",
       ],
     };
   } finally {

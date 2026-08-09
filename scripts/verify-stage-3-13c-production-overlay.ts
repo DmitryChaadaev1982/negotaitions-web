@@ -17,7 +17,7 @@ import pg from "pg";
 
 import {
   executeProductionOverlay,
-  EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+  EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
   LEGACY_PRODUCTION_MIGRATIONS,
   listActiveMigrationNames,
   readMigrationHistoryFromDatabase,
@@ -36,28 +36,12 @@ const STAGE_3_13B = [
   "20260804113000_stage_3_13b_email_foundation",
   PRE_STAGE_3_13C,
 ] as const;
-const STAGE_3_13C_ACCOUNT =
-  "20260804170000_stage_3_13c_account_security_email";
-const STAGE_3_13C_REMEDIATION =
-  "20260805140000_stage_3_13c_security_remediation";
-const STAGE_3_13C_PROVIDER_EVENTS =
-  "20260806113000_add_email_provider_event_ingestion";
-const STAGE_3_13C_PROVIDER_EVENT_HARDENING =
-  "20260806160000_harden_email_provider_event_ingestion";
-const STAGE_3_13C_PROVIDER_EVENT_FENCING =
-  "20260806183000_add_provider_event_consumer_fencing";
-const STAGE_3_13C_PENDING = [
-  STAGE_3_13C_ACCOUNT,
-  STAGE_3_13C_REMEDIATION,
-  STAGE_3_13C_PROVIDER_EVENTS,
-  STAGE_3_13C_PROVIDER_EVENT_HARDENING,
-  STAGE_3_13C_PROVIDER_EVENT_FENCING,
-] as const;
 /**
- * The only application tables the pending Stage 3.13C migrations may create.
- * Anything else appearing after the overlay is an unreviewed schema change.
+ * The only application tables the approved production migrations may create.
+ * Stage 3.13D only adds nullable AiAnalysis columns and an index, so any other
+ * new table after the overlay is an unreviewed schema change.
  */
-const TABLES_ADDED_BY_STAGE_3_13C_OVERLAY = [
+const TABLES_ADDED_BY_APPROVED_PRODUCTION_MIGRATIONS = [
   "EmailProviderConsumerLease",
   "EmailProviderIngestionFailure",
   "EmailProviderStreamCheckpoint",
@@ -138,7 +122,7 @@ async function createWorkspace(repoRoot: string): Promise<Workspace> {
       (name) => name <= PRE_STAGE_3_13C,
     );
     assert.ok(migrationNames.includes(PRE_STAGE_3_13C));
-    for (const pending of STAGE_3_13C_PENDING) {
+    for (const pending of EXPECTED_PRODUCTION_PENDING_MIGRATIONS) {
       assert.ok(!migrationNames.includes(pending));
     }
     for (const name of migrationNames) {
@@ -351,7 +335,7 @@ async function passwordResetIndexes(
   return result.rows.map((row) => row.indexname);
 }
 
-async function assertStage313cDatabaseInvariants(
+async function assertApprovedProductionDatabaseInvariants(
   client: pg.Client,
   schemaName: string,
 ) {
@@ -463,11 +447,11 @@ async function assertStage313cDatabaseInvariants(
     `SELECT migration_name FROM "_prisma_migrations"
      WHERE migration_name = ANY($1::text[])
      ORDER BY migration_name`,
-    [[...STAGE_3_13C_PENDING]],
+    [[...EXPECTED_PRODUCTION_PENDING_MIGRATIONS]],
   );
   assert.deepEqual(
     migrationHistory.rows.map((row) => row.migration_name),
-    [...STAGE_3_13C_PENDING],
+    [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
   );
 
   const providerEvents = await assertProviderEventRemediationIsAdditive(
@@ -654,11 +638,7 @@ async function main() {
     });
     assert.deepEqual(
       preStatus?.pendingActiveMigrations,
-      [...STAGE_3_13C_PENDING],
-    );
-    assert.deepEqual(
-      preStatus?.pendingActiveMigrations,
-      [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS],
+      [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
     );
 
     const beforeDeployNames = new Set(
@@ -676,7 +656,7 @@ async function main() {
     });
     assert.deepEqual(
       deployGuard?.pendingActiveMigrations,
-      [...STAGE_3_13C_PENDING],
+      [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
     );
 
     const afterDeployHistory =
@@ -684,10 +664,15 @@ async function main() {
     const appliedByOverlay = afterDeployHistory
       .map((row) => row.migration_name)
       .filter((name) => !beforeDeployNames.has(name));
-    assert.deepEqual(appliedByOverlay, [...STAGE_3_13C_PENDING]);
+    assert.deepEqual(appliedByOverlay, [
+      ...EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
+    ]);
     assertHistory(
       afterDeployHistory,
-      new Set([...expectedPreNames, ...STAGE_3_13C_PENDING]),
+      new Set([
+        ...expectedPreNames,
+        ...EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
+      ]),
     );
 
     const postStatus = await executeProductionOverlay({
@@ -705,19 +690,21 @@ async function main() {
       stage313bBefore,
     );
     const postTables = await applicationTables(client, schemaName);
-    const addedTables = new Set<string>(TABLES_ADDED_BY_STAGE_3_13C_OVERLAY);
+    const addedTables = new Set<string>(
+      TABLES_ADDED_BY_APPROVED_PRODUCTION_MIGRATIONS,
+    );
     // Every pre-existing table survives untouched and only the reviewed tables
     // are added, so the overlay never drops or renames production tables.
     assert.deepEqual(
       postTables.filter((name) => !addedTables.has(name)),
       preexistingTables,
     );
-    for (const name of TABLES_ADDED_BY_STAGE_3_13C_OVERLAY) {
+    for (const name of TABLES_ADDED_BY_APPROVED_PRODUCTION_MIGRATIONS) {
       assert.ok(postTables.includes(name), `overlay did not create ${name}`);
     }
     const indexes = await passwordResetIndexes(client, schemaName);
     assert.deepEqual(indexes, [...PASSWORD_RESET_INDEXES].sort());
-    const invariants = await assertStage313cDatabaseInvariants(
+    const invariants = await assertApprovedProductionDatabaseInvariants(
       client,
       schemaName,
     );

@@ -13,7 +13,9 @@ import {
   createTemporaryOverlayDirectory,
   copyFileBytePreserving,
   executeProductionOverlay,
+  EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+  EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
   isExpectedPendingStatusOutput,
   LEGACY_PRODUCTION_MIGRATIONS,
   loadLegacyManifest,
@@ -38,7 +40,7 @@ const ACTIVE_MIGRATIONS = [
   "20260721002000_stage_3_10_voximplant_server_stop",
   "20260804113000_stage_3_13b_email_foundation",
   "20260804143000_stage_3_13b_email_hardening",
-  ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+  ...EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
 ];
 
 function successfulRow(
@@ -60,13 +62,22 @@ function legacyRows(): MigrationHistoryRow[] {
   );
 }
 
-function productionHistoryRows(): MigrationHistoryRow[] {
+function preApprovedProductionHistoryRows(): MigrationHistoryRow[] {
   const preStageRows = ACTIVE_MIGRATIONS.filter(
-    (name) => !EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS.includes(
-      name as (typeof EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS)[number],
+    (name) => !EXPECTED_PRODUCTION_PENDING_MIGRATIONS.includes(
+      name as (typeof EXPECTED_PRODUCTION_PENDING_MIGRATIONS)[number],
     ),
   ).map((name) => successfulRow(name));
   return [...legacyRows(), ...preStageRows];
+}
+
+function currentProductionHistoryRows(): MigrationHistoryRow[] {
+  return [
+    ...preApprovedProductionHistoryRows(),
+    ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS.map((name) =>
+      successfulRow(name),
+    ),
+  ];
 }
 
 function assertRefusal(
@@ -160,13 +171,17 @@ test("empty migration history is refused", () => {
 
 test("missing legacy row is refused", () => {
   assertRefusal(
-    () => validateMigrationHistoryRows(productionHistoryRows().slice(1), ACTIVE_MIGRATIONS),
+    () =>
+      validateMigrationHistoryRows(
+        preApprovedProductionHistoryRows().slice(1),
+        ACTIVE_MIGRATIONS,
+      ),
     "REFUSE_LEGACY_ROW_MISSING",
   );
 });
 
 test("legacy checksum mismatch is refused", () => {
-  const rows = productionHistoryRows();
+  const rows = preApprovedProductionHistoryRows();
   rows[0] = { ...rows[0], checksum: "bad-checksum" };
   assertRefusal(
     () => validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS),
@@ -175,8 +190,11 @@ test("legacy checksum mismatch is refused", () => {
 });
 
 test("rolled-back legacy row is refused", () => {
-  const rows = productionHistoryRows();
-  rows[0] = { ...rows[0], rolled_back_at: new Date("2026-08-04T09:00:00.000Z") };
+  const rows = preApprovedProductionHistoryRows();
+  rows[0] = {
+    ...rows[0],
+    rolled_back_at: new Date("2026-08-04T09:00:00.000Z"),
+  };
   assertRefusal(
     () => validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS),
     "REFUSE_LEGACY_ROLLED_BACK",
@@ -184,7 +202,7 @@ test("rolled-back legacy row is refused", () => {
 });
 
 test("unfinished legacy row is refused", () => {
-  const rows = productionHistoryRows();
+  const rows = preApprovedProductionHistoryRows();
   rows[0] = { ...rows[0], finished_at: null };
   assertRefusal(
     () => validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS),
@@ -193,7 +211,7 @@ test("unfinished legacy row is refused", () => {
 });
 
 test("failed migration history is refused", () => {
-  const rows = productionHistoryRows();
+  const rows = preApprovedProductionHistoryRows();
   rows.push({
     ...successfulRow("20260804170000_stage_3_13c_account_security_email"),
     finished_at: null,
@@ -204,19 +222,71 @@ test("failed migration history is refused", () => {
   );
 });
 
-test("Stage 3.13B production history accepts only Stage 3.13C pending", () => {
+test("exact approved Stage 3.13C and Stage 3.13D sequence is accepted", () => {
   const result = validateMigrationHistoryRows(
-    productionHistoryRows(),
+    preApprovedProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
   );
   assert.deepEqual(
     result.pendingActiveMigrations,
-    [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS],
+    [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
+  );
+  assert.deepEqual(EXPECTED_PRODUCTION_PENDING_MIGRATIONS, [
+    ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
+    ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
+  ]);
+  assert.deepEqual(
+    result.recognizedLegacyMigrations,
+    LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
+  );
+});
+
+test("current production baseline accepts only the two Stage 3.13D migrations pending", () => {
+  const result = validateMigrationHistoryRows(
+    currentProductionHistoryRows(),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(
+    result.pendingActiveMigrations,
+    [...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS],
   );
   assert.deepEqual(
     result.recognizedLegacyMigrations,
     LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
   );
+});
+
+test("an additional unknown pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(currentProductionHistoryRows(), [
+        ...ACTIVE_MIGRATIONS,
+        "20260809120000_unreviewed_migration",
+      ]),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("unknown migration-history rows remain refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        [
+          ...currentProductionHistoryRows(),
+          successfulRow("20260809120000_unknown_history"),
+        ],
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_UNKNOWN_LEGACY_DIVERGENCE",
+  );
+});
+
+test("fully applied approved sequence is accepted idempotently", () => {
+  const result = validateMigrationHistoryRows(
+    [...legacyRows(), ...ACTIVE_MIGRATIONS.map((name) => successfulRow(name))],
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(result.pendingActiveMigrations, []);
 });
 
 test("temporary overlay directory is cleaned up", async () => {
@@ -283,7 +353,7 @@ test("sanitized output never logs DATABASE_URL", () => {
 });
 
 test("Prisma status accepts singular and plural expected-pending output", () => {
-  const pending = [...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS];
+  const pending = [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS];
   // Singular phrasing is only valid when exactly one migration is expected.
   assert.equal(
     isExpectedPendingStatusOutput(
