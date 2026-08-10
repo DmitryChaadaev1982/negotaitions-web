@@ -59,6 +59,7 @@ type AiAnalysisOperationRow = {
   transcriptId: string | null;
   transcriptRetranscribeCount: number;
   language: string | null;
+  progressJson?: unknown;
   updatedAt: Date;
 };
 
@@ -112,6 +113,11 @@ export type AiAnalysisOperationStore = {
     leaseExpiresAt: Date;
     providerResponseId: string | null;
   }): Promise<boolean>;
+  start(
+    owner: AiAnalysisRunOwner,
+    now: Date,
+    leaseExpiresAt: Date,
+  ): Promise<boolean>;
   renew(
     owner: AiAnalysisRunOwner,
     now: Date,
@@ -120,6 +126,11 @@ export type AiAnalysisOperationStore = {
   persistProviderResponseId(params: {
     owner: AiAnalysisRunOwner;
     providerResponseId: string;
+    now: Date;
+  }): Promise<boolean>;
+  persistProgress(params: {
+    owner: AiAnalysisRunOwner;
+    progress: Prisma.InputJsonValue;
     now: Date;
   }): Promise<boolean>;
   complete(params: {
@@ -156,6 +167,7 @@ export function createPrismaAiAnalysisOperationStore(
     transcriptId: true,
     transcriptRetranscribeCount: true,
     language: true,
+    progressJson: true,
     updatedAt: true,
   } as const;
 
@@ -173,11 +185,12 @@ export function createPrismaAiAnalysisOperationStore(
             sessionId: params.sessionId,
             transcriptId: params.transcriptId,
             transcriptRetranscribeCount: params.transcriptRetranscribeCount,
-            status: AiAnalysisStatus.ANALYZING,
+            status: AiAnalysisStatus.QUEUED,
             language: params.language,
             runToken: params.runToken,
             leaseExpiresAt: params.leaseExpiresAt,
             providerResponseId: null,
+            progressJson: Prisma.JsonNull,
             startedAt: params.now,
             completedAt: null,
             errorMessage: null,
@@ -201,17 +214,36 @@ export function createPrismaAiAnalysisOperationStore(
         data: {
           transcriptId: params.transcriptId,
           transcriptRetranscribeCount: params.transcriptRetranscribeCount,
-          status: AiAnalysisStatus.ANALYZING,
+          status: AiAnalysisStatus.QUEUED,
           language: params.language,
           runToken: params.runToken,
           leaseExpiresAt: params.leaseExpiresAt,
           providerResponseId: params.providerResponseId,
+          progressJson: Prisma.JsonNull,
           startedAt: params.now,
           completedAt: null,
           errorMessage: null,
         },
       });
       return claimed.count === 1;
+    },
+    async start(owner, now, leaseExpiresAt) {
+      const started = await client.aiAnalysis.updateMany({
+        where: {
+          id: owner.analysisId,
+          status: AiAnalysisStatus.QUEUED,
+          runToken: owner.runToken,
+          leaseExpiresAt: {
+            equals: owner.leaseExpiresAt,
+            gt: now,
+          },
+        },
+        data: {
+          status: AiAnalysisStatus.ANALYZING,
+          leaseExpiresAt,
+        },
+      });
+      return started.count === 1;
     },
     async renew(owner, now, leaseExpiresAt) {
       const renewed = await client.aiAnalysis.updateMany({
@@ -245,6 +277,23 @@ export function createPrismaAiAnalysisOperationStore(
       });
       return persisted.count === 1;
     },
+    async persistProgress(params) {
+      const persisted = await client.aiAnalysis.updateMany({
+        where: {
+          id: params.owner.analysisId,
+          status: AiAnalysisStatus.ANALYZING,
+          runToken: params.owner.runToken,
+          leaseExpiresAt: {
+            equals: params.owner.leaseExpiresAt,
+            gt: params.now,
+          },
+        },
+        data: {
+          progressJson: params.progress,
+        },
+      });
+      return persisted.count === 1;
+    },
     async complete(params) {
       const completed = await client.aiAnalysis.updateMany({
         where: {
@@ -259,6 +308,7 @@ export function createPrismaAiAnalysisOperationStore(
           executiveSummary: params.fields.executiveSummary,
           overallScore: params.fields.overallScore,
           analysisJson: params.fields.analysisJson,
+          progressJson: Prisma.JsonNull,
           rawModelOutput: params.fields.rawModelOutput,
           completedAt: params.completedAt,
           providerResponseId: null,
@@ -279,6 +329,7 @@ export function createPrismaAiAnalysisOperationStore(
           leaseExpiresAt: null,
           errorMessage: params.errorMessage,
           completedAt: params.completedAt,
+          progressJson: Prisma.JsonNull,
           ...(params.clearProviderResponseId
             ? { providerResponseId: null }
             : {}),
@@ -379,8 +430,10 @@ export async function claimAiAnalysisRun(params: {
       continue;
     }
 
+    const isOwnedQueuedRun =
+      existing.status === AiAnalysisStatus.QUEUED && Boolean(existing.runToken);
     if (
-      existing.status === AiAnalysisStatus.ANALYZING &&
+      (existing.status === AiAnalysisStatus.ANALYZING || isOwnedQueuedRun) &&
       isAiAnalysisRunLeaseActive(existing, now, legacyStaleAfterMs)
     ) {
       return {
@@ -454,6 +507,21 @@ export async function renewAiAnalysisLease(params: {
   return renewed ? { ...params.owner, leaseExpiresAt } : null;
 }
 
+export async function startAiAnalysisRun(params: {
+  owner: AiAnalysisRunOwner;
+  now?: Date;
+  leaseDurationMs?: number;
+  store?: AiAnalysisOperationStore;
+}): Promise<AiAnalysisRunOwner | null> {
+  const store = params.store ?? createPrismaAiAnalysisOperationStore();
+  const now = params.now ?? new Date();
+  const leaseExpiresAt = new Date(
+    now.getTime() + (params.leaseDurationMs ?? getAiAnalysisLeaseDurationMs()),
+  );
+  const started = await store.start(params.owner, now, leaseExpiresAt);
+  return started ? { ...params.owner, leaseExpiresAt } : null;
+}
+
 export async function persistAiAnalysisProviderResponseId(params: {
   owner: AiAnalysisRunOwner;
   providerResponseId: string;
@@ -470,6 +538,19 @@ export async function persistAiAnalysisProviderResponseId(params: {
   return persisted
     ? { ...params.owner, providerResponseId: params.providerResponseId }
     : null;
+}
+
+export async function persistAiAnalysisProgress(params: {
+  owner: AiAnalysisRunOwner;
+  progress: Prisma.InputJsonValue;
+  now?: Date;
+  store?: AiAnalysisOperationStore;
+}): Promise<boolean> {
+  return (params.store ?? createPrismaAiAnalysisOperationStore()).persistProgress({
+    owner: params.owner,
+    progress: params.progress,
+    now: params.now ?? new Date(),
+  });
 }
 
 export async function completeAiAnalysisRun(params: {

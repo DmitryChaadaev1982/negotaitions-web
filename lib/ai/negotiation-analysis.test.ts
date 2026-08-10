@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   AiAnalysisProviderError,
+  buildNegotiationAnalysisProgressFromOutput,
   canRecoverProviderResponseAfterFailure,
   classifyYandexResponseLifecycle,
   createMockAnalysisOutput,
+  dispatchSelectedAiAnalysisProvider,
+  extractNegotiationAnalysisProgress,
   getAiAnalysisPerformanceModel,
   runNegotiationAnalysis,
   type AiAnalysisExecutionOptions,
@@ -136,6 +139,72 @@ test("lifecycle classifier covers only documented production states", () => {
   assert.equal(classifyYandexResponseLifecycle(fixtures.cancelled).kind, "failure");
   assert.equal(classifyYandexResponseLifecycle(fixtures.incomplete).kind, "failure");
   assert.equal(classifyYandexResponseLifecycle(fixtures.unknown).kind, "unknown");
+});
+
+test("Yandex adapter failure is fail-closed and never invokes OpenAI", async () => {
+  let yandexCalls = 0;
+  let openAiCalls = 0;
+  const failure = new Error("synthetic Yandex failure");
+
+  await assert.rejects(
+    dispatchSelectedAiAnalysisProvider("yandex", {
+      yandex: async () => {
+        yandexCalls += 1;
+        throw failure;
+      },
+      openai: async () => {
+        openAiCalls += 1;
+        return "unexpected fallback";
+      },
+    }),
+    (error) => error === failure,
+  );
+
+  assert.equal(yandexCalls, 1);
+  assert.equal(openAiCalls, 0);
+});
+
+test("progress extraction accepts only complete validated schema sections", () => {
+  const output = validAnalysisOutput();
+  const serialized = JSON.stringify(output);
+  const roleObjectivesStart = serialized.indexOf(',"roleObjectivesAnalysis"');
+  assert.ok(roleObjectivesStart > 0);
+
+  const progress = extractNegotiationAnalysisProgress(
+    serialized.slice(0, roleObjectivesStart),
+  );
+  assert.deepEqual(progress?.completedSections, ["overview", "scores"]);
+  assert.equal(progress?.analysis.executiveSummary, output.executiveSummary);
+  assert.deepEqual(progress?.analysis.scores, output.scores);
+  assert.equal(progress?.analysis.roleObjectivesAnalysis, undefined);
+});
+
+test("malformed or incomplete partial output produces no completed progress", () => {
+  assert.equal(
+    extractNegotiationAnalysisProgress(
+      '{"executiveSummary":"Partial","overallScore":"not-a-number"',
+    ),
+    null,
+  );
+  assert.equal(
+    extractNegotiationAnalysisProgress(
+      '{"executiveSummary":"Partial","overallScore":55,"confidenceLevel":"HIGH"',
+    ),
+    null,
+  );
+});
+
+test("progress snapshots built from final output remain ordered prefixes", () => {
+  const progress = buildNegotiationAnalysisProgressFromOutput(
+    validAnalysisOutput(),
+    4,
+  );
+  assert.deepEqual(progress?.completedSections, [
+    "overview",
+    "scores",
+    "roleObjectivesAnalysis",
+    "strengths",
+  ]);
 });
 
 test("direct completed success returns explicit metrics", async () => {
@@ -328,6 +397,113 @@ test("in-progress partial text is ignored until completed retrieval", async () =
   assert.deepEqual(methods, ["POST", "GET"]);
   assert.equal(result.metrics.generationCallCount, 1);
   assert.equal(result.metrics.pollingRequestCount, 1);
+});
+
+test("validated sections are published from nonterminal retrieval snapshots", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const serialized = JSON.stringify(output);
+  const partialEnd = serialized.indexOf(',"roleObjectivesAnalysis"');
+  assert.ok(partialEnd > 0);
+  let gets = 0;
+  const snapshots: string[][] = [];
+
+  const result = await runWithFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return jsonResponse(fixtures.inProgress);
+      gets += 1;
+      if (gets === 1) {
+        return jsonResponse({
+          ...fixtures.inProgress,
+          output_text: serialized.slice(0, partialEnd),
+        });
+      }
+      return jsonResponse(fixtures.completed(serialized));
+    }) as typeof fetch,
+    {
+      ...controlledRuntime(),
+      persistProgress: async (progress) => {
+        snapshots.push([...progress.completedSections]);
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result.output.executiveSummary, output.executiveSummary);
+  assert.deepEqual(snapshots, [["overview", "scores"]]);
+});
+
+test("progress persistence interruption does not cancel background retrieval", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const serialized = JSON.stringify(output);
+  const partialEnd = serialized.indexOf(',"roleObjectivesAnalysis"');
+  let gets = 0;
+  let progressAttempts = 0;
+
+  const result = await runWithFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return jsonResponse(fixtures.inProgress);
+      gets += 1;
+      return gets === 1
+        ? jsonResponse({
+            ...fixtures.inProgress,
+            output_text: serialized.slice(0, partialEnd),
+          })
+        : jsonResponse(fixtures.completed(serialized));
+    }) as typeof fetch,
+    {
+      ...controlledRuntime(),
+      persistProgress: async () => {
+        progressAttempts += 1;
+        throw new Error("synthetic progress channel interruption");
+      },
+    },
+  );
+
+  assert.equal(progressAttempts, 1);
+  assert.equal(result.output.overallScore, output.overallScore);
+  assert.equal(gets, 2);
+});
+
+test("partial progress never substitutes for a valid completed report", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const serialized = JSON.stringify(output);
+  const partialEnd = serialized.indexOf(',"roleObjectivesAnalysis"');
+  const partial = serialized.slice(0, partialEnd);
+  let gets = 0;
+  let progressWrites = 0;
+
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === "POST") return jsonResponse(fixtures.inProgress);
+          gets += 1;
+          return gets === 1
+            ? jsonResponse({ ...fixtures.inProgress, output_text: partial })
+            : jsonResponse(fixtures.completed(partial));
+        }) as typeof fetch,
+        {
+          ...controlledRuntime(),
+          persistProgress: async () => {
+            progressWrites += 1;
+            return true;
+          },
+        },
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.ok(
+        error.code === "MODEL_INVALID_OUTPUT" ||
+          error.code === "MODEL_SCHEMA_VALIDATION_ERROR",
+      );
+      return true;
+    },
+  );
+
+  assert.equal(progressWrites, 1);
 });
 
 for (const [name, fixture] of [

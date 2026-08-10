@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
@@ -17,6 +17,7 @@ import {
   AiAnalysisProviderError,
   canRecoverProviderResponseAfterFailure,
   classifyAiAnalysisError,
+  buildNegotiationAnalysisProgressFromOutput,
   createMockAnalysisOutput,
   isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
@@ -28,8 +29,10 @@ import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
   failAiAnalysisRun,
+  persistAiAnalysisProgress,
   persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
+  startAiAnalysisRun,
   type AiAnalysisRunOwner,
 } from "@/lib/ai/analysis-operation";
 import {
@@ -48,6 +51,7 @@ import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-res
 import { getAiAnalysisProvider } from "@/lib/env";
 
 export const runtime = "nodejs";
+export const maxDuration = 610;
 
 const schema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -311,20 +315,44 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  if (isAiAnalysisMockMode()) {
-    return await processMockAnalysis(
-      sessionId,
-      claimedRun.owner,
-      analysisLanguage,
-    );
-  }
+  const mockMode = isAiAnalysisMockMode();
+  const simulatedError = mockMode ? getMockExternalServiceError() : null;
+  after(async () => {
+    let owner = claimedRun.owner;
+    try {
+      const startedOwner = await startAiAnalysisRun({ owner });
+      if (!startedOwner) return;
+      owner = startedOwner;
+      if (mockMode) {
+        await processMockAnalysis(
+          sessionId,
+          owner,
+          analysisLanguage,
+          simulatedError,
+        );
+      } else {
+        await processRealAnalysis(
+          sessionId,
+          owner,
+          analysisLanguage,
+          operationStartedAtMonotonic,
+        );
+      }
+    } catch (error) {
+      console.error("[AI analysis] detached execution failed", {
+        sessionId,
+        analysisId: owner.analysisId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  });
 
-  return await processRealAnalysis(
-    sessionId,
-    claimedRun.owner,
-    analysisLanguage,
-    request.signal,
-    operationStartedAtMonotonic,
+  return NextResponse.json(
+    {
+      analysisId: claimedRun.owner.analysisId,
+      status: AiAnalysisStatus.QUEUED,
+    },
+    { status: 202 },
   );
 }
 
@@ -332,9 +360,8 @@ async function processMockAnalysis(
   sessionId: string,
   owner: AiAnalysisRunOwner,
   language: string,
+  simulatedError: string | null,
 ) {
-  const simulatedError = getMockExternalServiceError();
-
   if (
     simulatedError === "OPENAI_AI_ANALYSIS_FAILED" ||
     simulatedError === "OPENAI_QUOTA_EXCEEDED" ||
@@ -362,10 +389,7 @@ async function processMockAnalysis(
       errorMessage: errorMsg,
     });
     if (!terminalized) {
-      return NextResponse.json(
-        { error: "AI analysis ownership changed." },
-        { status: 409 },
-      );
+      return;
     }
     try {
       await logExternalServiceEvent({
@@ -379,10 +403,29 @@ async function processMockAnalysis(
     } catch {
       // The durable FAILED state is authoritative; mock logging is best-effort.
     }
-    return NextResponse.json({ error: errorMsg }, { status: 500 });
+    return;
   }
 
   const mockOutput = createMockAnalysisOutput(language);
+  if (simulatedError === "AI_ANALYSIS_PROGRESSIVE_HOLD") {
+    for (const completedSectionCount of [1, 4, 7]) {
+      const progress = buildNegotiationAnalysisProgressFromOutput(
+        mockOutput,
+        completedSectionCount,
+      );
+      if (
+        progress &&
+        !(await persistAiAnalysisProgress({
+          owner,
+          progress: progress as Prisma.InputJsonValue,
+        }))
+      ) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+  }
   const completedAt = new Date();
   const terminalized = await completeAiAnalysisRun({
     owner,
@@ -396,26 +439,14 @@ async function processMockAnalysis(
     },
   });
   if (!terminalized) {
-    return NextResponse.json(
-      { error: "AI analysis ownership changed." },
-      { status: 409 },
-    );
+    return;
   }
-
-  return NextResponse.json({
-    analysisId: owner.analysisId,
-    status: AiAnalysisStatus.COMPLETED,
-    executiveSummary: mockOutput.executiveSummary,
-    overallScore: mockOutput.overallScore,
-    completedAt: completedAt.toISOString(),
-  });
 }
 
 async function processRealAnalysis(
   sessionId: string,
   initialOwner: AiAnalysisRunOwner,
   language: string,
-  signal: AbortSignal,
   operationStartedAtMonotonic: number,
 ) {
   const provider = getAiAnalysisProvider();
@@ -452,7 +483,6 @@ async function processRealAnalysis(
       }
       const prompt = buildAnalysisPrompt(analysisContext);
       return runNegotiationAnalysis(prompt, language, {
-        signal,
         renewLease,
         operationStartedAtMonotonic,
         existingProviderResponseId: owner.providerResponseId,
@@ -467,19 +497,14 @@ async function processRealAnalysis(
           owner = persisted;
           return true;
         },
+        persistProgress: (progress) =>
+          persistAiAnalysisProgress({
+            owner,
+            progress: progress as Prisma.InputJsonValue,
+          }),
       });
     },
     complete: async ({ output, rawOutput, model, metrics }) => {
-      if (signal.aborted) {
-        throw new AiAnalysisProviderError({
-          code: "CANCELLED",
-          provider,
-          model,
-          message: "AI analysis request was cancelled before terminalization.",
-          diagnostics: { cancellationSource: "request" },
-          allowsRegeneration: false,
-        });
-      }
       if (!(await renewLease("before_success_terminalization"))) {
         return false;
       }
@@ -612,29 +637,9 @@ async function processRealAnalysis(
   });
 
   if (result.state === "ownership_lost") {
-    return NextResponse.json(
-      {
-        error: "AI analysis ownership changed.",
-        errorClass: "OWNERSHIP_LOST",
-      },
-      { status: 409 },
-    );
+    return;
   }
   if (result.state === "failed") {
-    return NextResponse.json(
-      {
-        error: result.failure.userMessage,
-        errorClass: result.failure.errorClass,
-      },
-      { status: result.failure.errorClass === "CANCELLED" ? 499 : 500 },
-    );
+    return;
   }
-
-  return NextResponse.json({
-    analysisId: owner.analysisId,
-    status: AiAnalysisStatus.COMPLETED,
-    executiveSummary: result.value.output.executiveSummary,
-    overallScore: result.value.output.overallScore,
-    completedAt: completion.completedAt?.toISOString() ?? null,
-  });
 }

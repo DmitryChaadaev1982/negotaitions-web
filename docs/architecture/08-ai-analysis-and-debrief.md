@@ -10,9 +10,61 @@ Produce structured post-session coaching output from transcript/materials and ex
 2. Analysis context is built from transcript segments with pause processing mode awareness:
    - `source_audio_cut` (production default): use transcript as-is (already generated from active-only audio).
    - `transcript_interval_filter` (legacy/deprecated fallback): apply shared interval filter to transcript segments.
-3. Provider-specific analysis execution runs (`openai` or `yandex`).
-4. Structured output is validated against schema.
-5. Analysis is persisted and optionally shared to session participants/observers.
+3. A fenced `QUEUED` operation is created and the route returns `202` without
+   making the browser connection execution authority.
+4. Self-hosted Next.js `after()` starts the owned operation, transitions it to
+   `ANALYZING`, and runs the explicitly selected provider (`openai` or
+   `yandex`).
+5. Yandex creates one durable background response and retrieves that same
+   response by ID. Valid complete sections found in nonterminal retrieval
+   snapshots are persisted as facilitator-only progress.
+6. The complete provider output is parsed and validated against the canonical
+   schema. Only then is `analysisJson` persisted and status changed to
+   `COMPLETED`.
+7. A completed analysis can be shared to session participants/observers through
+   the existing sanitized publication flow.
+
+## Provider Selection And Fail-Closed Contract
+
+- `AI_ANALYSIS_PROVIDER` is an explicit required enum: `yandex` or `openai`.
+- Dispatch is exact. A selected Yandex adapter failure is returned as a Yandex
+  failure; no catch, configuration, timeout, transport, lifecycle, parsing, or
+  schema branch invokes OpenAI.
+- Missing Yandex credentials fail closed even if OpenAI credentials are
+  present.
+- OpenAI remains supported only when `AI_ANALYSIS_PROVIDER=openai` is selected
+  explicitly, plus existing explicit mock/test paths.
+- The production configuration used by the Yandex POC selects `yandex`.
+
+## Durable Background And Progressive Semantics
+
+- `runToken` and `leaseExpiresAt` own `QUEUED` and `ANALYZING` work. Background
+  start, lease renewal, provider-response persistence, progress writes, success,
+  and failure are fenced to the current token.
+- `providerResponseId` remains the durable recovery pointer. Once accepted, GET
+  retries and later recovery retrieve the same Yandex generation and never
+  create a second generation for that known ID.
+- `AiAnalysis.progressJson` is an additive nullable field with one meaning:
+  validated, ordered section snapshots for the current `ANALYZING` owner. It
+  never contains raw provider events or incomplete provider JSON.
+- Progress sections are an ordered prefix of the canonical report schema:
+  overview, scores, role objectives, strengths, improvement areas, tactics,
+  questions, listening/reframing, value creation, training focus, facilitator
+  questions, one-minute feedback, and participant feedback.
+- Each section is validated independently before a fenced write. Invalid or
+  incomplete values remain pending. A rerun clears previous progress; stale
+  owners cannot write new progress.
+- `progressJson` is cleared on success and failure. `analysisJson` retains its
+  original meaning as the complete, schema-valid canonical report.
+- The verified repository provider contract establishes Yandex background
+  creation plus independent response retrieval. It does not establish a safe
+  resumable `background=true` + `stream=true` contract, so Wave 2 does not
+  enable provider streaming. Nonterminal background GET snapshots are the
+  optional progress channel; final polling/recovery remains authoritative.
+- A browser refresh, navigation, disconnect, or closed page only interrupts UI
+  polling. It does not abort accepted server work. If the app process stops,
+  lease expiry and `providerResponseId` recovery preserve Wave 1 takeover
+  behavior.
 
 ## Pause Filtering Guarantees
 
@@ -28,8 +80,12 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Key Components
 
 - Analysis model/schema and provider execution: `lib/ai/negotiation-analysis.ts`.
+- Durable ownership and progress persistence: `lib/ai/analysis-operation.ts`.
 - Analysis context builder: `lib/ai/session-analysis-context.ts`.
 - Visibility filtering: `lib/analysis-visibility.ts`.
+- Shared facilitator progress UI:
+  `components/session-post-processing-panel.tsx` and
+  `components/session-materials-dashboard.tsx`.
 - APIs:
   - `app/api/sessions/[sessionId]/analyze/route.ts`
   - `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`
@@ -38,8 +94,25 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Visibility Model
 
 - Facilitator: full analysis.
+- Facilitator: validated progressive sections while queued/analyzing.
 - Participant/observer: shared/sanitized analysis only when published.
+- Participant/observer responses always return null progressive content,
+  regardless of prior publication state.
 - Sharing state controls materials access for observer-facing debrief behavior.
+
+## Facilitator UI State Model
+
+- `QUEUED`: accepted and waiting for detached execution; duplicate start is
+  hidden and API duplicate protection remains active.
+- `ANALYZING`: completed progress sections remain visible and the ordered
+  remainder is marked processing. Refresh reconstructs progress from
+  `progressJson`.
+- `COMPLETED`: canonical `analysisJson` replaces progress and existing
+  share/unshare controls remain available.
+- `FAILED`: progress is not displayed as a report; the existing safe retry path
+  is shown.
+- Transcript-enhancement `COMPLETED` uses explicit success/green semantics;
+  running, partial/failed, and skipped states remain visually distinct.
 
 ## Debrief Right-Panel State Machine
 

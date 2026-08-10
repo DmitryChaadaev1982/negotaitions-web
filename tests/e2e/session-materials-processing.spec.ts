@@ -22,6 +22,7 @@ import {
   getTranscriptStatus,
   getTranscriptText,
   participantByName,
+  query,
   upsertRecordingForSession,
   updateRecordingCompleted,
 } from "./helpers/db";
@@ -588,6 +589,34 @@ test("Test 9 — External event diagnostics recorded for failed storage download
 
 // ── AI Analysis Tests ──────────────────────────────────────────────────────
 
+test("completed transcript enhancement status uses success semantics", async ({
+  request,
+  page,
+}) => {
+  const { session, facilitator } = await createAssignedSession(request);
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
+  await createCompletedTranscript(session.id);
+  await query(
+    `UPDATE "Transcript"
+     SET "processingMetadata" = jsonb_build_object(
+       'transcriptionProvider', 'yandex_speechkit',
+       'transcriptEnhancement', jsonb_build_object('status', 'COMPLETED')
+     )
+     WHERE "sessionId" = $1`,
+    [session.id],
+  );
+
+  await authenticatePageAs(page, facilitator);
+  await page.goto(`/join/${facilitator.joinToken}`);
+  const enhancementStatus = page.getByTestId(
+    "post-processing-enhancement-status",
+  );
+  await expect(enhancementStatus).toHaveAttribute("data-stage", "COMPLETED");
+  await expect(enhancementStatus).toHaveClass(/border-emerald-500/);
+});
+
 test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async ({
   request,
   page,
@@ -620,13 +649,16 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   expect(analyzeResponse.ok()).toBeTruthy();
   const analyzeBody = (await analyzeResponse.json()) as {
     status: string;
-    executiveSummary: string | null;
-    overallScore: number | null;
+    analysisId: string;
   };
-  expect(analyzeBody.status).toBe("COMPLETED");
-  expect(analyzeBody.executiveSummary).toBeTruthy();
-  expect(analyzeBody.overallScore).toBeGreaterThanOrEqual(0);
+  expect(analyzeResponse.status()).toBe(202);
+  expect(analyzeBody.status).toBe("QUEUED");
+  expect(analyzeBody.analysisId).toBeTruthy();
 
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 15000 });
   const dbAnalysis = await getAiAnalysis(session.id);
   expect(dbAnalysis?.status).toBe("COMPLETED");
   expect(dbAnalysis?.executiveSummary).toBeTruthy();
@@ -665,6 +697,104 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   await expect(page.getByTestId("overall-score")).toBeVisible();
 });
 
+test("AI progressive — facilitator refresh restores sections while participant and observer see none", async ({
+  request,
+  page,
+}) => {
+  const { session, facilitator, igor, serg } = await createAssignedSession(request);
+  await control(request, session.id, facilitator, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator, "START");
+  await control(request, session.id, facilitator, "FINISH");
+  await createCompletedTranscript(session.id);
+
+  await request.post("/api/test/mock-external-service", {
+    data: { error: "AI_ANALYSIS_PROGRESSIVE_HOLD" },
+  });
+  const analyzeResponse = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/analyze`,
+    facilitator,
+    { aiProcessingConfirmed: true },
+  );
+  expect(analyzeResponse.status()).toBe(202);
+  await request.post("/api/test/mock-external-service", {
+    data: { error: null },
+  });
+
+  await expect(async () => {
+    const facilitatorStatus = await roomApiGet(
+      request,
+      materialsStatusUrl(session.id, facilitator),
+      facilitator,
+    );
+    const body = (await facilitatorStatus.json()) as {
+      aiAnalysis: {
+        status: string;
+        processingStage: string;
+        progress: { completedSections?: string[] } | null;
+        canStart: boolean;
+      };
+    };
+    expect(body.aiAnalysis.status).toBe("ANALYZING");
+    expect(body.aiAnalysis.processingStage).toBe("analyzing");
+    expect(body.aiAnalysis.progress?.completedSections?.length ?? 0).toBeGreaterThan(0);
+    expect(body.aiAnalysis.canStart).toBe(false);
+  }).toPass({ timeout: 5000 });
+
+  const duplicate = await roomApiPost(
+    request,
+    `/api/sessions/${session.id}/analyze`,
+    facilitator,
+    { aiProcessingConfirmed: true },
+  );
+  expect(duplicate.status()).toBe(409);
+
+  for (const viewer of [igor, serg]) {
+    const status = await roomApiGet(
+      request,
+      materialsStatusUrl(session.id, viewer),
+      viewer,
+    );
+    const body = (await status.json()) as {
+      aiAnalysis: { progress?: unknown; analysisJson: unknown };
+    };
+    expect(body.aiAnalysis.progress ?? null).toBeNull();
+    expect(body.aiAnalysis.analysisJson).toBeNull();
+  }
+
+  await authenticatePageAs(page, facilitator);
+  await page.goto(`/join/${facilitator.joinToken}`);
+  await expect(page.getByTestId("ai-analysis-progress-report")).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(page.getByTestId("ai-progress-section-overview")).toHaveAttribute(
+    "data-progress-state",
+    "completed",
+  );
+  await expect(
+    page.getByTestId("ai-progress-section-participantPersonalFeedback"),
+  ).toHaveAttribute("data-progress-state", "pending");
+  await expect(
+    page.getByTestId("post-processing-run-ai-analysis-button"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("post-processing-ai-status-message"),
+  ).toContainText(/in progress|выполняется|идёт/i);
+  await expect(
+    page.getByTestId("post-processing-ai-status-message"),
+  ).not.toContainText(/can be started|можно запустить/i);
+
+  await page.reload();
+  await expect(page.getByTestId("ai-analysis-progress-report")).toBeVisible({
+    timeout: 5000,
+  });
+
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 15000 });
+});
+
 test("AI Test 2 — AI analysis unavailable without transcript", async ({
   request,
 }) => {
@@ -691,7 +821,6 @@ test("AI Test 2 — AI analysis unavailable without transcript", async ({
     facilitator,
     { aiProcessingConfirmed: true },
   );
-  expect(analyzeResponse.ok()).toBeFalsy();
   expect(analyzeResponse.status()).toBe(400);
 });
 
@@ -716,12 +845,16 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
     facilitator,
     { aiProcessingConfirmed: true },
   );
-  expect(analyzeResponse.ok()).toBeFalsy();
+  expect(analyzeResponse.status()).toBe(202);
 
   await request.post("/api/test/mock-external-service", {
     data: { error: null },
   });
 
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("FAILED");
+  }).toPass({ timeout: 15000 });
   const dbAnalysis = await getAiAnalysis(session.id);
   expect(dbAnalysis?.status).toBe("FAILED");
   expect(dbAnalysis?.errorMessage).toBeTruthy();
@@ -744,11 +877,12 @@ test("AI Test 3 — AI analysis failure creates ExternalServiceEvent and retry a
   expect(statusBody.aiAnalysis.canRetry).toBe(true);
   expect(statusBody.aiAnalysis.errorMessage).toBeTruthy();
 
-  const serviceEvents = await getExternalServiceNames(session.id);
-  expect(serviceEvents).toContain("OPENAI");
-
-  const openaiEvent = await getExternalServiceEvent(session.id, "OPENAI");
-  expect(openaiEvent).not.toBeNull();
+  await expect(async () => {
+    const serviceEvents = await getExternalServiceNames(session.id);
+    expect(serviceEvents).toContain("OPENAI");
+    const openaiEvent = await getExternalServiceEvent(session.id, "OPENAI");
+    expect(openaiEvent).not.toBeNull();
+  }).toPass({ timeout: 5000 });
 });
 
 test("AI Test 4 — Participant does not see facilitator-only analysis", async ({
@@ -769,6 +903,10 @@ test("AI Test 4 — Participant does not see facilitator-only analysis", async (
     { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 15000 });
 
   const facilitatorStatus = await roomApiGet(
     request,
@@ -830,6 +968,10 @@ test("AI Test 5 — Multi-session isolation: Session 1 analysis not visible in S
     { aiProcessingConfirmed: true },
   );
   expect(analyzeResponse.ok()).toBeTruthy();
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session1Id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 15000 });
 
   const session1Status = await roomApiGet(
     request,

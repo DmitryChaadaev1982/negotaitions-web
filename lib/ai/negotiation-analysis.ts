@@ -125,6 +125,12 @@ export type AiAnalysisExecutionOptions = {
   operationStartedAtMonotonic?: number;
   existingProviderResponseId?: string | null;
   persistProviderResponseId?: (providerResponseId: string) => Promise<boolean>;
+  /**
+   * Best-effort durable progress channel. Returning false means this run no
+   * longer owns the analysis and provider work must stop. Other callback
+   * failures do not cancel the authoritative background generation.
+   */
+  persistProgress?: (progress: NegotiationAnalysisProgress) => Promise<boolean>;
 };
 
 export class AiAnalysisProviderError extends Error {
@@ -583,6 +589,280 @@ export const NegotiationAnalysisOutputSchema = z.object({
 export type NegotiationAnalysisOutput = z.infer<
   typeof NegotiationAnalysisOutputSchema
 >;
+
+export const NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER = [
+  "overview",
+  "scores",
+  "roleObjectivesAnalysis",
+  "strengths",
+  "improvementAreas",
+  "detectedTactics",
+  "questionsAnalysis",
+  "listeningAndReframing",
+  "valueCreationAnalysis",
+  "nextTrainingFocus",
+  "facilitatorDebriefQuestions",
+  "oneMinuteFeedback",
+  "participantPersonalFeedback",
+] as const;
+
+export type NegotiationAnalysisProgressSection =
+  (typeof NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER)[number];
+
+const NegotiationAnalysisProgressSectionSchema = z.enum(
+  NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER,
+);
+const PartialNegotiationAnalysisOutputSchema =
+  NegotiationAnalysisOutputSchema.partial();
+
+const PROGRESS_SECTION_FIELDS: Record<
+  NegotiationAnalysisProgressSection,
+  readonly (keyof NegotiationAnalysisOutput)[]
+> = {
+  overview: [
+    "executiveSummary",
+    "overallScore",
+    "confidenceLevel",
+    "evidenceQuality",
+  ],
+  scores: ["scores"],
+  roleObjectivesAnalysis: ["roleObjectivesAnalysis"],
+  strengths: ["strengths"],
+  improvementAreas: ["improvementAreas"],
+  detectedTactics: ["detectedTactics"],
+  questionsAnalysis: ["questionsAnalysis"],
+  listeningAndReframing: ["listeningAndReframing"],
+  valueCreationAnalysis: ["valueCreationAnalysis"],
+  nextTrainingFocus: ["nextTrainingFocus"],
+  facilitatorDebriefQuestions: ["facilitatorDebriefQuestions"],
+  oneMinuteFeedback: ["oneMinuteFeedback"],
+  participantPersonalFeedback: ["participantPersonalFeedback"],
+};
+
+export const NegotiationAnalysisProgressSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    completedSections: z.array(NegotiationAnalysisProgressSectionSchema),
+    analysis: PartialNegotiationAnalysisOutputSchema,
+  })
+  .superRefine((progress, context) => {
+    const expected = NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.slice(
+      0,
+      progress.completedSections.length,
+    );
+    if (
+      expected.some(
+        (section, index) => progress.completedSections[index] !== section,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["completedSections"],
+        message: "Completed progress sections must be an ordered prefix.",
+      });
+    }
+    for (const section of progress.completedSections) {
+      for (const field of PROGRESS_SECTION_FIELDS[section]) {
+        if (!Object.hasOwn(progress.analysis, field)) {
+          context.addIssue({
+            code: "custom",
+            path: ["analysis", field],
+            message: `Completed section ${section} is missing ${field}.`,
+          });
+        }
+      }
+    }
+  });
+
+export type NegotiationAnalysisProgress = z.infer<
+  typeof NegotiationAnalysisProgressSchema
+>;
+
+function findJsonStringEnd(text: string, start: number): number | null {
+  if (text[start] !== '"') return null;
+  let escaped = false;
+  for (let index = start + 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') return index + 1;
+  }
+  return null;
+}
+
+function findCompleteJsonValueEnd(text: string, start: number): number | null {
+  const first = text[start];
+  if (first === '"') return findJsonStringEnd(text, start);
+
+  if (first === "{" || first === "[") {
+    const stack = [first];
+    let inString = false;
+    let escaped = false;
+    for (let index = start + 1; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+      } else if (character === "{" || character === "[") {
+        stack.push(character);
+      } else if (character === "}" || character === "]") {
+        const opening = stack.pop();
+        if (
+          (opening === "{" && character !== "}") ||
+          (opening === "[" && character !== "]")
+        ) {
+          return null;
+        }
+        if (stack.length === 0) return index + 1;
+      }
+    }
+    return null;
+  }
+
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] === "," || text[index] === "}") {
+      const candidate = text.slice(start, index).trim();
+      if (!candidate) return null;
+      try {
+        JSON.parse(candidate);
+        return index;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extracts only complete top-level JSON members from an append-only provider
+ * snapshot. Incomplete or malformed values are ignored; no repaired provider
+ * text is persisted as application progress.
+ */
+export function extractCompleteTopLevelJsonMembers(
+  rawText: string,
+): Record<string, unknown> {
+  const rootStart = rawText.indexOf("{");
+  if (rootStart < 0) return {};
+  const members: Record<string, unknown> = {};
+  let cursor = rootStart + 1;
+
+  while (cursor < rawText.length) {
+    while (
+      cursor < rawText.length &&
+      (/\s/.test(rawText[cursor] ?? "") || rawText[cursor] === ",")
+    ) {
+      cursor += 1;
+    }
+    if (rawText[cursor] === "}") break;
+    if (rawText[cursor] !== '"') break;
+
+    const keyEnd = findJsonStringEnd(rawText, cursor);
+    if (keyEnd == null) break;
+    let key: string;
+    try {
+      key = JSON.parse(rawText.slice(cursor, keyEnd)) as string;
+    } catch {
+      break;
+    }
+    cursor = keyEnd;
+    while (cursor < rawText.length && /\s/.test(rawText[cursor] ?? "")) {
+      cursor += 1;
+    }
+    if (rawText[cursor] !== ":") break;
+    cursor += 1;
+    while (cursor < rawText.length && /\s/.test(rawText[cursor] ?? "")) {
+      cursor += 1;
+    }
+
+    const valueEnd = findCompleteJsonValueEnd(rawText, cursor);
+    if (valueEnd == null) break;
+    try {
+      if (!Object.hasOwn(members, key)) {
+        members[key] = JSON.parse(rawText.slice(cursor, valueEnd));
+      }
+    } catch {
+      break;
+    }
+    cursor = valueEnd;
+  }
+
+  return members;
+}
+
+export function buildNegotiationAnalysisProgress(
+  availableFields: Record<string, unknown>,
+): NegotiationAnalysisProgress | null {
+  const analysis: Partial<NegotiationAnalysisOutput> = {};
+  const completedSections: NegotiationAnalysisProgressSection[] = [];
+
+  for (const section of NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER) {
+    const fields = PROGRESS_SECTION_FIELDS[section];
+    if (fields.some((field) => !Object.hasOwn(availableFields, field))) break;
+    const candidate = { ...analysis };
+    for (const field of fields) {
+      Object.assign(candidate, { [field]: availableFields[field] });
+    }
+    const validated = PartialNegotiationAnalysisOutputSchema.safeParse(candidate);
+    if (!validated.success) break;
+    Object.assign(analysis, validated.data);
+    completedSections.push(section);
+  }
+
+  if (completedSections.length === 0) return null;
+  return NegotiationAnalysisProgressSchema.parse({
+    schemaVersion: 1,
+    completedSections,
+    analysis,
+  });
+}
+
+export function extractNegotiationAnalysisProgress(
+  rawText: string,
+): NegotiationAnalysisProgress | null {
+  return buildNegotiationAnalysisProgress(
+    extractCompleteTopLevelJsonMembers(rawText),
+  );
+}
+
+export function buildNegotiationAnalysisProgressFromOutput(
+  output: NegotiationAnalysisOutput,
+  completedSectionCount: number =
+    NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.length,
+): NegotiationAnalysisProgress | null {
+  const allowedSections = Math.max(
+    0,
+    Math.min(
+      NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.length,
+      Math.floor(completedSectionCount),
+    ),
+  );
+  const availableFields: Record<string, unknown> = {};
+  for (const section of NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.slice(
+    0,
+    allowedSections,
+  )) {
+    for (const field of PROGRESS_SECTION_FIELDS[section]) {
+      availableFields[field] = output[field];
+    }
+  }
+  return buildNegotiationAnalysisProgress(availableFields);
+}
 
 // ── System prompt ──────────────────────────────────────────────────────────
 
@@ -1696,6 +1976,7 @@ async function pollYandexResponseUntilTerminal(params: {
   let pollingRequestCount = 0;
   let retrievalRetryCount = 0;
   let providerStatus: string | null = null;
+  let lastProgressFingerprint = "";
 
   while (true) {
     await executionCheckpoint({
@@ -1845,6 +2126,37 @@ async function pollYandexResponseUntilTerminal(params: {
         responseIdPresent: true,
         pollingRequestCount,
       });
+    }
+
+    if (params.options?.persistProgress) {
+      const partialOutput = extractYandexOutputText(envelope);
+      const progress = partialOutput.text
+        ? extractNegotiationAnalysisProgress(partialOutput.text)
+        : null;
+      const fingerprint = progress ? JSON.stringify(progress) : "";
+      if (progress && fingerprint !== lastProgressFingerprint) {
+        try {
+          const persisted = await params.options.persistProgress(progress);
+          if (!persisted) {
+            throw new AiAnalysisProviderError({
+              code: "OWNERSHIP_LOST",
+              provider: "yandex",
+              model: params.modelName,
+              message:
+                "AI analysis ownership was lost while persisting progressive output.",
+              diagnostics: { checkpoint: "persist_progress" },
+              allowsRegeneration: false,
+            });
+          }
+          lastProgressFingerprint = fingerprint;
+        } catch (error) {
+          if (classifyAiAnalysisError(error).code === "OWNERSHIP_LOST") {
+            throw error;
+          }
+          // Progress is a best-effort channel. The provider response ID and
+          // final retrieval remain authoritative when a partial write fails.
+        }
+      }
     }
 
     const sleepRemaining = params.deadline - monotonicNow(params.options);
@@ -2534,6 +2846,15 @@ async function runYandexNegotiationAnalysis(
   };
 }
 
+export function dispatchSelectedAiAnalysisProvider<T>(
+  provider: AiAnalysisProviderName,
+  adapters: Record<AiAnalysisProviderName, () => Promise<T>>,
+): Promise<T> {
+  // Selection is exact and fail-closed. In particular, a rejected Yandex
+  // adapter promise is returned to the caller and never invokes OpenAI.
+  return adapters[provider]();
+}
+
 export async function runNegotiationAnalysis(
   prompt: string,
   language: string,
@@ -2545,9 +2866,8 @@ export async function runNegotiationAnalysis(
   metrics: AiAnalysisRunMetrics;
 }> {
   const provider = getAiAnalysisProvider();
-  const providers = {
-    openai: runOpenAiNegotiationAnalysis,
-    yandex: runYandexNegotiationAnalysis,
-  };
-  return providers[provider](prompt, language, options);
+  return dispatchSelectedAiAnalysisProvider(provider, {
+    openai: () => runOpenAiNegotiationAnalysis(prompt, language, options),
+    yandex: () => runYandexNegotiationAnalysis(prompt, language, options),
+  });
 }

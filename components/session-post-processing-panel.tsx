@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { AiAnalysisReport } from "@/components/session-materials-dashboard";
+import {
+  AiAnalysisProgressReport,
+  AiAnalysisReport,
+} from "@/components/session-materials-dashboard";
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
@@ -19,6 +22,7 @@ import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
   NegotiationAnalysisOutputSchema,
+  NegotiationAnalysisProgressSchema,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
 import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
@@ -69,6 +73,7 @@ type MaterialsStatusResponse = {
     notSharedMessage: string | null;
     analysisFromOlderTranscript?: boolean;
     analysisJson: unknown;
+    progress: unknown;
     errorMessage: string | null;
   };
   permissions: {
@@ -148,15 +153,23 @@ const speakerMappingStageKeys: Record<string, TranslationKey> = {
 };
 
 function stageTone(stage: string): string {
-  if (stage === "ready") return "border-emerald-500/30 bg-emerald-950/20 text-emerald-200";
+  const normalized = stage.toLowerCase();
+  if (normalized === "ready" || normalized === "completed") {
+    return "border-emerald-500/30 bg-emerald-950/20 text-emerald-200";
+  }
   if (
     ["queued", "analyzing", "downloading", "compressing", "transcribing", "processing", "in_progress", "finalizing"].includes(
-      stage,
+      normalized,
     )
   ) {
     return "border-cyan-500/30 bg-cyan-950/20 text-cyan-200";
   }
-  if (stage === "failed") return "border-rose-500/30 bg-rose-950/20 text-rose-200";
+  if (normalized === "failed") {
+    return "border-rose-500/30 bg-rose-950/20 text-rose-200";
+  }
+  if (normalized === "partial") {
+    return "border-amber-500/30 bg-amber-950/20 text-amber-200";
+  }
   return "border-slate-700/50 bg-slate-900/40 text-slate-400";
 }
 
@@ -164,15 +177,21 @@ function StatusPill({
   title,
   stage,
   stageKeys,
+  testId,
 }: {
   title: string;
   stage: string;
   stageKeys: Record<string, TranslationKey>;
+  testId?: string;
 }) {
   const { t } = useI18n();
   const labelKey = stageKeys[stage];
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${stageTone(stage)}`}>
+    <div
+      className={`rounded-lg border px-3 py-2 text-sm ${stageTone(stage)}`}
+      data-testid={testId}
+      data-stage={stage}
+    >
       <p className="text-xs font-medium uppercase tracking-wide opacity-70">{title}</p>
       <p className="mt-0.5 font-medium">{labelKey ? t(labelKey) : stage}</p>
     </div>
@@ -378,6 +397,10 @@ export function SessionPostProcessingPanel({
       : (value) => ParticipantAnalysisSchema.safeParse(value),
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const parsedAiProgress = NegotiationAnalysisProgressSchema.safeParse(
+    ai?.progress,
+  );
+  const aiProgress = parsedAiProgress.success ? parsedAiProgress.data : null;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
@@ -510,6 +533,32 @@ export function SessionPostProcessingPanel({
     setAiBusy(true);
     setAiError(null);
     setSpeakerMappingBlockingAi(false);
+    setStatusData((current) =>
+      current
+        ? {
+            ...current,
+            aiAnalysis: {
+              ...current.aiAnalysis,
+              processingStage: "queued",
+              canStart: false,
+              canRetry: false,
+              canRerun: false,
+              progress: null,
+            },
+            permissions: {
+              ...current.permissions,
+              canRunAiAnalysis: false,
+            },
+            processing: {
+              ...current.processing,
+              shouldPoll: true,
+              nextPollMs: current.processing.nextPollMs ?? DEFAULT_POLL_INTERVAL_MS,
+            },
+          }
+        : current,
+    );
+    forceStatusPolling();
+    void fetchStatus();
     try {
       const res = await fetch(`/api/sessions/${sessionId}/analyze`, {
         method: "POST",
@@ -524,7 +573,6 @@ export function SessionPostProcessingPanel({
           setAiError(body.error ?? "AI analysis failed.");
         }
       } else {
-        forceStatusPolling();
         void fetchStatus();
       }
     } catch {
@@ -1044,6 +1092,7 @@ export function SessionPostProcessingPanel({
         title={t("sessionMaterials.transcriptEnhancement")}
         stage={enhancement?.status ?? "NOT_STARTED"}
         stageKeys={enhancementStageKeys}
+        testId="post-processing-enhancement-status"
       />
       <StatusPill
         title={t("sessionMaterials.speakerMapping")}
@@ -1159,9 +1208,18 @@ export function SessionPostProcessingPanel({
         ) : null}
 
         {!ai?.participantPlaceholder && aiStatusMessageKey ? (
-          <p className="text-sm text-slate-400">
+          <p
+            className="text-sm text-slate-400"
+            data-testid="post-processing-ai-status-message"
+          >
             {t(aiStatusMessageKey)}
           </p>
+        ) : null}
+
+        {isFacilitatorView &&
+        (ai?.processingStage === "queued" ||
+          ai?.processingStage === "analyzing") ? (
+          <AiAnalysisProgressReport progress={aiProgress} />
         ) : null}
 
         {ai?.processingStage === "failed" && ai.errorMessage ? (

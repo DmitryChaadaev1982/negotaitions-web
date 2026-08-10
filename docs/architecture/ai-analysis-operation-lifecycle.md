@@ -17,6 +17,14 @@ provider request.
   success/failure after takeover.
 - A normal failure is terminal `FAILED` and is immediately retryable.
 
+Wave 2 also fences the short `QUEUED` acceptance state. The analyze route
+returns `202`, then self-hosted Next.js `after()` atomically transitions the
+same owner to `ANALYZING`. A second request sees the active queued lease and
+cannot create duplicate provider work. Client request cancellation is not
+forwarded into accepted provider execution. The route declares a static
+`maxDuration` of 610 seconds, just above the bounded 600-second provider
+operation deadline required by Next.js route configuration.
+
 Rows created before the lease migration have both ownership columns null.
 They remain protected for 30 minutes from `updatedAt` by default
 (`AI_ANALYSIS_LEGACY_STALE_AFTER_MS`), then become atomically recoverable.
@@ -50,6 +58,18 @@ terminal non-success response is partial and is never accepted. A completed
 response with no usable text is `MODEL_EMPTY_OUTPUT`. Failure, cancellation,
 incomplete, missing status, and unknown status use explicit provider
 lifecycle errors and retain only bounded status/error-code/reason metadata.
+
+For progressive facilitator display, a nonterminal background GET may be
+inspected for complete top-level report members. Ordered schema sections are
+validated independently and persisted to `AiAnalysis.progressJson`. This does
+not relax the rule above: nonterminal text is never final `analysisJson`, never
+marks the operation `COMPLETED`, and terminal non-success output is ignored.
+
+The current verified contract covers `background=true` plus independent GET
+retrieval. Repository evidence does not establish resumable
+`background=true` + `stream=true`, so no provider stream is opened. Background
+GET retrieval is both the optional progress channel and the authoritative final
+recovery path.
 
 A nonterminal response must include `id`; otherwise retrieval is impossible
 and the call ends deterministically. A completed response does not require an
@@ -133,6 +153,11 @@ The call tree is:
    elapsed-time deadline.
 4. Schema validation and fenced terminalization.
 
+Progress write failures are non-authoritative and do not cancel retrieval.
+Returning an ownership-loss fence from a progress write does stop stale local
+work. Successful/failing terminalization clears `progressJson`; rerun claim also
+clears it before assigning the new token.
+
 Wave 1 intentionally disables automatic compact fallback and optional depth
 generation. The arbitrary provider GET count ceiling is no longer a primary
 termination mechanism; elapsed deadlines are authoritative. Retryable GET
@@ -191,7 +216,24 @@ enhancement, the request invariant is:
 Do not replace it with flat `reasoning_effort`, `reasoningOptions`, or
 provider-specific thinking flags.
 
-The following require later waves and are not changed here: background
-`stream=true` delivery, progressive section rendering, token-aware larger
-chunk packing, oversized single-utterance splitting, automatic mapping
-parallelism, and `processingMetadata` race remediation.
+Wave 2 adds fenced progressive section rendering from background retrieval
+snapshots without enabling unverified streaming. The following remain deferred:
+token-aware larger chunk packing, oversized single-utterance splitting,
+automatic mapping parallelism, and `processingMetadata` race remediation.
+
+## Deferred-item review at Wave 2
+
+- Analysis prompt construction still includes canonical transcript text without
+  token-aware packing. It does not silently drop utterances; large-input
+  partitioning remains separate work.
+- Oversized single-utterance splitting remains unimplemented and is not needed
+  by retrieval-snapshot progress parsing.
+- Speaker mapping orchestration remains deterministic/sequential; progressive
+  analysis does not depend on mapping parallelism.
+- `processingMetadata` writers outside the analysis row still include
+  read-modify-write paths (notably automatic mapping diagnostics). Wave 2 uses
+  the dedicated `AiAnalysis.progressJson` column instead of extending that
+  shared metadata race.
+- Existing provider timeout and delay timers are scoped and cleaned up.
+  Detached execution adds no browser timers or listeners; lease/provider-ID
+  recovery remains the cleanup and takeover mechanism.

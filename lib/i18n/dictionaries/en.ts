@@ -856,6 +856,11 @@ export const en = {
     aiAnalysisQueued: "AI analysis is in progress.",
     aiAnalysisAnalyzing: "AI analysis is in progress.",
     aiAnalysisInProgress: "AI analysis is in progress.",
+    aiAnalysisProgressTitle: "Analysis sections are arriving progressively",
+    aiAnalysisProgressDescription:
+      "Completed sections are durable. Remaining sections stay pending until the full report passes validation.",
+    aiAnalysisSectionReady: "Ready",
+    aiAnalysisSectionPending: "Processing",
     aiAnalysisReady: "AI analysis is ready.",
     aiAnalysisFailed: "AI analysis failed.",
     aiAnalysisInvalidResult: "AI analysis result is invalid. Please rerun analysis.",

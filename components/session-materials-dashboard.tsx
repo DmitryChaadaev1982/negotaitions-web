@@ -18,6 +18,10 @@ import {
   type SessionMaterialsTranscriptSnapshot,
 } from "@/lib/session-materials-processing";
 import {
+  NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER,
+  NegotiationAnalysisProgressSchema,
+  type NegotiationAnalysisProgress,
+  type NegotiationAnalysisProgressSection,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
 import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
@@ -72,6 +76,7 @@ type MaterialsStatusAiAnalysis = {
   overallScore: number | null;
   analysisFromOlderTranscript?: boolean;
   analysisJson: unknown;
+  progress: unknown;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
@@ -380,6 +385,184 @@ function SectionCard({
     <div className="rounded-lg border border-slate-700/50 bg-slate-800/60 p-4">
       <h3 className="mb-3 text-sm font-semibold text-slate-200">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+const progressSectionTitleKeys: Record<
+  NegotiationAnalysisProgressSection,
+  TranslationKey
+> = {
+  overview: "sessionMaterials.executiveSummary",
+  scores: "sessionMaterials.scoreBreakdown",
+  roleObjectivesAnalysis: "sessionMaterials.roleObjectivesAnalysis",
+  strengths: "sessionMaterials.strengths",
+  improvementAreas: "sessionMaterials.improvementAreas",
+  detectedTactics: "sessionMaterials.detectedTactics",
+  questionsAnalysis: "sessionMaterials.questionsAnalysis",
+  listeningAndReframing: "sessionMaterials.listeningAndReframing",
+  valueCreationAnalysis: "sessionMaterials.valueCreationAnalysis",
+  nextTrainingFocus: "sessionMaterials.nextTrainingFocus",
+  facilitatorDebriefQuestions: "sessionMaterials.facilitatorDebriefQuestions",
+  oneMinuteFeedback: "sessionMaterials.oneMinuteFeedback",
+  participantPersonalFeedback: "sessionMaterials.participantPersonalFeedback",
+};
+
+function progressiveSectionLines(
+  section: NegotiationAnalysisProgressSection,
+  analysis: Partial<NegotiationAnalysisOutput>,
+): string[] {
+  switch (section) {
+    case "scores":
+      return Object.entries(analysis.scores ?? {}).map(
+        ([name, score]) => `${name}: ${score}/100`,
+      );
+    case "roleObjectivesAnalysis":
+      return (analysis.roleObjectivesAnalysis ?? []).map(
+        (item) => `${item.participantName}: ${item.objectiveProgress}`,
+      );
+    case "strengths":
+      return (analysis.strengths ?? []).map(
+        (item) => `${item.title}: ${item.recommendation}`,
+      );
+    case "improvementAreas":
+      return (analysis.improvementAreas ?? []).map(
+        (item) => `${item.title}: ${item.recommendation}`,
+      );
+    case "detectedTactics":
+      return (analysis.detectedTactics ?? []).map(
+        (item) => `${item.name} — ${item.usedBy}: ${item.effectiveness}`,
+      );
+    case "questionsAnalysis":
+      return [
+        analysis.questionsAnalysis?.diagnosticQualityComment,
+        ...(analysis.questionsAnalysis?.goodQuestions ?? []).map(
+          (item) => item.question,
+        ),
+        ...(analysis.questionsAnalysis?.missedQuestions ?? []).map(
+          (item) => item.suggestedQuestion,
+        ),
+      ].filter((value): value is string => Boolean(value));
+    case "listeningAndReframing":
+      return [
+        analysis.listeningAndReframing?.comment,
+        ...(analysis.listeningAndReframing?.goodExamples ?? []),
+        ...(analysis.listeningAndReframing?.missedOpportunities ?? []),
+      ].filter((value): value is string => Boolean(value));
+    case "valueCreationAnalysis":
+      return [
+        analysis.valueCreationAnalysis?.comment,
+        ...(analysis.valueCreationAnalysis?.createdOptions ?? []),
+        ...(analysis.valueCreationAnalysis?.missedOptions ?? []),
+      ].filter((value): value is string => Boolean(value));
+    case "nextTrainingFocus":
+      return (analysis.nextTrainingFocus ?? []).map(
+        (item) => `${item.focusArea}: ${item.why}`,
+      );
+    case "facilitatorDebriefQuestions":
+      return analysis.facilitatorDebriefQuestions ?? [];
+    case "oneMinuteFeedback":
+      return [
+        analysis.oneMinuteFeedback?.summary,
+        analysis.oneMinuteFeedback?.whatWorked,
+        analysis.oneMinuteFeedback?.whatToImprove,
+        analysis.oneMinuteFeedback?.nextStep,
+      ].filter((value): value is string => Boolean(value));
+    case "participantPersonalFeedback":
+      return (analysis.participantPersonalFeedback ?? []).map(
+        (item) =>
+          `${item.participantName}: ${[...item.achievements, ...item.nextSteps].join(" · ")}`,
+      );
+    case "overview":
+      return [];
+  }
+}
+
+export function AiAnalysisProgressReport({
+  progress,
+}: {
+  progress: NegotiationAnalysisProgress | null;
+}) {
+  const { t } = useI18n();
+  const completed = new Set(progress?.completedSections ?? []);
+  const analysis = progress?.analysis ?? {};
+
+  return (
+    <div className="space-y-3" data-testid="ai-analysis-progress-report">
+      <div>
+        <p className="text-sm font-medium text-cyan-200">
+          {t("sessionMaterials.aiAnalysisProgressTitle")}
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          {t("sessionMaterials.aiAnalysisProgressDescription")}
+        </p>
+      </div>
+      {NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.map((section) => {
+        const isComplete = completed.has(section);
+        const lines = isComplete
+          ? progressiveSectionLines(section, analysis)
+          : [];
+        return (
+          <section
+            key={section}
+            data-testid={`ai-progress-section-${section}`}
+            data-progress-state={isComplete ? "completed" : "pending"}
+            className={
+              isComplete
+                ? "rounded-lg border border-emerald-500/25 bg-emerald-950/10 p-3"
+                : "rounded-lg border border-dashed border-slate-700/60 bg-slate-900/20 p-3"
+            }
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3
+                className={
+                  isComplete
+                    ? "text-sm font-medium text-slate-100"
+                    : "text-sm font-medium text-slate-500"
+                }
+              >
+                {t(progressSectionTitleKeys[section])}
+              </h3>
+              <span
+                className={
+                  isComplete
+                    ? "text-xs font-medium text-emerald-300"
+                    : "text-xs text-slate-500"
+                }
+              >
+                {t(
+                  isComplete
+                    ? "sessionMaterials.aiAnalysisSectionReady"
+                    : "sessionMaterials.aiAnalysisSectionPending",
+                )}
+              </span>
+            </div>
+            {isComplete && section === "overview" ? (
+              <div className="mt-2 space-y-2">
+                <p className="text-sm leading-6 text-slate-300">
+                  {analysis.executiveSummary}
+                </p>
+                <p className="text-xs text-emerald-300">
+                  {t("sessionMaterials.overallScore")}: {analysis.overallScore}
+                  /100
+                </p>
+              </div>
+            ) : null}
+            {isComplete && lines.length > 0 ? (
+              <ul className="mt-2 space-y-1">
+                {lines.map((line, index) => (
+                  <li
+                    key={`${section}-${index}`}
+                    className="text-xs leading-5 text-slate-300"
+                  >
+                    • {line}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -953,6 +1136,7 @@ export function SessionMaterialsDashboard({
   const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [aiAnalysisBusy, setAiAnalysisBusy] = useState(false);
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
+  const [aiWarningOpen, setAiWarningOpen] = useState(false);
   const [sharingBusy, setSharingBusy] = useState(false);
   const [unsharingBusy, setUnsharingBusy] = useState(false);
   const [forcePollingActive, setForcePollingActive] = useState(false);
@@ -1056,6 +1240,12 @@ export function SessionMaterialsDashboard({
     analysisJson: analysisData?.analysisJson ?? null,
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const parsedAnalysisProgress = NegotiationAnalysisProgressSchema.safeParse(
+    analysisData?.progress,
+  );
+  const analysisProgress = parsedAnalysisProgress.success
+    ? parsedAnalysisProgress.data
+    : null;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
@@ -1273,20 +1463,41 @@ export function SessionMaterialsDashboard({
 
   const handleRunAiAnalysis = useCallback(async () => {
     if (!sessionId || !joinToken) return;
+    setAiWarningOpen(false);
     setAiAnalysisBusy(true);
     setAiAnalysisError(null);
+    setLiveData((current) =>
+      current
+        ? {
+            ...current,
+            aiAnalysis: {
+              ...current.aiAnalysis,
+              processingStage: "queued",
+              canStart: false,
+              canRetry: false,
+              progress: null,
+            },
+            processing: {
+              ...current.processing,
+              shouldPoll: true,
+              nextPollMs: current.processing.nextPollMs ?? DEFAULT_POLL_INTERVAL_MS,
+            },
+          }
+        : current,
+    );
+    forceStatusPolling();
+    void fetchStatus();
     try {
       const res = await fetch(`/api/sessions/${sessionId}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+        body: JSON.stringify({ joinToken, aiProcessingConfirmed: true }),
       });
       if (!isMountedRef.current) return;
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "AI analysis failed.");
       }
-      forceStatusPolling();
       await fetchStatus();
     } catch (err) {
       if (isMountedRef.current) {
@@ -1366,6 +1577,12 @@ export function SessionMaterialsDashboard({
 
   return (
     <div className="space-y-6">
+      {aiWarningOpen ? (
+        <MaterialsAiProcessingWarningModal
+          onConfirm={() => void handleRunAiAnalysis()}
+          onCancel={() => setAiWarningOpen(false)}
+        />
+      ) : null}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
@@ -1701,6 +1918,12 @@ export function SessionMaterialsDashboard({
             </p>
           ) : null}
 
+          {isFacilitatorView &&
+          (liveAiAnalysisStage === "queued" ||
+            liveAiAnalysisStage === "analyzing") ? (
+            <AiAnalysisProgressReport progress={analysisProgress} />
+          ) : null}
+
           {/* Error */}
           {aiAnalysisError || aiRenderValidationError ? (
             <p className="text-sm text-amber-400" data-testid="ai-analysis-error">
@@ -1721,7 +1944,7 @@ export function SessionMaterialsDashboard({
               {canStartAiAnalysis ? (
                 <SecondaryButton
                   disabled={aiAnalysisBusy}
-                  onClick={() => void handleRunAiAnalysis()}
+                  onClick={() => setAiWarningOpen(true)}
                   data-testid="run-ai-analysis-button"
                 >
                   {aiAnalysisBusy
@@ -1732,7 +1955,7 @@ export function SessionMaterialsDashboard({
               {canRetryAiAnalysis ? (
                 <SecondaryButton
                   disabled={aiAnalysisBusy}
-                  onClick={() => void handleRunAiAnalysis()}
+                  onClick={() => setAiWarningOpen(true)}
                   data-testid="retry-ai-analysis-button"
                 >
                   {aiAnalysisBusy
@@ -1806,6 +2029,69 @@ export function SessionMaterialsDashboard({
           ) : null}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function MaterialsAiProcessingWarningModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="ai-analysis-warning-modal"
+    >
+      <div
+        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      <div className="relative z-10 w-full max-w-md space-y-4 rounded-2xl border border-slate-700/60 bg-slate-900 p-6 shadow-2xl">
+        <h2 className="text-base font-semibold text-slate-50">
+          {t("legal.aiAnalysisWarningTitle")}
+        </h2>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => setChecked(event.target.checked)}
+              data-testid="ai-analysis-consent-checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm leading-relaxed text-amber-100">
+              {t("legal.aiAnalysisWarningText")}
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!checked}
+            onClick={onConfirm}
+            data-testid="ai-analysis-confirm"
+            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t("legal.aiAnalysisConfirm")}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            data-testid="ai-analysis-cancel"
+            className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
+          >
+            {t("legal.aiAnalysisCancel")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

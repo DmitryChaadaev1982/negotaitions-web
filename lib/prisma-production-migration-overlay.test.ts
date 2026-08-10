@@ -241,7 +241,7 @@ test("exact approved Stage 3.13C and Stage 3.13D sequence is accepted", () => {
   );
 });
 
-test("current production baseline accepts only the two Stage 3.13D migrations pending", () => {
+test("current production baseline accepts only approved Stage 3.13D migrations pending", () => {
   const result = validateMigrationHistoryRows(
     currentProductionHistoryRows(),
     ACTIVE_MIGRATIONS,

@@ -21,7 +21,7 @@ async function main() {
        FROM information_schema.columns
        WHERE table_schema = $1
          AND table_name = 'AiAnalysis'
-         AND column_name IN ('runToken', 'leaseExpiresAt', 'providerResponseId')
+         AND column_name IN ('runToken', 'leaseExpiresAt', 'providerResponseId', 'progressJson')
        ORDER BY column_name`,
       [approved.schemaName],
     );
@@ -29,6 +29,7 @@ async function main() {
       columns.rows,
       [
         { column_name: "leaseExpiresAt", is_nullable: "YES" },
+        { column_name: "progressJson", is_nullable: "YES" },
         { column_name: "providerResponseId", is_nullable: "YES" },
         { column_name: "runToken", is_nullable: "YES" },
       ],

@@ -861,6 +861,11 @@ export const ru: Dictionary = {
     aiAnalysisQueued: "ИИ-разбор выполняется.",
     aiAnalysisAnalyzing: "ИИ-разбор выполняется.",
     aiAnalysisInProgress: "ИИ-разбор выполняется.",
+    aiAnalysisProgressTitle: "Разделы анализа появляются по мере готовности",
+    aiAnalysisProgressDescription:
+      "Готовые разделы сохранены. Остальные обрабатываются до проверки полного отчёта.",
+    aiAnalysisSectionReady: "Готово",
+    aiAnalysisSectionPending: "Обрабатывается",
     aiAnalysisReady: "ИИ-разбор готов.",
     aiAnalysisFailed: "Ошибка ИИ-разбора.",
     aiAnalysisInvalidResult: "Результат ИИ-разбора некорректен. Запустите анализ повторно.",

@@ -134,6 +134,9 @@
   - `PARTIAL`: at least one chunk succeeded and at least one chunk used fallback;
   - `FAILED`: all chunks used fallback or orchestration failed;
   - `SKIPPED`: enhancement skipped due empty input.
+- Materials/debrief status UI maps only `COMPLETED` to explicit
+  success/green semantics. Running remains active, `PARTIAL`/`FAILED` remain
+  warning/error, and `SKIPPED` remains neutral.
 - Persistence safety and recovery path:
   - enhanced text is persisted into `Transcript.text`, `Transcript.diarizedText`, and `TranscriptSegment.text` when status is `COMPLETED` or `PARTIAL`;
   - initial transcription ingestion now stores provider text in both `TranscriptSegment.text` and `TranscriptSegment.qualityText` for newly created rows;

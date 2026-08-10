@@ -30,7 +30,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/diarization-speaker-mapping.spec.ts`, `lib/transcription/mapping-ui-presentation.test.ts`
 
 - AI analysis and debrief
-  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/session-analysis-context.ts`
+  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/session-analysis-context.ts`, `components/session-post-processing-panel.tsx`, `components/session-materials-dashboard.tsx`
   - Docs: `08-ai-analysis-and-debrief.md`, `ai-analysis-operation-lifecycle.md`
   - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`, `lib/ai/analysis-operation.test.ts`, `lib/ai/negotiation-analysis.test.ts`
 

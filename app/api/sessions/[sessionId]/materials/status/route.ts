@@ -11,7 +11,10 @@ import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
-import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
+import {
+  NegotiationAnalysisProgressSchema,
+  type NegotiationAnalysisOutput,
+} from "@/lib/ai/negotiation-analysis";
 import {
   getAnalysisForFacilitator,
   getAnalysisForObserver,
@@ -106,15 +109,16 @@ function resolveAiAnalysisProcessingStage(
   aiStatus: AiAnalysisStatus | null,
   transcriptStatus: TranscriptStatus | null,
   transcriptHasText: boolean,
+  runActive: boolean,
 ): string {
   if (!aiStatus) {
     return transcriptHasText ? "not_started" : "waiting_for_transcript";
   }
   switch (aiStatus) {
     case AiAnalysisStatus.QUEUED:
-      return "queued";
+      return runActive ? "queued" : "failed";
     case AiAnalysisStatus.ANALYZING:
-      return "analyzing";
+      return runActive ? "analyzing" : "failed";
     case AiAnalysisStatus.COMPLETED:
       return "ready";
     case AiAnalysisStatus.FAILED:
@@ -223,6 +227,7 @@ export async function GET(request: Request, context: RouteContext) {
           executiveSummary: true,
           overallScore: true,
           analysisJson: true,
+          progressJson: true,
           startedAt: true,
           completedAt: true,
           errorMessage: true,
@@ -384,9 +389,9 @@ export async function GET(request: Request, context: RouteContext) {
   const transcriptCompleted =
     transcriptStatus === TranscriptStatus.COMPLETED && transcriptHasText;
   const hasRunningAiAnalysis =
-    aiStatus === AiAnalysisStatus.QUEUED ||
-    (aiStatus === AiAnalysisStatus.ANALYZING &&
-      Boolean(aiAnalysis && isAiAnalysisRunLeaseActive(aiAnalysis)));
+    (aiStatus === AiAnalysisStatus.QUEUED ||
+      aiStatus === AiAnalysisStatus.ANALYZING) &&
+    Boolean(aiAnalysis && isAiAnalysisRunLeaseActive(aiAnalysis));
 
   const speakerMappingReady = transcript
     ? aiAnalysisReadiness.speakerMappingReady
@@ -406,12 +411,14 @@ export async function GET(request: Request, context: RouteContext) {
     !hasRunningAiAnalysis &&
     (aiStatus === null ||
       aiStatus === AiAnalysisStatus.FAILED ||
+      aiStatus === AiAnalysisStatus.QUEUED ||
       aiStatus === AiAnalysisStatus.ANALYZING ||
       analysisOutdated);
   const canRetryAiAnalysis =
     isFacilitator &&
     aiAnalysisReadiness.ready &&
     (aiStatus === AiAnalysisStatus.FAILED ||
+      aiStatus === AiAnalysisStatus.QUEUED ||
       aiStatus === AiAnalysisStatus.ANALYZING) &&
     !hasRunningAiAnalysis &&
     speakerMappingReady;
@@ -469,6 +476,7 @@ export async function GET(request: Request, context: RouteContext) {
     aiStatus,
     transcriptStatus,
     transcriptHasText,
+    hasRunningAiAnalysis,
   );
 
   const isParticipantOrObserver = !isFacilitator;
@@ -548,6 +556,17 @@ export async function GET(request: Request, context: RouteContext) {
       ? (aiAnalysis?.sharedExecutiveSummary ?? null)
       : null;
 
+  const parsedProgress = NegotiationAnalysisProgressSchema.safeParse(
+    aiAnalysis?.progressJson,
+  );
+  const facilitatorProgress =
+    isFacilitator &&
+    (aiStatus === AiAnalysisStatus.QUEUED ||
+      aiStatus === AiAnalysisStatus.ANALYZING) &&
+    parsedProgress.success
+      ? parsedProgress.data
+      : null;
+
   const aiAnalysisResponse = {
     id: aiAnalysis?.id ?? null,
     status: aiAnalysis?.status ?? "NOT_STARTED",
@@ -556,6 +575,7 @@ export async function GET(request: Request, context: RouteContext) {
     overallScore:
       canViewAiAnalysis && isFacilitator ? (aiAnalysis?.overallScore ?? null) : null,
     analysisJson: canViewAiAnalysis ? analysisJsonForUser : null,
+    progress: facilitatorProgress,
     startedAt: aiAnalysis?.startedAt?.toISOString() ?? null,
     completedAt: aiAnalysis?.completedAt?.toISOString() ?? null,
     errorMessage: isFacilitator ? (aiAnalysis?.errorMessage ?? null) : null,
