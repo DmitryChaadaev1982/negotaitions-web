@@ -66,6 +66,13 @@ function createInMemoryDb(state: InMemoryTranscript) {
         if (state.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
           return { count: 0 };
         }
+        if ("text" in args.data && typeof args.data.text === "string") {
+          state.text = args.data.text;
+        }
+        if ("diarizedText" in args.data) {
+          state.diarizedText =
+            (args.data.diarizedText as string | null) ?? null;
+        }
         if (
           "processingMetadata" in args.data &&
           args.data.processingMetadata &&
@@ -368,6 +375,115 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
       resolveProvider?.();
       await new Promise((resolve) => setTimeout(resolve, 5));
       assert.equal(state.text, "raw transcript enhanced");
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("stale enhancement owner cannot overwrite a newer run", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const state: InMemoryTranscript = {
+        id: "tr_stale_owner",
+        text: "current transcript",
+        diarizedText: "current transcript",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 0,
+        processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+        segments: [
+          {
+            id: "seg-stale",
+            orderIndex: 0,
+            speakerLabel: "speaker_1",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: null,
+            text: "current transcript",
+            qualityText: "current transcript",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      let resolveProvider: (() => void) | null = null;
+      const enhance = async (
+        segments: Array<{ index: number; originalText: string }>,
+      ) => {
+        await new Promise<void>((resolve) => {
+          resolveProvider = resolve;
+        });
+        return {
+          segments: segments.map((segment) => ({
+            index: segment.index,
+            cleanedText: "stale enhanced transcript",
+          })),
+          globalWarnings: [],
+          meta: {
+            mode: "chunked",
+            model: "deepseek-v4-flash",
+            overallStatus: "COMPLETED",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            totalLatencyMs: 1,
+            originalSegmentCount: 1,
+            originalCharacterCount: 18,
+            chunkCount: 1,
+            concurrency: 1,
+            successfulChunkCount: 1,
+            failedChunkCount: 0,
+            fallbackSegmentCount: 0,
+            changedSegmentCount: 1,
+            unchangedSegmentCount: 0,
+            retryCount: 0,
+            perChunk: [],
+            originalWordCount: 2,
+            enhancedWordCount: 3,
+            addedWordEstimate: 1,
+            removedWordEstimate: 0,
+          },
+        };
+      };
+
+      await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "manual",
+        runInBackground: true,
+        dependencies: { db: db as never, enhance: enhance as never },
+      });
+      const running = state.processingMetadata
+        .transcriptEnhancement as Record<string, unknown>;
+      state.processingMetadata = {
+        ...state.processingMetadata,
+        transcriptEnhancement: {
+          ...running,
+          runId: "newer-run-owner",
+          status: "RUNNING",
+        },
+      };
+      state.updatedAt = new Date(state.updatedAt.getTime() + 1);
+
+      resolveProvider?.();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      assert.equal(state.text, "current transcript");
+      assert.equal(
+        (
+          state.processingMetadata
+            .transcriptEnhancement as Record<string, unknown>
+        ).runId,
+        "newer-run-owner",
+      );
     } finally {
       if (previousDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

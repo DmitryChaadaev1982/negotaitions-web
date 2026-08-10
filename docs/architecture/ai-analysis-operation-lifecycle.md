@@ -210,24 +210,49 @@ enhancement, the request invariant is:
 Do not replace it with flat `reasoning_effort`, `reasoningOptions`, or
 provider-specific thinking flags.
 
-Wave 2 keeps the durable whole-report provider path and adds a truthful
-queued/analyzing pending-section UI without enabling unverified streaming or
-persisting speculative partial output. The following remain deferred:
-token-aware larger chunk packing, oversized single-utterance splitting,
-automatic mapping parallelism, and `processingMetadata` race remediation.
+Stage 3.13D Wave 2 keeps this durable whole-report provider path. It does not
+enable streaming, progressive parsing, partial-result persistence, or
+additional provider generations.
 
-## Deferred-item review at Wave 2
+## Large-input lifecycle interaction
 
-- Analysis prompt construction still includes canonical transcript text without
-  token-aware packing. It does not silently drop utterances; large-input
-  partitioning remains separate work.
-- Oversized single-utterance splitting remains unimplemented and is not needed
-  by the whole-report path.
+- Normal and lossless-compact analysis prompts both create one canonical Yandex
+  background generation. Packing does not add intermediate response IDs or
+  weaken `runToken`/lease fencing.
+- The compact representation removes the narrative transcript only after
+  normalized equivalence with ordered segment text is verified; every timeline
+  segment remains. The logical analysis input identity is therefore still
+  transcript ID + retranscription count + language. No derived AI summary is
+  persisted or reused.
+- A new Yandex DeepSeek generation is rejected locally with
+  `INPUT_TOO_LARGE` when the complete lossless prompt exceeds the 90,000
+  estimated-token prompt budget. This happens before POST and reports
+  `contentDropped=false`.
+- Recovery-first remains stronger than the new local budget: an existing
+  `providerResponseId` is retrieved before applying the no-new-generation
+  boundary. An accepted potentially live generation is not abandoned merely
+  because application code now has a conservative input limit.
+- `INPUT_TOO_LARGE` does not make a response reusable. If no response ID exists,
+  failure terminalization clears any stale pointer and an explicit retry cannot
+  accidentally adopt unrelated work.
+- Output exhaustion remains separate. `incomplete/max_output_tokens`, invalid
+  JSON, empty output, and schema failure still exhaust and release the recorded
+  provider generation exactly as before.
+
+## Deferred-item review after large-input hardening
+
+- Oversized transcript-enhancement utterances are now split and reconstructed
+  deterministically. This is outside the `AiAnalysis` provider lifecycle.
+- Enhancement terminal writes gained a narrow metadata `runId`,
+  retranscription-generation check, and `updatedAt` compare-and-swap because
+  extra pieces can lengthen execution. Shared speaker-mapping metadata writers
+  were not refactored.
 - Speaker mapping orchestration remains deterministic/sequential; analysis does
   not depend on mapping parallelism.
-- `processingMetadata` writers outside the analysis row still include
-  read-modify-write paths (notably automatic mapping diagnostics). Wave 2 does
-  not extend that shared metadata or add partial-analysis persistence.
-- Existing provider timeout and delay timers are scoped and cleaned up.
+- The context builder now reads `Transcript` and ordered
+  `TranscriptSegment` rows through one relation query, so the historical torn
+  transcript/segment read is not present. Pause intervals are still loaded
+  separately, but they do not represent a transcript text version.
+- Existing provider timeout and delay timers remain scoped and cleaned up.
   Detached execution adds no browser timers or listeners; lease/provider-ID
   recovery remains the cleanup and takeover mechanism.

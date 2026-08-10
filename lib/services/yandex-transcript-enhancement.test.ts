@@ -3,8 +3,12 @@ import test from "node:test";
 
 import {
   buildTranscriptEnhancementChunks,
+  buildTranscriptEnhancementTargetPieces,
   buildChunkSchemaJsonSchema,
   enhanceTranscriptWithYandexAi,
+  getTranscriptEnhancementChunkSourceCharLimit,
+  reconstructTranscriptEnhancementCoverage,
+  splitOversizedEnhancementText,
   validateChunkEnhancementResponse,
   validateChunkSchemaEnhancementResponse,
   type TranscriptEnhancementInputSegment,
@@ -28,17 +32,32 @@ function makeSegments(count: number, seed = "тест"): TranscriptEnhancementIn
   );
 }
 
-function extractTargetIndexesFromPrompt(input: string): number[] {
+function extractTargetsFromPrompt(
+  input: string,
+): Array<{ index: number; originalText: string }> {
   const marker = "Input JSON:\n";
   const start = input.indexOf(marker);
   if (start < 0) return [];
   const payload = input.slice(start + marker.length).trim();
   const parsed = JSON.parse(payload) as {
-    targetSegments?: Array<{ index?: number }>;
+    targetSegments?: Array<{ index?: number; originalText?: string }>;
   };
   return (parsed.targetSegments ?? [])
-    .map((segment) => segment.index)
-    .filter((index): index is number => typeof index === "number");
+    .filter(
+      (segment): segment is { index: number; originalText?: string } =>
+        typeof segment.index === "number",
+    )
+    .map((segment) => ({
+      index: segment.index,
+      originalText:
+        typeof segment.originalText === "string"
+          ? segment.originalText
+          : "",
+    }));
+}
+
+function extractTargetIndexesFromPrompt(input: string): number[] {
+  return extractTargetsFromPrompt(input).map((segment) => segment.index);
 }
 
 function parseFetchBody(init?: RequestInit): Record<string, unknown> {
@@ -100,6 +119,189 @@ test("chunking large transcript produces more than four chunks", () => {
     maxCharsPerChunk: 700,
   });
   assert.equal(chunks.length > 4, true);
+});
+
+test("deterministic packing proves no-loss coverage across large-input boundaries", async (t) => {
+  const scenarios: Array<{
+    name: string;
+    segments: TranscriptEnhancementInputSegment[];
+    maxSegmentsPerChunk: number;
+    maxCharsPerChunk: number;
+  }> = [
+    {
+      name: "small normal transcript",
+      segments: makeSegments(3, "обычный"),
+      maxSegmentsPerChunk: 6,
+      maxCharsPerChunk: 120,
+    },
+    {
+      name: "close to one character boundary",
+      segments: [
+        makeSegment(0, "а".repeat(59)),
+        makeSegment(1, "б".repeat(60)),
+      ],
+      maxSegmentsPerChunk: 4,
+      maxCharsPerChunk: 60,
+    },
+    {
+      name: "multiple chunks",
+      segments: makeSegments(40, "граница"),
+      maxSegmentsPerChunk: 5,
+      maxCharsPerChunk: 150,
+    },
+    {
+      name: "very large normal utterance count",
+      segments: makeSegments(2_000, "масштаб"),
+      maxSegmentsPerChunk: 6,
+      maxCharsPerChunk: 180,
+    },
+    {
+      name: "one oversized utterance",
+      segments: [makeSegment(0, "Большая фраза. ".repeat(200))],
+      maxSegmentsPerChunk: 6,
+      maxCharsPerChunk: 80,
+    },
+    {
+      name: "oversized utterance in the middle",
+      segments: [
+        makeSegment(0, "до"),
+        makeSegment(1, "Середина переговоров! ".repeat(120)),
+        makeSegment(2, "после"),
+      ],
+      maxSegmentsPerChunk: 4,
+      maxCharsPerChunk: 90,
+    },
+    {
+      name: "multiple oversized utterances",
+      segments: [
+        makeSegment(0, "Первый длинный ответ. ".repeat(100)),
+        makeSegment(1, "Второй длинный ответ? ".repeat(110)),
+      ],
+      maxSegmentsPerChunk: 5,
+      maxCharsPerChunk: 85,
+    },
+    {
+      name: "alternating speakers across boundaries",
+      segments: makeSegments(80, "чередование"),
+      maxSegmentsPerChunk: 3,
+      maxCharsPerChunk: 100,
+    },
+    {
+      name: "unicode Russian and emoji",
+      segments: [
+        makeSegment(
+          0,
+          "Цена — 10\u00a0000 ₽. Согласны? 🤝 ".repeat(50),
+        ),
+      ],
+      maxSegmentsPerChunk: 4,
+      maxCharsPerChunk: 37,
+    },
+    {
+      name: "empty and short utterances around boundaries",
+      segments: [
+        makeSegment(0, ""),
+        makeSegment(1, "я"),
+        makeSegment(2, "   "),
+        makeSegment(3, "Коротко. ".repeat(40)),
+        makeSegment(4, "да"),
+      ],
+      maxSegmentsPerChunk: 3,
+      maxCharsPerChunk: 50,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, () => {
+      const first = buildTranscriptEnhancementChunks(scenario.segments, {
+        maxSegmentsPerChunk: scenario.maxSegmentsPerChunk,
+        maxCharsPerChunk: scenario.maxCharsPerChunk,
+      });
+      const second = buildTranscriptEnhancementChunks(scenario.segments, {
+        maxSegmentsPerChunk: scenario.maxSegmentsPerChunk,
+        maxCharsPerChunk: scenario.maxCharsPerChunk,
+      });
+      const serialize = (
+        chunks: ReturnType<typeof buildTranscriptEnhancementChunks>,
+      ) =>
+        chunks.map((chunk) => ({
+          targets: chunk.targets.map((target) => ({
+            index: target.index,
+            sourceIndex: target.sourceIndex,
+            pieceIndex: target.pieceIndex,
+            pieceCount: target.pieceCount,
+            text: target.originalText,
+          })),
+          before: chunk.contextBefore.map((target) => target.index),
+          after: chunk.contextAfter.map((target) => target.index),
+          inputChars: chunk.inputChars,
+        }));
+      assert.deepEqual(serialize(first), serialize(second));
+
+      const pieces = buildTranscriptEnhancementTargetPieces(
+        scenario.segments,
+        scenario.maxCharsPerChunk,
+      );
+      const flattened = first.flatMap((chunk) => chunk.targets);
+      assert.deepEqual(
+        flattened.map((piece) => piece.index),
+        pieces.map((piece) => piece.index),
+      );
+      assert.equal(new Set(flattened.map((piece) => piece.index)).size, pieces.length);
+      assert.equal(
+        flattened.every(
+          (piece) => piece.originalText.length <= scenario.maxCharsPerChunk,
+        ),
+        true,
+      );
+      assert.equal(
+        first.every(
+          (chunk) =>
+            chunk.targets.length <= scenario.maxSegmentsPerChunk &&
+            chunk.inputChars <=
+              getTranscriptEnhancementChunkSourceCharLimit(
+                scenario.maxCharsPerChunk,
+              ),
+        ),
+        true,
+      );
+
+      const reconstructed = reconstructTranscriptEnhancementCoverage({
+        sourceSegments: scenario.segments,
+        targetPieces: pieces,
+        enhancedByIndex: new Map(
+          pieces.map((piece) => [piece.index, piece.originalText]),
+        ),
+      });
+      assert.equal(reconstructed.fallbackSourceIndexes.size, 0);
+      assert.deepEqual(
+        scenario.segments.map((segment) =>
+          reconstructed.textBySourceIndex.get(segment.index),
+        ),
+        scenario.segments.map((segment) => segment.originalText),
+      );
+    });
+  }
+});
+
+test("oversized text splitting preserves exact Unicode source reconstruction", () => {
+  const source =
+    "  Первая мысль. Вторая мысль? 🤝ТретьяБезПробелов".repeat(20) +
+    "  ";
+  const pieces = splitOversizedEnhancementText(source, 31);
+  assert.equal(
+    pieces.map((piece) => `${piece.prefixText}${piece.text}${piece.separatorAfter}`).join(""),
+    source,
+  );
+  assert.equal(pieces.every((piece) => piece.text.length <= 31), true);
+  assert.equal(
+    pieces.every(
+      (piece) =>
+        !/[\uD800-\uDBFF]$/u.test(piece.text) &&
+        !/^[\uDC00-\uDFFF]/u.test(piece.text),
+    ),
+    true,
+  );
 });
 
 test("validation rejects unknown, duplicate, empty, and catastrophic shrink", () => {
@@ -254,6 +456,148 @@ test("json_schema mode sends Responses API text.format schema payload", async ()
         assert.equal(typeof format?.name, "string");
         const schema = format?.schema as Record<string, unknown>;
         assert.equal(schema?.type, "object");
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("synthetic large-session provider pipeline preserves final coverage through retry", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "6",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS: "120",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "4",
+    },
+    async () => {
+      const source = makeSegments(600, "синтетическая большая сессия");
+      source[299] = makeSegment(
+        299,
+        "Очень длинная реплика в середине переговоров. ".repeat(120),
+      );
+      const expectedPieces = buildTranscriptEnhancementTargetPieces(source, 120);
+      const targetRequestCounts = new Map<number, number>();
+      const attemptsByAnchor = new Map<number, number>();
+      let providerCalls = 0;
+      const originalFetch = global.fetch;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        providerCalls += 1;
+        const body = parseFetchBody(init);
+        const targets = extractTargetsFromPrompt(String(body.input ?? ""));
+        const anchor = targets[0]?.index ?? -1;
+        const anchorAttempt = (attemptsByAnchor.get(anchor) ?? 0) + 1;
+        attemptsByAnchor.set(anchor, anchorAttempt);
+        for (const target of targets) {
+          targetRequestCounts.set(
+            target.index,
+            (targetRequestCounts.get(target.index) ?? 0) + 1,
+          );
+        }
+        if (attemptsByAnchor.size === 1 && anchorAttempt === 1) {
+          return new Response(
+            JSON.stringify({
+              status: "completed",
+              output_text: JSON.stringify({ segments: {} }),
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: Object.fromEntries(
+                targets.map((target) => [
+                  String(target.index),
+                  target.originalText,
+                ]),
+              ),
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+
+      try {
+        const result = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(result.meta?.originalSegmentCount, source.length);
+        assert.equal(result.meta?.oversizedSegmentCount, 1);
+        assert.equal(result.meta?.splitPieceCount, expectedPieces.filter((piece) => piece.pieceCount > 1).length);
+        assert.equal(providerCalls, (result.meta?.chunkCount ?? 0) + 1);
+        assert.equal(result.meta?.retryCount, 1);
+        assert.equal(targetRequestCounts.size, expectedPieces.length);
+        assert.equal(
+          [...targetRequestCounts.values()].every(
+            (requestCount) => requestCount === 1 || requestCount === 2,
+          ),
+          true,
+        );
+        assert.equal(
+          [...targetRequestCounts.values()].some(
+            (requestCount) => requestCount === 2,
+          ),
+          true,
+        );
+        assert.deepEqual(
+          result.segments.map((segment) => segment.cleanedText),
+          source.map((segment) => segment.originalText),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
+test("configured single mode automatically bounds an oversized utterance", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "single",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "json_schema",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "6",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS: "80",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "2",
+    },
+    async () => {
+      const source = [
+        makeSegment(0, "Одна очень длинная реплика. ".repeat(80)),
+      ];
+      let providerCalls = 0;
+      const originalFetch = global.fetch;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        providerCalls += 1;
+        const targets = extractTargetsFromPrompt(
+          String(parseFetchBody(init).input ?? ""),
+        );
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output_text: JSON.stringify({
+              segments: Object.fromEntries(
+                targets.map((target) => [
+                  String(target.index),
+                  target.originalText,
+                ]),
+              ),
+            }),
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const result = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(result.meta?.mode, "chunked");
+        assert.equal(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(providerCalls > 1, true);
+        assert.equal(result.segments[0]?.cleanedText, source[0]?.originalText);
       } finally {
         global.fetch = originalFetch;
       }

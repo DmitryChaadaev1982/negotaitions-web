@@ -33,6 +33,7 @@ export type SessionAnalysisTranscript = {
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
   segments: Array<{
+    orderIndex: number;
     speakerLabel: string | null;
     mappedParticipantName: string | null;
     startSeconds: number | null;
@@ -182,6 +183,7 @@ export async function buildSessionAnalysisContext(
       transcriptionModel: t.transcriptionModel,
       hasSpeakerDiarization: t.hasSpeakerDiarization,
       segments: filteredSegments.map((seg) => ({
+        orderIndex: seg.orderIndex,
         speakerLabel: seg.speakerLabel,
         mappedParticipantName: seg.mappedParticipant?.displayName ?? null,
         startSeconds: seg.startSeconds,

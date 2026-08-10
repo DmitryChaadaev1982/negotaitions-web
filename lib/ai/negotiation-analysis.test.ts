@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET } from "@/lib/ai/analysis-input-budget";
 import {
   AiAnalysisProviderError,
   canRecoverProviderResponseAfterFailure,
@@ -258,6 +259,51 @@ test("existing provider response ID is retrieved before any new generation POST"
   assert.equal(urls[0]?.endsWith("/responses/resp_existing"), true);
   assert.equal(result.metrics.generationCallCount, 1);
   assert.equal(result.metrics.calls[0]?.responseIdPresent, true);
+});
+
+test("oversized complete prompt fails explicitly before creating a provider generation", async () => {
+  configureYandexEnv();
+  let fetchCalls = 0;
+  const oversizedPrompt = "x".repeat(
+    YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET * 4 + 1,
+  );
+
+  await assert.rejects(
+    runNegotiationAnalysis(oversizedPrompt, "en", {
+      fetch: (async () => {
+        fetchCalls += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "INPUT_TOO_LARGE");
+      assert.equal(error.diagnostics.contentDropped, false);
+      return true;
+    },
+  );
+  assert.equal(fetchCalls, 0);
+  assert.equal(canRecoverProviderResponseAfterFailure("INPUT_TOO_LARGE"), false);
+});
+
+test("oversized prompt still recovers a known provider response before any new POST", async () => {
+  configureYandexEnv();
+  const methods: string[] = [];
+  const oversizedPrompt = "x".repeat(
+    YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET * 4 + 1,
+  );
+  const result = await runNegotiationAnalysis(oversizedPrompt, "en", {
+    existingProviderResponseId: "resp_oversized_recovery",
+    fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      return jsonResponse(
+        fixtures.completed(JSON.stringify(validAnalysisOutput())),
+      );
+    }) as typeof fetch,
+  });
+
+  assert.equal(result.output.overallScore, 72);
+  assert.deepEqual(methods, ["GET"]);
 });
 
 test("provider response ID is persisted before long polling continues", async () => {
@@ -678,6 +724,7 @@ test("retrieved-and-unusable outcomes exhaust the recorded generation", () => {
     "MODEL_EMPTY_OUTPUT",
     "MODEL_INVALID_OUTPUT",
     "MODEL_SCHEMA_VALIDATION_ERROR",
+    "INPUT_TOO_LARGE",
   ] as const) {
     assert.equal(canRecoverProviderResponseAfterFailure(code), false, code);
   }

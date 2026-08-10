@@ -99,6 +99,10 @@
   - `single`: one-request enhancement flow.
   - `chunked`: bounded chunk enhancement with deterministic merge and per-chunk fallback.
 - Local default is `chunked` unless explicitly overridden for rollback diagnostics.
+- `single` is honored only when the complete input fits the configured segment
+  and character bounds. Larger input automatically uses the bounded chunked
+  path; rollback mode cannot turn an oversized utterance into an unbounded
+  request.
 - Chunked mode uses ordered `TranscriptSegment` input and keeps canonical fields unchanged:
   - segment identity (`orderIndex` / ID),
   - start/end timestamps,
@@ -108,14 +112,29 @@
   - balanced split by segment count and character budget,
   - bounded by `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS` and `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS`,
   - context neighbors are read-only and cannot overwrite target segments.
+- Stage 3.13D Wave 2 makes the character bound effective for every individual
+  utterance:
+  - complete utterances remain the preferred target unit;
+  - an utterance over the target budget is split deterministically at sentence
+    punctuation, then whitespace, and only then a Unicode-safe hard boundary;
+  - every piece retains source segment index/ID, speaker, participant mapping,
+    timestamps, piece order, and exact local separators;
+  - provider keys for pieces are internal and unique; persistence still targets
+    the original `orderIndex`;
+  - all pieces must succeed before the reconstructed utterance is accepted.
+    If any piece fails, the complete original utterance is used instead;
+  - empty/whitespace-only source utterances are deterministic pass-through
+    entries and cannot poison a neighboring provider chunk.
+- The configured character limit bounds editable target text. With the default
+  one read-only neighbor on each side, total source text in one provider prompt
+  is bounded by three times that target limit. Prompt/schema overhead is also
+  bounded by the configured target-count limit.
 - Concurrency and retry are bounded:
   - `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`),
-  - `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`),
-  - `TRANSCRIPT_ENHANCEMENT_MAX_RETRIES` (default `1`, transient timeout/network/provider errors only).
-- Empty-output reliability policy per chunk (bounded to max 3 attempts):
+  - `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`).
+- Empty-output reliability policy per chunk is bounded to two attempts:
   - attempt 1: primary model with normal prompt;
   - attempt 2: primary model strict-JSON retry with increased bounded `max_output_tokens`;
-  - attempt 3: optional `TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL` strict-JSON retry when configured.
 - Empty-output diagnostics are persisted as sanitized attempt telemetry (no raw provider payload):
   - `responseIdPresent`, `initialStatus`, `finalStatus`,
   - `pollingAttemptCount`, `pollingElapsedMs`,
@@ -144,6 +163,12 @@
   - every manual re-enhancement input segment starts from `originalText = qualityText ?? text`, so enhancement never recursively re-enhances previous AI output when backup exists;
   - original transcript can be reconstructed from ordered segments using preserved `qualityText` + existing speaker/timestamp fields;
   - `TRANSCRIPT_ENHANCEMENT_MODE=single|chunked` only changes execution mode for future runs and does not revert already persisted enhanced text.
+  - each enhancement run has a metadata `runId`; completion/failure requires
+    the same current run ID, input identity, `RUNNING` state, and transcript
+    retranscription generation;
+  - terminal persistence uses a compare-and-swap on `Transcript.updatedAt`, so
+    a stale long-running chunk worker cannot overwrite a newer enhancement or
+    retranscription.
 - UI rendering path is unchanged and single-source:
   - transcript/materials UI reads persisted canonical text (`Transcript.text`, `Transcript.diarizedText`, `TranscriptSegment.text`);
   - UI does not currently expose side-by-side original vs enhanced transcript versions.

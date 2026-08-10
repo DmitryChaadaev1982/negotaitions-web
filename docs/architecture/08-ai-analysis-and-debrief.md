@@ -7,19 +7,64 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Flow
 
 1. Facilitator starts analysis when transcript is ready and mapping prerequisites are met.
-2. Analysis context is built from transcript segments with pause processing mode awareness:
+2. A fenced `QUEUED` operation is created and the route returns `202` without
+   making the browser connection execution authority.
+3. Self-hosted Next.js `after()` starts the owned operation and transitions it
+   to `ANALYZING`.
+4. Analysis context is read with transcript and ordered segments in one Prisma
+   relation query, then applies pause processing mode awareness:
    - `source_audio_cut` (production default): use transcript as-is (already generated from active-only audio).
    - `transcript_interval_filter` (legacy/deprecated fallback): apply shared interval filter to transcript segments.
-3. A fenced `QUEUED` operation is created and the route returns `202` without
-   making the browser connection execution authority.
-4. Self-hosted Next.js `after()` starts the owned operation, transitions it to
-   `ANALYZING`, and runs the explicitly selected provider (`openai` or
-   `yandex`).
-5. Yandex creates one durable background response and retrieves that same
+5. Prompt packing keeps the existing direct representation for normal sessions.
+   Large direct prompts switch to a lossless timeline representation that
+   removes only the duplicate narrative copy while retaining every ordered
+   segment, speaker attribution, and timestamp.
+6. Yandex creates one durable background response and retrieves that same
    response by ID until it reaches a terminal provider state.
-6. The complete provider output is parsed and validated against the canonical
+7. The complete provider output is parsed and validated against the canonical
    schema. Only then is `analysisJson` persisted and status changed to
    `COMPLETED`.
+
+## Large-session input contract
+
+- Normal sessions use the byte-for-byte existing direct whole-session prompt:
+  narrative/diarized transcript plus the attributed timeline. They still make
+  one canonical provider generation with unchanged model, temperature,
+  reasoning, background, and output-token semantics.
+- Yandex DeepSeek input diagnostics use the existing conservative `chars / 4`
+  estimate. Yandex DeepSeek application budgets are:
+  - complete provider input: 100,000 estimated tokens;
+  - reserved provider instructions/schema: 10,000 estimated tokens;
+  - session prompt: 90,000 estimated tokens.
+- Yandex's authenticated `/models` catalog confirms
+  `deepseek-v4-flash` but exposes no context-window capability. These are
+  therefore explicit conservative application safety limits, not claims about
+  an undocumented Yandex provider maximum and not runtime-tunable settings.
+- If the normal representation exceeds the prompt budget and ordered segments
+  exist, the packer first verifies normalized `Transcript.text` equivalence
+  with the ordered segment text. Only after that no-loss check does it emit all
+  segments exactly once as a deterministic JSON timeline. It preserves order
+  index, participant/speaker, start/end time, and complete text. Only the
+  verified redundant `Transcript.text`/`diarizedText` copy is omitted. A
+  mismatch keeps the full direct prompt and therefore fails explicitly if it
+  remains over budget.
+- This lossless compact path remains a single whole-negotiation provider call.
+  It is not a set of unrelated chunk summaries and does not add synthesis calls,
+  so cross-session reasoning and Wave 1 response recovery remain unchanged.
+- If the lossless representation still exceeds the supported prompt budget,
+  execution fails before creating a provider generation with
+  `INPUT_TOO_LARGE` and `contentDropped=false`. No substring, array cap, or
+  provider-side truncation is used.
+- A known `providerResponseId` remains recovery-first even if the current
+  application budget would reject a new POST. This preserves an already
+  accepted generation and does not create a duplicate.
+- The 8,000-token canonical output budget is independent from input packing.
+  An `incomplete/max_output_tokens` provider result is still an explicit
+  exhausted-generation failure and can be retried as a new generation.
+- No hierarchical summary/synthesis stage is introduced. Durable intermediate
+  generations would require additional recoverable stage state, add cost, and
+  risk evidence loss. The quality stop condition therefore prefers an explicit
+  supported boundary over a lossy report presented as complete.
 7. A completed analysis can be shared to session participants/observers through
    the existing sanitized publication flow.
 

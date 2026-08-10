@@ -1,3 +1,9 @@
+import {
+  YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
+  estimateAiAnalysisTokensFromChars,
+} from "@/lib/ai/analysis-input-budget";
+import { getAiAnalysisProvider } from "@/lib/env";
+
 export type BuildAnalysisPromptContext = {
   session: {
     id?: string;
@@ -45,6 +51,7 @@ export type BuildAnalysisPromptContext = {
     transcriptionModel?: string | null;
     hasSpeakerDiarization: boolean;
     segments: Array<{
+      orderIndex?: number;
       speakerLabel: string | null;
       mappedParticipantName: string | null;
       startSeconds: number | null;
@@ -54,7 +61,16 @@ export type BuildAnalysisPromptContext = {
   } | null;
 };
 
-export function buildAnalysisPrompt(context: BuildAnalysisPromptContext): string {
+type TranscriptPromptMode = "direct" | "lossless_compact";
+
+function normalizeTranscriptCoverageText(text: string): string {
+  return text.trim().replace(/\s+/gu, " ");
+}
+
+function renderAnalysisPrompt(
+  context: BuildAnalysisPromptContext,
+  transcriptMode: TranscriptPromptMode,
+): string {
   const lines: string[] = [];
 
   const formatTimestamp = (value: number | null) => {
@@ -148,12 +164,35 @@ export function buildAnalysisPrompt(context: BuildAnalysisPromptContext): string
 
   if (context.transcript) {
     lines.push("## Transcript");
-    if (
+    const hasTimeline = context.transcript.segments.length > 0;
+    const segmentCoverageText = context.transcript.segments
+      .map((segment) => segment.text.trim())
+      .filter(Boolean)
+      .join(" ");
+    const canonicalTextHasUncoveredContent =
+      hasTimeline &&
+      normalizeTranscriptCoverageText(context.transcript.text) !==
+        normalizeTranscriptCoverageText(segmentCoverageText);
+    if (transcriptMode === "lossless_compact" && hasTimeline) {
+      lines.push(
+        "(Complete lossless timeline; the duplicate narrative transcript is intentionally omitted.)",
+      );
+    } else if (
       context.transcript.hasSpeakerDiarization &&
       context.transcript.diarizedText?.trim()
     ) {
       lines.push("(Speaker-attributed transcript)");
       lines.push(context.transcript.diarizedText.trim());
+      if (
+        canonicalTextHasUncoveredContent &&
+        context.transcript.text.trim()
+      ) {
+        lines.push("");
+        lines.push(
+          "(Additional canonical plain transcript retained because it differs from the segment timeline)",
+        );
+        lines.push(context.transcript.text.trim());
+      }
     } else if (context.transcript.text?.trim()) {
       lines.push("(Plain transcript — speaker attribution not available)");
       lines.push(context.transcript.text.trim());
@@ -168,13 +207,31 @@ export function buildAnalysisPrompt(context: BuildAnalysisPromptContext): string
     if (context.transcript.segments.length > 0) {
       lines.push("");
       lines.push("## Transcript Segments (Timeline)");
-      for (const segment of context.transcript.segments) {
-        const speaker = segment.mappedParticipantName ?? segment.speakerLabel ?? "Speaker";
-        const start = formatTimestamp(segment.startSeconds);
-        const end = formatTimestamp(segment.endSeconds);
-        const timeRange =
-          start && end ? `${start}-${end}` : (start ?? end ?? "00:00:00");
-        lines.push(`[${timeRange}] [${speaker}] ${segment.text}`);
+      if (transcriptMode === "lossless_compact") {
+        lines.push(
+          JSON.stringify({
+            segments: context.transcript.segments.map((segment, position) => ({
+              orderIndex: segment.orderIndex ?? position,
+              speaker:
+                segment.mappedParticipantName ??
+                segment.speakerLabel ??
+                "Speaker",
+              startSeconds: segment.startSeconds,
+              endSeconds: segment.endSeconds,
+              text: segment.text,
+            })),
+          }),
+        );
+      } else {
+        for (const segment of context.transcript.segments) {
+          const speaker =
+            segment.mappedParticipantName ?? segment.speakerLabel ?? "Speaker";
+          const start = formatTimestamp(segment.startSeconds);
+          const end = formatTimestamp(segment.endSeconds);
+          const timeRange =
+            start && end ? `${start}-${end}` : (start ?? end ?? "00:00:00");
+          lines.push(`[${timeRange}] [${speaker}] ${segment.text}`);
+        }
       }
     }
   } else {
@@ -184,4 +241,91 @@ export function buildAnalysisPrompt(context: BuildAnalysisPromptContext): string
   }
 
   return lines.join("\n");
+}
+
+export type AnalysisPromptPackingResult = {
+  prompt: string;
+  mode: TranscriptPromptMode;
+  promptChars: number;
+  estimatedPromptTokens: number;
+  sourceSegmentCount: number;
+  sourceSegmentCharacters: number;
+  duplicateNarrativeCharactersOmitted: number;
+  duplicateNarrativeVerified: boolean;
+  exceedsPromptBudget: boolean;
+};
+
+export function packAnalysisPrompt(
+  context: BuildAnalysisPromptContext,
+): AnalysisPromptPackingResult {
+  const directPrompt = renderAnalysisPrompt(context, "direct");
+  const directEstimatedTokens = estimateAiAnalysisTokensFromChars(
+    directPrompt.length,
+  );
+  const sourceSegmentCount = context.transcript?.segments.length ?? 0;
+  const sourceSegmentCharacters =
+    context.transcript?.segments.reduce(
+      (total, segment) => total + segment.text.length,
+      0,
+    ) ?? 0;
+  const segmentCoverageText =
+    context.transcript?.segments
+      .map((segment) => segment.text.trim())
+      .filter(Boolean)
+      .join(" ") ?? "";
+  const duplicateNarrativeVerified = Boolean(
+    context.transcript &&
+      sourceSegmentCount > 0 &&
+      normalizeTranscriptCoverageText(context.transcript.text) ===
+        normalizeTranscriptCoverageText(segmentCoverageText),
+  );
+
+  if (
+    directEstimatedTokens <=
+      YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET ||
+    !duplicateNarrativeVerified
+  ) {
+    return {
+      prompt: directPrompt,
+      mode: "direct",
+      promptChars: directPrompt.length,
+      estimatedPromptTokens: directEstimatedTokens,
+      sourceSegmentCount,
+      sourceSegmentCharacters,
+      duplicateNarrativeCharactersOmitted: 0,
+      duplicateNarrativeVerified,
+      exceedsPromptBudget:
+        directEstimatedTokens >
+        YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
+    };
+  }
+
+  const compactPrompt = renderAnalysisPrompt(context, "lossless_compact");
+  return {
+    prompt: compactPrompt,
+    mode: "lossless_compact",
+    promptChars: compactPrompt.length,
+    estimatedPromptTokens: estimateAiAnalysisTokensFromChars(
+      compactPrompt.length,
+    ),
+    sourceSegmentCount,
+    sourceSegmentCharacters,
+    duplicateNarrativeCharactersOmitted:
+      (context.transcript?.diarizedText?.trim() ||
+        context.transcript?.text?.trim() ||
+        "").length,
+    duplicateNarrativeVerified,
+    exceedsPromptBudget:
+      estimateAiAnalysisTokensFromChars(compactPrompt.length) >
+      YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
+  };
+}
+
+export function buildAnalysisPrompt(
+  context: BuildAnalysisPromptContext,
+): string {
+  if (getAiAnalysisProvider() !== "yandex") {
+    return renderAnalysisPrompt(context, "direct");
+  }
+  return packAnalysisPrompt(context).prompt;
 }

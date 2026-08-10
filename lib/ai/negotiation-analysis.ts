@@ -1,5 +1,10 @@
 import OpenAI from "openai";
 import { z } from "zod";
+import {
+  YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
+  YANDEX_DEEPSEEK_ANALYSIS_TOTAL_INPUT_TOKEN_BUDGET,
+  estimateAiAnalysisTokensFromChars,
+} from "@/lib/ai/analysis-input-budget";
 import { getAiAnalysisProvider, isYandexAiConfigured } from "@/lib/env";
 
 export function getAiAnalysisModel(): string {
@@ -43,6 +48,7 @@ export type AiAnalysisErrorCode =
   | "MODEL_EMPTY_OUTPUT"
   | "MODEL_INVALID_OUTPUT"
   | "MODEL_SCHEMA_VALIDATION_ERROR"
+  | "INPUT_TOO_LARGE"
   | "INTERNAL_ERROR"
   | "CANCELLED"
   | "OWNERSHIP_LOST";
@@ -184,6 +190,8 @@ function defaultAiAnalysisUserMessage(code: AiAnalysisErrorCode): string {
       return "ИИ-разбор вернулся в некорректном формате. Повторите попытку.";
     case "MODEL_SCHEMA_VALIDATION_ERROR":
       return "ИИ-разбор не прошёл проверку формата. Повторите попытку.";
+    case "INPUT_TOO_LARGE":
+      return "Транскрипт слишком велик для полного безопасного ИИ-разбора без потери содержания.";
     case "CANCELLED":
       return "ИИ-разбор был отменён.";
     case "OWNERSHIP_LOST":
@@ -268,14 +276,11 @@ export function canRecoverProviderResponseAfterFailure(
     case "MODEL_EMPTY_OUTPUT":
     case "MODEL_INVALID_OUTPUT":
     case "MODEL_SCHEMA_VALIDATION_ERROR":
+    case "INPUT_TOO_LARGE":
       return false;
     default:
       return true;
   }
-}
-
-function estimateTokensFromChars(chars: number): number {
-  return Math.ceil(chars / 4);
 }
 
 function parseBoundedIntegerEnv(
@@ -1066,7 +1071,7 @@ async function runOpenAiNegotiationAnalysis(
     promptChars: prompt.length,
     instructionChars,
     inputChars,
-    estimatedInputTokens: estimateTokensFromChars(inputChars),
+    estimatedInputTokens: estimateAiAnalysisTokensFromChars(inputChars),
     maxOutputTokens: 0,
     responseLength: rawContent.length,
     httpStatus: null,
@@ -1105,10 +1110,10 @@ async function runOpenAiNegotiationAnalysis(
       ),
       optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      estimatedPromptTokens: estimateAiAnalysisTokensFromChars(prompt.length),
       instructionChars,
       inputChars,
-      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      estimatedInputTokens: estimateAiAnalysisTokensFromChars(inputChars),
       outputSchemaInstructionChars: schemaDescription.length,
       primaryMaxOutputTokensConfigured: 0,
       operationAttemptCount: 1,
@@ -1162,10 +1167,10 @@ async function runOpenAiNegotiationAnalysis(
       ),
       optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      estimatedPromptTokens: estimateAiAnalysisTokensFromChars(prompt.length),
       instructionChars,
       inputChars,
-      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      estimatedInputTokens: estimateAiAnalysisTokensFromChars(inputChars),
       outputSchemaInstructionChars: schemaDescription.length,
       primaryMaxOutputTokensConfigured: 0,
       operationAttemptCount: 1,
@@ -1208,10 +1213,10 @@ async function runOpenAiNegotiationAnalysis(
       ),
       optionalDepthDurationMs: 0,
       promptChars: prompt.length,
-      estimatedPromptTokens: estimateTokensFromChars(prompt.length),
+      estimatedPromptTokens: estimateAiAnalysisTokensFromChars(prompt.length),
       instructionChars,
       inputChars,
-      estimatedInputTokens: estimateTokensFromChars(inputChars),
+      estimatedInputTokens: estimateAiAnalysisTokensFromChars(inputChars),
       outputSchemaInstructionChars: schemaDescription.length,
       primaryMaxOutputTokensConfigured: 0,
       operationAttemptCount: 1,
@@ -1909,10 +1914,32 @@ async function runYandexNegotiationAnalysis(
     "x-data-logging-enabled": "false",
   };
   const promptChars = prompt.length;
-  const estimatedPromptTokens = estimateTokensFromChars(promptChars);
+  const estimatedPromptTokens = estimateAiAnalysisTokensFromChars(promptChars);
   const instructionChars = baseInstructions.length;
   const inputChars = promptChars + instructionChars;
-  const estimatedInputTokens = estimateTokensFromChars(inputChars);
+  const estimatedInputTokens = estimateAiAnalysisTokensFromChars(inputChars);
+  if (
+    estimatedInputTokens >
+      YANDEX_DEEPSEEK_ANALYSIS_TOTAL_INPUT_TOKEN_BUDGET &&
+    !options?.existingProviderResponseId?.trim()
+  ) {
+    throw new AiAnalysisProviderError({
+      code: "INPUT_TOO_LARGE",
+      provider: "yandex",
+      model: modelName,
+      message:
+        "Complete Yandex analysis input exceeds the conservative application budget.",
+      retryable: false,
+      allowsRegeneration: false,
+      diagnostics: {
+        inputChars,
+        estimatedInputTokens,
+        estimatedTotalInputTokenBudget:
+          YANDEX_DEEPSEEK_ANALYSIS_TOTAL_INPUT_TOKEN_BUDGET,
+        contentDropped: false,
+      },
+    });
+  }
   const calls: AiAnalysisCallMetric[] = [];
   const maxOperationAttempts = getAiAnalysisMaxAttempts();
   const maxCompactFallbackCalls = 0;
@@ -2049,7 +2076,7 @@ async function runYandexNegotiationAnalysis(
       promptChars,
       instructionChars: callInstructionChars,
       inputChars: callInputChars,
-      estimatedInputTokens: estimateTokensFromChars(callInputChars),
+      estimatedInputTokens: estimateAiAnalysisTokensFromChars(callInputChars),
       maxOutputTokens: params.tokenLimit,
       responseLength: 0,
       httpStatus: null,
@@ -2554,6 +2581,32 @@ export async function runNegotiationAnalysis(
   metrics: AiAnalysisRunMetrics;
 }> {
   const provider = getAiAnalysisProvider();
+  const estimatedPromptTokens = estimateAiAnalysisTokensFromChars(
+    prompt.length,
+  );
+  if (
+    provider === "yandex" &&
+    estimatedPromptTokens >
+      YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET &&
+    !options?.existingProviderResponseId?.trim()
+  ) {
+    throw new AiAnalysisProviderError({
+      code: "INPUT_TOO_LARGE",
+      provider: "yandex",
+      model: getYandexAiModel(),
+      message:
+        "Complete Yandex DeepSeek analysis prompt exceeds the conservative application input budget.",
+      retryable: false,
+      allowsRegeneration: false,
+      diagnostics: {
+        promptChars: prompt.length,
+        estimatedPromptTokens,
+        estimatedPromptTokenBudget:
+          YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
+        contentDropped: false,
+      },
+    });
+  }
   return dispatchSelectedAiAnalysisProvider(provider, {
     openai: () => runOpenAiNegotiationAnalysis(prompt, language, options),
     yandex: () => runYandexNegotiationAnalysis(prompt, language, options),

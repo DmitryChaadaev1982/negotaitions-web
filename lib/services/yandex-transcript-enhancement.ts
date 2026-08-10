@@ -81,6 +81,8 @@ export type TranscriptEnhancementOverallStatus =
 export type TranscriptEnhancementChunkMetadata = {
   chunkIndex: number;
   targetSegmentCount: number;
+  targetPieceCount?: number;
+  sourceSegmentCount?: number;
   targetSegmentStartIndex: number;
   targetSegmentEndIndex: number;
   inputChars: number;
@@ -174,6 +176,8 @@ export type TranscriptEnhancementMeta = {
   structuredOutputEnabled?: boolean;
   schemaVersion?: string | null;
   schemaChunkCount?: number;
+  oversizedSegmentCount?: number;
+  splitPieceCount?: number;
 };
 
 export type TranscriptEnhancementResult = {
@@ -207,11 +211,20 @@ type TranscriptEnhancementResponseSchema = {
 
 type EnhancementChunk = {
   chunkIndex: number;
-  targets: TranscriptEnhancementInputSegment[];
-  contextBefore: TranscriptEnhancementInputSegment[];
-  contextAfter: TranscriptEnhancementInputSegment[];
+  targets: PackedTranscriptEnhancementSegment[];
+  contextBefore: PackedTranscriptEnhancementSegment[];
+  contextAfter: PackedTranscriptEnhancementSegment[];
   inputChars: number;
 };
+
+export type PackedTranscriptEnhancementSegment =
+  TranscriptEnhancementInputSegment & {
+    sourceIndex: number;
+    pieceIndex: number;
+    pieceCount: number;
+    prefixText: string;
+    separatorAfter: string;
+  };
 
 type ChunkExecutionResult = {
   chunkIndex: number;
@@ -537,6 +550,18 @@ function buildSinglePrompt(segments: TranscriptEnhancementInputSegment[], strict
   ].join("\n");
 }
 
+function buildSplitPiecePromptIdentity(
+  segment: PackedTranscriptEnhancementSegment,
+) {
+  return segment.pieceCount > 1
+    ? {
+        sourceIndex: segment.sourceIndex,
+        pieceIndex: segment.pieceIndex,
+        pieceCount: segment.pieceCount,
+      }
+    : {};
+}
+
 function buildChunkPrompt(chunk: EnhancementChunk, strictJsonMode = false): string {
   return [
     "You are cleaning automatic Russian ASR transcript segments for negotiation training.",
@@ -563,11 +588,13 @@ function buildChunkPrompt(chunk: EnhancementChunk, strictJsonMode = false): stri
     JSON.stringify({
       readOnlyContextBefore: chunk.contextBefore.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         text: segment.originalText,
       })),
       targetSegments: chunk.targets.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         startMs: segment.startMs,
         endMs: segment.endMs,
@@ -577,6 +604,7 @@ function buildChunkPrompt(chunk: EnhancementChunk, strictJsonMode = false): stri
       })),
       readOnlyContextAfter: chunk.contextAfter.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         text: segment.originalText,
       })),
@@ -630,11 +658,13 @@ function buildChunkSchemaPrompt(chunk: EnhancementChunk): string {
     JSON.stringify({
       readOnlyContextBefore: chunk.contextBefore.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         text: segment.originalText,
       })),
       targetSegments: chunk.targets.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         startMs: segment.startMs,
         endMs: segment.endMs,
@@ -644,6 +674,7 @@ function buildChunkSchemaPrompt(chunk: EnhancementChunk): string {
       })),
       readOnlyContextAfter: chunk.contextAfter.map((segment) => ({
         index: segment.index,
+        ...buildSplitPiecePromptIdentity(segment),
         speakerLabel: segment.speakerLabel,
         text: segment.originalText,
       })),
@@ -958,6 +989,201 @@ function isCatastrophicShrink(originalText: string, cleanedText: string): boolea
   return ratio < CATASTROPHIC_SHRINK_RATIO && removedChars >= CATASTROPHIC_SHRINK_MIN_REMOVED_CHARS;
 }
 
+function avoidSplittingSurrogatePair(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) return index;
+  const previous = text.charCodeAt(index - 1);
+  const current = text.charCodeAt(index);
+  const previousIsHighSurrogate = previous >= 0xd800 && previous <= 0xdbff;
+  const currentIsLowSurrogate = current >= 0xdc00 && current <= 0xdfff;
+  return previousIsHighSurrogate && currentIsLowSurrogate ? index - 1 : index;
+}
+
+function findPreferredPieceEnd(
+  text: string,
+  start: number,
+  maxChars: number,
+): number {
+  const hardEnd = avoidSplittingSurrogatePair(
+    text,
+    Math.min(text.length, start + maxChars),
+  );
+  if (hardEnd >= text.length) return text.length;
+  const preferredStart = start + Math.floor(maxChars * 0.5);
+
+  for (let index = hardEnd - 1; index >= preferredStart; index -= 1) {
+    if (
+      /[.!?…;:]/u.test(text[index] ?? "") &&
+      /\s/u.test(text[index + 1] ?? "")
+    ) {
+      return index + 1;
+    }
+  }
+  for (let index = hardEnd - 1; index >= preferredStart; index -= 1) {
+    if (/\s/u.test(text[index] ?? "")) {
+      return index;
+    }
+  }
+  return hardEnd;
+}
+
+export type SplitTextPiece = {
+  text: string;
+  prefixText: string;
+  separatorAfter: string;
+};
+
+export function splitOversizedEnhancementText(
+  text: string,
+  maxChars: number,
+): SplitTextPiece[] {
+  const boundedMaxChars = Math.max(2, Math.floor(maxChars));
+  if (text.length <= boundedMaxChars || text.trim().length === 0) {
+    return [{ text, prefixText: "", separatorAfter: "" }];
+  }
+
+  const pieces: SplitTextPiece[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const prefixStart = cursor;
+    while (cursor < text.length && /\s/u.test(text[cursor] ?? "")) {
+      cursor += 1;
+    }
+    const prefixText = text.slice(prefixStart, cursor);
+    if (cursor >= text.length) {
+      if (pieces.length > 0) {
+        pieces[pieces.length - 1]!.separatorAfter += prefixText;
+      } else {
+        pieces.push({ text: "", prefixText, separatorAfter: "" });
+      }
+      break;
+    }
+
+    let boundaryEnd = findPreferredPieceEnd(
+      text,
+      cursor,
+      boundedMaxChars,
+    );
+    if (boundaryEnd <= cursor) {
+      boundaryEnd = Math.min(text.length, cursor + boundedMaxChars);
+    }
+    let contentEnd = boundaryEnd;
+    while (
+      contentEnd > cursor &&
+      /\s/u.test(text[contentEnd - 1] ?? "")
+    ) {
+      contentEnd -= 1;
+    }
+    let separatorEnd = boundaryEnd;
+    while (
+      separatorEnd < text.length &&
+      /\s/u.test(text[separatorEnd] ?? "")
+    ) {
+      separatorEnd += 1;
+    }
+    pieces.push({
+      text: text.slice(cursor, contentEnd),
+      prefixText,
+      separatorAfter: text.slice(contentEnd, separatorEnd),
+    });
+    cursor = separatorEnd;
+  }
+  return pieces;
+}
+
+export function buildTranscriptEnhancementTargetPieces(
+  segments: TranscriptEnhancementInputSegment[],
+  maxCharsPerPiece: number,
+): PackedTranscriptEnhancementSegment[] {
+  const maxExistingIndex = segments.reduce(
+    (maximum, segment) => Math.max(maximum, segment.index),
+    -1,
+  );
+  let nextSyntheticIndex = maxExistingIndex + 1;
+  const packed: PackedTranscriptEnhancementSegment[] = [];
+
+  for (const segment of segments) {
+    if (segment.originalText.trim().length === 0) {
+      continue;
+    }
+    const pieces = splitOversizedEnhancementText(
+      segment.originalText,
+      maxCharsPerPiece,
+    );
+    const split = pieces.length > 1;
+    for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
+      const piece = pieces[pieceIndex]!;
+      packed.push({
+        ...segment,
+        index: split ? nextSyntheticIndex++ : segment.index,
+        originalText: piece.text,
+        sourceIndex: segment.index,
+        pieceIndex,
+        pieceCount: pieces.length,
+        prefixText: piece.prefixText,
+        separatorAfter: piece.separatorAfter,
+      });
+    }
+  }
+  return packed;
+}
+
+export function reconstructTranscriptEnhancementCoverage(params: {
+  sourceSegments: TranscriptEnhancementInputSegment[];
+  targetPieces: PackedTranscriptEnhancementSegment[];
+  enhancedByIndex: Map<number, string>;
+}): {
+  textBySourceIndex: Map<number, string>;
+  fallbackSourceIndexes: Set<number>;
+} {
+  const piecesBySourceIndex = new Map<
+    number,
+    PackedTranscriptEnhancementSegment[]
+  >();
+  for (const piece of params.targetPieces) {
+    const current = piecesBySourceIndex.get(piece.sourceIndex) ?? [];
+    current.push(piece);
+    piecesBySourceIndex.set(piece.sourceIndex, current);
+  }
+
+  const textBySourceIndex = new Map<number, string>();
+  const fallbackSourceIndexes = new Set<number>();
+  for (const source of params.sourceSegments) {
+    const pieces = piecesBySourceIndex.get(source.index) ?? [];
+    if (pieces.length === 0) {
+      textBySourceIndex.set(source.index, source.originalText);
+      continue;
+    }
+    const complete = pieces.every((piece) =>
+      params.enhancedByIndex.has(piece.index),
+    );
+    if (!complete) {
+      fallbackSourceIndexes.add(source.index);
+      textBySourceIndex.set(source.index, source.originalText);
+      continue;
+    }
+    textBySourceIndex.set(
+      source.index,
+      pieces
+        .map(
+          (piece) =>
+            `${piece.prefixText}${params.enhancedByIndex.get(piece.index)!.trim()}${piece.separatorAfter}`,
+        )
+        .join(""),
+    );
+  }
+  return { textBySourceIndex, fallbackSourceIndexes };
+}
+
+export function getTranscriptEnhancementChunkSourceCharLimit(
+  maxTargetChars: number,
+  contextNeighbors = CHUNK_CONTEXT_NEIGHBORS,
+): number {
+  return (
+    Math.max(1, maxTargetChars) *
+    (1 + Math.max(0, Math.floor(contextNeighbors)) * 2)
+  );
+}
+
 export function buildTranscriptEnhancementChunks(
   segments: TranscriptEnhancementInputSegment[],
   options?: {
@@ -971,20 +1197,28 @@ export function buildTranscriptEnhancementChunks(
     options?.maxSegmentsPerChunk ?? getTranscriptEnhancementChunkMaxSegments();
   const maxCharsPerChunk = options?.maxCharsPerChunk ?? getTranscriptEnhancementChunkMaxChars();
   const contextNeighbors = options?.contextNeighbors ?? CHUNK_CONTEXT_NEIGHBORS;
-  const totalChars = segments.reduce((sum, segment) => sum + segment.originalText.length, 0);
+  const targetPieces = buildTranscriptEnhancementTargetPieces(
+    segments,
+    maxCharsPerChunk,
+  );
+  if (targetPieces.length === 0) return [];
+  const totalChars = targetPieces.reduce(
+    (sum, segment) => sum + segment.originalText.length,
+    0,
+  );
   const desiredChunkCount = Math.max(
     1,
-    Math.ceil(segments.length / Math.max(1, maxSegmentsPerChunk)),
+    Math.ceil(targetPieces.length / Math.max(1, maxSegmentsPerChunk)),
     Math.ceil(totalChars / Math.max(1, maxCharsPerChunk)),
   );
 
-  const partitions: TranscriptEnhancementInputSegment[][] = [];
+  const partitions: PackedTranscriptEnhancementSegment[][] = [];
   let cursor = 0;
-  for (let chunkIndex = 0; chunkIndex < desiredChunkCount && cursor < segments.length; chunkIndex += 1) {
-    const remainingSegments = segments.length - cursor;
+  for (let chunkIndex = 0; chunkIndex < desiredChunkCount && cursor < targetPieces.length; chunkIndex += 1) {
+    const remainingSegments = targetPieces.length - cursor;
     const remainingChunks = desiredChunkCount - chunkIndex;
     const size = Math.ceil(remainingSegments / remainingChunks);
-    partitions.push(segments.slice(cursor, cursor + size));
+    partitions.push(targetPieces.slice(cursor, cursor + size));
     cursor += size;
   }
 
@@ -1001,14 +1235,27 @@ export function buildTranscriptEnhancementChunks(
   }
 
   return partitions.map((targets, chunkIndex) => {
-    const firstGlobalIndex = segments.findIndex((segment) => segment.index === targets[0]?.index);
+    const firstGlobalIndex = targetPieces.findIndex(
+      (segment) => segment.index === targets[0]?.index,
+    );
     const lastGlobalIndex = firstGlobalIndex + targets.length - 1;
+    const contextBefore = targetPieces.slice(
+      Math.max(0, firstGlobalIndex - contextNeighbors),
+      firstGlobalIndex,
+    );
+    const contextAfter = targetPieces.slice(
+      lastGlobalIndex + 1,
+      lastGlobalIndex + 1 + contextNeighbors,
+    );
     return {
       chunkIndex,
       targets,
-      contextBefore: segments.slice(Math.max(0, firstGlobalIndex - contextNeighbors), firstGlobalIndex),
-      contextAfter: segments.slice(lastGlobalIndex + 1, lastGlobalIndex + 1 + contextNeighbors),
-      inputChars: targets.reduce((sum, segment) => sum + segment.originalText.length, 0),
+      contextBefore,
+      contextAfter,
+      inputChars: [...contextBefore, ...targets, ...contextAfter].reduce(
+        (sum, segment) => sum + segment.originalText.length,
+        0,
+      ),
     };
   });
 }
@@ -1853,7 +2100,6 @@ async function runChunkedEnhancement(params: {
   let totalRetryCount = 0;
   let fallbackTriggeredAny = false;
   const fallbackReasons = new Set<string>();
-  const failedChunkIndexes = new Set<number>();
 
   for (const result of chunkResults) {
     totalRetryCount += result.retryCount;
@@ -1869,7 +2115,6 @@ async function runChunkedEnhancement(params: {
       warnings.push(...result.warnings);
     } else {
       failedChunkCount += 1;
-      failedChunkIndexes.add(result.chunkIndex);
       if (result.errorCategory) {
         warnings.push(`chunk_${result.chunkIndex}:${result.errorCategory}`);
       }
@@ -1877,21 +2122,19 @@ async function runChunkedEnhancement(params: {
   }
 
   let changedSegmentCount = 0;
-  let fallbackSegmentCount = 0;
+  const targetPieces = chunks.flatMap((chunk) => chunk.targets);
+  const reconstructed = reconstructTranscriptEnhancementCoverage({
+    sourceSegments: segments,
+    targetPieces,
+    enhancedByIndex: resultByIndex,
+  });
+  const fallbackSegmentCount = reconstructed.fallbackSourceIndexes.size;
   const mergedSegments: TranscriptEnhancementRawSegment[] = segments.map((segment) => {
-    const cleanedText = resultByIndex.get(segment.index) ?? segment.originalText;
+    const cleanedText =
+      reconstructed.textBySourceIndex.get(segment.index) ??
+      segment.originalText;
     const changed = cleanedText.trim() !== segment.originalText.trim();
     if (changed) changedSegmentCount += 1;
-    const ownerChunk = chunks.find((chunk) =>
-      chunk.targets.some((targetSegment) => targetSegment.index === segment.index),
-    );
-    if (
-      !resultByIndex.has(segment.index) &&
-      ownerChunk &&
-      failedChunkIndexes.has(ownerChunk.chunkIndex)
-    ) {
-      fallbackSegmentCount += 1;
-    }
     return {
       index: segment.index,
       cleanedText,
@@ -1932,6 +2175,14 @@ async function runChunkedEnhancement(params: {
       structuredOutputEnabled,
       schemaVersion: structuredOutputEnabled ? TRANSCRIPT_ENHANCEMENT_SCHEMA_VERSION : null,
       schemaChunkCount: structuredOutputEnabled ? chunks.length : 0,
+      oversizedSegmentCount: new Set(
+        targetPieces
+          .filter((piece) => piece.pieceCount > 1)
+          .map((piece) => piece.sourceIndex),
+      ).size,
+      splitPieceCount: targetPieces.filter(
+        (piece) => piece.pieceCount > 1,
+      ).length,
       overallStatus,
       startedAt: new Date(startedAtMs).toISOString(),
       finishedAt: new Date(finishedAtMs).toISOString(),
@@ -1948,11 +2199,17 @@ async function runChunkedEnhancement(params: {
       retryCount: totalRetryCount,
       perChunk: chunks.map((chunk) => {
         const result = chunkResults[chunk.chunkIndex];
+        const sourceIndexes = new Set(
+          chunk.targets.map((target) => target.sourceIndex),
+        );
         return {
           chunkIndex: chunk.chunkIndex,
-          targetSegmentCount: chunk.targets.length,
-          targetSegmentStartIndex: chunk.targets[0]?.index ?? 0,
-          targetSegmentEndIndex: chunk.targets[chunk.targets.length - 1]?.index ?? 0,
+          targetSegmentCount: sourceIndexes.size,
+          targetPieceCount: chunk.targets.length,
+          sourceSegmentCount: sourceIndexes.size,
+          targetSegmentStartIndex: chunk.targets[0]?.sourceIndex ?? 0,
+          targetSegmentEndIndex:
+            chunk.targets[chunk.targets.length - 1]?.sourceIndex ?? 0,
           inputChars: chunk.inputChars,
           queuedAt: chunkQueuedAt[chunk.chunkIndex],
           startedAt: result?.startedAt ?? null,
@@ -2038,7 +2295,19 @@ export async function enhanceTranscriptWithYandexAi(
   const modelName = getYandexTranscriptEnhancementModel();
   const baseUrl = getYandexAiBaseUrl();
 
-  if (mode === "single") {
+  const singleRequestFitsConfiguredBounds =
+    segments.length <= getTranscriptEnhancementChunkMaxSegments() &&
+    segments.reduce(
+      (total, segment) => total + segment.originalText.length,
+      0,
+    ) <= getTranscriptEnhancementChunkMaxChars() &&
+    segments.every(
+      (segment) =>
+        segment.originalText.length <=
+        getTranscriptEnhancementChunkMaxChars(),
+    );
+
+  if (mode === "single" && singleRequestFitsConfiguredBounds) {
     return runSingleShotEnhancement({
       segments,
       apiKey,

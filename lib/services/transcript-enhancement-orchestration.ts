@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@/app/generated/prisma/client";
 import {
@@ -52,6 +52,13 @@ type TranscriptEnhancementIdempotencyDecision =
   | "lock_lost";
 
 type ProcessingMetadata = Record<string, unknown>;
+
+class TranscriptEnhancementOwnershipLostError extends Error {
+  constructor() {
+    super("Transcript enhancement ownership was lost.");
+    this.name = "TranscriptEnhancementOwnershipLostError";
+  }
+}
 type TranscriptSegmentForEnhancement = {
   id: string;
   orderIndex: number;
@@ -198,6 +205,7 @@ function buildRunningMetadata(params: {
   metadata: ProcessingMetadata;
   triggerSource: TranscriptEnhancementTriggerSource;
   inputIdentity: string;
+  runId: string;
   idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
 }): ProcessingMetadata {
   const nowIso = new Date().toISOString();
@@ -209,6 +217,7 @@ function buildRunningMetadata(params: {
       status: "RUNNING",
       triggerSource: params.triggerSource,
       inputIdentity: params.inputIdentity,
+      runId: params.runId,
       idempotencyDecision: params.idempotencyDecision,
       queuedAt: nowIso,
       startedAt: nowIso,
@@ -242,6 +251,7 @@ function buildSkipMetadata(params: {
       status: "SKIPPED",
       triggerSource: params.triggerSource,
       inputIdentity: params.inputIdentity,
+      runId: null,
       idempotencyDecision: params.reason,
       queuedAt: nowIso,
       startedAt: nowIso,
@@ -393,6 +403,7 @@ async function runEnhancementExecution(params: {
   enhancementInput: TranscriptEnhancementInputSegment[];
   triggerSource: TranscriptEnhancementTriggerSource;
   inputIdentity: string;
+  runId: string;
   startedAtMs: number;
   idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
 }): Promise<void> {
@@ -403,6 +414,7 @@ async function runEnhancementExecution(params: {
     enhancementInput,
     triggerSource,
     inputIdentity,
+    runId,
     startedAtMs,
     idempotencyDecision,
   } = params;
@@ -438,6 +450,28 @@ async function runEnhancementExecution(params: {
         : transcript.diarizedText;
 
     await db.$transaction(async (tx) => {
+      const latest = await tx.transcript.findUnique({
+        where: { id: transcript.id },
+        select: {
+          processingMetadata: true,
+          retranscribeCount: true,
+          updatedAt: true,
+        },
+      });
+      const latestMetadata = asMetadata(latest?.processingMetadata);
+      const latestEnhancement = asMetadata(
+        latestMetadata.transcriptEnhancement,
+      );
+      if (
+        !latest ||
+        latestEnhancement.runId !== runId ||
+        latestEnhancement.inputIdentity !== inputIdentity ||
+        resolveEnhancementStatus(latestEnhancement.status) !== "RUNNING" ||
+        latest.retranscribeCount !== transcript.retranscribeCount
+      ) {
+        return;
+      }
+
       if (persistEnhanced) {
         for (const segmentUpdate of segmentUpdates) {
           await tx.transcriptSegment.update({
@@ -450,11 +484,6 @@ async function runEnhancementExecution(params: {
         }
       }
 
-      const latest = await tx.transcript.findUnique({
-        where: { id: transcript.id },
-        select: { processingMetadata: true },
-      });
-      const latestMetadata = asMetadata(latest?.processingMetadata);
       const completedMetadata = buildCompletedMetadata({
         metadata: latestMetadata,
         triggerSource,
@@ -465,8 +494,8 @@ async function runEnhancementExecution(params: {
         idempotencyDecision,
       });
 
-      await tx.transcript.update({
-        where: { id: transcript.id },
+      const terminalized = await tx.transcript.updateMany({
+        where: { id: transcript.id, updatedAt: latest.updatedAt },
         data: {
           text:
             persistEnhanced && enhancedTranscriptText.length > 0
@@ -479,13 +508,35 @@ async function runEnhancementExecution(params: {
           processingMetadata: completedMetadata as Prisma.InputJsonValue,
         },
       });
+      if (terminalized.count === 0) {
+        throw new TranscriptEnhancementOwnershipLostError();
+      }
     });
   } catch (error) {
+    if (error instanceof TranscriptEnhancementOwnershipLostError) {
+      return;
+    }
     const latest = await db.transcript.findUnique({
       where: { id: transcript.id },
-      select: { processingMetadata: true },
+      select: {
+        processingMetadata: true,
+        retranscribeCount: true,
+        updatedAt: true,
+      },
     });
     const latestMetadata = asMetadata(latest?.processingMetadata);
+    const latestEnhancement = asMetadata(
+      latestMetadata.transcriptEnhancement,
+    );
+    if (
+      !latest ||
+      latestEnhancement.runId !== runId ||
+      latestEnhancement.inputIdentity !== inputIdentity ||
+      resolveEnhancementStatus(latestEnhancement.status) !== "RUNNING" ||
+      latest.retranscribeCount !== transcript.retranscribeCount
+    ) {
+      return;
+    }
     const failedMetadata = buildFailedMetadata({
       metadata: latestMetadata,
       triggerSource,
@@ -494,8 +545,8 @@ async function runEnhancementExecution(params: {
       idempotencyDecision,
       error,
     });
-    await db.transcript.update({
-      where: { id: transcript.id },
+    await db.transcript.updateMany({
+      where: { id: transcript.id, updatedAt: latest.updatedAt },
       data: {
         processingMetadata: failedMetadata as Prisma.InputJsonValue,
       },
@@ -717,10 +768,12 @@ export async function executeTranscriptEnhancement(params: {
         ? "manual_forced_rerun"
         : "started_new";
 
+  const runId = randomUUID();
   const runningMetadata = buildRunningMetadata({
     metadata,
     triggerSource,
     inputIdentity,
+    runId,
     idempotencyDecision,
   });
 
@@ -752,6 +805,7 @@ export async function executeTranscriptEnhancement(params: {
       enhancementInput,
       triggerSource,
       inputIdentity,
+      runId,
       startedAtMs,
       idempotencyDecision,
     }).catch((backgroundError) => {
@@ -771,6 +825,7 @@ export async function executeTranscriptEnhancement(params: {
       enhancementInput,
       triggerSource,
       inputIdentity,
+      runId,
       startedAtMs,
       idempotencyDecision,
     });
