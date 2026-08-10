@@ -31,8 +31,8 @@ Produce structured post-session coaching output from transcript/materials and ex
   narrative/diarized transcript plus the attributed timeline. They still make
   one canonical provider generation with unchanged model, temperature,
   reasoning, background, and output-token semantics.
-- Yandex DeepSeek input diagnostics use the existing conservative `chars / 4`
-  estimate. Yandex DeepSeek application budgets are:
+- Yandex DeepSeek input diagnostics use the existing `chars / 4` application
+  heuristic as an approximate guard. Yandex DeepSeek application budgets are:
   - complete provider input: 100,000 estimated tokens;
   - reserved provider instructions/schema: 10,000 estimated tokens;
   - session prompt: 90,000 estimated tokens.
@@ -55,6 +55,7 @@ Produce structured post-session coaching output from transcript/materials and ex
   execution fails before creating a provider generation with
   `INPUT_TOO_LARGE` and `contentDropped=false`. No substring, array cap, or
   provider-side truncation is used.
+- Provider-side capacity failures remain explicit failures.
 - A known `providerResponseId` remains recovery-first even if the current
   application budget would reject a new POST. This preserves an already
   accepted generation and does not create a duplicate.

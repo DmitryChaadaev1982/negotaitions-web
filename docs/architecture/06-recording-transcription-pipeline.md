@@ -149,8 +149,8 @@
   - catastrophic shrinkage is rejected per segment,
   - missing/failed chunk outputs fall back to original text.
 - Enhancement statuses in `processingMetadata.transcriptEnhancement.status`:
-  - `COMPLETED`: all chunks succeeded;
-  - `PARTIAL`: at least one chunk succeeded and at least one chunk used fallback;
+  - `COMPLETED`: all chunks succeeded and no source segment used fallback;
+  - `PARTIAL`: at least one chunk succeeded and at least one chunk or source segment used fallback;
   - `FAILED`: all chunks used fallback or orchestration failed;
   - `SKIPPED`: enhancement skipped due empty input.
 - Materials/debrief status UI maps only `COMPLETED` to explicit

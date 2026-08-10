@@ -2147,9 +2147,9 @@ async function runChunkedEnhancement(params: {
   const overallStatus: TranscriptEnhancementOverallStatus =
     successfulChunkCount === 0
       ? "FAILED"
-      : failedChunkCount === 0
-        ? "COMPLETED"
-        : "PARTIAL";
+      : failedChunkCount > 0 || fallbackSegmentCount > 0
+        ? "PARTIAL"
+        : "COMPLETED";
 
   const originalText = getSegmentsText(segments);
   const enhancedText = mergedSegments

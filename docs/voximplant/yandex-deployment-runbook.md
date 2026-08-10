@@ -179,6 +179,11 @@ NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
   rollback bundle must include the normalizer; do not substitute `chmod -R`.
 - If transcription quality regresses, return to `standard` profile and re-run A/B procedure.
 - For transcript enhancement rollout rollback, switch `TRANSCRIPT_ENHANCEMENT_MODE=single` and restart service.
+  Single mode prefers one provider request only when the input fits the
+  configured segment and character bounds. Oversized input still uses the
+  bounded chunked path, so this setting is not an operational switch for
+  disabling all chunking on arbitrarily large sessions; that preserves the
+  large-input safety guarantee.
 
 ## 14) Stage 3.9E JSON Schema rollout (manual env activation)
 

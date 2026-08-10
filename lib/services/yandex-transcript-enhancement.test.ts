@@ -770,6 +770,59 @@ test("chunked mode keeps partial fallback semantics with bounded retries", async
   );
 });
 
+test("chunked mode marks missing target fallback as PARTIAL", async () => {
+  await withEnv(
+    {
+      YANDEX_API_KEY: "test-key",
+      YANDEX_FOLDER_ID: "test-folder",
+      TRANSCRIPT_ENHANCEMENT_MODE: "chunked",
+      TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE: "legacy",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS: "4",
+      TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS: "1000",
+      TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY: "1",
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = (async (_url: string, init?: RequestInit) => {
+        const indexes = extractTargetIndexesFromPrompt(
+          String(parseFetchBody(init).input ?? ""),
+        );
+        return new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              segments: [
+                {
+                  index: indexes[0],
+                  cleanedText: "исправлен только первый сегмент",
+                },
+              ],
+              globalWarnings: [],
+            }),
+            status: "completed",
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      try {
+        const source = makeSegments(2, "missing-target");
+        const result = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(result.meta?.successfulChunkCount, 1);
+        assert.equal(result.meta?.failedChunkCount, 0);
+        assert.equal(result.meta?.fallbackSegmentCount, 1);
+        assert.equal(result.meta?.overallStatus, "PARTIAL");
+        assert.notEqual(result.meta?.overallStatus, "COMPLETED");
+        assert.equal(
+          result.segments[0]?.cleanedText,
+          "исправлен только первый сегмент",
+        );
+        assert.equal(result.segments[1]?.cleanedText, source[1]?.originalText);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
 test("json_schema mode missing key fails and preserves originals after retries", async () => {
   await withEnv(
     {

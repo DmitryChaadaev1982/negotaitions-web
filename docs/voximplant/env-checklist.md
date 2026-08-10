@@ -84,12 +84,13 @@ RC2 operational constraint:
 - `YANDEX_TRANSCRIPT_ENHANCEMENT_ENABLED=true|false`
 - `YANDEX_TRANSCRIPT_ENHANCEMENT_MODEL` (example: `deepseek-v4-flash`)
 - `YANDEX_TRANSCRIPT_ENHANCEMENT_MAX_OUTPUT_TOKENS` (example: `6000`)
-- `TRANSCRIPT_ENHANCEMENT_MODE=single|chunked` (default `single`, explicit rollback control)
-- `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS` (default `6`, chunked mode only)
-- `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS` (default `700`, chunked mode only)
-- `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`, chunked mode only)
-- `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`, chunked mode only)
-- `TRANSCRIPT_ENHANCEMENT_MAX_RETRIES` (default `1`, chunked mode only)
+- `TRANSCRIPT_ENHANCEMENT_MODE=single|chunked` (default `single`; `single`
+  uses one provider call only when the input fits the configured safe bounds)
+- `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS` (default `6`, chunk safety bound)
+- `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS` (default `700`, chunk safety bound)
+- `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`, bounded chunk path)
+- `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`, bounded chunk path)
+- `TRANSCRIPT_ENHANCEMENT_MAX_RETRIES` (default `1`, bounded chunk path)
 - DeepSeek credentials/endpoint vars as required by local Yandex integration code.
 
 ## Audio quality controls
