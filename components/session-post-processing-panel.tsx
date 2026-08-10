@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
-  AiAnalysisProgressReport,
+  AiAnalysisPendingReport,
   AiAnalysisReport,
 } from "@/components/session-materials-dashboard";
 import { Card, CardContent, CardHeader } from "@/components/card";
@@ -22,7 +22,6 @@ import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
   NegotiationAnalysisOutputSchema,
-  NegotiationAnalysisProgressSchema,
   type NegotiationAnalysisOutput,
 } from "@/lib/ai/negotiation-analysis";
 import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
@@ -73,7 +72,6 @@ type MaterialsStatusResponse = {
     notSharedMessage: string | null;
     analysisFromOlderTranscript?: boolean;
     analysisJson: unknown;
-    progress: unknown;
     errorMessage: string | null;
   };
   permissions: {
@@ -397,10 +395,6 @@ export function SessionPostProcessingPanel({
       : (value) => ParticipantAnalysisSchema.safeParse(value),
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
-  const parsedAiProgress = NegotiationAnalysisProgressSchema.safeParse(
-    ai?.progress,
-  );
-  const aiProgress = parsedAiProgress.success ? parsedAiProgress.data : null;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
@@ -543,7 +537,6 @@ export function SessionPostProcessingPanel({
               canStart: false,
               canRetry: false,
               canRerun: false,
-              progress: null,
             },
             permissions: {
               ...current.permissions,
@@ -1219,7 +1212,7 @@ export function SessionPostProcessingPanel({
         {isFacilitatorView &&
         (ai?.processingStage === "queued" ||
           ai?.processingStage === "analyzing") ? (
-          <AiAnalysisProgressReport progress={aiProgress} />
+          <AiAnalysisPendingReport />
         ) : null}
 
         {ai?.processingStage === "failed" && ai.errorMessage ? (

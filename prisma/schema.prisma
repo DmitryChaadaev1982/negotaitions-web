@@ -859,8 +859,6 @@ model AiAnalysis {
   executiveSummary       String?          @db.Text
   overallScore           Int?
   analysisJson           Json?
-  // Fenced, facilitator-only validated section snapshots while ANALYZING.
-  progressJson           Json?
   rawModelOutput         Json?
   errorMessage           String?          @db.Text
   startedAt              DateTime?

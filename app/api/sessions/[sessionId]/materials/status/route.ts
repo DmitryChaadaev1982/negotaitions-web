@@ -11,10 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
-import {
-  NegotiationAnalysisProgressSchema,
-  type NegotiationAnalysisOutput,
-} from "@/lib/ai/negotiation-analysis";
+import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import {
   getAnalysisForFacilitator,
   getAnalysisForObserver,
@@ -227,7 +224,6 @@ export async function GET(request: Request, context: RouteContext) {
           executiveSummary: true,
           overallScore: true,
           analysisJson: true,
-          progressJson: true,
           startedAt: true,
           completedAt: true,
           errorMessage: true,
@@ -556,17 +552,6 @@ export async function GET(request: Request, context: RouteContext) {
       ? (aiAnalysis?.sharedExecutiveSummary ?? null)
       : null;
 
-  const parsedProgress = NegotiationAnalysisProgressSchema.safeParse(
-    aiAnalysis?.progressJson,
-  );
-  const facilitatorProgress =
-    isFacilitator &&
-    (aiStatus === AiAnalysisStatus.QUEUED ||
-      aiStatus === AiAnalysisStatus.ANALYZING) &&
-    parsedProgress.success
-      ? parsedProgress.data
-      : null;
-
   const aiAnalysisResponse = {
     id: aiAnalysis?.id ?? null,
     status: aiAnalysis?.status ?? "NOT_STARTED",
@@ -575,7 +560,6 @@ export async function GET(request: Request, context: RouteContext) {
     overallScore:
       canViewAiAnalysis && isFacilitator ? (aiAnalysis?.overallScore ?? null) : null,
     analysisJson: canViewAiAnalysis ? analysisJsonForUser : null,
-    progress: facilitatorProgress,
     startedAt: aiAnalysis?.startedAt?.toISOString() ?? null,
     completedAt: aiAnalysis?.completedAt?.toISOString() ?? null,
     errorMessage: isFacilitator ? (aiAnalysis?.errorMessage ?? null) : null,

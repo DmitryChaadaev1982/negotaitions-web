@@ -697,7 +697,7 @@ test("AI Test 1 — AI analysis flow: QUEUED → COMPLETED with report", async (
   await expect(page.getByTestId("overall-score")).toBeVisible();
 });
 
-test("AI progressive — facilitator refresh restores sections while participant and observer see none", async ({
+test("AI whole report — refresh preserves truthful pending UX and viewers see no partial report", async ({
   request,
   page,
 }) => {
@@ -708,7 +708,7 @@ test("AI progressive — facilitator refresh restores sections while participant
   await createCompletedTranscript(session.id);
 
   await request.post("/api/test/mock-external-service", {
-    data: { error: "AI_ANALYSIS_PROGRESSIVE_HOLD" },
+    data: { error: "AI_ANALYSIS_HOLD" },
   });
   const analyzeResponse = await roomApiPost(
     request,
@@ -731,13 +731,14 @@ test("AI progressive — facilitator refresh restores sections while participant
       aiAnalysis: {
         status: string;
         processingStage: string;
-        progress: { completedSections?: string[] } | null;
+        analysisJson: unknown;
         canStart: boolean;
       };
     };
     expect(body.aiAnalysis.status).toBe("ANALYZING");
     expect(body.aiAnalysis.processingStage).toBe("analyzing");
-    expect(body.aiAnalysis.progress?.completedSections?.length ?? 0).toBeGreaterThan(0);
+    expect(body.aiAnalysis.analysisJson).toBeNull();
+    expect(body.aiAnalysis).not.toHaveProperty("progress");
     expect(body.aiAnalysis.canStart).toBe(false);
   }).toPass({ timeout: 5000 });
 
@@ -756,24 +757,27 @@ test("AI progressive — facilitator refresh restores sections while participant
       viewer,
     );
     const body = (await status.json()) as {
-      aiAnalysis: { progress?: unknown; analysisJson: unknown };
+      aiAnalysis: { analysisJson: unknown };
     };
-    expect(body.aiAnalysis.progress ?? null).toBeNull();
+    expect(body.aiAnalysis).not.toHaveProperty("progress");
     expect(body.aiAnalysis.analysisJson).toBeNull();
   }
 
   await authenticatePageAs(page, facilitator);
   await page.goto(`/join/${facilitator.joinToken}`);
-  await expect(page.getByTestId("ai-analysis-progress-report")).toBeVisible({
+  await expect(page.getByTestId("ai-analysis-pending-report")).toBeVisible({
     timeout: 5000,
   });
-  await expect(page.getByTestId("ai-progress-section-overview")).toHaveAttribute(
-    "data-progress-state",
-    "completed",
+  await expect(page.getByTestId("ai-pending-section-overview")).toHaveAttribute(
+    "data-analysis-state",
+    "pending",
   );
   await expect(
-    page.getByTestId("ai-progress-section-participantPersonalFeedback"),
-  ).toHaveAttribute("data-progress-state", "pending");
+    page.getByTestId("ai-pending-section-participantPersonalFeedback"),
+  ).toHaveAttribute("data-analysis-state", "pending");
+  await expect(page.getByTestId("ai-analysis-pending-report")).not.toContainText(
+    /arriving progressively|появляются по мере готовности/i,
+  );
   await expect(
     page.getByTestId("post-processing-run-ai-analysis-button"),
   ).toHaveCount(0);
@@ -785,7 +789,7 @@ test("AI progressive — facilitator refresh restores sections while participant
   ).not.toContainText(/can be started|можно запустить/i);
 
   await page.reload();
-  await expect(page.getByTestId("ai-analysis-progress-report")).toBeVisible({
+  await expect(page.getByTestId("ai-analysis-pending-report")).toBeVisible({
     timeout: 5000,
   });
 

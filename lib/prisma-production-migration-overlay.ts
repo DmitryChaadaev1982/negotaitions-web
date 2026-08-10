@@ -64,7 +64,6 @@ export const EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS = [
 export const EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS = [
   "20260807190000_harden_ai_analysis_operation_lifecycle",
   "20260808210000_add_ai_analysis_provider_response_id",
-  "20260810120000_add_ai_analysis_progress",
 ] as const;
 
 /**

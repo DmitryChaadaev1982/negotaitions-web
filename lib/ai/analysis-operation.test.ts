@@ -6,7 +6,6 @@ import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
   failAiAnalysisRun,
-  persistAiAnalysisProgress,
   persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
   startAiAnalysisRun,
@@ -43,7 +42,6 @@ function createMemoryStore(initial: Row | null = null) {
         transcriptId: params.transcriptId,
         transcriptRetranscribeCount: params.transcriptRetranscribeCount,
         language: params.language,
-        progressJson: null,
         updatedAt: params.now,
       };
       return { ...row };
@@ -69,7 +67,6 @@ function createMemoryStore(initial: Row | null = null) {
         transcriptId: params.transcriptId,
         transcriptRetranscribeCount: params.transcriptRetranscribeCount,
         language: params.language,
-        progressJson: null,
         updatedAt: params.now,
       };
       return true;
@@ -127,22 +124,6 @@ function createMemoryStore(initial: Row | null = null) {
       row = { ...row, providerResponseId: params.providerResponseId };
       return true;
     },
-    async persistProgress(params) {
-      trace.push(`progress:${params.owner.runToken}`);
-      if (
-        !row ||
-        row.id !== params.owner.analysisId ||
-        row.status !== AiAnalysisStatus.ANALYZING ||
-        row.runToken !== params.owner.runToken ||
-        !row.leaseExpiresAt ||
-        row.leaseExpiresAt.getTime() !== params.owner.leaseExpiresAt.getTime() ||
-        row.leaseExpiresAt.getTime() <= params.now.getTime()
-      ) {
-        return false;
-      }
-      row = { ...row, progressJson: params.progress };
-      return true;
-    },
     async complete(params) {
       trace.push(`complete:${params.owner.runToken}`);
       if (
@@ -158,7 +139,6 @@ function createMemoryStore(initial: Row | null = null) {
         status: AiAnalysisStatus.COMPLETED,
         leaseExpiresAt: null,
         providerResponseId: null,
-        progressJson: null,
         updatedAt: params.completedAt,
       };
       return true;
@@ -180,7 +160,6 @@ function createMemoryStore(initial: Row | null = null) {
         providerResponseId: params.clearProviderResponseId
           ? null
           : row.providerResponseId,
-        progressJson: null,
         updatedAt: params.completedAt,
       };
       return true;
@@ -397,90 +376,6 @@ test("provider response ID persistence is fenced by current run token and lease"
   });
   assert.equal(stalePersisted, null);
   assert.equal(memory.row?.providerResponseId, "resp_a");
-});
-
-test("progress writes are fenced and rerun clears superseded progress", async () => {
-  const memory = createMemoryStore();
-  const now = new Date("2026-08-07T12:00:00.000Z");
-  const firstClaim = await claimAiAnalysisRun({
-    ...claimInput,
-    now,
-    runToken: "progress-token-a",
-    store: memory.store,
-  });
-  assert.equal(firstClaim.state, "claimed");
-  if (firstClaim.state !== "claimed") return;
-  const firstOwner = await startAiAnalysisRun({
-    owner: firstClaim.owner,
-    now: new Date(now.getTime() + 500),
-    store: memory.store,
-  });
-  assert.ok(firstOwner);
-
-  const firstProgress = {
-    schemaVersion: 1,
-    completedSections: ["overview"],
-    analysis: { executiveSummary: "First run" },
-  };
-  assert.equal(
-    await persistAiAnalysisProgress({
-      owner: firstOwner,
-      progress: firstProgress,
-      now: new Date(now.getTime() + 1_000),
-      store: memory.store,
-    }),
-    true,
-  );
-  assert.deepEqual(memory.row?.progressJson, firstProgress);
-
-  const takeoverAt = new Date(firstOwner.leaseExpiresAt.getTime() + 1);
-  const secondClaim = await claimAiAnalysisRun({
-    ...claimInput,
-    now: takeoverAt,
-    runToken: "progress-token-b",
-    store: memory.store,
-  });
-  assert.equal(secondClaim.state, "claimed");
-  if (secondClaim.state !== "claimed") return;
-  assert.notEqual(secondClaim.owner.runToken, firstOwner.runToken);
-  assert.equal(memory.row?.progressJson, null);
-
-  assert.equal(
-    await persistAiAnalysisProgress({
-      owner: firstOwner,
-      progress: {
-        schemaVersion: 1,
-        completedSections: ["overview", "scores"],
-        analysis: { executiveSummary: "Stale run" },
-      },
-      now: new Date(takeoverAt.getTime() + 1),
-      store: memory.store,
-    }),
-    false,
-  );
-  assert.equal(memory.row?.progressJson, null);
-
-  const secondOwner = await startAiAnalysisRun({
-    owner: secondClaim.owner,
-    now: new Date(takeoverAt.getTime() + 2),
-    store: memory.store,
-  });
-  assert.ok(secondOwner);
-  const secondProgress = {
-    schemaVersion: 1,
-    completedSections: ["overview"],
-    analysis: { executiveSummary: "Second run" },
-  };
-  assert.equal(
-    await persistAiAnalysisProgress({
-      owner: secondOwner,
-      progress: secondProgress,
-      now: new Date(takeoverAt.getTime() + 3),
-      store: memory.store,
-    }),
-    true,
-  );
-  assert.deepEqual(memory.row?.progressJson, secondProgress);
 });
 
 async function claimAndRecordResponse(

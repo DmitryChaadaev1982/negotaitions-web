@@ -59,17 +59,16 @@ response with no usable text is `MODEL_EMPTY_OUTPUT`. Failure, cancellation,
 incomplete, missing status, and unknown status use explicit provider
 lifecycle errors and retain only bounded status/error-code/reason metadata.
 
-For progressive facilitator display, a nonterminal background GET may be
-inspected for complete top-level report members. Ordered schema sections are
-validated independently and persisted to `AiAnalysis.progressJson`. This does
-not relax the rule above: nonterminal text is never final `analysisJson`, never
-marks the operation `COMPLETED`, and terminal non-success output is ignored.
-
 The current verified contract covers `background=true` plus independent GET
 retrieval. Repository evidence does not establish resumable
 `background=true` + `stream=true`, so no provider stream is opened. Background
-GET retrieval is both the optional progress channel and the authoritative final
-recovery path.
+GET retrieval is the authoritative final recovery path.
+
+A live August 10, 2026 Yandex run returned no usable output in any nonterminal
+retrieval during approximately 85 seconds. The complete report appeared only
+with `completed`. Wave 2 therefore does not inspect or persist nonterminal
+output. This keeps one prompt, one generation, one full validation boundary,
+and the pre-Wave-2 report quality contract.
 
 A nonterminal response must include `id`; otherwise retrieval is impossible
 and the call ends deterministically. A completed response does not require an
@@ -153,11 +152,6 @@ The call tree is:
    elapsed-time deadline.
 4. Schema validation and fenced terminalization.
 
-Progress write failures are non-authoritative and do not cancel retrieval.
-Returning an ownership-loss fence from a progress write does stop stale local
-work. Successful/failing terminalization clears `progressJson`; rerun claim also
-clears it before assigning the new token.
-
 Wave 1 intentionally disables automatic compact fallback and optional depth
 generation. The arbitrary provider GET count ceiling is no longer a primary
 termination mechanism; elapsed deadlines are authoritative. Retryable GET
@@ -216,8 +210,9 @@ enhancement, the request invariant is:
 Do not replace it with flat `reasoning_effort`, `reasoningOptions`, or
 provider-specific thinking flags.
 
-Wave 2 adds fenced progressive section rendering from background retrieval
-snapshots without enabling unverified streaming. The following remain deferred:
+Wave 2 keeps the durable whole-report provider path and adds a truthful
+queued/analyzing pending-section UI without enabling unverified streaming or
+persisting speculative partial output. The following remain deferred:
 token-aware larger chunk packing, oversized single-utterance splitting,
 automatic mapping parallelism, and `processingMetadata` race remediation.
 
@@ -227,13 +222,12 @@ automatic mapping parallelism, and `processingMetadata` race remediation.
   token-aware packing. It does not silently drop utterances; large-input
   partitioning remains separate work.
 - Oversized single-utterance splitting remains unimplemented and is not needed
-  by retrieval-snapshot progress parsing.
-- Speaker mapping orchestration remains deterministic/sequential; progressive
-  analysis does not depend on mapping parallelism.
+  by the whole-report path.
+- Speaker mapping orchestration remains deterministic/sequential; analysis does
+  not depend on mapping parallelism.
 - `processingMetadata` writers outside the analysis row still include
-  read-modify-write paths (notably automatic mapping diagnostics). Wave 2 uses
-  the dedicated `AiAnalysis.progressJson` column instead of extending that
-  shared metadata race.
+  read-modify-write paths (notably automatic mapping diagnostics). Wave 2 does
+  not extend that shared metadata or add partial-analysis persistence.
 - Existing provider timeout and delay timers are scoped and cleaned up.
   Detached execution adds no browser timers or listeners; lease/provider-ID
   recovery remains the cleanup and takeover mechanism.

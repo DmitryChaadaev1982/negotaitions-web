@@ -38,8 +38,8 @@ This document maps High and Medium findings to remediations on
   commands are committed. No service or timer is enabled.
 - Current automated PostgreSQL provider-event and advisory-lock checks use the
   canonical `E2E_DATABASE_URL` database on `localhost:5433/negotiations_e2e`.
-  The retired `STAGE313C_TEST_DATABASE_URL` verifier-schema flow must not be
-  used for routine local validation.
+  The schema verifier also derives its isolated schema from this canonical URL;
+  it no longer reads the retired `STAGE313C_TEST_DATABASE_URL` target.
 
 ## Stage 3.13C-H nonblocking hardening
 

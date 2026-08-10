@@ -17,7 +17,6 @@ import {
   AiAnalysisProviderError,
   canRecoverProviderResponseAfterFailure,
   classifyAiAnalysisError,
-  buildNegotiationAnalysisProgressFromOutput,
   createMockAnalysisOutput,
   isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
@@ -29,7 +28,6 @@ import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
   failAiAnalysisRun,
-  persistAiAnalysisProgress,
   persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
   startAiAnalysisRun,
@@ -407,23 +405,8 @@ async function processMockAnalysis(
   }
 
   const mockOutput = createMockAnalysisOutput(language);
-  if (simulatedError === "AI_ANALYSIS_PROGRESSIVE_HOLD") {
-    for (const completedSectionCount of [1, 4, 7]) {
-      const progress = buildNegotiationAnalysisProgressFromOutput(
-        mockOutput,
-        completedSectionCount,
-      );
-      if (
-        progress &&
-        !(await persistAiAnalysisProgress({
-          owner,
-          progress: progress as Prisma.InputJsonValue,
-        }))
-      ) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 350));
-    }
+  if (simulatedError === "AI_ANALYSIS_HOLD") {
+    // Test-only hold used to exercise durable queued/analyzing UI and refresh.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
   }
   const completedAt = new Date();
@@ -497,11 +480,6 @@ async function processRealAnalysis(
           owner = persisted;
           return true;
         },
-        persistProgress: (progress) =>
-          persistAiAnalysisProgress({
-            owner,
-            progress: progress as Prisma.InputJsonValue,
-          }),
       });
     },
     complete: async ({ output, rawOutput, model, metrics }) => {

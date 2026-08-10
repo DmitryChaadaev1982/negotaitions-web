@@ -8,15 +8,15 @@
 - `TrainingEvent`, `EventParticipant`, `EventInvite`: event-level lobby and assignment.
 - `Recording`, `Transcript`, `TranscriptSegment`, `AiAnalysis`: post-session processing chain.
 
-`AiAnalysis` separates operation ownership, progressive display, and final
-publication:
+`AiAnalysis` separates durable operation ownership from final publication:
 
 - `runToken`, `leaseExpiresAt`, and `providerResponseId` own and recover the
   current durable provider operation;
-- nullable `progressJson` stores only validated facilitator section snapshots
-  for the current queued/analyzing run;
 - `analysisJson` remains the complete validated report;
 - `sharedAnalysisJson` remains the sanitized participant/observer publication.
+
+Queued/analyzing section placeholders are derived from operation status and do
+not persist or expose nonterminal provider output.
 
 ## Session Lifecycle Model
 

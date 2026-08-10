@@ -9,10 +9,14 @@ import {
   resolveApprovedStage313cTestDatabase,
   Stage313cTestDatabaseRefusal,
   STAGE313C_COORDINATOR_APPLICATION_NAME,
+  STAGE313C_TEST_DATABASE_APPROVED_ENV,
+  STAGE313C_TEST_DATABASE_URL_ENV,
   STAGE313C_TEST_SCHEMA,
+  STAGE313C_TEST_SCHEMA_ENV,
   STAGE313C_TEST_SCHEMA_MARKER,
   STAGE313C_VERIFIER_APPLICATION_NAME,
 } from "./stage-3-13c-test-database";
+import { assertIsolatedE2eDatabase } from "../tests/e2e/helpers/e2e-database";
 
 loadEnvConfig(process.cwd());
 
@@ -374,9 +378,10 @@ async function runVerifierChild(params: {
   repoRoot: string;
   verifierPath: string;
   scopedDatabaseUrl: string;
+  baseEnvironment: NodeJS.ProcessEnv;
 }): Promise<Record<string, unknown>[]> {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...params.baseEnvironment,
     DATABASE_URL: params.scopedDatabaseUrl,
     EMAIL_PROVIDER: "fake",
     EMAIL_DELIVERY_ENABLED: "true",
@@ -531,7 +536,17 @@ async function assertNoVerifierAdvisoryLocks(
 
 async function main() {
   const verifierName = parseVerifierName(process.argv.slice(2));
-  const approved = resolveApprovedStage313cTestDatabase(process.env);
+  const verifierDatabaseUrl = new URL(assertIsolatedE2eDatabase());
+  verifierDatabaseUrl.searchParams.delete("schema");
+  verifierDatabaseUrl.searchParams.delete("options");
+  verifierDatabaseUrl.searchParams.delete("application_name");
+  const verifierEnvironment: NodeJS.ProcessEnv = {
+    ...process.env,
+    [STAGE313C_TEST_DATABASE_URL_ENV]: verifierDatabaseUrl.toString(),
+    [STAGE313C_TEST_DATABASE_APPROVED_ENV]: "true",
+    [STAGE313C_TEST_SCHEMA_ENV]: STAGE313C_TEST_SCHEMA,
+  };
+  const approved = resolveApprovedStage313cTestDatabase(verifierEnvironment);
   const scopedDatabaseUrl =
     deriveStage313cSchemaScopedDatabaseUrl(approved);
   const repoRoot = process.cwd();
@@ -570,6 +585,7 @@ async function main() {
       repoRoot,
       verifierPath,
       scopedDatabaseUrl,
+      baseEnvironment: verifierEnvironment,
     });
     await assertVerifierSchemaMarker(client);
     verifiedTables = await assertNoApplicationRows(client);

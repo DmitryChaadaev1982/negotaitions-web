@@ -17,13 +17,7 @@ import {
   type SessionMaterialsRecordingSnapshot,
   type SessionMaterialsTranscriptSnapshot,
 } from "@/lib/session-materials-processing";
-import {
-  NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER,
-  NegotiationAnalysisProgressSchema,
-  type NegotiationAnalysisProgress,
-  type NegotiationAnalysisProgressSection,
-  type NegotiationAnalysisOutput,
-} from "@/lib/ai/negotiation-analysis";
+import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -76,7 +70,6 @@ type MaterialsStatusAiAnalysis = {
   overallScore: number | null;
   analysisFromOlderTranscript?: boolean;
   analysisJson: unknown;
-  progress: unknown;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
@@ -389,8 +382,26 @@ function SectionCard({
   );
 }
 
-const progressSectionTitleKeys: Record<
-  NegotiationAnalysisProgressSection,
+const AI_ANALYSIS_PENDING_SECTIONS = [
+  "overview",
+  "scores",
+  "roleObjectivesAnalysis",
+  "strengths",
+  "improvementAreas",
+  "detectedTactics",
+  "questionsAnalysis",
+  "listeningAndReframing",
+  "valueCreationAnalysis",
+  "nextTrainingFocus",
+  "facilitatorDebriefQuestions",
+  "oneMinuteFeedback",
+  "participantPersonalFeedback",
+] as const;
+
+type AiAnalysisPendingSection = (typeof AI_ANALYSIS_PENDING_SECTIONS)[number];
+
+const pendingSectionTitleKeys: Record<
+  AiAnalysisPendingSection,
   TranslationKey
 > = {
   overview: "sessionMaterials.executiveSummary",
@@ -408,161 +419,36 @@ const progressSectionTitleKeys: Record<
   participantPersonalFeedback: "sessionMaterials.participantPersonalFeedback",
 };
 
-function progressiveSectionLines(
-  section: NegotiationAnalysisProgressSection,
-  analysis: Partial<NegotiationAnalysisOutput>,
-): string[] {
-  switch (section) {
-    case "scores":
-      return Object.entries(analysis.scores ?? {}).map(
-        ([name, score]) => `${name}: ${score}/100`,
-      );
-    case "roleObjectivesAnalysis":
-      return (analysis.roleObjectivesAnalysis ?? []).map(
-        (item) => `${item.participantName}: ${item.objectiveProgress}`,
-      );
-    case "strengths":
-      return (analysis.strengths ?? []).map(
-        (item) => `${item.title}: ${item.recommendation}`,
-      );
-    case "improvementAreas":
-      return (analysis.improvementAreas ?? []).map(
-        (item) => `${item.title}: ${item.recommendation}`,
-      );
-    case "detectedTactics":
-      return (analysis.detectedTactics ?? []).map(
-        (item) => `${item.name} — ${item.usedBy}: ${item.effectiveness}`,
-      );
-    case "questionsAnalysis":
-      return [
-        analysis.questionsAnalysis?.diagnosticQualityComment,
-        ...(analysis.questionsAnalysis?.goodQuestions ?? []).map(
-          (item) => item.question,
-        ),
-        ...(analysis.questionsAnalysis?.missedQuestions ?? []).map(
-          (item) => item.suggestedQuestion,
-        ),
-      ].filter((value): value is string => Boolean(value));
-    case "listeningAndReframing":
-      return [
-        analysis.listeningAndReframing?.comment,
-        ...(analysis.listeningAndReframing?.goodExamples ?? []),
-        ...(analysis.listeningAndReframing?.missedOpportunities ?? []),
-      ].filter((value): value is string => Boolean(value));
-    case "valueCreationAnalysis":
-      return [
-        analysis.valueCreationAnalysis?.comment,
-        ...(analysis.valueCreationAnalysis?.createdOptions ?? []),
-        ...(analysis.valueCreationAnalysis?.missedOptions ?? []),
-      ].filter((value): value is string => Boolean(value));
-    case "nextTrainingFocus":
-      return (analysis.nextTrainingFocus ?? []).map(
-        (item) => `${item.focusArea}: ${item.why}`,
-      );
-    case "facilitatorDebriefQuestions":
-      return analysis.facilitatorDebriefQuestions ?? [];
-    case "oneMinuteFeedback":
-      return [
-        analysis.oneMinuteFeedback?.summary,
-        analysis.oneMinuteFeedback?.whatWorked,
-        analysis.oneMinuteFeedback?.whatToImprove,
-        analysis.oneMinuteFeedback?.nextStep,
-      ].filter((value): value is string => Boolean(value));
-    case "participantPersonalFeedback":
-      return (analysis.participantPersonalFeedback ?? []).map(
-        (item) =>
-          `${item.participantName}: ${[...item.achievements, ...item.nextSteps].join(" · ")}`,
-      );
-    case "overview":
-      return [];
-  }
-}
-
-export function AiAnalysisProgressReport({
-  progress,
-}: {
-  progress: NegotiationAnalysisProgress | null;
-}) {
+export function AiAnalysisPendingReport() {
   const { t } = useI18n();
-  const completed = new Set(progress?.completedSections ?? []);
-  const analysis = progress?.analysis ?? {};
 
   return (
-    <div className="space-y-3" data-testid="ai-analysis-progress-report">
+    <div className="space-y-3" data-testid="ai-analysis-pending-report">
       <div>
         <p className="text-sm font-medium text-cyan-200">
-          {t("sessionMaterials.aiAnalysisProgressTitle")}
+          {t("sessionMaterials.aiAnalysisPendingTitle")}
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          {t("sessionMaterials.aiAnalysisProgressDescription")}
+          {t("sessionMaterials.aiAnalysisPendingDescription")}
         </p>
       </div>
-      {NEGOTIATION_ANALYSIS_PROGRESS_SECTION_ORDER.map((section) => {
-        const isComplete = completed.has(section);
-        const lines = isComplete
-          ? progressiveSectionLines(section, analysis)
-          : [];
-        return (
-          <section
-            key={section}
-            data-testid={`ai-progress-section-${section}`}
-            data-progress-state={isComplete ? "completed" : "pending"}
-            className={
-              isComplete
-                ? "rounded-lg border border-emerald-500/25 bg-emerald-950/10 p-3"
-                : "rounded-lg border border-dashed border-slate-700/60 bg-slate-900/20 p-3"
-            }
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h3
-                className={
-                  isComplete
-                    ? "text-sm font-medium text-slate-100"
-                    : "text-sm font-medium text-slate-500"
-                }
-              >
-                {t(progressSectionTitleKeys[section])}
-              </h3>
-              <span
-                className={
-                  isComplete
-                    ? "text-xs font-medium text-emerald-300"
-                    : "text-xs text-slate-500"
-                }
-              >
-                {t(
-                  isComplete
-                    ? "sessionMaterials.aiAnalysisSectionReady"
-                    : "sessionMaterials.aiAnalysisSectionPending",
-                )}
-              </span>
-            </div>
-            {isComplete && section === "overview" ? (
-              <div className="mt-2 space-y-2">
-                <p className="text-sm leading-6 text-slate-300">
-                  {analysis.executiveSummary}
-                </p>
-                <p className="text-xs text-emerald-300">
-                  {t("sessionMaterials.overallScore")}: {analysis.overallScore}
-                  /100
-                </p>
-              </div>
-            ) : null}
-            {isComplete && lines.length > 0 ? (
-              <ul className="mt-2 space-y-1">
-                {lines.map((line, index) => (
-                  <li
-                    key={`${section}-${index}`}
-                    className="text-xs leading-5 text-slate-300"
-                  >
-                    • {line}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        );
-      })}
+      {AI_ANALYSIS_PENDING_SECTIONS.map((section) => (
+        <section
+          key={section}
+          data-testid={`ai-pending-section-${section}`}
+          data-analysis-state="pending"
+          className="rounded-lg border border-dashed border-slate-700/60 bg-slate-900/20 p-3"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium text-slate-500">
+              {t(pendingSectionTitleKeys[section])}
+            </h3>
+            <span className="text-xs text-slate-500">
+              {t("sessionMaterials.aiAnalysisSectionPending")}
+            </span>
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -1240,12 +1126,6 @@ export function SessionMaterialsDashboard({
     analysisJson: analysisData?.analysisJson ?? null,
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
-  const parsedAnalysisProgress = NegotiationAnalysisProgressSchema.safeParse(
-    analysisData?.progress,
-  );
-  const analysisProgress = parsedAnalysisProgress.success
-    ? parsedAnalysisProgress.data
-    : null;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
@@ -1475,7 +1355,6 @@ export function SessionMaterialsDashboard({
               processingStage: "queued",
               canStart: false,
               canRetry: false,
-              progress: null,
             },
             processing: {
               ...current.processing,
@@ -1921,7 +1800,7 @@ export function SessionMaterialsDashboard({
           {isFacilitatorView &&
           (liveAiAnalysisStage === "queued" ||
             liveAiAnalysisStage === "analyzing") ? (
-            <AiAnalysisProgressReport progress={analysisProgress} />
+            <AiAnalysisPendingReport />
           ) : null}
 
           {/* Error */}
