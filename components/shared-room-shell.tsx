@@ -30,7 +30,7 @@
  *   - debugPanel       — Voximplant AudioDiagnosticsPanel (null for LiveKit)
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
@@ -579,6 +579,8 @@ export function SharedRoomShell({
 }: SharedRoomShellProps) {
   const { t } = useI18n();
   const liveSessionUx = useRoomLiveSessionUx({ controlState, sessionCloseState });
+  const [isCompactSidebarOpen, setIsCompactSidebarOpen] = useState(false);
+  const compactSidebarId = "room-compact-sidebar-panel";
 
   // Normal session FINISH → debrief mode (stay in room, show debrief panel)
   const isDebriefMode =
@@ -592,6 +594,42 @@ export function SharedRoomShell({
   const isEventClosed =
     sessionCloseState.isClosed &&
     sessionCloseState.closeMessageKey !== "join.sessionFinishedMessage";
+  const compactSidebarTitle = isDebriefMode
+    ? t("room.debriefTitle")
+    : t("room.sessionPanel");
+
+  useEffect(() => {
+    const desktopSidebarMediaQuery = window.matchMedia("(min-width: 1280px)");
+    const closeCompactSidebarOnDesktop = () => {
+      if (desktopSidebarMediaQuery.matches) {
+        setIsCompactSidebarOpen(false);
+      }
+    };
+    closeCompactSidebarOnDesktop();
+    if (desktopSidebarMediaQuery.addEventListener) {
+      desktopSidebarMediaQuery.addEventListener("change", closeCompactSidebarOnDesktop);
+      return () =>
+        desktopSidebarMediaQuery.removeEventListener(
+          "change",
+          closeCompactSidebarOnDesktop,
+        );
+    }
+    desktopSidebarMediaQuery.addListener(closeCompactSidebarOnDesktop);
+    return () => desktopSidebarMediaQuery.removeListener(closeCompactSidebarOnDesktop);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompactSidebarOpen) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsCompactSidebarOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isCompactSidebarOpen]);
   const notificationsControlLabel =
     liveSessionUx.soundControlState === "OFF"
       ? t("room.soundOff")
@@ -669,10 +707,10 @@ export function SharedRoomShell({
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header
-        className="glass-header flex shrink-0 items-center justify-between gap-3 border-b border-slate-600/25 px-4 py-3"
+        className="glass-header flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-slate-600/25 px-4 py-3 sm:items-center"
         data-testid="session-room-header"
       >
-        <div className="flex min-w-0 items-start gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <BrandLogo
             variant="session"
             size="sm"
@@ -722,7 +760,17 @@ export function SharedRoomShell({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            className="inline-flex rounded-md border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 xl:hidden"
+            onClick={() => setIsCompactSidebarOpen((current) => !current)}
+            aria-expanded={isCompactSidebarOpen}
+            aria-controls={compactSidebarId}
+            data-testid="room-sidebar-toggle"
+          >
+            {compactSidebarTitle}
+          </button>
           <RoomExitControl
             href={SESSION_EXIT_DESTINATIONS.sessionsOverview}
             onExit={onExitSession}
@@ -795,7 +843,10 @@ export function SharedRoomShell({
             </div>
           ) : null}
           {/* Video layout */}
-          <div className="min-h-0 flex-1 overflow-hidden bg-[#0f172a]">
+          <div
+            className="min-h-0 flex-1 overflow-hidden bg-[#0f172a]"
+            data-testid="room-video-surface"
+          >
             {mediaArea}
           </div>
 
@@ -818,28 +869,38 @@ export function SharedRoomShell({
           controlState.negotiationState !== "FINISHED" &&
           !sessionCloseState.isClosed &&
           !staleConnection ? (
-            <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3 space-y-2">
-              <FacilitatorRoomControls
-                sessionId={sessionId}
-                roomAuth={roomAuth}
-                connectionId={connectionId}
-                controlState={controlState}
-                onControlStateChange={onControlStateChange}
-                onRecordingStateChange={onRecordingStateChange}
-                onNegotiationStarted={onNegotiationStarted}
-                onNegotiationFinished={onNegotiationFinished}
-              />
-              {/* Provider-specific recording controls (Voximplant only) */}
-              {recordingControls}
+            <div
+              className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3"
+              data-testid="room-facilitator-controls-container"
+            >
+              <div className="max-h-[42dvh] overflow-y-auto overscroll-contain pr-1">
+                <div className="space-y-2">
+                  <FacilitatorRoomControls
+                    sessionId={sessionId}
+                    roomAuth={roomAuth}
+                    connectionId={connectionId}
+                    controlState={controlState}
+                    onControlStateChange={onControlStateChange}
+                    onRecordingStateChange={onRecordingStateChange}
+                    onNegotiationStarted={onNegotiationStarted}
+                    onNegotiationFinished={onNegotiationFinished}
+                  />
+                  {/* Provider-specific recording controls (Voximplant only) */}
+                  {recordingControls}
+                </div>
+              </div>
             </div>
           ) : null}
 
           {/* Provider-specific media control bar (mic/camera/leave) */}
-          <div className="shrink-0 border-t border-slate-800 bg-slate-900">
+          <div
+            className="shrink-0 border-t border-slate-800 bg-slate-900"
+            data-testid="room-media-controls-strip"
+          >
             {typeof controlBar === "function"
               ? controlBar({ notificationsControl })
               : (
-                  <div className="flex items-center gap-2 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-2">
                     {notificationsControl}
                     <div className="min-w-0 flex-1">{controlBar}</div>
                   </div>
@@ -851,7 +912,10 @@ export function SharedRoomShell({
         </div>
 
         {/* Right sidebar: debrief panel when finished, regular sidebar otherwise */}
-        <div className="hidden h-full min-h-0 w-[28rem] shrink-0 overflow-hidden border-l border-slate-800 xl:w-[32rem] lg:block">
+        <div
+          className="hidden h-full min-h-0 w-[24rem] shrink-0 overflow-hidden border-l border-slate-800 xl:block 2xl:w-[28rem]"
+          data-testid="room-desktop-sidebar"
+        >
           {isDebriefMode ? (
             <DebriefPanel
               sessionId={sessionId}
@@ -868,6 +932,63 @@ export function SharedRoomShell({
             />
           )}
         </div>
+      </div>
+
+      <div
+        className={`fixed inset-0 z-40 xl:hidden ${
+          isCompactSidebarOpen ? "" : "pointer-events-none opacity-0"
+        } transition-opacity`}
+        aria-hidden={!isCompactSidebarOpen}
+        data-testid="room-compact-sidebar-root"
+      >
+        <button
+          type="button"
+          className={`absolute inset-0 bg-black/65 transition-opacity ${
+            isCompactSidebarOpen ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => setIsCompactSidebarOpen(false)}
+          aria-label={t("room.closeSidebar")}
+          tabIndex={isCompactSidebarOpen ? 0 : -1}
+          data-testid="room-compact-sidebar-backdrop"
+        />
+        <aside
+          id={compactSidebarId}
+          className={`absolute right-0 top-0 flex h-full w-full max-w-[26rem] min-h-0 flex-col border-l border-slate-700/70 bg-[#020617] shadow-[0_0_32px_rgba(2,6,23,0.85)] transition-transform ${
+            isCompactSidebarOpen ? "visible translate-x-0" : "invisible translate-x-full"
+          }`}
+          aria-hidden={!isCompactSidebarOpen}
+          data-testid="room-compact-sidebar-panel"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-700/70 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-100">{compactSidebarTitle}</p>
+            <button
+              type="button"
+              className="inline-flex rounded-md border border-slate-600 px-2.5 py-1 text-xs font-medium text-slate-100 hover:bg-slate-800"
+              onClick={() => setIsCompactSidebarOpen(false)}
+              aria-label={t("room.closeSidebar")}
+              data-testid="room-compact-sidebar-close"
+            >
+              {t("room.closeSidebar")}
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {isDebriefMode ? (
+              <DebriefPanel
+                sessionId={sessionId}
+                roomAuth={roomAuth}
+                participantType={participantType}
+                eventLobbyUrl={sidebar.event?.lobbyUrl}
+                sidebarData={sidebar}
+              />
+            ) : (
+              <RoomSidebar
+                roomAuth={roomAuth}
+                sidebar={sidebar}
+                negotiationState={controlState.negotiationState}
+              />
+            )}
+          </div>
+        </aside>
       </div>
     </>
   );

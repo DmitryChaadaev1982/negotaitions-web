@@ -430,34 +430,41 @@ export function StructuredVideoLayout({
   return (
     <div
       ref={containerRef}
-      className="flex h-full min-h-0 flex-col overflow-hidden p-2 sm:p-3"
+      className="flex h-full min-h-0 flex-col overflow-auto p-2 sm:p-3"
+      data-testid="lk-layout-root"
       style={{ gap: TILE_GAP_PX }}
     >
       {hasObservers ? (
         <section
           aria-label={t("room.observersSection")}
-          className="flex shrink-0 items-center justify-center overflow-hidden"
+          className="shrink-0 overflow-x-auto overflow-y-hidden"
+          data-testid="lk-observer-row"
           style={{
             height: sizes.observerRowHeight,
-            gap: TILE_GAP_PX,
           }}
         >
-          {observers.map((observer) => (
-            <SizedVideoFrame key={observer.id} heightPx={sizes.observer}>
-              <RoleVideoTile
-                layoutParticipant={observer}
-                isSpeaking={speakingIds.has(observer.id)}
-                trackRef={trackRefByIdentity.get(observer.id)}
-                layoutGeneration={layoutGeneration}
-              />
-            </SizedVideoFrame>
-          ))}
+          <div
+            className="mx-auto flex min-w-max items-center"
+            style={{ gap: TILE_GAP_PX }}
+          >
+            {observers.map((observer) => (
+              <SizedVideoFrame key={observer.id} heightPx={sizes.observer}>
+                <RoleVideoTile
+                  layoutParticipant={observer}
+                  isSpeaking={speakingIds.has(observer.id)}
+                  trackRef={trackRefByIdentity.get(observer.id)}
+                  layoutGeneration={layoutGeneration}
+                />
+              </SizedVideoFrame>
+            ))}
+          </div>
         </section>
       ) : null}
 
       <section
         aria-label={t("room.negotiationTableSection")}
-        className="grid min-h-0 flex-1 items-center overflow-hidden"
+        className="grid min-h-0 flex-1 items-center overflow-auto"
+        data-testid="lk-zone-main"
         style={{
           gap: TILE_GAP_PX,
           gridTemplateColumns: `minmax(0, 1.2fr) ${centerColumnWidth}px minmax(0, 1.2fr)`,
@@ -472,7 +479,8 @@ export function StructuredVideoLayout({
         />
 
         <div
-          className="flex h-full min-h-0 flex-col items-center justify-center overflow-hidden"
+          className="flex h-full min-h-0 flex-col items-center justify-center"
+          data-testid="lk-zone-center"
           style={{ width: centerColumnWidth, gap: TILE_GAP_PX }}
         >
           <CenterTimer controlState={layoutControlState} />

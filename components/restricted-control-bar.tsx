@@ -61,7 +61,7 @@ export function RestrictedControlBar({
   );
 
   return (
-    <div className="lk-control-bar">
+    <div className="lk-control-bar flex flex-wrap items-center gap-2 px-3 py-2">
       {visibleControls.microphone ? (
         <div className="lk-button-group">
           <TrackToggle
@@ -106,7 +106,9 @@ export function RestrictedControlBar({
       ) : null}
 
       {visibleControls.leave ? (
-        <DisconnectButton onClick={onLeave}>{t("room.leave")}</DisconnectButton>
+        <DisconnectButton className="sm:ml-auto" onClick={onLeave}>
+          {t("room.leave")}
+        </DisconnectButton>
       ) : null}
     </div>
   );

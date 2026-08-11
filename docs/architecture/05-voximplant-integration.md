@@ -162,6 +162,27 @@ record it fails to resolve arrive in one message.
   harness executes the shipped SDK source and fails when it changes shape,
   which surfaces that on upgrade.
 
+## Stage 3.13E Wave 3 responsive geometry hardening
+
+- Shared room shell now treats the right sidebar as desktop-only at `xl+`
+  (`components/shared-room-shell.tsx`) and uses a compact, accessible sidebar
+  drawer toggle below `xl` so session/debrief context remains reachable at
+  zoom-pressured widths.
+- Room header actions and media-control rows explicitly allow wrapping under
+  width pressure; this prevents control truncation/collision at 1093/1024/911/853 CSS widths.
+- Facilitator controls are now hosted in a bounded scroll container inside the
+  room footer so short-height viewports keep all mandatory actions reachable
+  without forcing page-level overflow.
+- Vox observer rail height is compacted with a `clamp(...)` contract, and the
+  desktop stage breakpoint moved from `lg` to `xl`, matching the shared-shell
+  sidebar breakpoint to avoid intermediate-width compression.
+- Event lobby shell follows the same `xl` desktop split rule and reduced sidebar
+  width at `xl`, preserving video + control usability in the browser-zoom matrix
+  while keeping sidebar content accessible.
+- Geometry verification is codified by
+  `tests/e2e/stage-3-13e-responsive-geometry.spec.ts` with viewport-matrix,
+  RU/EN pressure, observer-heavy (30/50/100), and lobby assertions.
+
 ## Source Notes
 
 - `components/voximplant-negotiation-room-page.tsx`

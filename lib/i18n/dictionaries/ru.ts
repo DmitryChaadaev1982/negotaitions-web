@@ -1074,6 +1074,7 @@ export const ru: Dictionary = {
       "Вы покинули переговорную комнату. Комната открыта — можно вернуться.",
     sessionMaterials: "Материалы сессии",
     sessionPanel: "Панель сессии",
+    closeSidebar: "Закрыть панель",
     facilitatorPanel: "Панель фасилитатора",
     participantRoleBriefingsDescription:
       "Брифинги ролей участников для этой сессии.",

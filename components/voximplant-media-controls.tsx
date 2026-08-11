@@ -57,7 +57,7 @@ export function VoximplantMediaControls({
         : t("room.mediaCameraOff");
 
   return (
-    <div className="lk-control-bar flex items-center gap-2 px-3 py-2">
+    <div className="lk-control-bar flex flex-wrap items-center gap-2 px-3 py-2">
       <button
         type="button"
         onClick={onToggleMic}
@@ -84,7 +84,9 @@ export function VoximplantMediaControls({
       </button>
       {trailingMediaControl}
       {statusText ? (
-        <span className="ml-auto text-xs text-slate-400">{statusText}</span>
+        <span className="basis-full text-xs text-slate-400 sm:ml-auto sm:basis-auto">
+          {statusText}
+        </span>
       ) : null}
     </div>
   );

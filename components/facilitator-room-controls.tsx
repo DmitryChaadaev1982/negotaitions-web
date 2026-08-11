@@ -342,7 +342,7 @@ export function FacilitatorRoomControls({
         onCancel={handleRecordingConsentCancel}
       />
     ) : null}
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           {t("room.facilitatorControls")}

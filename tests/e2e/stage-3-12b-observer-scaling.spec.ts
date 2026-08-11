@@ -669,7 +669,7 @@ async function collectLayoutMetrics(
         ) ?? [],
       );
       const mainStage = document.querySelector('[data-testid="vox-zone-main-desktop"]');
-      const rightSidebar = document.querySelector(".hidden.h-full.min-h-0.w-\\[28rem\\]");
+      const rightSidebar = document.querySelector('[data-testid="room-desktop-sidebar"]');
       const leftArrow = document.querySelector('[data-testid="vox-observer-scroll-left"]');
       const rightArrow = document.querySelector('[data-testid="vox-observer-scroll-right"]');
       const observerZoneBox = toBox(observerZone);
@@ -1030,12 +1030,15 @@ test("observer rail removes inactive observers while facilitator roster keeps th
 
   await page.setViewportSize(desktopViewport);
   await openRoom(page, session);
-  await expect(page.getByTestId("session-role-management-panel")).toBeVisible();
+  const desktopSidebar = page.getByTestId("room-desktop-sidebar");
+  await expect(
+    desktopSidebar.getByTestId("session-role-management-panel"),
+  ).toBeVisible();
   await expect(page.getByTestId("vox-observer-tile")).toHaveCount(3);
   await assertObserversRenderedWithCameraOff(page, 3);
   expect(await observerTileIds(page)).toEqual(session.observerParticipantIds);
   for (const participantId of session.observerParticipantIds) {
-    await expect(page.getByTestId(`role-row-${participantId}`)).toBeVisible();
+    await expect(desktopSidebar.getByTestId(`role-row-${participantId}`)).toBeVisible();
   }
 
   const initialMetrics = await captureEvidence(page, "presence-open-initial", 3);
@@ -1049,7 +1052,9 @@ test("observer rail removes inactive observers while facilitator roster keeps th
     session.observerParticipantIds[0],
     session.observerParticipantIds[2],
   ]);
-  await expect(page.getByTestId(`role-row-${session.observerParticipantIds[1]}`)).toBeVisible();
+  await expect(
+    desktopSidebar.getByTestId(`role-row-${session.observerParticipantIds[1]}`),
+  ).toBeVisible();
   const leftState = await roomConnectionState(session.observerConnectionIds[1]);
   expect(leftState.disconnectedReason).toBe("EXPLICIT_LEAVE");
   expect(leftState.disconnectedAt).not.toBeNull();
@@ -1062,7 +1067,9 @@ test("observer rail removes inactive observers while facilitator roster keeps th
     timeout: 5_000,
   });
   expect(await observerTileIds(page)).toEqual([session.observerParticipantIds[2]]);
-  await expect(page.getByTestId(`role-row-${session.observerParticipantIds[0]}`)).toBeVisible();
+  await expect(
+    desktopSidebar.getByTestId(`role-row-${session.observerParticipantIds[0]}`),
+  ).toBeVisible();
   const expiredState = await roomConnectionState(session.observerConnectionIds[0]);
   expect(new Date(expiredState.expiresAt).getTime()).toBeLessThan(Date.now());
 

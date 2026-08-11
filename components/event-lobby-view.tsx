@@ -986,7 +986,7 @@ export function EventLobbyView({
         ) : null}
       </header>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:overflow-hidden">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-y-auto p-4 xl:flex-row xl:overflow-hidden">
         <section
           className="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25"
           data-testid="event-lobby-video-area"
@@ -1062,7 +1062,10 @@ export function EventLobbyView({
           </div>
         </section>
 
-        <aside className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-visible rounded-2xl border border-slate-600/25 p-4 lg:w-[380px] lg:shrink-0 lg:overflow-y-auto xl:w-[420px]">
+        <aside
+          className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-hidden rounded-2xl border border-slate-600/25 p-4 xl:w-[360px] xl:shrink-0 xl:overflow-y-auto 2xl:w-[420px]"
+          data-testid="event-lobby-sidebar"
+        >
           {state.currentParticipant ? (
             <DesiredRolePreferenceCard
               participant={state.currentParticipant}

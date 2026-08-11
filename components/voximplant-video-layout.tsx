@@ -506,7 +506,7 @@ export default function VoximplantVideoLayout({
         key={tile.rosterEntry.id}
         className={
           options?.observerCompact
-            ? "w-40 min-w-0 max-w-full shrink-0 snap-start rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300 sm:w-48 lg:w-52"
+            ? "w-40 min-w-0 max-w-full shrink-0 snap-start rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300 sm:w-44 md:w-48 xl:w-52"
             : "min-w-0"
         }
         role={options?.observerCompact ? "listitem" : undefined}
@@ -557,7 +557,7 @@ export default function VoximplantVideoLayout({
         <RoleSection
           title={t("room.observerCountLabel", { count: observerTiles.length })}
           testId="vox-zone-observers"
-          className="h-[10rem] shrink-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/45 p-2 sm:h-[11.25rem] lg:h-[11.75rem]"
+          className="h-[clamp(8.5rem,24vh,11.75rem)] shrink-0 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/45 p-2"
         >
           {observerTiles.length > 0 ? (
             <div className="relative min-w-0" data-testid="vox-observer-rail-shell">
@@ -628,7 +628,7 @@ export default function VoximplantVideoLayout({
         </RoleSection>
 
         <div
-          className="hidden min-h-0 flex-1 gap-2 lg:grid lg:grid-cols-[minmax(0,38fr)_minmax(0,24fr)_minmax(0,38fr)]"
+          className="hidden min-h-0 flex-1 gap-2 xl:grid xl:grid-cols-[minmax(0,38fr)_minmax(0,24fr)_minmax(0,38fr)]"
           data-testid="vox-zone-main-desktop"
         >
           <RoleSection title={t("room.participantA")} testId="vox-zone-participant-a" className="min-h-0 min-w-0">
@@ -651,7 +651,7 @@ export default function VoximplantVideoLayout({
           </RoleSection>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto lg:hidden" data-testid="vox-zone-main-mobile">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto xl:hidden" data-testid="vox-zone-main-mobile">
           <RoleSection title={t("room.participants")} testId="vox-zone-participants-mobile">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}

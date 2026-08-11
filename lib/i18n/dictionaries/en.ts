@@ -1069,6 +1069,7 @@ export const en = {
       "You left the negotiation room. The room is still open — you can return.",
     sessionMaterials: "Session materials",
     sessionPanel: "Session panel",
+    closeSidebar: "Close sidebar",
     facilitatorPanel: "Facilitator panel",
     participantRoleBriefingsDescription:
       "Participant role briefings for this session.",

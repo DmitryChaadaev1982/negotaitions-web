@@ -1305,3 +1305,21 @@ Non-blocking manual-acceptance decisions:
 6. The existing timer/status card footprint must remain unchanged unless explicitly re-approved.
 7. No unrelated dependency/security/AI/email/infrastructure remediation is part of this Stage.
 8. Required migrations must be explicitly reviewed before production deployment.
+
+## 30. Wave 3 implementation notes (responsive geometry)
+
+- Desktop sidebar mode is now `xl+`; below `xl`, session/debrief sidebar content
+  is exposed through a compact drawer toggle in the room header.
+- Facilitator controls keep semantic actions/labels unchanged and now run inside
+  a bounded internal scroll container to preserve reachability under short
+  viewport heights.
+- Media-control rows (including Notifications) are wrap-capable to avoid hidden
+  controls at zoom-pressured widths.
+- Vox desktop stage breakpoint moved from `lg` to `xl`; observer rail uses a
+  compact clamped height contract to avoid pushing mandatory controls off-screen.
+- Lobby desktop split breakpoint moved from `lg` to `xl`, with narrower desktop
+  sidebar width at `xl`, preserving action reachability at 1093/1024/911/853
+  effective widths.
+- Automated Wave 3 matrix coverage is implemented in
+  `tests/e2e/stage-3-13e-responsive-geometry.spec.ts` and is intended to run
+  with observer-layout validation gates.
