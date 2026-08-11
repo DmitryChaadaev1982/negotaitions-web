@@ -1,3 +1,8 @@
+import {
+  buildEventJoinPath,
+  buildEventPublicJoinPath,
+} from "@/lib/invite-links";
+
 const DEFAULT_APP_URL = "http://localhost:3000";
 const DEFAULT_PUBLIC_INVITE_URL = "https://negotaitions.ru";
 
@@ -101,11 +106,11 @@ export function buildSessionRoomUrl(sessionId: string, joinToken: string) {
 }
 
 export function getEventJoinUrl(eventId: string) {
-  return `${getPublicAppUrl()}/events/${eventId}/join`;
+  return `${getPublicAppUrl()}${buildEventJoinPath(eventId)}`;
 }
 
 export function getEventPublicJoinUrl(publicJoinCode: string) {
-  return `${getPublicAppUrl()}/events/join/${publicJoinCode}`;
+  return `${getPublicAppUrl()}${buildEventPublicJoinPath(publicJoinCode)}`;
 }
 
 export function getEventLobbyUrl(

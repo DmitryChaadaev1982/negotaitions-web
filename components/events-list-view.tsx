@@ -23,7 +23,11 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/badge";
 import { VisibilityBadge } from "@/components/visibility-badge";
-import { getEventJoinUrl, getEventPublicJoinUrl } from "@/lib/config";
+import {
+  buildBrowserInviteUrl,
+  buildEventJoinPath,
+  buildEventPublicJoinPath,
+} from "@/lib/invite-links";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
   cancelTrainingEvent,
@@ -433,10 +437,11 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
   };
 
   const copyLink = async (event: EventRow) => {
-    const url =
+    const path =
       event.visibility === "PUBLIC"
-        ? getEventPublicJoinUrl(event.publicJoinCode)
-        : getEventJoinUrl(event.id);
+        ? buildEventPublicJoinPath(event.publicJoinCode)
+        : buildEventJoinPath(event.id);
+    const url = buildBrowserInviteUrl(window.location.origin, path);
     await navigator.clipboard.writeText(url);
     setCopyId(event.id);
     window.setTimeout(() => setCopyId(null), 2000);

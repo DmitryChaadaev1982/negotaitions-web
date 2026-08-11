@@ -79,7 +79,8 @@ export default async function SessionDetailPage({
   const displayStatus = resolveSessionDisplayStatus(session, session.participants);
   const caseSnapshot = resolveSessionCaseSnapshot(session);
 
-  const sessionUrl = `${getPublicAppUrl()}${buildAccountSessionRoomPath(id)}`;
+  const sessionInvitePath = buildAccountSessionRoomPath(id);
+  const sessionUrl = `${getPublicAppUrl()}${sessionInvitePath}`;
   const existingParticipantUserIds = session.participants
     .filter((p) => p.userId != null)
     .map((p) => p.userId!);
@@ -100,6 +101,7 @@ export default async function SessionDetailPage({
         displayStatus,
         isDeleted: session.deletedAt != null,
         sessionUrl,
+        sessionInvitePath,
         caseSnapshot: {
           sourceCaseId: caseSnapshot.sourceCaseId,
           title: caseSnapshot.title,

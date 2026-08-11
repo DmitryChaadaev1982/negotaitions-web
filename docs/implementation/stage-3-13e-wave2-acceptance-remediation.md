@@ -61,9 +61,10 @@ invite origins. It covers both LiveKit and Voximplant room shells.
 
 ### Public invite links
 
-- Public Event and standalone Session URLs use the canonical public origin.
-- Localhost and loopback origins are rejected for shareable links.
-- Production fallback is `https://negotaitions.ru`.
+- Browser Event and standalone Session copy actions use the current page
+  origin plus canonical relative invitation paths.
+- Server-generated links continue to use the configured canonical public
+  origin and reject localhost/loopback fallbacks.
 
 ## Verification
 

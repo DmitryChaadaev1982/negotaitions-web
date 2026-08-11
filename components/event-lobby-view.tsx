@@ -30,9 +30,12 @@ import {
 import {
   buildAccountSessionMaterialsPath,
   buildAccountSessionRoomPath,
-  getEventJoinUrl,
-  getEventPublicJoinUrl,
 } from "@/lib/config";
+import {
+  buildBrowserInviteUrl,
+  buildEventJoinPath,
+  buildEventPublicJoinPath,
+} from "@/lib/invite-links";
 import { resolveLobbyMediaControlPermission } from "@/lib/event-lobby-media-control-permission";
 import type { EventStateResponse } from "@/lib/event-state";
 import type {
@@ -690,10 +693,11 @@ export function EventLobbyView({
 
   const copyJoinLink = useCallback(async () => {
     if (!state) return;
-    const url =
+    const path =
       state.event.visibility === "PUBLIC"
-        ? getEventPublicJoinUrl(state.event.publicJoinCode)
-        : getEventJoinUrl(eventId);
+        ? buildEventPublicJoinPath(state.event.publicJoinCode)
+        : buildEventJoinPath(eventId);
+    const url = buildBrowserInviteUrl(window.location.origin, path);
     await navigator.clipboard.writeText(url);
     setCopyMessage(t("events.linkCopied"));
     window.setTimeout(() => setCopyMessage(null), 2000);

@@ -29,7 +29,7 @@ import {
   deriveUnassignedRoleEligibleParticipantIds,
   normalizeEventAssignmentDraft,
 } from "@/lib/event-role-ui-state";
-import { getPublicAppUrl } from "@/lib/config";
+import { buildBrowserInviteUrl } from "@/lib/invite-links";
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
 import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
@@ -492,8 +492,11 @@ export function EventHostControlsPanel({
       const links = session.participants
         .filter((participant) => participant.materialsUrl || participant.roomUrl)
         .map((participant) => {
-          const url = participant.roomUrl ?? participant.materialsUrl;
-          return `${participant.displayName}: ${getPublicAppUrl()}${url}`;
+          const url = participant.roomUrl ?? participant.materialsUrl!;
+          return `${participant.displayName}: ${buildBrowserInviteUrl(
+            window.location.origin,
+            url,
+          )}`;
         })
         .join("\n");
 

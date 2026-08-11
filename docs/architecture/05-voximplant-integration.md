@@ -18,6 +18,10 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 - Access APIs:
   - `app/api/sessions/[sessionId]/voximplant/access/route.ts`
   - `app/api/events/[id]/voximplant-access/route.ts`
+
+Event-lobby browser copy actions use the active page origin plus canonical
+relative invitation paths. This UI concern does not alter Voximplant access
+URLs, credentials, or server-generated invitation origins.
 - Recording dispatch adapter: `lib/voximplant/recording-dispatch.ts`.
 
 ## Control Channel

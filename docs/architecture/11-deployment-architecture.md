@@ -54,6 +54,10 @@
 - Next Server Actions behind nginx require the approved origin allowlist in
   `next.config.ts`; this fixes login/logout forwarded-host validation without
   weakening same-origin checks.
+- Browser-interactive Event/Session copy-link actions use the actual page
+  origin and canonical relative paths, so the same build works behind local,
+  production, or future domains. Server/email links remain bound to explicitly
+  configured canonical origins because no browser authority exists there.
 
 ## Source Notes
 

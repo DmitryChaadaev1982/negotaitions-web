@@ -3,11 +3,16 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildAccountSessionRoomPath,
   buildSessionMaterialsUrl,
   getEventJoinUrl,
   getEventPublicJoinUrl,
   getPublicAppUrl,
 } from "@/lib/config";
+import {
+  buildBrowserInviteUrl,
+  buildEventPublicJoinPath,
+} from "@/lib/invite-links";
 
 function withEnv<T>(
   patch: Record<string, string | undefined>,
@@ -103,9 +108,61 @@ test("event and standalone session links use canonical public origin", () => {
   assert.equal(links.sessionStandalone.includes("localhost"), false);
 });
 
-test("event lobby copy-link path uses canonical URL helpers", () => {
-  const source = readFileSync("components/event-lobby-view.tsx", "utf-8");
-  assert.match(source, /getEventPublicJoinUrl\(state\.event\.publicJoinCode\)/);
-  assert.match(source, /getEventJoinUrl\(eventId\)/);
-  assert.doesNotMatch(source, /window\.location\.origin\/events/);
+test("browser Event copy links use the current runtime origin", () => {
+  const path = buildEventPublicJoinPath("PZFGHRCG");
+  for (const origin of [
+    "https://local.negotaitions.ru",
+    "https://negotaitions.ru",
+    "https://training.example.com",
+  ]) {
+    assert.equal(
+      buildBrowserInviteUrl(origin, path),
+      `${origin}/events/join/PZFGHRCG`,
+    );
+  }
+});
+
+test("browser standalone Session copy links use the current runtime origin", () => {
+  const path = buildAccountSessionRoomPath("session_123");
+  for (const origin of [
+    "https://local.negotaitions.ru",
+    "https://negotaitions.ru",
+    "https://training.example.com",
+  ]) {
+    const url = buildBrowserInviteUrl(origin, path);
+    assert.equal(url, `${origin}/room/session_123`);
+    assert.equal(url.includes("localhost:3000"), false);
+  }
+});
+
+test("browser copy-link builder has no hardcoded deployment domain", () => {
+  const source = readFileSync("lib/invite-links.ts", "utf-8");
+  assert.doesNotMatch(source, /negotaitions\.ru/);
+  assert.doesNotMatch(source, /localhost:3000/);
+  assert.throws(
+    () => buildBrowserInviteUrl("https://training.example.com", "//attacker.example/join"),
+    /root-relative/,
+  );
+});
+
+test("Event and Session browser copy actions use runtime origin with relative paths", () => {
+  const eventLobbySource = readFileSync("components/event-lobby-view.tsx", "utf-8");
+  const eventsListSource = readFileSync("components/events-list-view.tsx", "utf-8");
+  const eventHostSource = readFileSync(
+    "components/event-host-controls-panel.tsx",
+    "utf-8",
+  );
+  const sessionDetailSource = readFileSync("components/session-detail-view.tsx", "utf-8");
+
+  for (const source of [eventLobbySource, eventsListSource, eventHostSource]) {
+    assert.match(
+      source,
+      /buildBrowserInviteUrl\(\s*window\.location\.origin,/,
+    );
+    assert.doesNotMatch(source, /getPublicAppUrl\(\)/);
+  }
+  assert.match(
+    sessionDetailSource,
+    /buildBrowserInviteUrl\(\s*window\.location\.origin,\s*session\.sessionInvitePath/,
+  );
 });

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { buildAccountSessionRoomPath } from "@/lib/config";
+import { buildBrowserInviteUrl } from "@/lib/invite-links";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 import { AddParticipantForm } from "@/components/add-participant-form";
@@ -55,6 +56,7 @@ type SessionDetailViewProps = {
     displayStatus: SessionDisplayStatus;
     isDeleted: boolean;
     sessionUrl: string;
+    sessionInvitePath: string;
     caseSnapshot: {
       sourceCaseId: string;
       title: string;
@@ -182,12 +184,16 @@ export function SessionDetailView({
   }, [notesModalParticipant, notesByParticipantId, participantsWithLiveNotes]);
 
   const handleCopySessionLink = async () => {
+    const inviteUrl = buildBrowserInviteUrl(
+      window.location.origin,
+      session.sessionInvitePath,
+    );
     try {
-      await navigator.clipboard.writeText(session.sessionUrl);
+      await navigator.clipboard.writeText(inviteUrl);
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     } catch {
-      window.prompt(t("sessions.copySessionLinkPrompt"), session.sessionUrl);
+      window.prompt(t("sessions.copySessionLinkPrompt"), inviteUrl);
     }
   };
 

@@ -87,9 +87,10 @@ lifetime; it must not reuse the short debrief grace.
 
 ## Stage 3.13E Wave 2 Acceptance Remediation Notes
 
-- Public invitation links (Event copy-link and standalone Session invite links)
-  must be generated from canonical public origin helpers and must never fall
-  back to localhost/loopback origins.
+- Interactive browser copy-link actions combine the current
+  `window.location.origin` with canonical relative Event/Session invitation
+  paths. Server-generated links without a browser context continue to use the
+  configured canonical public origin.
 - FINISHED presentation keeps a strict 2500 ms finish-line window derived from
   authoritative `negotiationEndedAt`/`serverNow`; subsequent polls may shorten
   but never re-extend the local deadline.

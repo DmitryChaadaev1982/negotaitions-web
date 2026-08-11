@@ -46,6 +46,9 @@
   - `negotaitions.ru`
   - `app.negotaitions.ru`
   - `local.negotaitions.ru` (local/tunnel testing domain)
+- These domains are deployment examples, not a browser copy-link allowlist.
+  Interactive invitation copies use the page's actual origin; server and email
+  generation uses configured canonical origins.
 - Reverse-proxy + process-manager model:
   - nginx in front of Node runtime.
   - systemd service `negotaitions-poc` running app process.
