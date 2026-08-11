@@ -1,61 +1,14 @@
 "use client";
 
-import { NegotiationState, ParticipantType } from "@/app/generated/prisma/enums";
+import { NegotiationState } from "@/app/generated/prisma/enums";
 import type { ControlState } from "@/lib/negotiation-control";
 import { formatSecondsAsMmSs } from "@/lib/negotiation-duration";
+import {
+  buildRoomTimerPresentation,
+  isNegotiationTimerVisible,
+  isPreparationTimerVisible,
+} from "@/lib/room-timer-presentation";
 import { useI18n } from "@/lib/i18n/useI18n";
-
-function getStateMessage(
-  negotiationState: NegotiationState,
-  participantType: ParticipantType,
-  controlState: ControlState,
-  t: ReturnType<typeof useI18n>["t"],
-) {
-  switch (negotiationState) {
-    case NegotiationState.PREPARATION:
-      return {
-        title: t("room.preparation"),
-        subtitle: t("room.participantsCanPrepare"),
-      };
-    case NegotiationState.PREPARATION_RUNNING:
-      return {
-        title: t("room.preparation"),
-        subtitle: controlState.preparationTimeOver ? t("room.preparationTimeOver") : null,
-      };
-    case NegotiationState.PREPARATION_PAUSED:
-      return {
-        title: t("room.preparationPaused"),
-        subtitle: null,
-      };
-    case NegotiationState.READY_TO_START:
-      return {
-        title: controlState.preparationTimeOver
-          ? t("room.preparationTimeOver")
-          : t("room.readyToStartNegotiation"),
-        subtitle: null,
-      };
-    case NegotiationState.RUNNING:
-      return {
-        title: t("room.negotiationInProgress"),
-        subtitle:
-          participantType === ParticipantType.PARTICIPANT
-            ? null
-            : t("room.microphoneMutedDuringNegotiation"),
-      };
-    case NegotiationState.PAUSED:
-      return {
-        title: t("room.pausedByFacilitator"),
-        subtitle: null,
-      };
-    case NegotiationState.FINISHED:
-      return {
-        title: t("room.negotiationFinishedDebrief"),
-        subtitle: null,
-      };
-    default:
-      return { title: "", subtitle: null };
-  }
-}
 
 export function RoomTimerPanel({ controlState }: { controlState: ControlState }) {
   const { t } = useI18n();
@@ -66,19 +19,20 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
     preparationRemainingSeconds,
     preparationDurationSeconds,
   } = controlState;
-  const isNegotiationExpired =
-    negotiationState === NegotiationState.RUNNING && remainingSeconds === 0;
+  const isManualFinish =
+    negotiationState === NegotiationState.FINISHED && remainingSeconds > 0;
+  const stateMessage = buildRoomTimerPresentation(controlState);
+  const isFinalMinuteState =
+    negotiationState === NegotiationState.RUNNING &&
+    remainingSeconds > 10 &&
+    remainingSeconds <= 60;
+  const isFinalTenState =
+    negotiationState === NegotiationState.RUNNING &&
+    remainingSeconds > 0 &&
+    remainingSeconds <= 10;
 
-  const showPreparationTimer =
-    negotiationState === NegotiationState.PREPARATION ||
-    negotiationState === NegotiationState.PREPARATION_RUNNING ||
-    negotiationState === NegotiationState.PREPARATION_PAUSED;
-
-  const showNegotiationTimer =
-    negotiationState === NegotiationState.READY_TO_START ||
-    negotiationState === NegotiationState.RUNNING ||
-    negotiationState === NegotiationState.PAUSED ||
-    negotiationState === NegotiationState.FINISHED;
+  const showPreparationTimer = isPreparationTimerVisible(negotiationState);
+  const showNegotiationTimer = isNegotiationTimerVisible(negotiationState);
 
   let preparationLabel: string | null = null;
   if (showPreparationTimer) {
@@ -94,25 +48,42 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
     if (negotiationState === NegotiationState.READY_TO_START) {
       negotiationLabel = formatSecondsAsMmSs(durationSeconds);
     } else if (negotiationState === NegotiationState.FINISHED) {
-      negotiationLabel = formatSecondsAsMmSs(remainingSeconds);
+      negotiationLabel = isManualFinish
+        ? formatSecondsAsMmSs(remainingSeconds)
+        : "00:00";
     } else {
-      negotiationLabel = isNegotiationExpired
-        ? "00:00"
-        : formatSecondsAsMmSs(remainingSeconds);
+      negotiationLabel = formatSecondsAsMmSs(remainingSeconds);
     }
   }
 
-  const stateMessage = getStateMessage(
-    negotiationState,
-    controlState.participantType,
-    controlState,
-    t,
-  );
+  const panelToneClass =
+    stateMessage.tone === "finished"
+      ? "border border-emerald-400/70 bg-emerald-900/30"
+      : stateMessage.tone === "critical"
+        ? "border border-rose-400/70 bg-rose-900/25"
+        : stateMessage.tone === "warning"
+          ? "border border-amber-400/70 bg-amber-900/25"
+          : "border border-slate-700/70 bg-slate-800/90";
+  const timerDigitClass =
+    stateMessage.tone === "finished"
+      ? "text-emerald-200"
+      : isFinalTenState
+        ? "text-rose-300"
+        : isFinalMinuteState
+          ? "text-amber-300"
+          : negotiationState === NegotiationState.READY_TO_START
+            ? "text-slate-300"
+            : negotiationState === NegotiationState.PREPARATION ||
+                negotiationState === NegotiationState.PREPARATION_RUNNING ||
+                negotiationState === NegotiationState.PREPARATION_PAUSED
+              ? "text-slate-300"
+              : "text-emerald-300";
 
   return (
     <div
-      className="w-full rounded-xl bg-slate-800/90 px-3 py-2 text-center shadow-lg sm:rounded-2xl sm:px-4 sm:py-3"
+      className={`w-full rounded-xl px-3 py-2 text-center shadow-lg sm:rounded-2xl sm:px-4 sm:py-3 ${panelToneClass}`}
       data-testid="room-server-timer"
+      data-state={stateMessage.presentationState}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {preparationLabel ? (
@@ -131,14 +102,10 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
               {t("room.negotiation")}
             </p>
             <div
-              className={`font-mono text-xl font-semibold tabular-nums sm:text-2xl ${
-                isNegotiationExpired
-                  ? "text-rose-400"
-                  : remainingSeconds <= 60 && negotiationState === NegotiationState.RUNNING
-                    ? "text-amber-400"
-                    : negotiationState === NegotiationState.READY_TO_START
-                      ? "text-slate-300"
-                      : "text-emerald-400"
+              className={`font-mono text-xl font-semibold tabular-nums sm:text-2xl ${timerDigitClass} ${
+                isFinalTenState
+                  ? "motion-safe:scale-105 motion-safe:transition-transform motion-reduce:scale-100"
+                  : ""
               }`}
             >
               {negotiationLabel}
@@ -146,9 +113,19 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
           </div>
         ) : null}
       </div>
-      <p className="mt-2 text-xs font-medium text-white/90 sm:text-sm">{stateMessage.title}</p>
-      {stateMessage.subtitle ? (
-        <p className="mt-0.5 text-[10px] text-white/60 sm:text-xs">{stateMessage.subtitle}</p>
+      <p className="mt-2 text-xs font-medium text-white/90 sm:text-sm">
+        <span
+          className="mr-1 inline-block rounded border border-white/40 px-1 text-[10px] align-middle uppercase tracking-wide text-white/80"
+          aria-hidden="true"
+        >
+          {stateMessage.icon}
+        </span>
+        <span className="align-middle">{t(stateMessage.titleKey)}</span>
+      </p>
+      {stateMessage.subtitleKey ? (
+        <p className="mt-0.5 text-[10px] text-white/60 sm:text-xs">
+          {t(stateMessage.subtitleKey)}
+        </p>
       ) : null}
     </div>
   );

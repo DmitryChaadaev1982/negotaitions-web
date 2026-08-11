@@ -52,6 +52,7 @@ import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { useRoomLiveSessionUx } from "@/lib/use-room-live-session-ux";
 import type { RoomRecordingState, ShellSessionCloseState } from "@/lib/room-provider/types";
 import { formatRoomHeaderTitle } from "@/lib/room-header-title";
 
@@ -534,16 +535,33 @@ export function SharedRoomShell({
   recordingControls,
 }: SharedRoomShellProps) {
   const { t } = useI18n();
+  const liveSessionUx = useRoomLiveSessionUx({ controlState, sessionCloseState });
 
   // Normal session FINISH → debrief mode (stay in room, show debrief panel)
   const isDebriefMode =
     sessionCloseState.isClosed &&
-    sessionCloseState.closeMessageKey === "join.sessionFinishedMessage";
+    sessionCloseState.closeMessageKey === "join.sessionFinishedMessage" &&
+    !liveSessionUx.isFinishLineActive;
   const showDebriefModeNotice =
     isDebriefMode && sidebar.event?.status !== "COMPLETED";
 
   // Event-closed or other closures → blocking overlay
-  const isEventClosed = sessionCloseState.isClosed && !isDebriefMode;
+  const isEventClosed =
+    sessionCloseState.isClosed &&
+    sessionCloseState.closeMessageKey !== "join.sessionFinishedMessage";
+  const soundControlLabel =
+    liveSessionUx.soundControlState === "OFF"
+      ? t("room.soundOff")
+      : liveSessionUx.soundControlState === "ENABLED"
+        ? t("room.soundOn")
+        : t("room.enableSound");
+  const soundControlAriaLabel =
+    liveSessionUx.soundControlState === "OFF"
+      ? t("room.enableSessionSound")
+      : liveSessionUx.soundControlState === "ENABLED"
+        ? t("room.disableSessionSound")
+        : t("room.enableSound");
+  const soundControlPressed = liveSessionUx.soundControlState === "ENABLED";
 
   return (
     <>
@@ -551,6 +569,17 @@ export function SharedRoomShell({
       {audioRenderer}
       {micEnforcement}
       {speakingTracker}
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="room-live-status-region"
+      >
+        <span key={liveSessionUx.announcement?.id ?? 0}>
+          {liveSessionUx.announcement?.text ?? ""}
+        </span>
+      </div>
 
       {/* Presence heartbeat (works for both providers via roomAuth) */}
       <SessionRoomPresenceHeartbeat
@@ -674,6 +703,17 @@ export function SharedRoomShell({
             </RoomExitControl>
           ) : null}
           <RejoinNavLink onNavigate={onExitSession} />
+          <button
+            type="button"
+            className="rounded-md border border-slate-600 bg-slate-900/40 px-2.5 py-1 text-xs text-slate-100 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => void liveSessionUx.onSoundControlPress()}
+            aria-label={soundControlAriaLabel}
+            aria-pressed={soundControlPressed}
+            disabled={liveSessionUx.soundControlBusy}
+            data-testid="room-sound-control"
+          >
+            {soundControlLabel}
+          </button>
           <LanguageSwitcher />
           {/* Provider-specific leave button slot */}
           {leaveButton}
@@ -723,7 +763,10 @@ export function SharedRoomShell({
           {autoplayUnlockBanner}
 
           {/* Facilitator controls — hidden in debrief/closed states */}
-          {controlState.canControl && !sessionCloseState.isClosed && !staleConnection ? (
+          {controlState.canControl &&
+          controlState.negotiationState !== "FINISHED" &&
+          !sessionCloseState.isClosed &&
+          !staleConnection ? (
             <div className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3 space-y-2">
               <FacilitatorRoomControls
                 sessionId={sessionId}
