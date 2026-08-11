@@ -68,6 +68,21 @@
 - Manual stop/cancel state is represented with explicit transcript failure sentinel.
 - Session pause windows (`SessionPauseInterval`) are converted to recording-relative offsets and classified against transcript segments before persistence.
 
+## Single-Run Admission
+
+- Initial transcription and manual retranscription serialize admission by
+  locking the owning non-deleted `Session` row.
+- The current `Transcript` status check, generation/archive preparation, and
+  `QUEUED` upsert execute in the same transaction. A competing request waits,
+  observes the committed active claim, and returns `409` without starting a
+  second provider run.
+- Provider download/transcription starts only after the claim transaction
+  commits, so the row lock is not held across external work.
+- This Session-scoped admission fence is shared by standalone and Event-created
+  Sessions. It preserves the existing post-transcription enhancement trigger
+  while preventing duplicate provider cost and competing raw/enhancement
+  persistence for one transcript generation.
+
 ## Observability
 
 - Processing metadata stores preprocessing decisions, provider timings, and quality indicators.

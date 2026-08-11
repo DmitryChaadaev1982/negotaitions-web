@@ -183,7 +183,7 @@ test("enhancement input identity changes when raw hash changes", async () => {
   }
 });
 
-test("simultaneous equivalent runs acquire lock once", async () => {
+test("simultaneous automatic initial enhancement runs execute provider once", async () => {
   await withEnhancementEnv(async () => {
     const previousDatabaseUrl = process.env.DATABASE_URL;
     process.env.DATABASE_URL =
@@ -259,12 +259,12 @@ test("simultaneous equivalent runs acquire lock once", async () => {
       const [first, second] = await Promise.all([
         executeTranscriptEnhancement({
           transcriptId: state.id,
-          triggerSource: "manual",
+          triggerSource: "automatic_initial_transcription",
           dependencies: { db: db as never, enhance: enhance as never },
         }),
         executeTranscriptEnhancement({
           transcriptId: state.id,
-          triggerSource: "manual",
+          triggerSource: "automatic_initial_transcription",
           dependencies: { db: db as never, enhance: enhance as never },
         }),
       ]);
@@ -272,6 +272,20 @@ test("simultaneous equivalent runs acquire lock once", async () => {
       assert.equal(providerCalls, 1);
       const outcomes = [first.outcome, second.outcome].sort();
       assert.deepEqual(outcomes, ["already_running", "started"]);
+      assert.equal(
+        (
+          state.processingMetadata
+            .transcriptEnhancement as Record<string, unknown>
+        ).triggerSource,
+        "automatic_initial_transcription",
+      );
+      assert.equal(
+        (
+          state.processingMetadata
+            .transcriptEnhancement as Record<string, unknown>
+        ).status,
+        "COMPLETED",
+      );
     } finally {
       if (previousDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

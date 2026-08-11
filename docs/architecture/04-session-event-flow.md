@@ -105,7 +105,12 @@ lifetime; it must not reuse the short debrief grace.
 - `Session.facilitatorId` is the canonical facilitator owner identity.
 - Event owner (`TrainingEvent.hostUserId`) keeps administrative event/session rights but does not auto-promote to session facilitator on room entry.
 - Facilitator reassignment is explicit and centralized through session role-management actions, not through implicit participant upsert paths.
-- Reassignment updates `Session.facilitatorId` and participant capabilities deterministically; it does not rely on runtime read-time type demotion.
+- Reassignment updates `Session.facilitatorId`, both participant capabilities,
+  and both users' still-active Session-room lease roles transactionally. The
+  promoted facilitator can use the existing connection without a hidden
+  refresh, while the demoted facilitator loses strict control authority
+  immediately. Expired/finalized leases remain terminal and fresh claims read
+  the current participant type.
 
 ## Event Presence DTO
 

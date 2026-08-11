@@ -18,6 +18,7 @@ import {
   runMockTranscription,
   runRealTranscription,
 } from "@/lib/services/transcription-runner";
+import { lockSessionTranscriptionClaim } from "@/lib/services/transcription-run-claim";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
 
 export const runtime = "nodejs";
@@ -104,64 +105,82 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const existingTranscript = await prisma.transcript.findUnique({
-    where: { sessionId },
-    select: { id: true, status: true, text: true },
+  const now = new Date();
+  const claim = await prisma.$transaction(async (tx) => {
+    const sessionLocked = await lockSessionTranscriptionClaim(tx, sessionId);
+    if (!sessionLocked) {
+      return { kind: "session_not_found" } as const;
+    }
+
+    const existingTranscript = await tx.transcript.findUnique({
+      where: { sessionId },
+      select: { id: true, status: true, text: true },
+    });
+
+    if (existingTranscript && isTranscriptionActive(existingTranscript.status)) {
+      return { kind: "already_active", transcript: existingTranscript } as const;
+    }
+
+    // A completed transcript must go through the explicit retranscription path.
+    if (
+      existingTranscript?.status === TranscriptStatus.COMPLETED &&
+      existingTranscript.text.trim()
+    ) {
+      return { kind: "already_completed", transcript: existingTranscript } as const;
+    }
+
+    const transcript = await tx.transcript.upsert({
+      where: { sessionId },
+      create: {
+        sessionId,
+        recordingId: recording.id,
+        source: TranscriptSource.GENERATED,
+        status: TranscriptStatus.QUEUED,
+        text: existingTranscript?.text ?? "",
+        language: language === "auto" ? null : language,
+        startedAt: now,
+        processingMetadata: {},
+      },
+      update: {
+        recordingId: recording.id,
+        source: TranscriptSource.GENERATED,
+        status: TranscriptStatus.QUEUED,
+        language: language === "auto" ? null : language,
+        startedAt: now,
+        completedAt: null,
+        errorMessage: null,
+        processingMetadata: {},
+      },
+    });
+
+    return { kind: "claimed", transcript } as const;
   });
 
-  if (existingTranscript && isTranscriptionActive(existingTranscript.status)) {
+  if (claim.kind === "session_not_found") {
+    return NextResponse.json({ error: "Session not found or deleted." }, { status: 404 });
+  }
+  if (claim.kind === "already_active") {
     return NextResponse.json(
       {
         error: "A transcription is already in progress.",
-        transcriptId: existingTranscript.id,
-        status: existingTranscript.status,
+        transcriptId: claim.transcript.id,
+        status: claim.transcript.status,
       },
       { status: 409 },
     );
   }
-
-  // Block if a completed transcript with text already exists.
-  // Use the /retranscribe route to force re-transcription.
-  if (
-    existingTranscript?.status === TranscriptStatus.COMPLETED &&
-    existingTranscript.text?.trim()
-  ) {
+  if (claim.kind === "already_completed") {
     return NextResponse.json(
       {
         error: "A completed transcript already exists for this session.",
-        transcriptId: existingTranscript.id,
-        status: existingTranscript.status,
+        transcriptId: claim.transcript.id,
+        status: claim.transcript.status,
       },
       { status: 409 },
     );
   }
 
-  const now = new Date();
-
-  const transcript = await prisma.transcript.upsert({
-    where: { sessionId },
-    create: {
-      sessionId,
-      recordingId: recording.id,
-      source: TranscriptSource.GENERATED,
-      status: TranscriptStatus.QUEUED,
-      text: existingTranscript?.text ?? "",
-      language: language === "auto" ? null : language,
-      startedAt: now,
-      processingMetadata: {},
-    },
-    update: {
-      recordingId: recording.id,
-      source: TranscriptSource.GENERATED,
-      status: TranscriptStatus.QUEUED,
-      language: language === "auto" ? null : language,
-      startedAt: now,
-      completedAt: null,
-      errorMessage: null,
-      processingMetadata: {},
-    },
-  });
-
+  const { transcript } = claim;
   if (isTranscriptionMockMode()) {
     return await runMockTranscription(sessionId, recording, transcript.id, language);
   }

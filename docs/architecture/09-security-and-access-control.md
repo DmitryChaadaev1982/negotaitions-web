@@ -65,6 +65,12 @@ suppression, notification, and local-preview contracts.
   CAS. Takeover, disconnect, revocation, facilitator reassignment, and account
   deactivation therefore linearize before or after the mutation; serialization
   conflicts are retried against fresh authority.
+- Facilitator reassignment updates canonical Session/participant authority and
+  rebinds the roles on both users' still-active `SessionRoomConnection` leases
+  in the same transaction. The promoted user's open lease becomes
+  `FACILITATOR`; the demoted user's open lease receives its selected fallback
+  role. Finalized or expired leases are not revived, and later claims continue
+  to derive their role from the current `SessionParticipant`.
 - Session Vox access also validates lease on `connectionId` and returns `409 STALE_CONNECTION` for superseded clients, preventing stale tabs from obtaining fresh Vox credentials.
 
 ## Security-Sensitive Areas

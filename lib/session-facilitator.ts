@@ -233,6 +233,45 @@ export async function reassignSessionFacilitator(
       });
     }
 
+    const now = new Date();
+    const activeConnectionWhere = {
+      sessionId: params.sessionId,
+      disconnectedAt: null,
+      supersededAt: null,
+      revokedAt: null,
+      expiresAt: { gt: now },
+    } as const;
+
+    // A room connection lease snapshots the participant role at claim time.
+    // Keep already-open clients aligned with the participant-role mutation so
+    // strict facilitator control remains authoritative without requiring a
+    // hidden refresh/rejoin step.
+    await tx.sessionRoomConnection.updateMany({
+      where: {
+        ...activeConnectionWhere,
+        userId: nextFacilitator.userId,
+      },
+      data: { role: ParticipantType.FACILITATOR },
+    });
+
+    if (
+      canonicalFacilitator?.userId &&
+      canonicalFacilitator.userId !== nextFacilitator.userId
+    ) {
+      await tx.sessionRoomConnection.updateMany({
+        where: {
+          ...activeConnectionWhere,
+          userId: canonicalFacilitator.userId,
+        },
+        data: {
+          role:
+            params.previousFacilitatorType === "PARTICIPANT"
+              ? ParticipantType.PARTICIPANT
+              : ParticipantType.OBSERVER,
+        },
+      });
+    }
+
     return {
       ok: true,
       changed: true,

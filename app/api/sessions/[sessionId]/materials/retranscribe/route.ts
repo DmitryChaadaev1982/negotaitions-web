@@ -20,6 +20,7 @@ import {
   buildFailedRetranscriptionRestoreData,
   shouldRestoreArchivedTranscript,
 } from "@/lib/services/retranscription-safety";
+import { lockSessionTranscriptionClaim } from "@/lib/services/transcription-run-claim";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 
@@ -113,40 +114,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const existingTranscript = await prisma.transcript.findUnique({
-    where: { sessionId },
-    select: {
-      id: true,
-      status: true,
-      text: true,
-      diarizedText: true,
-      language: true,
-      transcriptionModel: true,
-      hasSpeakerDiarization: true,
-      diarizationStatus: true,
-      speakerMapping: true,
-      speakerMappingStatus: true,
-      completedAt: true,
-      processingMetadata: true,
-      retranscribeCount: true,
-      retranscribeHistory: true,
-    },
-  });
-
-  if (existingTranscript && isTranscriptionActive(existingTranscript.status)) {
-    return NextResponse.json(
-      {
-        error: "Transcription is already running.",
-        transcriptId: existingTranscript.id,
-        status: existingTranscript.status,
-      },
-      { status: 409 },
-    );
-  }
-
-  const now = new Date();
-
-  // Build archive entry from current transcript (if any)
   type HistoryEntry = {
     archivedAt: string;
     reason: string | null;
@@ -164,44 +131,46 @@ export async function POST(request: Request, context: RouteContext) {
     processingMetadata: unknown;
   };
 
-  const existingHistory = Array.isArray(existingTranscript?.retranscribeHistory)
-    ? (existingTranscript.retranscribeHistory as HistoryEntry[])
-    : [];
+  const claim = await prisma.$transaction(async (tx) => {
+    const sessionLocked = await lockSessionTranscriptionClaim(tx, sessionId);
+    if (!sessionLocked) {
+      return { kind: "session_not_found" } as const;
+    }
 
-  const newVersion = (existingTranscript?.retranscribeCount ?? 0) + 1;
+    const existingTranscript = await tx.transcript.findUnique({
+      where: { sessionId },
+      select: {
+        id: true,
+        status: true,
+        text: true,
+        diarizedText: true,
+        language: true,
+        transcriptionModel: true,
+        hasSpeakerDiarization: true,
+        diarizationStatus: true,
+        speakerMapping: true,
+        speakerMappingStatus: true,
+        completedAt: true,
+        processingMetadata: true,
+        retranscribeCount: true,
+        retranscribeHistory: true,
+      },
+    });
 
-  const archiveEntry: HistoryEntry | null = existingTranscript
-    ? {
-        archivedAt: now.toISOString(),
-        reason: reason ?? null,
-        version: existingTranscript.retranscribeCount,
-        status: existingTranscript.status,
-        text: existingTranscript.text,
-        diarizedText: existingTranscript.diarizedText,
-        language: existingTranscript.language,
-        transcriptionModel: existingTranscript.transcriptionModel,
-        hasSpeakerDiarization: existingTranscript.hasSpeakerDiarization,
-        diarizationStatus: existingTranscript.diarizationStatus,
-        speakerMapping: existingTranscript.speakerMapping,
-        speakerMappingStatus: existingTranscript.speakerMappingStatus,
-        completedAt: existingTranscript.completedAt?.toISOString() ?? null,
-        processingMetadata: existingTranscript.processingMetadata,
-      }
-    : null;
+    if (existingTranscript && isTranscriptionActive(existingTranscript.status)) {
+      return { kind: "already_active", transcript: existingTranscript } as const;
+    }
 
-  const updatedHistory = archiveEntry
-    ? [...existingHistory, archiveEntry]
-    : existingHistory;
-
-  const upsertData = buildRetranscriptionUpsertData({
-    sessionId,
-    recordingId: recording.id,
-    language,
-    newVersion,
-    history: updatedHistory as object[],
-    now,
-    existingTranscript: existingTranscript
+    const now = new Date();
+    const existingHistory = Array.isArray(existingTranscript?.retranscribeHistory)
+      ? (existingTranscript.retranscribeHistory as HistoryEntry[])
+      : [];
+    const newVersion = (existingTranscript?.retranscribeCount ?? 0) + 1;
+    const archiveEntry: HistoryEntry | null = existingTranscript
       ? {
+          archivedAt: now.toISOString(),
+          reason: reason ?? null,
+          version: existingTranscript.retranscribeCount,
           status: existingTranscript.status,
           text: existingTranscript.text,
           diarizedText: existingTranscript.diarizedText,
@@ -211,17 +180,59 @@ export async function POST(request: Request, context: RouteContext) {
           diarizationStatus: existingTranscript.diarizationStatus,
           speakerMapping: existingTranscript.speakerMapping,
           speakerMappingStatus: existingTranscript.speakerMappingStatus,
-          completedAt: existingTranscript.completedAt,
+          completedAt: existingTranscript.completedAt?.toISOString() ?? null,
           processingMetadata: existingTranscript.processingMetadata,
         }
-      : null,
+      : null;
+    const updatedHistory = archiveEntry
+      ? [...existingHistory, archiveEntry]
+      : existingHistory;
+    const upsertData = buildRetranscriptionUpsertData({
+      sessionId,
+      recordingId: recording.id,
+      language,
+      newVersion,
+      history: updatedHistory as object[],
+      now,
+      existingTranscript: existingTranscript
+        ? {
+            status: existingTranscript.status,
+            text: existingTranscript.text,
+            diarizedText: existingTranscript.diarizedText,
+            language: existingTranscript.language,
+            transcriptionModel: existingTranscript.transcriptionModel,
+            hasSpeakerDiarization: existingTranscript.hasSpeakerDiarization,
+            diarizationStatus: existingTranscript.diarizationStatus,
+            speakerMapping: existingTranscript.speakerMapping,
+            speakerMappingStatus: existingTranscript.speakerMappingStatus,
+            completedAt: existingTranscript.completedAt,
+            processingMetadata: existingTranscript.processingMetadata,
+          }
+        : null,
+    });
+    const transcript = await tx.transcript.upsert({
+      where: { sessionId },
+      ...upsertData,
+    });
+
+    return { kind: "claimed", transcript, archiveEntry } as const;
   });
 
-  const transcript = await prisma.transcript.upsert({
-    where: { sessionId },
-    ...upsertData,
-  });
+  if (claim.kind === "session_not_found") {
+    return NextResponse.json({ error: "Session not found or deleted." }, { status: 404 });
+  }
+  if (claim.kind === "already_active") {
+    return NextResponse.json(
+      {
+        error: "Transcription is already running.",
+        transcriptId: claim.transcript.id,
+        status: claim.transcript.status,
+      },
+      { status: 409 },
+    );
+  }
 
+  const { transcript, archiveEntry } = claim;
   if (isTranscriptionMockMode()) {
     return await runMockTranscription(sessionId, recording, transcript.id, language);
   }
