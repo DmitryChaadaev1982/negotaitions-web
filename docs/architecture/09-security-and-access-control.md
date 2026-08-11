@@ -60,6 +60,11 @@ suppression, notification, and local-preview contracts.
 - Interactive session control mutations additionally require expected
   negotiation state plus expected narrow `controlToken`, so stale tabs cannot
   replay transitions after unrelated writes.
+- Session `control` and `duration` mutations lock and revalidate the exact
+  active facilitator lease in the same serializable transaction as the Session
+  CAS. Takeover, disconnect, revocation, facilitator reassignment, and account
+  deactivation therefore linearize before or after the mutation; serialization
+  conflicts are retried against fresh authority.
 - Session Vox access also validates lease on `connectionId` and returns `409 STALE_CONNECTION` for superseded clients, preventing stale tabs from obtaining fresh Vox credentials.
 
 ## Security-Sensitive Areas

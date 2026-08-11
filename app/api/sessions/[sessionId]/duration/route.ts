@@ -16,6 +16,7 @@ import {
   decideSessionRoomAccess,
   isRoomAccessAllowed,
 } from "@/lib/session-room-access";
+import { lockStrictActiveFacilitatorSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import {
   buildSessionControlSnapshotWhere,
   createSessionControlToken,
@@ -103,9 +104,21 @@ function buildRoomAccessConflict(params: { output: string; redirectTo: string | 
 }
 
 function isSerializableConflict(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2034") {
+      return true;
+    }
+    if (
+      error.code === "P2010" &&
+      String(error.meta?.code ?? "") === "40001"
+    ) {
+      return true;
+    }
+  }
+  const message = error instanceof Error ? error.message : "";
   return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2034"
+    message.includes("Code: `40001`") &&
+    message.includes("could not serialize access")
   );
 }
 
@@ -205,22 +218,14 @@ export async function PATCH(request: Request, context: RouteContext) {
             };
           }
 
-          const lease = await tx.sessionRoomConnection.findFirst({
-            where: {
+          const leaseIsAuthoritative =
+            await lockStrictActiveFacilitatorSessionRoomConnectionLease(tx, {
               sessionId,
               userId: participant.userId,
+              participantId: participant.id,
               connectionId,
-              role: ParticipantType.FACILITATOR,
-              disconnectedAt: null,
-              supersededAt: null,
-              revokedAt: null,
-              expiresAt: {
-                gt: new Date(),
-              },
-            },
-            select: { leaseVersion: true },
-          });
-          if (!lease) {
+            });
+          if (!leaseIsAuthoritative) {
             return {
               kind: "stale_connection" as const,
               status: 409,

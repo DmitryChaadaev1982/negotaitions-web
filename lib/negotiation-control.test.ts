@@ -156,3 +156,45 @@ test("duplicate resume math remains monotonic and deterministic", () => {
   assert.equal(resumed.pausedAt, null);
   assert.equal(resumed.totalPausedSeconds, 20);
 });
+
+test("sub-second negotiation resume advances the running epoch without losing time", () => {
+  const timerStartedAt = new Date("2026-08-11T10:00:00.000Z");
+  const resumed = getControlUpdateData(
+    {
+      ...baseSession(NegotiationState.PAUSED),
+      negotiationStartedAt: timerStartedAt,
+      timerStartedAt,
+      pausedAt: new Date("2026-08-11T10:01:00.100Z"),
+      totalPausedSeconds: 4,
+    },
+    "RESUME",
+    new Date("2026-08-11T10:01:00.350Z"),
+  );
+
+  assert.equal(resumed.totalPausedSeconds, 4);
+  assert.equal(
+    resumed.timerStartedAt?.toISOString(),
+    "2026-08-11T10:00:00.250Z",
+  );
+});
+
+test("sub-second preparation resume advances the running epoch without losing time", () => {
+  const timerStartedAt = new Date("2026-08-11T10:00:00.000Z");
+  const resumed = getControlUpdateData(
+    {
+      ...baseSession(NegotiationState.PREPARATION_PAUSED),
+      preparationStartedAt: timerStartedAt,
+      preparationTimerStartedAt: timerStartedAt,
+      preparationPausedAt: new Date("2026-08-11T10:01:00.100Z"),
+      preparationTotalPausedSeconds: 4,
+    },
+    "RESUME_PREPARATION",
+    new Date("2026-08-11T10:01:00.350Z"),
+  );
+
+  assert.equal(resumed.preparationTotalPausedSeconds, 4);
+  assert.equal(
+    resumed.preparationTimerStartedAt?.toISOString(),
+    "2026-08-11T10:00:00.250Z",
+  );
+});

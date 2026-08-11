@@ -71,6 +71,14 @@ lifetime; it must not reuse the short debrief grace.
   (negotiation/preparation timers, pause accumulators, facilitator/lifecycle
   invariants) and explicitly does not depend on broad fields such as
   `Session.updatedAt` or room-name metadata.
+- A resume advances the running timer epoch at millisecond precision while
+  whole elapsed pause seconds remain in the pause accumulator. This prevents a
+  delayed command from an earlier running epoch from matching after a
+  sub-second pause/resume cycle.
+- The Session CAS and negotiation `SessionPauseInterval` creation/closure commit
+  in the same transaction. Request-driven timer expiry first wins a Session CAS,
+  and canonical completion side effects run only for that winner; later polling
+  recovers a committed FINISHED/OPEN intermediate state idempotently.
 - Preparation lifecycle is authoritative and non-bypassable:
   `PREPARATION -> START_PREPARATION -> (PAUSE/RESUME)* -> STOP_PREPARATION -> READY_TO_START`.
 - Direct `START` from `PREPARATION` and direct `SKIP_PREPARATION` are invalid.

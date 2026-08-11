@@ -345,14 +345,26 @@ export function getControlUpdateData(
         throw new Error("Cannot RESUME_PREPARATION without preparationPausedAt.");
       }
 
-      const pauseDurationSeconds = Math.floor(
-        (now.getTime() - session.preparationPausedAt.getTime()) / 1000,
+      const pauseDurationMs = Math.max(
+        0,
+        now.getTime() - session.preparationPausedAt.getTime(),
       );
+      const pauseDurationSeconds = Math.floor(pauseDurationMs / 1000);
+      const subsecondPauseMs = pauseDurationMs - pauseDurationSeconds * 1000;
+      const epochShiftMs =
+        pauseDurationSeconds === 0 && subsecondPauseMs === 0
+          ? 1
+          : subsecondPauseMs;
 
       return {
         negotiationState: NegotiationState.PREPARATION_RUNNING,
         preparationTotalPausedSeconds:
           session.preparationTotalPausedSeconds + pauseDurationSeconds,
+        preparationTimerStartedAt: session.preparationTimerStartedAt
+          ? new Date(
+              session.preparationTimerStartedAt.getTime() + epochShiftMs,
+            )
+          : null,
         preparationPausedAt: null,
       };
     }
@@ -392,13 +404,23 @@ export function getControlUpdateData(
         throw new Error("Cannot RESUME without pausedAt.");
       }
 
-      const pauseDurationSeconds = Math.floor(
-        (now.getTime() - session.pausedAt.getTime()) / 1000,
+      const pauseDurationMs = Math.max(
+        0,
+        now.getTime() - session.pausedAt.getTime(),
       );
+      const pauseDurationSeconds = Math.floor(pauseDurationMs / 1000);
+      const subsecondPauseMs = pauseDurationMs - pauseDurationSeconds * 1000;
+      const epochShiftMs =
+        pauseDurationSeconds === 0 && subsecondPauseMs === 0
+          ? 1
+          : subsecondPauseMs;
 
       return {
         negotiationState: NegotiationState.RUNNING,
         totalPausedSeconds: session.totalPausedSeconds + pauseDurationSeconds,
+        timerStartedAt: session.timerStartedAt
+          ? new Date(session.timerStartedAt.getTime() + epochShiftMs)
+          : null,
         pausedAt: null,
       };
     }

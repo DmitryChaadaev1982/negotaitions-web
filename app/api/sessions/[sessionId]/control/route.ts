@@ -5,6 +5,7 @@ import {
   type NegotiationState,
   ParticipantType,
   Prisma,
+  RoomLifecycle,
 } from "@/app/generated/prisma/client";
 import { handleNegotiationStartRecording } from "@/lib/livekit-egress";
 import {
@@ -17,11 +18,6 @@ import {
   isSessionClosedByOrganizer,
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
-import {
-  closeAllOpenPauseIntervals,
-  closeLatestPauseInterval,
-  createPauseInterval,
-} from "@/lib/session-pause-intervals";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
 import {
   decideSessionRoomAccess,
@@ -30,6 +26,7 @@ import {
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { shouldRunLivekitRecordingLifecycle } from "@/lib/session-control-recording-policy";
 import { completeSessionCanonical } from "@/lib/session-completion";
+import { lockStrictActiveFacilitatorSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import {
   reconcileSessionControlAutoTransitions,
 } from "@/lib/session-control-auto-transitions";
@@ -139,18 +136,6 @@ function buildRoomAccessConflict(params: {
   };
 }
 
-async function syncPauseIntervals(
-  sessionId: string,
-  action: "PAUSE" | "RESUME",
-  now: Date,
-) {
-  if (action === "PAUSE") {
-    await createPauseInterval(sessionId, now);
-    return;
-  }
-  await closeLatestPauseInterval(sessionId, now);
-}
-
 async function loadRecordingState(sessionId: string) {
   return prisma.recording.findUnique({
     where: { sessionId },
@@ -171,9 +156,21 @@ function buildControlConflictPayload(
 }
 
 function isSerializableConflict(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2034") {
+      return true;
+    }
+    if (
+      error.code === "P2010" &&
+      String(error.meta?.code ?? "") === "40001"
+    ) {
+      return true;
+    }
+  }
+  const message = error instanceof Error ? error.message : "";
   return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2034"
+    message.includes("Code: `40001`") &&
+    message.includes("could not serialize access")
   );
 }
 
@@ -290,25 +287,15 @@ async function runInteractiveMutation(params: {
             };
           }
 
-          const lease = await tx.sessionRoomConnection.findFirst({
-            where: {
+          const leaseIsAuthoritative =
+            await lockStrictActiveFacilitatorSessionRoomConnectionLease(tx, {
               sessionId,
               userId: participant.userId,
+              participantId: participant.id,
               connectionId,
-              role: ParticipantType.FACILITATOR,
-              disconnectedAt: null,
-              supersededAt: null,
-              revokedAt: null,
-              expiresAt: {
-                gt: now,
-              },
-            },
-            select: {
-              leaseVersion: true,
-            },
-          });
+            });
 
-          if (!lease) {
+          if (!leaseIsAuthoritative) {
             return {
               kind: "stale_connection" as const,
               body: {
@@ -337,7 +324,12 @@ async function runInteractiveMutation(params: {
             };
           }
 
-          const updateData = getControlUpdateData(session, action, now);
+          const updateData = {
+            ...getControlUpdateData(session, action, now),
+            ...(action === "FINISH" && session.roomLifecycle == null
+              ? { roomLifecycle: RoomLifecycle.OPEN }
+              : {}),
+          };
           const updated = await tx.session.updateMany({
             where: buildSessionControlSnapshotWhere(sessionId, snapshot),
             data: updateData,
@@ -352,6 +344,40 @@ async function runInteractiveMutation(params: {
               kind: "control_conflict" as const,
               session: current,
             };
+          }
+
+          if (action === "PAUSE") {
+            const existingOpenInterval =
+              await tx.sessionPauseInterval.findFirst({
+                where: {
+                  sessionId,
+                  endedAt: null,
+                },
+                orderBy: {
+                  startedAt: "desc",
+                },
+                select: {
+                  id: true,
+                },
+              });
+            if (!existingOpenInterval) {
+              await tx.sessionPauseInterval.create({
+                data: {
+                  sessionId,
+                  startedAt: now,
+                },
+              });
+            }
+          } else if (action === "RESUME" || action === "FINISH") {
+            await tx.sessionPauseInterval.updateMany({
+              where: {
+                sessionId,
+                endedAt: null,
+              },
+              data: {
+                endedAt: now,
+              },
+            });
           }
 
           const current = await tx.session.findUniqueOrThrow({
@@ -470,14 +496,9 @@ export async function POST(request: Request, context: RouteContext) {
 
     let recordingWarning: string | undefined;
 
-    if (action === "PAUSE" || action === "RESUME") {
-      await syncPauseIntervals(sessionId, action, now);
-    }
-
     if (action === "FINISH") {
       // CAS has already authored FINISHED; canonical completion claims/delivers
       // stop intent and enforces room lifecycle without re-running transition.
-      await closeAllOpenPauseIntervals(sessionId, now);
       const finishResult = await completeSessionCanonical({
         sessionId,
         mode: "ROOM_FACILITATOR_FINISH",

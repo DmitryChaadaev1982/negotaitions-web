@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 
 import { expect, test } from "@playwright/test";
+import pg from "pg";
 
 import {
   cleanupE2eData,
@@ -12,6 +13,7 @@ import {
   query,
   revokeRoomConnection,
 } from "./helpers/db";
+import { assertIsolatedE2eDatabase } from "./helpers/e2e-database";
 
 // Stage 3.10 traceability:
 // ST310-PRESENCE-001..010, ST310-ROOM-001..005, ST310-NAV-001, ST310-RACE-002..005
@@ -101,6 +103,7 @@ async function createPresenceFixture() {
     facilitatorParticipantId,
     participantParticipantId,
     observerParticipantId,
+    facilitatorUserId,
     facilitatorCookie: await createUserSession(facilitatorUserId),
     participantCookie: await createUserSession(participantUserId),
     observerCookie: await createUserSession(observerUserId),
@@ -193,6 +196,103 @@ test.describe("Vox room presence lease policy", () => {
       },
     });
     expect(activeControl.ok()).toBeTruthy();
+  });
+
+  test("lease invalidation linearizes before an in-flight control mutation", async ({
+    request,
+  }) => {
+    const headers = cookieHeader(fixture.facilitatorCookie);
+    const connectionId = "lease-control-race-old";
+    const stateResponse = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}&claimLease=1`,
+      { headers },
+    );
+    expect(stateResponse.ok()).toBeTruthy();
+    const state = (await stateResponse.json()) as {
+      negotiationState: string;
+      controlToken: string;
+    };
+    expect(state.negotiationState).toBe("PREPARATION_RUNNING");
+
+    const client = new pg.Client({
+      connectionString: assertIsolatedE2eDatabase(),
+    });
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE "SessionRoomConnection"
+         SET "supersededAt" = NOW(),
+             "supersededByConnectionId" = $2,
+             "updatedAt" = NOW()
+         WHERE "sessionId" = $1
+           AND "userId" = $3
+           AND "connectionId" = $4
+           AND "supersededAt" IS NULL`,
+        [
+          fixture.sessionId,
+          "lease-control-race-new",
+          fixture.facilitatorUserId,
+          connectionId,
+        ],
+      );
+
+      const controlPromise = request.post(
+        `/api/sessions/${fixture.sessionId}/control`,
+        {
+          headers,
+          data: {
+            participantId: fixture.facilitatorParticipantId,
+            connectionId,
+            action: "PAUSE_PREPARATION",
+            expectedNegotiationState: state.negotiationState,
+            expectedControlToken: state.controlToken,
+          },
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await client.query("COMMIT");
+      const control = await controlPromise;
+      expect(control.status()).toBe(409);
+      expect((await control.json()).code).toBe("STALE_CONNECTION");
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end();
+    }
+
+    const sessionRows = await query<{ negotiationState: string }>(
+      `SELECT "negotiationState"
+       FROM "Session"
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+    expect(sessionRows[0]?.negotiationState).toBe("PREPARATION_RUNNING");
+
+    await query(
+      `UPDATE "SessionRoomConnection"
+       SET "supersededAt" = NOW(),
+           "supersededByConnectionId" = 'lease-B',
+           "updatedAt" = NOW()
+       WHERE "sessionId" = $1
+         AND "userId" = $2
+         AND "connectionId" <> 'lease-B'
+         AND "supersededAt" IS NULL`,
+      [fixture.sessionId, fixture.facilitatorUserId],
+    );
+    await query(
+      `UPDATE "SessionRoomConnection"
+       SET "disconnectedAt" = NULL,
+           "supersededAt" = NULL,
+           "supersededByConnectionId" = NULL,
+           "revokedAt" = NULL,
+           "expiresAt" = NOW() + INTERVAL '5 minutes',
+           "updatedAt" = NOW()
+       WHERE "sessionId" = $1
+         AND "userId" = $2
+         AND "connectionId" = 'lease-B'`,
+      [fixture.sessionId, fixture.facilitatorUserId],
+    );
   });
 
   test("stale connection cannot send heartbeat after takeover", async ({ request }) => {

@@ -5,6 +5,7 @@ import { PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
+import { sqlUtcWallClockNow } from "@/lib/sql-utc-wall-clock";
 
 type ClaimResult = {
   activeConnectionId: string;
@@ -121,6 +122,57 @@ export function activeHumanSessionConnectionWhere(params: {
       gt: now,
     },
   } as const;
+}
+
+/**
+ * Locks and validates the exact authoritative facilitator lease used by an
+ * interactive Session mutation. Row invalidation (takeover, disconnect, or
+ * revocation) must update this same lease row and therefore linearizes before
+ * or after the mutation transaction rather than racing through it.
+ */
+export async function lockStrictActiveFacilitatorSessionRoomConnectionLease(
+  tx: Prisma.TransactionClient,
+  params: {
+    sessionId: string;
+    userId: string;
+    participantId: string;
+    connectionId: string;
+  },
+): Promise<boolean> {
+  const now = sqlUtcWallClockNow();
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT src.id
+    FROM "SessionRoomConnection" src
+    INNER JOIN "SessionParticipant" sp
+      ON sp.id = ${params.participantId}
+     AND sp."sessionId" = src."sessionId"
+     AND sp."userId" = src."userId"
+     AND sp.type = 'FACILITATOR'::"ParticipantType"
+    INNER JOIN "User" u
+      ON u.id = src."userId"
+     AND u.status = 'ACTIVE'
+    WHERE src."sessionId" = ${params.sessionId}
+      AND src."userId" = ${params.userId}
+      AND src."connectionId" = ${params.connectionId}
+      AND src.role = 'FACILITATOR'::"ParticipantType"
+      AND src."disconnectedAt" IS NULL
+      AND src."supersededAt" IS NULL
+      AND src."revokedAt" IS NULL
+      AND src."expiresAt" > ${now}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "SessionRoomConnection" competing
+        WHERE competing."sessionId" = src."sessionId"
+          AND competing."userId" = src."userId"
+          AND competing."connectionId" <> src."connectionId"
+          AND competing."disconnectedAt" IS NULL
+          AND competing."supersededAt" IS NULL
+          AND competing."revokedAt" IS NULL
+          AND competing."expiresAt" > ${now}
+      )
+    FOR UPDATE OF src, sp, u
+  `);
+  return rows.length === 1;
 }
 
 export async function touchSessionRoomConnectionLease(params: {

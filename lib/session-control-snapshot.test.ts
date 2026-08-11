@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { NegotiationState, RoomLifecycle } from "@/app/generated/prisma/enums";
+import { getControlUpdateData } from "@/lib/negotiation-control";
 import {
   buildSessionControlSnapshotWhere,
   createSessionControlToken,
@@ -133,6 +134,38 @@ test("timestamp epoch differences invalidate stale actions", () => {
   const nextToken = createSessionControlToken(pickSessionControlSnapshot(nextEpoch));
   const olderToken = createSessionControlToken(pickSessionControlSnapshot(olderEpoch));
   assert.notEqual(nextToken, olderToken);
+});
+
+test("a sub-second pause/resume cycle cannot recreate the prior RUNNING token", () => {
+  const running = {
+    ...baseFields(),
+    id: "session-1",
+    negotiationState: NegotiationState.RUNNING,
+    negotiationStartedAt: new Date("2026-08-11T09:00:00.000Z"),
+    timerStartedAt: new Date("2026-08-11T09:00:00.000Z"),
+  };
+  const oldToken = createSessionControlToken(
+    pickSessionControlSnapshot(running),
+  );
+  const pausedAt = new Date("2026-08-11T09:01:00.100Z");
+  const pausedUpdate = getControlUpdateData(running, "PAUSE", pausedAt);
+  const resumedUpdate = getControlUpdateData(
+    {
+      ...running,
+      ...pausedUpdate,
+    },
+    "RESUME",
+    new Date("2026-08-11T09:01:00.350Z"),
+  );
+  const resumedToken = createSessionControlToken(
+    pickSessionControlSnapshot({
+      ...running,
+      ...pausedUpdate,
+      ...resumedUpdate,
+    }),
+  );
+
+  assert.notEqual(resumedToken, oldToken);
 });
 
 test("snapshot where predicate excludes unrelated fields", () => {

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import pg from "pg";
 
 import {
   cleanupE2eData,
@@ -14,6 +15,7 @@ import {
   query,
   upsertRecordingForSession,
 } from "./helpers/db";
+import { assertIsolatedE2eDatabase } from "./helpers/e2e-database";
 
 // Stage 3.10 traceability:
 // ST310-SESSION-001, ST310-SESSION-002, ST310-SESSION-003, ST310-RECORDING-004, ST310-RECORDING-010
@@ -311,7 +313,7 @@ test.describe("Canonical session finish", () => {
 
     const stateAfterFirstFinish = await getSessionNegotiationState(fixture.sessionId);
     expect(stateAfterFirstFinish.negotiationState).toBe("FINISHED");
-    expect(["DEBRIEF_OPEN", "CLOSED"]).toContain(stateAfterFirstFinish.roomLifecycle);
+    expect(stateAfterFirstFinish.roomLifecycle).toBe("DEBRIEF_OPEN");
 
     const secondFinish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers: { ...headers, "Content-Type": "application/json" },
@@ -324,11 +326,11 @@ test.describe("Canonical session finish", () => {
         expectedControlToken: firstFinishPayload.controlToken ?? "fallback-token",
       },
     });
-    expect([200, 409]).toContain(secondFinish.status());
+    expect(secondFinish.status()).toBe(200);
 
     const stateAfterSecondFinish = await getSessionNegotiationState(fixture.sessionId);
     expect(stateAfterSecondFinish.negotiationState).toBe("FINISHED");
-    expect(["DEBRIEF_OPEN", "CLOSED"]).toContain(stateAfterSecondFinish.roomLifecycle);
+    expect(stateAfterSecondFinish.roomLifecycle).toBe("DEBRIEF_OPEN");
   });
 
   test("finish without explicit connectionId is rejected", async ({ request }) => {
@@ -443,6 +445,224 @@ test.describe("Canonical session finish", () => {
 
     const recording = await getRecordingBySession(fixture.sessionId);
     expect(["STOPPED", "COMPLETED"]).toContain(recording?.status);
+  });
+
+  test("pause state and pause interval commit atomically", async ({ request }) => {
+    const fixture = await createSessionFixture();
+    const headers = cookieHeader(fixture.facilitatorCookie);
+    const connectionId = "pause-interval-atomic";
+
+    for (const action of ["START_PREPARATION", "STOP_PREPARATION", "START"]) {
+      const response = await postControlActionWithLease({
+        request,
+        sessionId: fixture.sessionId,
+        participantId: fixture.facilitatorParticipantId,
+        connectionId,
+        action,
+        headers,
+      });
+      expect(response.ok()).toBeTruthy();
+    }
+
+    const stateResponse = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}`,
+      { headers },
+    );
+    expect(stateResponse.ok()).toBeTruthy();
+    const state = (await stateResponse.json()) as {
+      negotiationState: string;
+      controlToken: string;
+    };
+    expect(state.negotiationState).toBe("RUNNING");
+
+    const client = new pg.Client({
+      connectionString: assertIsolatedE2eDatabase(),
+    });
+    await client.connect();
+    let pausePromise: ReturnType<APIRequestContext["post"]> | null = null;
+    let visibleState: string | null = null;
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `LOCK TABLE "SessionPauseInterval" IN ACCESS EXCLUSIVE MODE`,
+      );
+      pausePromise = request.post(
+        `/api/sessions/${fixture.sessionId}/control`,
+        {
+          headers,
+          data: {
+            participantId: fixture.facilitatorParticipantId,
+            connectionId,
+            action: "PAUSE",
+            expectedNegotiationState: state.negotiationState,
+            expectedControlToken: state.controlToken,
+          },
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const rows = await query<{ negotiationState: string }>(
+        `SELECT "negotiationState"
+         FROM "Session"
+         WHERE "id" = $1`,
+        [fixture.sessionId],
+      );
+      visibleState = rows[0]?.negotiationState ?? null;
+      await client.query("COMMIT");
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end();
+    }
+
+    expect(visibleState).toBe("RUNNING");
+    expect(pausePromise).not.toBeNull();
+    const pause = await pausePromise!;
+    expect(pause.ok()).toBeTruthy();
+
+    const [sessionRows, intervalRows] = await Promise.all([
+      query<{ negotiationState: string }>(
+        `SELECT "negotiationState"
+         FROM "Session"
+         WHERE "id" = $1`,
+        [fixture.sessionId],
+      ),
+      query<{ openCount: number }>(
+        `SELECT COUNT(*) FILTER (WHERE "endedAt" IS NULL)::int AS "openCount"
+         FROM "SessionPauseInterval"
+         WHERE "sessionId" = $1`,
+        [fixture.sessionId],
+      ),
+    ]);
+    expect(sessionRows[0]?.negotiationState).toBe("PAUSED");
+    expect(intervalRows[0]?.openCount).toBe(1);
+  });
+
+  test("timer expiry loses cleanly to a concurrently committed pause", async ({
+    request,
+  }) => {
+    const fixture = await createSessionFixture();
+    const headers = cookieHeader(fixture.facilitatorCookie);
+    const connectionId = "auto-finish-cas-race";
+    const claim = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}&claimLease=1`,
+      { headers },
+    );
+    expect(claim.ok()).toBeTruthy();
+
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState" = 'RUNNING',
+           "preparationStartedAt" = NOW() - INTERVAL '3 minutes',
+           "preparationEndedAt" = NOW() - INTERVAL '2 minutes',
+           "preparationTimerStartedAt" = NOW() - INTERVAL '3 minutes',
+           "preparationPausedAt" = NULL,
+           "preparationTotalPausedSeconds" = 0,
+           "negotiationStartedAt" = NOW() - INTERVAL '2 minutes',
+           "negotiationEndedAt" = NULL,
+           "timerStartedAt" = NOW() - INTERVAL '2 minutes',
+           "pausedAt" = NULL,
+           "totalPausedSeconds" = 0,
+           "durationSeconds" = 60,
+           "roomLifecycle" = NULL,
+           "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+
+    const client = new pg.Client({
+      connectionString: assertIsolatedE2eDatabase(),
+    });
+    await client.connect();
+    let statePromise: ReturnType<APIRequestContext["get"]> | null = null;
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `SELECT id
+         FROM "Session"
+         WHERE id = $1
+         FOR UPDATE`,
+        [fixture.sessionId],
+      );
+
+      statePromise = request.get(
+        `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}`,
+        { headers },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await client.query(
+        `UPDATE "Session"
+         SET "negotiationState" = 'PAUSED',
+             "pausedAt" = NOW(),
+             "updatedAt" = NOW()
+         WHERE id = $1`,
+        [fixture.sessionId],
+      );
+      await client.query("COMMIT");
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      await client.end();
+    }
+
+    expect(statePromise).not.toBeNull();
+    const stateResponse = await statePromise!;
+    expect(stateResponse.ok()).toBeTruthy();
+    const state = (await stateResponse.json()) as {
+      negotiationState: string;
+    };
+    expect(state.negotiationState).toBe("PAUSED");
+
+    const rows = await query<{ negotiationState: string }>(
+      `SELECT "negotiationState"
+       FROM "Session"
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+    expect(rows[0]?.negotiationState).toBe("PAUSED");
+    expect(await getRecordingStopOperations(fixture.sessionId)).toHaveLength(0);
+  });
+
+  test("polling recovers canonical side effects after a committed FINISH CAS", async ({
+    request,
+  }) => {
+    const fixture = await createSessionFixture();
+    const headers = cookieHeader(fixture.facilitatorCookie);
+    const connectionId = "finish-side-effect-recovery";
+    const claim = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}&claimLease=1`,
+      { headers },
+    );
+    expect(claim.ok()).toBeTruthy();
+
+    await upsertRecordingForSession({
+      sessionId: fixture.sessionId,
+      status: "RECORDING",
+      provider: "LIVEKIT_CLOUD",
+      egressId: null,
+    });
+    await query(
+      `UPDATE "Session"
+       SET "negotiationState" = 'FINISHED',
+           "negotiationStartedAt" = NOW() - INTERVAL '1 minute',
+           "negotiationEndedAt" = NOW(),
+           "timerStartedAt" = NOW() - INTERVAL '1 minute',
+           "roomLifecycle" = 'OPEN',
+           "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+
+    const recovered = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=${connectionId}`,
+      { headers },
+    );
+    expect(recovered.ok()).toBeTruthy();
+
+    const state = await getSessionNegotiationState(fixture.sessionId);
+    expect(state.negotiationState).toBe("FINISHED");
+    expect(state.roomLifecycle).toBe("DEBRIEF_OPEN");
+    const operations = await getRecordingStopOperations(fixture.sessionId);
+    expect(operations).toHaveLength(1);
+    expect(operations[0]?.state).toBe("DELIVERED");
   });
 
   test("administrative complete endpoint is idempotent for manager", async ({
