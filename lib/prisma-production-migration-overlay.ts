@@ -67,12 +67,21 @@ export const EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS = [
 ] as const;
 
 /**
+ * The Stage 3.13E additive account preference migration explicitly approved
+ * for the production overlay.
+ */
+export const EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS = [
+  "20260811112000_stage_3_13e_session_sound_preference",
+] as const;
+
+/**
  * The complete, explicit production pending-migration allowlist. Keep this as
  * a union of stage-specific lists so future migrations cannot pass implicitly.
  */
 export const EXPECTED_PRODUCTION_PENDING_MIGRATIONS = [
   ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
   ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
+  ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";

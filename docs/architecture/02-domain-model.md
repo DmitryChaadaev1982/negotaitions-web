@@ -24,6 +24,13 @@ not persist or expose nonterminal provider output.
 - `Session.negotiationState`: `PREPARATION -> READY_TO_START -> RUNNING -> FINISHED` with paused variants.
 - Room/runtime checks and controls are role-gated by participant type and ownership.
 
+## Account Preferences
+
+- `User.preferredLocale`: persisted UI locale.
+- `User.sessionSoundEnabled` (Stage 3.13E): persisted room-sound preference,
+  non-null boolean with database default `true` and migration backfill for
+  existing users.
+
 ## Recording/Transcript Model
 
 - One `Recording` per `Session` (`sessionId` unique on `Recording`).

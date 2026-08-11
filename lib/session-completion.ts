@@ -71,6 +71,49 @@ export type CanonicalSessionFinishResult = {
   };
 };
 
+function getCanonicalFinishUpdateData(params: {
+  session: Prisma.SessionGetPayload<{ select: typeof SESSION_CONTROL_SELECT }>;
+  mode: SessionFinishMode;
+  now: Date;
+}) {
+  const { session, mode, now } = params;
+
+  if (mode === "ROOM_FACILITATOR_FINISH") {
+    return getControlUpdateData(session, "FINISH", now);
+  }
+
+  if (
+    session.negotiationState === NegotiationState.RUNNING ||
+    session.negotiationState === NegotiationState.PAUSED
+  ) {
+    return getControlUpdateData(session, "FINISH", now);
+  }
+
+  let totalPausedSeconds = session.totalPausedSeconds;
+  if (session.pausedAt) {
+    totalPausedSeconds += Math.floor(
+      (now.getTime() - session.pausedAt.getTime()) / 1000,
+    );
+  }
+
+  let preparationTotalPausedSeconds = session.preparationTotalPausedSeconds;
+  if (session.preparationPausedAt) {
+    preparationTotalPausedSeconds += Math.floor(
+      (now.getTime() - session.preparationPausedAt.getTime()) / 1000,
+    );
+  }
+
+  return {
+    negotiationState: NegotiationState.FINISHED,
+    negotiationEndedAt: now,
+    preparationEndedAt: session.preparationEndedAt ?? now,
+    totalPausedSeconds,
+    preparationTotalPausedSeconds,
+    pausedAt: null,
+    preparationPausedAt: null,
+  };
+}
+
 function shouldRequestRecordingStop(status: RecordingStatus) {
   return (
     status === RecordingStatus.RECORDING ||
@@ -627,10 +670,13 @@ export async function completeSessionCanonical(params: {
       activeConnectionCount,
     });
 
-    const finishUpdateData =
-      alreadyFinished
-        ? {}
-        : getControlUpdateData(existingSession, "FINISH", now);
+    const finishUpdateData = alreadyFinished
+      ? {}
+      : getCanonicalFinishUpdateData({
+          session: existingSession,
+          mode: params.mode,
+          now,
+        });
 
     const closeUpdateData = hardClose
       ? {

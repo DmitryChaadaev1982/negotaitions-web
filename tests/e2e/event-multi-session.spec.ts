@@ -10,6 +10,7 @@ import {
   participantByName,
   query,
 } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.beforeEach(async () => {
   await cleanupE2eData();
@@ -163,8 +164,29 @@ test("event supports multiple sessions and active assignment rules", async ({
 
   const session1 = await getSession(session1Body.session.id);
   const dmitrySessionParticipant = participantByName(session1.participants, "Dmitry");
-  await request.post(`/api/sessions/${session1Body.session.id}/control`, {
-    data: { joinToken: dmitrySessionParticipant.joinToken, action: "FINISH" },
+  await postSessionControlAction(request, {
+    sessionId: session1Body.session.id,
+    auth: { joinToken: dmitrySessionParticipant.joinToken },
+    action: "START_PREPARATION",
+    connectionId: "event-multi-session-facilitator",
+  });
+  await postSessionControlAction(request, {
+    sessionId: session1Body.session.id,
+    auth: { joinToken: dmitrySessionParticipant.joinToken },
+    action: "STOP_PREPARATION",
+    connectionId: "event-multi-session-facilitator",
+  });
+  await postSessionControlAction(request, {
+    sessionId: session1Body.session.id,
+    auth: { joinToken: dmitrySessionParticipant.joinToken },
+    action: "START",
+    connectionId: "event-multi-session-facilitator",
+  });
+  await postSessionControlAction(request, {
+    sessionId: session1Body.session.id,
+    auth: { joinToken: dmitrySessionParticipant.joinToken },
+    action: "FINISH",
+    connectionId: "event-multi-session-facilitator",
   });
 
   const session3Response = await createEventSession(request, {

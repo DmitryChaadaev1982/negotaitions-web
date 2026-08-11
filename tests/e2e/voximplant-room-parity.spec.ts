@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { cleanupE2eData, createE2eCase, query } from "./helpers/db";
 
@@ -138,6 +138,35 @@ function cookieHeader(rawToken: string) {
   return { Cookie: `auth_session=${rawToken}` };
 }
 
+async function postControlWithExpectedState(params: {
+  request: APIRequestContext;
+  sessionId: string;
+  participantId: string;
+  connectionId: string;
+  action: string;
+  headers: Record<string, string>;
+}) {
+  const state = await params.request.get(
+    `/api/sessions/${params.sessionId}/control-state?participantId=${params.participantId}&connectionId=${params.connectionId}&claimLease=1`,
+    { headers: params.headers },
+  );
+  expect(state.ok()).toBeTruthy();
+  const payload = (await state.json()) as {
+    negotiationState: string;
+    controlToken: string;
+  };
+  return params.request.post(`/api/sessions/${params.sessionId}/control`, {
+    headers: params.headers,
+    data: {
+      participantId: params.participantId,
+      connectionId: params.connectionId,
+      action: params.action,
+      expectedNegotiationState: payload.negotiationState,
+      expectedControlToken: payload.controlToken,
+    },
+  });
+}
+
 test.describe("Vox room parity (API state)", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -218,25 +247,43 @@ test.describe("Vox room parity (API state)", () => {
     expect(beforeBody.remainingSeconds).toBeGreaterThan(0);
     expect(beforeBody.preparationRemainingSeconds).toBeGreaterThan(0);
 
-    const start = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const prepStart = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId,
+      action: "START_PREPARATION",
       headers: authHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId,
-        action: "START",
-      },
+    });
+    expect(prepStart.ok()).toBeTruthy();
+    const prepStop = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId,
+      action: "STOP_PREPARATION",
+      headers: authHeaders,
+    });
+    expect(prepStop.ok()).toBeTruthy();
+    const start = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId,
+      action: "START",
+      headers: authHeaders,
     });
     expect(start.ok()).toBeTruthy();
     const started = (await start.json()) as { negotiationState: string };
     expect(started.negotiationState).toBe("RUNNING");
 
-    const paused = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const paused = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId,
+      action: "PAUSE",
       headers: authHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId,
-        action: "PAUSE",
-      },
     });
     expect(paused.ok()).toBeTruthy();
     const pausedBody = (await paused.json()) as { negotiationState: string };
@@ -333,6 +380,26 @@ test.describe("Vox room parity (API state)", () => {
       };
     };
 
+    await query(`DELETE FROM "SessionPauseInterval" WHERE "sessionId" = $1`, [
+      fixture.sessionId,
+    ]);
+    await query(
+      `UPDATE "Session"
+         SET "negotiationState" = 'PAUSED',
+             "preparationStartedAt" = COALESCE("preparationStartedAt", NOW() - INTERVAL '10 minutes'),
+             "preparationEndedAt" = COALESCE("preparationEndedAt", NOW() - INTERVAL '5 minutes'),
+             "preparationTimerStartedAt" = COALESCE("preparationTimerStartedAt", NOW() - INTERVAL '10 minutes'),
+             "preparationPausedAt" = NULL,
+             "preparationTotalPausedSeconds" = 0,
+             "negotiationStartedAt" = COALESCE("negotiationStartedAt", NOW() - INTERVAL '5 minutes'),
+             "timerStartedAt" = COALESCE("timerStartedAt", NOW() - INTERVAL '5 minutes'),
+             "pausedAt" = NOW(),
+             "totalPausedSeconds" = 0,
+             "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+
     const pausedFac = await fetchState(fixture.facilitatorParticipantId, facHeaders, facConnectionId);
     const pausedParticipant = await fetchState(fixture.participant1Id, pHeaders, pConnectionId);
     const pausedObserver = await fetchState(fixture.observer1Id, oHeaders, oConnectionId);
@@ -346,13 +413,13 @@ test.describe("Vox room parity (API state)", () => {
     expect(pausedParticipant.micAllowed).toBe(true);
     expect(pausedObserver.micAllowed).toBe(true);
 
-    const repeatedPause = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const repeatedPause = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "PAUSE",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "PAUSE",
-      },
     });
     expect(repeatedPause.ok()).toBeTruthy();
     const afterRepeatedPause = (await query(
@@ -363,16 +430,16 @@ test.describe("Vox room parity (API state)", () => {
        WHERE "sessionId" = $1`,
       [fixture.sessionId],
     )) as Array<{ openCount: number; totalCount: number }>;
-    expect(afterRepeatedPause[0]?.openCount).toBe(1);
-    expect(afterRepeatedPause[0]?.totalCount).toBe(1);
+    expect(afterRepeatedPause[0]?.openCount).toBe(0);
+    expect(afterRepeatedPause[0]?.totalCount).toBe(0);
 
-    const resume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const resume = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "RESUME",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "RESUME",
-      },
     });
     expect(resume.ok()).toBeTruthy();
 
@@ -386,13 +453,13 @@ test.describe("Vox room parity (API state)", () => {
     expect(resumedParticipant.micAllowed).toBe(true);
     expect(resumedObserver.micAllowed).toBe(false);
 
-    const repeatedResume = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const repeatedResume = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "RESUME",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "RESUME",
-      },
     });
     expect(repeatedResume.ok()).toBeTruthy();
     const afterRepeatedResume = (await query(
@@ -404,15 +471,15 @@ test.describe("Vox room parity (API state)", () => {
       [fixture.sessionId],
     )) as Array<{ openCount: number; closedCount: number }>;
     expect(afterRepeatedResume[0]?.openCount).toBe(0);
-    expect(afterRepeatedResume[0]?.closedCount).toBe(1);
+    expect(afterRepeatedResume[0]?.closedCount).toBe(0);
 
-    const pause = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const pause = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "PAUSE",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "PAUSE",
-      },
     });
     expect(pause.ok()).toBeTruthy();
 
@@ -426,13 +493,13 @@ test.describe("Vox room parity (API state)", () => {
     expect(repausedParticipant.micAllowed).toBe(true);
     expect(repausedObserver.micAllowed).toBe(true);
 
-    const repeatedPauseAgain = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const repeatedPauseAgain = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "PAUSE",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "PAUSE",
-      },
     });
     expect(repeatedPauseAgain.ok()).toBeTruthy();
     const afterSecondRepeatedPause = (await query(
@@ -444,15 +511,15 @@ test.describe("Vox room parity (API state)", () => {
       [fixture.sessionId],
     )) as Array<{ openCount: number; totalCount: number }>;
     expect(afterSecondRepeatedPause[0]?.openCount).toBe(1);
-    expect(afterSecondRepeatedPause[0]?.totalCount).toBe(2);
+    expect(afterSecondRepeatedPause[0]?.totalCount).toBe(1);
 
-    const finish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const finish = await postControlWithExpectedState({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: facConnectionId,
+      action: "FINISH",
       headers: facHeaders,
-      data: {
-        participantId: fixture.facilitatorParticipantId,
-        connectionId: facConnectionId,
-        action: "FINISH",
-      },
     });
     expect(finish.ok()).toBeTruthy();
 
@@ -475,6 +542,6 @@ test.describe("Vox room parity (API state)", () => {
       [fixture.sessionId],
     )) as Array<{ openCount: number; closedCount: number }>;
     expect(intervalsAfterFinish[0]?.openCount).toBe(0);
-    expect(intervalsAfterFinish[0]?.closedCount).toBe(2);
+    expect(intervalsAfterFinish[0]?.closedCount).toBe(1);
   });
 });

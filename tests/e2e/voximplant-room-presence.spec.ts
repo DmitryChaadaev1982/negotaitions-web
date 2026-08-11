@@ -158,13 +158,24 @@ test.describe("Vox room presence lease policy", () => {
 
   test("stale facilitator connection cannot execute control actions", async ({ request }) => {
     const headers = cookieHeader(fixture.facilitatorCookie);
+    const activeState = await request.get(
+      `/api/sessions/${fixture.sessionId}/control-state?participantId=${fixture.facilitatorParticipantId}&connectionId=lease-B`,
+      { headers },
+    );
+    expect(activeState.ok()).toBeTruthy();
+    const controlState = (await activeState.json()) as {
+      negotiationState: string;
+      controlToken: string;
+    };
 
     const staleControl = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers,
       data: {
         participantId: fixture.facilitatorParticipantId,
         connectionId: "lease-A",
-        action: "START",
+        action: "START_PREPARATION",
+        expectedNegotiationState: controlState.negotiationState,
+        expectedControlToken: controlState.controlToken,
       },
     });
     expect(staleControl.status()).toBe(409);
@@ -176,7 +187,9 @@ test.describe("Vox room presence lease policy", () => {
       data: {
         participantId: fixture.facilitatorParticipantId,
         connectionId: "lease-B",
-        action: "START",
+        action: "START_PREPARATION",
+        expectedNegotiationState: controlState.negotiationState,
+        expectedControlToken: controlState.controlToken,
       },
     });
     expect(activeControl.ok()).toBeTruthy();

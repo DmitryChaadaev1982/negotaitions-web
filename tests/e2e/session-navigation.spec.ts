@@ -12,6 +12,7 @@ import {
   participantByName,
   query,
 } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.describe.configure({ mode: "serial" });
 
@@ -186,14 +187,29 @@ test("finished session rejoin routes to materials", async ({ request }) => {
   const facilitator = participantByName(session.participants, "Dmitry");
   const authToken = await createUserSessionCookie(igorUser.id);
 
-  await request.post(`/api/sessions/${session.id}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "SKIP_PREPARATION" },
+  await postSessionControlAction(request, {
+    sessionId: session.id,
+    auth: { joinToken: facilitator.joinToken },
+    action: "START_PREPARATION",
+    connectionId: "session-navigation-facilitator",
   });
-  await request.post(`/api/sessions/${session.id}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "START" },
+  await postSessionControlAction(request, {
+    sessionId: session.id,
+    auth: { joinToken: facilitator.joinToken },
+    action: "STOP_PREPARATION",
+    connectionId: "session-navigation-facilitator",
   });
-  await request.post(`/api/sessions/${session.id}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "FINISH" },
+  await postSessionControlAction(request, {
+    sessionId: session.id,
+    auth: { joinToken: facilitator.joinToken },
+    action: "START",
+    connectionId: "session-navigation-facilitator",
+  });
+  await postSessionControlAction(request, {
+    sessionId: session.id,
+    auth: { joinToken: facilitator.joinToken },
+    action: "FINISH",
+    connectionId: "session-navigation-facilitator",
   });
   await query(
     `UPDATE "Session"

@@ -9,6 +9,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import {
+  NegotiationState,
   ParticipantType,
   SessionStatus,
 } from "@/app/generated/prisma/client";
@@ -631,8 +632,11 @@ export async function updateSessionDuration(formData: FormData) {
       return;
     }
 
-    await prisma.session.update({
-      where: { id: sessionId },
+    const updated = await prisma.session.updateMany({
+      where: {
+        id: sessionId,
+        negotiationState: NegotiationState.PREPARATION,
+      },
       data: {
         ...(durationMinutes !== undefined
           ? { durationSeconds: minutesToSeconds(durationMinutes) }
@@ -646,6 +650,10 @@ export async function updateSessionDuration(formData: FormData) {
           : {}),
       },
     });
+
+    if (updated.count === 0) {
+      return;
+    }
 
     revalidatePath(`/sessions/${sessionId}`);
   } catch {

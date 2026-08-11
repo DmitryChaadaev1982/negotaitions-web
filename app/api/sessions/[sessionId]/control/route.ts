@@ -1,21 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
 import {
-  handleNegotiationStartRecording,
-} from "@/lib/livekit-egress";
+  type NegotiationState,
+  ParticipantType,
+  Prisma,
+} from "@/app/generated/prisma/client";
+import { handleNegotiationStartRecording } from "@/lib/livekit-egress";
 import {
-  buildControlState,
-  getAutoFinishPreparationUpdateData,
+  type ControlAction,
   getControlUpdateData,
   SESSION_CONTROL_SELECT,
-  shouldAutoFinish,
-  shouldAutoFinishPreparation,
 } from "@/lib/negotiation-control";
 import { prisma } from "@/lib/prisma";
 import {
-  buildSessionCloseState,
   isSessionClosedByOrganizer,
   SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
@@ -29,21 +27,41 @@ import {
   decideSessionRoomAccess,
   isRoomAccessAllowed,
 } from "@/lib/session-room-access";
-import { validateSessionRoomConnectionLease } from "@/lib/session-room-connection-lease";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { shouldRunLivekitRecordingLifecycle } from "@/lib/session-control-recording-policy";
 import { completeSessionCanonical } from "@/lib/session-completion";
+import {
+  reconcileSessionControlAutoTransitions,
+} from "@/lib/session-control-auto-transitions";
+import {
+  buildControlStateResponse,
+} from "@/lib/session-control-response";
+import {
+  buildSessionControlSnapshotWhere,
+  createSessionControlToken,
+  pickSessionControlSnapshot,
+  SESSION_CONTROL_SNAPSHOT_SELECT,
+} from "@/lib/session-control-snapshot";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
-  connectionId: z.string().trim().min(1).max(128).optional(),
+  connectionId: z.string().trim().min(1).max(128),
+  expectedNegotiationState: z.enum([
+    "PREPARATION",
+    "PREPARATION_RUNNING",
+    "PREPARATION_PAUSED",
+    "READY_TO_START",
+    "RUNNING",
+    "PAUSED",
+    "FINISHED",
+  ]),
+  expectedControlToken: z.string().trim().min(1).max(256),
   action: z.enum([
     "START_PREPARATION",
     "PAUSE_PREPARATION",
     "RESUME_PREPARATION",
     "STOP_PREPARATION",
-    "SKIP_PREPARATION",
     "START",
     "PAUSE",
     "RESUME",
@@ -54,6 +72,27 @@ const controlActionSchema = z.object({
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
+
+type SessionMutationRow = Prisma.SessionGetPayload<{
+  select: typeof SESSION_MUTATION_SELECT;
+}>;
+
+type AccessConflictPayload = {
+  status: number;
+  body: Record<string, unknown>;
+};
+
+const SESSION_MUTATION_SELECT = {
+  ...SESSION_CONTROL_SELECT,
+  ...SESSION_CONTROL_SNAPSHOT_SELECT,
+  ...SESSION_CLOSE_SELECT,
+  eventId: true,
+  event: {
+    select: {
+      status: true,
+    },
+  },
+} as const;
 
 export const runtime = "nodejs";
 
@@ -76,77 +115,266 @@ function logStage310SessionControl(
   );
 }
 
+function buildAccessConflictResponse(conflict: AccessConflictPayload) {
+  return NextResponse.json(conflict.body, { status: conflict.status });
+}
+
+function buildRoomAccessConflict(params: {
+  output: string;
+  redirectTo: string | null;
+}): AccessConflictPayload {
+  if (params.output === "DENY_DELETED") {
+    return { status: 404, body: { error: "sessionDeleted" } };
+  }
+  if (params.output === "DENY_UNAUTHORIZED") {
+    return { status: 403, body: { error: "Forbidden." } };
+  }
+  return {
+    status: 409,
+    body: {
+      error: params.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
+      code: params.output === "EVENT_CLOSED" ? "EVENT_CLOSED" : "ROOM_CLOSED",
+      redirectTo: params.redirectTo,
+    },
+  };
+}
+
 async function syncPauseIntervals(
   sessionId: string,
-  action: "PAUSE" | "RESUME" | "FINISH",
+  action: "PAUSE" | "RESUME",
   now: Date,
 ) {
   if (action === "PAUSE") {
     await createPauseInterval(sessionId, now);
     return;
   }
-
-  if (action === "RESUME") {
-    await closeLatestPauseInterval(sessionId, now);
-    return;
-  }
-
-  await closeAllOpenPauseIntervals(sessionId, now);
+  await closeLatestPauseInterval(sessionId, now);
 }
 
-function isIdempotentNoopAction(params: {
-  action: z.infer<typeof controlActionSchema>["action"];
-  negotiationState: string;
-}) {
-  if (params.action === "PAUSE" && params.negotiationState === "PAUSED") {
-    return true;
-  }
-  if (params.action === "RESUME" && params.negotiationState === "RUNNING") {
-    return true;
-  }
-  return false;
-}
-
-async function applyAutoTransitions(sessionId: string, now: Date) {
-  let session = await prisma.session.findUniqueOrThrow({
-    where: { id: sessionId },
-    select: {
-      ...SESSION_CONTROL_SELECT,
-      ...SESSION_CLOSE_SELECT,
-    },
+async function loadRecordingState(sessionId: string) {
+  return prisma.recording.findUnique({
+    where: { sessionId },
+    select: { status: true, errorMessage: true, provider: true },
   });
+}
 
-  if (buildSessionCloseState(session).isClosed) {
-    return session;
+function buildControlConflictPayload(
+  session: SessionMutationRow,
+  participantType: ParticipantType,
+  now: Date,
+) {
+  return {
+    ...buildControlStateResponse(session, participantType, now),
+    error: "staleControlSnapshot",
+    code: "CONTROL_CONFLICT",
+  };
+}
+
+function isSerializableConflict(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
+  );
+}
+
+function isIdempotentNoopAction(
+  action: ControlAction,
+  state: NegotiationState,
+) {
+  switch (action) {
+    case "START_PREPARATION":
+      return state === "PREPARATION_RUNNING";
+    case "PAUSE_PREPARATION":
+      return state === "PREPARATION_PAUSED";
+    case "RESUME_PREPARATION":
+      return state === "PREPARATION_RUNNING";
+    case "STOP_PREPARATION":
+      return state === "READY_TO_START";
+    case "START":
+      return state === "RUNNING";
+    case "PAUSE":
+      return state === "PAUSED";
+    case "RESUME":
+      return state === "RUNNING";
+    case "FINISH":
+      return state === "FINISHED";
+    default:
+      return false;
+  }
+}
+
+async function runInteractiveMutation(params: {
+  sessionId: string;
+  action: ControlAction;
+  expectedNegotiationState: NegotiationState;
+  expectedControlToken: string;
+  connectionId: string;
+  participant: Awaited<ReturnType<typeof resolveRoomParticipantFromBody>>;
+  now: Date;
+}) {
+  const {
+    sessionId,
+    action,
+    expectedNegotiationState,
+    expectedControlToken,
+    connectionId,
+    participant,
+    now,
+  } = params;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const session = await tx.session.findUniqueOrThrow({
+            where: { id: sessionId },
+            select: SESSION_MUTATION_SELECT,
+          });
+
+          const accessDecision = decideSessionRoomAccess({
+            user: {
+              isAuthenticated: true,
+              isAuthorizedMember: true,
+            },
+            session: {
+              sessionId,
+              negotiationState: session.negotiationState,
+              roomLifecycle: session.roomLifecycle ?? null,
+              deletedAt: session.deletedAt ?? null,
+              closeReason: session.closeReason ?? null,
+              closedByEventAt: session.closedByEventAt ?? null,
+              eventId: session.eventId ?? null,
+              eventStatus: session.event?.status ?? null,
+            },
+            redirect: {
+              sessionId,
+              participantJoinToken: participant?.joinToken ?? null,
+              eventId: session.eventId ?? null,
+              eventStatus: session.event?.status ?? null,
+              preferEventResultsForEventOwner:
+                participant?.type === ParticipantType.FACILITATOR,
+            },
+          });
+
+          if (!isRoomAccessAllowed(accessDecision.output)) {
+            return {
+              kind: "access_conflict" as const,
+              conflict: buildRoomAccessConflict({
+                output: accessDecision.output,
+                redirectTo: accessDecision.redirectTo,
+              }),
+            };
+          }
+
+          if (participant?.type !== ParticipantType.FACILITATOR) {
+            return {
+              kind: "forbidden" as const,
+              body: { error: "Only facilitators can control negotiation state." },
+            };
+          }
+
+          if (!participant.userId || participant.userId !== session.facilitatorId) {
+            return {
+              kind: "forbidden" as const,
+              body: { error: "Only current facilitator can control negotiation state." },
+            };
+          }
+
+          if (isSessionClosedByOrganizer(session)) {
+            return {
+              kind: "access_conflict" as const,
+              conflict: {
+                status: 409,
+                body: { error: "sessionClosedByEvent" },
+              },
+            };
+          }
+
+          const lease = await tx.sessionRoomConnection.findFirst({
+            where: {
+              sessionId,
+              userId: participant.userId,
+              connectionId,
+              role: ParticipantType.FACILITATOR,
+              disconnectedAt: null,
+              supersededAt: null,
+              revokedAt: null,
+              expiresAt: {
+                gt: now,
+              },
+            },
+            select: {
+              leaseVersion: true,
+            },
+          });
+
+          if (!lease) {
+            return {
+              kind: "stale_connection" as const,
+              body: {
+                error: "staleConnection",
+                code: "STALE_CONNECTION",
+              },
+            };
+          }
+
+          const snapshot = pickSessionControlSnapshot(session);
+          const token = createSessionControlToken(snapshot);
+          if (
+            session.negotiationState !== expectedNegotiationState ||
+            token !== expectedControlToken
+          ) {
+            return {
+              kind: "control_conflict" as const,
+              session,
+            };
+          }
+
+          if (isIdempotentNoopAction(action, session.negotiationState)) {
+            return {
+              kind: "noop" as const,
+              session,
+            };
+          }
+
+          const updateData = getControlUpdateData(session, action, now);
+          const updated = await tx.session.updateMany({
+            where: buildSessionControlSnapshotWhere(sessionId, snapshot),
+            data: updateData,
+          });
+
+          if (updated.count === 0) {
+            const current = await tx.session.findUniqueOrThrow({
+              where: { id: sessionId },
+              select: SESSION_MUTATION_SELECT,
+            });
+            return {
+              kind: "control_conflict" as const,
+              session: current,
+            };
+          }
+
+          const current = await tx.session.findUniqueOrThrow({
+            where: { id: sessionId },
+            select: SESSION_MUTATION_SELECT,
+          });
+
+          return {
+            kind: "applied" as const,
+            session: current,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (isSerializableConflict(error) && attempt === 0) {
+        continue;
+      }
+      throw error;
+    }
   }
 
-  if (shouldAutoFinishPreparation(session, now)) {
-    session = await prisma.session.update({
-      where: { id: sessionId },
-      data: getAutoFinishPreparationUpdateData(session, now),
-      select: {
-        ...SESSION_CONTROL_SELECT,
-        ...SESSION_CLOSE_SELECT,
-      },
-    });
-  }
-
-  if (shouldAutoFinish(session, now)) {
-    await completeSessionCanonical({
-      sessionId,
-      mode: "ROOM_FACILITATOR_FINISH",
-      reason: "AUTO_TIMER_FINISH",
-    });
-    session = await prisma.session.findUniqueOrThrow({
-      where: { id: sessionId },
-      select: {
-        ...SESSION_CONTROL_SELECT,
-        ...SESSION_CLOSE_SELECT,
-      },
-    });
-  }
-
-  return session;
+  throw new Error("Unable to apply session control mutation.");
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -160,7 +388,6 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const parsed = controlActionSchema.safeParse(body);
-
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid request." },
@@ -168,195 +395,55 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { action } = parsed.data;
+  const now = new Date();
+  const {
+    action,
+    connectionId,
+    expectedControlToken,
+    expectedNegotiationState,
+  } = parsed.data;
+
   logStage310SessionControl("operation_started", {
     sessionId,
     action,
-    connectionId: shortConnectionId(parsed.data.connectionId),
+    connectionId: shortConnectionId(connectionId),
   });
+
   const participant = await resolveRoomParticipantFromBody(
     parsed.data as Record<string, unknown>,
     sessionId,
   );
-
   if (!participant) {
-    logStage310SessionControl("authorisation_result", {
-      sessionId,
-      action,
-      authorised: false,
-      reason: "participant_not_found",
-      connectionId: shortConnectionId(parsed.data.connectionId),
-    });
     return NextResponse.json({ error: "Invalid join token." }, { status: 404 });
   }
 
-  const accessDecision = decideSessionRoomAccess({
-    user: {
-      isAuthenticated: true,
-      isAuthorizedMember: true,
-    },
-    session: {
-      sessionId,
-      negotiationState: participant.session.negotiationState,
-      roomLifecycle: participant.session.roomLifecycle ?? null,
-      deletedAt: participant.session.deletedAt ?? null,
-      closeReason: participant.session.closeReason ?? null,
-      closedByEventAt: participant.session.closedByEventAt ?? null,
-      eventId: participant.session.eventId ?? null,
-      eventStatus: participant.session.event?.status ?? null,
-    },
-    redirect: {
-      sessionId,
-      participantJoinToken: participant.joinToken,
-      eventId: participant.session.eventId ?? null,
-      eventStatus: participant.session.event?.status ?? null,
-      preferEventResultsForEventOwner: participant.type === ParticipantType.FACILITATOR,
-    },
-  });
-  logStage310SessionControl("authorisation_result", {
-    sessionId,
-    action,
-    authorised: isRoomAccessAllowed(accessDecision.output),
-    decision: accessDecision.output,
-    participantType: participant.type,
-    negotiationState: participant.session.negotiationState,
-    roomLifecycle: participant.session.roomLifecycle ?? null,
-    eventId: participant.session.eventId ?? null,
-    connectionId: shortConnectionId(parsed.data.connectionId),
-  });
-  if (!isRoomAccessAllowed(accessDecision.output)) {
-    if (accessDecision.output === "DENY_DELETED") {
-      return NextResponse.json({ error: "sessionDeleted" }, { status: 404 });
-    }
-    if (accessDecision.output === "DENY_UNAUTHORIZED") {
-      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-    }
-    return NextResponse.json(
-      {
-        error:
-          accessDecision.output === "EVENT_CLOSED" ? "eventClosed" : "roomClosed",
-        code:
-          accessDecision.output === "EVENT_CLOSED"
-            ? "EVENT_CLOSED"
-            : "ROOM_CLOSED",
-        redirectTo: accessDecision.redirectTo,
-      },
-      { status: 409 },
-    );
-  }
+  try {
+    await reconcileSessionControlAutoTransitions(sessionId, now);
 
-  if (
-    accessDecision.output === "ALLOW_DEBRIEF" &&
-    action !== "FINISH"
-  ) {
-    return NextResponse.json(
-      {
-        error: "negotiationAlreadyFinished",
-        code: "DEBRIEF_CONTROL_DENIED",
-      },
-      { status: 409 },
-    );
-  }
-
-  if (participant.userId && parsed.data.connectionId) {
-    const leaseState = await validateSessionRoomConnectionLease({
-      sessionId,
-      userId: participant.userId,
-      connectionId: parsed.data.connectionId,
-    });
-    if (!leaseState.isCurrentConnectionActive) {
-      logStage310SessionControl("controlled_error", {
-        sessionId,
-        action,
-        operation: "connection_lease",
-        error: "staleConnection",
-        participantType: participant.type,
-        activeConnectionVersion: leaseState.version,
-        connectionId: shortConnectionId(parsed.data.connectionId),
-      });
-      return NextResponse.json(
-        {
-          error: "staleConnection",
-          code: "STALE_CONNECTION",
-          activeConnectionVersion: leaseState.version,
-        },
-        { status: 409 },
-      );
-    }
-  }
-
-  if (participant.type !== ParticipantType.FACILITATOR) {
-    logStage310SessionControl("authorisation_result", {
+    const mutation = await runInteractiveMutation({
       sessionId,
       action,
-      authorised: false,
-      reason: "not_facilitator",
-      participantType: participant.type,
-      connectionId: shortConnectionId(parsed.data.connectionId),
+      expectedNegotiationState,
+      expectedControlToken,
+      connectionId,
+      participant,
+      now,
     });
-    return NextResponse.json(
-      { error: "Only facilitators can control negotiation state." },
-      { status: 403 },
-    );
-  }
 
-  const now = new Date();
-
-  try {
-    let session = await applyAutoTransitions(sessionId, now);
-
-    if (isSessionClosedByOrganizer(session)) {
-      logStage310SessionControl("lifecycle_decision", {
-        sessionId,
-        action,
-        decision: "closed_by_organizer",
-        participantType: participant.type,
-        negotiationState: session.negotiationState,
-      });
-      return NextResponse.json(
-        { error: "sessionClosedByEvent" },
-        { status: 409 },
-      );
+    if (mutation.kind === "access_conflict") {
+      return buildAccessConflictResponse(mutation.conflict);
     }
-
-    if (shouldAutoFinish(session, now) && action !== "FINISH") {
-      logStage310SessionControl("lifecycle_decision", {
-        sessionId,
-        action,
-        decision: "auto_finished",
-        participantType: participant.type,
-        negotiationState: session.negotiationState,
-      });
-      return NextResponse.json(
-        buildControlState(session, participant.type, now),
-      );
+    if (mutation.kind === "forbidden") {
+      return NextResponse.json(mutation.body, { status: 403 });
     }
-
-    if (
-      isIdempotentNoopAction({
-        action,
-        negotiationState: session.negotiationState,
-      })
-    ) {
-      if (action === "PAUSE") {
-        await createPauseInterval(sessionId, now);
-      } else if (action === "RESUME") {
-        await closeLatestPauseInterval(sessionId, now);
-      }
-      const recording = await prisma.recording.findUnique({
-        where: { sessionId },
-        select: { status: true, errorMessage: true },
-      });
-      logStage310SessionControl("operation_result", {
-        sessionId,
-        action,
-        result: "idempotent_noop",
-        participantType: participant.type,
-        negotiationState: session.negotiationState,
-        recordingStatus: recording?.status ?? null,
-      });
+    if (mutation.kind === "stale_connection") {
+      return NextResponse.json(mutation.body, { status: 409 });
+    }
+    if (mutation.kind === "noop") {
+      const recording = await loadRecordingState(sessionId);
       return NextResponse.json({
-        ...buildControlState(session, participant.type, now),
+        ...buildControlStateResponse(mutation.session, participant.type, now),
+        recordingWarning: undefined,
         recording: recording
           ? {
               status: recording.status,
@@ -365,83 +452,51 @@ export async function POST(request: Request, context: RouteContext) {
           : null,
       });
     }
+    if (mutation.kind === "control_conflict") {
+      const recording = await loadRecordingState(sessionId);
+      return NextResponse.json(
+        {
+          ...buildControlConflictPayload(mutation.session, participant.type, now),
+          recording: recording
+            ? {
+                status: recording.status,
+                errorMessage: recording.errorMessage,
+              }
+            : null,
+        },
+        { status: 409 },
+      );
+    }
 
     let recordingWarning: string | undefined;
-
-    // LiveKit egress start/stop — skip entirely for Voximplant provider.
-    // For Voximplant, recording is orchestrated by the browser adapter:
-    // after this /control response, the client calls /recording-control and
-    // relays the typed scenarioMessage to the VoxEngine conference.
-    const recordingProvider = (
-      await prisma.recording.findUnique({
-        where: { sessionId },
-        select: { provider: true },
-      })
-    )?.provider;
-    const isLiveKit =
-      resolveEffectiveRecordingProvider(recordingProvider) === "livekit";
-
-    if (isLiveKit && shouldRunLivekitRecordingLifecycle(action) && action === "START") {
-      const recordingResult = await handleNegotiationStartRecording(sessionId);
-      if (recordingResult && !recordingResult.ok) {
-        recordingWarning = recordingResult.warning;
-      }
-    }
-
-    if (action === "FINISH") {
-      const finishResult = await completeSessionCanonical({
-        sessionId,
-        mode: "ROOM_FACILITATOR_FINISH",
-      });
-      logStage310SessionControl("lifecycle_decision", {
-        sessionId,
-        action,
-        decision: "facilitator_finish",
-        participantType: participant.type,
-        negotiationState: finishResult.negotiationState,
-        roomLifecycle: finishResult.roomLifecycle,
-        closeReason: finishResult.closeReason,
-        recordingStatus: finishResult.recording.status,
-        stopOperationId: finishResult.recording.stopOperationId,
-        stopOperationState: finishResult.recording.stopOperationState,
-      });
-      recordingWarning = finishResult.recording.warning ?? undefined;
-
-      session = await prisma.session.findUniqueOrThrow({
-        where: { id: sessionId },
-        select: {
-          ...SESSION_CONTROL_SELECT,
-          ...SESSION_CLOSE_SELECT,
-        },
-      });
-    } else {
-      const updateData = getControlUpdateData(session, action, now);
-      session = await prisma.session.update({
-        where: { id: sessionId },
-        data: updateData,
-        select: {
-          ...SESSION_CONTROL_SELECT,
-          ...SESSION_CLOSE_SELECT,
-        },
-      });
-    }
 
     if (action === "PAUSE" || action === "RESUME") {
       await syncPauseIntervals(sessionId, action, now);
     }
 
-    if (action === "PAUSE") {
-      console.info(
-        `[session-control] PAUSE applied without recording stop: sessionId=${sessionId} provider=${isLiveKit ? "livekit" : "voximplant"}`,
-      );
+    if (action === "FINISH") {
+      // CAS has already authored FINISHED; canonical completion claims/delivers
+      // stop intent and enforces room lifecycle without re-running transition.
+      await closeAllOpenPauseIntervals(sessionId, now);
+      const finishResult = await completeSessionCanonical({
+        sessionId,
+        mode: "ROOM_FACILITATOR_FINISH",
+      });
+      recordingWarning = finishResult.recording.warning ?? undefined;
+    } else {
+      const recording = await loadRecordingState(sessionId);
+      const isLiveKit =
+        resolveEffectiveRecordingProvider(recording?.provider) === "livekit";
+      if (isLiveKit && shouldRunLivekitRecordingLifecycle(action)) {
+        const recordingResult = await handleNegotiationStartRecording(sessionId);
+        if (recordingResult && !recordingResult.ok) {
+          recordingWarning = recordingResult.warning;
+        }
+      }
     }
 
-    session = await applyAutoTransitions(sessionId, now);
-
-    const recording = await prisma.recording.findUnique({
-      where: { sessionId },
-      select: { status: true, errorMessage: true },
-    });
+    const session = await reconcileSessionControlAutoTransitions(sessionId, now);
+    const recording = await loadRecordingState(sessionId);
 
     logStage310SessionControl("operation_result", {
       sessionId,
@@ -454,7 +509,7 @@ export async function POST(request: Request, context: RouteContext) {
     });
 
     return NextResponse.json({
-      ...buildControlState(session, participant.type, now),
+      ...buildControlStateResponse(session, participant.type, now),
       recordingWarning,
       recording: recording
         ? {

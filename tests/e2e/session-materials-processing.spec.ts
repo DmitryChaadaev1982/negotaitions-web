@@ -105,13 +105,39 @@ async function control(
   participant: { id: string; userId: string | null },
   action: string,
 ) {
+  if (action === "SKIP_PREPARATION") {
+    await control(request, sessionId, participant, "START_PREPARATION");
+    return control(request, sessionId, participant, "STOP_PREPARATION");
+  }
   if (!participant.userId) {
     throw new Error(`Session control ${action} requires an account-bound participant.`);
   }
   const authCookie = await createUserSessionCookie(participant.userId);
+  const connectionId = `materials-${participant.id}`;
+  const controlState = await request.get(
+    `/api/sessions/${sessionId}/control-state?participantId=${participant.id}&connectionId=${connectionId}&claimLease=1`,
+    {
+      headers: { Cookie: authCookie },
+    },
+  );
+  if (!controlState.ok()) {
+    throw new Error(
+      `Session control-state for ${action} failed (${controlState.status()}): ${await controlState.text()}`,
+    );
+  }
+  const expected = (await controlState.json()) as {
+    negotiationState: string;
+    controlToken: string;
+  };
   const response = await request.post(`/api/sessions/${sessionId}/control`, {
     headers: { Cookie: authCookie },
-    data: { participantId: participant.id, action },
+    data: {
+      participantId: participant.id,
+      connectionId,
+      action,
+      expectedNegotiationState: expected.negotiationState,
+      expectedControlToken: expected.controlToken,
+    },
   });
   if (!response.ok()) {
     throw new Error(

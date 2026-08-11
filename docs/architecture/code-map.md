@@ -9,6 +9,11 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Docs: `01-product-context.md`, `02-domain-model.md`
   - Tests: `tests/e2e/current-product-workflow.spec.ts`, `tests/e2e/event-flow.spec.ts`
 
+- Account preferences
+  - Code: `app/actions/session-sound-preference.ts`, `app/api/account/session-sound-preference/route.ts`, `lib/session-sound-preference.ts`, `prisma/schema.prisma`
+  - Docs: `02-domain-model.md`, `09-security-and-access-control.md`
+  - Tests: `tests/e2e/session-sound-preference.spec.ts`
+
 - Session/event lifecycle and control
   - Code: `app/api/sessions/[sessionId]/control/route.ts`, `app/api/sessions/[sessionId]/control-state/route.ts`, `app/api/sessions/[sessionId]/media-status/route.ts`, `app/api/sessions/[sessionId]/complete/route.ts`, `app/api/events/[id]/host/route.ts`, `app/api/events/[id]/state/route.ts`, `app/api/events/[id]/media-status/route.ts`, `app/api/events/[id]/media-control/route.ts`
   - Docs: `04-session-event-flow.md`

@@ -43,6 +43,7 @@ export type AuthUser = {
   globalRole: string;
   status: string;
   preferredLocale: string;
+  sessionSoundEnabled: boolean;
 };
 
 /**
@@ -186,6 +187,7 @@ export async function getOptionalCurrentUser(): Promise<AuthUser | null> {
           globalRole: true,
           status: true,
           preferredLocale: true,
+          sessionSoundEnabled: true,
         },
       },
     },

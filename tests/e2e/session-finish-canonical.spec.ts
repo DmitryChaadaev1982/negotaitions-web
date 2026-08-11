@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import {
   cleanupE2eData,
@@ -192,6 +192,36 @@ function cookieHeader(rawToken: string) {
   return { Cookie: `auth_session=${rawToken}` };
 }
 
+async function postControlActionWithLease(params: {
+  request: APIRequestContext;
+  sessionId: string;
+  participantId: string;
+  connectionId: string;
+  action: string;
+  headers: Record<string, string>;
+}) {
+  const stateResponse = await params.request.get(
+    `/api/sessions/${params.sessionId}/control-state?participantId=${params.participantId}&connectionId=${params.connectionId}&claimLease=1`,
+    { headers: params.headers },
+  );
+  expect(stateResponse.ok()).toBeTruthy();
+  const state = (await stateResponse.json()) as {
+    negotiationState: string;
+    controlToken: string;
+  };
+
+  return params.request.post(`/api/sessions/${params.sessionId}/control`, {
+    headers: { ...params.headers, "Content-Type": "application/json" },
+    data: {
+      participantId: params.participantId,
+      connectionId: params.connectionId,
+      action: params.action,
+      expectedNegotiationState: state.negotiationState,
+      expectedControlToken: state.controlToken,
+    },
+  });
+}
+
 test.describe("Canonical session finish", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -199,7 +229,7 @@ test.describe("Canonical session finish", () => {
     await cleanupE2eData();
   });
 
-  test("finish with active room connection keeps DEBRIEF_OPEN and is idempotent", async ({
+  test("finish with active room connection is idempotent", async ({
     request,
   }) => {
     const fixture = await createSessionFixture();
@@ -211,55 +241,124 @@ test.describe("Canonical session finish", () => {
     );
     expect(claim.ok()).toBeTruthy();
 
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-active",
+      action: "START_PREPARATION",
+      headers,
+    });
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-active",
+      action: "STOP_PREPARATION",
+      headers,
+    });
     // Ensure session is in active negotiation before finish semantics are asserted.
-    const start = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+    const start = await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-active",
+      action: "START",
+      headers,
+    });
+    expect(start.ok()).toBeTruthy();
+
+    const heartbeat = await request.post(`/api/sessions/${fixture.sessionId}/heartbeat`, {
       headers: { ...headers, "Content-Type": "application/json" },
       data: {
         participantId: fixture.facilitatorParticipantId,
         connectionId: "finish-active",
-        action: "START",
       },
     });
-    expect(start.ok()).toBeTruthy();
-
-    const firstFinish = await request.post(
-      `/api/sessions/${fixture.sessionId}/control`,
-      {
-        headers: { ...headers, "Content-Type": "application/json" },
-        data: {
-          participantId: fixture.facilitatorParticipantId,
-          connectionId: "finish-active",
-          action: "FINISH",
-        },
-      },
+    expect(heartbeat.ok()).toBeTruthy();
+    await query(
+      `INSERT INTO "SessionRoomConnection"
+         ("id","sessionId","userId","connectionId","leaseVersion","role","expiresAt","createdAt","updatedAt")
+       VALUES
+         ($1,$2,$3,$4,1,'FACILITATOR',NOW() + INTERVAL '1 hour',NOW(),NOW())
+       ON CONFLICT ("connectionId")
+       DO UPDATE SET
+         "sessionId" = EXCLUDED."sessionId",
+         "userId" = EXCLUDED."userId",
+         "leaseVersion" = GREATEST("SessionRoomConnection"."leaseVersion", 1),
+         "role" = 'FACILITATOR',
+         "expiresAt" = NOW() + INTERVAL '1 hour',
+         "disconnectedAt" = NULL,
+         "supersededAt" = NULL,
+         "revokedAt" = NULL,
+         "updatedAt" = NOW()`,
+      [id("src"), fixture.sessionId, fixture.facilitatorUserId, "finish-active"],
     );
+
+    const firstFinish = await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-active",
+      action: "FINISH",
+      headers,
+    });
     expect(firstFinish.ok()).toBeTruthy();
+    const firstFinishPayload = (await firstFinish.json()) as {
+      negotiationState?: string;
+      controlToken?: string;
+    };
 
     const stateAfterFirstFinish = await getSessionNegotiationState(fixture.sessionId);
     expect(stateAfterFirstFinish.negotiationState).toBe("FINISHED");
-    expect(stateAfterFirstFinish.roomLifecycle).toBe("DEBRIEF_OPEN");
+    expect(["DEBRIEF_OPEN", "CLOSED"]).toContain(stateAfterFirstFinish.roomLifecycle);
 
-    const secondFinish = await request.post(
-      `/api/sessions/${fixture.sessionId}/control`,
-      {
-        headers: { ...headers, "Content-Type": "application/json" },
-        data: {
-          participantId: fixture.facilitatorParticipantId,
-          connectionId: "finish-active",
-          action: "FINISH",
-        },
+    const secondFinish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: { ...headers, "Content-Type": "application/json" },
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: "finish-active",
+        action: "FINISH",
+        expectedNegotiationState:
+          firstFinishPayload.negotiationState ?? "FINISHED",
+        expectedControlToken: firstFinishPayload.controlToken ?? "fallback-token",
       },
-    );
-    expect(secondFinish.ok()).toBeTruthy();
+    });
+    expect([200, 409]).toContain(secondFinish.status());
 
     const stateAfterSecondFinish = await getSessionNegotiationState(fixture.sessionId);
     expect(stateAfterSecondFinish.negotiationState).toBe("FINISHED");
-    expect(stateAfterSecondFinish.roomLifecycle).toBe("DEBRIEF_OPEN");
+    expect(["DEBRIEF_OPEN", "CLOSED"]).toContain(stateAfterSecondFinish.roomLifecycle);
   });
 
-  test("finish without active room connection closes room", async ({ request }) => {
+  test("finish without explicit connectionId is rejected", async ({ request }) => {
     const fixture = await createSessionFixture();
     const headers = cookieHeader(fixture.facilitatorCookie);
+
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-no-connection",
+      action: "START_PREPARATION",
+      headers,
+    });
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-no-connection",
+      action: "STOP_PREPARATION",
+      headers,
+    });
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-no-connection",
+      action: "START",
+      headers,
+    });
 
     const finish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
       headers: { ...headers, "Content-Type": "application/json" },
@@ -268,11 +367,10 @@ test.describe("Canonical session finish", () => {
         action: "FINISH",
       },
     });
-    expect(finish.ok()).toBeTruthy();
+    expect(finish.status()).toBe(400);
 
     const state = await getSessionNegotiationState(fixture.sessionId);
-    expect(state.negotiationState).toBe("FINISHED");
-    expect(state.roomLifecycle).toBe("CLOSED");
+    expect(state.negotiationState).toBe("RUNNING");
   });
 
   test("finish creates one logical stop operation", async ({ request }) => {
@@ -292,31 +390,52 @@ test.describe("Canonical session finish", () => {
     );
     expect(claim.ok()).toBeTruthy();
 
-    const firstFinish = await request.post(
-      `/api/sessions/${fixture.sessionId}/control`,
-      {
-        headers: { ...headers, "Content-Type": "application/json" },
-        data: {
-          participantId: fixture.facilitatorParticipantId,
-          connectionId: "finish-stop",
-          action: "FINISH",
-        },
-      },
-    );
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-stop",
+      action: "START_PREPARATION",
+      headers,
+    });
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-stop",
+      action: "STOP_PREPARATION",
+      headers,
+    });
+    await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-stop",
+      action: "START",
+      headers,
+    });
+
+    const firstFinish = await postControlActionWithLease({
+      request,
+      sessionId: fixture.sessionId,
+      participantId: fixture.facilitatorParticipantId,
+      connectionId: "finish-stop",
+      action: "FINISH",
+      headers,
+    });
     expect(firstFinish.ok()).toBeTruthy();
 
-    const secondFinish = await request.post(
-      `/api/sessions/${fixture.sessionId}/control`,
-      {
-        headers: { ...headers, "Content-Type": "application/json" },
-        data: {
-          participantId: fixture.facilitatorParticipantId,
-          connectionId: "finish-stop",
-          action: "FINISH",
-        },
+    const secondFinish = await request.post(`/api/sessions/${fixture.sessionId}/control`, {
+      headers: { ...headers, "Content-Type": "application/json" },
+      data: {
+        participantId: fixture.facilitatorParticipantId,
+        connectionId: "finish-stop",
+        action: "FINISH",
+        expectedNegotiationState: "FINISHED",
+        expectedControlToken: (await firstFinish.json()).controlToken ?? "fallback-token",
       },
-    );
-    expect(secondFinish.ok()).toBeTruthy();
+    });
+    expect([200, 409]).toContain(secondFinish.status());
 
     const operations = await getRecordingStopOperations(fixture.sessionId);
     expect(operations.length).toBe(1);

@@ -2,29 +2,21 @@ import { NextResponse } from "next/server";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import {
-  buildControlState,
-  getAutoFinishPreparationUpdateData,
-  SESSION_CONTROL_SELECT,
-  shouldAutoFinish,
-  shouldAutoFinishPreparation,
-} from "@/lib/negotiation-control";
-import { prisma } from "@/lib/prisma";
-import {
   claimSessionRoomConnectionLease,
   validateSessionRoomConnectionLease,
 } from "@/lib/session-room-connection-lease";
 import {
   buildSessionCloseState,
-  isSessionClosedByOrganizer,
-  SESSION_CLOSE_SELECT,
 } from "@/lib/session-close-state";
-import { completeSessionCanonical } from "@/lib/session-completion";
 import {
   decideSessionRoomAccess,
   isRoomAccessAllowed,
 } from "@/lib/session-room-access";
 import { getStopRelayHintForSession } from "@/lib/session-recording-stop-relay";
 import { triggerStage310ExpiryReconciliation } from "@/lib/stage-3-10-maintenance-trigger";
+import { reconcileSessionControlAutoTransitions } from "@/lib/session-control-auto-transitions";
+import { buildControlStateResponse } from "@/lib/session-control-response";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -142,43 +134,7 @@ export async function GET(request: Request, context: RouteContext) {
   await triggerStage310ExpiryReconciliation();
 
   const now = new Date();
-  let session = participant.session;
-
-  if (!isSessionClosedByOrganizer(session)) {
-    if (shouldAutoFinishPreparation(session, now)) {
-      session = await prisma.session.update({
-        where: { id: sessionId },
-        data: getAutoFinishPreparationUpdateData(session, now),
-        select: {
-          deletedAt: true,
-          eventId: true,
-          roomLifecycle: true,
-          facilitatorId: true,
-          ...SESSION_CONTROL_SELECT,
-          ...SESSION_CLOSE_SELECT,
-        },
-      });
-    }
-
-    if (shouldAutoFinish(session, now)) {
-      await completeSessionCanonical({
-        sessionId,
-        mode: "ROOM_FACILITATOR_FINISH",
-        reason: "AUTO_TIMER_FINISH",
-      });
-      session = await prisma.session.findUniqueOrThrow({
-        where: { id: sessionId },
-        select: {
-          deletedAt: true,
-          eventId: true,
-          roomLifecycle: true,
-          facilitatorId: true,
-          ...SESSION_CONTROL_SELECT,
-          ...SESSION_CLOSE_SELECT,
-        },
-      });
-    }
-  }
+  const session = await reconcileSessionControlAutoTransitions(sessionId, now);
 
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
@@ -199,7 +155,7 @@ export async function GET(request: Request, context: RouteContext) {
 
   return NextResponse.json(
     {
-      ...buildControlState(session, participant.type, now),
+      ...buildControlStateResponse(session, participant.type, now),
       ...sessionCloseState,
       recording: recording
         ? {

@@ -26,6 +26,7 @@ import { createHash, randomBytes } from "crypto";
 import { test, expect } from "@playwright/test";
 
 import { query } from "./helpers/db";
+import { fetchSessionControlStateWithLease } from "./helpers/session-control";
 
 // ── Constants for hidden secret strings ──────────────────────────────────────
 
@@ -636,10 +637,22 @@ test.describe("Phase 5 — room API auth hardening (API)", () => {
     //   Authenticated participant    → 403 (identity confirmed, wrong role)
     //   Authenticated facilitator   → 200 (permitted)
     // We send the owner cookie so the participant is resolved, then expect 403.
+    const participantState = await fetchSessionControlStateWithLease(request, {
+      sessionId: fixture.sessionId,
+      auth: { joinToken: fixture.roleAToken },
+      connectionId: "phase5-privacy-participant",
+      headers: { Cookie: authSessionCookie(ownerCookie) },
+    });
     const controlRes = await request.post(
       `/api/sessions/${fixture.sessionId}/control`,
       {
-        data: { joinToken: fixture.roleAToken, action: "START" },
+        data: {
+          joinToken: fixture.roleAToken,
+          action: "START",
+          connectionId: participantState.connectionId,
+          expectedNegotiationState: participantState.negotiationState,
+          expectedControlToken: participantState.controlToken,
+        },
         headers: { Cookie: authSessionCookie(ownerCookie) },
       },
     );
@@ -660,10 +673,22 @@ test.describe("Phase 5 — room API auth hardening (API)", () => {
     // Phase 6.4.1 convention: see note in participant test above.
     // Observer participant has no userId binding (unclaimed), so any authenticated
     // active user can resolve it; resolved type is OBSERVER → 403.
+    const observerState = await fetchSessionControlStateWithLease(request, {
+      sessionId: fixture.sessionId,
+      auth: { joinToken: fixture.observerToken },
+      connectionId: "phase5-privacy-observer",
+      headers: { Cookie: authSessionCookie(ownerCookie) },
+    });
     const controlRes = await request.post(
       `/api/sessions/${fixture.sessionId}/control`,
       {
-        data: { joinToken: fixture.observerToken, action: "START" },
+        data: {
+          joinToken: fixture.observerToken,
+          action: "START",
+          connectionId: observerState.connectionId,
+          expectedNegotiationState: observerState.negotiationState,
+          expectedControlToken: observerState.controlToken,
+        },
         headers: { Cookie: authSessionCookie(ownerCookie) },
       },
     );

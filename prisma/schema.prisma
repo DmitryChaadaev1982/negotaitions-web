@@ -263,6 +263,8 @@ model User {
 
   // UI language preference: "ru" | "en"
   preferredLocale  String    @default("ru")
+  // Session room sound preference for Stage 3.13E.
+  sessionSoundEnabled Boolean @default(true)
 
   // Incremented on every password mutation. Captured during password
   // verification so login / password-change can CAS against reset.

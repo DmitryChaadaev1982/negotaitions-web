@@ -14,6 +14,7 @@ import {
   query,
   upsertRecordingForSession,
 } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.describe.configure({ mode: "serial" });
 
@@ -60,8 +61,18 @@ async function finishSession(
 ) {
   const session = await getSession(sessionId);
   const facilitator = participantByName(session.participants, facilitatorName);
-  const response = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken: facilitator.joinToken, action: "FINISH" },
+  const cookieHeader =
+    facilitator.userId != null
+      ? { Cookie: `auth_session=${await createUserSessionCookie(facilitator.userId)}` }
+      : undefined;
+  const response = await postSessionControlAction(request, {
+    sessionId,
+    auth: facilitator.userId
+      ? { participantId: facilitator.id }
+      : { joinToken: facilitator.joinToken },
+    action: "FINISH",
+    connectionId: "workflow-finish",
+    headers: cookieHeader,
   });
   if (response.ok()) {
     return;

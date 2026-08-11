@@ -53,6 +53,7 @@ type FacilitatorRoomControlsProps = {
 type DurationControlsProps = {
   sessionId: string;
   roomAuth: RoomAuthToken;
+  connectionId?: string;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
   isSubmitting: boolean;
@@ -63,6 +64,7 @@ type DurationControlsProps = {
 function DurationControls({
   sessionId,
   roomAuth,
+  connectionId,
   controlState,
   onControlStateChange,
   isSubmitting,
@@ -79,6 +81,10 @@ function DurationControls({
   const [durationError, setDurationError] = useState<string | null>(null);
 
   const saveDurations = useCallback(async () => {
+    if (!connectionId || !controlState.controlToken) {
+      setDurationError(t("room.unableToUpdateDuration"));
+      return;
+    }
     setDurationError(null);
     setIsSubmitting(true);
 
@@ -88,6 +94,9 @@ function DurationControls({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...roomAuthBody(roomAuth),
+          connectionId,
+          expectedNegotiationState: controlState.negotiationState,
+          expectedControlToken: controlState.controlToken,
           preparationDurationMinutes,
           durationMinutes: negotiationDurationMinutes,
         }),
@@ -97,6 +106,8 @@ function DurationControls({
         | {
             durationSeconds: number;
             preparationDurationSeconds: number;
+            negotiationState: ControlState["negotiationState"];
+            controlToken: string;
             error?: string;
           }
         | { error?: string };
@@ -112,6 +123,8 @@ function DurationControls({
       if ("durationSeconds" in payload) {
         onControlStateChange({
           ...controlState,
+          negotiationState: payload.negotiationState,
+          controlToken: payload.controlToken,
           durationSeconds: payload.durationSeconds,
           preparationDurationSeconds: payload.preparationDurationSeconds,
           remainingSeconds: payload.durationSeconds,
@@ -129,6 +142,7 @@ function DurationControls({
     }
   }, [
     controlState,
+    connectionId,
     roomAuth,
     negotiationDurationMinutes,
     onControlStateChange,
@@ -209,6 +223,10 @@ export function FacilitatorRoomControls({
 
   const runAction = useCallback(
     async (action: ControlAction) => {
+      if (!connectionId || !controlState.controlToken) {
+        setRecordingWarning("Connection lease missing. Rejoin the room.");
+        return;
+      }
       setIsSubmitting(true);
       setRecordingWarning(null);
 
@@ -219,6 +237,8 @@ export function FacilitatorRoomControls({
           body: JSON.stringify({
             ...roomAuthBody(roomAuth, { connectionId }),
             action,
+            expectedNegotiationState: controlState.negotiationState,
+            expectedControlToken: controlState.controlToken,
           }),
         });
 
@@ -261,6 +281,8 @@ export function FacilitatorRoomControls({
     [
       roomAuth,
       connectionId,
+      controlState.controlToken,
+      controlState.negotiationState,
       onControlStateChange,
       onRecordingStateChange,
       sessionId,
@@ -344,6 +366,7 @@ export function FacilitatorRoomControls({
             key={`${controlState.durationSeconds}-${controlState.preparationDurationSeconds}`}
             sessionId={sessionId}
             roomAuth={roomAuth}
+            connectionId={connectionId}
             controlState={controlState}
             onControlStateChange={onControlStateChange}
             isSubmitting={isSubmitting}
@@ -359,24 +382,6 @@ export function FacilitatorRoomControls({
               className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
             >
               {t("room.startPreparation")}
-            </button>
-            <button
-              type="button"
-              data-testid="skip-preparation-button"
-              disabled={isSubmitting}
-              onClick={() => void runAction("SKIP_PREPARATION")}
-              className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
-            >
-              {t("room.skipPreparation")}
-            </button>
-            <button
-              type="button"
-              data-testid="start-negotiation-button"
-              disabled={isSubmitting}
-              onClick={() => requestAction("START")}
-              className={`${actionButtonClass} border border-slate-600 text-slate-200 hover:bg-slate-800`}
-            >
-              {t("room.startNegotiation")}
             </button>
           </div>
         </div>

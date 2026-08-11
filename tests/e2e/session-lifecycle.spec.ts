@@ -17,6 +17,7 @@ import {
   updateParticipantNotes,
   updateRecordingCompleted,
 } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.describe.configure({ mode: "serial" });
 
@@ -78,8 +79,11 @@ async function control(
   joinToken: string,
   action: string,
 ) {
-  const response = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken, action },
+  const response = await postSessionControlAction(request, {
+    sessionId,
+    auth: { joinToken },
+    action,
+    connectionId: "session-lifecycle-facilitator",
   });
   expect(response.ok()).toBeTruthy();
   return response.json() as Promise<{
@@ -324,7 +328,8 @@ test("mock external service failures are visible without blocking negotiation st
 }) => {
   const { session, facilitator } = await createAssignedSession(request);
 
-  await control(request, session.id, facilitator.joinToken, "SKIP_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "START_PREPARATION");
+  await control(request, session.id, facilitator.joinToken, "STOP_PREPARATION");
   await request.post("/api/test/mock-external-service", {
     data: { error: "LIVEKIT_QUOTA_EXCEEDED" },
   });

@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "crypto";
 import { expect, test } from "@playwright/test";
 
 import { cleanupE2eData, query } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.beforeAll(cleanupE2eData);
 test.afterAll(cleanupE2eData);
@@ -337,13 +338,19 @@ test.describe("Phase 6.12 - DB/API regression", () => {
     const facStandalone = await addSessionParticipant({ sessionId: standaloneId, userId: user.id, displayName: "Fac", type: "FACILITATOR" });
     const facLinked = await addSessionParticipant({ sessionId: linkedId, userId: user.id, displayName: "Fac", type: "FACILITATOR" });
 
-    const controlStandalone = await request.post(`/api/sessions/${standaloneId}/control`, {
+    const controlStandalone = await postSessionControlAction(request, {
+      sessionId: standaloneId,
+      auth: { participantId: facStandalone.participantId },
+      action: "START_PREPARATION",
+      connectionId: "phase612-standalone-fac",
       headers: { Cookie: cookie },
-      data: { participantId: facStandalone.participantId, action: "START_PREPARATION" },
     });
-    const controlLinked = await request.post(`/api/sessions/${linkedId}/control`, {
+    const controlLinked = await postSessionControlAction(request, {
+      sessionId: linkedId,
+      auth: { participantId: facLinked.participantId },
+      action: "START_PREPARATION",
+      connectionId: "phase612-linked-fac",
       headers: { Cookie: cookie },
-      data: { participantId: facLinked.participantId, action: "START_PREPARATION" },
     });
     expect(controlStandalone.status()).toBe(200);
     expect(controlLinked.status()).toBe(200);
@@ -486,9 +493,12 @@ test.describe("Phase 6.12 - DB/API regression", () => {
     await addSessionParticipant({ sessionId, userId: facilitator.id, displayName: "Fac", type: "FACILITATOR" });
     const p = await addSessionParticipant({ sessionId, userId: participant.id, displayName: "Part", type: "PARTICIPANT", sessionRoleId: roles[0]!.id });
 
-    const control = await request.post(`/api/sessions/${sessionId}/control`, {
+    const control = await postSessionControlAction(request, {
+      sessionId,
+      auth: { participantId: p.participantId },
+      action: "START_PREPARATION",
+      connectionId: "phase612-participant-denied",
       headers: { Cookie: partCookie },
-      data: { participantId: p.participantId, action: "START_PREPARATION" },
     });
     const analyze = await request.post(`/api/sessions/${sessionId}/analyze`, {
       headers: { Cookie: partCookie },

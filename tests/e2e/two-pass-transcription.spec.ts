@@ -33,6 +33,7 @@ import {
   participantByName,
   updateRecordingCompleted,
 } from "./helpers/db";
+import { postSessionControlAction } from "./helpers/session-control";
 
 test.describe.configure({ mode: "serial" });
 
@@ -91,8 +92,15 @@ async function control(
   joinToken: string,
   action: string,
 ) {
-  const response = await request.post(`/api/sessions/${sessionId}/control`, {
-    data: { joinToken, action },
+  if (action === "SKIP_PREPARATION") {
+    await control(request, sessionId, joinToken, "START_PREPARATION");
+    return control(request, sessionId, joinToken, "STOP_PREPARATION");
+  }
+  const response = await postSessionControlAction(request, {
+    sessionId,
+    auth: { joinToken },
+    action,
+    connectionId: "two-pass-facilitator",
   });
   expect(response.ok()).toBeTruthy();
   return response.json();

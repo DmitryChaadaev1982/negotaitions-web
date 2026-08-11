@@ -16,6 +16,7 @@ import {
   EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
+  EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   isExpectedPendingStatusOutput,
   LEGACY_PRODUCTION_MIGRATIONS,
   loadLegacyManifest,
@@ -222,7 +223,7 @@ test("failed migration history is refused", () => {
   );
 });
 
-test("exact approved Stage 3.13C and Stage 3.13D sequence is accepted", () => {
+test("exact approved Stage 3.13C/3.13D/3.13E sequence is accepted", () => {
   const result = validateMigrationHistoryRows(
     preApprovedProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
@@ -234,6 +235,7 @@ test("exact approved Stage 3.13C and Stage 3.13D sequence is accepted", () => {
   assert.deepEqual(EXPECTED_PRODUCTION_PENDING_MIGRATIONS, [
     ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
+    ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   ]);
   assert.deepEqual(
     result.recognizedLegacyMigrations,
@@ -241,14 +243,17 @@ test("exact approved Stage 3.13C and Stage 3.13D sequence is accepted", () => {
   );
 });
 
-test("current production baseline accepts only approved Stage 3.13D migrations pending", () => {
+test("current production baseline accepts only approved Stage 3.13D/3.13E migrations pending", () => {
   const result = validateMigrationHistoryRows(
     currentProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
   );
   assert.deepEqual(
     result.pendingActiveMigrations,
-    [...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS],
+    [
+      ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
+      ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
+    ],
   );
   assert.deepEqual(
     result.recognizedLegacyMigrations,

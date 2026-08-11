@@ -9,6 +9,8 @@
 ## Role-Based Controls
 
 - Facilitator-only operations include negotiation control, recording control, transcription start, AI analysis run/share.
+- Account preference writes are self-only; `sessionSoundEnabled` is read/updated
+  via authenticated current-user routes/actions without cross-user targeting.
 - Participant and observer views are constrained through serializer and response shaping.
 - Admin diagnostics are separated from standard user surfaces.
 - Event lobby remote media controls are owner-only and are authorized server-side
@@ -55,6 +57,9 @@ suppression, notification, and local-preview contracts.
 
 - Session room and event lobby enforce a single active connection per `(session|event, user)` lease key when `connectionId` is provided.
 - Lease claim/check is applied on control-state/sidebar/state polling and write paths (control/host/participant/heartbeat/media-status).
+- Interactive session control mutations additionally require expected
+  negotiation state plus expected narrow `controlToken`, so stale tabs cannot
+  replay transitions after unrelated writes.
 - Session Vox access also validates lease on `connectionId` and returns `409 STALE_CONNECTION` for superseded clients, preventing stale tabs from obtaining fresh Vox credentials.
 
 ## Security-Sensitive Areas

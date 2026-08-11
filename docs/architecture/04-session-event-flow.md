@@ -62,6 +62,21 @@ lifetime; it must not reuse the short debrief grace.
   `Просмотреть материалы`) because recording, transcript, enhancement, speaker
   mapping, and publication state may be available independently of AI analysis.
 
+## Stage 3.13E Control Contract
+
+- Interactive facilitator writes on `control` and `duration` require all of:
+  authenticated participant identity, active facilitator lease `connectionId`,
+  expected negotiation state, and expected narrow `controlToken`.
+- `controlToken` is derived only from control-relevant Session fields
+  (negotiation/preparation timers, pause accumulators, facilitator/lifecycle
+  invariants) and explicitly does not depend on broad fields such as
+  `Session.updatedAt` or room-name metadata.
+- Preparation lifecycle is authoritative and non-bypassable:
+  `PREPARATION -> START_PREPARATION -> (PAUSE/RESUME)* -> STOP_PREPARATION -> READY_TO_START`.
+- Direct `START` from `PREPARATION` and direct `SKIP_PREPARATION` are invalid.
+- Negotiation `FINISH` is valid only after negotiation start (`RUNNING`/`PAUSED`);
+  pre-start finish requests are rejected.
+
 ## Facilitator Authority Model
 
 - `Session.facilitatorId` is the canonical facilitator owner identity.

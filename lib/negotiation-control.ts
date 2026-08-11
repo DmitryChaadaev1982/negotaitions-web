@@ -9,7 +9,6 @@ export type ControlAction =
   | "PAUSE_PREPARATION"
   | "RESUME_PREPARATION"
   | "STOP_PREPARATION"
-  | "SKIP_PREPARATION"
   | "START"
   | "PAUSE"
   | "RESUME"
@@ -45,6 +44,18 @@ export type ControlState = {
   canControl: boolean;
   micAllowed: boolean;
   cameraAllowed: boolean;
+  controlToken?: string;
+  serverNow?: string;
+  preparationStartedAt?: string | null;
+  preparationEndedAt?: string | null;
+  preparationTimerStartedAt?: string | null;
+  preparationPausedAt?: string | null;
+  preparationTotalPausedSeconds?: number;
+  negotiationStartedAt?: string | null;
+  negotiationEndedAt?: string | null;
+  timerStartedAt?: string | null;
+  pausedAt?: string | null;
+  totalPausedSeconds?: number;
 };
 
 const PREPARATION_PHASE_STATES: NegotiationState[] = [
@@ -58,10 +69,7 @@ export function isPreparationPhaseState(negotiationState: NegotiationState) {
 }
 
 export function canEditSessionDurations(negotiationState: NegotiationState) {
-  return (
-    isPreparationPhaseState(negotiationState) ||
-    negotiationState === NegotiationState.READY_TO_START
-  );
+  return negotiationState === NegotiationState.PREPARATION;
 }
 
 export function isCameraAllowed() {
@@ -348,12 +356,10 @@ export function getControlUpdateData(
         preparationPausedAt: null,
       };
     }
-    case "STOP_PREPARATION":
-    case "SKIP_PREPARATION": {
+    case "STOP_PREPARATION": {
       assertTransition(
         session.negotiationState,
         [
-          NegotiationState.PREPARATION,
           NegotiationState.PREPARATION_RUNNING,
           NegotiationState.PREPARATION_PAUSED,
         ],
@@ -363,13 +369,6 @@ export function getControlUpdateData(
       return getStopPreparationUpdateData(session, now);
     }
     case "START": {
-      if (session.negotiationState === NegotiationState.PREPARATION) {
-        return {
-          ...getStopPreparationUpdateData(session, now),
-          ...getStartNegotiationUpdateData(session, now),
-        };
-      }
-
       assertTransition(
         session.negotiationState,
         [NegotiationState.READY_TO_START],
@@ -407,10 +406,6 @@ export function getControlUpdateData(
       assertTransition(
         session.negotiationState,
         [
-          NegotiationState.PREPARATION,
-          NegotiationState.PREPARATION_RUNNING,
-          NegotiationState.PREPARATION_PAUSED,
-          NegotiationState.READY_TO_START,
           NegotiationState.RUNNING,
           NegotiationState.PAUSED,
         ],
