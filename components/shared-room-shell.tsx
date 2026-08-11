@@ -348,6 +348,47 @@ function SessionClosedOverlay({
   );
 }
 
+function NotificationsControlIcon({
+  state,
+}: {
+  state: "OFF" | "ENABLED";
+}) {
+  if (state === "OFF") {
+    return (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 16 16"
+        className="h-3.5 w-3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M2.5 9.5h2.4L8.4 12V4L4.9 6.5H2.5v3Z" />
+        <path d="M10.2 5.8c.9.5 1.5 1.3 1.8 2.2" />
+        <path d="M1.8 1.8l12.4 12.4" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2.5 9.5h2.4L8.4 12V4L4.9 6.5H2.5v3Z" />
+      <path d="M10.2 5.8c.9.5 1.5 1.3 1.8 2.2.3.9.3 1.9 0 2.8" />
+      <path d="M12.6 4.5c1.3 1 2 2.4 2 3.9s-.7 2.9-2 3.9" />
+    </svg>
+  );
+}
+
 // ─── SharedRoomShell props ────────────────────────────────────────────────────
 
 export type SharedRoomShellProps = {
@@ -425,7 +466,9 @@ export type SharedRoomShellProps = {
    * - LiveKit: <RestrictedControlBar micAllowed={...} onLeave={...} />
    * - Voximplant: <VoximplantControlBar .../>
    */
-  controlBar: ReactNode;
+  controlBar:
+    | ReactNode
+    | ((slots: { notificationsControl: ReactNode }) => ReactNode);
 
   /**
    * Video layout slot.
@@ -549,19 +592,38 @@ export function SharedRoomShell({
   const isEventClosed =
     sessionCloseState.isClosed &&
     sessionCloseState.closeMessageKey !== "join.sessionFinishedMessage";
-  const soundControlLabel =
+  const notificationsControlLabel =
     liveSessionUx.soundControlState === "OFF"
       ? t("room.soundOff")
-      : liveSessionUx.soundControlState === "ENABLED"
-        ? t("room.soundOn")
-        : t("room.enableSound");
-  const soundControlAriaLabel =
+      : t("room.soundOn");
+  const notificationsControlAriaLabel =
     liveSessionUx.soundControlState === "OFF"
       ? t("room.enableSessionSound")
-      : liveSessionUx.soundControlState === "ENABLED"
-        ? t("room.disableSessionSound")
-        : t("room.enableSound");
-  const soundControlPressed = liveSessionUx.soundControlState === "ENABLED";
+      : t("room.disableSessionSound");
+  const notificationsControlPressed = liveSessionUx.soundControlState === "ENABLED";
+  const notificationsControlToneClass =
+    liveSessionUx.soundControlState === "ENABLED"
+      ? "border-emerald-500/60 bg-emerald-900/35 text-emerald-100 hover:bg-emerald-900/55"
+      : "border-rose-500/60 bg-rose-900/35 text-rose-100 hover:bg-rose-900/50";
+  const notificationsControl = (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${notificationsControlToneClass}`}
+      onClick={() =>
+        void liveSessionUx.onSoundControlPress(liveSessionUx.soundControlState)
+      }
+      aria-label={notificationsControlAriaLabel}
+      aria-pressed={notificationsControlPressed}
+      disabled={liveSessionUx.soundControlBusy}
+      data-audio-runtime={
+        liveSessionUx.soundRuntimeReady ? "running" : "awaiting-user-gesture"
+      }
+      data-testid="room-notifications-control"
+    >
+      <NotificationsControlIcon state={liveSessionUx.soundControlState} />
+      <span>{notificationsControlLabel}</span>
+    </button>
+  );
 
   return (
     <>
@@ -703,17 +765,6 @@ export function SharedRoomShell({
             </RoomExitControl>
           ) : null}
           <RejoinNavLink onNavigate={onExitSession} />
-          <button
-            type="button"
-            className="rounded-md border border-slate-600 bg-slate-900/40 px-2.5 py-1 text-xs text-slate-100 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => void liveSessionUx.onSoundControlPress()}
-            aria-label={soundControlAriaLabel}
-            aria-pressed={soundControlPressed}
-            disabled={liveSessionUx.soundControlBusy}
-            data-testid="room-sound-control"
-          >
-            {soundControlLabel}
-          </button>
           <LanguageSwitcher />
           {/* Provider-specific leave button slot */}
           {leaveButton}
@@ -785,7 +836,14 @@ export function SharedRoomShell({
 
           {/* Provider-specific media control bar (mic/camera/leave) */}
           <div className="shrink-0 border-t border-slate-800 bg-slate-900">
-            {controlBar}
+            {typeof controlBar === "function"
+              ? controlBar({ notificationsControl })
+              : (
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    {notificationsControl}
+                    <div className="min-w-0 flex-1">{controlBar}</div>
+                  </div>
+                )}
           </div>
 
           {/* Provider diagnostics panel (Voximplant ?debugAudio=1) */}

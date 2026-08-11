@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ControlState } from "@/lib/negotiation-control";
 import type { ShellSessionCloseState } from "@/lib/room-provider/types";
@@ -18,11 +18,15 @@ import {
   reduceLiveSessionTransition,
 } from "@/lib/live-session-transitions";
 import {
+  ensureSemanticRoomAudioContextRunning,
+  getSemanticRoomAudioContext,
+  isSemanticRoomAudioContextRunning,
   playSemanticRoomAudioCue,
+  subscribeSemanticRoomAudioContextRunning,
 } from "@/lib/semantic-room-audio";
 import { useI18n } from "@/lib/i18n/useI18n";
 
-type SoundControlState = "OFF" | "ENABLED" | "BLOCKED";
+type SoundControlState = "OFF" | "ENABLED";
 
 export type LiveSessionAnnouncement = {
   id: number;
@@ -35,19 +39,10 @@ type RoomLiveSessionUxResult = {
   finishLineVariant: "TIMER_EXPIRED" | "MANUAL_FINISH" | null;
   announcement: LiveSessionAnnouncement;
   soundControlState: SoundControlState;
+  soundRuntimeReady: boolean;
   soundControlBusy: boolean;
-  onSoundControlPress: () => Promise<void>;
+  onSoundControlPress: (uiState?: SoundControlState) => Promise<void>;
 };
-
-function getAudioContextConstructor() {
-  if (typeof globalThis === "undefined") {
-    return null;
-  }
-  const typedGlobal = globalThis as typeof globalThis & {
-    webkitAudioContext?: typeof AudioContext;
-  };
-  return typedGlobal.AudioContext ?? typedGlobal.webkitAudioContext ?? null;
-}
 
 export function useRoomLiveSessionUx(params: {
   controlState: ControlState;
@@ -71,9 +66,10 @@ export function useRoomLiveSessionUx(params: {
   const [soundPreferenceEnabled, setSoundPreferenceEnabled] = useState(true);
   const [soundPreferencePending, setSoundPreferencePending] = useState(false);
   const [soundUnlockPending, setSoundUnlockPending] = useState(false);
-  const [audioContextRunning, setAudioContextRunning] = useState(false);
+  const [audioContextRunning, setAudioContextRunning] = useState(() =>
+    isSemanticRoomAudioContextRunning(),
+  );
 
-  const audioContextRef = useRef<AudioContext | null>(null);
   const transitionStateRef = useRef(createLiveSessionTransitionMachineState());
 
   const finishLineEligible = canUseFinishLinePresentation({
@@ -148,53 +144,55 @@ export function useRoomLiveSessionUx(params: {
     }
   }
 
-  async function ensureAudioContextRunning() {
-    const AudioContextConstructor = getAudioContextConstructor();
-    if (!AudioContextConstructor) {
-      setAudioContextRunning(false);
-      return false;
-    }
-
-    let context = audioContextRef.current;
-    if (!context) {
-      try {
-        context = new AudioContextConstructor();
-        context.onstatechange = () => {
-          const nextContext = audioContextRef.current;
-          setAudioContextRunning(Boolean(nextContext && nextContext.state === "running"));
-        };
-        audioContextRef.current = context;
-      } catch {
-        setAudioContextRunning(false);
-        return false;
-      }
-    }
-
-    if (context.state !== "running") {
-      try {
-        await context.resume();
-      } catch {
-        setAudioContextRunning(false);
-        return false;
-      }
-    }
-    setAudioContextRunning(context.state === "running");
-    return context.state === "running";
-  }
+  const ensureAudioContextRunning = useCallback(async () => {
+    const isRunning = await ensureSemanticRoomAudioContextRunning();
+    setAudioContextRunning(isRunning);
+    return isRunning;
+  }, []);
 
   useEffect(() => {
-    return () => {
-      const context = audioContextRef.current;
-      audioContextRef.current = null;
-      setAudioContextRunning(false);
-      if (!context) {
+    if (!soundPreferenceEnabled || audioContextRunning) {
+      return;
+    }
+    queueMicrotask(() => {
+      void ensureAudioContextRunning();
+    });
+  }, [audioContextRunning, ensureAudioContextRunning, soundPreferenceEnabled]);
+
+  useEffect(() => {
+    return subscribeSemanticRoomAudioContextRunning(setAudioContextRunning);
+  }, []);
+
+  useEffect(() => {
+    if (
+      !soundPreferenceEnabled ||
+      audioContextRunning ||
+      soundPreferencePending ||
+      soundUnlockPending
+    ) {
+      return;
+    }
+
+    const onTrustedInteraction = (event: PointerEvent | KeyboardEvent) => {
+      if ("repeat" in event && event.repeat) {
         return;
       }
-      void context.close().catch(() => {
-        // No-op: failed close is non-blocking.
-      });
+      void ensureAudioContextRunning();
     };
-  }, []);
+
+    window.addEventListener("pointerdown", onTrustedInteraction, { passive: true });
+    window.addEventListener("keydown", onTrustedInteraction);
+    return () => {
+      window.removeEventListener("pointerdown", onTrustedInteraction);
+      window.removeEventListener("keydown", onTrustedInteraction);
+    };
+  }, [
+    ensureAudioContextRunning,
+    audioContextRunning,
+    soundPreferenceEnabled,
+    soundPreferencePending,
+    soundUnlockPending,
+  ]);
 
   useEffect(() => {
     if (!finishLineEligible) {
@@ -243,18 +241,17 @@ export function useRoomLiveSessionUx(params: {
       ? resolveFinishLineVariant(controlState.remainingSeconds)
       : null;
 
-  const soundControlState: SoundControlState = !soundPreferenceEnabled
-    ? "OFF"
-    : audioContextRunning
-      ? "ENABLED"
-      : "BLOCKED";
+  const soundControlState: SoundControlState = soundPreferenceEnabled
+    ? "ENABLED"
+    : "OFF";
 
-  async function onSoundControlPress() {
+  async function onSoundControlPress(uiState?: SoundControlState) {
     if (soundPreferencePending || soundUnlockPending) {
       return;
     }
 
-    if (!soundPreferenceEnabled) {
+    const stateAtPress = uiState ?? soundControlState;
+    if (stateAtPress === "OFF") {
       const persisted = await persistSoundPreference(true);
       if (!persisted) {
         return;
@@ -268,17 +265,17 @@ export function useRoomLiveSessionUx(params: {
       return;
     }
 
-    if (audioContextRunning) {
-      await persistSoundPreference(false);
+    if (!audioContextRunning) {
+      setSoundUnlockPending(true);
+      try {
+        await ensureAudioContextRunning();
+      } finally {
+        setSoundUnlockPending(false);
+      }
       return;
     }
 
-    setSoundUnlockPending(true);
-    try {
-      await ensureAudioContextRunning();
-    } finally {
-      setSoundUnlockPending(false);
-    }
+    await persistSoundPreference(false);
   }
 
   useEffect(() => {
@@ -303,7 +300,7 @@ export function useRoomLiveSessionUx(params: {
     if (!cue) {
       return;
     }
-    const context = audioContextRef.current;
+    const context = getSemanticRoomAudioContext();
     if (!context || context.state !== "running") {
       return;
     }
@@ -329,6 +326,7 @@ export function useRoomLiveSessionUx(params: {
     finishLineVariant,
     announcement,
     soundControlState,
+    soundRuntimeReady: audioContextRunning,
     soundControlBusy: soundPreferencePending || soundUnlockPending,
     onSoundControlPress,
   };

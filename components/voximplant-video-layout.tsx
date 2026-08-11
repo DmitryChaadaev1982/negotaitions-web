@@ -635,15 +635,15 @@ export default function VoximplantVideoLayout({
             {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
           </RoleSection>
 
-          <div className="flex min-h-0 min-w-0 flex-col gap-2" data-testid="vox-zone-center">
+          <div className="flex min-h-0 min-w-0 flex-col justify-center gap-2" data-testid="vox-zone-center">
             <RoleSection title={t("room.timer")} testId="vox-zone-timer" className="shrink-0">
               <RoomTimerPanel controlState={controlState} />
             </RoleSection>
-            <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 min-w-0 flex-1">
-              {facilitatorTiles.length > 0
-                ? facilitatorTiles.map((tile) => renderRosterTile(tile))
-                : <NoVideoPlaceholder message={t("room.slotFacilitatorEmpty")} />}
-            </RoleSection>
+            {facilitatorTiles.length > 0 ? (
+              <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 min-w-0">
+                {facilitatorTiles.map((tile) => renderRosterTile(tile))}
+              </RoleSection>
+            ) : null}
           </div>
 
           <RoleSection title={t("room.participantB")} testId="vox-zone-participant-b" className="min-h-0 min-w-0">
@@ -651,15 +651,15 @@ export default function VoximplantVideoLayout({
           </RoleSection>
         </div>
 
-        <div className="space-y-2 overflow-auto lg:hidden" data-testid="vox-zone-main-mobile">
-          <RoleSection title={t("room.timer")} testId="vox-zone-timer-mobile">
-            <RoomTimerPanel controlState={controlState} />
-          </RoleSection>
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto lg:hidden" data-testid="vox-zone-main-mobile">
           <RoleSection title={t("room.participants")} testId="vox-zone-participants-mobile">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
               {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
             </div>
+          </RoleSection>
+          <RoleSection title={t("room.timer")} testId="vox-zone-timer-mobile" className="my-auto shrink-0">
+            <RoomTimerPanel controlState={controlState} />
           </RoleSection>
           <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator-mobile">
             {facilitatorTiles.length > 0

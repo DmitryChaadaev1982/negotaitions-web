@@ -4,6 +4,35 @@ import { deriveLiveSessionPresentationState } from "@/lib/live-session-presentat
 import type { ControlState } from "@/lib/negotiation-control";
 
 export type TimerStateTone = "default" | "warning" | "critical" | "finished";
+export type StatusBadgePath =
+  | "/status-badges/status-room-ready.png"
+  | "/status-badges/status-preparation-running.png"
+  | "/status-badges/status-preparation-paused.png"
+  | "/status-badges/status-ready-to-start.png"
+  | "/status-badges/status-negotiation-running.png"
+  | "/status-badges/status-negotiation-paused.png"
+  | "/status-badges/status-final-minute.png"
+  | "/status-badges/status-final-10.png"
+  | "/status-badges/status-time-expired.png"
+  | "/status-badges/status-negotiation-complete.png"
+  | "/status-badges/status-debrief.png";
+
+export const STATUS_BADGE_BY_PRESENTATION_STATE = {
+  ROOM_READY: "/status-badges/status-room-ready.png",
+  PREPARATION_RUNNING: "/status-badges/status-preparation-running.png",
+  PREPARATION_PAUSED: "/status-badges/status-preparation-paused.png",
+  WAITING_FOR_NEGOTIATION_START: "/status-badges/status-ready-to-start.png",
+  NEGOTIATION_RUNNING: "/status-badges/status-negotiation-running.png",
+  NEGOTIATION_PAUSED: "/status-badges/status-negotiation-paused.png",
+  FINAL_MINUTE: "/status-badges/status-final-minute.png",
+  FINAL_10_SECONDS: "/status-badges/status-final-10.png",
+  FINISH_LINE_TIMER_EXPIRED: "/status-badges/status-time-expired.png",
+  FINISH_LINE_MANUAL_FINISH: "/status-badges/status-negotiation-complete.png",
+  DEBRIEF: "/status-badges/status-debrief.png",
+} as const satisfies Record<
+  ReturnType<typeof deriveLiveSessionPresentationState>,
+  StatusBadgePath
+>;
 
 export type TimerPresentation = {
   presentationState: ReturnType<typeof deriveLiveSessionPresentationState>;
@@ -26,19 +55,33 @@ export type TimerPresentation = {
     | "room.waitingForFacilitatorStart"
     | "room.negotiationsComplete"
     | "room.debriefIsNext"
+    | "room.discussMeetingResults"
     | null;
-  icon: "i" | ">" | "!" | "!!" | "||" | "[]";
+  badgePath: StatusBadgePath;
   tone: TimerStateTone;
 };
 
 export function buildRoomTimerPresentation(
-  controlState: Pick<ControlState, "negotiationState" | "remainingSeconds" | "participantType">,
+  controlState: Pick<
+    ControlState,
+    "negotiationState" | "remainingSeconds" | "participantType"
+  > & {
+    finishLineActive?: boolean;
+  },
 ): TimerPresentation {
+  const finishLineActive =
+    controlState.finishLineActive ?? controlState.negotiationState === "FINISHED";
   const presentationState = deriveLiveSessionPresentationState({
     negotiationState: controlState.negotiationState,
     remainingSeconds: controlState.remainingSeconds,
-    finishLineActive: controlState.negotiationState === "FINISHED",
+    finishLineActive,
   });
+  const pausedTone: TimerStateTone =
+    controlState.remainingSeconds <= 10
+      ? "critical"
+      : controlState.remainingSeconds <= 60
+        ? "warning"
+        : "default";
 
   switch (presentationState) {
     case "ROOM_READY":
@@ -49,7 +92,7 @@ export function buildRoomTimerPresentation(
           controlState.participantType === ParticipantType.FACILITATOR
             ? "room.checkParticipantsAndConnection"
             : "room.facilitatorWillStartShortly",
-        icon: "i",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.ROOM_READY,
         tone: "default",
       };
     case "PREPARATION_RUNNING":
@@ -57,7 +100,7 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.preparationRunning",
         subtitleKey: null,
-        icon: "i",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.PREPARATION_RUNNING,
         tone: "default",
       };
     case "PREPARATION_PAUSED":
@@ -68,7 +111,7 @@ export function buildRoomTimerPresentation(
           controlState.participantType === ParticipantType.PARTICIPANT
             ? "room.waitingForFacilitator"
             : null,
-        icon: "||",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.PREPARATION_PAUSED,
         tone: "default",
       };
     case "WAITING_FOR_NEGOTIATION_START":
@@ -76,7 +119,7 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.preparationComplete",
         subtitleKey: "room.waitingForFacilitatorStart",
-        icon: "i",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.WAITING_FOR_NEGOTIATION_START,
         tone: "default",
       };
     case "NEGOTIATION_RUNNING":
@@ -84,7 +127,7 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.negotiationInProgress",
         subtitleKey: null,
-        icon: ">",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.NEGOTIATION_RUNNING,
         tone: "default",
       };
     case "FINAL_MINUTE":
@@ -92,7 +135,7 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.oneMinuteRemaining",
         subtitleKey: null,
-        icon: "!",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.FINAL_MINUTE,
         tone: "warning",
       };
     case "FINAL_10_SECONDS":
@@ -100,7 +143,7 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.finalTenSeconds",
         subtitleKey: null,
-        icon: "!!",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.FINAL_10_SECONDS,
         tone: "critical",
       };
     case "NEGOTIATION_PAUSED":
@@ -108,15 +151,15 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.negotiationPaused",
         subtitleKey: null,
-        icon: "||",
-        tone: "default",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.NEGOTIATION_PAUSED,
+        tone: pausedTone,
       };
     case "FINISH_LINE_TIMER_EXPIRED":
       return {
         presentationState,
         titleKey: "room.timeIsUp",
         subtitleKey: "room.negotiationsComplete",
-        icon: "[]",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.FINISH_LINE_TIMER_EXPIRED,
         tone: "finished",
       };
     case "FINISH_LINE_MANUAL_FINISH":
@@ -124,24 +167,24 @@ export function buildRoomTimerPresentation(
         presentationState,
         titleKey: "room.negotiationsComplete",
         subtitleKey: "room.debriefIsNext",
-        icon: "[]",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.FINISH_LINE_MANUAL_FINISH,
         tone: "finished",
       };
     case "DEBRIEF":
       return {
         presentationState,
         titleKey: "room.debriefTitle",
-        subtitleKey: null,
-        icon: "i",
-        tone: "default",
+        subtitleKey: "room.discussMeetingResults",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.DEBRIEF,
+        tone: "finished",
       };
     default:
       return {
         presentationState: "DEBRIEF",
         titleKey: "room.debriefTitle",
-        subtitleKey: null,
-        icon: "i",
-        tone: "default",
+        subtitleKey: "room.discussMeetingResults",
+        badgePath: STATUS_BADGE_BY_PRESENTATION_STATE.DEBRIEF,
+        tone: "finished",
       };
   }
 }

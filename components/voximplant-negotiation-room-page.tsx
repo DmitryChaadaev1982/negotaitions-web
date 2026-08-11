@@ -61,6 +61,7 @@ import {
 } from "@/lib/client/stale-connection";
 import type { VoxProviderFaultMode } from "@/lib/voximplant/provider-fault-simulation";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Page props ───────────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ function VoximplantControlBar({
   cameraUnavailable,
   toggleMic,
   toggleCamera,
+  trailingMediaControl,
 }: {
   joined: boolean;
   disabled?: boolean;
@@ -110,6 +112,7 @@ function VoximplantControlBar({
   cameraUnavailable: boolean;
   toggleMic: () => void;
   toggleCamera: () => void;
+  trailingMediaControl?: ReactNode;
 }) {
   const micActuallyOn = micCaptureStatus === "active";
   const micState: "on" | "off" | "locked" =
@@ -128,6 +131,7 @@ function VoximplantControlBar({
       cameraState={cameraState}
       onToggleMic={toggleMic}
       onToggleCamera={toggleCamera}
+      trailingMediaControl={trailingMediaControl}
       testIdPrefix="vox"
     />
   );
@@ -1295,7 +1299,7 @@ export default function VoximplantNegotiationRoomPage(
             audioProcessingEnabled={audioProcessingEnabled}
           />
         }
-        controlBar={
+        controlBar={({ notificationsControl }) => (
           <VoximplantControlBar
             joined={joined}
             micCaptureStatus={micCaptureStatus}
@@ -1305,8 +1309,9 @@ export default function VoximplantNegotiationRoomPage(
             toggleMic={toggleMic}
             toggleCamera={toggleCamera}
             disabled={staleConnection}
+            trailingMediaControl={notificationsControl}
           />
-        }
+        )}
         leaveButton={
           <VoximplantLeaveButton
             isLeaving={isLeaving || isExplicitLeavePending}

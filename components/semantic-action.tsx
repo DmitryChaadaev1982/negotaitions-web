@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import type { KeyboardEvent, PointerEvent } from "react";
 
 import { cn } from "@/lib/cn";
+import { ensureSemanticRoomAudioContextRunning } from "@/lib/semantic-room-audio";
 import {
   getSemanticActionPresentation,
   type SemanticActionKind,
@@ -46,6 +50,14 @@ type SemanticActionButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonEleme
   size?: SemanticActionSize;
 };
 
+function shouldPrimeRoomAudio(actionTarget: string | undefined) {
+  return typeof actionTarget === "string" && /(^|\/)room\//.test(actionTarget);
+}
+
+function primeRoomAudioForNavigation() {
+  void ensureSemanticRoomAudioContextRunning();
+}
+
 export function getSemanticActionClassName(
   actionKind: SemanticActionKind,
   size: SemanticActionSize = "default",
@@ -65,15 +77,34 @@ export function SemanticActionLink({
   actionTarget,
   className,
   href,
+  onKeyDown,
+  onPointerDown,
   size = "default",
   ...props
 }: SemanticActionLinkProps) {
   const target = actionTarget ?? (typeof href === "string" ? href : undefined);
+  const primeRoomAudio = shouldPrimeRoomAudio(target);
+
+  const handlePointerDown = (event: PointerEvent<HTMLAnchorElement>) => {
+    if (primeRoomAudio) {
+      primeRoomAudioForNavigation();
+    }
+    onPointerDown?.(event);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
+    if (primeRoomAudio && event.key === "Enter") {
+      primeRoomAudioForNavigation();
+    }
+    onKeyDown?.(event);
+  };
 
   return (
     <Link
       {...props}
       href={href}
+      onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
       data-action-kind={actionKind}
       data-action-target={target}
       className={getSemanticActionClassName(actionKind, size, className)}

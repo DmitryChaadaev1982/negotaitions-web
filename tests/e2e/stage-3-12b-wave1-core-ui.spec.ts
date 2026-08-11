@@ -193,6 +193,114 @@ test("assigned lobby shows compact desired role, My Session, and one primary roo
   await expect(page.getByTestId("open-session-materials-button")).toBeVisible();
 });
 
+test("room entry unlocks notification audio and button states toggle correctly", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "negotaitions.cookieConsent.v1",
+      JSON.stringify({
+        necessary: true,
+        analytics: true,
+        marketing: true,
+        timestamp: Date.now(),
+      }),
+    );
+    const metrics = {
+      constructorCalls: 0,
+      oscillatorStarts: 0,
+      resumeCalls: 0,
+    };
+    Object.defineProperty(window, "__roomAudioTestMetrics", {
+      configurable: true,
+      value: metrics,
+    });
+
+    const NativeAudioContext = window.AudioContext;
+    window.AudioContext = class InstrumentedAudioContext extends NativeAudioContext {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        metrics.constructorCalls += 1;
+      }
+
+      override createOscillator() {
+        const oscillator = super.createOscillator();
+        const nativeStart = oscillator.start.bind(oscillator);
+        oscillator.start = (...args: Parameters<OscillatorNode["start"]>) => {
+          metrics.oscillatorStarts += 1;
+          nativeStart(...args);
+        };
+        return oscillator;
+      }
+
+      override resume() {
+        metrics.resumeCalls += 1;
+        return super.resume();
+      }
+    };
+  });
+
+  const fixture = await createEventSessionFixture();
+  await login(page, fixture.participantUserId);
+  await page.goto(`/events/${fixture.eventId}/lobby`);
+
+  await page.evaluate(() => {
+    const metrics = (
+      window as typeof window & {
+        __roomAudioTestMetrics: {
+          constructorCalls: number;
+          oscillatorStarts: number;
+          resumeCalls: number;
+        };
+      }
+    ).__roomAudioTestMetrics;
+    metrics.constructorCalls = 0;
+    metrics.oscillatorStarts = 0;
+    metrics.resumeCalls = 0;
+  });
+
+  await page.getByTestId("go-to-session-room-button").click();
+  await expect(page).toHaveURL(new RegExp(`/room/${fixture.sessionId}`));
+
+  const notificationsControl = page.getByTestId("room-notifications-control");
+  await expect(notificationsControl).toBeVisible();
+  await expect(notificationsControl).toHaveAttribute("aria-pressed", "true");
+  await expect(notificationsControl).toHaveAttribute("data-audio-runtime", "running");
+  await expect(notificationsControl).toContainText("Notifications on");
+  await expect(notificationsControl).toHaveClass(/border-emerald-500/);
+
+  const audioMetrics = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __roomAudioTestMetrics: {
+            constructorCalls: number;
+            oscillatorStarts: number;
+            resumeCalls: number;
+          };
+        }
+      ).__roomAudioTestMetrics,
+  );
+  expect(audioMetrics.constructorCalls).toBeGreaterThan(0);
+  expect(audioMetrics.oscillatorStarts).toBeGreaterThan(0);
+
+  const cookieBanner = page.getByTestId("cookie-banner");
+  if (await cookieBanner.isVisible().catch(() => false)) {
+    await page.getByTestId("cookie-accept-all").click();
+    await expect(cookieBanner).toHaveCount(0);
+  }
+
+  await notificationsControl.click();
+  await expect(notificationsControl).toHaveAttribute("aria-pressed", "false");
+  await expect(notificationsControl).toContainText("Notifications off");
+  await expect(notificationsControl).toHaveClass(/border-rose-500/);
+
+  await notificationsControl.click();
+  await expect(notificationsControl).toHaveAttribute("aria-pressed", "true");
+  await expect(notificationsControl).toContainText("Notifications on");
+  await expect(notificationsControl).toHaveClass(/border-emerald-500/);
+});
+
 test("undecided desired role keeps the full selector visible", async ({ page }) => {
   const fixture = await createEventSessionFixture({
     participantPreference: "UNDECIDED",

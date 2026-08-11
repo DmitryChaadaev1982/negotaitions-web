@@ -29,6 +29,7 @@ import {
   deriveUnassignedRoleEligibleParticipantIds,
   normalizeEventAssignmentDraft,
 } from "@/lib/event-role-ui-state";
+import { getPublicAppUrl } from "@/lib/config";
 import type { PublicCaseSummary } from "@/lib/event-case-public";
 import type { EventStateResponse } from "@/lib/event-state";
 import { resolveEventSessionPrimaryAction } from "@/lib/event-session-primary-action";
@@ -492,7 +493,7 @@ export function EventHostControlsPanel({
         .filter((participant) => participant.materialsUrl || participant.roomUrl)
         .map((participant) => {
           const url = participant.roomUrl ?? participant.materialsUrl;
-          return `${participant.displayName}: ${window.location.origin}${url}`;
+          return `${participant.displayName}: ${getPublicAppUrl()}${url}`;
         })
         .join("\n");
 

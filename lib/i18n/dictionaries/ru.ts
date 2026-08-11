@@ -1030,6 +1030,7 @@ export const ru: Dictionary = {
     timeIsUp: "Время истекло",
     negotiationsComplete: "Переговоры завершены",
     debriefIsNext: "Далее — дебрифинг",
+    discussMeetingResults: "Можно обсудить результаты встречи",
     startPreparation: "Начать подготовку",
     pausePreparation: "Поставить подготовку на паузу",
     resumePreparation: "Продолжить подготовку",
@@ -1137,11 +1138,11 @@ export const ru: Dictionary = {
     duplicateEndpointSuppressed:
       "Дубликат endpoint скрыт детерминированным сопоставлением",
     unknownParticipant: "Неизвестный участник",
-    soundOn: "Звук включён",
-    soundOff: "Звук выключен",
-    enableSound: "Включить звук",
-    enableSessionSound: "Включить звук сессии",
-    disableSessionSound: "Выключить звук сессии",
+    soundOn: "Оповещения включены",
+    soundOff: "Оповещения выключены",
+    enableSound: "Включить оповещения",
+    enableSessionSound: "Включить оповещения",
+    disableSessionSound: "Выключить оповещения",
     a11yPreparationStarted: "Подготовка началась.",
     a11yPreparationPaused: "Подготовка на паузе.",
     a11yPreparationResumed: "Подготовка продолжена.",
@@ -1157,7 +1158,7 @@ export const ru: Dictionary = {
     allowAudio: "Разрешить звук",
     // Debrief mode
     debrief: "Разбор",
-    debriefTitle: "Разбор",
+    debriefTitle: "Дебриф",
     debriefMessage:
       "Сессия завершена. Вы можете остаться в комнате для разбора.",
     debriefModeNotice:

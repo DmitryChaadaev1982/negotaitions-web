@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { NegotiationState, ParticipantType } from "@/app/generated/prisma/client";
-import { buildRoomTimerPresentation } from "@/lib/room-timer-presentation";
+import {
+  buildRoomTimerPresentation,
+  STATUS_BADGE_BY_PRESENTATION_STATE,
+} from "@/lib/room-timer-presentation";
 
 function makeState(negotiationState: NegotiationState, remainingSeconds: number) {
   return {
@@ -73,9 +76,38 @@ test("running state warning precedence: final-10 overrides final-minute", () => 
 });
 
 test("paused state stays paused even with low remaining seconds", () => {
-  const paused = buildRoomTimerPresentation(makeState(NegotiationState.PAUSED, 8));
-  assert.equal(paused.presentationState, "NEGOTIATION_PAUSED");
-  assert.equal(paused.titleKey, "room.negotiationPaused");
+  const pausedNormal = buildRoomTimerPresentation(
+    makeState(NegotiationState.PAUSED, 75),
+  );
+  assert.equal(pausedNormal.presentationState, "NEGOTIATION_PAUSED");
+  assert.equal(pausedNormal.titleKey, "room.negotiationPaused");
+  assert.equal(pausedNormal.tone, "default");
+  assert.equal(
+    pausedNormal.badgePath,
+    "/status-badges/status-negotiation-paused.png",
+  );
+
+  const pausedMinute = buildRoomTimerPresentation(
+    makeState(NegotiationState.PAUSED, 55),
+  );
+  assert.equal(pausedMinute.presentationState, "NEGOTIATION_PAUSED");
+  assert.equal(pausedMinute.titleKey, "room.negotiationPaused");
+  assert.equal(pausedMinute.tone, "warning");
+  assert.equal(
+    pausedMinute.badgePath,
+    "/status-badges/status-negotiation-paused.png",
+  );
+
+  const pausedFinalTen = buildRoomTimerPresentation(
+    makeState(NegotiationState.PAUSED, 8),
+  );
+  assert.equal(pausedFinalTen.presentationState, "NEGOTIATION_PAUSED");
+  assert.equal(pausedFinalTen.titleKey, "room.negotiationPaused");
+  assert.equal(pausedFinalTen.tone, "critical");
+  assert.equal(
+    pausedFinalTen.badgePath,
+    "/status-badges/status-negotiation-paused.png",
+  );
 });
 
 test("finished state maps timer-expired and manual-finish variants", () => {
@@ -83,9 +115,42 @@ test("finished state maps timer-expired and manual-finish variants", () => {
   assert.equal(expired.presentationState, "FINISH_LINE_TIMER_EXPIRED");
   assert.equal(expired.titleKey, "room.timeIsUp");
   assert.equal(expired.subtitleKey, "room.negotiationsComplete");
+  assert.equal(expired.tone, "finished");
 
   const manual = buildRoomTimerPresentation(makeState(NegotiationState.FINISHED, 180));
   assert.equal(manual.presentationState, "FINISH_LINE_MANUAL_FINISH");
   assert.equal(manual.titleKey, "room.negotiationsComplete");
   assert.equal(manual.subtitleKey, "room.debriefIsNext");
+  assert.equal(manual.tone, "finished");
+});
+
+test("finished state becomes debrief when finish-line window has expired", () => {
+  const debrief = buildRoomTimerPresentation({
+    ...makeState(NegotiationState.FINISHED, 0),
+    finishLineActive: false,
+  });
+  assert.equal(debrief.presentationState, "DEBRIEF");
+  assert.equal(debrief.titleKey, "room.debriefTitle");
+  assert.equal(debrief.subtitleKey, "room.discussMeetingResults");
+  assert.equal(debrief.tone, "finished");
+  assert.equal(
+    debrief.badgePath,
+    "/status-badges/status-debrief.png",
+  );
+});
+
+test("approved status badges map exactly to each presentation state", () => {
+  assert.deepEqual(STATUS_BADGE_BY_PRESENTATION_STATE, {
+    ROOM_READY: "/status-badges/status-room-ready.png",
+    PREPARATION_RUNNING: "/status-badges/status-preparation-running.png",
+    PREPARATION_PAUSED: "/status-badges/status-preparation-paused.png",
+    WAITING_FOR_NEGOTIATION_START: "/status-badges/status-ready-to-start.png",
+    NEGOTIATION_RUNNING: "/status-badges/status-negotiation-running.png",
+    NEGOTIATION_PAUSED: "/status-badges/status-negotiation-paused.png",
+    FINAL_MINUTE: "/status-badges/status-final-minute.png",
+    FINAL_10_SECONDS: "/status-badges/status-final-10.png",
+    FINISH_LINE_TIMER_EXPIRED: "/status-badges/status-time-expired.png",
+    FINISH_LINE_MANUAL_FINISH: "/status-badges/status-negotiation-complete.png",
+    DEBRIEF: "/status-badges/status-debrief.png",
+  });
 });

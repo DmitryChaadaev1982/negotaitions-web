@@ -354,7 +354,7 @@ NEGOTIATION_RUNNING
 FINISH_LINE / TIMER_EXPIRED for exactly 2,500 ms after authoritative completion
   or
 FINISH_LINE / MANUAL_FINISH for exactly 2,500 ms after authoritative completion
-  -> FINISHED / DEBRIEF
+  -> FINISHED / DEBRIEF with the timer/status card retained
 ```
 
 `ROOM_READY`, `WAITING_FOR_NEGOTIATION_START`, `FINAL_MINUTE`,
@@ -376,7 +376,7 @@ sufficient.
 | FINAL_10_SECONDS | `RUNNING`, 0 < remaining <= 10 | **DERIVED PRESENTATION STATE** | Final 10 seconds | Same | Pause; Finish | Continues; restrained digit emphasis | One urgent two-tone cue | Reduced motion respected |
 | FINISH_LINE / TIMER_EXPIRED | authoritative `FINISHED`, `remainingSeconds=0`, fresh `negotiationEndedAt` deadline | **DERIVED PRESENTATION STATE** | Time is up; negotiations complete | Same; no controls | None | May show `00:00`; no active countdown | END once | Same strong treatment; exactly 2,500 ms from authoritative end |
 | FINISH_LINE / MANUAL_FINISH | authoritative `FINISHED`, `remainingSeconds>0`, fresh `negotiationEndedAt` deadline | **DERIVED PRESENTATION STATE** | Negotiations complete | Same; no controls | None | Do not show `00:00` or imply expiry | END once | Same strong treatment; exactly 2,500 ms from authoritative end |
-| FINISHED / DEBRIEF | `FINISHED` + room lifecycle after finish-line deadline | Persisted source + elapsed presentation deadline | Debrief/materials | Debrief/materials | No negotiation controls | No active countdown | None on hydration | `DEBRIEF_OPEN` remains re-enterable; `CLOSED` redirects |
+| FINISHED / DEBRIEF | `FINISHED` + room lifecycle after finish-line deadline | Persisted source + elapsed presentation deadline | Debrief/materials with persistent status card | Same | No negotiation controls | Frozen final time (`00:00` for expiry or authoritative remaining time for manual Finish) | None on hydration | Uses neutral `status-debrief.png`; `DEBRIEF_OPEN` remains re-enterable; `CLOSED` redirects |
 
 ## 8. ROOM_READY and preparation lifecycle
 
@@ -486,13 +486,16 @@ Do not add a persisted FINISH_LINE, TIMER_EXPIRED, or MANUAL_FINISH state.
   available.
 - Delay only the local debrief panel presentation until the remaining
   deadline; do not delay completion or recording stop.
+- Keep the timer/status card mounted after that deadline. Replace the strong
+  finish-line copy/badge with neutral Debrief copy, `status-debrief.png`, and
+  the frozen authoritative final time.
 - Play END once only on a live observed active/paused -> FINISHED transition,
   when the finish-line deadline is still current and sound is
   enabled/unlocked. This applies equally to timer expiry and manual Finish.
 - A client initially hydrating into FINISHED is silent. If it joins/reloads
   inside the authoritative 2,500 ms window, it may show the remaining
   finish-line visual time but must not replay END. After the window it goes
-  directly to debrief/materials.
+  directly to debrief/materials while retaining the neutral status card.
 - On reconnect, use the server timestamp, not remount time.
 - Multiple clients calculate the same deadline and independently render it.
 - On `visibilitychange`, compare the deadline immediately. A backgrounded tab
@@ -551,7 +554,7 @@ Concise card strings:
 | FINAL_10_SECONDS | Final 10 seconds | — | Последние 10 секунд | — |
 | FINISH_LINE / TIMER_EXPIRED | Time is up | Negotiations complete | Время истекло | Переговоры завершены |
 | FINISH_LINE / MANUAL_FINISH | Negotiations complete | Debrief is next | Переговоры завершены | Далее — дебрифинг |
-| FINISHED | Debrief | — | Дебрифинг | — |
+| FINISHED | Debrief | You can discuss the meeting results | Дебриф | Можно обсудить результаты встречи |
 
 ## 12. Audio UX contract
 
@@ -572,27 +575,32 @@ Semantic cues:
   completion cue. Preparation remains visible and accessibly announced.
 - Implement a small provider-independent Web Audio utility; do not add media
   assets or npm dependencies.
-- Lazily create one `AudioContext` per mounted room sound controller after a
-  trusted `pointerdown` or `keydown`, or when the sound toggle is used.
-- Model three distinct control states:
-  - persisted preference OFF: normal muted/off state;
-  - preference ON and context available/running: normal enabled state;
-  - preference ON but context absent/suspended/blocked: compact “Enable sound”
-    / “Включить звук” action.
-- Resume or create a blocked context only from the trusted Enable sound
-  gesture. The status is non-blocking and must not use a modal or delay room
-  entry. Visual semantics remain complete.
+- Lazily create one provider-independent shared `AudioContext`. Prime it on a
+  trusted pointer/keyboard gesture used to navigate into `/room/...`, and
+  reuse it from the mounted room sound controller.
+- Also attempt resume on room mount and on the first trusted pointer/keyboard
+  gesture inside the room. A short inaudible oscillator primes the graph in
+  the same gesture for browser autoplay compatibility.
+- The visible button follows the persisted preference: ON is green and OFF is
+  red. Runtime readiness is exposed separately as
+  `data-audio-runtime=running|awaiting-user-gesture`; a blocked browser context
+  must not make the persisted default-ON preference appear OFF.
+- If the preference is ON but runtime is not ready, the first button click
+  unlocks audio and leaves the preference ON. Once runtime is ready, the same
+  button toggles the preference OFF.
 - A cue that occurred while blocked is discarded. Enabling sound seeds the
   current transition refs and must not replay any historical cue.
 - Generate cues with oscillator(s) and a gain envelope: short attack, short
-  decay, low default gain, and total duration roughly 120–450 ms.
+  decay, an audible restrained master gain, and total duration roughly
+  120–450 ms.
 - START/RESUME use an upward tonal direction; PAUSE uses downward direction;
   60 seconds uses one mild tone; 10 seconds uses a clear short two-tone cue;
   END uses a distinct short completion cadence.
 - Exact frequencies may be tuned during manual acceptance.
 - No per-second beep, siren, voice, long melody, or preparation-complete cue.
-- Close/disconnect the Stage cue context on unmount; do not reuse provider
-  microphone-analysis contexts.
+- Do not reuse provider microphone-analysis contexts. The shared semantic
+  context survives client-side room navigation so entry-gesture unlock is not
+  lost before the room hook mounts.
 
 ## 13. Audio event deduplication
 
@@ -655,13 +663,13 @@ Migration contract:
   user.
 - Load the preference once when entering the room; do not add a user query to
   every one-second control poll.
-- Add a compact, accessible sound control in the room controls/header. It
-  distinguishes preference OFF, enabled/running, and preference ON but
-  blocked. The blocked form is “Enable sound” / “Включить звук”.
+- Add a compact, accessible notifications control immediately after camera in
+  the room media controls. It renders persisted preference ON as green and OFF
+  as red; technical AudioContext readiness remains separately inspectable.
 - Preference changes persist before confirming success and may optimistically
-  update with rollback on failure. Enable sound is the trusted gesture that
-  creates/resumes the `AudioContext`; it does not change an already-ON
-  persisted preference.
+  update with rollback on failure. A click while preference is already ON but
+  runtime is blocked creates/resumes the `AudioContext` without turning the
+  preference OFF.
 - No room or control functionality depends on sound.
 - Because production room access requires an authenticated account, no guest
   persistence fallback is needed. If guest room access is reintroduced in a

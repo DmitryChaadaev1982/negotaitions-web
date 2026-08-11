@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ensureSemanticRoomAudioContextRunning,
   ROOM_AUDIO_CUE_DEFINITIONS,
   ROOM_AUDIO_MASTER_GAIN,
   playSemanticRoomAudioCue,
@@ -17,14 +18,64 @@ function totalCueDurationMs(cue: RoomAudioCue) {
   }, 0);
 }
 
-test("cue design uses conservative gain and short semantic durations", () => {
-  assert.ok(ROOM_AUDIO_MASTER_GAIN <= 0.05);
+test("cue design uses audible restrained gain and short semantic durations", () => {
+  assert.ok(ROOM_AUDIO_MASTER_GAIN >= 0.08 && ROOM_AUDIO_MASTER_GAIN <= 0.16);
   for (const cue of Object.keys(ROOM_AUDIO_CUE_DEFINITIONS) as RoomAudioCue[]) {
     const durationMs = totalCueDurationMs(cue);
     assert.ok(
       durationMs >= 120 && durationMs <= 450,
       `${cue} duration ${durationMs}ms is outside 120-450ms`,
     );
+  }
+});
+
+test("audio unlock primes a graph before reporting running", async () => {
+  const originalAudioContext = globalThis.AudioContext;
+  let oscillatorStarts = 0;
+  let resumeCalls = 0;
+
+  class FakeAudioContext {
+    state: AudioContextState = "suspended";
+    currentTime = 1;
+    destination = {} as AudioDestinationNode;
+    onstatechange: (() => void) | null = null;
+
+    createOscillator() {
+      return {
+        connect() {},
+        disconnect() {},
+        start() {
+          oscillatorStarts += 1;
+        },
+        stop() {},
+        onended: null,
+      } as unknown as OscillatorNode;
+    }
+
+    createGain() {
+      return {
+        connect() {},
+        disconnect() {},
+        gain: {
+          setValueAtTime() {},
+        },
+      } as unknown as GainNode;
+    }
+
+    async resume() {
+      resumeCalls += 1;
+      this.state = "running";
+      this.onstatechange?.();
+    }
+  }
+
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext;
+  try {
+    assert.equal(await ensureSemanticRoomAudioContextRunning(), true);
+    assert.equal(resumeCalls, 1);
+    assert.equal(oscillatorStarts, 1);
+  } finally {
+    globalThis.AudioContext = originalAudioContext;
   }
 });
 

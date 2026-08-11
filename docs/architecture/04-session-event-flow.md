@@ -85,6 +85,20 @@ lifetime; it must not reuse the short debrief grace.
 - Negotiation `FINISH` is valid only after negotiation start (`RUNNING`/`PAUSED`);
   pre-start finish requests are rejected.
 
+## Stage 3.13E Wave 2 Acceptance Remediation Notes
+
+- Public invitation links (Event copy-link and standalone Session invite links)
+  must be generated from canonical public origin helpers and must never fall
+  back to localhost/loopback origins.
+- FINISHED presentation keeps a strict 2500 ms finish-line window derived from
+  authoritative `negotiationEndedAt`/`serverNow`; subsequent polls may shorten
+  but never re-extend the local deadline.
+- Negotiation `PAUSED` remains the semantic state, while warning/critical tone
+  is derived from authoritative `remainingSeconds` (`<=60` warning, `<=10`
+  critical) without resuming countdown.
+- Notifications control is part of the room media-control surface (provider
+  parity for LiveKit and Voximplant), with explicit OFF/ON/BLOCKED behavior.
+
 ## Facilitator Authority Model
 
 - `Session.facilitatorId` is the canonical facilitator owner identity.

@@ -485,13 +485,7 @@ export function StructuredVideoLayout({
                 layoutGeneration={layoutGeneration}
               />
             </SizedVideoFrame>
-          ) : (
-            <SizedVideoFrame heightPx={sizes.facilitator}>
-              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/30 text-xs text-slate-500 sm:rounded-2xl sm:text-sm">
-                {t("room.noFacilitatorPlaceholder")}
-              </div>
-            </SizedVideoFrame>
-          )}
+          ) : null}
         </div>
 
         <ParticipantColumn

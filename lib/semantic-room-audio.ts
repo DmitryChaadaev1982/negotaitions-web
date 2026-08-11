@@ -20,7 +20,13 @@ type CueDefinition = {
   stepGapMs?: number;
 };
 
-export const ROOM_AUDIO_MASTER_GAIN = 0.035;
+export const ROOM_AUDIO_MASTER_GAIN = 0.12;
+
+type AudioContextConstructor = typeof AudioContext;
+type AudioContextRunningListener = (isRunning: boolean) => void;
+
+let sharedRoomAudioContext: AudioContext | null = null;
+const audioContextRunningListeners = new Set<AudioContextRunningListener>();
 
 export const ROOM_AUDIO_CUE_DEFINITIONS: Record<RoomAudioCue, CueDefinition> = {
   START: {
@@ -63,6 +69,92 @@ export const ROOM_AUDIO_CUE_DEFINITIONS: Record<RoomAudioCue, CueDefinition> = {
     stepGapMs: 24,
   },
 };
+
+function getAudioContextConstructor(): AudioContextConstructor | null {
+  if (typeof globalThis === "undefined") {
+    return null;
+  }
+  const typedGlobal = globalThis as typeof globalThis & {
+    webkitAudioContext?: AudioContextConstructor;
+  };
+  return typedGlobal.AudioContext ?? typedGlobal.webkitAudioContext ?? null;
+}
+
+function notifyAudioContextRunningListeners() {
+  const isRunning = sharedRoomAudioContext?.state === "running";
+  for (const listener of audioContextRunningListeners) {
+    listener(isRunning);
+  }
+}
+
+function primeSemanticRoomAudioGraph(context: AudioContext) {
+  try {
+    const oscillator = context.createOscillator();
+    const gainNode = context.createGain();
+    const startAtSeconds = context.currentTime;
+    gainNode.gain.setValueAtTime(0.0001, startAtSeconds);
+    oscillator.connect(gainNode);
+    gainNode.connect(context.destination);
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gainNode.disconnect();
+    };
+    oscillator.start(startAtSeconds);
+    oscillator.stop(startAtSeconds + 0.02);
+  } catch {
+    // Priming is best-effort; resume below remains authoritative.
+  }
+}
+
+export function getSemanticRoomAudioContext() {
+  return sharedRoomAudioContext;
+}
+
+export function isSemanticRoomAudioContextRunning() {
+  return sharedRoomAudioContext?.state === "running";
+}
+
+export function subscribeSemanticRoomAudioContextRunning(
+  listener: AudioContextRunningListener,
+) {
+  audioContextRunningListeners.add(listener);
+  listener(isSemanticRoomAudioContextRunning());
+  return () => {
+    audioContextRunningListeners.delete(listener);
+  };
+}
+
+export async function ensureSemanticRoomAudioContextRunning() {
+  const AudioContextConstructor = getAudioContextConstructor();
+  if (!AudioContextConstructor) {
+    notifyAudioContextRunningListeners();
+    return false;
+  }
+
+  if (!sharedRoomAudioContext) {
+    try {
+      sharedRoomAudioContext = new AudioContextConstructor();
+      sharedRoomAudioContext.onstatechange = notifyAudioContextRunningListeners;
+    } catch {
+      notifyAudioContextRunningListeners();
+      return false;
+    }
+  }
+
+  primeSemanticRoomAudioGraph(sharedRoomAudioContext);
+
+  if (sharedRoomAudioContext.state !== "running") {
+    try {
+      await sharedRoomAudioContext.resume();
+    } catch {
+      notifyAudioContextRunningListeners();
+      return false;
+    }
+  }
+
+  notifyAudioContextRunningListeners();
+  return sharedRoomAudioContext.state === "running";
+}
 
 type AudioContextLike = {
   currentTime: number;

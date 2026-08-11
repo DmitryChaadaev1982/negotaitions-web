@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { SessionDetailView } from "@/components/session-detail-view";
-import { buildAccountSessionRoomPath, getAppUrl } from "@/lib/config";
+import { buildAccountSessionRoomPath, getPublicAppUrl } from "@/lib/config";
 import { canManageSession, getCurrentUserSessionAccess } from "@/lib/access-control";
 import { isAssignableCaseRole } from "@/lib/case-roles";
 import { autoTranscribeAfterRecording } from "@/lib/env";
@@ -79,7 +79,7 @@ export default async function SessionDetailPage({
   const displayStatus = resolveSessionDisplayStatus(session, session.participants);
   const caseSnapshot = resolveSessionCaseSnapshot(session);
 
-  const sessionUrl = `${getAppUrl()}${buildAccountSessionRoomPath(id)}`;
+  const sessionUrl = `${getPublicAppUrl()}${buildAccountSessionRoomPath(id)}`;
   const existingParticipantUserIds = session.participants
     .filter((p) => p.userId != null)
     .map((p) => p.userId!);

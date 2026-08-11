@@ -8,6 +8,7 @@ import {
   useLocalParticipantPermissions,
   usePersistentUserChoices,
 } from "@livekit/components-react";
+import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 
 import { useI18n } from "@/lib/i18n/useI18n";
@@ -15,11 +16,13 @@ import { useI18n } from "@/lib/i18n/useI18n";
 type RestrictedControlBarProps = {
   micAllowed: boolean;
   onLeave: () => void;
+  trailingMediaControl?: ReactNode;
 };
 
 export function RestrictedControlBar({
   micAllowed,
   onLeave,
+  trailingMediaControl,
 }: RestrictedControlBarProps) {
   const { t } = useI18n();
   const localPermissions = useLocalParticipantPermissions();
@@ -97,6 +100,9 @@ export function RestrictedControlBar({
             />
           </div>
         </div>
+      ) : null}
+      {trailingMediaControl ? (
+        <div className="lk-button-group">{trailingMediaControl}</div>
       ) : null}
 
       {visibleControls.leave ? (

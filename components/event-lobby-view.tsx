@@ -27,7 +27,12 @@ import { VisibilityBadge } from "@/components/visibility-badge";
 import {
   alertErrorClassName,
 } from "@/components/ui/form-styles";
-import { buildAccountSessionMaterialsPath, buildAccountSessionRoomPath } from "@/lib/config";
+import {
+  buildAccountSessionMaterialsPath,
+  buildAccountSessionRoomPath,
+  getEventJoinUrl,
+  getEventPublicJoinUrl,
+} from "@/lib/config";
 import { resolveLobbyMediaControlPermission } from "@/lib/event-lobby-media-control-permission";
 import type { EventStateResponse } from "@/lib/event-state";
 import type {
@@ -687,8 +692,8 @@ export function EventLobbyView({
     if (!state) return;
     const url =
       state.event.visibility === "PUBLIC"
-        ? `${window.location.origin}/events/join/${state.event.publicJoinCode}`
-        : `${window.location.origin}/events/${eventId}/join`;
+        ? getEventPublicJoinUrl(state.event.publicJoinCode)
+        : getEventJoinUrl(eventId);
     await navigator.clipboard.writeText(url);
     setCopyMessage(t("events.linkCopied"));
     window.setTimeout(() => setCopyMessage(null), 2000);

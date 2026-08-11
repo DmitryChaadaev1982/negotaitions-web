@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type MediaControlState = "on" | "off" | "locked";
@@ -12,6 +14,7 @@ type VoximplantMediaControlsProps = {
   cameraState: MediaControlState;
   onToggleMic: () => void;
   onToggleCamera: () => void;
+  trailingMediaControl?: ReactNode;
   statusText?: string | null;
   testIdPrefix?: string;
 };
@@ -34,6 +37,7 @@ export function VoximplantMediaControls({
   cameraState,
   onToggleMic,
   onToggleCamera,
+  trailingMediaControl,
   statusText,
   testIdPrefix = "vox",
 }: VoximplantMediaControlsProps) {
@@ -78,6 +82,7 @@ export function VoximplantMediaControls({
       >
         {cameraLabel}
       </button>
+      {trailingMediaControl}
       {statusText ? (
         <span className="ml-auto text-xs text-slate-400">{statusText}</span>
       ) : null}

@@ -13,6 +13,7 @@ import { AppShell } from "@/components/ui/app-shell";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { SecondaryButtonLink } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath, buildSessionRoomPath } from "@/lib/config";
+import { ensureSemanticRoomAudioContextRunning } from "@/lib/semantic-room-audio";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import type {
@@ -207,6 +208,12 @@ export function JoinPageView({
                 href={roomHref}
                 className="w-full text-center sm:w-auto"
                 data-testid="join-video-room-button"
+                onPointerDown={() => void ensureSemanticRoomAudioContextRunning()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void ensureSemanticRoomAudioContextRunning();
+                  }
+                }}
               >
                 {t("join.joinVideoRoom")}
               </SecondaryButtonLink>

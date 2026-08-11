@@ -99,6 +99,37 @@ test("PAUSE and RESUME cues fire once each", () => {
   assert.equal(resumed.cue, "RESUME");
 });
 
+test("paused countdown snapshots remain silent and do not emit threshold cues", () => {
+  let state = createLiveSessionTransitionMachineState();
+  state = reduceLiveSessionTransition({
+    state,
+    currentSnapshot: snapshot(NegotiationState.PAUSED, 75),
+    isVisible: true,
+    finishLineActive: false,
+    allowAudio: true,
+  }).nextState;
+
+  const pausedMinuteWindow = reduceLiveSessionTransition({
+    state,
+    currentSnapshot: snapshot(NegotiationState.PAUSED, 55),
+    isVisible: true,
+    finishLineActive: false,
+    allowAudio: true,
+  });
+  assert.equal(pausedMinuteWindow.event, null);
+  assert.equal(pausedMinuteWindow.cue, null);
+
+  const pausedFinalTenWindow = reduceLiveSessionTransition({
+    state: pausedMinuteWindow.nextState,
+    currentSnapshot: snapshot(NegotiationState.PAUSED, 8),
+    isVisible: true,
+    finishLineActive: false,
+    allowAudio: true,
+  });
+  assert.equal(pausedFinalTenWindow.event, null);
+  assert.equal(pausedFinalTenWindow.cue, null);
+});
+
 test("final-minute and final-10 cues fire once without per-second beeps", () => {
   let state = createLiveSessionTransitionMachineState();
   state = reduceLiveSessionTransition({

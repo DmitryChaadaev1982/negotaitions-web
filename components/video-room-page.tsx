@@ -283,12 +283,13 @@ function ConnectedRoom({
             participantType={tokenResponse.participantType}
           />
         }
-        controlBar={
+        controlBar={({ notificationsControl }) => (
           <RestrictedControlBar
             micAllowed={controlState.micAllowed}
             onLeave={() => void handleLeave()}
+            trailingMediaControl={notificationsControl}
           />
-        }
+        )}
         leaveButton={
           <LeaveRoomButton
             sessionId={sessionId}

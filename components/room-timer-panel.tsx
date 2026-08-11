@@ -1,8 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { NegotiationState } from "@/app/generated/prisma/enums";
 import type { ControlState } from "@/lib/negotiation-control";
 import { formatSecondsAsMmSs } from "@/lib/negotiation-duration";
+import {
+  coalesceFinishLineDeadlineMs,
+  computeFinishLineClientDeadlineMs,
+} from "@/lib/live-session-presentation";
 import {
   buildRoomTimerPresentation,
   isNegotiationTimerVisible,
@@ -19,17 +25,59 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
     preparationRemainingSeconds,
     preparationDurationSeconds,
   } = controlState;
+  const [finishLineDeadlineMs, setFinishLineDeadlineMs] = useState<number | null>(
+    null,
+  );
+  const [finishLineClockMs, setFinishLineClockMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (negotiationState !== NegotiationState.FINISHED) {
+      queueMicrotask(() => setFinishLineDeadlineMs(null));
+      return;
+    }
+    const candidateDeadlineMs = computeFinishLineClientDeadlineMs({
+      negotiationEndedAt: controlState.negotiationEndedAt ?? null,
+      serverNow: controlState.serverNow ?? null,
+      clientNowMs: Date.now(),
+    });
+    queueMicrotask(() => {
+      setFinishLineDeadlineMs((currentDeadlineMs) =>
+        coalesceFinishLineDeadlineMs(currentDeadlineMs, candidateDeadlineMs),
+      );
+    });
+  }, [
+    controlState.negotiationEndedAt,
+    controlState.serverNow,
+    negotiationState,
+  ]);
+
+  useEffect(() => {
+    if (finishLineDeadlineMs == null) {
+      return;
+    }
+    const remainingMs = finishLineDeadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      queueMicrotask(() => setFinishLineClockMs(Date.now()));
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setFinishLineClockMs(Date.now());
+    }, remainingMs + 1);
+    return () => window.clearTimeout(timeoutId);
+  }, [finishLineDeadlineMs]);
+
+  const finishLineActive =
+    negotiationState === NegotiationState.FINISHED &&
+    finishLineDeadlineMs != null &&
+    finishLineClockMs < finishLineDeadlineMs;
+
   const isManualFinish =
     negotiationState === NegotiationState.FINISHED && remainingSeconds > 0;
-  const stateMessage = buildRoomTimerPresentation(controlState);
-  const isFinalMinuteState =
-    negotiationState === NegotiationState.RUNNING &&
-    remainingSeconds > 10 &&
-    remainingSeconds <= 60;
-  const isFinalTenState =
-    negotiationState === NegotiationState.RUNNING &&
-    remainingSeconds > 0 &&
-    remainingSeconds <= 10;
+  const stateMessage = buildRoomTimerPresentation({
+    ...controlState,
+    finishLineActive,
+  });
+  const isFinalTenState = stateMessage.presentationState === "FINAL_10_SECONDS";
 
   const showPreparationTimer = isPreparationTimerVisible(negotiationState);
   const showNegotiationTimer = isNegotiationTimerVisible(negotiationState);
@@ -55,6 +103,8 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
       negotiationLabel = formatSecondsAsMmSs(remainingSeconds);
     }
   }
+  const visibleTimerCount =
+    Number(Boolean(preparationLabel)) + Number(Boolean(negotiationLabel));
 
   const panelToneClass =
     stateMessage.tone === "finished"
@@ -67,9 +117,9 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
   const timerDigitClass =
     stateMessage.tone === "finished"
       ? "text-emerald-200"
-      : isFinalTenState
+      : stateMessage.tone === "critical"
         ? "text-rose-300"
-        : isFinalMinuteState
+        : stateMessage.tone === "warning"
           ? "text-amber-300"
           : negotiationState === NegotiationState.READY_TO_START
             ? "text-slate-300"
@@ -85,7 +135,13 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
       data-testid="room-server-timer"
       data-state={stateMessage.presentationState}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div
+        className={
+          visibleTimerCount <= 1
+            ? "flex justify-center gap-2"
+            : "grid grid-cols-1 gap-2 sm:grid-cols-2"
+        }
+      >
         {preparationLabel ? (
           <div>
             <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400 sm:text-xs">
@@ -113,14 +169,18 @@ export function RoomTimerPanel({ controlState }: { controlState: ControlState })
           </div>
         ) : null}
       </div>
-      <p className="mt-2 text-xs font-medium text-white/90 sm:text-sm">
-        <span
-          className="mr-1 inline-block rounded border border-white/40 px-1 text-[10px] align-middle uppercase tracking-wide text-white/80"
-          aria-hidden="true"
-        >
-          {stateMessage.icon}
+      <p className="mt-2 text-sm font-medium text-white/90 sm:text-base">
+        <span className="inline-flex h-24 w-24 shrink-0 items-center justify-center align-middle">
+          <img
+            src={stateMessage.badgePath}
+            alt=""
+            aria-hidden="true"
+            className="h-24 w-24 object-contain"
+            decoding="async"
+            data-testid="room-status-badge-image"
+          />
         </span>
-        <span className="align-middle">{t(stateMessage.titleKey)}</span>
+        <span className="ml-2 align-middle">{t(stateMessage.titleKey)}</span>
       </p>
       {stateMessage.subtitleKey ? (
         <p className="mt-0.5 text-[10px] text-white/60 sm:text-xs">

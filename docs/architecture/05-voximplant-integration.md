@@ -11,6 +11,9 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
 ## Key Components
 
 - Room page: `components/voximplant-negotiation-room-page.tsx`.
+- Room control bar: `components/voximplant-media-controls.tsx` renders the
+  provider mic/camera controls; shared room notification controls are injected
+  immediately after camera so session audio cues remain provider-neutral.
 - Room hook: `lib/voximplant/use-voximplant-room.ts`.
 - Access APIs:
   - `app/api/sessions/[sessionId]/voximplant/access/route.ts`
