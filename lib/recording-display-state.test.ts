@@ -7,6 +7,20 @@ import {
 } from "@/lib/recording-display-state";
 
 describe("getRecordingDisplayState", () => {
+  it("keeps STARTING distinct from provider-confirmed active recording", () => {
+    assert.equal(
+      getRecordingDisplayState({
+        recordingStatus: "STARTING",
+        negotiationState: "RUNNING",
+      }),
+      "starting",
+    );
+    assert.equal(
+      getRecordingDisplayPresentation("starting").labelKey,
+      "recording.recordingStarting",
+    );
+  });
+
   it("maps active recording to active", () => {
     assert.equal(
       getRecordingDisplayState({
@@ -69,6 +83,41 @@ describe("getRecordingDisplayState", () => {
         stopOperationState: "DELIVERING",
       }),
       "failed",
+    );
+  });
+
+  it("maps callback-loss uncertainty to the orange did-not-start warning", () => {
+    const state = getRecordingDisplayState({
+      recordingStatus: "FAILED",
+      errorMessage: "RECORDING_STARTING_TIMEOUT_RECONCILED",
+    });
+    assert.equal(state, "uncertain");
+    const presentation = getRecordingDisplayPresentation(state);
+    assert.equal(presentation.labelKey, "recording.recordingDidNotStart");
+    assert.match(presentation.className, /orange/);
+  });
+
+  it("never infers active recording from negotiation RUNNING", () => {
+    assert.equal(
+      getRecordingDisplayState({
+        recordingStatus: "STARTING",
+        negotiationState: "RUNNING",
+      }),
+      "starting",
+    );
+    assert.equal(
+      getRecordingDisplayState({
+        recordingStatus: "FAILED",
+        negotiationState: "RUNNING",
+      }),
+      "failed",
+    );
+    assert.equal(
+      getRecordingDisplayState({
+        recordingStatus: null,
+        negotiationState: "RUNNING",
+      }),
+      "none",
     );
   });
 

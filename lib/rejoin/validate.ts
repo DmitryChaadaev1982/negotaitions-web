@@ -10,7 +10,6 @@ import {
 } from "@/lib/event-auth";
 import { getActiveSessionAssignment } from "@/lib/event-active-assignment";
 import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
-import { buildSessionCloseState } from "@/lib/session-close-state";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 import { prisma } from "@/lib/prisma";
 import type { rejoinValidateSchema } from "@/lib/validations/rejoin";
@@ -151,8 +150,10 @@ export async function validateRejoinContext(
       select: {
         id: true,
         title: true,
+        status: true,
         deletedAt: true,
         negotiationState: true,
+        roomLifecycle: true,
         negotiationStartedAt: true,
         closedByEventAt: true,
         closeReason: true,
@@ -172,11 +173,10 @@ export async function validateRejoinContext(
       return { valid: false, reason: "sessionDeleted" };
     }
 
-    const closeState = buildSessionCloseState(sessionRecord);
     const materialsUrl = buildSessionMaterialsUrl(input.joinToken);
     const roomActive = isSessionActiveForRoom(sessionRecord);
 
-    if (closeState.isClosed || !roomActive) {
+    if (!roomActive) {
       return {
         valid: true,
         primaryAction: "materials",

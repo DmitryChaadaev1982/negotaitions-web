@@ -30,6 +30,7 @@ export function RecordingIndicator({
     recordingStatus: status,
     stopOperationState,
     negotiationState,
+    errorMessage,
   });
 
   if (displayState === "none") {
@@ -50,7 +51,11 @@ export function RecordingIndicator({
         data-status={status ?? "NOT_STARTED"}
         data-recording-state={presentation.state}
         className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
-          displayState === "active"
+          displayState === "starting"
+            ? "border-sky-500/40 bg-sky-500/15 text-sky-100"
+            : displayState === "uncertain"
+              ? "border-orange-500/40 bg-orange-500/15 text-orange-100"
+            : displayState === "active"
             ? "border-rose-500/40 bg-rose-500/15 text-rose-200"
             : displayState === "paused"
               ? "border-amber-500/40 bg-amber-500/15 text-amber-100"

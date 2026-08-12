@@ -665,6 +665,7 @@ model SessionInvite {
 model Recording {
   id                   String             @id @default(cuid())
   sessionId            String             @unique
+  recordingAttemptId   String?            @unique
   provider             String             @default("LIVEKIT_CLOUD")
   egressId             String?
   status               RecordingStatus    @default(NOT_STARTED)

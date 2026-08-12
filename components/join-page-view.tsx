@@ -1,5 +1,9 @@
 "use client";
 
+import type {
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
 import { StatusBadge } from "@/components/badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
@@ -42,7 +46,9 @@ type JoinPageViewProps = {
     preparationDurationMinutes: number;
     negotiationDurationMinutes: number;
     displayStatus: SessionDisplayStatus;
+    status: SessionStatus;
     negotiationState: string;
+    roomLifecycle: RoomLifecycle | null;
     isDeleted?: boolean;
     closedByEvent?: boolean;
     closedBeforeNegotiation?: boolean;
@@ -108,8 +114,12 @@ export function JoinPageView({
   const isFacilitator = participant.type === "FACILITATOR";
 
   const roomActive = isSessionActiveForRoom({
+    status: session.status,
     negotiationState: session.negotiationState,
-    closedByEventAt: session.closedByEventAt ?? null,
+    roomLifecycle: session.roomLifecycle,
+    closedByEventAt: session.closedByEvent
+      ? (session.closedByEventAt ?? "event-authority-closed")
+      : null,
     deletedAt: session.isDeleted ? new Date() : null,
   });
   const isFinishedSession = !roomActive && !session.isDeleted;

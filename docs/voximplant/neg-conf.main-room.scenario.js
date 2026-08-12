@@ -50,7 +50,7 @@ try {
 //
 // Search Voximplant logs for this build id to confirm the correct scenario is running.
 // __LOCAL_DEV_BUILD__ is replaced by scripts/voximplant-sync-scenario.mjs when using CI sync.
-var SCENARIO_BUILD_ID   = "main-room-server-stop-2026-07-28-rc6";
+var SCENARIO_BUILD_ID   = "main-room-recording-reconciliation-2026-08-12-rc4";
 var SCENARIO_SOURCE_NAME = "neg-conf-main-room";
 
 // Audio recording mode:
@@ -142,7 +142,11 @@ var RECORDING_CONTROL_ALLOWED_WEBHOOK_ORIGINS = {
 var STARTING_TIMEOUT_MS = 10000;
 var STOPPING_TIMEOUT_MS = 10000;
 var RESUMING_TIMEOUT_MS = 7000;
+// Initial watchdog cleanup plus one retry if Started arrives after cleanup.
+var RECORDER_CLEANUP_MAX_ATTEMPTS = 2;
 var RECORDING_CONTROL_CLOCK_SKEW_SECONDS = 30;
+var TERMINAL_RECORDING_ATTEMPT_CACHE_MAX = 8;
+var TERMINAL_RECORDING_ATTEMPT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 var STATE_IDLE = "idle";
 var STATE_STARTING = "starting";
@@ -159,13 +163,30 @@ var ACTION_RESUME = "resume";
 var ACTION_STOP = "stop";
 var ACTION_STATUS = "status";
 var RECORDING_CONTROL_PROTOCOL_VERSION = "rc2-hmac-sha256-v1";
-var RECORDING_CONTROL_SIGNED_FIELDS_ORDER = [
+var RECORDING_CONTROL_FENCED_PROTOCOL_VERSION = "rc3-hmac-sha256-recording-attempt-v1";
+var RECORDING_CONTROL_LEGACY_SIGNED_FIELDS_ORDER = [
   "protocolVersion",
   "issuedAt",
   "expiresAt",
   "nonce",
   "action",
   "requestId",
+  "sessionId",
+  "conferenceName",
+  "participantId",
+  "controllerUserId",
+  "controllerRole",
+  "canControlRecording",
+  "webhookBaseUrl",
+];
+var RECORDING_CONTROL_FENCED_SIGNED_FIELDS_ORDER = [
+  "protocolVersion",
+  "issuedAt",
+  "expiresAt",
+  "nonce",
+  "action",
+  "requestId",
+  "recordingAttemptId",
   "sessionId",
   "conferenceName",
   "participantId",
@@ -201,6 +222,14 @@ var resumingWatchdogId = null;
 // Read in Recorder.Stopped to send the completion webhook.
 // Cleared only after the webhook send has been attempted.
 var currentRecordingContext = null;
+// Timed-out recorder instances remain strongly referenced until their own
+// terminal event arrives. A newer attempt may become current, but late events
+// continue to use the old context captured by that recorder's handlers.
+var orphanedRecorderContexts = [];
+// RC4 exact-attempt STATUS keeps a small immutable terminal snapshot cache.
+// It never aliases an obsolete attempt to the current recorder context.
+var terminalRecordingAttemptCache = {};
+var terminalRecordingAttemptOrder = [];
 
 // Fallback: last conferenceName seen in any recording_control message.
 // Used to recover sessionId in Recorder.Stopped when currentRecordingContext is null.
@@ -542,8 +571,18 @@ function sendServerStopCallback(
     conferenceName: conferenceName,
     providerSessionId: providerSession,
   };
+  if (
+    eventType !== "provider_session_registered" &&
+    (!extra || extra.useCurrentRecordingAttemptId !== false) &&
+    currentRecordingContext &&
+    currentRecordingContext.recordingAttemptId
+  ) {
+    payload.recordingAttemptId =
+      currentRecordingContext.recordingAttemptId;
+  }
   if (extra) {
     for (var key in extra) {
+      if (key === "useCurrentRecordingAttemptId") continue;
       if (Object.prototype.hasOwnProperty.call(extra, key) && extra[key] !== undefined) {
         payload[key] = extra[key];
       }
@@ -585,49 +624,59 @@ function sendServerStopCallback(
       originDecision.source,
   );
   try {
-    Net.httpRequestAsync(
-      callbackUrl,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-vox-stop-protocol": SERVER_STOP_PROTOCOL_VERSION,
-          "x-vox-stop-timestamp": timestamp,
-          "x-vox-stop-nonce": nonce,
-          "x-vox-stop-body-sha256": bodyHash,
-          "x-vox-stop-signature": signature,
-        },
-        postData: body,
+    Net.httpRequestAsync(callbackUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vox-stop-protocol": SERVER_STOP_PROTOCOL_VERSION,
+        "x-vox-stop-timestamp": timestamp,
+        "x-vox-stop-nonce": nonce,
+        "x-vox-stop-body-sha256": bodyHash,
+        "x-vox-stop-signature": signature,
       },
-      function (result) {
-        var code = safeToString(result && result.code);
-        var responseBodyPreview = "";
+      postData: body,
+    }).then(function (result) {
+      var code = safeToString(result && result.code);
+      var responseBodyPreview = "";
+      try {
+        responseBodyPreview = result && result.text ? String(result.text).slice(0, 200) : "";
+      } catch (readErr) {
+        responseBodyPreview = "body_read_failed";
+      }
+      log(
+        "server-stop callback response eventType=" +
+          eventType +
+          " status=" +
+          code +
+          " sessionId=" +
+          sessionId +
+          " recordingAttemptId=" +
+          (payload.recordingAttemptId || "legacy") +
+          " callbackOrigin=" +
+          callbackBaseUrl +
+          " body=" +
+          responseBodyPreview,
+      );
+      if (typeof onResult === "function") {
         try {
-          responseBodyPreview = result && result.text ? String(result.text).slice(0, 200) : "";
-        } catch (readErr) {
-          responseBodyPreview = "body_read_failed";
+          onResult(result || null, callbackBaseUrl);
+        } catch (callbackResultErr) {
+          log("server-stop callback result handler failed: " + safeToString(callbackResultErr));
         }
-        log(
-          "server-stop callback response eventType=" +
-            eventType +
-            " status=" +
-            code +
-            " sessionId=" +
-            sessionId +
-            " callbackOrigin=" +
-            callbackBaseUrl +
-            " body=" +
-            responseBodyPreview,
-        );
-        if (typeof onResult === "function") {
-          try {
-            onResult(result || null, callbackBaseUrl);
-          } catch (callbackResultErr) {
-            log("server-stop callback result handler failed: " + safeToString(callbackResultErr));
-          }
-        }
-      },
-    );
+      }
+    }).catch(function (dispatchErr) {
+      log(
+        "server-stop callback transport failed eventType=" +
+          eventType +
+          " sessionId=" +
+          sessionId +
+          " error=" +
+          safeToString(dispatchErr),
+      );
+      if (typeof onResult === "function") {
+        onResult(null, callbackBaseUrl);
+      }
+    });
     return true;
   } catch (dispatchErr) {
     log(
@@ -667,9 +716,13 @@ function normalizeRecordingControlWebhookOrigin(value) {
 }
 
 function buildRecordingControlCanonicalPayload(claims) {
+  var signedFieldsOrder =
+    claims && claims.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+      ? RECORDING_CONTROL_FENCED_SIGNED_FIELDS_ORDER
+      : RECORDING_CONTROL_LEGACY_SIGNED_FIELDS_ORDER;
   var lines = [];
-  for (var i = 0; i < RECORDING_CONTROL_SIGNED_FIELDS_ORDER.length; i++) {
-    var key = RECORDING_CONTROL_SIGNED_FIELDS_ORDER[i];
+  for (var i = 0; i < signedFieldsOrder.length; i++) {
+    var key = signedFieldsOrder[i];
     var value = claims[key];
     if (typeof value === "boolean") {
       lines.push(key + "=" + (value ? "true" : "false"));
@@ -1554,8 +1607,15 @@ function resolveEffectiveWebhookBaseUrl() {
  * @param {object} [extraFields] - Optional extra fields: startedAt, stoppedAt
  * @param {string} [preferredWebhookBaseUrl] - Optional bound callback origin.
  */
-function sendRecordingWebhook(sessionId, statusPayload, extraFields, preferredWebhookBaseUrl) {
+function sendRecordingWebhook(
+  sessionId,
+  statusPayload,
+  extraFields,
+  preferredWebhookBaseUrl,
+  conferenceHintOverride
+) {
   var conferenceHint =
+    conferenceHintOverride ||
     (currentRecordingContext && currentRecordingContext.conferenceName) ||
     lastConferenceName ||
     null;
@@ -1612,6 +1672,15 @@ function sendRecordingWebhook(sessionId, statusPayload, extraFields, preferredWe
     errorCode: statusPayload.errorCode || null,
     message: statusPayload.message || null,
   };
+  var fencedCallback =
+    statusPayload.protocolVersion ===
+      RECORDING_CONTROL_FENCED_PROTOCOL_VERSION &&
+    Boolean(statusPayload.recordingAttemptId);
+  if (fencedCallback) {
+    webhookPayload.protocolVersion =
+      RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+    webhookPayload.recordingAttemptId = statusPayload.recordingAttemptId;
+  }
 
   if (extraFields) {
     if (extraFields.startedAt) webhookPayload.startedAt = extraFields.startedAt;
@@ -1639,31 +1708,111 @@ function sendRecordingWebhook(sessionId, statusPayload, extraFields, preferredWe
       " objectKeyPresent=" + Boolean(webhookPayload.objectKey) +
       " recordingUrlPresent=" + Boolean(webhookPayload.recordingUrl));
 
-  try {
-    Net.httpRequestAsync(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Voximplant-Signature": "hmac-sha256=" + hmacHex,
-      },
-      postData: body,
-    }, function (result) {
-      var respCode = safeToString(result && result.code);
+  var maxAttempts = fencedCallback ? 3 : 1;
+  function shouldRetryRecordingWebhook(statusCode) {
+    return (
+      statusCode === -4 ||
+      statusCode === -6 ||
+      statusCode === -7 ||
+      statusCode === -8 ||
+      statusCode === 408 ||
+      statusCode === 429 ||
+      statusCode >= 500
+    );
+  }
+  function postRecordingWebhookAttempt(attemptNumber) {
+    log(
+      "webhook POST dispatch status=" +
+        webhookPayload.status +
+        " requestId=" +
+        (webhookPayload.requestId || "none") +
+        " recordingAttemptId=" +
+        (webhookPayload.recordingAttemptId || "legacy") +
+        " attempt=" +
+        attemptNumber +
+        "/" +
+        maxAttempts,
+    );
+    var requestPromise;
+    try {
+      requestPromise = Net.httpRequestAsync(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Voximplant-Signature": "hmac-sha256=" + hmacHex,
+        },
+        postData: body,
+      });
+    } catch (httpErr) {
+      requestPromise = Promise.reject(httpErr);
+    }
+
+    requestPromise.then(function (result) {
+      var statusCode = Number(result && result.code) || 0;
       var respBody = "";
       try {
         respBody = (result && result.text) ? String(result.text).slice(0, 200) : "";
       } catch (readErr) {
         respBody = "body_read_failed";
       }
-      if (result && result.code >= 200 && result.code < 300) {
-        log("webhook response status=" + respCode + " body=" + respBody);
-      } else {
-        log("webhook response non-2xx status=" + respCode + " body=" + respBody);
+      log(
+        "webhook response status=" +
+          statusCode +
+          " callbackStatus=" +
+          webhookPayload.status +
+          " recordingAttemptId=" +
+          (webhookPayload.recordingAttemptId || "legacy") +
+          " attempt=" +
+          attemptNumber +
+          " body=" +
+          respBody,
+      );
+      if (
+        fencedCallback &&
+        shouldRetryRecordingWebhook(statusCode) &&
+        attemptNumber < maxAttempts
+      ) {
+        setTimeout(function () {
+          postRecordingWebhookAttempt(attemptNumber + 1);
+        }, 250 * attemptNumber);
+      } else if (
+        fencedCallback &&
+        shouldRetryRecordingWebhook(statusCode) &&
+        attemptNumber >= maxAttempts
+      ) {
+        log(
+          "webhook retries exhausted callbackStatus=" +
+            webhookPayload.status +
+            " recordingAttemptId=" +
+            webhookPayload.recordingAttemptId,
+        );
+      }
+    }).catch(function (httpErr) {
+      log(
+        "webhook transport error callbackStatus=" +
+          webhookPayload.status +
+          " recordingAttemptId=" +
+          (webhookPayload.recordingAttemptId || "legacy") +
+          " attempt=" +
+          attemptNumber +
+          " error=" +
+          safeToString(httpErr),
+      );
+      if (fencedCallback && attemptNumber < maxAttempts) {
+        setTimeout(function () {
+          postRecordingWebhookAttempt(attemptNumber + 1);
+        }, 250 * attemptNumber);
+      } else if (fencedCallback) {
+        log(
+          "webhook retries exhausted callbackStatus=" +
+            webhookPayload.status +
+            " recordingAttemptId=" +
+            webhookPayload.recordingAttemptId,
+        );
       }
     });
-  } catch (httpErr) {
-    log("webhook send error: " + safeToString(httpErr));
   }
+  postRecordingWebhookAttempt(1);
 }
 
 function safeCall(call, methodName, fallbackValue) {
@@ -1782,6 +1931,203 @@ function clearAllWatchdogs() {
   resumingWatchdogId = clearWatchdog(resumingWatchdogId);
 }
 
+function isCurrentRecorderContext(ctx) {
+  return Boolean(ctx && currentRecordingContext === ctx);
+}
+
+function clearRecorderContextWatchdog(ctx, watchdogField, globalTimerId) {
+  if (!ctx) return null;
+  var timerId = ctx[watchdogField];
+  if (timerId !== null && timerId !== undefined) {
+    clearTimeout(timerId);
+  }
+  ctx[watchdogField] = null;
+  return globalTimerId === timerId ? null : globalTimerId;
+}
+
+function clearRecorderContextWatchdogs(ctx) {
+  startingWatchdogId = clearRecorderContextWatchdog(
+    ctx,
+    "startingWatchdogId",
+    startingWatchdogId,
+  );
+  stoppingWatchdogId = clearRecorderContextWatchdog(
+    ctx,
+    "stoppingWatchdogId",
+    stoppingWatchdogId,
+  );
+  resumingWatchdogId = clearRecorderContextWatchdog(
+    ctx,
+    "resumingWatchdogId",
+    resumingWatchdogId,
+  );
+}
+
+function retainOrphanedRecorderContext(ctx) {
+  if (!ctx) return;
+  for (var i = 0; i < orphanedRecorderContexts.length; i++) {
+    if (orphanedRecorderContexts[i] === ctx) return;
+  }
+  orphanedRecorderContexts.push(ctx);
+}
+
+function releaseOrphanedRecorderContext(ctx) {
+  if (!ctx) return;
+  var retained = [];
+  for (var i = 0; i < orphanedRecorderContexts.length; i++) {
+    if (orphanedRecorderContexts[i] !== ctx) {
+      retained.push(orphanedRecorderContexts[i]);
+    }
+  }
+  orphanedRecorderContexts = retained;
+}
+
+function purgeTerminalRecordingAttemptCache(nowMs) {
+  var retainedOrder = [];
+  for (var i = 0; i < terminalRecordingAttemptOrder.length; i++) {
+    var attemptId = terminalRecordingAttemptOrder[i];
+    var entry = terminalRecordingAttemptCache[attemptId];
+    if (
+      entry &&
+      nowMs - Number(entry.cachedAtMs || 0) <=
+        TERMINAL_RECORDING_ATTEMPT_CACHE_TTL_MS
+    ) {
+      retainedOrder.push(attemptId);
+    } else {
+      delete terminalRecordingAttemptCache[attemptId];
+    }
+  }
+  while (retainedOrder.length > TERMINAL_RECORDING_ATTEMPT_CACHE_MAX) {
+    var evictedAttemptId = retainedOrder.shift();
+    delete terminalRecordingAttemptCache[evictedAttemptId];
+  }
+  terminalRecordingAttemptOrder = retainedOrder;
+}
+
+function cacheTerminalRecorderContext(ctx) {
+  if (!ctx || !ctx.recordingAttemptId || !ctx.terminalConfirmed) return;
+  var nowMs = Date.now();
+  purgeTerminalRecordingAttemptCache(nowMs);
+  if (terminalRecordingAttemptCache[ctx.recordingAttemptId]) {
+    return;
+  }
+  terminalRecordingAttemptCache[ctx.recordingAttemptId] = {
+    recordingAttemptId: ctx.recordingAttemptId,
+    protocolVersion: ctx.protocolVersion,
+    sessionId: ctx.sessionId,
+    conferenceName: ctx.conferenceName,
+    status: ctx.state,
+    recordingUrl: ctx.recordingUrl || null,
+    recordingId: ctx.recordingId || null,
+    objectKey: ctx.objectKey || null,
+    startedAt: ctx.startedAt || null,
+    stoppedAt: ctx.stoppedAt || null,
+    errorCode: ctx.errorCode || null,
+    message: ctx.errorMessage || null,
+    terminalConfirmed: true,
+    cachedAtMs: nowMs,
+  };
+  terminalRecordingAttemptOrder.push(ctx.recordingAttemptId);
+  purgeTerminalRecordingAttemptCache(nowMs);
+}
+
+function getExactRecordingAttemptStatus(recordingAttemptId) {
+  if (!recordingAttemptId) return null;
+  if (
+    currentRecordingContext &&
+    currentRecordingContext.recordingAttemptId === recordingAttemptId
+  ) {
+    return {
+      recordingAttemptId: currentRecordingContext.recordingAttemptId,
+      protocolVersion: currentRecordingContext.protocolVersion,
+      sessionId: currentRecordingContext.sessionId,
+      conferenceName: currentRecordingContext.conferenceName,
+      status: currentRecordingContext.state || recordingState,
+      recordingUrl: currentRecordingContext.recordingUrl || null,
+      recordingId: currentRecordingContext.recordingId || null,
+      objectKey: currentRecordingContext.objectKey || null,
+      startedAt: currentRecordingContext.startedAt || null,
+      stoppedAt: currentRecordingContext.stoppedAt || null,
+      errorCode: currentRecordingContext.errorCode || null,
+      message: currentRecordingContext.errorMessage || null,
+      terminalConfirmed: Boolean(currentRecordingContext.terminalConfirmed),
+    };
+  }
+  purgeTerminalRecordingAttemptCache(Date.now());
+  return terminalRecordingAttemptCache[recordingAttemptId] || null;
+}
+
+function requestBestEffortRecorderCleanup(ctx, reason) {
+  if (!ctx || !ctx.recorder) {
+    log(
+      "recorder cleanup skipped reason=" +
+        (safeToString(reason) || "unknown") +
+        " recorderPresent=false",
+    );
+    return false;
+  }
+  ctx.cleanupRequested = true;
+  ctx.cleanupReason = safeToString(reason) || "unknown";
+  retainOrphanedRecorderContext(ctx);
+  if (
+    Number(ctx.cleanupAttemptCount || 0) >=
+    RECORDER_CLEANUP_MAX_ATTEMPTS
+  ) {
+    log(
+      "recorder cleanup attempt limit reached reason=" +
+        ctx.cleanupReason +
+        " recordingAttemptId=" +
+        (ctx.recordingAttemptId || "legacy") +
+        " attempts=" +
+        ctx.cleanupAttemptCount,
+    );
+    return false;
+  }
+  ctx.cleanupAttemptCount = Number(ctx.cleanupAttemptCount || 0) + 1;
+
+  var cleanupDispatched = false;
+  try {
+    if (typeof ctx.recorder.stop === "function") {
+      ctx.recorder.stop();
+      cleanupDispatched = true;
+    } else if (typeof ctx.recorder.stopRecord === "function") {
+      ctx.recorder.stopRecord();
+      cleanupDispatched = true;
+    } else {
+      log(
+        "recorder cleanup unavailable reason=" +
+          ctx.cleanupReason +
+          " recordingAttemptId=" +
+          (ctx.recordingAttemptId || "legacy"),
+      );
+    }
+  } catch (cleanupError) {
+    log(
+      "recorder cleanup failed reason=" +
+        ctx.cleanupReason +
+        " recordingAttemptId=" +
+        (ctx.recordingAttemptId || "legacy") +
+        " error=" +
+        safeToString(cleanupError),
+    );
+  }
+
+  // Release only the mutable current pointer. The concrete instance remains in
+  // ctx/orphanedRecorderContexts and keeps its immutable event handlers.
+  if (recorder === ctx.recorder) {
+    recorder = null;
+  }
+  log(
+    "recorder cleanup requested reason=" +
+      ctx.cleanupReason +
+      " recordingAttemptId=" +
+      (ctx.recordingAttemptId || "legacy") +
+      " dispatched=" +
+      cleanupDispatched,
+  );
+  return cleanupDispatched;
+}
+
 function normalizeObjectKeyFromUrl(url) {
   if (!url || typeof url !== "string") return null;
   // Best-effort extraction only. Real handoff may come from webhook/status API later.
@@ -1793,7 +2139,7 @@ function normalizeObjectKeyFromUrl(url) {
 }
 
 function buildStatusPayload(requestId, status, message, errorCode) {
-  return {
+  var payload = {
     type: "recording_status",
     requestId: requestId || null,
     status: status,
@@ -1808,24 +2154,140 @@ function buildStatusPayload(requestId, status, message, errorCode) {
     scenarioBuildId: SCENARIO_BUILD_ID,
     scenarioSourceName: SCENARIO_SOURCE_NAME,
   };
+  if (
+    currentRecordingContext &&
+    currentRecordingContext.protocolVersion ===
+      RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
+    payload.protocolVersion = RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+    payload.recordingAttemptId =
+      currentRecordingContext.recordingAttemptId || null;
+  }
+  return payload;
 }
 
-function sendStatus(call, requestId, status, message, errorCode) {
-  var payload = buildStatusPayload(requestId, status, message, errorCode);
+function buildRecorderContextStatusPayload(
+  ctx,
+  requestId,
+  status,
+  message,
+  errorCode
+) {
+  var payload = {
+    type: "recording_status",
+    requestId: requestId || null,
+    status: status,
+    message: message || undefined,
+    recordingUrl: (ctx && ctx.recordingUrl) || null,
+    recordingId: (ctx && ctx.recordingId) || null,
+    objectKey: (ctx && ctx.objectKey) || null,
+    startedAt: (ctx && ctx.startedAt) || null,
+    stoppedAt: (ctx && ctx.stoppedAt) || null,
+    pausedAt: (ctx && ctx.pausedAt) || null,
+    resumedAt: (ctx && ctx.resumedAt) || null,
+    errorCode: errorCode || null,
+    scenarioBuildId: SCENARIO_BUILD_ID,
+    scenarioSourceName: SCENARIO_SOURCE_NAME,
+  };
+  if (
+    ctx &&
+    ctx.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
+    payload.protocolVersion = RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+    payload.recordingAttemptId = ctx.recordingAttemptId || null;
+  }
+  return payload;
+}
+
+function buildAttemptScopedRejectionPayload(
+  claims,
+  requestId,
+  message,
+  errorCode
+) {
+  var payload = {
+    type: "recording_status",
+    requestId: requestId || null,
+    status: STATE_ERROR,
+    message: message || undefined,
+    recordingUrl: null,
+    recordingId: null,
+    objectKey: null,
+    startedAt: null,
+    stoppedAt: null,
+    pausedAt: null,
+    resumedAt: null,
+    errorCode: errorCode || null,
+    scenarioBuildId: SCENARIO_BUILD_ID,
+    scenarioSourceName: SCENARIO_SOURCE_NAME,
+  };
+  if (
+    claims &&
+    claims.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
+    payload.protocolVersion = RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+    payload.recordingAttemptId = claims.recordingAttemptId || null;
+  }
+  return payload;
+}
+
+function sendPreparedStatus(call, payload) {
   if (!call) {
-    log("sendStatus skipped (no call): status=" + status + " requestId=" + (requestId || "none"));
+    log(
+      "sendStatus skipped (no call): status=" +
+        payload.status +
+        " requestId=" +
+        (payload.requestId || "none"),
+    );
     return;
   }
   try {
     call.sendMessage(JSON.stringify(payload));
     log(
-      "status sent status=" + status +
-        " requestId=" + (requestId || "none") +
-        (errorCode ? " errorCode=" + errorCode : ""),
+      "status sent status=" +
+        payload.status +
+        " requestId=" +
+        (payload.requestId || "none") +
+        (payload.errorCode ? " errorCode=" + payload.errorCode : ""),
     );
   } catch (e) {
     log("sendStatus failed: " + safeToString(e));
   }
+}
+
+function sendRecordingAttemptCommandRejection(
+  call,
+  claims,
+  requestId,
+  message,
+  errorCode
+) {
+  sendPreparedStatus(
+    call,
+    buildAttemptScopedRejectionPayload(
+      claims,
+      requestId,
+      message,
+      errorCode,
+    ),
+  );
+  log(
+    "recording_control rejected code=" +
+      errorCode +
+      " action=" +
+      (claims && claims.action ? claims.action : "unknown") +
+      " requestId=" +
+      (requestId || "none") +
+      " recordingAttemptId=" +
+      (claims && claims.recordingAttemptId
+        ? claims.recordingAttemptId
+        : "legacy"),
+  );
+}
+
+function sendStatus(call, requestId, status, message, errorCode) {
+  var payload = buildStatusPayload(requestId, status, message, errorCode);
+  sendPreparedStatus(call, payload);
 }
 
 function setErrorState(errorCode, message) {
@@ -1927,7 +2389,13 @@ function validateRecordingControlSchema(rawPayload) {
   if (rawPayload.type !== "recording_control") {
     return { ok: false, code: "SCHEMA_INVALID" };
   }
-  if (rawPayload.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
+  var protocolVersion = rawPayload.protocolVersion
+    ? String(rawPayload.protocolVersion)
+    : "";
+  if (
+    protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION &&
+    protocolVersion !== RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
     return { ok: false, code: "PROTOCOL_MISMATCH" };
   }
   if (!rawPayload.claims || typeof rawPayload.claims !== "object") {
@@ -1935,6 +2403,9 @@ function validateRecordingControlSchema(rawPayload) {
   }
   var claims = rawPayload.claims;
   var requestId = claims.requestId ? String(claims.requestId).trim() : "";
+  var recordingAttemptId = claims.recordingAttemptId
+    ? String(claims.recordingAttemptId).trim()
+    : "";
   var sessionId = claims.sessionId ? String(claims.sessionId).trim() : "";
   var conferenceName = claims.conferenceName ? String(claims.conferenceName).trim() : "";
   var participantId = claims.participantId ? String(claims.participantId).trim() : "";
@@ -1967,22 +2438,35 @@ function validateRecordingControlSchema(rawPayload) {
   if (!webhookBaseUrl) {
     return { ok: false, code: "WEBHOOK_ORIGIN_INVALID", requestId: requestId };
   }
-  if (claims.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
+  if (claims.protocolVersion !== protocolVersion) {
     return { ok: false, code: "PROTOCOL_MISMATCH", requestId: requestId };
+  }
+  if (
+    (protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION &&
+      !recordingAttemptId) ||
+    (protocolVersion === RECORDING_CONTROL_PROTOCOL_VERSION &&
+      recordingAttemptId)
+  ) {
+    return {
+      ok: false,
+      code: "RECORDING_ATTEMPT_PROTOCOL_INVALID",
+      requestId: requestId,
+    };
   }
   return {
     ok: true,
     payload: {
       type: "recording_control",
-      protocolVersion: RECORDING_CONTROL_PROTOCOL_VERSION,
+      protocolVersion: protocolVersion,
       signature: signature.toLowerCase(),
       claims: {
-        protocolVersion: RECORDING_CONTROL_PROTOCOL_VERSION,
+        protocolVersion: protocolVersion,
         issuedAt: issuedAt,
         expiresAt: expiresAt,
         nonce: nonce,
         action: action,
         requestId: requestId,
+        recordingAttemptId: recordingAttemptId || undefined,
         sessionId: sessionId,
         conferenceName: conferenceName,
         participantId: participantId,
@@ -2030,170 +2514,243 @@ function isAuthorizedRecordingController(payload, call) {
   return { allowed: false, reason: "UNAUTHORIZED_RECORDING_CONTROLLER" };
 }
 
-function attachRecorderEventHandlers(commandRequestId) {
-  addSafeEventListener(recorder, "RecorderEvents", "Started", function (e) {
-    log("Recorder.Started handler entered");
-    startingWatchdogId = clearWatchdog(startingWatchdogId);
-    if (recordingState !== STATE_STARTING) {
+function createRecorderRuntimeContext(recorderInstance, sourceContext, call, requestId) {
+  var base = sourceContext || {};
+  return {
+    // Immutable recorder/attempt identity captured by every event closure.
+    recorder: recorderInstance,
+    protocolVersion: base.protocolVersion || RECORDING_CONTROL_PROTOCOL_VERSION,
+    recordingAttemptId: base.recordingAttemptId || null,
+    sessionId: base.sessionId || null,
+    conferenceName: base.conferenceName || null,
+    webhookBaseUrl: base.webhookBaseUrl || null,
+    participantId: base.participantId || null,
+    startRequestId: base.startRequestId || requestId || null,
+
+    // Attempt-local mutable runtime state. Never read from a newer global context.
+    stopRequestId: base.stopRequestId || null,
+    controllerCall: call || null,
+    state: STATE_STARTING,
+    recordingUrl: null,
+    recordingId: null,
+    objectKey: null,
+    startedAt: null,
+    stoppedAt: null,
+    pausedAt: null,
+    resumedAt: null,
+    errorCode: null,
+    errorMessage: null,
+    startingWatchdogId: null,
+    stoppingWatchdogId: null,
+    resumingWatchdogId: null,
+    cleanupRequested: false,
+    cleanupReason: null,
+    cleanupAttemptCount: 0,
+    terminalConfirmed: false,
+  };
+}
+
+function attachRecorderEventHandlers(recorderInstance, recorderContext) {
+  var ctx = recorderContext;
+
+  addSafeEventListener(recorderInstance, "RecorderEvents", "Started", function (e) {
+    startingWatchdogId = clearRecorderContextWatchdog(
+      ctx,
+      "startingWatchdogId",
+      startingWatchdogId,
+    );
+    if (ctx.state !== STATE_STARTING && !ctx.cleanupRequested) {
       return;
     }
-    recordingState = STATE_RECORDING;
-    recordingUrl = (e && e.url) ? String(e.url) : recordingUrl;
-    recordingId = (e && e.id) ? String(e.id) : recordingId;
-    objectKey = normalizeObjectKeyFromUrl(recordingUrl);
-    log("Recorder.Started:" +
-        " recordingUrl present=" + Boolean(recordingUrl) +
-        " extractedFileKey present=" + Boolean(objectKey) +
-        " recordingId present=" + Boolean(recordingId) +
-        " context present=" + Boolean(currentRecordingContext) +
-        " context sessionId present=" + Boolean(currentRecordingContext && currentRecordingContext.sessionId) +
-        " context webhookBaseUrl present=" + Boolean(currentRecordingContext && currentRecordingContext.webhookBaseUrl));
-    var statusPayload = buildStatusPayload(commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
-    sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_RECORDING, "Recording is active.", null);
-    log("webhook POST intent status=recording sessionId=" + (resolvedSessionId || "null"));
+
+    ctx.recordingUrl = (e && e.url) ? String(e.url) : ctx.recordingUrl;
+    ctx.recordingId = (e && e.id) ? String(e.id) : ctx.recordingId;
+    ctx.objectKey = normalizeObjectKeyFromUrl(ctx.recordingUrl);
+    if (ctx.cleanupRequested) {
+      log(
+        "Recorder.Started ignored after cleanup request recordingAttemptId=" +
+          (ctx.recordingAttemptId || "legacy") +
+          " cleanupAttempts=" +
+          ctx.cleanupAttemptCount,
+      );
+      requestBestEffortRecorderCleanup(
+        ctx,
+        "LATE_STARTED_AFTER_CLEANUP",
+      );
+      return;
+    }
+
+    ctx.state = STATE_RECORDING;
+    ctx.startedAt = ctx.startedAt || safeNowIso();
+    var mayMutateCurrentRuntime =
+      isCurrentRecorderContext(ctx);
+    if (mayMutateCurrentRuntime) {
+      recordingState = STATE_RECORDING;
+      recordingUrl = ctx.recordingUrl;
+      recordingId = ctx.recordingId;
+      objectKey = ctx.objectKey;
+    }
+
+    log(
+      "Recorder.Started handler entered recordingAttemptId=" +
+        (ctx.recordingAttemptId || "legacy") +
+        " current=" +
+        isCurrentRecorderContext(ctx) +
+        " cleanupRequested=" +
+        ctx.cleanupRequested,
+    );
+    var statusPayload = buildRecorderContextStatusPayload(
+      ctx,
+      ctx.startRequestId,
+      STATE_RECORDING,
+      "Recording is active.",
+      null,
+    );
+    sendPreparedStatus(ctx.controllerCall, statusPayload);
     sendRecordingWebhook(
-      getCurrentContextSessionId(),
+      ctx.sessionId,
       statusPayload,
-      { startedAt: safeNowIso() },
-      getCurrentContextWebhookBaseUrl(),
+      { startedAt: ctx.startedAt },
+      ctx.webhookBaseUrl,
+      ctx.conferenceName,
     );
   }, "RecorderEvents.Started");
 
-  addSafeEventListener(recorder, "RecorderEvents", "Stopped", function (e) {
-    stoppingWatchdogId = clearWatchdog(stoppingWatchdogId);
+  addSafeEventListener(recorderInstance, "RecorderEvents", "Stopped", function (e) {
+    clearRecorderContextWatchdogs(ctx);
+    ctx.state = STATE_STOPPED;
+    ctx.terminalConfirmed = true;
+    ctx.recordingUrl = (e && e.url) ? String(e.url) : ctx.recordingUrl;
+    ctx.recordingId = (e && e.id) ? String(e.id) : ctx.recordingId;
+    ctx.objectKey =
+      ctx.objectKey || normalizeObjectKeyFromUrl(ctx.recordingUrl);
+    ctx.stoppedAt = ctx.stoppedAt || safeNowIso();
+    cacheTerminalRecorderContext(ctx);
 
-    // ── Part C: diagnostics — handler entered ───────────────────────────────
-    log("Recorder.Stopped handler entered");
-
-    // ── Part A: read durable context captured at start/stop ─────────────────
-    var ctx = currentRecordingContext;
-    var ctxPresent = Boolean(ctx);
-    var ctxSessionId   = (ctx && ctx.sessionId)        ? ctx.sessionId        : null;
-    var ctxWebhookUrl  = (ctx && ctx.webhookBaseUrl)   ? ctx.webhookBaseUrl   : null;
-    var ctxStopReqId   = (ctx && ctx.stopRequestId)    ? ctx.stopRequestId    : null;
-    var ctxConfName    = (ctx && ctx.conferenceName)   ? ctx.conferenceName   : null;
-
-    log("context present=" + ctxPresent +
-        " sessionId present=" + Boolean(ctxSessionId || resolvedSessionId) +
-        " context webhookBaseUrl present=" + Boolean(ctxWebhookUrl));
-
-    // ── Update recording state and URL fields ────────────────────────────────
-    recordingState = STATE_STOPPED;
-    recordingUrl   = (e && e.url) ? String(e.url) : recordingUrl;
-    recordingId    = (e && e.id)  ? String(e.id)  : recordingId;
-    objectKey      = objectKey || normalizeObjectKeyFromUrl(recordingUrl);
-
-    var stoppedRecordingUrl = recordingUrl;
-    var stoppedObjectKey    = objectKey;
-    var fileKeyPresent      = Boolean(stoppedObjectKey);
-    var effectiveStopRequestId = ctxStopReqId || lastRequestId || null;
-
-    log("recordingUrl present=" + Boolean(stoppedRecordingUrl) +
-        " extractedFileKey present=" + fileKeyPresent +
-        " recordingId present=" + Boolean(recordingId) +
-        " context present=" + ctxPresent +
-        " context sessionId present=" + Boolean(ctxSessionId) +
-        " context webhookBaseUrl present=" + Boolean(ctxWebhookUrl) +
-        " stopRequestId present=" + Boolean(effectiveStopRequestId));
-
-    // ── Part A.5: use stop requestId; do not fall back to start requestId ───
-    // commandRequestId is the START requestId captured in the closure.
-    // ctxStopReqId / lastRequestId are both updated to the STOP requestId.
-
-    // Build payload and send browser status using the stop requestId.
-    var statusPayload = buildStatusPayload(effectiveStopRequestId, STATE_STOPPED, "Recording stopped.", null);
-    sendStatus(lastControllerCall, effectiveStopRequestId, STATE_STOPPED, "Recording stopped.", null);
-
-    // ── Part D.1: resolve sessionId with cascading fallback ─────────────────
-    var stoppedSessionId = ctxSessionId || resolvedSessionId || null;
-    if (!stoppedSessionId && ctxConfName) {
-      stoppedSessionId = parseSessionIdFromConferenceName(ctxConfName);
-      if (stoppedSessionId) log("sessionId recovered from context.conferenceName=" + stoppedSessionId);
-    }
-    if (!stoppedSessionId && lastConferenceName) {
-      stoppedSessionId = parseSessionIdFromConferenceName(lastConferenceName);
-      if (stoppedSessionId) log("sessionId recovered from lastConferenceName=" + stoppedSessionId);
-    }
-    var stoppedConferenceName =
-      ctxConfName ||
-      (stoppedSessionId ? buildVoximplantConferenceName(stoppedSessionId) : null);
-
-    // Part C: log the exact callback origin selected for this webhook dispatch.
-    var recordingWebhookDecision = resolveRecordingStatusWebhookOrigin(
-      stoppedSessionId,
-      stoppedConferenceName,
-      ctxWebhookUrl,
+    var effectiveStopRequestId = ctx.stopRequestId || null;
+    var statusPayload = buildRecorderContextStatusPayload(
+      ctx,
+      effectiveStopRequestId,
+      STATE_STOPPED,
+      "Recording stopped.",
+      null,
     );
-    var webhookTargetUrl = (stoppedSessionId && recordingWebhookDecision.origin)
-      ? recordingWebhookDecision.origin + "/api/sessions/" + stoppedSessionId + "/voximplant/recording-status"
-      : null;
+    var wasCurrentContext = isCurrentRecorderContext(ctx);
+    if (wasCurrentContext) {
+      recordingState = STATE_STOPPED;
+      recordingUrl = ctx.recordingUrl;
+      recordingId = ctx.recordingId;
+      objectKey = ctx.objectKey;
+      if (recorder === ctx.recorder) {
+        recorder = null;
+      }
+    }
+
     log(
-      "webhook URL=" +
-        (webhookTargetUrl || "null (will be skipped)") +
-        " callbackOriginSource=" +
-        recordingWebhookDecision.source,
+      "Recorder.Stopped handler entered recordingAttemptId=" +
+        (ctx.recordingAttemptId || "legacy") +
+        " current=" +
+        wasCurrentContext +
+        " stopRequestId=" +
+        (effectiveStopRequestId || "null"),
     );
-
-    // Set recorder = null only after all synchronous payload building is done.
-    recorder = null;
-
-    // Part C: explicit pre-attempt log so we can see intent even if POST fails
-    log("webhook POST intent status=stopped sessionId=" + (stoppedSessionId || "null") +
-        " fileKeyPresent=" + fileKeyPresent +
-        " recordingUrlPresent=" + Boolean(stoppedRecordingUrl) +
-        " stopRequestId=" + (effectiveStopRequestId || "null"));
-
-    // ── Part B: send signed completion webhook to Next.js ───────────────────
-    // Part D.2: if fileKey extraction failed, still send webhook (with recordingUrl
-    // and fileKeyPresent=false in logs) so the server gets stoppedAt at minimum.
-    sendRecordingWebhook(stoppedSessionId, statusPayload, { stoppedAt: safeNowIso() }, ctxWebhookUrl);
-    if (stoppedSessionId && stoppedConferenceName) {
+    sendPreparedStatus(ctx.controllerCall, statusPayload);
+    sendRecordingWebhook(
+      ctx.sessionId,
+      statusPayload,
+      { stoppedAt: ctx.stoppedAt },
+      ctx.webhookBaseUrl,
+      ctx.conferenceName,
+    );
+    if (ctx.sessionId && ctx.conferenceName) {
+      var stopCallbackExtra = {
+        operationId: effectiveStopRequestId,
+        terminalStatus: "recording_stopped",
+        useCurrentRecordingAttemptId: false,
+      };
+      if (ctx.recordingAttemptId) {
+        stopCallbackExtra.recordingAttemptId = ctx.recordingAttemptId;
+      }
       sendServerStopCallback(
         "recording_stopped",
-        stoppedSessionId,
-        stoppedConferenceName,
+        ctx.sessionId,
+        ctx.conferenceName,
         resolveProviderSessionId(),
-        {
-          operationId: effectiveStopRequestId,
-          terminalStatus: "recording_stopped",
-        },
+        stopCallbackExtra,
       );
     }
 
-    // ── Part A/D: clear context only after webhook attempt ──────────────────
-    currentRecordingContext = null;
-    log("context cleanup after webhook attempt");
+    releaseOrphanedRecorderContext(ctx);
+    if (isCurrentRecorderContext(ctx)) {
+      currentRecordingContext = null;
+      log(
+        "context cleanup after webhook attempt recordingAttemptId=" +
+          (ctx.recordingAttemptId || "legacy"),
+      );
+    }
   }, "RecorderEvents.Stopped");
 
-  addSafeEventListener(recorder, "RecorderEvents", "Error", function (e) {
-    clearAllWatchdogs();
+  addSafeEventListener(recorderInstance, "RecorderEvents", "Error", function (e) {
+    clearRecorderContextWatchdogs(ctx);
     var safeErrorCode = safeToString(e && e.code) || "RECORDER_EVENT_ERROR";
     var safeErrorMsg = safeToString(e && e.message) || "Recorder error event.";
-    setErrorState(safeErrorCode, safeErrorMsg);
-    log("Recorder.Error handler entered code=" + safeErrorCode + " message=" + safeErrorMsg);
-    var statusPayload = buildStatusPayload(commandRequestId || lastRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
-    sendStatus(lastControllerCall, commandRequestId || lastRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
-    log("webhook POST intent status=error sessionId=" + (resolvedSessionId || "null"));
+    ctx.state = STATE_ERROR;
+    ctx.errorCode = safeErrorCode;
+    ctx.errorMessage = safeErrorMsg;
+    ctx.terminalConfirmed = true;
+    cacheTerminalRecorderContext(ctx);
+    var wasCurrentContext = isCurrentRecorderContext(ctx);
+    if (wasCurrentContext) {
+      recordingState = STATE_ERROR;
+      lastErrorCode = safeErrorCode;
+      lastErrorMessage = safeErrorMsg;
+      if (recorder === ctx.recorder) {
+        recorder = null;
+      }
+    }
+
+    log(
+      "Recorder.Error handler entered code=" +
+        safeErrorCode +
+        " recordingAttemptId=" +
+        (ctx.recordingAttemptId || "legacy") +
+        " current=" +
+        wasCurrentContext,
+    );
+    var statusPayload = buildRecorderContextStatusPayload(
+      ctx,
+      ctx.stopRequestId || ctx.startRequestId,
+      STATE_ERROR,
+      safeErrorMsg,
+      safeErrorCode,
+    );
+    sendPreparedStatus(ctx.controllerCall, statusPayload);
     sendRecordingWebhook(
-      getCurrentContextSessionId(),
+      ctx.sessionId,
       statusPayload,
       null,
-      getCurrentContextWebhookBaseUrl(),
+      ctx.webhookBaseUrl,
+      ctx.conferenceName,
     );
-    if (resolvedSessionId) {
+    if (ctx.sessionId && ctx.conferenceName) {
+      var errorCallbackExtra = {
+        operationId: ctx.stopRequestId || null,
+        failureCode: safeErrorCode,
+        failureMessage: safeErrorMsg,
+        useCurrentRecordingAttemptId: false,
+      };
+      if (ctx.recordingAttemptId) {
+        errorCallbackExtra.recordingAttemptId = ctx.recordingAttemptId;
+      }
       sendServerStopCallback(
         "recording_stop_failed",
-        resolvedSessionId,
-        buildVoximplantConferenceName(resolvedSessionId),
+        ctx.sessionId,
+        ctx.conferenceName,
         resolveProviderSessionId(),
-        {
-          operationId: commandRequestId || lastRequestId || null,
-          failureCode: safeErrorCode,
-          failureMessage: safeErrorMsg,
-        },
+        errorCallbackExtra,
       );
     }
-    recorder = null;
+    releaseOrphanedRecorderContext(ctx);
   }, "RecorderEvents.Error");
 }
 
@@ -2234,6 +2791,9 @@ function startRecording(call, requestId) {
   lastRequestId = requestId;
   lastErrorCode = null;
   lastErrorMessage = null;
+  recordingUrl = null;
+  recordingId = null;
+  objectKey = null;
   pausedAt = null;
   resumedAt = null;
   sendStatus(call, requestId, STATE_STARTING, "Recording start requested.", null);
@@ -2241,10 +2801,11 @@ function startRecording(call, requestId) {
   sendRecordingWebhook(
     getCurrentContextSessionId(),
     buildStatusPayload(requestId, STATE_STARTING, "Recording start requested.", null),
-    { startedAt: safeNowIso() },
+    null,
     getCurrentContextWebhookBaseUrl(),
   );
 
+  var recorderContext = null;
   try {
     var options = {
       video: false,
@@ -2257,31 +2818,79 @@ function startRecording(call, requestId) {
       options.hd_audio = true;
     }
 
-    recorder = VoxEngine.createRecorder(options);
-    if (!recorder) {
+    var recorderInstance = VoxEngine.createRecorder(options);
+    if (!recorderInstance) {
       setErrorState("RECORDER_CREATE_FAILED", "Recorder was not created.");
       sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
       reportRuntimeStartFailure(requestId, lastErrorCode, lastErrorMessage);
       return;
     }
 
-    attachRecorderEventHandlers(requestId);
-    conference.sendMediaTo(recorder);
+    recorderContext = createRecorderRuntimeContext(
+      recorderInstance,
+      currentRecordingContext,
+      call,
+      requestId,
+    );
+    currentRecordingContext = recorderContext;
+    recorder = recorderInstance;
+    attachRecorderEventHandlers(recorderInstance, recorderContext);
+    conference.sendMediaTo(recorderInstance);
 
-    startingWatchdogId = setTimeout(function () {
-      startingWatchdogId = null;
-      if (recordingState === STATE_STARTING) {
-        setErrorState("STARTING_TIMEOUT", "Recorder did not enter recording state in time.");
-        sendStatus(lastControllerCall, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
-        reportRuntimeStartFailure(requestId, lastErrorCode, lastErrorMessage);
-        recorder = null;
+    recorderContext.startingWatchdogId = setTimeout(function () {
+      var timeoutId = recorderContext.startingWatchdogId;
+      recorderContext.startingWatchdogId = null;
+      if (startingWatchdogId === timeoutId) {
+        startingWatchdogId = null;
+      }
+      if (
+        recorderContext.state === STATE_STARTING &&
+        isCurrentRecorderContext(recorderContext)
+      ) {
+        recorderContext.state = STATE_ERROR;
+        recorderContext.errorCode = "STARTING_TIMEOUT";
+        recorderContext.errorMessage =
+          "Recorder did not enter recording state in time.";
+        recordingState = STATE_ERROR;
+        lastErrorCode = recorderContext.errorCode;
+        lastErrorMessage = recorderContext.errorMessage;
+        var timeoutPayload = buildRecorderContextStatusPayload(
+          recorderContext,
+          requestId,
+          STATE_ERROR,
+          recorderContext.errorMessage,
+          recorderContext.errorCode,
+        );
+        sendPreparedStatus(recorderContext.controllerCall, timeoutPayload);
+        sendRecordingWebhook(
+          recorderContext.sessionId,
+          timeoutPayload,
+          null,
+          recorderContext.webhookBaseUrl,
+          recorderContext.conferenceName,
+        );
+        requestBestEffortRecorderCleanup(
+          recorderContext,
+          "STARTING_TIMEOUT",
+        );
       }
     }, STARTING_TIMEOUT_MS);
+    startingWatchdogId = recorderContext.startingWatchdogId;
   } catch (e) {
     setErrorState("START_RECORDING_EXCEPTION", safeToString(e));
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     reportRuntimeStartFailure(requestId, lastErrorCode, lastErrorMessage);
-    recorder = null;
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(
+        recorderContext,
+        "START_RECORDING_EXCEPTION",
+      );
+    } else {
+      recorder = null;
+    }
   }
 }
 
@@ -2290,26 +2899,49 @@ function pauseRecording(call, requestId) {
     sendStatus(call, requestId, recordingState, "Pause is valid only from recording state.", null);
     return;
   }
-  if (!recorder) {
+  var recorderContext = currentRecordingContext;
+  var recorderInstance =
+    (recorderContext && recorderContext.recorder) || recorder;
+  if (!recorderInstance) {
     setErrorState("RECORDER_MISSING_ON_PAUSE", "Recorder is missing.");
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     return;
   }
-  if (typeof recorder.mute !== "function") {
+  if (typeof recorderInstance.mute !== "function") {
     setErrorState("RECORDER_MUTE_UNAVAILABLE", "Recorder pause API is unavailable.");
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(
+        recorderContext,
+        "RECORDER_MUTE_UNAVAILABLE",
+      );
+    }
     return;
   }
   try {
-    recorder.mute(true);
+    recorderInstance.mute(true);
     recordingState = STATE_PAUSED;
     pausedAt = safeNowIso();
+    if (recorderContext) {
+      recorderContext.state = STATE_PAUSED;
+      recorderContext.pausedAt = pausedAt;
+      recorderContext.controllerCall = call;
+    }
     lastControllerCall = call;
     lastRequestId = requestId;
     sendStatus(call, requestId, STATE_PAUSED, "Recording paused via recorder.mute(true).", null);
   } catch (e) {
     setErrorState("PAUSE_EXCEPTION", safeToString(e));
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(recorderContext, "PAUSE_EXCEPTION");
+    }
   }
 }
 
@@ -2318,39 +2950,87 @@ function resumeRecording(call, requestId) {
     sendStatus(call, requestId, recordingState, "Resume is valid only from paused state.", null);
     return;
   }
-  if (!recorder) {
+  var recorderContext = currentRecordingContext;
+  var recorderInstance =
+    (recorderContext && recorderContext.recorder) || recorder;
+  if (!recorderInstance) {
     setErrorState("RECORDER_MISSING_ON_RESUME", "Recorder is missing.");
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
     return;
   }
-  if (typeof recorder.mute !== "function") {
+  if (typeof recorderInstance.mute !== "function") {
     setErrorState("RECORDER_MUTE_UNAVAILABLE", "Recorder resume API is unavailable.");
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(
+        recorderContext,
+        "RECORDER_MUTE_UNAVAILABLE",
+      );
+    }
     return;
   }
 
   try {
     recordingState = STATE_RESUMING;
+    if (recorderContext) {
+      recorderContext.state = STATE_RESUMING;
+      recorderContext.controllerCall = call;
+    }
     lastControllerCall = call;
     lastRequestId = requestId;
     sendStatus(call, requestId, STATE_RESUMING, "Recording resume requested.", null);
 
-    recorder.mute(false);
+    recorderInstance.mute(false);
     recordingState = STATE_RECORDING;
     resumedAt = safeNowIso();
+    if (recorderContext) {
+      recorderContext.state = STATE_RECORDING;
+      recorderContext.resumedAt = resumedAt;
+    }
     sendStatus(call, requestId, STATE_RECORDING, "Recording resumed via recorder.mute(false).", null);
 
     // Defensive watchdog for future async resume behavior.
-    resumingWatchdogId = setTimeout(function () {
-      resumingWatchdogId = null;
-      if (recordingState === STATE_RESUMING) {
+    var resumeContext = recorderContext;
+    var resumeTimerId = setTimeout(function () {
+      if (resumeContext) {
+        resumeContext.resumingWatchdogId = null;
+      }
+      if (resumingWatchdogId === resumeTimerId) {
+        resumingWatchdogId = null;
+      }
+      if (
+        resumeContext &&
+        resumeContext.state === STATE_RESUMING &&
+        isCurrentRecorderContext(resumeContext)
+      ) {
+        resumeContext.state = STATE_ERROR;
+        resumeContext.errorCode = "RESUMING_TIMEOUT";
+        resumeContext.errorMessage =
+          "Recorder did not finish resuming in time.";
         setErrorState("RESUMING_TIMEOUT", "Recorder did not finish resuming in time.");
         sendStatus(lastControllerCall, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+        requestBestEffortRecorderCleanup(
+          resumeContext,
+          "RESUMING_TIMEOUT",
+        );
       }
     }, RESUMING_TIMEOUT_MS);
+    if (resumeContext) {
+      resumeContext.resumingWatchdogId = resumeTimerId;
+    }
+    resumingWatchdogId = resumeTimerId;
   } catch (e) {
     setErrorState("RESUME_EXCEPTION", safeToString(e));
     sendStatus(call, requestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(recorderContext, "RESUME_EXCEPTION");
+    }
   }
 }
 
@@ -2384,6 +3064,9 @@ function requestRecorderStopForScenarioShutdown(reason) {
 }
 
 function stopRecording(call, requestId) {
+  var recorderContext = currentRecordingContext;
+  var recorderInstance =
+    (recorderContext && recorderContext.recorder) || recorder;
   var effectiveRequestId =
     requestId ||
     (currentRecordingContext && currentRecordingContext.stopRequestId) ||
@@ -2409,7 +3092,7 @@ function stopRecording(call, requestId) {
     sendStatus(call, effectiveRequestId, recordingState, "Stop is not valid from current state.", null);
     return;
   }
-  if (!recorder) {
+  if (!recorderInstance) {
     recordingState = STATE_STOPPED;
     sendStatus(call, effectiveRequestId, STATE_STOPPED, "Recorder not present; treated as stopped.", null);
     return;
@@ -2420,9 +3103,24 @@ function stopRecording(call, requestId) {
   lastRequestId = effectiveRequestId;
   if (currentRecordingContext) {
     currentRecordingContext.stopRequestId = effectiveRequestId;
+    currentRecordingContext.controllerCall = call || currentRecordingContext.controllerCall;
+    currentRecordingContext.state = STATE_STOPPING;
   }
-  startingWatchdogId = clearWatchdog(startingWatchdogId);
-  resumingWatchdogId = clearWatchdog(resumingWatchdogId);
+  if (recorderContext) {
+    startingWatchdogId = clearRecorderContextWatchdog(
+      recorderContext,
+      "startingWatchdogId",
+      startingWatchdogId,
+    );
+    resumingWatchdogId = clearRecorderContextWatchdog(
+      recorderContext,
+      "resumingWatchdogId",
+      resumingWatchdogId,
+    );
+  } else {
+    startingWatchdogId = clearWatchdog(startingWatchdogId);
+    resumingWatchdogId = clearWatchdog(resumingWatchdogId);
+  }
   sendStatus(call, effectiveRequestId, STATE_STOPPING, "Recording stop requested.", null);
   log("webhook POST intent status=stopping sessionId=" + (resolvedSessionId || "null"));
   sendRecordingWebhook(
@@ -2433,10 +3131,10 @@ function stopRecording(call, requestId) {
   );
 
   try {
-    if (typeof recorder.stop === "function") {
-      recorder.stop();
-    } else if (typeof recorder.stopRecord === "function") {
-      recorder.stopRecord();
+    if (typeof recorderInstance.stop === "function") {
+      recorderInstance.stop();
+    } else if (typeof recorderInstance.stopRecord === "function") {
+      recorderInstance.stopRecord();
     } else {
       setErrorState("RECORDER_STOP_UNAVAILABLE", "Recorder stop method unavailable.");
       sendStatus(call, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
@@ -2448,42 +3146,97 @@ function stopRecording(call, requestId) {
         getCurrentContextWebhookBaseUrl(),
       );
       if (resolvedSessionId) {
+        var unavailableExtra = {
+          operationId: effectiveRequestId,
+          failureCode: "RECORDER_STOP_UNAVAILABLE",
+          failureMessage: lastErrorMessage,
+          useCurrentRecordingAttemptId: false,
+        };
+        if (recorderContext && recorderContext.recordingAttemptId) {
+          unavailableExtra.recordingAttemptId =
+            recorderContext.recordingAttemptId;
+        }
         sendServerStopCallback(
           "recording_stop_failed",
           resolvedSessionId,
           buildVoximplantConferenceName(resolvedSessionId),
           resolveProviderSessionId(),
-          {
-            operationId: effectiveRequestId,
-            failureCode: "RECORDER_STOP_UNAVAILABLE",
-            failureMessage: lastErrorMessage,
-          },
+          unavailableExtra,
+        );
+      }
+      if (recorderContext) {
+        recorderContext.state = STATE_ERROR;
+        recorderContext.errorCode = lastErrorCode;
+        recorderContext.errorMessage = lastErrorMessage;
+        requestBestEffortRecorderCleanup(
+          recorderContext,
+          "RECORDER_STOP_UNAVAILABLE",
         );
       }
       return;
     }
 
-    stoppingWatchdogId = setTimeout(function () {
-      stoppingWatchdogId = null;
-      if (recordingState === STATE_STOPPING) {
-        setErrorState("STOPPING_TIMEOUT", "Recorder did not stop in time.");
-        sendStatus(lastControllerCall, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
-        if (resolvedSessionId) {
+    var stopContext = recorderContext;
+    var stopTimerId = setTimeout(function () {
+      if (stopContext) {
+        stopContext.stoppingWatchdogId = null;
+      }
+      if (stoppingWatchdogId === stopTimerId) {
+        stoppingWatchdogId = null;
+      }
+      if (
+        stopContext &&
+        stopContext.state === STATE_STOPPING &&
+        isCurrentRecorderContext(stopContext)
+      ) {
+        stopContext.state = STATE_ERROR;
+        stopContext.errorCode = "STOPPING_TIMEOUT";
+        stopContext.errorMessage = "Recorder did not stop in time.";
+        setErrorState("STOPPING_TIMEOUT", stopContext.errorMessage);
+        var timeoutPayload = buildRecorderContextStatusPayload(
+          stopContext,
+          effectiveRequestId,
+          STATE_ERROR,
+          stopContext.errorMessage,
+          stopContext.errorCode,
+        );
+        sendPreparedStatus(stopContext.controllerCall, timeoutPayload);
+        sendRecordingWebhook(
+          stopContext.sessionId,
+          timeoutPayload,
+          null,
+          stopContext.webhookBaseUrl,
+          stopContext.conferenceName,
+        );
+        if (stopContext.sessionId && stopContext.conferenceName) {
+          var timeoutExtra = {
+            operationId: effectiveRequestId,
+            failureCode: "STOPPING_TIMEOUT",
+            failureMessage: stopContext.errorMessage,
+            useCurrentRecordingAttemptId: false,
+          };
+          if (stopContext.recordingAttemptId) {
+            timeoutExtra.recordingAttemptId =
+              stopContext.recordingAttemptId;
+          }
           sendServerStopCallback(
             "recording_stop_failed",
-            resolvedSessionId,
-            buildVoximplantConferenceName(resolvedSessionId),
+            stopContext.sessionId,
+            stopContext.conferenceName,
             resolveProviderSessionId(),
-            {
-              operationId: effectiveRequestId,
-              failureCode: "STOPPING_TIMEOUT",
-              failureMessage: lastErrorMessage,
-            },
+            timeoutExtra,
           );
         }
-        recorder = null;
+        requestBestEffortRecorderCleanup(
+          stopContext,
+          "STOPPING_TIMEOUT",
+        );
       }
     }, STOPPING_TIMEOUT_MS);
+    if (stopContext) {
+      stopContext.stoppingWatchdogId = stopTimerId;
+    }
+    stoppingWatchdogId = stopTimerId;
   } catch (e) {
     setErrorState("STOP_EXCEPTION", safeToString(e));
     sendStatus(call, effectiveRequestId, STATE_ERROR, lastErrorMessage, lastErrorCode);
@@ -2495,28 +3248,81 @@ function stopRecording(call, requestId) {
       getCurrentContextWebhookBaseUrl(),
     );
     if (resolvedSessionId) {
+      var exceptionExtra = {
+        operationId: effectiveRequestId,
+        failureCode: "STOP_EXCEPTION",
+        failureMessage: lastErrorMessage,
+        useCurrentRecordingAttemptId: false,
+      };
+      if (recorderContext && recorderContext.recordingAttemptId) {
+        exceptionExtra.recordingAttemptId =
+          recorderContext.recordingAttemptId;
+      }
       sendServerStopCallback(
         "recording_stop_failed",
         resolvedSessionId,
         buildVoximplantConferenceName(resolvedSessionId),
         resolveProviderSessionId(),
-        {
-          operationId: effectiveRequestId,
-          failureCode: "STOP_EXCEPTION",
-          failureMessage: lastErrorMessage,
-        },
+        exceptionExtra,
       );
     }
-    recorder = null;
+    if (recorderContext) {
+      recorderContext.state = STATE_ERROR;
+      recorderContext.errorCode = lastErrorCode;
+      recorderContext.errorMessage = lastErrorMessage;
+      requestBestEffortRecorderCleanup(recorderContext, "STOP_EXCEPTION");
+    } else {
+      recorder = null;
+    }
   }
 }
 
-function sendCurrentStatus(call, requestId) {
+function sendCurrentStatus(call, requestId, recordingAttemptId) {
+  if (recordingAttemptId) {
+    var exactStatus = getExactRecordingAttemptStatus(recordingAttemptId);
+    if (!exactStatus) {
+      sendPreparedStatus(
+        call,
+        buildAttemptScopedRejectionPayload(
+          {
+            protocolVersion: RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+            recordingAttemptId: recordingAttemptId,
+          },
+          requestId,
+          "Recording attempt is unknown or no longer retained.",
+          "RECORDING_ATTEMPT_UNKNOWN",
+        ),
+      );
+      return false;
+    }
+    var exactPayload = {
+      type: "recording_status",
+      requestId: requestId || null,
+      status: exactStatus.status,
+      message: exactStatus.message || "Exact recording attempt state.",
+      recordingUrl: exactStatus.recordingUrl || null,
+      recordingId: exactStatus.recordingId || null,
+      objectKey: exactStatus.objectKey || null,
+      startedAt: exactStatus.startedAt || null,
+      stoppedAt: exactStatus.stoppedAt || null,
+      pausedAt: exactStatus.pausedAt || null,
+      resumedAt: exactStatus.resumedAt || null,
+      errorCode: exactStatus.errorCode || null,
+      terminalConfirmed: Boolean(exactStatus.terminalConfirmed),
+      protocolVersion: RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+      recordingAttemptId: recordingAttemptId,
+      scenarioBuildId: SCENARIO_BUILD_ID,
+      scenarioSourceName: SCENARIO_SOURCE_NAME,
+    };
+    sendPreparedStatus(call, exactPayload);
+    return true;
+  }
   var msg = "Current recording state.";
   if (recordingState === STATE_ERROR && lastErrorMessage) {
     msg = "Current recording state error: " + lastErrorMessage;
   }
   sendStatus(call, requestId, recordingState, msg, lastErrorCode);
+  return true;
 }
 
 function reportSignedStartFailure(claims, errorCode, message, diagnostics) {
@@ -2535,6 +3341,14 @@ function reportSignedStartFailure(claims, errorCode, message, diagnostics) {
     message,
     errorCode,
   );
+  if (
+    claims.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION &&
+    claims.recordingAttemptId
+  ) {
+    statusPayload.protocolVersion =
+      RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+    statusPayload.recordingAttemptId = claims.recordingAttemptId;
+  }
   var clockFragment =
     diagnostics && typeof diagnostics.clockDeltaSeconds === "number"
       ? " clockDeltaSeconds=" + diagnostics.clockDeltaSeconds
@@ -2888,7 +3702,7 @@ function onRecordingControlMessage(call, rawPayload) {
         " nonce=" +
         claims.nonce,
     );
-    sendCurrentStatus(call, requestId);
+    sendCurrentStatus(call, requestId, claims.recordingAttemptId || null);
     return;
   }
 
@@ -2931,7 +3745,7 @@ function onRecordingControlMessage(call, rawPayload) {
       );
       return;
     }
-    sendCurrentStatus(call, requestId);
+    sendCurrentStatus(call, requestId, claims.recordingAttemptId || null);
     return;
   }
 
@@ -2998,11 +3812,95 @@ function onRecordingControlMessage(call, rawPayload) {
       claims.conferenceName +
       " webhookBaseUrl=" +
       claims.webhookBaseUrl +
+      " recordingAttemptId=" +
+      (claims.recordingAttemptId || "legacy") +
       " authReason=" +
       auth.reason,
   );
 
-  // 13. execute recording action
+  // 13. fence command execution to the recorder's stable attempt identity.
+  var isFencedCommand =
+    claims.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+  var startRuntimeAdmissible =
+    recordingState === STATE_IDLE ||
+    recordingState === STATE_STOPPED ||
+    recordingState === STATE_ERROR;
+  if (
+    claims.action === ACTION_START &&
+    !startRuntimeAdmissible
+  ) {
+    var startRejectionCode =
+      isFencedCommand &&
+      currentRecordingContext &&
+      currentRecordingContext.recordingAttemptId !== claims.recordingAttemptId
+        ? "RECORDING_ATTEMPT_MISMATCH"
+        : "RECORDING_START_NOT_ADMISSIBLE";
+    markRecordingControlNonceOutcome(
+      claims.nonce,
+      "REJECTED_PRE_EXECUTION",
+      startRejectionCode,
+      nonceReplayExpiresAt,
+    );
+    sendRecordingAttemptCommandRejection(
+      call,
+      claims,
+      requestId,
+      "A new recording attempt cannot replace a non-terminal recorder runtime.",
+      startRejectionCode,
+    );
+    return;
+  }
+  var requiresCurrentAttempt =
+    claims.action === ACTION_STOP ||
+    claims.action === ACTION_PAUSE ||
+    claims.action === ACTION_RESUME;
+  var requiresAttemptContext =
+    requiresCurrentAttempt || claims.action === ACTION_STATUS;
+  if (requiresCurrentAttempt && isFencedCommand) {
+    if (
+      !currentRecordingContext ||
+      !currentRecordingContext.recordingAttemptId ||
+      currentRecordingContext.recordingAttemptId !== claims.recordingAttemptId
+    ) {
+      markRecordingControlNonceOutcome(
+        claims.nonce,
+        "REJECTED_PRE_EXECUTION",
+        "RECORDING_ATTEMPT_MISMATCH",
+        nonceReplayExpiresAt,
+      );
+      sendRecordingAttemptCommandRejection(
+        call,
+        claims,
+        requestId,
+        "Command belongs to an obsolete or missing recording attempt.",
+        "RECORDING_ATTEMPT_MISMATCH",
+      );
+      return;
+    }
+  }
+  if (
+    requiresAttemptContext &&
+    !isFencedCommand &&
+    currentRecordingContext &&
+    currentRecordingContext.recordingAttemptId
+  ) {
+    markRecordingControlNonceOutcome(
+      claims.nonce,
+      "REJECTED_PRE_EXECUTION",
+      "RECORDING_ATTEMPT_REQUIRED",
+      nonceReplayExpiresAt,
+    );
+    sendRecordingAttemptCommandRejection(
+      call,
+      claims,
+      requestId,
+      "Legacy command cannot observe or mutate a fenced recording attempt.",
+      "RECORDING_ATTEMPT_REQUIRED",
+    );
+    return;
+  }
+
+  // 14. execute recording action
   markRecordingControlNonceOutcome(
     claims.nonce,
     "EXECUTED",
@@ -3017,6 +3915,8 @@ function onRecordingControlMessage(call, rawPayload) {
       participantId: claims.participantId,
       startRequestId: requestId,
       stopRequestId: null,
+      protocolVersion: claims.protocolVersion,
+      recordingAttemptId: claims.recordingAttemptId || null,
     };
     log(
       "recording context created sessionId=" +
@@ -3031,10 +3931,9 @@ function onRecordingControlMessage(call, rawPayload) {
   if (claims.action === ACTION_STOP) {
     if (currentRecordingContext) {
       currentRecordingContext.stopRequestId = requestId;
-      currentRecordingContext.webhookBaseUrl = normalizedOrigin;
-      currentRecordingContext.conferenceName = claims.conferenceName;
-      currentRecordingContext.sessionId = claims.sessionId;
-      currentRecordingContext.participantId = claims.participantId;
+      currentRecordingContext.controllerCall =
+        call || currentRecordingContext.controllerCall;
+      // Stable attempt identity is immutable for the lifetime of this recorder.
       log(
         "recording context updated stopRequestId=" +
           requestId +
@@ -3049,6 +3948,25 @@ function onRecordingControlMessage(call, rawPayload) {
         participantId: claims.participantId,
         startRequestId: null,
         stopRequestId: requestId,
+        protocolVersion: claims.protocolVersion,
+        recordingAttemptId: claims.recordingAttemptId || null,
+        recorder: recorder,
+        controllerCall: call || null,
+        state: recordingState,
+        recordingUrl: recordingUrl,
+        recordingId: recordingId,
+        objectKey: objectKey,
+        startedAt: null,
+        stoppedAt: null,
+        pausedAt: pausedAt,
+        resumedAt: resumedAt,
+        startingWatchdogId: null,
+        stoppingWatchdogId: null,
+        resumingWatchdogId: null,
+        cleanupRequested: false,
+        cleanupReason: null,
+        cleanupAttemptCount: 0,
+        terminalConfirmed: false,
       };
       log(
         "recording context reconstructed sessionId=" +
@@ -3069,7 +3987,7 @@ function onRecordingControlMessage(call, rawPayload) {
     resumeRecording(call, requestId);
     return;
   }
-  sendCurrentStatus(call, requestId);
+  sendCurrentStatus(call, requestId, claims.recordingAttemptId || null);
 }
 
 function readHeaderValue(headers, headerName) {
@@ -3204,8 +4122,6 @@ function handleServerStopHttpRequest(event) {
   if (!expectedSignature || expectedSignature !== String(signature).toLowerCase()) {
     return sendHttpResponse(event, 401, JSON.stringify({ ok: false, error: "signature_invalid" }));
   }
-  rememberServerStopNonce(nonce);
-
   var payload = null;
   try {
     payload = JSON.parse(rawBody);
@@ -3214,6 +4130,10 @@ function handleServerStopHttpRequest(event) {
   }
 
   var operationId = payload && payload.operationId ? String(payload.operationId) : null;
+  var commandRecordingAttemptId =
+    payload && payload.recordingAttemptId
+      ? String(payload.recordingAttemptId)
+      : null;
   var sessionId = payload && payload.sessionId ? String(payload.sessionId) : null;
   var conferenceName = payload && payload.conferenceName ? String(payload.conferenceName) : null;
   var incomingProviderSessionId =
@@ -3221,7 +4141,7 @@ function handleServerStopHttpRequest(event) {
   var action = payload && payload.action ? String(payload.action) : null;
 
   if (
-    action !== "stop_recording" ||
+    (action !== "stop_recording" && action !== "get_recording_status") ||
     !operationId ||
     !sessionId ||
     !conferenceName ||
@@ -3241,6 +4161,41 @@ function handleServerStopHttpRequest(event) {
     return sendHttpResponse(event, 409, JSON.stringify({ ok: false, error: "recording_control_binding_missing" }));
   }
   if (
+    action === "stop_recording" &&
+    commandRecordingAttemptId &&
+    !currentRecordingContext
+  ) {
+    log(
+      "server-stop rejected code=RECORDING_ATTEMPT_CONTEXT_MISSING operationId=" +
+        operationId +
+        " recordingAttemptId=" +
+        commandRecordingAttemptId,
+    );
+    return sendHttpResponse(
+      event,
+      409,
+      JSON.stringify({ ok: false, error: "recording_attempt_context_missing" }),
+    );
+  }
+  if (
+    action === "stop_recording" &&
+    currentRecordingContext &&
+    (currentRecordingContext.recordingAttemptId || null) !==
+      commandRecordingAttemptId
+  ) {
+    log(
+      "server-stop rejected code=RECORDING_ATTEMPT_MISMATCH operationId=" +
+        operationId +
+        " recordingAttemptId=" +
+        (commandRecordingAttemptId || "missing"),
+    );
+    return sendHttpResponse(
+      event,
+      409,
+      JSON.stringify({ ok: false, error: "recording_attempt_mismatch" }),
+    );
+  }
+  if (
     RECORDING_CONTROL_BINDING.sessionId !== sessionId ||
     RECORDING_CONTROL_BINDING.conferenceName !== conferenceName ||
     RECORDING_CONTROL_BINDING.providerSessionId !== incomingProviderSessionId
@@ -3248,10 +4203,86 @@ function handleServerStopHttpRequest(event) {
     return sendHttpResponse(event, 409, JSON.stringify({ ok: false, error: "recording_control_binding_mismatch" }));
   }
 
-  currentRecordingContext = currentRecordingContext || {};
-  currentRecordingContext.sessionId = sessionId;
-  currentRecordingContext.conferenceName = conferenceName;
-  currentRecordingContext.webhookBaseUrl = RECORDING_CONTROL_BINDING.webhookBaseUrl;
+  if (action === "get_recording_status") {
+    if (!commandRecordingAttemptId) {
+      return sendHttpResponse(
+        event,
+        400,
+        JSON.stringify({ ok: false, error: "recording_attempt_required" }),
+      );
+    }
+    var exactAttemptStatus =
+      getExactRecordingAttemptStatus(commandRecordingAttemptId);
+    if (
+      !exactAttemptStatus ||
+      exactAttemptStatus.sessionId !== sessionId ||
+      exactAttemptStatus.conferenceName !== conferenceName
+    ) {
+      return sendHttpResponse(
+        event,
+        409,
+        JSON.stringify({
+          ok: false,
+          accepted: false,
+          error: "recording_attempt_unknown",
+          recordingAttemptId: commandRecordingAttemptId,
+        }),
+      );
+    }
+    rememberServerStopNonce(nonce);
+    return sendHttpResponse(
+      event,
+      200,
+      JSON.stringify({
+        ok: true,
+        accepted: true,
+        code: "RECORDING_STATUS_OK",
+        attempt: {
+          protocolVersion: RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+          recordingAttemptId: commandRecordingAttemptId,
+          status: exactAttemptStatus.status,
+          recordingUrl: exactAttemptStatus.recordingUrl || null,
+          recordingId: exactAttemptStatus.recordingId || null,
+          objectKey: exactAttemptStatus.objectKey || null,
+          startedAt: exactAttemptStatus.startedAt || null,
+          stoppedAt: exactAttemptStatus.stoppedAt || null,
+          errorCode: exactAttemptStatus.errorCode || null,
+          message: exactAttemptStatus.message || null,
+          terminalConfirmed: Boolean(exactAttemptStatus.terminalConfirmed),
+        },
+      }),
+    );
+  }
+
+  rememberServerStopNonce(nonce);
+  if (!currentRecordingContext) {
+    // Legacy-only reconstruction. Fenced commands have already failed closed.
+    currentRecordingContext = {
+      recorder: recorder,
+      protocolVersion: RECORDING_CONTROL_PROTOCOL_VERSION,
+      recordingAttemptId: null,
+      sessionId: sessionId,
+      conferenceName: conferenceName,
+      webhookBaseUrl: RECORDING_CONTROL_BINDING.webhookBaseUrl,
+      participantId: null,
+      startRequestId: null,
+      stopRequestId: null,
+      controllerCall: lastControllerCall,
+      state: recordingState,
+      recordingUrl: recordingUrl,
+      recordingId: recordingId,
+      objectKey: objectKey,
+      pausedAt: pausedAt,
+      resumedAt: resumedAt,
+      startingWatchdogId: null,
+      stoppingWatchdogId: null,
+      resumingWatchdogId: null,
+      cleanupRequested: false,
+      cleanupReason: null,
+      cleanupAttemptCount: 0,
+      terminalConfirmed: false,
+    };
+  }
   currentRecordingContext.stopRequestId = operationId;
 
   sendServerStopCallback(

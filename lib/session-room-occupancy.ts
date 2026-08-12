@@ -1,4 +1,9 @@
-import { Prisma, RoomLifecycle } from "@/app/generated/prisma/client";
+import {
+  NegotiationState,
+  Prisma,
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
 import { getDebriefAutoCloseGraceMs } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import {
@@ -15,6 +20,24 @@ export {
 } from "@/lib/session-room-occupancy-policy";
 
 type DbClient = Pick<typeof prisma, "$queryRaw">;
+
+export type SessionFinalCloseAuthority =
+  | "FACILITATOR_SESSION_COMPLETE"
+  | "DEBRIEF_EMPTY_TIMEOUT"
+  | "EVENT_COMPLETION";
+
+export type CanonicalFinalSessionCloseResult = {
+  applied: boolean;
+  session: {
+    id: string;
+    status: SessionStatus;
+    negotiationState: NegotiationState;
+    roomLifecycle: RoomLifecycle | null;
+    closeReason: string | null;
+    endedAt: Date | null;
+    closedByEventAt: Date | null;
+  } | null;
+};
 
 export type ActiveConnectionDiagnostics = {
   sessionId: string;
@@ -34,11 +57,6 @@ function sqlActiveConnectionPredicateForSessionAt(params: {
   const nowExpr = sqlUtcWallClockOrDate(params.now);
   return Prisma.sql`
     src."sessionId" = ${params.sessionId}
-    AND src.role IN (
-      'FACILITATOR'::"ParticipantType",
-      'PARTICIPANT'::"ParticipantType",
-      'OBSERVER'::"ParticipantType"
-    )
     AND src."disconnectedAt" IS NULL
     AND src."supersededAt" IS NULL
     AND src."revokedAt" IS NULL
@@ -46,13 +64,6 @@ function sqlActiveConnectionPredicateForSessionAt(params: {
     AND s."deletedAt" IS NULL
     AND (s."roomLifecycle" IS NULL OR s."roomLifecycle" <> ${RoomLifecycle.CLOSED})
     AND u.status = 'ACTIVE'
-    AND EXISTS (
-      SELECT 1
-      FROM "SessionParticipant" sp
-      WHERE sp."sessionId" = src."sessionId"
-        AND sp."userId" = src."userId"
-        AND sp.type = src.role
-    )
   `;
 }
 
@@ -91,29 +102,25 @@ export async function getActiveConnectionDiagnostics(
 function sqlLastInvalidatedConnectionTimestampForSession(sessionId: string) {
   return Prisma.sql`
     SELECT MAX(
-      CASE
-        WHEN src."supersededAt" IS NOT NULL OR src."revokedAt" IS NOT NULL THEN NULL
-        WHEN src."disconnectedAt" IS NULL THEN NULL
-        WHEN src."disconnectedReason" = 'EXPIRED' THEN src."expiresAt"
-        ELSE src."disconnectedAt"
-      END
+      GREATEST(
+        CASE
+          WHEN src."disconnectedAt" IS NOT NULL
+            AND src."disconnectedReason" = 'EXPIRED'
+            THEN src."expiresAt"
+          WHEN src."disconnectedAt" IS NOT NULL
+            THEN src."disconnectedAt"
+          WHEN src."supersededAt" IS NULL AND src."revokedAt" IS NULL
+            THEN src."expiresAt"
+          ELSE NULL
+        END,
+        src."supersededAt",
+        src."revokedAt"
+      )
     ) AS "lastInvalidatedAt"
     FROM "SessionRoomConnection" src
     INNER JOIN "User" u ON u.id = src."userId"
     WHERE src."sessionId" = ${sessionId}
-      AND src.role IN (
-        'FACILITATOR'::"ParticipantType",
-        'PARTICIPANT'::"ParticipantType",
-        'OBSERVER'::"ParticipantType"
-      )
       AND u.status = 'ACTIVE'
-      AND EXISTS (
-        SELECT 1
-        FROM "SessionParticipant" sp
-        WHERE sp."sessionId" = src."sessionId"
-          AND sp."userId" = src."userId"
-          AND sp.type = src.role
-      )
   `;
 }
 
@@ -127,6 +134,110 @@ export async function getLastInvalidatedSessionRoomConnectionAt(
   return lastInvalidationRow?.lastInvalidatedAt ?? null;
 }
 
+export async function finalizeSessionCanonicalClose(
+  params: {
+    sessionId: string;
+    authority: SessionFinalCloseAuthority;
+    now?: Date;
+    graceMs?: number;
+    closedByEventId?: string | null;
+  },
+  client: DbClient = prisma,
+): Promise<CanonicalFinalSessionCloseResult> {
+  const now = params.now ?? new Date();
+  const nowExpr = sqlUtcWallClockOrDate(now);
+  const isEmptyDebriefAuthority =
+    params.authority === "DEBRIEF_EMPTY_TIMEOUT";
+  const isEventAuthority = params.authority === "EVENT_COMPLETION";
+  const closeReason =
+    params.authority === "EVENT_COMPLETION"
+      ? "EVENT_COMPLETED"
+      : params.authority;
+  const graceMs = params.graceMs ?? getDebriefAutoCloseGraceMs();
+  const graceCutoffExpr = sqlUtcWallClockOrDate(
+    new Date(now.getTime() - graceMs),
+  );
+  const authorityGuard = isEmptyDebriefAuthority
+    ? Prisma.sql`
+        AND s."roomLifecycle" = ${RoomLifecycle.DEBRIEF_OPEN}
+        AND s."negotiationEndedAt" IS NOT NULL
+        AND GREATEST(
+          s."negotiationEndedAt",
+          COALESCE(
+            (${sqlLastInvalidatedConnectionTimestampForSession(params.sessionId)}),
+            s."negotiationEndedAt"
+          )
+        ) <= ${graceCutoffExpr}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "SessionRoomConnection" src
+          INNER JOIN "User" u ON u.id = src."userId"
+          WHERE ${sqlActiveConnectionPredicateForSessionAt({
+            sessionId: params.sessionId,
+            now,
+          })}
+        )
+      `
+    : params.authority === "FACILITATOR_SESSION_COMPLETE"
+      ? Prisma.sql`
+          AND (
+            s."roomLifecycle" IS NULL OR
+            s."roomLifecycle" <> ${RoomLifecycle.CLOSED}
+          )
+        `
+      : Prisma.empty;
+
+  const updated = await client.$queryRaw<
+    CanonicalFinalSessionCloseResult["session"][]
+  >(Prisma.sql`
+    UPDATE "Session" s
+    SET "status" = ${SessionStatus.COMPLETED},
+        "endedAt" = COALESCE(s."endedAt", ${nowExpr}),
+        "closeReason" = ${closeReason},
+        "roomLifecycle" = ${RoomLifecycle.CLOSED},
+        "closedByEventAt" = CASE
+          WHEN ${isEventAuthority}
+            THEN COALESCE(s."closedByEventAt", ${nowExpr})
+          ELSE s."closedByEventAt"
+        END,
+        "closedByEventId" = CASE
+          WHEN ${isEventAuthority}
+            THEN ${params.closedByEventId ?? null}
+          ELSE s."closedByEventId"
+        END,
+        "updatedAt" = ${nowExpr}
+    WHERE s.id = ${params.sessionId}
+      AND s."deletedAt" IS NULL
+      ${authorityGuard}
+    RETURNING
+      s.id,
+      s.status,
+      s."negotiationState",
+      s."roomLifecycle",
+      s."closeReason",
+      s."endedAt",
+      s."closedByEventAt"
+  `);
+  if (updated[0]) {
+    return { applied: true, session: updated[0] };
+  }
+  const [existing] = await client.$queryRaw<
+    CanonicalFinalSessionCloseResult["session"][]
+  >(Prisma.sql`
+    SELECT
+      s.id,
+      s.status,
+      s."negotiationState",
+      s."roomLifecycle",
+      s."closeReason",
+      s."endedAt",
+      s."closedByEventAt"
+    FROM "Session" s
+    WHERE s.id = ${params.sessionId}
+  `);
+  return { applied: false, session: existing ?? null };
+}
+
 export async function closeDebriefRoomIfEmpty(
   sessionId: string,
   client: DbClient = prisma,
@@ -138,9 +249,12 @@ export async function closeDebriefRoomIfEmpty(
   const now = options?.now ?? new Date();
   const graceMs = options?.graceMs ?? getDebriefAutoCloseGraceMs();
   const [sessionRow] = await client.$queryRaw<
-    Array<{ roomLifecycle: RoomLifecycle | null }>
+    Array<{
+      roomLifecycle: RoomLifecycle | null;
+      negotiationEndedAt: Date | null;
+    }>
   >(Prisma.sql`
-    SELECT "roomLifecycle"
+    SELECT "roomLifecycle", "negotiationEndedAt"
     FROM "Session"
     WHERE id = ${sessionId}
   `);
@@ -157,6 +271,7 @@ export async function closeDebriefRoomIfEmpty(
     evaluateDebriefAutoCloseEligibility({
       roomLifecycle: sessionRow?.roomLifecycle ?? null,
       activeConnectionCount,
+      debriefOpenedAt: sessionRow?.negotiationEndedAt ?? null,
       lastInvalidatedAt,
       now,
       graceMs,
@@ -177,6 +292,8 @@ export async function closeDebriefRoomIfEmpty(
         sessionId,
         currentLifecycle: sessionRow.roomLifecycle,
         activeConnectionCount,
+        debriefOpenedAt:
+          sessionRow.negotiationEndedAt?.toISOString() ?? null,
         lastInvalidatedAt: lastInvalidatedAt?.toISOString() ?? null,
         now: now.toISOString(),
         graceMs,
@@ -202,26 +319,16 @@ export async function closeDebriefRoomIfEmpty(
     };
   }
 
-  const updatedAtExpr = sqlUtcWallClockOrDate(options?.now);
-  const updated = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-    UPDATE "Session" s
-    SET "roomLifecycle" = ${RoomLifecycle.CLOSED},
-        "updatedAt" = ${updatedAtExpr}
-    WHERE s.id = ${sessionId}
-      AND s."deletedAt" IS NULL
-      AND s."roomLifecycle" = ${RoomLifecycle.DEBRIEF_OPEN}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "SessionRoomConnection" src
-        INNER JOIN "User" u ON u.id = src."userId"
-        WHERE ${sqlActiveConnectionPredicateForSessionAt({
-          sessionId,
-          now: options?.now,
-        })}
-      )
-    RETURNING s.id
-  `);
-  if (updated.length > 0) {
+  const finalized = await finalizeSessionCanonicalClose(
+    {
+      sessionId,
+      authority: "DEBRIEF_EMPTY_TIMEOUT",
+      now,
+      graceMs,
+    },
+    client,
+  );
+  if (finalized.applied) {
     console.info(
       JSON.stringify({
         area: "session_room_occupancy",
@@ -234,7 +341,7 @@ export async function closeDebriefRoomIfEmpty(
         graceMs,
         graceRemainingMs: 0,
         eligibilityReason: eligibility.reason,
-        updateRowCount: updated.length,
+        updateRowCount: 1,
         closed: true,
       }),
     );

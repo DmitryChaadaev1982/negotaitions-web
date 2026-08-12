@@ -51,6 +51,7 @@ export type RemoteParticipantState = {
  */
 export type RoomRecordingState = {
   status: string;
+  recordingAttemptId?: string | null;
   errorMessage: string | null;
   startedAt?: string | null;
   endedAt?: string | null;

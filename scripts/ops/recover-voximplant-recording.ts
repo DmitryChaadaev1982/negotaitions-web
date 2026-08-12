@@ -9,12 +9,14 @@ import { RecordingStatus } from "@/app/generated/prisma/client";
 import { bootstrapOperationalEnv } from "@/lib/operational-env";
 import { prisma } from "@/lib/prisma";
 import { getS3Client, getS3Config } from "@/lib/storage/s3";
+import { RECORDING_STARTING_TIMEOUT_RECONCILED } from "@/lib/voximplant/recording-status-fencing";
 
 bootstrapOperationalEnv();
 
 type CliValues = {
   sessionId?: string;
   objectKey?: string;
+  recordingAttemptId?: string;
   out?: string;
   "dry-run"?: boolean;
   execute?: boolean;
@@ -32,6 +34,7 @@ function parseCli(): CliValues {
     options: {
       sessionId: { type: "string" },
       objectKey: { type: "string" },
+      recordingAttemptId: { type: "string" },
       out: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       execute: { type: "boolean", default: false },
@@ -128,11 +131,15 @@ async function main() {
   const args = parseCli();
   const sessionId = args.sessionId?.trim();
   const objectKey = args.objectKey?.trim();
+  const recordingAttemptId = args.recordingAttemptId?.trim();
   const dryRun = Boolean(args["dry-run"]);
   const execute = Boolean(args.execute);
 
   if (!sessionId) throw new Error("Missing --sessionId argument.");
   if (!objectKey) throw new Error("Missing --objectKey argument.");
+  if (!recordingAttemptId) {
+    throw new Error("Missing --recordingAttemptId argument.");
+  }
   if (!dryRun && !execute) {
     throw new Error("Specify one mode: --dry-run or --execute.");
   }
@@ -149,6 +156,7 @@ async function main() {
       id: true,
       sessionId: true,
       provider: true,
+      recordingAttemptId: true,
       status: true,
       recordingType: true,
       fileKey: true,
@@ -164,6 +172,20 @@ async function main() {
 
   if (!recording) {
     throw new Error(`Recording row not found for session ${sessionId}.`);
+  }
+  if (
+    !recording.recordingAttemptId ||
+    recording.recordingAttemptId !== recordingAttemptId
+  ) {
+    throw new Error(
+      "Recording attempt mismatch. Legacy NULL rows are not recoverable.",
+    );
+  }
+  if (
+    recording.status !== RecordingStatus.FAILED ||
+    recording.errorMessage !== RECORDING_STARTING_TIMEOUT_RECONCILED
+  ) {
+    throw new Error("Recording is not eligible for fenced timeout recovery.");
   }
 
   const client = getS3Client();
@@ -236,6 +258,7 @@ async function main() {
     mode: dryRun ? "dry-run" : "execute",
     sessionId,
     recordingId: recording.id,
+    recordingAttemptId,
     dbCurrent: {
       provider: recording.provider,
       status: recording.status,
@@ -266,9 +289,22 @@ async function main() {
     report.result = "blocked";
     report.reason = "Object does not exist, DB update skipped.";
   } else if (execute) {
-    const updated = await prisma.recording.update({
-      where: { id: recording.id },
+    const mutation = await prisma.recording.updateMany({
+      where: {
+        id: recording.id,
+        recordingAttemptId,
+        status: RecordingStatus.FAILED,
+        errorMessage: RECORDING_STARTING_TIMEOUT_RECONCILED,
+      },
       data: plannedUpdate,
+    });
+    if (mutation.count !== 1) {
+      throw new Error(
+        "Recovery CAS rejected because the current recording attempt changed.",
+      );
+    }
+    const updated = await prisma.recording.findUniqueOrThrow({
+      where: { id: recording.id },
       select: {
         id: true,
         status: true,

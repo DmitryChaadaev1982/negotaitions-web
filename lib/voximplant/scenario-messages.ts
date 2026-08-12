@@ -31,14 +31,20 @@ export type VoximplantRoomRole =
   | "unknown";
 
 export const RECORDING_CONTROL_PROTOCOL_VERSION = "rc2-hmac-sha256-v1";
+export const RECORDING_CONTROL_FENCED_PROTOCOL_VERSION =
+  "rc3-hmac-sha256-recording-attempt-v1";
+export type RecordingControlProtocolVersion =
+  | typeof RECORDING_CONTROL_PROTOCOL_VERSION
+  | typeof RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
 
 export type RecordingControlSignedClaims = {
-  protocolVersion: typeof RECORDING_CONTROL_PROTOCOL_VERSION;
+  protocolVersion: RecordingControlProtocolVersion;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
   action: RecordingControlAction;
   requestId: string;
+  recordingAttemptId?: string;
   sessionId: string;
   conferenceName: string;
   participantId: string;
@@ -50,14 +56,16 @@ export type RecordingControlSignedClaims = {
 
 export type RecordingControlMessage = {
   type: "recording_control";
-  protocolVersion: typeof RECORDING_CONTROL_PROTOCOL_VERSION;
+  protocolVersion: RecordingControlProtocolVersion;
   claims: RecordingControlSignedClaims;
   signature: string;
 };
 
 export type RecordingStatusMessage = {
   type: "recording_status";
+  protocolVersion?: RecordingControlProtocolVersion | null;
   requestId?: string | null;
+  recordingAttemptId?: string | null;
   status: RecordingStatus;
   message?: string;
   recordingUrl?: string | null;
@@ -139,7 +147,10 @@ export function isRecordingControlMessage(
   if (value.type !== "recording_control") {
     return false;
   }
-  if (value.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
+  if (
+    value.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION &&
+    value.protocolVersion !== RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
     return false;
   }
   if (typeof value.signature !== "string" || !value.signature.trim()) {
@@ -150,7 +161,7 @@ export function isRecordingControlMessage(
   if (!isPlainObject(claims)) {
     return false;
   }
-  if (claims.protocolVersion !== RECORDING_CONTROL_PROTOCOL_VERSION) {
+  if (claims.protocolVersion !== value.protocolVersion) {
     return false;
   }
   if (!isFinitePositiveInteger(claims.issuedAt)) {
@@ -166,6 +177,19 @@ export function isRecordingControlMessage(
     return false;
   }
   if (typeof claims.requestId !== "string" || !claims.requestId.trim()) {
+    return false;
+  }
+  if (
+    value.protocolVersion === RECORDING_CONTROL_FENCED_PROTOCOL_VERSION &&
+    (typeof claims.recordingAttemptId !== "string" ||
+      !claims.recordingAttemptId.trim())
+  ) {
+    return false;
+  }
+  if (
+    value.protocolVersion === RECORDING_CONTROL_PROTOCOL_VERSION &&
+    claims.recordingAttemptId !== undefined
+  ) {
     return false;
   }
   if (typeof claims.sessionId !== "string" || !claims.sessionId.trim()) {
@@ -206,7 +230,9 @@ export function isRecordingStatusMessage(
   }
 
   return (
+    isOptionalStringOrNull(value.protocolVersion) &&
     isOptionalStringOrNull(value.requestId) &&
+    isOptionalStringOrNull(value.recordingAttemptId) &&
     isOptionalStringOrNull(value.message) &&
     isOptionalStringOrNull(value.recordingUrl) &&
     isOptionalStringOrNull(value.recordingId) &&
@@ -244,7 +270,7 @@ export function createRecordingControlMessage(
 ): RecordingControlMessage {
   return {
     type: "recording_control",
-    protocolVersion: RECORDING_CONTROL_PROTOCOL_VERSION,
+    protocolVersion: options.claims.protocolVersion,
     claims: options.claims,
     signature: options.signature,
   };

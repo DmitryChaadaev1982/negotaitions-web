@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sendVoximplantServerStopCommand } from "@/lib/voximplant/server-stop-client";
+import {
+  queryVoximplantRecordingAttemptStatus,
+  sendVoximplantServerStopCommand,
+} from "@/lib/voximplant/server-stop-client";
 
 const baseInput = {
   controlUrl: "https://provider.example/control/abc123",
@@ -107,6 +110,103 @@ test("sendVoximplantServerStopCommand returns TRANSPORT_RESPONSE_INVALID", async
     const result = await sendVoximplantServerStopCommand(baseInput);
     assert.equal(result.code, "TRANSPORT_RESPONSE_INVALID");
     assert.equal(result.httpStatus, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("queryVoximplantRecordingAttemptStatus returns exact fenced attempt metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        accepted: true,
+        attempt: {
+          protocolVersion: "rc3-hmac-sha256-recording-attempt-v1",
+          recordingAttemptId: "attempt-a",
+          status: "stopped",
+          recordingUrl: "https://provider.example/recording.mp4",
+          recordingId: "provider-recording-a",
+          objectKey: "negotiation-room/audio/a.mp4",
+          startedAt: "2026-08-12T10:00:00.000Z",
+          stoppedAt: "2026-08-12T10:05:00.000Z",
+          errorCode: null,
+          message: "Recording stopped.",
+          terminalConfirmed: true,
+        },
+      }),
+      { status: 200 },
+    );
+  };
+
+  try {
+    const result = await queryVoximplantRecordingAttemptStatus({
+      ...baseInput,
+      recordingAttemptId: "attempt-a",
+    });
+    assert.equal(requestBody?.action, "get_recording_status");
+    assert.equal(requestBody?.recordingAttemptId, "attempt-a");
+    assert.equal(result.code, "STATUS_FOUND");
+    if (result.code === "STATUS_FOUND") {
+      assert.equal(result.attempt.recordingAttemptId, "attempt-a");
+      assert.equal(result.attempt.status, "stopped");
+      assert.equal(result.attempt.terminalConfirmed, true);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("queryVoximplantRecordingAttemptStatus preserves unknown-attempt 409", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        accepted: false,
+        error: "recording_attempt_unknown",
+      }),
+      { status: 409 },
+    );
+
+  try {
+    const result = await queryVoximplantRecordingAttemptStatus({
+      ...baseInput,
+      recordingAttemptId: "attempt-unknown",
+    });
+    assert.equal(result.code, "TRANSPORT_APPLICATION_REJECTED");
+    assert.equal(result.httpStatus, 409);
+    if (result.code === "TRANSPORT_APPLICATION_REJECTED") {
+      assert.equal(result.scenarioCode, "recording_attempt_unknown");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("queryVoximplantRecordingAttemptStatus rejects non-fenced attempt metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        accepted: true,
+        attempt: {
+          protocolVersion: "rc2-hmac-sha256-v1",
+          recordingAttemptId: "attempt-a",
+          status: "recording",
+          terminalConfirmed: false,
+        },
+      }),
+      { status: 200 },
+    );
+
+  try {
+    const result = await queryVoximplantRecordingAttemptStatus({
+      ...baseInput,
+      recordingAttemptId: "attempt-a",
+    });
+    assert.equal(result.code, "TRANSPORT_RESPONSE_INVALID");
   } finally {
     globalThis.fetch = originalFetch;
   }

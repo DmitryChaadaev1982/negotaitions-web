@@ -29,6 +29,7 @@ export async function GET(request: Request, context: RouteContext) {
     select: {
       status: true,
       negotiationState: true,
+      roomLifecycle: true,
       participants: {
         select: {
           type: true,

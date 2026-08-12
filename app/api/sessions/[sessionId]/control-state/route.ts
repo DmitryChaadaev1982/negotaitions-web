@@ -17,6 +17,7 @@ import { triggerStage310ExpiryReconciliation } from "@/lib/stage-3-10-maintenanc
 import { reconcileSessionControlAutoTransitions } from "@/lib/session-control-auto-transitions";
 import { buildControlStateResponse } from "@/lib/session-control-response";
 import { prisma } from "@/lib/prisma";
+import { maybeReconcileVoximplantRecordingAttempt } from "@/lib/voximplant/recording-reconciliation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,11 +136,20 @@ export async function GET(request: Request, context: RouteContext) {
 
   const now = new Date();
   const session = await reconcileSessionControlAutoTransitions(sessionId, now);
+  try {
+    await maybeReconcileVoximplantRecordingAttempt(sessionId);
+  } catch (error) {
+    console.warn(
+      "[control-state] provider recording reconciliation deferred:",
+      error instanceof Error ? error.message : "unknown error",
+    );
+  }
 
   const recording = await prisma.recording.findUnique({
     where: { sessionId },
     select: {
       status: true,
+      recordingAttemptId: true,
       errorMessage: true,
       startedAt: true,
       endedAt: true,
@@ -160,6 +170,7 @@ export async function GET(request: Request, context: RouteContext) {
       recording: recording
         ? {
             status: recording.status,
+            recordingAttemptId: recording.recordingAttemptId,
             errorMessage: isFacilitator ? recording.errorMessage : null,
             startedAt: recording.startedAt?.toISOString() ?? null,
             endedAt: recording.endedAt?.toISOString() ?? null,

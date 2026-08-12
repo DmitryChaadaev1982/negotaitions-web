@@ -13,6 +13,7 @@ import {
   resolveServerControlTransportFailure,
   resolveVoxRelayFailure,
   scheduleStopRetry,
+  shouldDeferStartingStopForMissingProviderId,
 } from "@/lib/recording-stop-delivery-policy";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
@@ -242,7 +243,10 @@ export async function runRecordingStopDeliverySweep(params?: {
   let skipped = 0;
   let failures = 0;
 
-  async function buildBrowserRelayFallback(sessionId: string) {
+  async function buildBrowserRelayFallback(
+    sessionId: string,
+    recordingAttemptId?: string,
+  ) {
     const facilitator = await prisma.sessionParticipant.findFirst({
       where: {
         sessionId,
@@ -261,6 +265,7 @@ export async function runRecordingStopDeliverySweep(params?: {
         facilitator?.userId ?? `session_participant:${facilitator?.id ?? "maintenance_worker"}`,
       controllerRole: "facilitator",
       canControlRecording: true,
+      recordingAttemptId,
     });
   }
 
@@ -349,6 +354,9 @@ export async function runRecordingStopDeliverySweep(params?: {
         skipped += 1;
         continue;
       }
+      const provider = resolveEffectiveRecordingProvider(
+        operation.recording.provider,
+      );
 
       if (
         operation.recording.status === RecordingStatus.PROCESSING ||
@@ -371,8 +379,11 @@ export async function runRecordingStopDeliverySweep(params?: {
       }
 
       if (
-        operation.recording.status === RecordingStatus.STARTING &&
-        !operation.recording.egressId
+        shouldDeferStartingStopForMissingProviderId({
+          provider,
+          recordingStatus: operation.recording.status,
+          egressId: operation.recording.egressId,
+        })
       ) {
         const retry = resolveStartingNotReadyFailure(operation.attemptCount);
         await prisma.$transaction(async (tx) => {
@@ -387,8 +398,14 @@ export async function runRecordingStopDeliverySweep(params?: {
             },
           });
           if (retry.terminal) {
-            await tx.recording.update({
-              where: { id: operation.recording.id },
+            await tx.recording.updateMany({
+              where: {
+                id: operation.recording.id,
+                recordingAttemptId:
+                  operation.recording.recordingAttemptId,
+                status: RecordingStatus.STARTING,
+                egressId: null,
+              },
               data: {
                 status: RecordingStatus.FAILED,
                 endedAt: operation.recording.endedAt ?? new Date(),
@@ -401,7 +418,6 @@ export async function runRecordingStopDeliverySweep(params?: {
         continue;
       }
 
-      const provider = resolveEffectiveRecordingProvider(operation.recording.provider);
       if (provider === "livekit") {
         const result = await stopRecording(operation.recording);
         if (result.ok) {
@@ -462,7 +478,10 @@ export async function runRecordingStopDeliverySweep(params?: {
             operation.attemptCount,
           );
           if (relayFallbackAllowed) {
-            const dispatch = await buildBrowserRelayFallback(operation.sessionId);
+            const dispatch = await buildBrowserRelayFallback(
+              operation.sessionId,
+              operation.recording.recordingAttemptId ?? undefined,
+            );
             await prisma.sessionRecordingStopOperation.update({
               where: { id: operation.id },
               data: {
@@ -502,6 +521,8 @@ export async function runRecordingStopDeliverySweep(params?: {
           sessionId: operation.sessionId,
           conferenceName: activeControlChannel.conferenceName,
           providerSessionId: activeControlChannel.providerSessionId,
+          recordingAttemptId:
+            operation.recording.recordingAttemptId ?? undefined,
         });
 
         if (transport.code === "TRANSPORT_ACCEPTED") {
@@ -530,7 +551,10 @@ export async function runRecordingStopDeliverySweep(params?: {
           transport.code,
         );
         if (relayFallbackAllowed) {
-          const dispatch = await buildBrowserRelayFallback(operation.sessionId);
+          const dispatch = await buildBrowserRelayFallback(
+            operation.sessionId,
+            operation.recording.recordingAttemptId ?? undefined,
+          );
           await prisma.sessionRecordingStopOperation.update({
             where: { id: operation.id },
             data: {
@@ -560,7 +584,10 @@ export async function runRecordingStopDeliverySweep(params?: {
         continue;
       }
 
-      const dispatch = await buildBrowserRelayFallback(operation.sessionId);
+      const dispatch = await buildBrowserRelayFallback(
+        operation.sessionId,
+        operation.recording.recordingAttemptId ?? undefined,
+      );
       const retry = resolveVoxRelayFailure(operation.attemptCount);
       await prisma.sessionRecordingStopOperation.update({
         where: { id: operation.id },

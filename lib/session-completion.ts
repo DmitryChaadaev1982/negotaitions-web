@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import {
   countActiveSessionRoomConnections,
   decideFinishRoomLifecycle,
+  finalizeSessionCanonicalClose,
 } from "@/lib/session-room-occupancy";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
 import { closeAllOpenPauseIntervals } from "@/lib/session-pause-intervals";
@@ -23,10 +24,12 @@ import {
   resolveServerControlTransportFailure,
   resolveVoxRelayFailure,
   scheduleStopRetry,
+  shouldDeferStartingStopForMissingProviderId,
 } from "@/lib/recording-stop-delivery-policy";
 import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dispatch";
 import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
+import { RECORDING_STARTING_TIMEOUT_RECONCILED } from "@/lib/voximplant/recording-status-fencing";
 import {
   getVoximplantServerStopConfig,
   type VoximplantServerStopConfig,
@@ -50,12 +53,15 @@ type StopIntent = {
   recordingId: string;
   provider: "livekit" | "voximplant";
   recordingStatus: RecordingStatus;
+  recordingAttemptId: string | null;
   shouldDeliver: boolean;
 };
 
 export type CanonicalSessionFinishResult = {
   sessionId: string;
   alreadyFinished: boolean;
+  sessionCloseApplied: boolean;
+  sessionAlreadyClosed: boolean;
   operationId: string;
   negotiationState: NegotiationState;
   roomLifecycle: RoomLifecycle | null;
@@ -126,8 +132,12 @@ function generateFinishOperationId(sessionId: string, mode: SessionFinishMode) {
   return `finish:${sessionId}:${mode}`.toLowerCase();
 }
 
-function generateStopOperationId(recordingId: string, mode: SessionFinishMode) {
-  return `stop:${recordingId}:${mode}`.toLowerCase();
+function generateStopOperationId(
+  recordingId: string,
+  recordingAttemptId: string | null,
+  mode: SessionFinishMode,
+) {
+  return `stop:${recordingId}:${recordingAttemptId ?? "legacy"}:${mode}`.toLowerCase();
 }
 
 async function claimRecordingStopIntent(params: {
@@ -142,18 +152,45 @@ async function claimRecordingStopIntent(params: {
       id: true,
       status: true,
       provider: true,
+      recordingAttemptId: true,
+      errorMessage: true,
     },
   });
 
-  if (!recording || !shouldRequestRecordingStop(recording.status)) {
+  if (!recording) {
     return {
-      recordingStatus: recording?.status ?? null,
+      recordingStatus: null,
       stopIntent: null as StopIntent | null,
     };
   }
 
   const provider = resolveEffectiveRecordingProvider(recording.provider);
-  const operationId = generateStopOperationId(recording.id, params.mode);
+  const isRecoverableVoxFailure =
+    provider === "voximplant" &&
+    recording.status === RecordingStatus.FAILED &&
+    recording.errorMessage === RECORDING_STARTING_TIMEOUT_RECONCILED &&
+    Boolean(recording.recordingAttemptId) &&
+    Boolean(
+      await params.tx.sessionVoximplantControlChannel.findUnique({
+        where: { sessionId: params.sessionId },
+        select: { id: true },
+      }),
+    );
+  if (
+    !shouldRequestRecordingStop(recording.status) &&
+    !isRecoverableVoxFailure
+  ) {
+    return {
+      recordingStatus: recording.status,
+      stopIntent: null as StopIntent | null,
+    };
+  }
+
+  const operationId = generateStopOperationId(
+    recording.id,
+    recording.recordingAttemptId,
+    params.mode,
+  );
   const existing = await params.tx.sessionRecordingStopOperation.findUnique({
     where: { recordingId: recording.id },
     select: {
@@ -188,6 +225,7 @@ async function claimRecordingStopIntent(params: {
         recordingId: recording.id,
         provider,
         recordingStatus: recording.status,
+        recordingAttemptId: recording.recordingAttemptId,
         shouldDeliver,
       },
     };
@@ -217,6 +255,7 @@ async function claimRecordingStopIntent(params: {
       recordingId: recording.id,
       provider,
       recordingStatus: recording.status,
+      recordingAttemptId: recording.recordingAttemptId,
       shouldDeliver: true,
     },
   };
@@ -302,8 +341,11 @@ async function deliverRecordingStopOperation(params: {
   }
 
   if (
-    operation.recording.status === RecordingStatus.STARTING &&
-    !operation.recording.egressId
+    shouldDeferStartingStopForMissingProviderId({
+      provider,
+      recordingStatus: operation.recording.status,
+      egressId: operation.recording.egressId,
+    })
   ) {
     const retry = resolveStartingNotReadyFailure(operation.attemptCount);
     await prisma.$transaction(async (tx) => {
@@ -318,8 +360,13 @@ async function deliverRecordingStopOperation(params: {
         },
       });
       if (retry.terminal) {
-        await tx.recording.update({
-          where: { id: operation.recording.id },
+        await tx.recording.updateMany({
+          where: {
+            id: operation.recording.id,
+            recordingAttemptId: operation.recording.recordingAttemptId,
+            status: RecordingStatus.STARTING,
+            egressId: null,
+          },
           data: {
             status: RecordingStatus.FAILED,
             endedAt: operation.recording.endedAt ?? new Date(),
@@ -391,6 +438,8 @@ async function deliverRecordingStopOperation(params: {
         facilitator?.userId ?? `session_participant:${facilitator?.id ?? "server_stop_fallback"}`,
       controllerRole: "facilitator",
       canControlRecording: true,
+      recordingAttemptId:
+        operation.recording.recordingAttemptId ?? undefined,
     });
     return dispatch;
   }
@@ -492,6 +541,8 @@ async function deliverRecordingStopOperation(params: {
       sessionId: params.sessionId,
       conferenceName: activeControlChannel.conferenceName,
       providerSessionId: activeControlChannel.providerSessionId,
+      recordingAttemptId:
+        operation.recording.recordingAttemptId ?? undefined,
     });
 
     if (transport.code === "TRANSPORT_ACCEPTED") {
@@ -583,6 +634,8 @@ async function deliverRecordingStopOperation(params: {
       facilitator?.userId ?? `session_participant:${facilitator?.id ?? "browser_relay_fallback"}`,
     controllerRole: "facilitator",
     canControlRecording: true,
+    recordingAttemptId:
+      operation.recording.recordingAttemptId ?? undefined,
   });
   const retry = resolveVoxRelayFailure(operation.attemptCount);
 
@@ -615,6 +668,48 @@ async function deliverRecordingStopOperation(params: {
     warning: retry.lastError,
     fallbackScenarioMessage: dispatch.scenarioMessage,
   };
+}
+
+export async function retryRecordingStopAfterExactAttemptReconciliation(params: {
+  sessionId: string;
+  operationRowId: string;
+  recordingAttemptId: string;
+  now?: Date;
+}) {
+  const now = params.now ?? new Date();
+  await prisma.sessionRecordingStopOperation.updateMany({
+    where: {
+      id: params.operationRowId,
+      sessionId: params.sessionId,
+      recording: {
+        is: {
+          recordingAttemptId: params.recordingAttemptId,
+        },
+      },
+      OR: [
+        {
+          state: "FAILED",
+          OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+        },
+        {
+          state: "DELIVERING",
+          nextRetryAt: { lte: now },
+        },
+      ],
+    },
+    data: {
+      state: "FAILED",
+      failedAt: now,
+      lastErrorClass: "EXACT_ATTEMPT_RECONCILIATION_STOP_RETRY",
+      lastError: "exactAttemptReconciliationStopRetry",
+      nextRetryAt: now,
+    },
+  });
+
+  return deliverRecordingStopOperation({
+    operationRowId: params.operationRowId,
+    sessionId: params.sessionId,
+  });
 }
 
 export async function completeSessionCanonical(params: {
@@ -678,22 +773,18 @@ export async function completeSessionCanonical(params: {
           now,
         });
 
-    const closeUpdateData = hardClose
-      ? {
-          closeReason: "EVENT_COMPLETED",
-          closedByEventAt: existingSession.closedByEventAt ?? now,
-          closedByEventId: params.closedByEventId ?? null,
-        }
-      : {};
-
-    const session = await tx.session.update({
+    const intermediateSession = await tx.session.update({
       where: { id: params.sessionId },
       data: {
         ...finishUpdateData,
-        ...closeUpdateData,
-        roomLifecycle: effectiveLifecycle === RoomLifecycle.CLOSED
-          ? RoomLifecycle.CLOSED
-          : nextLifecycle,
+        ...(!hardClose
+          ? {
+              roomLifecycle:
+                effectiveLifecycle === RoomLifecycle.CLOSED
+                  ? RoomLifecycle.CLOSED
+                  : nextLifecycle,
+            }
+          : {}),
       },
       select: {
         id: true,
@@ -703,6 +794,21 @@ export async function completeSessionCanonical(params: {
         closedByEventAt: true,
       },
     });
+    const finalClose = hardClose
+      ? await finalizeSessionCanonicalClose(
+          {
+            sessionId: params.sessionId,
+            authority:
+              params.mode === "EVENT_COMPLETION"
+                ? "EVENT_COMPLETION"
+                : "FACILITATOR_SESSION_COMPLETE",
+            now,
+            closedByEventId: params.closedByEventId ?? null,
+          },
+          tx,
+        )
+      : null;
+    const session = finalClose?.session ?? intermediateSession;
 
     console.info(
       JSON.stringify({
@@ -733,6 +839,11 @@ export async function completeSessionCanonical(params: {
     return {
       session,
       alreadyFinished,
+      sessionCloseApplied: finalClose?.applied ?? false,
+      sessionAlreadyClosed:
+        hardClose &&
+        finalClose?.applied === false &&
+        session.roomLifecycle === RoomLifecycle.CLOSED,
       stopIntent: stopIntentResult.stopIntent,
       recordingStatus: stopIntentResult.recordingStatus,
       operationId: generateFinishOperationId(params.sessionId, params.mode),
@@ -761,6 +872,8 @@ export async function completeSessionCanonical(params: {
   return {
     sessionId: txResult.session.id,
     alreadyFinished: txResult.alreadyFinished,
+    sessionCloseApplied: txResult.sessionCloseApplied,
+    sessionAlreadyClosed: txResult.sessionAlreadyClosed,
     operationId: txResult.operationId,
     negotiationState: txResult.session.negotiationState,
     roomLifecycle: txResult.session.roomLifecycle,

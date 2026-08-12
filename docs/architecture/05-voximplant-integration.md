@@ -30,6 +30,99 @@ URLs, credentials, or server-generated invitation origins.
 - Browser relays payload with `conference.sendMessage(...)`.
 - Vox scenario executes recording operation and posts status webhook back to app.
 
+### Recording Attempt Fencing (Stage 3.13E)
+
+- Recording control supports dual protocol versions:
+  - legacy `rc2-hmac-sha256-v1` for historical callbacks/messages;
+  - fenced `rc3-hmac-sha256-recording-attempt-v1` for durable attempt identity.
+- A stable `recordingAttemptId` is persisted by app backend before START dispatch
+  and is carried through START/STOP commands, scenario callbacks, and server-stop
+  callbacks.
+- Scenario-side command admission is attempt-aware:
+  - START for attempt `B` is rejected while active attempt `A` is in
+    any non-terminal state, including `resuming`;
+  - STOP, PAUSE, RESUME, and STATUS must match the active attempt identity;
+  - legacy mutating/status commands are rejected when the active recorder is
+    fenced.
+- Recorder event handlers capture one immutable per-instance attempt context.
+  Late `Started`, `Stopped`, or `Error` from recorder `A` always reports attempt
+  `A` and cannot clear or mutate current recorder/context `B`.
+- STARTING/STOPPING watchdog failures retain the concrete timed-out recorder,
+  issue best-effort provider cleanup, and keep its event handlers alive until
+  its own terminal event. A newer attempt can replace only the mutable current
+  pointer, not the old recorder's captured identity. `Started` received after
+  cleanup was requested captures provider metadata but cannot publish
+  `RECORDING` or mutate current state; it retries stop for that exact instance
+  once (two total cleanup attempts) and then waits for its own `Stopped`/`Error`.
+- Recording-status webhooks use Promise-based bounded retries for fenced callbacks
+  only (transient Vox transport codes `-4`, `-6`, `-7`, `-8`, plus HTTP `408`,
+  `429`, and `5xx`), while legacy callbacks keep one-shot send. Unknown negative
+  provider result codes are not retried.
+- Server-stop callback payloads now include `recordingAttemptId` when present, so
+  app-side terminal mutations remain CAS-fenced to one attempt.
+- A fenced server-stop command fails with `409` when the scenario has no current
+  attempt context; only the separate legacy path may reconstruct context.
+- If server-stop falls back to browser relay, the relay claim reloads the
+  current Recording attempt and re-signs STOP as RC3 with the same
+  `recordingAttemptId`. Facilitator reassignment or a stale former facilitator
+  lease may change which eligible room client transports the fallback, but
+  cannot downgrade the command to legacy RC2.
+
+### Exact-Attempt Reconciliation (RC4)
+
+- RC4 retains the RC3 signed attempt identity and adds server-originated
+  `get_recording_status` for one exact `recordingAttemptId`.
+- The scenario answers from the current matching recorder context or an
+  immutable bounded terminal cache (maximum 8 attempts, 60-minute TTL).
+  Unknown/evicted attempts return `recording_attempt_unknown`; an obsolete
+  query never falls through to the current attempt.
+- App reconciliation is triggered by existing control-state/materials polling,
+  but admission is CAS-claimed and throttled to at most one query per attempt
+  per 30 seconds. It applies only to stale `STARTING`, durable stopping, and the
+  narrow recoverable callback-loss failure.
+- Provider-confirmed `recording` restores canonical `RECORDING`; confirmed
+  terminal error remains `FAILED`; confirmed `stopped` uses the normal
+  attempt-fenced callback application path, including S3 HEAD verification
+  outside the DB transaction and a second CAS fence before final mutation.
+- When an exact query proves that the same attempt is still active and its
+  durable stop operation is due in `FAILED`/timed-out `DELIVERING`, the app
+  re-drives that exact-attempt STOP through the existing bounded delivery
+  policy.
+- If an old STARTING attempt cannot be confirmed, the app records
+  `RECORDING_STARTING_TIMEOUT_RECONCILED`. This is a bounded, recoverable
+  uncertainty state, not proof that Vox never created a physical recorder.
+- Exact RC3 STOP is permitted for canonical `STARTING` without `egressId` and
+  for only the narrow recoverable failure above. It still requires a persisted
+  `recordingAttemptId`; legacy NULL-attempt rows remain excluded.
+
+### RC4 compatibility boundary
+
+The active scenario marker is
+`main-room-recording-reconciliation-2026-08-12-rc4`. Its exported source
+SHA256 is
+`040e7c5557c3156133a48556da1a6b86976f058fb969f111d9c673c9a2368553`,
+which matches `docs/voximplant/neg-conf.main-room.scenario.js`.
+
+Application `601704bafde7da219fe1f1e37737e7769a09a6f9` sends RC2 recording
+control and attempt-less server-stop commands. RC4 remains backward-compatible
+for a recording created by that application:
+
+- room join/conference/media handling is outside the RC4 recording-control
+  changes;
+- legacy START, STOP, PAUSE, RESUME, and STATUS use the unchanged RC2 canonical
+  signature field order and create a null-attempt recorder context;
+- recording-status payloads add protocol/attempt fields only for fenced
+  callbacks, so RC2 callback payloads remain accepted by the old route;
+- provider registration and legacy server-stop callbacks remain attempt-less,
+  and RC4 accepts the old signed `stop_recording` payload when the active
+  recorder context is legacy.
+
+An old application cannot mutate a fenced RC3 attempt started by the new
+application. This is intentional fail-closed behavior, not a backward
+compatibility failure for old-app-created work. Deployment and rollback
+preflight must therefore require zero active recording/stop operations before
+switching application versions.
+
 ## Presence And Media Status Model (Stage 3.1)
 
 - Session room and event lobby both normalize participant media state via `lib/voximplant/participant-presence-media-model.ts`.

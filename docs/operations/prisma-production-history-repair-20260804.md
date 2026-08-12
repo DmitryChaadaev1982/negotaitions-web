@@ -74,8 +74,9 @@ Before overlay `status` or `deploy`, the tool reads only `_prisma_migrations` me
 - `20260627_production_initial_baseline` is successfully applied;
 - no migration row is unfinished/failed;
 - no migration row exists outside the active migration set plus the two legacy evidence rows;
-- all Stage 3.13B migrations are already successful and only the allowlisted
-  Stage 3.13C migration may be pending.
+- all Stage 3.13B migrations are already successful and every pending active
+  migration is one of the exact Stage 3.13C, Stage 3.13D, or Stage 3.13E names
+  listed below. There is no prefix, date, or stage-wide wildcard.
 
 Refusal codes are explicit, including `REFUSE_EMPTY_OR_NO_HISTORY`, `REFUSE_LEGACY_ROW_MISSING`, `REFUSE_LEGACY_CHECKSUM_MISMATCH`, `REFUSE_LEGACY_ROLLED_BACK`, `REFUSE_LEGACY_UNFINISHED`, `REFUSE_FAILED_MIGRATION_HISTORY`, `REFUSE_UNKNOWN_LEGACY_DIVERGENCE`, and `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
 
@@ -102,15 +103,24 @@ npm run prisma:production:deploy -- --confirm-legacy-production-history
 npm run prisma:production:status
 ```
 
-For the Stage 3.13C branch, the expected pre-deploy overlay status is that both
-legacy rows and all Stage 3.13B rows are recognized and only these migrations are
-pending:
+The complete pending-migration allowlist is:
 
 - `20260804170000_stage_3_13c_account_security_email`
 - `20260805140000_stage_3_13c_security_remediation`
+- `20260806113000_add_email_provider_event_ingestion`
+- `20260806160000_harden_email_provider_event_ingestion`
+- `20260806183000_add_provider_event_consumer_fencing`
+- `20260807190000_harden_ai_analysis_operation_lifecycle`
+- `20260808210000_add_ai_analysis_provider_response_id`
+- `20260811112000_stage_3_13e_session_sound_preference`
+- `20260812111000_add_recording_attempt_fencing`
 
-Stage 3.13C local verification must use a simulated production-history
-database. It must not run this deploy command against production.
+The last entry is the recording-attempt fencing migration. It adds nullable
+`Recording.recordingAttemptId` plus its unique index. Any other pending active
+migration must produce `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
+
+Local verification must use a simulated production-history database. It must
+not run this deploy command against production.
 
 ## Simulation Evidence
 
@@ -120,8 +130,9 @@ Local disposable PostgreSQL verification must cover both paths:
 - simulated production history includes the two legacy rows plus the squashed
   baseline and all active migrations through Stage 3.13B;
 - ordinary Prisma status/deploy against the simulated production-history database shows the legacy divergence;
-- overlay status recognizes the legacy rows and shows only Stage 3.13C pending;
-- overlay deploy applies only Stage 3.13C;
+- overlay status recognizes the legacy rows and shows only the exact approved
+  pending active migrations;
+- overlay deploy applies only those approved active migrations;
 - overlay post-status is up to date;
 - email tables and indexes exist afterward;
 - existing application tables remain present.

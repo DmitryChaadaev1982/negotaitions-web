@@ -26,7 +26,9 @@
 - `DEBRIEF_OPEN`: negotiation is finished, recording stop has already been
   requested by canonical completion, and existing participants may use the
   debrief/materials flow. This is the only lifecycle state eligible for
-  empty-room auto-close, after `DEBRIEF_AUTO_CLOSE_GRACE_MS`.
+  empty-room auto-close, after `DEBRIEF_AUTO_CLOSE_GRACE_MS` (authoritative
+  default: 30,000 ms). Normal/manual negotiation finish always opens Debrief
+  first, including when the room is already empty.
 - Event owners may also use the Event lobby `Complete Session` action while a
   Session is `DEBRIEF_OPEN`. That route still calls the canonical complete API,
   but passes a debrief-close flag so `completeSessionCanonical(..., hardClose)`
@@ -34,12 +36,53 @@
   leave.
 - `CLOSED`: room admission is denied and the backend supplies the canonical
   Event-lobby or materials redirect.
-- Closing an empty `DEBRIEF_OPEN` room is a lifecycle-only transition. It does
-  not create or request a second provider recording stop.
+- Empty-Debrief timing starts at
+  `max(negotiationEndedAt, last active-human room departure)`. This prevents a
+  pre-Debrief disconnect from consuming the Debrief grace. A rejoin makes the
+  pending close a no-op; a later departure starts the current empty period.
+  Explicit disconnect, supersede, and revoke use their terminal timestamp;
+  passive network loss uses the lease `expiresAt` boundary.
+- Debrief occupancy is role-agnostic and reads authoritative active
+  `SessionRoomConnection` leases for active human users. `FACILITATOR`,
+  `PARTICIPANT`, and `OBSERVER` all count; `SessionParticipant.type` is not
+  joined to lease role, so an in-place role transition cannot erase occupancy.
+  Expired, disconnected, superseded, revoked, deleted-Session, inactive-user,
+  and closed-room leases remain excluded.
+- Explicit facilitator completion, Event hard-close, and empty-Debrief grace
+  expiry use one idempotent final Session-close operation. It atomically writes
+  `status=COMPLETED`, `endedAt`, `roomLifecycle=CLOSED`, `closeReason`, and
+  `updatedAt`; Event authority alone writes `closedByEvent*`. Session
+  completion never completes the owning `TrainingEvent`.
+- Empty-Debrief finalization does not create a second provider recording stop.
+  Recording stop intent is already owned by canonical negotiation completion.
+- Session overview presentation distinguishes negotiation completion from final
+  Session completion. `negotiationState=FINISHED` with
+  `roomLifecycle=DEBRIEF_OPEN` displays `Debrief` / `Дебриф`, including while
+  the room is empty within its grace window and while recording, transcription,
+  or analysis finishes. The existing terminal display code `FINISHED`
+  (`Completed` / `Завершено`) is emitted only for `status=COMPLETED` plus
+  `roomLifecycle=CLOSED`; historical completed rows with a null lifecycle
+  remain a compatibility exception. Dashboard active/archive grouping uses the
+  same shared display derivation rather than `negotiationState` alone.
+- Room-return eligibility uses that same canonical terminal derivation.
+  `FINISHED + DEBRIEF_OPEN` remains returnable for standalone and Event-created
+  Sessions, including an empty-room grace interval and a reconnect during that
+  interval. `COMPLETED + CLOSED`, a deleted Session, `closedByEventAt`, or
+  completed Event authority makes it non-returnable. Recording, transcription,
+  and AI-analysis states never decide room eligibility. Existing participant,
+  account, token, and room-access authorization still applies after lifecycle
+  eligibility; this rule does not grant new access.
 
 Long-horizon cleanup for an empty `OPEN` Session or empty Event is separate
 backlog work. Any future policy must be measured in hours or bounded by Event
 lifetime; it must not reuse the short debrief grace.
+
+The approximately 120-second passive-disconnect lease expiry is independent
+from the 30-second empty-Debrief grace: it determines when a network-lost room
+lease stops counting as active. Recording server-stop terminal timeout is a
+third independent mechanism (default 90 seconds), and stale recording
+`STARTING` reconciliation has its own 90-second admission threshold. None of
+these timers changes the Debrief grace.
 
 ## Leave And Presence Semantics
 

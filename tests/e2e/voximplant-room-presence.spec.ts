@@ -104,6 +104,8 @@ async function createPresenceFixture() {
     participantParticipantId,
     observerParticipantId,
     facilitatorUserId,
+    participantUserId,
+    observerUserId,
     facilitatorCookie: await createUserSession(facilitatorUserId),
     participantCookie: await createUserSession(participantUserId),
     observerCookie: await createUserSession(observerUserId),
@@ -112,6 +114,28 @@ async function createPresenceFixture() {
 
 function cookieHeader(rawToken: string) {
   return { Cookie: `auth_session=${rawToken}` };
+}
+
+async function linkPresenceSessionToActiveEvent(sessionId: string) {
+  const eventId = id("event");
+  await query(
+    `INSERT INTO "TrainingEvent"
+      ("id", "title", "description", "status", "publicJoinCode", "hostToken",
+       "lobbyRoomName", "estimatedEventDurationSeconds", "updatedAt")
+     VALUES ($1, $2, 'E2E shared occupancy event', 'LOBBY_OPEN', $3, $4, $5, 5400, NOW())`,
+    [
+      eventId,
+      `E2E Shared Occupancy ${Date.now()}`,
+      `occupancy-${Date.now()}`,
+      `host-${Date.now()}`,
+      `lobby-${Date.now()}`,
+    ],
+  );
+  await query(
+    `UPDATE "Session" SET "eventId" = $2, "updatedAt" = NOW() WHERE "id" = $1`,
+    [sessionId, eventId],
+  );
+  return eventId;
 }
 
 test.describe("Vox room presence lease policy", () => {
@@ -512,7 +536,12 @@ test.describe("Vox room presence lease policy", () => {
     expect(claim.ok()).toBeTruthy();
 
     await query(
-      `UPDATE "Session" SET "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle", "updatedAt" = NOW() WHERE "id" = $1`,
+      `UPDATE "Session"
+       SET "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle",
+           "negotiationState" = 'FINISHED'::"NegotiationState",
+           "negotiationEndedAt" = NOW(),
+           "updatedAt" = NOW()
+       WHERE "id" = $1`,
       [localFixture.sessionId],
     );
 
@@ -546,6 +575,12 @@ test.describe("Vox room presence lease policy", () => {
        WHERE "connectionId" = $1`,
       [connectionId],
     );
+    await query(
+      `UPDATE "Session"
+       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       WHERE "id" = $1`,
+      [localFixture.sessionId],
+    );
 
     const reconcileLeave = await request.post(
       `/api/sessions/${localFixture.sessionId}/presence/leave`,
@@ -565,11 +600,20 @@ test.describe("Vox room presence lease policy", () => {
     expect(reconcileBody.disconnected).toBe(false);
     expect(reconcileBody.roomClosed).toBe(true);
 
-    const stateAfterGrace = await query<{ roomLifecycle: string | null }>(
-      `SELECT "roomLifecycle" FROM "Session" WHERE "id" = $1`,
+    const stateAfterGrace = await query<{
+      status: string;
+      endedAt: Date | null;
+      closeReason: string | null;
+      roomLifecycle: string | null;
+    }>(
+      `SELECT "status", "endedAt", "closeReason", "roomLifecycle"
+       FROM "Session" WHERE "id" = $1`,
       [localFixture.sessionId],
     );
     expect(stateAfterGrace[0]?.roomLifecycle).toBe("CLOSED");
+    expect(stateAfterGrace[0]?.status).toBe("COMPLETED");
+    expect(stateAfterGrace[0]?.endedAt).not.toBeNull();
+    expect(stateAfterGrace[0]?.closeReason).toBe("DEBRIEF_EMPTY_TIMEOUT");
   });
 
   test("explicit participant leave disconnects only participant and keeps session RUNNING", async ({
@@ -1062,6 +1106,7 @@ test.describe("Vox room presence lease policy", () => {
       `UPDATE "Session"
        SET "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle",
            "negotiationState" = 'FINISHED'::"NegotiationState",
+           "negotiationEndedAt" = NOW(),
            "updatedAt" = NOW()
        WHERE "id" = $1`,
       [localFixture.sessionId],
@@ -1103,6 +1148,7 @@ test.describe("Vox room presence lease policy", () => {
       `UPDATE "Session"
        SET "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle",
            "negotiationState" = 'FINISHED'::"NegotiationState",
+           "negotiationEndedAt" = NOW(),
            "updatedAt" = NOW()
        WHERE "id" = $1`,
       [localFixture.sessionId],
@@ -1160,6 +1206,12 @@ test.describe("Vox room presence lease policy", () => {
        WHERE "connectionId" = $1`,
       [connectionId],
     );
+    await query(
+      `UPDATE "Session"
+       SET "negotiationEndedAt" = NOW() - INTERVAL '31 seconds'
+       WHERE "id" = $1`,
+      [localFixture.sessionId],
+    );
 
     const atDeadline = await request.post(
       `/api/sessions/${localFixture.sessionId}/presence/leave`,
@@ -1189,12 +1241,22 @@ test.describe("Vox room presence lease policy", () => {
     const duplicateBody = (await duplicateReconcile.json()) as { roomClosed: boolean };
     expect(duplicateBody.roomClosed).toBe(false);
 
-    const state = await query<{ negotiationState: string; roomLifecycle: string | null }>(
-      `SELECT "negotiationState", "roomLifecycle" FROM "Session" WHERE "id" = $1`,
+    const state = await query<{
+      negotiationState: string;
+      status: string;
+      endedAt: Date | null;
+      closeReason: string | null;
+      roomLifecycle: string | null;
+    }>(
+      `SELECT "negotiationState", "status", "endedAt", "closeReason", "roomLifecycle"
+       FROM "Session" WHERE "id" = $1`,
       [localFixture.sessionId],
     );
     expect(state[0]?.negotiationState).toBe("FINISHED");
     expect(state[0]?.roomLifecycle).toBe("CLOSED");
+    expect(state[0]?.status).toBe("COMPLETED");
+    expect(state[0]?.endedAt).not.toBeNull();
+    expect(state[0]?.closeReason).toBe("DEBRIEF_EMPTY_TIMEOUT");
     expect(await getRecordingStopOperations(localFixture.sessionId)).toHaveLength(0);
   });
 
@@ -1206,6 +1268,7 @@ test.describe("Vox room presence lease policy", () => {
       `UPDATE "Session"
        SET "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle",
            "negotiationState" = 'FINISHED'::"NegotiationState",
+           "negotiationEndedAt" = NOW(),
            "updatedAt" = NOW()
        WHERE "id" = $1`,
       [localFixture.sessionId],
@@ -1269,6 +1332,12 @@ test.describe("Vox room presence lease policy", () => {
        WHERE "connectionId" = $1`,
       [newConnectionId],
     );
+    await query(
+      `UPDATE "Session"
+       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       WHERE "id" = $1`,
+      [localFixture.sessionId],
+    );
 
     const closesAfterSecondLeave = await request.post(
       `/api/sessions/${localFixture.sessionId}/presence/leave`,
@@ -1308,6 +1377,7 @@ test.describe("Vox room presence lease policy", () => {
        SET "eventId" = $2,
            "roomLifecycle" = 'DEBRIEF_OPEN'::"RoomLifecycle",
            "negotiationState" = 'FINISHED'::"NegotiationState",
+           "negotiationEndedAt" = NOW(),
            "updatedAt" = NOW()
        WHERE "id" = $1`,
       [localFixture.sessionId, eventId],
@@ -1343,6 +1413,12 @@ test.describe("Vox room presence lease policy", () => {
        WHERE "connectionId" = $1`,
       [connectionId],
     );
+    await query(
+      `UPDATE "Session"
+       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       WHERE "id" = $1`,
+      [localFixture.sessionId],
+    );
 
     const reconcile = await request.post(
       `/api/sessions/${localFixture.sessionId}/presence/leave`,
@@ -1356,11 +1432,20 @@ test.describe("Vox room presence lease policy", () => {
     );
     expect(reconcile.ok()).toBeTruthy();
 
-    const sessionState = await query<{ roomLifecycle: string | null }>(
-      `SELECT "roomLifecycle" FROM "Session" WHERE "id" = $1`,
+    const sessionState = await query<{
+      status: string;
+      endedAt: Date | null;
+      closeReason: string | null;
+      roomLifecycle: string | null;
+    }>(
+      `SELECT "status", "endedAt", "closeReason", "roomLifecycle"
+       FROM "Session" WHERE "id" = $1`,
       [localFixture.sessionId],
     );
     expect(sessionState[0]?.roomLifecycle).toBe("CLOSED");
+    expect(sessionState[0]?.status).toBe("COMPLETED");
+    expect(sessionState[0]?.endedAt).not.toBeNull();
+    expect(sessionState[0]?.closeReason).toBe("DEBRIEF_EMPTY_TIMEOUT");
 
     const eventState = await query<{ status: string }>(
       `SELECT "status" FROM "TrainingEvent" WHERE "id" = $1`,
@@ -1368,4 +1453,327 @@ test.describe("Vox room presence lease policy", () => {
     );
     expect(eventState[0]?.status).toBe("LOBBY_OPEN");
   });
+
+  for (const eventLinked of [false, true]) {
+    const scope = eventLinked ? "event-created" : "standalone";
+    test(`${scope} Debrief occupancy is role-agnostic and rejoin-fenced`, async ({
+      request,
+    }) => {
+      const localFixture = await createPresenceFixture();
+      const eventId = eventLinked
+        ? await linkPresenceSessionToActiveEvent(localFixture.sessionId)
+        : null;
+      await query(
+        `UPDATE "Session"
+         SET "roomLifecycle" = 'DEBRIEF_OPEN',
+             "negotiationState" = 'FINISHED',
+             "negotiationEndedAt" = NOW() - INTERVAL '2 minutes',
+             "updatedAt" = NOW()
+         WHERE "id" = $1`,
+        [localFixture.sessionId],
+      );
+
+      const facilitatorConnectionId = `${scope}-facilitator`;
+      const participantConnectionId = `${scope}-participant`;
+      const observerConnectionId = `${scope}-observer`;
+      const claim = async (
+        participantId: string,
+        connectionId: string,
+        cookie: string,
+      ) => {
+        const response = await request.get(
+          `/api/livekit/sidebar?participantId=${participantId}&connectionId=${connectionId}&claimLease=1`,
+          { headers: cookieHeader(cookie) },
+        );
+        expect(response.ok()).toBeTruthy();
+      };
+      const triggerReconciliation = async () => {
+        const response = await request.post(
+          `/api/sessions/${localFixture.sessionId}/presence/leave`,
+          {
+            headers: {
+              ...cookieHeader(localFixture.facilitatorCookie),
+              "Content-Type": "application/json",
+            },
+            data: {
+              participantId: localFixture.facilitatorParticipantId,
+              connectionId: `${scope}-non-existent`,
+            },
+          },
+        );
+        expect(response.ok()).toBeTruthy();
+      };
+      const expectDebriefOpen = async () => {
+        const rows = await query<{ roomLifecycle: string | null }>(
+          `SELECT "roomLifecycle" FROM "Session" WHERE "id" = $1`,
+          [localFixture.sessionId],
+        );
+        expect(rows[0]?.roomLifecycle).toBe("DEBRIEF_OPEN");
+      };
+
+      await claim(
+        localFixture.facilitatorParticipantId,
+        facilitatorConnectionId,
+        localFixture.facilitatorCookie,
+      );
+      await claim(
+        localFixture.participantParticipantId,
+        participantConnectionId,
+        localFixture.participantCookie,
+      );
+      await claim(
+        localFixture.observerParticipantId,
+        observerConnectionId,
+        localFixture.observerCookie,
+      );
+
+      // Only facilitator remains.
+      await query(
+        `UPDATE "SessionRoomConnection"
+         SET "disconnectedAt" = NOW() - INTERVAL '2 minutes'
+         WHERE "connectionId" = ANY($1::text[])`,
+        [[participantConnectionId, observerConnectionId]],
+      );
+      await triggerReconciliation();
+      await expectDebriefOpen();
+
+      // Only participant remains.
+      const participantOnlyConnectionId = `${scope}-participant-only`;
+      await claim(
+        localFixture.participantParticipantId,
+        participantOnlyConnectionId,
+        localFixture.participantCookie,
+      );
+      await query(
+        `UPDATE "SessionRoomConnection"
+         SET "disconnectedAt" = NOW() - INTERVAL '2 minutes'
+         WHERE "connectionId" = $1`,
+        [facilitatorConnectionId],
+      );
+      await triggerReconciliation();
+      await expectDebriefOpen();
+
+      // Only observer remains.
+      const observerOnlyConnectionId = `${scope}-observer-only`;
+      await claim(
+        localFixture.observerParticipantId,
+        observerOnlyConnectionId,
+        localFixture.observerCookie,
+      );
+      await query(
+        `UPDATE "SessionRoomConnection"
+         SET "disconnectedAt" = NOW() - INTERVAL '2 minutes'
+         WHERE "connectionId" = $1`,
+        [participantOnlyConnectionId],
+      );
+      await triggerReconciliation();
+      await expectDebriefOpen();
+
+      // Normal authorization-role transition cannot erase physical occupancy.
+      await query(
+        `UPDATE "SessionParticipant"
+         SET "type" = 'PARTICIPANT', "updatedAt" = NOW()
+         WHERE "id" = $1`,
+        [localFixture.observerParticipantId],
+      );
+      await triggerReconciliation();
+      await expectDebriefOpen();
+
+      // Last human leaves: grace starts now despite old pre-existing timestamps.
+      const leaveObserver = await request.post(
+        `/api/sessions/${localFixture.sessionId}/presence/leave`,
+        {
+          headers: {
+            ...cookieHeader(localFixture.observerCookie),
+            "Content-Type": "application/json",
+          },
+          data: {
+            participantId: localFixture.observerParticipantId,
+            connectionId: observerOnlyConnectionId,
+          },
+        },
+      );
+      expect(leaveObserver.ok()).toBeTruthy();
+      expect((await leaveObserver.json()).roomClosed).toBe(false);
+      await expectDebriefOpen();
+
+      // Rejoin by the transitioned participant invalidates the pending close.
+      const rejoinConnectionId = `${scope}-observer-rejoin`;
+      await claim(
+        localFixture.observerParticipantId,
+        rejoinConnectionId,
+        localFixture.observerCookie,
+      );
+      await query(
+        `UPDATE "SessionRoomConnection"
+         SET "disconnectedAt" = NOW() - INTERVAL '45 seconds'
+         WHERE "connectionId" = $1`,
+        [observerOnlyConnectionId],
+      );
+      await triggerReconciliation();
+      await expectDebriefOpen();
+
+      const leaveRejoin = await request.post(
+        `/api/sessions/${localFixture.sessionId}/presence/leave`,
+        {
+          headers: {
+            ...cookieHeader(localFixture.observerCookie),
+            "Content-Type": "application/json",
+          },
+          data: {
+            participantId: localFixture.observerParticipantId,
+            connectionId: rejoinConnectionId,
+          },
+        },
+      );
+      expect(leaveRejoin.ok()).toBeTruthy();
+      expect((await leaveRejoin.json()).roomClosed).toBe(false);
+      await query(
+        `UPDATE "SessionRoomConnection"
+         SET "disconnectedAt" = NOW() - INTERVAL '31 seconds'
+         WHERE "connectionId" = $1`,
+        [rejoinConnectionId],
+      );
+      await triggerReconciliation();
+
+      const finalState = await query<{
+        status: string;
+        endedAt: Date | null;
+        closeReason: string | null;
+        roomLifecycle: string | null;
+      }>(
+        `SELECT "status", "endedAt", "closeReason", "roomLifecycle"
+         FROM "Session" WHERE "id" = $1`,
+        [localFixture.sessionId],
+      );
+      expect(finalState[0]?.roomLifecycle).toBe("CLOSED");
+      expect(finalState[0]?.status).toBe("COMPLETED");
+      expect(finalState[0]?.endedAt).not.toBeNull();
+      expect(finalState[0]?.closeReason).toBe("DEBRIEF_EMPTY_TIMEOUT");
+      if (eventId) {
+        const eventState = await query<{ status: string }>(
+          `SELECT "status" FROM "TrainingEvent" WHERE "id" = $1`,
+          [eventId],
+        );
+        expect(eventState[0]?.status).toBe("LOBBY_OPEN");
+      }
+    });
+  }
+
+  for (const eventLinked of [false, true]) {
+    const scope = eventLinked ? "event-created" : "standalone";
+    test(`${scope} empty Debrief grace starts at Debrief opening`, async ({
+      request,
+    }) => {
+      const localFixture = await createPresenceFixture();
+      if (eventLinked) {
+        await linkPresenceSessionToActiveEvent(localFixture.sessionId);
+      }
+      const oldConnectionId = `${scope}-pre-debrief-departure`;
+      await query(
+        `INSERT INTO "SessionRoomConnection"
+          ("id", "sessionId", "userId", "connectionId", "leaseVersion", "role",
+           "expiresAt", "disconnectedAt", "disconnectedReason", "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, 1, 'OBSERVER',
+           NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '5 minutes',
+           'EXPLICIT_LEAVE', NOW() - INTERVAL '6 minutes', NOW() - INTERVAL '5 minutes')`,
+        [
+          id("src"),
+          localFixture.sessionId,
+          localFixture.observerUserId,
+          oldConnectionId,
+        ],
+      );
+      await query(
+        `UPDATE "Session"
+         SET "roomLifecycle" = 'DEBRIEF_OPEN',
+             "negotiationState" = 'FINISHED',
+             "negotiationEndedAt" = NOW(),
+             "updatedAt" = NOW()
+         WHERE "id" = $1`,
+        [localFixture.sessionId],
+      );
+
+      const trigger = async () =>
+        request.post(`/api/sessions/${localFixture.sessionId}/presence/leave`, {
+          headers: {
+            ...cookieHeader(localFixture.facilitatorCookie),
+            "Content-Type": "application/json",
+          },
+          data: {
+            participantId: localFixture.facilitatorParticipantId,
+            connectionId: `${scope}-empty-trigger`,
+          },
+        });
+      const beforeGrace = await trigger();
+      expect(beforeGrace.ok()).toBeTruthy();
+      expect((await beforeGrace.json()).roomClosed).toBe(false);
+
+      await query(
+        `UPDATE "Session"
+         SET "negotiationEndedAt" = NOW() - INTERVAL '31 seconds'
+         WHERE "id" = $1`,
+        [localFixture.sessionId],
+      );
+      const afterGrace = await trigger();
+      expect(afterGrace.ok()).toBeTruthy();
+      expect((await afterGrace.json()).roomClosed).toBe(true);
+    });
+  }
+
+  for (const eventLinked of [false, true]) {
+    const scope = eventLinked ? "event-created" : "standalone";
+    test(`${scope} empty pre-Debrief states never auto-complete`, async ({
+      request,
+    }) => {
+      const localFixture = await createPresenceFixture();
+      if (eventLinked) {
+        await linkPresenceSessionToActiveEvent(localFixture.sessionId);
+      }
+      for (const negotiationState of [
+        "PREPARATION",
+        "PREPARATION_RUNNING",
+        "PREPARATION_PAUSED",
+        "READY_TO_START",
+        "RUNNING",
+        "PAUSED",
+      ]) {
+        await query(
+          `UPDATE "Session"
+           SET "status" = 'READY',
+               "endedAt" = NULL,
+               "closeReason" = NULL,
+               "roomLifecycle" = 'OPEN',
+               "negotiationState" = $2::"NegotiationState",
+               "negotiationEndedAt" = NULL,
+               "updatedAt" = NOW()
+           WHERE "id" = $1`,
+          [localFixture.sessionId, negotiationState],
+        );
+        const response = await request.post(
+          `/api/sessions/${localFixture.sessionId}/presence/leave`,
+          {
+            headers: {
+              ...cookieHeader(localFixture.facilitatorCookie),
+              "Content-Type": "application/json",
+            },
+            data: {
+              participantId: localFixture.facilitatorParticipantId,
+              connectionId: `${scope}-empty-${negotiationState}`,
+            },
+          },
+        );
+        expect(response.ok()).toBeTruthy();
+        const state = await query<{
+          status: string;
+          roomLifecycle: string | null;
+        }>(
+          `SELECT "status", "roomLifecycle" FROM "Session" WHERE "id" = $1`,
+          [localFixture.sessionId],
+        );
+        expect(state[0]?.status).toBe("READY");
+        expect(state[0]?.roomLifecycle).toBe("OPEN");
+      }
+    });
+  }
 });

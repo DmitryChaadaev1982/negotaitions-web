@@ -139,7 +139,12 @@ function buildRoomAccessConflict(params: {
 async function loadRecordingState(sessionId: string) {
   return prisma.recording.findUnique({
     where: { sessionId },
-    select: { status: true, errorMessage: true, provider: true },
+    select: {
+      status: true,
+      recordingAttemptId: true,
+      errorMessage: true,
+      provider: true,
+    },
   });
 }
 
@@ -473,6 +478,7 @@ export async function POST(request: Request, context: RouteContext) {
         recording: recording
           ? {
               status: recording.status,
+              recordingAttemptId: recording.recordingAttemptId,
               errorMessage: recording.errorMessage,
             }
           : null,
@@ -486,6 +492,7 @@ export async function POST(request: Request, context: RouteContext) {
           recording: recording
             ? {
                 status: recording.status,
+                recordingAttemptId: recording.recordingAttemptId,
                 errorMessage: recording.errorMessage,
               }
             : null,
@@ -535,6 +542,7 @@ export async function POST(request: Request, context: RouteContext) {
       recording: recording
         ? {
             status: recording.status,
+            recordingAttemptId: recording.recordingAttemptId,
             errorMessage: recording.errorMessage,
           }
         : null,

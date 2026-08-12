@@ -5,7 +5,7 @@ export type DebriefAutoCloseEligibility = {
   reason:
     | "room_not_debrief_open"
     | "active_connections_remain"
-    | "no_invalidated_connections"
+    | "no_debrief_opened_at"
     | "grace_period_active"
     | "grace_period_elapsed";
   graceRemainingMs: number;
@@ -14,6 +14,7 @@ export type DebriefAutoCloseEligibility = {
 export function evaluateDebriefAutoCloseEligibility(params: {
   roomLifecycle: RoomLifecycle | null;
   activeConnectionCount: number;
+  debriefOpenedAt: Date | null;
   lastInvalidatedAt: Date | null;
   now: Date;
   graceMs: number;
@@ -32,15 +33,19 @@ export function evaluateDebriefAutoCloseEligibility(params: {
       graceRemainingMs: 0,
     };
   }
-  if (!params.lastInvalidatedAt) {
+  if (!params.debriefOpenedAt) {
     return {
       eligible: false,
-      reason: "no_invalidated_connections",
+      reason: "no_debrief_opened_at",
       graceRemainingMs: params.graceMs,
     };
   }
 
-  const elapsedMs = params.now.getTime() - params.lastInvalidatedAt.getTime();
+  const emptySinceMs = Math.max(
+    params.debriefOpenedAt.getTime(),
+    params.lastInvalidatedAt?.getTime() ?? params.debriefOpenedAt.getTime(),
+  );
+  const elapsedMs = params.now.getTime() - emptySinceMs;
   if (elapsedMs < params.graceMs) {
     return {
       eligible: false,
@@ -56,8 +61,9 @@ export function evaluateDebriefAutoCloseEligibility(params: {
 }
 
 /**
- * Pure decision used by finish: keep DEBRIEF_OPEN while any durable active
- * connection exists; otherwise CLOSED. Separated for deterministic unit tests.
+ * Negotiation finish always opens Debrief. Empty-room Session completion is a
+ * separate grace-fenced reconciliation; only an explicit hard-close authority
+ * may bypass that grace.
  */
 export function decideFinishRoomLifecycle(params: {
   effectiveLifecycle: RoomLifecycle;
@@ -67,9 +73,7 @@ export function decideFinishRoomLifecycle(params: {
   if (params.effectiveLifecycle === RoomLifecycle.CLOSED || params.hardClose) {
     return RoomLifecycle.CLOSED;
   }
-  return params.activeConnectionCount > 0
-    ? RoomLifecycle.DEBRIEF_OPEN
-    : RoomLifecycle.CLOSED;
+  return RoomLifecycle.DEBRIEF_OPEN;
 }
 
 /**

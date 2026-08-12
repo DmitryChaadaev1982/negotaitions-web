@@ -3,10 +3,12 @@
 import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
 import { SemanticActionLink } from "@/components/semantic-action";
+import { SessionStatusBadge } from "@/components/session-status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import { useI18n } from "@/lib/i18n/useI18n";
+import type { SessionDisplayStatus } from "@/lib/session-display-status";
 import type { SemanticActionKind } from "@/lib/ui/semantic-action-model";
 
 type DashboardAction = {
@@ -38,7 +40,7 @@ type DashboardSessionItem = {
   title: string;
   visibility: "PUBLIC" | "PRIVATE";
   eventTitle: string | null;
-  status: string;
+  status: SessionDisplayStatus;
   roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
   recordingStage: string | null;
   transcriptStage: string | null;
@@ -307,7 +309,7 @@ function SessionCards({
             <p className="truncate text-sm text-slate-400">{session.eventTitle ?? "—"}</p>
             <div className="flex flex-wrap gap-2">
               <Badge variant="default">{t(session.roleKey)}</Badge>
-              <Badge variant={archived ? "success" : "info"}>{session.status}</Badge>
+              <SessionStatusBadge status={session.status} />
             </div>
             {!archived ? (
               <p className="text-xs text-slate-500">

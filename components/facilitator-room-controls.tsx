@@ -3,6 +3,7 @@
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody } from "@/lib/room-auth";
 import type { ControlAction, ControlState } from "@/lib/negotiation-control";
+import type { RoomRecordingState } from "@/lib/room-provider/types";
 import { NegotiationState } from "@/app/generated/prisma/enums";
 import {
   MAX_NEGOTIATION_DURATION_MINUTES,
@@ -32,10 +33,7 @@ type FacilitatorRoomControlsProps = {
   connectionId?: string;
   controlState: ControlState;
   onControlStateChange: (state: ControlState) => void;
-  onRecordingStateChange?: (state: {
-    status: string;
-    errorMessage: string | null;
-  } | null) => void;
+  onRecordingStateChange?: (state: RoomRecordingState) => void;
   /**
    * Called after the START negotiation action succeeds and recording consent
    * was explicitly confirmed. Providers that manage their own recording
@@ -245,7 +243,7 @@ export function FacilitatorRoomControls({
         const payload = (await response.json()) as ControlState & {
           error?: string;
           recordingWarning?: string;
-          recording?: { status: string; errorMessage: string | null } | null;
+          recording?: RoomRecordingState;
         };
 
         if (!response.ok) {

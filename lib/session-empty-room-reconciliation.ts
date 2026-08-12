@@ -37,6 +37,7 @@ export async function reconcileSessionAfterOccupancyChange(params: {
       id: true,
       deletedAt: true,
       negotiationState: true,
+      negotiationEndedAt: true,
       roomLifecycle: true,
     },
   });
@@ -63,6 +64,7 @@ export async function reconcileSessionAfterOccupancyChange(params: {
   const debriefEligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: session.roomLifecycle,
     activeConnectionCount,
+    debriefOpenedAt: session.negotiationEndedAt,
     lastInvalidatedAt,
     now,
     graceMs,

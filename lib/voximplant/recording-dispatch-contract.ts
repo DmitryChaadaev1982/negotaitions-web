@@ -28,6 +28,7 @@ export function buildSignedRecordingDispatchPayload(input: {
   webhookBaseUrlRaw: string;
   signingSecret: string;
   requestId?: string;
+  recordingAttemptId?: string;
   issuedAt?: number;
   expiresAt?: number;
   nonce?: string;
@@ -50,6 +51,7 @@ export function buildSignedRecordingDispatchPayload(input: {
     secret: input.signingSecret,
     action: scenarioAction,
     requestId: input.requestId?.trim() || nanoid(12),
+    recordingAttemptId: input.recordingAttemptId,
     sessionId: input.sessionId,
     conferenceName,
     participantId: input.participantId,

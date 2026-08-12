@@ -680,10 +680,29 @@ test.describe("Canonical session finish", () => {
       completed: boolean;
       alreadyCompleted: boolean;
       negotiationState: string;
+      roomLifecycle: string;
+      closeReason: string | null;
     };
     expect(firstPayload.completed).toBe(true);
     expect(firstPayload.alreadyCompleted).toBe(false);
     expect(firstPayload.negotiationState).toBe("FINISHED");
+    expect(firstPayload.roomLifecycle).toBe("CLOSED");
+    expect(firstPayload.closeReason).toBe("FACILITATOR_SESSION_COMPLETE");
+
+    const finalized = await query<{
+      status: string;
+      endedAt: Date | null;
+      closeReason: string | null;
+      roomLifecycle: string | null;
+    }>(
+      `SELECT "status", "endedAt", "closeReason", "roomLifecycle"
+       FROM "Session" WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+    expect(finalized[0]?.status).toBe("COMPLETED");
+    expect(finalized[0]?.endedAt).not.toBeNull();
+    expect(finalized[0]?.closeReason).toBe("FACILITATOR_SESSION_COMPLETE");
+    expect(finalized[0]?.roomLifecycle).toBe("CLOSED");
 
     const second = await request.post(`/api/sessions/${fixture.sessionId}/complete`, {
       headers: { ...headers, "Content-Type": "application/json" },
@@ -843,6 +862,11 @@ test.describe("Canonical session finish", () => {
       });
       expect(response.ok()).toBeTruthy();
     }
+    const eventAfterSessionClose = await query<{ status: string }>(
+      `SELECT "status" FROM "TrainingEvent" WHERE "id" = $1`,
+      [fixture.eventId],
+    );
+    expect(eventAfterSessionClose[0]?.status).not.toBe("COMPLETED");
 
     // Host-token flow: valid, invalid, wrong-event
     {

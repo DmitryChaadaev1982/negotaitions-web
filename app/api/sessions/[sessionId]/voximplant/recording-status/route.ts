@@ -3,11 +3,15 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { Prisma, RecordingStatus } from "@/app/generated/prisma/client";
 import { getVoximplantRecordingWebhookSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
+import {
+  applyVoximplantRecordingStatusCallback,
+  RecordingStatusFencingError,
+} from "@/lib/voximplant/recording-status-fencing";
+import { VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION } from "@/lib/voximplant/recording-control-signature";
 
 /**
  * Stage 5.4 — Voximplant recording status webhook.
@@ -54,7 +58,9 @@ const recordingStatusPayloadSchema = z.object({
     "paused",
     "resuming",
   ]),
+  protocolVersion: z.string().optional().nullable(),
   requestId: z.string().optional().nullable(),
+  recordingAttemptId: z.string().trim().min(1).optional().nullable(),
   recordingId: z.string().optional().nullable(),
   objectKey: z.string().optional().nullable(),
   recordingUrl: z.string().optional().nullable(),
@@ -63,99 +69,6 @@ const recordingStatusPayloadSchema = z.object({
   startedAt: z.string().datetime({ offset: true }).optional().nullable(),
   stoppedAt: z.string().datetime({ offset: true }).optional().nullable(),
 });
-
-type RecordingStatusPayload = z.infer<typeof recordingStatusPayloadSchema>;
-
-// ─── Status mapping ───────────────────────────────────────────────────────────
-
-/**
- * Maps a Voximplant scenario recording status to the canonical DB RecordingStatus.
- * When status is "stopped" and a fileKey is available, returns COMPLETED so the
- * existing materials/status endpoint enables transcription immediately.
- */
-function mapVoximplantStatusToDb(
-  voximplantStatus: RecordingStatusPayload["status"],
-  hasFileKey: boolean,
-): RecordingStatus {
-  switch (voximplantStatus) {
-    case "starting":
-      return RecordingStatus.STARTING;
-    case "recording":
-    case "paused":
-    case "resuming":
-      return RecordingStatus.RECORDING;
-    case "stopping":
-      return RecordingStatus.STOPPED;
-    case "stopped":
-      return hasFileKey ? RecordingStatus.COMPLETED : RecordingStatus.STOPPED;
-    case "error":
-      return RecordingStatus.FAILED;
-    case "idle":
-    case "not_recording":
-      return RecordingStatus.NOT_STARTED;
-    default:
-      return RecordingStatus.NOT_STARTED;
-  }
-}
-
-/**
- * Returns true if the target status is a valid transition from the current status.
- * Prevents state machine downgrades (e.g. COMPLETED → STARTING from replayed webhook).
- */
-function isValidStatusTransition(
-  current: RecordingStatus,
-  next: RecordingStatus,
-): boolean {
-  // Terminal states — do not overwrite unless also terminal or same.
-  if (current === RecordingStatus.COMPLETED) {
-    return next === RecordingStatus.COMPLETED;
-  }
-  if (current === RecordingStatus.FAILED) {
-    return next === RecordingStatus.FAILED || next === RecordingStatus.COMPLETED;
-  }
-  // STOPPED can be upgraded to COMPLETED (if fileKey arrives in a later webhook).
-  if (current === RecordingStatus.STOPPED) {
-    return next === RecordingStatus.STOPPED || next === RecordingStatus.COMPLETED;
-  }
-  // All other transitions are allowed.
-  return true;
-}
-
-async function reconcileStopOperationsAfterRecordingUpdate(
-  recordingId: string,
-  status: RecordingStatus,
-  reconciliationTransport: "voximplant_webhook_reconciliation" | "voximplant_provider_auto_finalization",
-) {
-  if (
-    status !== RecordingStatus.PROCESSING &&
-    status !== RecordingStatus.STOPPED &&
-    status !== RecordingStatus.COMPLETED
-  ) {
-    return;
-  }
-
-  await prisma.sessionRecordingStopOperation.updateMany({
-    where: {
-      recordingId,
-      state: {
-        in: ["PENDING", "DELIVERING", "FAILED"],
-      },
-      // Server-control path requires dedicated provider-terminal callback evidence.
-      // Recording-status webhooks remain a supporting signal for legacy/browser relay.
-      providerSessionIdAtCommand: null,
-    },
-    data: {
-      state: "DELIVERED",
-      deliveredAt: new Date(),
-      failedAt: null,
-      lastError: null,
-      lastErrorClass: null,
-      nextRetryAt: null,
-      lastDeliveryTransport: reconciliationTransport,
-      fallbackPayload: Prisma.JsonNull,
-    },
-  });
-}
 
 // ─── objectKey → fileKey normalization ───────────────────────────────────────
 
@@ -257,6 +170,22 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const payload = parsed.data;
+  const isFencedProtocol =
+    payload.protocolVersion ===
+    VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
+  if (
+    (payload.recordingAttemptId && !isFencedProtocol) ||
+    (isFencedProtocol && !payload.recordingAttemptId)
+  ) {
+    return NextResponse.json(
+      {
+        error: "Fenced callbacks require a matching protocol and recordingAttemptId.",
+        code: "INVALID_RECORDING_ATTEMPT_PROTOCOL",
+        retryable: false,
+      },
+      { status: 400 },
+    );
+  }
 
   // ── Validate session ──────────────────────────────────────────────────────
   const session = await prisma.session.findUnique({
@@ -283,6 +212,16 @@ export async function POST(request: Request, context: RouteContext) {
       ? normalizedKey.normalizedKey
       : null;
   const hasFileKey = Boolean(fileKey);
+  if (rawObjectKey && !fileKey) {
+    return NextResponse.json(
+      {
+        error: "Unsafe recording object key.",
+        code: "UNSAFE_RECORDING_OBJECT_KEY",
+        retryable: false,
+      },
+      { status: 400 },
+    );
+  }
 
   console.log(
     `[vox-recording-webhook] payload sessionId=${sessionId} status=${payload.status} fileKeyPresent=${hasFileKey}`,
@@ -303,151 +242,71 @@ export async function POST(request: Request, context: RouteContext) {
       encodedProviderUrlDetected: normalizedKey?.containsEncodedUrl ?? false,
       encodedProviderUrlHost: normalizedKey?.decodedUrlHost ?? null,
       requestId: payload.requestId ?? null,
+      recordingAttemptId: payload.recordingAttemptId ?? null,
       recordingId: payload.recordingId ?? null,
     },
   });
 
-  // ── Map status ────────────────────────────────────────────────────────────
-  const targetStatus = mapVoximplantStatusToDb(payload.status, hasFileKey);
-
-  // Ignore purely informational statuses that don't imply a recording lifecycle change.
-  // "idle" and "not_recording" before any recording has ever started should not create a row.
-  const shouldCreateIfAbsent =
-    payload.status !== "idle" && payload.status !== "not_recording";
-
-  // ── Create or update Recording row ────────────────────────────────────────
   try {
-    const existing = await prisma.recording.findUnique({
-      where: { sessionId },
-      select: { id: true, status: true },
+    const result = await applyVoximplantRecordingStatusCallback({
+      sessionId,
+      payload: {
+        ...payload,
+        fileKey,
+      },
     });
-
-    if (!existing) {
-      if (!shouldCreateIfAbsent) {
-        // Do not create a recording row for idle/not_recording status.
-        return NextResponse.json({ ok: true, action: "skipped" });
-      }
-
-      const created = await prisma.recording.create({
-        data: {
-          sessionId,
-          provider: "VOXIMPLANT",
-          status: targetStatus,
-          recordingType: "AUDIO_ONLY",
-          fileKey: hasFileKey ? fileKey : undefined,
-          egressId: payload.recordingId ?? undefined,
-          startedAt:
-            payload.startedAt
-              ? new Date(payload.startedAt)
-              : payload.status === "starting" || payload.status === "recording"
-                ? new Date()
-                : undefined,
-          endedAt:
-            payload.stoppedAt
-              ? new Date(payload.stoppedAt)
-              : payload.status === "stopped" || payload.status === "stopping"
-                ? new Date()
-                : undefined,
-          errorMessage:
-            targetStatus === RecordingStatus.FAILED
-              ? (payload.errorCode ?? payload.message ?? "Recording failed.")
-              : undefined,
-        },
-        select: { id: true, status: true },
-      });
-
-      console.log(
-        `[vox-recording-webhook] created recordingId=${created.id} status=${created.status} fileKeyPresent=${hasFileKey}`,
-      );
-      appendRecordingDebugEvent({
-        sessionId,
-        source: "webhook",
-        level: created.status === "COMPLETED" ? "success" : "info",
-        step: "webhook:db:created",
-        message: `Recording row created: recordingId=${created.id} status=${created.status}`,
-        data: { recordingId: created.id, status: created.status, fileKeyPresent: hasFileKey },
-      });
-      const reconciliationTransport =
-        payload.status === "stopped"
-          ? "voximplant_provider_auto_finalization"
-          : "voximplant_webhook_reconciliation";
-      await reconcileStopOperationsAfterRecordingUpdate(
-        created.id,
-        created.status,
-        reconciliationTransport,
-      );
-      return NextResponse.json({ ok: true, action: "created", status: targetStatus });
-    }
-
-    // Row exists — check if transition is valid.
-    if (!isValidStatusTransition(existing.status, targetStatus)) {
-      return NextResponse.json({
-        ok: true,
-        action: "skipped",
-        reason: "state_machine_protection",
-        current: existing.status,
-        attempted: targetStatus,
-      });
-    }
-
-    const updateData: Parameters<typeof prisma.recording.update>[0]["data"] = {
-      status: targetStatus,
-    };
-
-    if (hasFileKey) updateData.fileKey = fileKey;
-    if (payload.recordingId) updateData.egressId = payload.recordingId;
-
-    if (
-      payload.startedAt &&
-      (payload.status === "starting" || payload.status === "recording")
-    ) {
-      updateData.startedAt = new Date(payload.startedAt);
-    } else if (
-      !payload.startedAt &&
-      (payload.status === "starting" || payload.status === "recording") &&
-      existing.status === RecordingStatus.NOT_STARTED
-    ) {
-      updateData.startedAt = new Date();
-    }
-
-    if (payload.stoppedAt && (payload.status === "stopped" || payload.status === "stopping")) {
-      updateData.endedAt = new Date(payload.stoppedAt);
-    } else if (!payload.stoppedAt && (payload.status === "stopped" || payload.status === "stopping")) {
-      updateData.endedAt = new Date();
-    }
-
-    if (targetStatus === RecordingStatus.FAILED) {
-      updateData.errorMessage = payload.errorCode ?? payload.message ?? "Recording failed.";
-    }
-
-    await prisma.recording.update({
-      where: { id: existing.id },
-      data: updateData,
-    });
-
     console.log(
-      `[vox-recording-webhook] updated recordingId=${existing.id} status=${targetStatus} fileKeyPresent=${hasFileKey}`,
+      `[vox-recording-webhook] ${result.action} recordingId=${result.recordingId} status=${result.status} attemptId=${payload.recordingAttemptId ?? "legacy"} recovered=${result.recovered}`,
     );
     appendRecordingDebugEvent({
       sessionId,
       source: "webhook",
-      level: targetStatus === "COMPLETED" ? "success" : "info",
-      step: "webhook:db:updated",
-      message: `Recording updated: recordingId=${existing.id} status=${targetStatus}`,
-      data: { recordingId: existing.id, status: targetStatus, fileKeyPresent: hasFileKey },
+      level: result.status === "COMPLETED" ? "success" : "info",
+      step: `webhook:db:${result.action}`,
+      message: `Recording callback ${result.action}: recordingId=${result.recordingId} status=${result.status}`,
+      data: {
+        recordingId: result.recordingId,
+        status: result.status,
+        recordingAttemptId: payload.recordingAttemptId ?? null,
+        requestId: payload.requestId ?? null,
+        recovered: result.recovered,
+      },
     });
-      const reconciliationTransport =
-        payload.status === "stopped"
-          ? "voximplant_provider_auto_finalization"
-          : "voximplant_webhook_reconciliation";
-      await reconcileStopOperationsAfterRecordingUpdate(
-        existing.id,
-        targetStatus,
-        reconciliationTransport,
-      );
-    return NextResponse.json({ ok: true, action: "updated", status: targetStatus });
+    return NextResponse.json({
+      ok: true,
+      action: result.action,
+      status: result.status,
+      duplicate: result.action === "duplicate",
+      recovered: result.recovered,
+    });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "DB update failed.";
+    if (err instanceof RecordingStatusFencingError) {
+      console.warn(
+        `[vox-recording-webhook] rejected code=${err.code} status=${err.status} attemptId=${payload.recordingAttemptId ?? "missing"}`,
+      );
+      appendRecordingDebugEvent({
+        sessionId,
+        source: "webhook",
+        level: "warn",
+        step: "webhook:fencing:rejected",
+        message: errMsg,
+        data: {
+          code: err.code,
+          retryable: err.retryable,
+          recordingAttemptId: payload.recordingAttemptId ?? null,
+          requestId: payload.requestId ?? null,
+        },
+      });
+      return NextResponse.json(
+        {
+          error: errMsg,
+          code: err.code,
+          retryable: err.retryable,
+        },
+        { status: err.status },
+      );
+    }
     console.error("[vox-recording-webhook] DB update failed:", err);
     appendRecordingDebugEvent({
       sessionId,

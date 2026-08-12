@@ -801,8 +801,10 @@ Applicable suites:
 - Active non-finished sessions already receive an Open room action.
 - `decideSessionRoomAccess()` authoritatively distinguishes
   `ALLOW_ACTIVE_ROOM`, `ALLOW_DEBRIEF`, and closed redirects.
-- Current materials data does not select/use `roomLifecycle`, so FINISHED
-  `DEBRIEF_OPEN` is treated like fully closed FINISHED.
+- Materials data now selects `roomLifecycle` for the shared display-status
+  derivation, so FINISHED `DEBRIEF_OPEN` is labeled Debrief rather than
+  Completed. The separate `canReturnToRoom` action still uses the older
+  FINISHED-only activity helper and does not yet consume that lifecycle.
 
 **DESIGN DECISION**
 

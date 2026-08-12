@@ -8,7 +8,10 @@ import { SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
-import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import {
+  isPostNegotiationSessionDisplayStatus,
+  type SessionDisplayStatus,
+} from "@/lib/session-display-status";
 import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels";
 import { shouldSyncSpeakerMappingDraft } from "@/lib/transcription/speaker-mapping-draft-sync";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
@@ -552,9 +555,11 @@ export function RecordingTranscriptionSection({
     }
   }, [sessionId]);
 
+  const isPostNegotiation =
+    isPostNegotiationSessionDisplayStatus(sessionStatus);
   const shouldWatchRecordingStall =
     !readOnly &&
-    sessionStatus === "FINISHED" &&
+    isPostNegotiation &&
     Boolean(recording) &&
     !isRecordingReadyForTranscription(recording!);
 
@@ -604,7 +609,7 @@ export function RecordingTranscriptionSection({
       void pollSessionStatus();
 
       const shouldPollRecording =
-        sessionStatus === "FINISHED" ||
+        isPostNegotiationSessionDisplayStatus(sessionStatus) ||
         recording?.status === "PROCESSING" ||
         recording?.status === "STOPPED" ||
         recording?.stopOperationState === "PENDING" ||
@@ -769,13 +774,13 @@ export function RecordingTranscriptionSection({
   }, [roomAuth, languageHint, loadData, notifyProcessingChange, sessionId, t]);
 
   const isWaitingForRecordingReady =
-    sessionStatus === "FINISHED" &&
+    isPostNegotiation &&
     Boolean(recording) &&
     !isRecordingReadyForTranscription(recording!);
 
   const canTranscribeRecording =
     !readOnly &&
-    sessionStatus === "FINISHED" &&
+    isPostNegotiation &&
     Boolean(recording) &&
     !hasUsableTranscript(transcript) &&
     isRecordingReadyForTranscription(recording!);

@@ -1,5 +1,6 @@
 import type { AuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 type RejoinTargetType = "room" | "lobby" | "materials";
 
@@ -36,6 +37,7 @@ export async function getAccountRejoinTargets(
       id: true,
       title: true,
       negotiationState: true,
+      roomLifecycle: true,
       closedByEventAt: true,
       status: true,
       event: {
@@ -55,7 +57,7 @@ export async function getAccountRejoinTargets(
   });
 
   const activeSessionTargets: AccountRejoinTarget[] = sessions
-    .filter((session) => session.negotiationState !== "FINISHED" && !session.closedByEventAt)
+    .filter((session) => isSessionActiveForRoom(session))
     .map((session) => ({
       type: "room",
       href: `/room/${session.id}`,
@@ -89,7 +91,7 @@ export async function getAccountRejoinTargets(
   });
 
   const latestFinishedSession = sessions.find(
-    (session) => session.negotiationState === "FINISHED" || Boolean(session.closedByEventAt),
+    (session) => !isSessionActiveForRoom(session),
   );
 
   const targets: AccountRejoinTarget[] = [...activeSessionTargets];

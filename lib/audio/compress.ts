@@ -140,6 +140,7 @@ export async function compressAudioForTranscription(
   inputFileName: string,
   options?: {
     recordingId?: string;
+    recordingAttemptId?: string | null;
     sessionId?: string;
     forceTranscode?: boolean;
     probe?: {
@@ -161,10 +162,32 @@ export async function compressAudioForTranscription(
   const webmPath = join(tempDir, "transcription.webm");
   const mp3Path = join(tempDir, "transcription.mp3");
 
+  async function updateCompressionState(data: {
+    compressionStatus: CompressionStatus;
+    compressionError: string | null;
+  }) {
+    if (!options?.recordingId) return;
+    if (options.recordingAttemptId === undefined) {
+      throw new Error(
+        "recordingAttemptId is required for recording compression updates.",
+      );
+    }
+    const mutation = await prisma.recording.updateMany({
+      where: {
+        id: options.recordingId,
+        recordingAttemptId: options.recordingAttemptId,
+      },
+      data,
+    });
+    if (mutation.count !== 1) {
+      throw new Error("Recording attempt changed during audio compression.");
+    }
+  }
+
   if (options?.recordingId) {
-    await prisma.recording.update({
-      where: { id: options.recordingId },
-      data: { compressionStatus: CompressionStatus.COMPRESSING },
+    await updateCompressionState({
+      compressionStatus: CompressionStatus.COMPRESSING,
+      compressionError: null,
     });
   }
 
@@ -177,9 +200,9 @@ export async function compressAudioForTranscription(
     );
     if (!options?.forceTranscode && reuseOriginalDecision.shouldReuseOriginal) {
       if (options?.recordingId) {
-        await prisma.recording.update({
-          where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.SKIPPED, compressionError: null },
+        await updateCompressionState({
+          compressionStatus: CompressionStatus.SKIPPED,
+          compressionError: null,
         });
       }
       return {
@@ -205,9 +228,9 @@ export async function compressAudioForTranscription(
       });
       const compressedBuffer = await readFile(wavPath);
       if (options?.recordingId) {
-        await prisma.recording.update({
-          where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
+        await updateCompressionState({
+          compressionStatus: CompressionStatus.COMPLETED,
+          compressionError: null,
         });
       }
       return {
@@ -232,9 +255,9 @@ export async function compressAudioForTranscription(
       const compressedBuffer = await readFile(webmPath);
 
       if (options?.recordingId) {
-        await prisma.recording.update({
-          where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
+        await updateCompressionState({
+          compressionStatus: CompressionStatus.COMPLETED,
+          compressionError: null,
         });
       }
 
@@ -259,9 +282,9 @@ export async function compressAudioForTranscription(
       const compressedBuffer = await readFile(mp3Path);
 
       if (options?.recordingId) {
-        await prisma.recording.update({
-          where: { id: options.recordingId },
-          data: { compressionStatus: CompressionStatus.COMPLETED, compressionError: null },
+        await updateCompressionState({
+          compressionStatus: CompressionStatus.COMPLETED,
+          compressionError: null,
         });
       }
 
@@ -285,12 +308,9 @@ export async function compressAudioForTranscription(
     );
 
     if (options?.recordingId) {
-      await prisma.recording.update({
-        where: { id: options.recordingId },
-        data: {
-          compressionStatus: CompressionStatus.FAILED,
-          compressionError: classified.message,
-        },
+      await updateCompressionState({
+        compressionStatus: CompressionStatus.FAILED,
+        compressionError: classified.message,
       });
     }
 

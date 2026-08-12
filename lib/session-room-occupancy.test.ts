@@ -15,6 +15,7 @@ test("debrief close waits full grace after last invalidation", () => {
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
     activeConnectionCount: 0,
+    debriefOpenedAt: new Date("2026-07-21T14:59:00.000Z"),
     lastInvalidatedAt: new Date("2026-07-21T14:59:45.000Z"),
     now,
     graceMs: GRACE_MS,
@@ -30,6 +31,7 @@ test("debrief closes once grace elapses with zero active connections", () => {
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
     activeConnectionCount: 0,
+    debriefOpenedAt: new Date("2026-07-21T14:59:00.000Z"),
     lastInvalidatedAt: new Date("2026-07-21T15:00:00.000Z"),
     now,
     graceMs: GRACE_MS,
@@ -44,6 +46,7 @@ test("debrief stays open while at least one active connection remains", () => {
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
     activeConnectionCount: 1,
+    debriefOpenedAt: new Date("2026-07-21T15:00:30.000Z"),
     lastInvalidatedAt: new Date("2026-07-21T15:00:00.000Z"),
     now,
     graceMs: GRACE_MS,
@@ -53,18 +56,35 @@ test("debrief stays open while at least one active connection remains", () => {
   assert.equal(eligibility.reason, "active_connections_remain");
 });
 
-test("debrief does not close without definitive invalidation evidence", () => {
+test("debrief does not close without an authoritative open boundary", () => {
   const now = new Date("2026-07-21T15:01:00.000Z");
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
     activeConnectionCount: 0,
+    debriefOpenedAt: null,
     lastInvalidatedAt: null,
     now,
     graceMs: GRACE_MS,
   });
 
   assert.equal(eligibility.eligible, false);
-  assert.equal(eligibility.reason, "no_invalidated_connections");
+  assert.equal(eligibility.reason, "no_debrief_opened_at");
+});
+
+test("already-empty debrief starts a full grace at debrief opening", () => {
+  const now = new Date("2026-07-21T15:00:20.000Z");
+  const eligibility = evaluateDebriefAutoCloseEligibility({
+    roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+    activeConnectionCount: 0,
+    debriefOpenedAt: new Date("2026-07-21T15:00:00.000Z"),
+    lastInvalidatedAt: new Date("2026-07-21T14:50:00.000Z"),
+    now,
+    graceMs: GRACE_MS,
+  });
+
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.reason, "grace_period_active");
+  assert.equal(eligibility.graceRemainingMs, 10_000);
 });
 
 test("OPEN lifecycle is never auto-closed by the debrief guard", () => {
@@ -72,6 +92,7 @@ test("OPEN lifecycle is never auto-closed by the debrief guard", () => {
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.OPEN,
     activeConnectionCount: 0,
+    debriefOpenedAt: null,
     lastInvalidatedAt: new Date("2026-07-21T15:00:00.000Z"),
     now,
     graceMs: GRACE_MS,
@@ -92,14 +113,14 @@ test("finish keeps DEBRIEF_OPEN when durable occupancy exists", () => {
   );
 });
 
-test("finish closes when occupancy is zero", () => {
+test("finish opens DEBRIEF even when occupancy is zero", () => {
   assert.equal(
     decideFinishRoomLifecycle({
       effectiveLifecycle: RoomLifecycle.OPEN,
       hardClose: false,
       activeConnectionCount: 0,
     }),
-    RoomLifecycle.CLOSED,
+    RoomLifecycle.DEBRIEF_OPEN,
   );
 });
 
@@ -154,7 +175,7 @@ test("MSK-style clock skew falsely marks UTC lease as expired against local NOW"
         ? 1
         : 0,
     }),
-    RoomLifecycle.CLOSED,
+    RoomLifecycle.DEBRIEF_OPEN,
   );
   assert.equal(
     decideFinishRoomLifecycle({

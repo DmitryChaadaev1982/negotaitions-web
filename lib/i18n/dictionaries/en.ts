@@ -482,7 +482,8 @@ export const en = {
       "Recording status is taking longer than expected. Try refreshing manually.",
     autoTranscribeFailedHint:
       "Automatic transcription failed. Try again manually.",
-    recordingStarting: "Recording is starting",
+    recordingStarting: "Starting recording…",
+    recordingDidNotStart: "Recording did not start",
     recordingInProgress: "Recording in progress",
     recordingContinuesDuringPause: "Recording continues during pause.",
     recordingPaused: "Recording paused",
@@ -1205,6 +1206,7 @@ export const en = {
     READY_TO_START: "Ready to start",
     RUNNING: "In progress",
     PAUSED: "Paused",
+    DEBRIEF: "Debrief",
     FINISHED: "Completed",
     ANALYZED: "Analyzed",
   },

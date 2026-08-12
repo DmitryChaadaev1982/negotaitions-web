@@ -27,6 +27,7 @@ type RecordingStopCommandAcceptedEvent = {
   conferenceName: string;
   providerSessionId: string;
   operationId: string;
+  recordingAttemptId?: string | null;
 };
 
 type RecordingStoppedEvent = {
@@ -35,6 +36,7 @@ type RecordingStoppedEvent = {
   conferenceName: string;
   providerSessionId: string;
   operationId: string;
+  recordingAttemptId?: string | null;
   terminalStatus?: string | null;
 };
 
@@ -44,6 +46,7 @@ type RecordingStopFailedEvent = {
   conferenceName: string;
   providerSessionId: string;
   operationId: string;
+  recordingAttemptId?: string | null;
   failureCode?: string | null;
   failureMessage?: string | null;
   terminal?: boolean | null;
@@ -128,6 +131,7 @@ function isTerminalProviderFailure(input: RecordingStopFailedEvent) {
 async function getOperationForEvent(input: {
   sessionId: string;
   operationId: string;
+  recordingAttemptId?: string | null;
   providerSessionId: string;
   conferenceName: string;
 }) {
@@ -135,12 +139,25 @@ async function getOperationForEvent(input: {
     where: { operationId: input.operationId },
     include: {
       recording: {
-        select: { id: true, status: true },
+        select: {
+          id: true,
+          status: true,
+          recordingAttemptId: true,
+        },
       },
     },
   });
   if (!operation || operation.sessionId !== input.sessionId) {
     throw new ServerStopCallbackHandlerError(404, "Operation not found.");
+  }
+  if (
+    operation.recording.recordingAttemptId !==
+    (input.recordingAttemptId ?? null)
+  ) {
+    throw new ServerStopCallbackHandlerError(
+      409,
+      "Recording attempt mismatch for operation correlation.",
+    );
   }
 
   if (
@@ -211,6 +228,7 @@ async function handleCommandAccepted(
   const operation = await getOperationForEvent({
     sessionId: payload.sessionId,
     operationId: payload.operationId,
+    recordingAttemptId: payload.recordingAttemptId,
     providerSessionId: payload.providerSessionId,
     conferenceName: payload.conferenceName,
   });
@@ -264,6 +282,7 @@ async function handleRecordingStopped(
   const operation = await getOperationForEvent({
     sessionId: payload.sessionId,
     operationId: payload.operationId,
+    recordingAttemptId: payload.recordingAttemptId,
     providerSessionId: payload.providerSessionId,
     conferenceName: payload.conferenceName,
   });
@@ -307,8 +326,12 @@ async function handleRecordingStopped(
     const nextRecordingStatus = resolveStoppedRecordingStatus(
       operation.recording.status,
     );
-    await tx.recording.update({
-      where: { id: operation.recordingId },
+    const recordingMutation = await tx.recording.updateMany({
+      where: {
+        id: operation.recordingId,
+        recordingAttemptId: operation.recording.recordingAttemptId,
+        status: operation.recording.status,
+      },
       data: {
         status: nextRecordingStatus,
         endedAt:
@@ -317,6 +340,12 @@ async function handleRecordingStopped(
             : undefined,
       },
     });
+    if (recordingMutation.count !== 1) {
+      throw new ServerStopCallbackHandlerError(
+        409,
+        "Recording attempt changed before stop finalization.",
+      );
+    }
   });
 
   const reread = await prisma.sessionRecordingStopOperation.findUnique({
@@ -350,6 +379,7 @@ async function handleRecordingStopFailed(
   const operation = await getOperationForEvent({
     sessionId: payload.sessionId,
     operationId: payload.operationId,
+    recordingAttemptId: payload.recordingAttemptId,
     providerSessionId: payload.providerSessionId,
     conferenceName: payload.conferenceName,
   });

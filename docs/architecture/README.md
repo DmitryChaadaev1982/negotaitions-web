@@ -23,6 +23,16 @@ This folder is the canonical architecture reference for the running NegotAItions
 
 These files are the authoritative current-state architecture truth and must be kept aligned with code changes.
 
+Cross-document ownership for current shared runtime flows:
+
+- Session negotiation, role-agnostic room occupancy, Debrief grace, and
+  canonical final Session close are owned by `04-session-event-flow.md`.
+- Voximplant exact-attempt control/status reconciliation is owned by
+  `05-voximplant-integration.md`; its S3/CAS and UI pipeline consequences are
+  owned by `06-recording-transcription-pipeline.md`.
+- Runtime permission and rollout requirements for those services are owned by
+  `11-deployment-architecture.md`.
+
 ## Historical / Reference / Source Docs
 
 The following are preserved for traceability and implementation history. They are supporting context and are not canonical current-state truth:

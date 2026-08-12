@@ -10,6 +10,7 @@ import {
   SERVER_CONTROL_MISSING_REGISTRATION_MAX_ATTEMPTS,
   SERVER_CONTROL_TRANSPORT_MAX_ATTEMPTS,
   scheduleStopRetry,
+  shouldDeferStartingStopForMissingProviderId,
   STARTING_NOT_READY_MAX_ATTEMPTS,
   VOX_BROWSER_RELAY_MAX_ATTEMPTS,
 } from "@/lib/recording-stop-delivery-policy";
@@ -51,6 +52,25 @@ test("resolveStartingNotReadyFailure becomes terminal after max attempts", () =>
   assert.equal(terminal.terminal, true);
   assert.equal(terminal.nextRetryAt, null);
   assert.equal(terminal.lastError, "recordingStartingNotReadyTerminal");
+});
+
+test("missing provider ID defers LiveKit STARTING but never blocks fenced Vox STOP", () => {
+  assert.equal(
+    shouldDeferStartingStopForMissingProviderId({
+      provider: "livekit",
+      recordingStatus: "STARTING",
+      egressId: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDeferStartingStopForMissingProviderId({
+      provider: "voximplant",
+      recordingStatus: "STARTING",
+      egressId: null,
+    }),
+    false,
+  );
 });
 
 test("resolveServerControlMissingRegistrationFailure schedules retry", () => {

@@ -53,6 +53,7 @@ import {
 } from "@/app/generated/prisma/client";
 import { getVoximplantRecordingControlSecret } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { admitRecordingAttempt } from "@/lib/recording/recording-attempt-fencing";
 import type { RoomRecordingState } from "@/lib/room-provider/types";
 import {
   type RecordingControlMessage,
@@ -143,6 +144,7 @@ export async function buildVoximplantRecordingDispatch(
     controllerRole: string;
     canControlRecording: boolean;
     requestId?: string;
+    recordingAttemptId?: string;
   },
   options?: {
     webhookBaseUrl?: string;
@@ -181,6 +183,7 @@ export async function buildVoximplantRecordingDispatch(
     webhookBaseUrlRaw,
     signingSecret: options?.signingSecret ?? getVoximplantRecordingControlSecret(),
     requestId: context.requestId?.trim() || nanoid(12),
+    recordingAttemptId: context.recordingAttemptId,
     issuedAt: options?.issuedAt,
     expiresAt: options?.expiresAt,
     nonce: options?.nonce,
@@ -203,20 +206,12 @@ export async function buildVoximplantRecordingDispatch(
   };
 }
 
-// ─── Statuses that indicate recording is already active or done on start ─────
-
-const DO_NOT_OVERWRITE_ON_START = new Set<DbRecordingStatus>([
-  DbRecordingStatus.STARTING,
-  DbRecordingStatus.RECORDING,
-  DbRecordingStatus.PAUSED,
-  DbRecordingStatus.PROCESSING,
-  DbRecordingStatus.COMPLETED,
-]);
-
 type PersistedRecordingRef = {
   id: string;
   status: DbRecordingStatus;
   errorMessage: string | null;
+  recordingAttemptId: string | null;
+  admitted?: boolean;
 };
 
 /**
@@ -233,49 +228,26 @@ type PersistedRecordingRef = {
 export async function upsertVoximplantRecordingOnStart(
   sessionId: string,
 ): Promise<PersistedRecordingRef> {
-  const existing = await prisma.recording.findUnique({
-    where: { sessionId },
-    select: { id: true, status: true, errorMessage: true },
-  });
-
-  if (!existing) {
-    const created = await prisma.recording.create({
-      data: {
-        sessionId,
-        provider: "VOXIMPLANT",
-        status: DbRecordingStatus.STARTING,
-        recordingType: RecordingType.AUDIO_ONLY,
-        startedAt: new Date(),
-        errorMessage: null,
-      },
-      select: { id: true, status: true, errorMessage: true },
-    });
-    console.log(
-      `[recording-control] vox start: created recordingId=${created.id} status=${created.status}`,
-    );
-    return created;
-  }
-
-  if (DO_NOT_OVERWRITE_ON_START.has(existing.status)) {
-    console.log(
-      `[recording-control] vox start: idempotent recordingId=${existing.id} status=${existing.status}`,
-    );
-    return existing;
-  }
-
-  const updated = await prisma.recording.update({
-    where: { id: existing.id },
-    data: {
-      status: DbRecordingStatus.STARTING,
-      errorMessage: null,
-      startedAt: new Date(),
+  const admission = await prisma.$transaction((tx) =>
+    admitRecordingAttempt(tx, {
+      sessionId,
+      provider: "VOXIMPLANT",
+      recordingType: RecordingType.AUDIO_ONLY,
+    }),
+  );
+  const recording = await prisma.recording.findUniqueOrThrow({
+    where: { id: admission.recordingId },
+    select: {
+      id: true,
+      status: true,
+      errorMessage: true,
+      recordingAttemptId: true,
     },
-    select: { id: true, status: true, errorMessage: true },
   });
   console.log(
-    `[recording-control] vox start: updated recordingId=${updated.id} status=${updated.status}`,
+    `[recording-control] vox start: recordingId=${recording.id} status=${recording.status} admitted=${admission.admitted}`,
   );
-  return updated;
+  return { ...recording, admitted: admission.admitted };
 }
 
 /**
@@ -295,49 +267,22 @@ export async function upsertVoximplantRecordingOnStop(
 ): Promise<PersistedRecordingRef> {
   const existing = await prisma.recording.findUnique({
     where: { sessionId },
-    select: { id: true, status: true, errorMessage: true },
+    select: {
+      id: true,
+      status: true,
+      errorMessage: true,
+      recordingAttemptId: true,
+    },
   });
 
   if (!existing) {
-    const created = await prisma.recording.create({
-      data: {
-        sessionId,
-        provider: "VOXIMPLANT",
-        status: DbRecordingStatus.STOPPED,
-        recordingType: RecordingType.AUDIO_ONLY,
-        endedAt: new Date(),
-      },
-      select: { id: true, status: true, errorMessage: true },
-    });
-    console.log(
-      `[recording-control] vox stop: created recoverable recordingId=${created.id} status=${created.status}`,
-    );
-    return created;
+    throw new Error("No recording attempt is available to stop.");
   }
 
-  if (
-    existing.status === DbRecordingStatus.COMPLETED ||
-    existing.status === DbRecordingStatus.STOPPED ||
-    existing.status === DbRecordingStatus.FAILED
-  ) {
-    console.log(
-      `[recording-control] vox stop: idempotent recordingId=${existing.id} status=${existing.status}`,
-    );
-    return existing;
-  }
-
-  const updated = await prisma.recording.update({
-    where: { id: existing.id },
-    data: {
-      status: DbRecordingStatus.STOPPED,
-      endedAt: new Date(),
-    },
-    select: { id: true, status: true, errorMessage: true },
-  });
   console.log(
-    `[recording-control] vox stop: updated recordingId=${updated.id} status=${updated.status}`,
+    `[recording-control] vox stop: current recordingId=${existing.id} status=${existing.status}`,
   );
-  return updated;
+  return existing;
 }
 
 /**

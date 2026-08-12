@@ -169,10 +169,27 @@ export async function failTranscript(
 
 type RecordingForTranscription = {
   id: string;
+  recordingAttemptId: string | null;
   fileKey: string | null;
   fileName: string | null;
   mimeType: string | null;
 };
+
+async function updateRecordingForTranscriptionAttempt(
+  recording: Pick<RecordingForTranscription, "id" | "recordingAttemptId">,
+  data: Parameters<typeof prisma.recording.updateMany>[0]["data"],
+) {
+  const mutation = await prisma.recording.updateMany({
+    where: {
+      id: recording.id,
+      recordingAttemptId: recording.recordingAttemptId,
+    },
+    data,
+  });
+  if (mutation.count !== 1) {
+    throw new Error("Recording attempt changed during transcription.");
+  }
+}
 
 type RecordingForRealTranscription = RecordingForTranscription & {
   fileKey: string;
@@ -343,33 +360,26 @@ export async function runRealTranscription(
     if (keyNormalization.containsRawUrl || keyNormalization.containsEncodedUrl) {
       const missingMessage =
         "Запись сохранена у провайдера, но файл ещё не загружен в хранилище";
-      await prisma.recording.update({
-        where: { id: recording.id },
-        data: {
-          status: RecordingStatus.FAILED,
-          errorMessage: missingMessage,
-        },
+      await updateRecordingForTranscriptionAttempt(recording, {
+        status: RecordingStatus.FAILED,
+        errorMessage: missingMessage,
       });
       throw new Error(missingMessage);
     }
 
     const effectiveFileKey = keyNormalization.normalizedKey;
     if (effectiveFileKey !== recording.fileKey) {
-      await prisma.recording.update({
-        where: { id: recording.id },
-        data: { fileKey: effectiveFileKey },
+      await updateRecordingForTranscriptionAttempt(recording, {
+        fileKey: effectiveFileKey,
       });
     }
 
     const objectHead = await headObject(effectiveFileKey);
     if (!objectHead.exists) {
       const missingMessage = "Файл записи не найден в хранилище";
-      await prisma.recording.update({
-        where: { id: recording.id },
-        data: {
-          status: RecordingStatus.FAILED,
-          errorMessage: missingMessage,
-        },
+      await updateRecordingForTranscriptionAttempt(recording, {
+        status: RecordingStatus.FAILED,
+        errorMessage: missingMessage,
       });
       throw new Error(missingMessage);
     }
@@ -382,9 +392,8 @@ export async function runRealTranscription(
     });
     await throwIfTranscriptionStoppedManually(transcriptId);
 
-    await prisma.recording.update({
-      where: { id: recording.id },
-      data: { originalSizeBytes: originalBuffer.length },
+    await updateRecordingForTranscriptionAttempt(recording, {
+      originalSizeBytes: originalBuffer.length,
     });
 
     // Phase 7: capture actual source audio metadata (codec/sample-rate/channels)
@@ -505,6 +514,7 @@ export async function runRealTranscription(
         transcriptionSourceFileName ?? "recording",
         {
           recordingId: recording.id,
+          recordingAttemptId: recording.recordingAttemptId,
           sessionId,
           forceTranscode: true,
           probe: transcriptionSourceMetadata,
@@ -542,28 +552,22 @@ export async function runRealTranscription(
         compression.compressedMimeType,
         { sessionId, recordingId: recording.id },
       );
-      await prisma.recording.update({
-        where: { id: recording.id },
-        data: {
+      await updateRecordingForTranscriptionAttempt(recording, {
           compressedFileKey,
           compressedFileName: compression.compressedFileName,
           compressedMimeType: compression.compressedMimeType,
           compressedSizeBytes: compression.compressedSizeBytes,
           compressionStatus: CompressionStatus.COMPLETED,
           compressionError: null,
-        },
       });
     } else {
-      await prisma.recording.update({
-        where: { id: recording.id },
-        data: {
+      await updateRecordingForTranscriptionAttempt(recording, {
           compressedFileKey: null,
           compressedFileName: null,
           compressedMimeType: null,
           compressedSizeBytes: transcriptionSourceBuffer.length,
           compressionStatus: CompressionStatus.SKIPPED,
           compressionError: null,
-        },
       });
     }
 

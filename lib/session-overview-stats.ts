@@ -58,6 +58,7 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       snapshotCaseTitle: true,
       status: true,
       negotiationState: true,
+      roomLifecycle: true,
       closedByEventAt: true,
       durationSeconds: true,
       visibility: true,
@@ -194,7 +195,9 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         ? `/events/${session.event.id}/lobby`
         : null,
       status: resolveSessionDisplayStatus(session, session.participants),
+      sessionStatus: session.status,
       negotiationState: session.negotiationState,
+      roomLifecycle: session.roomLifecycle,
       closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
       participantCount: session._count.participants,
       onlineParticipantCount: presenceActive

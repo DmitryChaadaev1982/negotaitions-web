@@ -173,7 +173,7 @@ type RecordingControlResponse = {
     scenarioMessageText: string;
     scenarioMessage?: RecordingControlMessage;
   };
-  recording?: { status: string; errorMessage: string | null } | null;
+  recording?: RoomRecordingState;
   warning?: string;
   error?: string;
   code?: string;

@@ -15,7 +15,7 @@ const scenarioSource = readFileSync(scenarioPath, "utf8");
 test("scenario build marker is release-candidate marker", () => {
   assert.match(
     scenarioSource,
-    /SCENARIO_BUILD_ID\s*=\s*"main-room-server-stop-2026-07-28-rc6"/,
+    /SCENARIO_BUILD_ID\s*=\s*"main-room-recording-reconciliation-2026-08-12-rc4"/,
   );
 });
 
@@ -141,7 +141,65 @@ test("signed pre-binding start failures may use allowlisted callback origin", ()
 test("recording-control verification order is explicit", () => {
   assert.match(
     scenarioSource,
-    /\/\/ 1\. parse message[\s\S]*\/\/ 2\. validate schema[\s\S]*\/\/ 3\. validate secret availability[\s\S]*\/\/ 4\. verify HMAC[\s\S]*\/\/ 5\. validate issuedAt\/expiresAt[\s\S]*\/\/ 6\. validate exact allowlisted webhook origin[\s\S]*\/\/ 7\. validate action\/requestId\/sessionId\/conferenceName\/participant claims[\s\S]*\/\/ 8\. validate canControlRecording=true[\s\S]*\/\/ 9\. bind provider-session identity and callback origin[\s\S]*\/\/ 10\. validate nonce\/replay\/idempotency outcome before reserving execution[\s\S]*\/\/ 11\. reserve nonce for command execution after immutable checks\.[\s\S]*\/\/ 12\. register server-stop control channel once \(async acknowledgement required\)[\s\S]*\/\/ 13\. execute recording action/,
+    /\/\/ 1\. parse message[\s\S]*\/\/ 2\. validate schema[\s\S]*\/\/ 3\. validate secret availability[\s\S]*\/\/ 4\. verify HMAC[\s\S]*\/\/ 5\. validate issuedAt\/expiresAt[\s\S]*\/\/ 6\. validate exact allowlisted webhook origin[\s\S]*\/\/ 7\. validate action\/requestId\/sessionId\/conferenceName\/participant claims[\s\S]*\/\/ 8\. validate canControlRecording=true[\s\S]*\/\/ 9\. bind provider-session identity and callback origin[\s\S]*\/\/ 10\. validate nonce\/replay\/idempotency outcome before reserving execution[\s\S]*\/\/ 11\. reserve nonce for command execution after immutable checks\.[\s\S]*\/\/ 12\. register server-stop control channel once \(async acknowledgement required\)[\s\S]*\/\/ 13\. fence command execution[\s\S]*\/\/ 14\. execute recording action/,
+  );
+});
+
+test("fenced recording protocol keeps command and attempt identities distinct", () => {
+  assert.match(
+    scenarioSource,
+    /RECORDING_CONTROL_FENCED_PROTOCOL_VERSION\s*=\s*"rc3-hmac-sha256-recording-attempt-v1"/,
+  );
+  assert.match(scenarioSource, /currentRecordingContext\.recordingAttemptId/);
+  assert.match(scenarioSource, /recordingAttemptId:\s*claims\.recordingAttemptId/);
+  assert.match(scenarioSource, /RECORDING_ATTEMPT_MISMATCH/);
+});
+
+test("recording callback retries are Promise-based, bounded, and fenced-only", () => {
+  assert.match(
+    scenarioSource,
+    /var maxAttempts = fencedCallback \? 3 : 1/,
+  );
+  assert.match(
+    scenarioSource,
+    /requestPromise = Net\.httpRequestAsync\(url,[\s\S]*requestPromise\.then\([\s\S]*\)\.catch\(/,
+  );
+  assert.match(scenarioSource, /statusCode === 408/);
+  assert.match(scenarioSource, /statusCode === 429/);
+  assert.match(scenarioSource, /statusCode >= 500/);
+  for (const code of [-4, -6, -7, -8]) {
+    assert.match(scenarioSource, new RegExp(`statusCode === ${code}`));
+  }
+  assert.match(scenarioSource, /webhook retries exhausted/);
+});
+
+test("recorder handlers capture immutable instance and attempt context", () => {
+  assert.match(
+    scenarioSource,
+    /function attachRecorderEventHandlers\(recorderInstance,\s*recorderContext\)/,
+  );
+  assert.match(
+    scenarioSource,
+    /addSafeEventListener\(recorderInstance,\s*"RecorderEvents",\s*"Started"/,
+  );
+  assert.match(scenarioSource, /isCurrentRecorderContext\(ctx\)/);
+  assert.match(scenarioSource, /requestBestEffortRecorderCleanup\(/);
+  assert.match(scenarioSource, /orphanedRecorderContexts/);
+  assert.match(scenarioSource, /RECORDER_CLEANUP_MAX_ATTEMPTS = 2/);
+  assert.match(
+    scenarioSource,
+    /if \(ctx\.cleanupRequested\) \{[\s\S]*"LATE_STARTED_AFTER_CLEANUP"[\s\S]*return;[\s\S]*ctx\.state = STATE_RECORDING;/,
+  );
+});
+
+test("STARTING webhook omits startedAt until Recorder.Started", () => {
+  assert.match(
+    scenarioSource,
+    /buildStatusPayload\(requestId,\s*STATE_STARTING,[\s\S]*null,\s*getCurrentContextWebhookBaseUrl\(\)/,
+  );
+  assert.match(
+    scenarioSource,
+    /"RecorderEvents",\s*"Started"[\s\S]*ctx\.startedAt = ctx\.startedAt \|\| safeNowIso\(\)[\s\S]*\{ startedAt: ctx\.startedAt \}/,
   );
 });
 
@@ -154,7 +212,10 @@ test("nonce replay cache supports idempotency and conflict rejection", () => {
   assert.match(scenarioSource, /duplicate_conflict/);
   assert.match(scenarioSource, /duplicate_rejected/);
   assert.match(scenarioSource, /RECORDING_CONTROL_NONCE_PREVIOUSLY_REJECTED/);
-  assert.match(scenarioSource, /sendCurrentStatus\(call,\s*requestId\);/);
+  assert.match(
+    scenarioSource,
+    /sendCurrentStatus\(call,\s*requestId,\s*claims\.recordingAttemptId \|\| null\);/,
+  );
 });
 
 test("provider-session binding is required and immutable", () => {
@@ -405,7 +466,23 @@ test("browser-side recording start flow remains present", () => {
   assert.match(scenarioSource, /parseRecordingControlPayload\(/);
   assert.match(scenarioSource, /if \(claims\.action === ACTION_PAUSE\)/);
   assert.match(scenarioSource, /if \(claims\.action === ACTION_RESUME\)/);
-  assert.match(scenarioSource, /sendCurrentStatus\(call,\s*requestId\);/);
+  assert.match(
+    scenarioSource,
+    /sendCurrentStatus\(call,\s*requestId,\s*claims\.recordingAttemptId \|\| null\);/,
+  );
+});
+
+test("RC4 exact-attempt status uses a bounded immutable terminal cache", () => {
+  assert.match(scenarioSource, /TERMINAL_RECORDING_ATTEMPT_CACHE_MAX = 8/);
+  assert.match(
+    scenarioSource,
+    /TERMINAL_RECORDING_ATTEMPT_CACHE_TTL_MS = 60 \* 60 \* 1000/,
+  );
+  assert.match(scenarioSource, /function cacheTerminalRecorderContext\(/);
+  assert.match(scenarioSource, /if \(terminalRecordingAttemptCache\[ctx\.recordingAttemptId\]\) \{[\s\S]*return;/);
+  assert.match(scenarioSource, /function getExactRecordingAttemptStatus\(/);
+  assert.match(scenarioSource, /action === "get_recording_status"/);
+  assert.match(scenarioSource, /recording_attempt_unknown/);
 });
 
 test("server-side stop protocol callbacks remain present", () => {

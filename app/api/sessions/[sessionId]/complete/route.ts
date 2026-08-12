@@ -87,14 +87,13 @@ export async function POST(request: Request, context: RouteContext) {
     const result = await completeSessionCanonical({
       sessionId,
       mode: "ADMINISTRATIVE_SESSION_FINISH",
-      reason:
-        parsedBody?.expectedOperationId?.trim() ?? "ADMINISTRATIVE_SESSION_FINISH",
-      hardClose: parsedBody?.closeDebriefForAll === true,
+      reason: "FACILITATOR_SESSION_COMPLETE",
+      hardClose: true,
     });
 
     return NextResponse.json({
-      completed: !result.alreadyFinished,
-      alreadyCompleted: result.alreadyFinished,
+      completed: result.sessionCloseApplied,
+      alreadyCompleted: result.sessionAlreadyClosed,
       operationId: result.operationId,
       negotiationState: result.negotiationState,
       roomLifecycle: result.roomLifecycle,

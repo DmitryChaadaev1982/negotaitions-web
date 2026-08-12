@@ -67,11 +67,12 @@ export const EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS = [
 ] as const;
 
 /**
- * The Stage 3.13E additive account preference migration explicitly approved
- * for the production overlay.
+ * The exact Stage 3.13E additive migrations explicitly approved for the
+ * production overlay.
  */
 export const EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS = [
   "20260811112000_stage_3_13e_session_sound_preference",
+  "20260812111000_add_recording_attempt_fencing",
 ] as const;
 
 /**

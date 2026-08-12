@@ -95,7 +95,7 @@ test("UTC wall-clock lease comparison is stable under UTC and Europe/Moscow", as
         hardClose: false,
         activeConnectionCount: msk.expires_gt_now ? 1 : 0,
       }),
-      RoomLifecycle.CLOSED,
+      RoomLifecycle.DEBRIEF_OPEN,
     );
   });
 });
@@ -174,6 +174,7 @@ test("grace eligibility remains pure JS Date math across TZ labels", () => {
   const eligibility = evaluateDebriefAutoCloseEligibility({
     roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
     activeConnectionCount: 0,
+    debriefOpenedAt: new Date("2026-07-29T19:30:00.000Z"),
     lastInvalidatedAt,
     now,
     graceMs: 30_000,

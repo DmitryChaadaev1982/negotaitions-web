@@ -337,16 +337,29 @@ export async function POST(request: Request, context: RouteContext) {
     });
 
     if (!recording.originalSizeBytes) {
-      await prisma.recording.update({
-        where: { id: recording.id },
+      const sizeMutation = await prisma.recording.updateMany({
+        where: {
+          id: recording.id,
+          recordingAttemptId: recording.recordingAttemptId,
+        },
         data: { originalSizeBytes: originalBuffer.length },
       });
+      if (sizeMutation.count !== 1) {
+        return NextResponse.json(
+          { error: "Recording attempt changed during transcription." },
+          { status: 409 },
+        );
+      }
     }
 
     const compression = await compressAudioForTranscription(
       originalBuffer,
       recording.fileName ?? "recording.mp4",
-      { recordingId: recording.id, sessionId },
+      {
+        recordingId: recording.id,
+        recordingAttemptId: recording.recordingAttemptId,
+        sessionId,
+      },
     );
 
     const timestamp = Date.now();
@@ -360,8 +373,11 @@ export async function POST(request: Request, context: RouteContext) {
       { sessionId, recordingId: recording.id },
     );
 
-    await prisma.recording.update({
-      where: { id: recording.id },
+    const compressionMutation = await prisma.recording.updateMany({
+      where: {
+        id: recording.id,
+        recordingAttemptId: recording.recordingAttemptId,
+      },
       data: {
         compressedFileKey,
         compressedFileName: compression.compressedFileName,
@@ -374,6 +390,12 @@ export async function POST(request: Request, context: RouteContext) {
         compressionError: null,
       },
     });
+    if (compressionMutation.count !== 1) {
+      return NextResponse.json(
+        { error: "Recording attempt changed during transcription." },
+        { status: 409 },
+      );
+    }
 
     const maxBytes = getAudioTranscriptionMaxFileBytes();
     if (compression.compressedSizeBytes > maxBytes) {

@@ -39,6 +39,7 @@ const callbackEventSchema = z.discriminatedUnion("eventType", [
     conferenceName: z.string().trim().min(1),
     providerSessionId: z.string().trim().min(1),
     operationId: z.string().trim().min(1),
+    recordingAttemptId: z.string().trim().min(1).optional().nullable(),
   }),
   z.object({
     eventType: z.literal("recording_stopped"),
@@ -46,6 +47,7 @@ const callbackEventSchema = z.discriminatedUnion("eventType", [
     conferenceName: z.string().trim().min(1),
     providerSessionId: z.string().trim().min(1),
     operationId: z.string().trim().min(1),
+    recordingAttemptId: z.string().trim().min(1).optional().nullable(),
     terminalStatus: z.string().trim().optional().nullable(),
   }),
   z.object({
@@ -54,6 +56,7 @@ const callbackEventSchema = z.discriminatedUnion("eventType", [
     conferenceName: z.string().trim().min(1),
     providerSessionId: z.string().trim().min(1),
     operationId: z.string().trim().min(1),
+    recordingAttemptId: z.string().trim().min(1).optional().nullable(),
     failureCode: z.string().trim().optional().nullable(),
     failureMessage: z.string().trim().optional().nullable(),
     terminal: z.boolean().optional().nullable(),

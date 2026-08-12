@@ -227,18 +227,32 @@ export async function POST(request: Request, context: RouteContext) {
     });
 
     try {
+      const persisted =
+        smokeAction === "start"
+          ? await upsertVoximplantRecordingOnStart(sessionId)
+          : await upsertVoximplantRecordingOnStop(sessionId);
       const dispatch = await buildVoximplantRecordingDispatch(smokeAction, {
         sessionId,
         participantId: participantId ?? "debug_smoke_participant",
         controllerUserId: `debug_smoke:${participantId ?? "anonymous"}`,
         controllerRole: "facilitator",
         canControlRecording: true,
+        recordingAttemptId: persisted.recordingAttemptId ?? undefined,
       });
 
-      const persisted =
-        smokeAction === "start"
-          ? await upsertVoximplantRecordingOnStart(sessionId)
-          : await upsertVoximplantRecordingOnStop(sessionId);
+      if (smokeAction === "stop") {
+        await prisma.recording.updateMany({
+          where: {
+            id: persisted.id,
+            recordingAttemptId: persisted.recordingAttemptId,
+          },
+          data: {
+            status: "STOPPED",
+            endedAt: new Date(),
+          },
+        });
+        persisted.status = "STOPPED";
+      }
 
       appendRecordingDebugEvent({
         sessionId,

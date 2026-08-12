@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import type {
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
 import { buildAccountSessionRoomPath } from "@/lib/config";
 import { buildBrowserInviteUrl } from "@/lib/invite-links";
 import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
@@ -43,6 +47,7 @@ type SessionDetailViewProps = {
     /** Phase 6.11B: display label for facilitator/owner (name or email). */
     facilitatorLabel?: string | null;
     durationSeconds: number;
+    sessionStatus: SessionStatus;
     negotiationState:
       | "PREPARATION"
       | "PREPARATION_RUNNING"
@@ -51,6 +56,8 @@ type SessionDetailViewProps = {
       | "RUNNING"
       | "PAUSED"
       | "FINISHED";
+    roomLifecycle: RoomLifecycle | null;
+    closedByEventAt: string | null;
     preparationDurationSeconds: number;
     createdAt: string;
     displayStatus: SessionDisplayStatus;
@@ -212,10 +219,12 @@ export function SessionDetailView({
   );
   const isReadOnly = session.isDeleted;
   const roomActive = isSessionActiveForRoom({
+    status: session.sessionStatus,
     negotiationState: session.negotiationState,
-    closedByEventAt:
-      session.linkedEvent?.status === "COMPLETED" ? new Date().toISOString() : null,
+    roomLifecycle: session.roomLifecycle,
+    closedByEventAt: session.closedByEventAt,
     deletedAt: session.isDeleted ? new Date().toISOString() : null,
+    event: session.linkedEvent,
   });
   const canManageRolesBeforePreparation = session.negotiationState === "PREPARATION";
   const canAddParticipants = !isReadOnly && session.negotiationState !== "FINISHED";

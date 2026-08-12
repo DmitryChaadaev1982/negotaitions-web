@@ -10,6 +10,54 @@
 6. Optional automatic transcript enhancement runs (DeepSeek JSON Schema mode).
 7. Transcript and segments are finalized for speaker mapping and AI analysis.
 
+## Recording Attempt Identity and CAS Discipline (Stage 3.13E)
+
+- `Recording.recordingAttemptId` is the stable identity of one provider recording
+  attempt and fences all delayed mutations.
+- START admission persists `recordingAttemptId` and `STARTING` state before
+  provider dispatch; provider dispatch never opens the attempt identity.
+- Callback application uses two-step attempt validation:
+  1. pre-HEAD attempt correlation check;
+  2. post-HEAD recheck inside DB transaction before mutation.
+- S3 HEAD verification is intentionally outside DB transactions; row/session locks
+  are taken only for final mutation to avoid long lock hold during network I/O.
+- Timeout reconciliation (`STARTING` -> `FAILED`) and callback terminal updates are
+  CAS-fenced by `id + recordingAttemptId + expected status`.
+- Legacy `recordingAttemptId = NULL` rows remain valid historical data but do not
+  participate in fenced timeout-recovery paths.
+- Existing control-state/materials polling may run one throttled RC4
+  exact-attempt provider query for stale STARTING, durable stopping, or the
+  recoverable callback-loss failure. Provider `stopped` still requires object
+  key normalization, S3 verification outside a transaction, and the second
+  attempt/status CAS before normal completion and downstream processing.
+  An exact active result can re-drive only a due STOP operation carrying that
+  same `recordingAttemptId`.
+
+## Recording Indicator Semantics
+
+- UI recording indicator is bound to authoritative backend `Recording.status`
+  returned by control-state/materials APIs, not optimistic client relay results.
+- Session `control-state` and negotiation-control responses return the canonical
+  `recordingAttemptId` with that status. Obsolete scenario/controller-call
+  status messages never replace this server-owned room state; attempt-fenced
+  callbacks must first update the canonical `Recording` row.
+- `STARTING` is rendered as an explicit non-success state
+  (`recording.recordingStarting`), while success-red "recording in progress"
+  appears only after backend status reaches `RECORDING`.
+- Callback-loss uncertainty is bounded to
+  `FAILED + RECORDING_STARTING_TIMEOUT_RECONCILED` and renders the distinct
+  orange `recording.recordingDidNotStart` warning. Other FAILED reasons retain
+  normal failure semantics.
+- The scenario's `STARTING` webhook carries no `startedAt`. The authoritative
+  start timestamp is emitted only from that recorder instance's `Started` event
+  together with canonical `RECORDING`. If cleanup was already requested after a
+  start timeout, a late `Started` event is cleanup-only: it cannot emit
+  `RECORDING`, so it cannot reactivate the recording indicator. A later
+  attempt-scoped `Stopped` remains eligible for server-fenced recovery.
+- Negotiation `RUNNING` does not imply recording `RECORDING`; these lifecycles are
+  intentionally decoupled.
+- The same status mapping applies to standalone and Event-created sessions.
+
 ## Pause/Resume Recording Continuity (Stages 3.4.1-3.4.4)
 
 - Current pipeline remains single-recording-per-session (`Recording.sessionId` unique, `Transcript.sessionId` unique).

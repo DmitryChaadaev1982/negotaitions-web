@@ -13,6 +13,7 @@ const statusStyles: Record<SessionDisplayStatus, string> = {
   READY_TO_START: "bg-violet-500/15 text-violet-300 ring-violet-500/25",
   RUNNING: "bg-amber-500/15 text-amber-300 ring-amber-500/25",
   PAUSED: "bg-orange-500/15 text-orange-300 ring-orange-500/25",
+  DEBRIEF: "bg-cyan-500/15 text-cyan-300 ring-cyan-500/25",
   FINISHED: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25",
 };
 

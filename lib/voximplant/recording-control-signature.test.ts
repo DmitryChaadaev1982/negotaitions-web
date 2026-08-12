@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   VOX_RECORDING_CONTROL_CLOCK_SKEW_SECONDS,
+  VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
   VOX_RECORDING_CONTROL_PROTOCOL_VERSION,
   buildRecordingControlCanonicalPayload,
   createSignedRecordingControlMessage,
@@ -49,6 +50,45 @@ test("local runtime signs local callback origin", () => {
 test("production runtime signs production callback origin", () => {
   const signed = buildSignedMessage({ webhookBaseUrl: "https://negotaitions.ru" });
   assert.equal(signed.message.claims.webhookBaseUrl, "https://negotaitions.ru");
+});
+
+test("stable recordingAttemptId selects fenced protocol and is signed", () => {
+  const signed = createSignedRecordingControlMessage({
+    secret: SECRET,
+    action: "stop",
+    requestId: "stop-command-001",
+    recordingAttemptId: "attempt-stable-001",
+    sessionId: "session-001",
+    conferenceName: "negotiation-session-001",
+    participantId: "participant-001",
+    controllerUserId: "user-001",
+    controllerRole: "facilitator",
+    canControlRecording: true,
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    nonce: "nonce-fenced-001",
+    issuedAt: BASE_TIME,
+    expiresAt: BASE_TIME + 90,
+  });
+  assert.equal(
+    signed.message.protocolVersion,
+    VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+  );
+  assert.equal(
+    signed.message.claims.recordingAttemptId,
+    "attempt-stable-001",
+  );
+  assert.match(
+    signed.canonicalPayload,
+    /requestId=stop-command-001\nrecordingAttemptId=attempt-stable-001/,
+  );
+  assert.equal(
+    verifySignedRecordingControlMessage({
+      message: signed.message,
+      secret: SECRET,
+      nowSeconds: BASE_TIME + 10,
+    }).ok,
+    true,
+  );
 });
 
 test("one unchanged verifier accepts local and production messages", () => {

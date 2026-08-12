@@ -353,7 +353,42 @@ async function handleVoximplantRecording(
     });
   }
 
+  let persistedStartAttempt:
+    | { id: string; recordingAttemptId: string; status: string }
+    | undefined;
   try {
+    // START admission is committed before any provider command is constructed.
+    // STOP reads and carries the current stable attempt without changing it.
+    const persisted =
+      action === "start"
+        ? await upsertVoximplantRecordingOnStart(sessionId)
+        : await upsertVoximplantRecordingOnStop(sessionId);
+    if (action === "start") {
+      if (!persisted.recordingAttemptId) {
+        return NextResponse.json(
+          {
+            error: "A legacy transient recording is still active.",
+            code: "LEGACY_RECORDING_ACTIVE",
+          },
+          { status: 409 },
+        );
+      }
+      if (persisted.status === "COMPLETED") {
+        return NextResponse.json(
+          {
+            error: "Recording is already completed.",
+            code: "RECORDING_ALREADY_COMPLETED",
+          },
+          { status: 409 },
+        );
+      }
+      persistedStartAttempt = {
+        id: persisted.id,
+        recordingAttemptId: persisted.recordingAttemptId,
+        status: persisted.status,
+      };
+    }
+
     const [dispatch, webhookResolution] = await Promise.all([
       buildVoximplantRecordingDispatch(action, {
         sessionId,
@@ -361,6 +396,7 @@ async function handleVoximplantRecording(
         controllerUserId: controller.controllerUserId,
         controllerRole: controller.controllerRole,
         canControlRecording: controller.canControlRecording,
+        recordingAttemptId: persisted.recordingAttemptId ?? undefined,
       }),
       resolveVoximplantRecordingWebhookUrlFromDb(),
     ]);
@@ -381,14 +417,10 @@ async function handleVoximplantRecording(
         savedOverridePresent: webhookResolution.savedOverridePresent,
         envWebhookBaseUrlPresent: Boolean(webhookResolution.envWebhookBaseUrl),
         requestId: dispatch.scenarioMessage.claims.requestId,
+        recordingAttemptId:
+          dispatch.scenarioMessage.claims.recordingAttemptId ?? null,
       },
     });
-
-    // Persist Recording row so webhook can find/update it and materials page shows status.
-    const persisted =
-      action === "start"
-        ? await upsertVoximplantRecordingOnStart(sessionId)
-        : await upsertVoximplantRecordingOnStop(sessionId);
 
     console.log(
       `[recording-control] vox ${action}: DB result recordingId=${persisted.id} status=${persisted.status}`,
@@ -417,6 +449,7 @@ async function handleVoximplantRecording(
         id: persisted.id,
         status: persisted.status,
         errorMessage: persisted.errorMessage,
+        recordingAttemptId: persisted.recordingAttemptId,
       },
       fileKeyHandoff: "webhook" as const,
       fileKeyHandoffDeferred: false,
@@ -424,6 +457,20 @@ async function handleVoximplantRecording(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to build Voximplant recording dispatch.";
+    if (persistedStartAttempt) {
+      await prisma.recording.updateMany({
+        where: {
+          id: persistedStartAttempt.id,
+          recordingAttemptId: persistedStartAttempt.recordingAttemptId,
+          status: "STARTING",
+        },
+        data: {
+          status: "FAILED",
+          endedAt: new Date(),
+          errorMessage: message,
+        },
+      });
+    }
     appendRecordingDebugEvent({
       sessionId,
       source: "recording-control",

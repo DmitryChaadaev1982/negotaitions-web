@@ -8,6 +8,7 @@ import {
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
 import {
+  buildAttemptFencedStopRelayDispatchContext,
   isBrowserStopRelayEnabledForMode,
   isRelayEligibleParticipantType,
   isRelayStoppableRecordingStatus,
@@ -22,6 +23,32 @@ test("relay eligibility allows facilitator, participant, observer", () => {
   assert.equal(isRelayEligibleParticipantType(ParticipantType.FACILITATOR), true);
   assert.equal(isRelayEligibleParticipantType(ParticipantType.PARTICIPANT), true);
   assert.equal(isRelayEligibleParticipantType(ParticipantType.OBSERVER), true);
+});
+
+test("browser fallback after facilitator reassignment preserves recording attempt fencing", () => {
+  const recordingAttemptId = "attempt-after-facilitator-reassignment";
+  for (const participant of [
+    {
+      id: "current-facilitator",
+      type: ParticipantType.FACILITATOR,
+      userId: "facilitator-user",
+    },
+    {
+      id: "fallback-participant",
+      type: ParticipantType.PARTICIPANT,
+      userId: "participant-user",
+    },
+  ]) {
+    const context = buildAttemptFencedStopRelayDispatchContext({
+      sessionId: "standalone-session",
+      operationId: `stop:recording:${recordingAttemptId}:room_facilitator_finish`,
+      recordingAttemptId,
+      participant,
+    });
+
+    assert.equal(context.recordingAttemptId, recordingAttemptId);
+    assert.equal(context.requestId?.includes(recordingAttemptId), true);
+  }
 });
 
 test("browser stop relay follows configured server-stop mode", () => {

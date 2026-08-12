@@ -10,6 +10,7 @@ import { EgressClient } from "livekit-server-sdk";
 import {
   ExternalService,
   RecordingStatus,
+  RecordingType,
   type Recording,
   type Session,
 } from "@/app/generated/prisma/client";
@@ -32,6 +33,7 @@ import {
   headObject,
 } from "@/lib/storage/s3";
 import { isLiveKitRecordingProvider } from "@/lib/recording/provider";
+import { admitRecordingAttempt } from "@/lib/recording/recording-attempt-fencing";
 
 export function createEgressClient() {
   const config = getLiveKitConfig();
@@ -80,6 +82,25 @@ function buildS3Upload() {
 export async function startAudioOnlyRoomRecording(
   session: Pick<Session, "id" | "livekitRoomName">,
 ) {
+  const admission = await prisma.$transaction((tx) =>
+    admitRecordingAttempt(tx, {
+      sessionId: session.id,
+      provider: "LIVEKIT_CLOUD",
+      recordingType: RecordingType.AUDIO_ONLY,
+    }),
+  );
+  const attemptRef = {
+    id: admission.recordingId,
+    sessionId: session.id,
+    recordingAttemptId: admission.recordingAttemptId,
+  };
+  if (!admission.admitted) {
+    const recording = await prisma.recording.findUniqueOrThrow({
+      where: { id: admission.recordingId },
+    });
+    return { ok: true as const, recording };
+  }
+
   if (isRecordingMockMode()) {
     const simulatedError = getMockExternalServiceError();
 
@@ -97,7 +118,7 @@ export async function startAudioOnlyRoomRecording(
         { sessionId: session.id, context: "start" },
       );
 
-      const recording = await upsertRecording(session.id, {
+      const recording = await updateRecordingForAttempt(attemptRef, {
         status: RecordingStatus.FAILED,
         errorMessage: classified.message,
         startedAt: new Date(),
@@ -107,7 +128,7 @@ export async function startAudioOnlyRoomRecording(
     }
 
     const timestamp = Date.now();
-    const recording = await upsertRecording(session.id, {
+    const recording = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.RECORDING,
       egressId: `mock-egress-${session.id}`,
       fileKey: null,
@@ -131,7 +152,7 @@ export async function startAudioOnlyRoomRecording(
       { sessionId: session.id, context: "start" },
     );
 
-    const recording = await upsertRecording(session.id, {
+    const recording = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.FAILED,
       errorMessage: classified.message,
     });
@@ -146,7 +167,7 @@ export async function startAudioOnlyRoomRecording(
       { sessionId: session.id, context: "start" },
     );
 
-    const recording = await upsertRecording(session.id, {
+    const recording = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.FAILED,
       errorMessage: classified.message,
     });
@@ -161,7 +182,7 @@ export async function startAudioOnlyRoomRecording(
   const startedAt = new Date();
   const targetBitrateKbps = getAudioRecordingTargetBitrateKbps();
 
-  await upsertRecording(session.id, {
+  await updateRecordingForAttempt(attemptRef, {
     status: RecordingStatus.STARTING,
     egressId: null,
     fileKey,
@@ -196,7 +217,7 @@ export async function startAudioOnlyRoomRecording(
       },
     );
 
-    const recording = await upsertRecording(session.id, {
+    const recording = await updateRecordingForAttempt(attemptRef, {
       status: mapEgressStatusToRecordingStatus(egressInfo.status),
       egressId: egressInfo.egressId,
       fileKey,
@@ -217,7 +238,7 @@ export async function startAudioOnlyRoomRecording(
       { sessionId: session.id, context: "start" },
     );
 
-    const recording = await upsertRecording(session.id, {
+    const recording = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.FAILED,
       errorMessage: classified.message,
     });
@@ -229,7 +250,13 @@ export async function startAudioOnlyRoomRecording(
 export async function stopRecording(
   recording: Pick<
     Recording,
-    "id" | "sessionId" | "egressId" | "startedAt" | "provider" | "status"
+    | "id"
+    | "sessionId"
+    | "recordingAttemptId"
+    | "egressId"
+    | "startedAt"
+    | "provider"
+    | "status"
   >,
 ) {
   if (!isLiveKitRecordingProvider(recording.provider)) {
@@ -242,6 +269,11 @@ export async function stopRecording(
       warning: "Skipped LiveKit stop for non-LiveKit recording provider.",
     };
   }
+  const attemptRef = {
+    id: recording.id,
+    sessionId: recording.sessionId,
+    recordingAttemptId: recording.recordingAttemptId,
+  };
 
   if (isRecordingMockMode()) {
     const simulatedError = getMockExternalServiceError();
@@ -256,7 +288,7 @@ export async function stopRecording(
           context: "stop",
         },
       );
-      const updated = await upsertRecording(recording.sessionId, {
+      const updated = await updateRecordingForAttempt(attemptRef, {
         status: RecordingStatus.PROCESSING,
         endedAt: new Date(),
         errorMessage: classified.message,
@@ -266,7 +298,7 @@ export async function stopRecording(
     }
 
     const timestamp = Date.now();
-    const updated = await upsertRecording(recording.sessionId, {
+    const updated = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.COMPLETED,
       egressId: recording.egressId,
       fileKey: buildRecordingFileKey(recording.sessionId, timestamp),
@@ -280,7 +312,7 @@ export async function stopRecording(
   }
 
   if (!recording.egressId) {
-    const updated = await upsertRecording(recording.sessionId, {
+    const updated = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.STOPPED,
       endedAt: new Date(),
     });
@@ -292,7 +324,7 @@ export async function stopRecording(
     const egressInfo = await egressClient.stopEgress(recording.egressId);
     const endedAt = new Date();
 
-    const updated = await upsertRecording(recording.sessionId, {
+    const updated = await updateRecordingForAttempt(attemptRef, {
       status: mapEgressStatusToRecordingStatus(egressInfo.status),
       endedAt,
       errorMessage: egressInfo.error ? String(egressInfo.error) : null,
@@ -314,7 +346,7 @@ export async function stopRecording(
       },
     );
 
-    const updated = await upsertRecording(recording.sessionId, {
+    const updated = await updateRecordingForAttempt(attemptRef, {
       status: RecordingStatus.PROCESSING,
       endedAt: new Date(),
       errorMessage: classified.message,
@@ -329,6 +361,7 @@ export async function refreshRecordingStatus(
     Recording,
     | "id"
     | "sessionId"
+    | "recordingAttemptId"
     | "egressId"
     | "fileKey"
     | "status"
@@ -412,20 +445,30 @@ export async function refreshRecordingStatus(
     }
   }
 
-  const updated = await prisma.recording.update({
-    where: { id: recording.id },
+  const mutation = await prisma.recording.updateMany({
+    where: {
+      id: recording.id,
+      recordingAttemptId: recording.recordingAttemptId,
+      status: recording.status,
+    },
     data: {
       status: nextStatus,
       errorMessage,
       ...(originalSizeBytes !== undefined ? { originalSizeBytes } : {}),
     },
   });
-
-  return updated;
+  if (mutation.count !== 1) {
+    return prisma.recording.findUniqueOrThrow({ where: { id: recording.id } });
+  }
+  return prisma.recording.findUniqueOrThrow({ where: { id: recording.id } });
 }
 
-async function upsertRecording(
-  sessionId: string,
+async function updateRecordingForAttempt(
+  recording: {
+    id: string;
+    sessionId: string;
+    recordingAttemptId: string | null;
+  },
   data: {
     status?: RecordingStatus;
     egressId?: string | null;
@@ -437,21 +480,18 @@ async function upsertRecording(
     errorMessage?: string | null;
   },
 ) {
-  return prisma.recording.upsert({
-    where: { sessionId },
-    create: {
-      sessionId,
-      status: data.status ?? RecordingStatus.NOT_STARTED,
-      egressId: data.egressId ?? undefined,
-      fileKey: data.fileKey ?? undefined,
-      fileName: data.fileName ?? undefined,
-      mimeType: data.mimeType ?? undefined,
-      startedAt: data.startedAt ?? undefined,
-      endedAt: data.endedAt ?? undefined,
-      errorMessage: data.errorMessage ?? undefined,
+  const mutation = await prisma.recording.updateMany({
+    where: {
+      id: recording.id,
+      sessionId: recording.sessionId,
+      recordingAttemptId: recording.recordingAttemptId,
     },
-    update: data,
+    data,
   });
+  if (mutation.count !== 1) {
+    throw new Error("Recording attempt changed before provider result persistence.");
+  }
+  return prisma.recording.findUniqueOrThrow({ where: { id: recording.id } });
 }
 
 export async function getSessionRecording(sessionId: string) {

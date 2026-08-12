@@ -184,6 +184,156 @@ The existing Yandex POC production database has two legitimate historical migrat
 
 The overlay must refuse empty, development, or mismatched databases. Do not manually edit `_prisma_migrations` and do not use `prisma migrate resolve` for this repair.
 
+## Stage 3.13E deployment preflight and release order
+
+The active `neg-conf-main-room` Voximplant scenario is already RC4:
+
+- build marker:
+  `main-room-recording-reconciliation-2026-08-12-rc4`;
+- exported source SHA256:
+  `040e7c5557c3156133a48556da1a6b86976f058fb969f111d9c673c9a2368553`;
+- local backup artifact:
+  `artifacts/voximplant-backups/2026-08-12-rc4-active/`.
+
+Do not upload or replace the Voximplant scenario during this application
+rollout. The server rollout consists of the guarded database migration and the
+application release only.
+
+Run the following read-only checks immediately before stopping the old
+application. Deployment is blocked if any query returns a row.
+
+Active recording/provider work:
+
+```sql
+SELECT r."id", r."sessionId", r."provider", r."status", r."updatedAt"
+FROM "Recording" AS r
+WHERE r."status" IN ('STARTING', 'RECORDING', 'PAUSED')
+   OR (
+     r."status" = 'PROCESSING'
+     AND COALESCE(UPPER(r."provider"), '') LIKE '%LIVEKIT%'
+   );
+```
+
+`PROCESSING` is included only for the LiveKit path because
+LiveKit maps provider `EGRESS_ENDING` to that state. Voximplant stop relay treats
+`PROCESSING`, `STOPPED`, `COMPLETED`, and `FAILED` as terminal for provider-stop
+delivery. A normal historical `STOPPED` row is therefore not a blocker.
+For a legacy row with a null/unknown provider, resolve the effective provider
+from the deployed `VIDEO_PROVIDER`; classify `PROCESSING` as blocking only when
+that effective provider is LiveKit.
+Voximplant's transient `stopping` provider state is represented by an active
+`SessionRecordingStopOperation`, not by a `RecordingStatus.STOPPING` enum value.
+
+Undelivered active server-stop work:
+
+```sql
+SELECT
+  o."id",
+  o."sessionId",
+  o."recordingId",
+  o."operationId",
+  o."state",
+  o."nextRetryAt",
+  r."status" AS "recordingStatus"
+FROM "SessionRecordingStopOperation" AS o
+JOIN "Recording" AS r ON r."id" = o."recordingId"
+WHERE o."deliveredAt" IS NULL
+  AND (
+    o."state" IN ('PENDING', 'DELIVERING')
+    OR (o."state" = 'FAILED' AND o."nextRetryAt" IS NOT NULL)
+  )
+  AND r."status" NOT IN ('PROCESSING', 'STOPPED', 'COMPLETED', 'FAILED');
+```
+
+An undelivered operation coupled to one of those terminal recording states is
+historical/reconcilable bookkeeping, not evidence that a provider recorder is
+still running. Review it separately, but do not block deployment on that fact
+alone.
+
+Active raw transcription or transcript enhancement:
+
+```sql
+SELECT t."id", t."sessionId", t."status", t."updatedAt"
+FROM "Transcript" AS t
+WHERE t."status" IN (
+  'QUEUED',
+  'DOWNLOADING_RECORDING',
+  'COMPRESSING_AUDIO',
+  'TRANSCRIBING'
+)
+OR (
+  t."processingMetadata" #>> '{transcriptEnhancement,status}'
+    IN ('RUNNING', 'IN_PROGRESS')
+  AND (
+    t."processingMetadata" #>> '{transcriptEnhancement,startedAt}' IS NULL
+    OR (
+      t."processingMetadata" #>> '{transcriptEnhancement,startedAt}'
+    )::timestamptz > NOW() - INTERVAL '10 minutes'
+  )
+);
+```
+
+The ten-minute enhancement predicate matches
+`ENHANCEMENT_RUNNING_STALE_MS`. `COMPLETED`, `FAILED`, `PARTIAL`, and `SKIPPED`
+enhancement outcomes are terminal and do not block.
+
+Active AI analysis execution:
+
+```sql
+SELECT
+  a."id",
+  a."sessionId",
+  a."status",
+  a."runToken",
+  a."leaseExpiresAt",
+  a."updatedAt"
+FROM "AiAnalysis" AS a
+WHERE a."status" IN ('QUEUED', 'ANALYZING')
+  AND (
+    (
+      a."runToken" IS NOT NULL
+      AND a."leaseExpiresAt" IS NOT NULL
+      AND a."leaseExpiresAt" > NOW()
+    )
+    OR (
+      (a."runToken" IS NULL OR a."leaseExpiresAt" IS NULL)
+      AND a."updatedAt" > NOW() - INTERVAL '30 minutes'
+    )
+  );
+```
+
+The 30-minute legacy fallback matches the default
+`AI_ANALYSIS_LEGACY_STALE_AFTER_MS`; substitute the deployed configured
+duration if production overrides that value. Expired leased work and stale
+legacy rows are reclaimable, not currently executing work.
+
+Exact release order:
+
+1. Verify branch/SHA, backups, and the preserved RC4 source/hash.
+2. Run the read-only transient-work queries above; require zero blocking rows.
+3. Stop the old application process so no old and new runtime overlap.
+4. Stage the reviewed application release and install dependencies as required.
+5. Run `npm run prisma:production:status`.
+6. Run
+   `npm run prisma:production:deploy -- --confirm-legacy-production-history`.
+7. Run `npm run prisma:production:status` again and require up-to-date status.
+8. Generate Prisma client and apply/check runtime permission normalization.
+9. Build/start the new application.
+10. Verify health, Session Debrief return/close behavior, and one disposable
+    room/recording/materials canary. Confirm the active Vox marker remains RC4.
+
+The migration is additive. Application rollback leaves it applied and leaves
+RC4 active. Stop the new runtime, repeat the transient-work preflight, restore
+application `601704bafde7da219fe1f1e37737e7769a09a6f9`, generate its Prisma
+client/build as required, normalize permissions, start it, and run the rollback
+canary. Do not reverse the migration or rewrite migration history.
+
+No exact RC3 source exists in repository files or Git history, and Voximplant's
+scenario API exports only the current source rather than version history. This
+does not block the rollback above because RC4 retains the RC2 protocol used by
+application `601704...`. It would be a rollback risk only if an RC3 scenario
+restore became mandatory; no exact RC3 artifact is currently recoverable.
+
 ## Post-Deploy Checks
 
 - Verify service health via admin diagnostics and endpoint checks.

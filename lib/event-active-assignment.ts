@@ -1,18 +1,33 @@
-import { NegotiationState, SessionStatus } from "@/app/generated/prisma/client";
+import {
+  NegotiationState,
+  type Prisma,
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 export const ACTIVE_SESSION_ASSIGNMENT_SESSION_WHERE = {
   deletedAt: null,
   closedByEventAt: null,
-  negotiationState: { not: NegotiationState.FINISHED },
-  status: { not: SessionStatus.COMPLETED },
-} as const;
+  NOT: [
+    {
+      status: SessionStatus.COMPLETED,
+      roomLifecycle: RoomLifecycle.CLOSED,
+    },
+    {
+      status: SessionStatus.COMPLETED,
+      roomLifecycle: null,
+      negotiationState: NegotiationState.FINISHED,
+    },
+  ],
+} satisfies Prisma.SessionWhereInput;
 
 export async function getActiveSessionAssignment(
   eventParticipantId: string,
   eventId: string,
 ) {
-  return prisma.sessionParticipant.findFirst({
+  const assignments = await prisma.sessionParticipant.findMany({
     where: {
       eventParticipantId,
       session: {
@@ -27,7 +42,16 @@ export async function getActiveSessionAssignment(
           title: true,
           roomLabel: true,
           sequenceNumber: true,
+          status: true,
           negotiationState: true,
+          roomLifecycle: true,
+          closedByEventAt: true,
+          deletedAt: true,
+          event: {
+            select: {
+              status: true,
+            },
+          },
         },
       },
       sessionRole: {
@@ -40,18 +64,26 @@ export async function getActiveSessionAssignment(
       createdAt: "desc",
     },
   });
+
+  return (
+    assignments.find((assignment) =>
+      isSessionActiveForAssignment(assignment.session),
+    ) ?? null
+  );
 }
 
 export function isSessionActiveForAssignment(session: {
   deletedAt?: Date | null;
   closedByEventAt?: Date | null;
   negotiationState: NegotiationState | string;
-  status?: SessionStatus | string;
+  status: SessionStatus;
+  roomLifecycle: RoomLifecycle | null;
+  event?: {
+    status?: string | null;
+  } | null;
 }) {
-  return (
-    !session.deletedAt &&
-    !session.closedByEventAt &&
-    session.negotiationState !== NegotiationState.FINISHED &&
-    session.status !== SessionStatus.COMPLETED
-  );
+  return isSessionActiveForRoom({
+    ...session,
+    closedByEventAt: session.closedByEventAt ?? null,
+  });
 }

@@ -16,6 +16,18 @@ export const TERMINAL_STOP_RETRY_ERROR_CLASSES = [
   "VOXIMPLANT_SERVER_CONTROL_TRANSPORT_RESPONSE_INVALID_TERMINAL",
 ] as const;
 
+export function shouldDeferStartingStopForMissingProviderId(input: {
+  provider: "livekit" | "voximplant";
+  recordingStatus: string;
+  egressId: string | null;
+}) {
+  return (
+    input.provider === "livekit" &&
+    input.recordingStatus === "STARTING" &&
+    !input.egressId
+  );
+}
+
 export function isTerminalStopRetryErrorClass(value: string | null | undefined) {
   if (!value) return false;
   return TERMINAL_STOP_RETRY_ERROR_CLASSES.includes(

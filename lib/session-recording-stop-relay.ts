@@ -14,6 +14,7 @@ import { buildVoximplantRecordingDispatch } from "@/lib/voximplant/recording-dis
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
 import { getVoximplantServerStopConfig } from "@/lib/voximplant/server-stop-config";
 import {
+  buildAttemptFencedStopRelayDispatchContext,
   isBrowserStopRelayEnabledForMode,
   isRelayEligibleParticipantType,
   isRelayStoppableRecordingStatus,
@@ -31,13 +32,6 @@ function isRelayFallbackErrorClass(value: string | null) {
     value.startsWith("VOXIMPLANT_SERVER_CONTROL_") ||
     value === "VOXIMPLANT_BROWSER_RELAY_REQUIRED"
   );
-}
-
-function toSignedControllerRole(participantType: ParticipantType): string {
-  if (participantType === ParticipantType.FACILITATOR) return "facilitator";
-  if (participantType === ParticipantType.OBSERVER) return "observer";
-  if (participantType === ParticipantType.PARTICIPANT) return "participant";
-  return "unknown";
 }
 
 function isRelayWindowOpen(session: {
@@ -207,6 +201,7 @@ export async function claimStopRelayDispatch(params: {
         select: {
           status: true,
           provider: true,
+          recordingAttemptId: true,
         },
       },
     },
@@ -256,15 +251,15 @@ export async function claimStopRelayDispatch(params: {
     return null;
   }
 
-  const dispatch = await buildVoximplantRecordingDispatch("stop", {
-    sessionId: params.sessionId,
-    participantId: params.participant.id,
-    controllerUserId:
-      params.participant.userId ?? `session_participant:${params.participant.id}`,
-    controllerRole: toSignedControllerRole(params.participant.type),
-    canControlRecording: true,
-    requestId: candidate.operationId,
-  });
+  const dispatch = await buildVoximplantRecordingDispatch(
+    "stop",
+    buildAttemptFencedStopRelayDispatchContext({
+      sessionId: params.sessionId,
+      operationId: candidate.operationId,
+      recordingAttemptId: candidate.recording.recordingAttemptId,
+      participant: params.participant,
+    }),
+  );
 
   await prisma.sessionRecordingStopOperation.update({
     where: { id: candidate.id },

@@ -1,8 +1,10 @@
 import type {
   EventParticipant,
+  NegotiationState,
   ParticipantType,
   RoomLifecycle,
   SessionParticipant,
+  SessionStatus,
   TrainingEvent,
 } from "@/app/generated/prisma/client";
 import {
@@ -40,7 +42,10 @@ import {
   isRoomAccessAllowed,
   type RoomAccessDecisionOutput,
 } from "@/lib/session-room-access";
-import { getRecordingDisplayState } from "@/lib/recording-display-state";
+import {
+  getRecordingDisplayState,
+  type RecordingDisplayState,
+} from "@/lib/recording-display-state";
 import {
   expirePendingEventMediaControlCommands,
   getPendingEventMediaControlCommands,
@@ -108,7 +113,7 @@ export type EventStateSession = {
   createdAt: string;
   recordingStatus: string | null;
   recordingStopOperationState: string | null;
-  recordingDisplayState: "active" | "paused" | "stopping" | "completed" | "failed" | "none";
+  recordingDisplayState: RecordingDisplayState;
   roomLifecycle: RoomLifecycle | null;
   closeReason: string | null;
   closedByEventAt: string | null;
@@ -391,6 +396,7 @@ export async function buildEventState(
               sequenceNumber: true,
               negotiationState: true,
               status: true,
+              roomLifecycle: true,
               deletedAt: true,
               closedByEventAt: true,
               createdAt: true,
@@ -743,8 +749,8 @@ function mapEventSession({
     sequenceNumber: number | null;
     snapshotCaseTitle: string;
     snapshotCaseLanguage: string;
-    status: string;
-    negotiationState: string;
+    status: SessionStatus;
+    negotiationState: NegotiationState;
     preparationDurationSeconds: number;
     durationSeconds: number;
     createdAt: Date;

@@ -5,6 +5,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 type HttpRequestCallback = (result: { code?: number; text?: string } | null) => void;
+type HttpRequestResult = Parameters<HttpRequestCallback>[0];
 type RuntimeEventListener = (event?: Record<string, unknown>) => void;
 
 type ScenarioRuntime = {
@@ -72,6 +73,7 @@ function loadScenarioRuntime(options?: LoadScenarioRuntimeOptions): ScenarioRunt
       Paused: "Paused",
       Resumed: "Resumed",
       Stopped: "Stopped",
+      Error: "Error",
     },
   };
 
@@ -215,20 +217,69 @@ function buildSignedRecordingControlStartMessage(
   });
 }
 
+function buildSignedRecordingControlMessage(
+  runtime: ScenarioRuntime,
+  secret: string,
+  input: {
+    action: "start" | "pause" | "resume" | "stop" | "status";
+    requestId: string;
+    nonce: string;
+    sessionId: string;
+    recordingAttemptId?: string;
+  },
+) {
+  const protocolVersion = input.recordingAttemptId
+    ? String(runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION)
+    : String(runtime.context.RECORDING_CONTROL_PROTOCOL_VERSION);
+  const issuedAt = Math.floor(Date.now() / 1000) - 5;
+  const claims = {
+    protocolVersion,
+    issuedAt,
+    expiresAt: issuedAt + 120,
+    nonce: input.nonce,
+    action: input.action,
+    requestId: input.requestId,
+    ...(input.recordingAttemptId
+      ? { recordingAttemptId: input.recordingAttemptId }
+      : {}),
+    sessionId: input.sessionId,
+    conferenceName: `negotiation-${input.sessionId}`,
+    participantId: "participant-fencing-1",
+    controllerUserId: "user-fencing-1",
+    controllerRole: "facilitator",
+    canControlRecording: true,
+    webhookBaseUrl: "https://local.negotaitions.ru",
+  };
+  const buildCanonicalPayload = runtime.context
+    .buildRecordingControlCanonicalPayload as (
+    claimsValue: Record<string, unknown>,
+  ) => string;
+  const computeSignature = runtime.context
+    .computeRecordingControlSignature as (
+    canonicalPayload: string,
+    secretValue: string,
+  ) => string | null;
+  const signature = computeSignature(buildCanonicalPayload(claims), secret);
+  assert.ok(signature);
+  return JSON.stringify({
+    type: "recording_control",
+    protocolVersion,
+    claims,
+    signature,
+  });
+}
+
 test("registration watchdog times out stuck in-flight attempt and blocks duplicate dispatch", async () => {
   const runtime = loadScenarioRuntime();
   setupRegistrationContext(runtime);
   runtime.context.SERVER_STOP_REGISTRATION_ATTEMPT_TIMEOUT_MS = 20;
 
   let dispatchCount = 0;
-  const pendingCallbacks: HttpRequestCallback[] = [];
-  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = (
-    _url: string,
-    _options: unknown,
-    callback: HttpRequestCallback,
-  ) => {
+  let pendingRequestCount = 0;
+  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = () => {
     dispatchCount += 1;
-    pendingCallbacks.push(callback);
+    pendingRequestCount += 1;
+    return new Promise<HttpRequestResult>(() => {});
   };
 
   const register = runtime.context.registerServerStopControlChannel as (
@@ -250,7 +301,7 @@ test("registration watchdog times out stuck in-flight attempt and blocks duplica
   assert.equal(duplicateWhileInFlight.pending, true);
   assert.equal(duplicateWhileInFlight.state, "IN_FLIGHT");
   assert.equal(dispatchCount, 1);
-  assert.equal(pendingCallbacks.length, 1);
+  assert.equal(pendingRequestCount, 1);
 
   await sleep(40);
 
@@ -268,14 +319,11 @@ test("late registration callback after watchdog timeout is ignored", async () =>
   setupRegistrationContext(runtime);
   runtime.context.SERVER_STOP_REGISTRATION_ATTEMPT_TIMEOUT_MS = 20;
 
-  const pendingCallbacks: HttpRequestCallback[] = [];
-  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = (
-    _url: string,
-    _options: unknown,
-    callback: HttpRequestCallback,
-  ) => {
-    pendingCallbacks.push(callback);
-  };
+  let resolveRequest!: (result: HttpRequestResult) => void;
+  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = () =>
+    new Promise<HttpRequestResult>((resolveRequestPromise) => {
+      resolveRequest = resolveRequestPromise;
+    });
 
   const register = runtime.context.registerServerStopControlChannel as (
     claims: ReturnType<typeof buildBoundClaims>,
@@ -287,7 +335,7 @@ test("late registration callback after watchdog timeout is ignored", async () =>
   await sleep(40);
 
   const nextRetryAtMsBefore = Number(registrationState.nextRetryAtMs);
-  pendingCallbacks[0]?.({
+  resolveRequest({
     code: 200,
     text: JSON.stringify({
       accepted: true,
@@ -295,6 +343,7 @@ test("late registration callback after watchdog timeout is ignored", async () =>
       stateScope: "SESSION_SCOPED",
     }),
   });
+  await sleep(0);
 
   assert.equal(registrationState.state, "FAILED_RETRYABLE");
   assert.equal(registrationState.acknowledgedAtMs, null);
@@ -306,14 +355,11 @@ test("callback before timeout acknowledges and clears watchdog", async () => {
   setupRegistrationContext(runtime);
   runtime.context.SERVER_STOP_REGISTRATION_ATTEMPT_TIMEOUT_MS = 100;
 
-  const pendingCallbacks: HttpRequestCallback[] = [];
-  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = (
-    _url: string,
-    _options: unknown,
-    callback: HttpRequestCallback,
-  ) => {
-    pendingCallbacks.push(callback);
-  };
+  let resolveRequest!: (result: HttpRequestResult) => void;
+  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = () =>
+    new Promise<HttpRequestResult>((resolveRequestPromise) => {
+      resolveRequest = resolveRequestPromise;
+    });
 
   const register = runtime.context.registerServerStopControlChannel as (
     claims: ReturnType<typeof buildBoundClaims>,
@@ -324,7 +370,7 @@ test("callback before timeout acknowledges and clears watchdog", async () => {
     .SERVER_STOP_CONTROL_CHANNEL_REGISTRATION as Record<string, unknown>;
   assert.notEqual(registrationState.inFlightWatchdogTimerId, null);
 
-  pendingCallbacks[0]?.({
+  resolveRequest({
     code: 200,
     text: JSON.stringify({
       accepted: true,
@@ -332,6 +378,7 @@ test("callback before timeout acknowledges and clears watchdog", async () => {
       stateScope: "SESSION_SCOPED",
     }),
   });
+  await sleep(0);
 
   assert.equal(registrationState.state, "ACKNOWLEDGED");
   assert.equal(registrationState.inFlightAttempt, 0);
@@ -1350,4 +1397,650 @@ test("provider relay wrapper fails closed when recording control secret is unava
   assert.equal(createRecorderCalls, 0);
   assert.equal(runtime.context.RECORDING_CONTROL_BINDING, null);
   assert.equal(registrationAttempts, 0);
+});
+
+test("late recorder A events stay tagged A and cannot mutate current recorder B", async () => {
+  const listenerSets: Array<Record<string, RuntimeEventListener>> = [];
+  const stopCalls: number[] = [];
+  const httpBodies: Array<Record<string, unknown>> = [];
+  let recorderIndex = 0;
+  const runtime = loadScenarioRuntime({
+    createRecorder: () => {
+      const index = recorderIndex++;
+      const listeners: Record<string, RuntimeEventListener> = {};
+      listenerSets[index] = listeners;
+      stopCalls[index] = 0;
+      return {
+        addEventListener: (
+          eventName: string,
+          handler: RuntimeEventListener,
+        ) => {
+          listeners[eventName] = handler;
+        },
+        stop: () => {
+          stopCalls[index] += 1;
+        },
+        mute: () => {},
+      };
+    },
+  });
+  runtime.context.conference = {
+    sendMediaTo: () => {},
+  };
+  runtime.context.WEBHOOK_SECRET = "webhook-secret-attempt-events-0123456789";
+  runtime.context.RECORDING_CONTROL_BINDING = {
+    sessionId: "session-attempt-events",
+    conferenceName: "negotiation-session-attempt-events",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    providerSessionId: "provider-session-1",
+  };
+  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = (
+    _url: string,
+    options: { postData?: string },
+  ) => {
+    if (options.postData) {
+      httpBodies.push(JSON.parse(options.postData) as Record<string, unknown>);
+    }
+    return Promise.resolve({ code: 200, text: JSON.stringify({ ok: true }) });
+  };
+  runtime.context.STARTING_TIMEOUT_MS = 5;
+
+  const sentA: string[] = [];
+  const sentB: string[] = [];
+  const callA = { sendMessage: (message: string) => sentA.push(message) };
+  const callB = { sendMessage: (message: string) => sentB.push(message) };
+  const startRecording = runtime.context.startRecording as (
+    call: Record<string, unknown>,
+    requestId: string,
+  ) => void;
+
+  runtime.context.currentRecordingContext = {
+    protocolVersion: runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+    recordingAttemptId: "attempt-a",
+    sessionId: "session-attempt-events",
+    conferenceName: "negotiation-session-attempt-events",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    participantId: "participant-a",
+    startRequestId: "start-a",
+    stopRequestId: null,
+  };
+  startRecording(callA, "start-a");
+  const contextA = runtime.context.currentRecordingContext as Record<
+    string,
+    unknown
+  >;
+  const recorderA = contextA.recorder;
+  await sleep(20);
+
+  assert.equal(runtime.context.recordingState, "error");
+  assert.equal(stopCalls[0], 1);
+  assert.equal(contextA.cleanupRequested, true);
+  assert.equal(contextA.recorder, recorderA);
+
+  runtime.context.currentRecordingContext = {
+    protocolVersion: runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+    recordingAttemptId: "attempt-b",
+    sessionId: "session-attempt-events",
+    conferenceName: "negotiation-session-attempt-events",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    participantId: "participant-b",
+    startRequestId: "start-b",
+    stopRequestId: null,
+  };
+  const bodiesBeforeB = httpBodies.length;
+  startRecording(callB, "start-b");
+  listenerSets[1]?.Started?.({
+    id: "provider-b",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/b.flac",
+  });
+  await sleep(0);
+
+  const bStartBodies = httpBodies.slice(bodiesBeforeB);
+  const bStarting = bStartBodies.find((body) => body.status === "starting");
+  const bRecording = bStartBodies.find((body) => body.status === "recording");
+  assert.ok(bStarting);
+  assert.equal("startedAt" in bStarting, false);
+  assert.equal(typeof bRecording?.startedAt, "string");
+
+  const contextB = runtime.context.currentRecordingContext as Record<
+    string,
+    unknown
+  >;
+  const recorderB = contextB.recorder;
+  const expectedBState = {
+    state: runtime.context.recordingState,
+    recorder: runtime.context.recorder,
+    context: runtime.context.currentRecordingContext,
+    recordingUrl: runtime.context.recordingUrl,
+    recordingId: runtime.context.recordingId,
+    objectKey: runtime.context.objectKey,
+  };
+  assert.equal(expectedBState.state, "recording");
+  const sentBBeforeLateA = [...sentB];
+
+  httpBodies.length = 0;
+  listenerSets[0]?.Started?.({
+    id: "provider-a",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a.flac",
+  });
+  await sleep(0);
+  const lateStarted = httpBodies.find((body) => body.status === "recording");
+  assert.equal(lateStarted, undefined);
+  assert.equal(contextA.recordingId, "provider-a");
+  assert.equal(
+    contextA.recordingUrl,
+    "https://storage.yandexcloud.net/negotiation-room/audio/a.flac",
+  );
+  assert.equal(stopCalls[0], 2);
+
+  listenerSets[0]?.Started?.({
+    id: "provider-a",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a.flac",
+  });
+  await sleep(0);
+  assert.equal(stopCalls[0], 2, "cleanup retries must remain bounded");
+  assert.equal(
+    httpBodies.some((body) => body.status === "recording"),
+    false,
+  );
+
+  httpBodies.length = 0;
+  listenerSets[0]?.Stopped?.({
+    id: "provider-a",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a.flac",
+  });
+  await sleep(0);
+  const lateStopped = httpBodies.find((body) => body.status === "stopped");
+  assert.equal(lateStopped?.recordingAttemptId, "attempt-a");
+  assert.equal(lateStopped?.recordingId, "provider-a");
+
+  httpBodies.length = 0;
+  listenerSets[0]?.Error?.({
+    code: "LATE_A_ERROR",
+    message: "late recorder A error",
+  });
+  await sleep(0);
+  const lateError = httpBodies.find((body) => body.status === "error");
+  assert.equal(lateError?.recordingAttemptId, "attempt-a");
+  assert.equal(lateError?.errorCode, "LATE_A_ERROR");
+
+  assert.equal(runtime.context.recordingState, expectedBState.state);
+  assert.equal(runtime.context.recorder, recorderB);
+  assert.equal(runtime.context.recorder, expectedBState.recorder);
+  assert.equal(runtime.context.currentRecordingContext, contextB);
+  assert.equal(
+    runtime.context.currentRecordingContext,
+    expectedBState.context,
+  );
+  assert.equal(runtime.context.recordingUrl, expectedBState.recordingUrl);
+  assert.equal(runtime.context.recordingId, expectedBState.recordingId);
+  assert.equal(runtime.context.objectKey, expectedBState.objectKey);
+  assert.equal(contextB.recordingAttemptId, "attempt-b");
+  assert.equal(contextB.state, "recording");
+  assert.deepEqual(sentB, sentBBeforeLateA);
+  const lateAttemptAStatuses = readStatusMessages(sentA);
+  assert.equal(
+    lateAttemptAStatuses.some((status) => status.status === "recording"),
+    false,
+  );
+  assert.equal(
+    lateAttemptAStatuses.some(
+      (status) =>
+        status.status === "stopped" &&
+        status.recordingAttemptId === "attempt-a",
+    ),
+    true,
+  );
+  assert.equal(
+    lateAttemptAStatuses.some(
+      (status) =>
+        status.status === "error" &&
+        status.recordingAttemptId === "attempt-a",
+    ),
+    true,
+  );
+  assert.equal(sentA.length > 0, true);
+  assert.equal(sentB.length > 0, true);
+});
+
+test("late Started after timeout without B stays non-authoritative until stopped recovery", async () => {
+  const listeners: Record<string, RuntimeEventListener> = {};
+  const httpBodies: Array<Record<string, unknown>> = [];
+  let stopCalls = 0;
+  const runtime = loadScenarioRuntime({
+    createRecorder: () => ({
+      addEventListener: (
+        eventName: string,
+        handler: RuntimeEventListener,
+      ) => {
+        listeners[eventName] = handler;
+      },
+      stop: () => {
+        stopCalls += 1;
+      },
+      mute: () => {},
+    }),
+  });
+  runtime.context.conference = { sendMediaTo: () => {} };
+  runtime.context.WEBHOOK_SECRET =
+    "webhook-no-b-cleanup-secret-0123456789";
+  runtime.context.RECORDING_CONTROL_BINDING = {
+    sessionId: "session-no-b-cleanup",
+    conferenceName: "negotiation-session-no-b-cleanup",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    providerSessionId: "provider-session-1",
+  };
+  (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync = (
+    _url: string,
+    options: { postData?: string },
+  ) => {
+    if (options.postData) {
+      httpBodies.push(JSON.parse(options.postData) as Record<string, unknown>);
+    }
+    return Promise.resolve({ code: 200, text: JSON.stringify({ ok: true }) });
+  };
+  runtime.context.STARTING_TIMEOUT_MS = 5;
+  runtime.context.currentRecordingContext = {
+    protocolVersion: runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+    recordingAttemptId: "attempt-a-no-b",
+    sessionId: "session-no-b-cleanup",
+    conferenceName: "negotiation-session-no-b-cleanup",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    participantId: "participant-a",
+    startRequestId: "start-a-no-b",
+    stopRequestId: null,
+  };
+  const sent: string[] = [];
+  const startRecording = runtime.context.startRecording as (
+    call: Record<string, unknown>,
+    requestId: string,
+  ) => void;
+  startRecording(
+    { sendMessage: (message: string) => sent.push(message) },
+    "start-a-no-b",
+  );
+  const contextA = runtime.context.currentRecordingContext as Record<
+    string,
+    unknown
+  >;
+  await sleep(20);
+
+  assert.equal(runtime.context.recordingState, "error");
+  assert.equal(runtime.context.recorder, null);
+  assert.equal(stopCalls, 1);
+  httpBodies.length = 0;
+
+  listeners.Started?.({
+    id: "provider-a-no-b",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a-no-b.flac",
+  });
+  await sleep(0);
+  assert.equal(runtime.context.recordingState, "error");
+  assert.equal(runtime.context.currentRecordingContext, contextA);
+  assert.equal(contextA.state, "error");
+  assert.equal(contextA.recordingId, "provider-a-no-b");
+  assert.equal(stopCalls, 2);
+  assert.equal(
+    httpBodies.some((body) => body.status === "recording"),
+    false,
+  );
+  assert.equal(
+    readStatusMessages(sent).some((status) => status.status === "recording"),
+    false,
+  );
+
+  listeners.Started?.({
+    id: "provider-a-no-b",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a-no-b.flac",
+  });
+  assert.equal(stopCalls, 2);
+
+  httpBodies.length = 0;
+  listeners.Stopped?.({
+    id: "provider-a-no-b",
+    url: "https://storage.yandexcloud.net/negotiation-room/audio/a-no-b.flac",
+  });
+  await sleep(0);
+  const stopped = httpBodies.find((body) => body.status === "stopped");
+  assert.equal(stopped?.recordingAttemptId, "attempt-a-no-b");
+  assert.equal(stopped?.recordingId, "provider-a-no-b");
+  assert.equal(runtime.context.recordingState, "stopped");
+  assert.equal(runtime.context.currentRecordingContext, null);
+});
+
+test("obsolete fenced PAUSE, RESUME, STATUS, and START during RESUMING leave B unchanged", () => {
+  const runtime = loadScenarioRuntime();
+  const secret = "recording-control-fencing-secret-0123456789";
+  const sessionId = "session-command-fencing";
+  let muteCalls = 0;
+  let createRecorderCalls = 0;
+  const recorderB = {
+    mute: () => {
+      muteCalls += 1;
+    },
+    stop: () => {},
+  };
+  const contextB = {
+    recorder: recorderB,
+    protocolVersion: runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+    recordingAttemptId: "attempt-b",
+    sessionId,
+    conferenceName: `negotiation-${sessionId}`,
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    participantId: "participant-b",
+    startRequestId: "start-b",
+    stopRequestId: null,
+    controllerCall: null,
+    state: "recording",
+  };
+  runtime.context.RECORDING_CONTROL_SECRET = secret;
+  runtime.context.RECORDING_CONTROL_BINDING = {
+    sessionId,
+    conferenceName: `negotiation-${sessionId}`,
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    providerSessionId: "provider-session-1",
+  };
+  runtime.context.currentRecordingContext = contextB;
+  runtime.context.recorder = recorderB;
+  runtime.context.recordingState = "recording";
+  (runtime.context.VoxEngine as Record<string, unknown>).createRecorder = () => {
+    createRecorderCalls += 1;
+    return {};
+  };
+
+  const sent: string[] = [];
+  const call = { sendMessage: (message: string) => sent.push(message) };
+  const onMessage = runtime.context.onRecordingControlMessage as (
+    callValue: Record<string, unknown>,
+    rawPayload: string,
+  ) => void;
+  const send = (
+    action: "start" | "pause" | "resume" | "status",
+    suffix: string,
+  ) => {
+    onMessage(
+      call,
+      buildSignedRecordingControlMessage(runtime, secret, {
+        action,
+        requestId: `${action}-${suffix}`,
+        nonce: `nonce-${action}-${suffix}`,
+        sessionId,
+        recordingAttemptId: "attempt-a",
+      }),
+    );
+  };
+
+  send("pause", "late-a");
+  assert.equal(muteCalls, 0);
+  assert.equal(runtime.context.recordingState, "recording");
+  assert.equal(runtime.context.currentRecordingContext, contextB);
+
+  runtime.context.recordingState = "paused";
+  contextB.state = "paused";
+  send("resume", "late-a");
+  assert.equal(muteCalls, 0);
+  assert.equal(runtime.context.recordingState, "paused");
+  assert.equal(runtime.context.currentRecordingContext, contextB);
+
+  runtime.context.recordingState = "recording";
+  contextB.state = "recording";
+  send("status", "late-a");
+  const statusRejection = readStatusMessages(sent).at(-1);
+  assert.equal(statusRejection?.errorCode, "RECORDING_ATTEMPT_UNKNOWN");
+  assert.equal(statusRejection?.recordingAttemptId, "attempt-a");
+  assert.equal(statusRejection?.recordingUrl, null);
+
+  runtime.context.recordingState = "resuming";
+  contextB.state = "resuming";
+  send("start", "while-resuming");
+  assert.equal(createRecorderCalls, 0);
+  assert.equal(runtime.context.recordingState, "resuming");
+  assert.equal(runtime.context.currentRecordingContext, contextB);
+  assert.equal(
+    readStatusMessages(sent).at(-1)?.errorCode,
+    "RECORDING_ATTEMPT_MISMATCH",
+  );
+});
+
+test("RC4 terminal cache returns immutable attempt A after B becomes current", () => {
+  const runtime = loadScenarioRuntime();
+  const sent: string[] = [];
+  const terminalA = {
+    recordingAttemptId: "attempt-a",
+    protocolVersion: "rc3-hmac-sha256-recording-attempt-v1",
+    sessionId: "session-terminal-cache",
+    conferenceName: "negotiation-session-terminal-cache",
+    state: "stopped",
+    recordingUrl: "https://provider.example/a.mp4",
+    recordingId: "provider-a",
+    objectKey: "negotiation-room/audio/a.mp4",
+    startedAt: "2026-08-12T10:00:00.000Z",
+    stoppedAt: "2026-08-12T10:05:00.000Z",
+    errorCode: null,
+    errorMessage: null,
+    terminalConfirmed: true,
+  };
+  const cacheTerminal = runtime.context.cacheTerminalRecorderContext as (
+    context: Record<string, unknown>,
+  ) => void;
+  cacheTerminal(terminalA);
+  terminalA.state = "error";
+  terminalA.objectKey = "mutated-after-cache";
+
+  runtime.context.currentRecordingContext = {
+    recordingAttemptId: "attempt-b",
+    protocolVersion: "rc3-hmac-sha256-recording-attempt-v1",
+    sessionId: "session-terminal-cache",
+    conferenceName: "negotiation-session-terminal-cache",
+    state: "recording",
+  };
+  const sendCurrentStatus = runtime.context.sendCurrentStatus as (
+    call: { sendMessage: (message: string) => void },
+    requestId: string,
+    recordingAttemptId: string,
+  ) => boolean;
+  const found = sendCurrentStatus(
+    { sendMessage: (message) => sent.push(message) },
+    "status-attempt-a",
+    "attempt-a",
+  );
+  assert.equal(found, true);
+  const statusA = readStatusMessages(sent).at(-1);
+  assert.equal(statusA?.recordingAttemptId, "attempt-a");
+  assert.equal(statusA?.status, "stopped");
+  assert.equal(statusA?.objectKey, "negotiation-room/audio/a.mp4");
+
+  const unknown = sendCurrentStatus(
+    { sendMessage: (message) => sent.push(message) },
+    "status-unknown",
+    "unknown-attempt",
+  );
+  assert.equal(unknown, false);
+  assert.equal(
+    readStatusMessages(sent).at(-1)?.errorCode,
+    "RECORDING_ATTEMPT_UNKNOWN",
+  );
+  assert.equal(
+    (runtime.context.currentRecordingContext as { recordingAttemptId: string })
+      .recordingAttemptId,
+    "attempt-b",
+  );
+});
+
+test("fenced server-stop without current attempt context returns repeatable 409", () => {
+  const runtime = loadScenarioRuntime();
+  const secret = "server-stop-control-fencing-secret-0123456789";
+  const sessionId = "session-server-stop-fencing";
+  let recorderStopCalls = 0;
+  runtime.context.SERVER_STOP_CONTROL_SECRET = secret;
+  runtime.context.providerSessionId = "provider-session-1";
+  runtime.context.RECORDING_CONTROL_BINDING = {
+    sessionId,
+    conferenceName: `negotiation-${sessionId}`,
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    providerSessionId: "provider-session-1",
+  };
+  runtime.context.currentRecordingContext = null;
+  runtime.context.recordingState = "recording";
+  runtime.context.recorder = {
+    stop: () => {
+      recorderStopCalls += 1;
+    },
+  };
+
+  const payload = {
+    action: "stop_recording",
+    operationId: "operation-no-context",
+    recordingAttemptId: "attempt-a",
+    sessionId,
+    conferenceName: `negotiation-${sessionId}`,
+    providerSessionId: "provider-session-1",
+  };
+  const body = JSON.stringify(payload);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "nonce-server-stop-no-context";
+  const sha256Hex = runtime.context.sha256Hex as (value: string) => string;
+  const bodyHash = sha256Hex(body);
+  const buildSignature = runtime.context.buildServerStopSignature as (
+    protocol: string,
+    timestampValue: string,
+    nonceValue: string,
+    bodyHashValue: string,
+    secretValue: string,
+  ) => string;
+  const signature = buildSignature("v1", timestamp, nonce, bodyHash, secret);
+  const responses: Array<{ status: number; body: string }> = [];
+  const makeEvent = () => {
+    let status = 0;
+    return {
+      method: "POST",
+      path: "/control",
+      body,
+      headers: {
+        "x-vox-stop-protocol": "v1",
+        "x-vox-stop-timestamp": timestamp,
+        "x-vox-stop-nonce": nonce,
+        "x-vox-stop-body-sha256": bodyHash,
+        "x-vox-stop-signature": signature,
+      },
+      response: {
+        writeHead: (nextStatus: number) => {
+          status = nextStatus;
+        },
+        end: (responseBody: string) => {
+          responses.push({ status, body: responseBody });
+        },
+      },
+    };
+  };
+  const handleServerStop = runtime.context.handleServerStopHttpRequest as (
+    event: Record<string, unknown>,
+  ) => unknown;
+
+  handleServerStop(makeEvent());
+  handleServerStop(makeEvent());
+  assert.deepEqual(
+    responses.map((response) => response.status),
+    [409, 409],
+  );
+  assert.equal(
+    responses.every((response) =>
+      response.body.includes("recording_attempt_context_missing"),
+    ),
+    true,
+  );
+  assert.equal(recorderStopCalls, 0);
+  assert.equal(runtime.context.currentRecordingContext, null);
+  assert.equal(runtime.context.recordingState, "recording");
+});
+
+test("resolved Vox transient result codes retry while unknown negative code does not", async () => {
+  for (const transientCode of [-4, -6, -7, -8]) {
+    const runtime = loadScenarioRuntime();
+    runtime.context.WEBHOOK_SECRET =
+      "webhook-negative-code-secret-0123456789";
+    runtime.context.RECORDING_CONTROL_BINDING = {
+      sessionId: "session-negative-code",
+      conferenceName: "negotiation-session-negative-code",
+      webhookBaseUrl: "https://local.negotaitions.ru",
+      providerSessionId: "provider-session-1",
+    };
+    runtime.context.setTimeout = (handler: () => void) => {
+      handler();
+      return 1;
+    };
+    let calls = 0;
+    (runtime.context.Net as { httpRequestAsync: unknown }).httpRequestAsync =
+      () => {
+        calls += 1;
+        return Promise.resolve({
+          code: calls === 1 ? transientCode : 200,
+          text: "",
+        });
+      };
+    const sendWebhook = runtime.context.sendRecordingWebhook as (
+      sessionId: string,
+      payload: Record<string, unknown>,
+      extra: null,
+      origin: string,
+      conferenceName: string,
+    ) => void;
+    sendWebhook(
+      "session-negative-code",
+      {
+        status: "recording",
+        requestId: `request-${transientCode}`,
+        protocolVersion:
+          runtime.context.RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+        recordingAttemptId: `attempt-${transientCode}`,
+      },
+      null,
+      "https://local.negotaitions.ru",
+      "negotiation-session-negative-code",
+    );
+    await sleep(0);
+    await sleep(0);
+    assert.equal(calls, 2, `code ${transientCode} should retry`);
+  }
+
+  const deterministicRuntime = loadScenarioRuntime();
+  deterministicRuntime.context.WEBHOOK_SECRET =
+    "webhook-deterministic-code-secret-0123456789";
+  deterministicRuntime.context.RECORDING_CONTROL_BINDING = {
+    sessionId: "session-negative-code",
+    conferenceName: "negotiation-session-negative-code",
+    webhookBaseUrl: "https://local.negotaitions.ru",
+    providerSessionId: "provider-session-1",
+  };
+  let deterministicCalls = 0;
+  (
+    deterministicRuntime.context.Net as { httpRequestAsync: unknown }
+  ).httpRequestAsync = () => {
+    deterministicCalls += 1;
+    return Promise.resolve({ code: -2, text: "deterministic input error" });
+  };
+  (
+    deterministicRuntime.context.sendRecordingWebhook as (
+      sessionId: string,
+      payload: Record<string, unknown>,
+      extra: null,
+      origin: string,
+      conferenceName: string,
+    ) => void
+  )(
+    "session-negative-code",
+    {
+      status: "recording",
+      requestId: "request-deterministic",
+      protocolVersion:
+        deterministicRuntime.context
+          .RECORDING_CONTROL_FENCED_PROTOCOL_VERSION,
+      recordingAttemptId: "attempt-deterministic",
+    },
+    null,
+    "https://local.negotaitions.ru",
+    "negotiation-session-negative-code",
+  );
+  await sleep(0);
+  assert.equal(deterministicCalls, 1);
 });

@@ -42,7 +42,32 @@
 ## Build/Deploy Model
 
 - Build and dependency install happen on deployment host workflow.
+- Runtime permission normalization uses an explicit reviewed allowlist that
+  includes transitive operational-script dependencies such as recording-attempt
+  fencing and exact-attempt recording reconciliation/policy.
 - This document does not introduce new deploy commands; it captures current documented model only.
+
+### Recording attempt fencing rollout order
+
+RC4 is already active in Voximplant with build marker
+`main-room-recording-reconciliation-2026-08-12-rc4`. The remaining rollout is:
+
+1. Preserve/export the active RC4 source/build and require zero active provider
+   or application processing work.
+2. Apply the additive nullable `Recording.recordingAttemptId` migration and its
+   unique index through the guarded production overlay.
+3. Deploy the application that persists attempt identity before dispatch,
+   accepts legacy RC2 callbacks only for legacy NULL-attempt rows, and supports
+   RC3/RC4 exact-attempt control.
+4. Confirm the existing scenario build marker and exact-attempt registration/status
+   telemetry before relying on reconciliation.
+
+Do not upload Voximplant again in this rollout. RC4 retains the legacy RC2
+message, callback, and server-stop path used by application `601704...`, so a
+quiescent application rollback may leave RC4 active. Rollback keeps the
+nullable column/index; historical NULL-attempt rows remain legacy-only. Exact
+preflight predicates and rollback steps are in
+`docs/operations/deployment-runbook.md`.
 
 ## Constraints
 

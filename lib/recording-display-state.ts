@@ -1,4 +1,6 @@
 export type RecordingDisplayState =
+  | "starting"
+  | "uncertain"
   | "active"
   | "paused"
   | "stopping"
@@ -9,6 +11,8 @@ export type RecordingDisplayState =
 export type RecordingDisplayPresentation = {
   state: RecordingDisplayState;
   labelKey:
+    | "recording.recordingStarting"
+    | "recording.recordingDidNotStart"
     | "recording.recordingInProgress"
     | "recording.recordingPaused"
     | "recording.recordingStopping"
@@ -50,12 +54,9 @@ function isPausedStatus(status: string | null) {
   return status === "PAUSED";
 }
 
-function isActiveStatus(status: string | null) {
-  return status === "RECORDING" || status === "STARTING";
-}
-
 export function getRecordingDisplayState(input: {
   recordingStatus: string | null | undefined;
+  errorMessage?: string | null | undefined;
   stopOperationState?: string | null | undefined;
   sessionStatus?: string | null | undefined;
   negotiationState?: string | null | undefined;
@@ -63,6 +64,13 @@ export function getRecordingDisplayState(input: {
 }): RecordingDisplayState {
   const recordingStatus = normalizeRecordingStatus(input.recordingStatus);
   const stopOperationState = normalizeStopOperationState(input.stopOperationState);
+
+  if (
+    isFailedStatus(recordingStatus) &&
+    input.errorMessage === "RECORDING_STARTING_TIMEOUT_RECONCILED"
+  ) {
+    return "uncertain";
+  }
 
   if (isFailedStatus(recordingStatus)) {
     return "failed";
@@ -80,7 +88,11 @@ export function getRecordingDisplayState(input: {
     return "paused";
   }
 
-  if (isActiveStatus(recordingStatus)) {
+  if (recordingStatus === "STARTING") {
+    return "starting";
+  }
+
+  if (recordingStatus === "RECORDING") {
     return "active";
   }
 
@@ -90,6 +102,20 @@ export function getRecordingDisplayState(input: {
 export function getRecordingDisplayPresentation(
   state: RecordingDisplayState,
 ): RecordingDisplayPresentation {
+  if (state === "starting") {
+    return {
+      state,
+      labelKey: "recording.recordingStarting",
+      className: "text-sky-300",
+    };
+  }
+  if (state === "uncertain") {
+    return {
+      state,
+      labelKey: "recording.recordingDidNotStart",
+      className: "text-orange-300",
+    };
+  }
   if (state === "active") {
     return {
       state,

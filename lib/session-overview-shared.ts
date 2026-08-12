@@ -1,4 +1,11 @@
-import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import type {
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
+import {
+  isCanonicallyCompletedSession,
+  type SessionDisplayStatus,
+} from "@/lib/session-display-status";
 
 export type SessionOverviewStats = {
   id: string;
@@ -27,7 +34,9 @@ export type SessionListItem = {
   eventVisibility: "PUBLIC" | "PRIVATE" | null;
   eventLobbyUrl: string | null;
   status: SessionDisplayStatus;
+  sessionStatus: SessionStatus;
   negotiationState: SessionNegotiationState;
+  roomLifecycle: RoomLifecycle | null;
   closedByEventAt: string | null;
   // facilitatorJoinToken intentionally omitted — must not appear in list HTML.
   // Deep-link access is available via the session detail page (/sessions/[id]).
@@ -48,34 +57,54 @@ export type SessionListItem = {
 };
 
 export function isSessionActiveForPresence(session: {
+  status: SessionStatus;
   negotiationState: SessionNegotiationState;
+  roomLifecycle: RoomLifecycle | null;
   closedByEventAt: Date | string | null;
+  event?: {
+    status?: string | null;
+    completedAt?: Date | string | null;
+  } | null;
 }) {
   return (
-    session.closedByEventAt == null && session.negotiationState !== "FINISHED"
+    !isCanonicallyCompletedSession(session) &&
+    session.closedByEventAt == null &&
+    session.event?.status !== "COMPLETED" &&
+    session.event?.completedAt == null
   );
 }
 
 /** Active sessions where the live video room is the primary entry point. */
 export function isSessionActiveForRoom(session: {
+  status: SessionStatus;
   negotiationState: SessionNegotiationState | string;
+  roomLifecycle: RoomLifecycle | null;
   closedByEventAt: Date | string | null;
   deletedAt?: Date | string | null;
+  event?: {
+    status?: string | null;
+    completedAt?: Date | string | null;
+  } | null;
 }) {
   if (session.deletedAt != null) {
     return false;
   }
 
   return isSessionActiveForPresence({
+    status: session.status,
     negotiationState: session.negotiationState as SessionNegotiationState,
+    roomLifecycle: session.roomLifecycle,
     closedByEventAt: session.closedByEventAt,
+    event: session.event,
   });
 }
 
 export function applySessionOverviewStats<
   T extends {
     id: string;
+    sessionStatus: SessionStatus;
     negotiationState: SessionNegotiationState;
+    roomLifecycle: RoomLifecycle | null;
     closedByEventAt: string | null;
     onlineParticipantCount: number;
   },
@@ -89,7 +118,14 @@ export function applySessionOverviewStats<
       return session;
     }
 
-    if (!isSessionActiveForPresence(session)) {
+    if (
+      !isSessionActiveForPresence({
+        status: session.sessionStatus,
+        negotiationState: session.negotiationState,
+        roomLifecycle: session.roomLifecycle,
+        closedByEventAt: session.closedByEventAt,
+      })
+    ) {
       return {
         ...session,
         onlineParticipantCount: 0,

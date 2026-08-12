@@ -1,6 +1,11 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 
 export const VOX_RECORDING_CONTROL_PROTOCOL_VERSION = "rc2-hmac-sha256-v1";
+export const VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION =
+  "rc3-hmac-sha256-recording-attempt-v1";
+export type VoxRecordingControlProtocolVersion =
+  | typeof VOX_RECORDING_CONTROL_PROTOCOL_VERSION
+  | typeof VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION;
 export const VOX_RECORDING_CONTROL_DEFAULT_TTL_SECONDS = 120;
 export const VOX_RECORDING_CONTROL_CLOCK_SKEW_SECONDS = 30;
 
@@ -21,12 +26,13 @@ export type RecordingControlAction =
   | "status";
 
 export type RecordingControlSignedClaims = {
-  protocolVersion: typeof VOX_RECORDING_CONTROL_PROTOCOL_VERSION;
+  protocolVersion: VoxRecordingControlProtocolVersion;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
   action: RecordingControlAction;
   requestId: string;
+  recordingAttemptId?: string;
   sessionId: string;
   conferenceName: string;
   participantId: string;
@@ -38,12 +44,14 @@ export type RecordingControlSignedClaims = {
 
 export type RecordingControlSignedMessage = {
   type: "recording_control";
-  protocolVersion: typeof VOX_RECORDING_CONTROL_PROTOCOL_VERSION;
+  protocolVersion: VoxRecordingControlProtocolVersion;
   claims: RecordingControlSignedClaims;
   signature: string;
 };
 
-const CLAIM_CANONICAL_ORDER: ReadonlyArray<keyof RecordingControlSignedClaims> = [
+const LEGACY_CLAIM_CANONICAL_ORDER: ReadonlyArray<
+  keyof RecordingControlSignedClaims
+> = [
   "protocolVersion",
   "issuedAt",
   "expiresAt",
@@ -57,6 +65,14 @@ const CLAIM_CANONICAL_ORDER: ReadonlyArray<keyof RecordingControlSignedClaims> =
   "controllerRole",
   "canControlRecording",
   "webhookBaseUrl",
+];
+
+const FENCED_CLAIM_CANONICAL_ORDER: ReadonlyArray<
+  keyof RecordingControlSignedClaims
+> = [
+  ...LEGACY_CLAIM_CANONICAL_ORDER.slice(0, 6),
+  "recordingAttemptId",
+  ...LEGACY_CLAIM_CANONICAL_ORDER.slice(6),
 ];
 
 const RECORDING_CONTROL_ACTIONS: ReadonlySet<RecordingControlAction> = new Set([
@@ -142,7 +158,11 @@ export function normalizeRecordingWebhookOrigin(rawValue: string): string | null
 export function buildRecordingControlCanonicalPayload(
   claims: RecordingControlSignedClaims,
 ): string {
-  return CLAIM_CANONICAL_ORDER.map((fieldName) => {
+  const order =
+    claims.protocolVersion === VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+      ? FENCED_CLAIM_CANONICAL_ORDER
+      : LEGACY_CLAIM_CANONICAL_ORDER;
+  return order.map((fieldName) => {
     const value = claims[fieldName];
     if (typeof value === "boolean") {
       return `${fieldName}=${value ? "true" : "false"}`;
@@ -161,7 +181,9 @@ export function computeRecordingControlSignatureHex(input: {
 }
 
 function sanitizeClaims(
-  claims: Omit<RecordingControlSignedClaims, "protocolVersion">,
+  claims: Omit<RecordingControlSignedClaims, "protocolVersion"> & {
+    protocolVersion?: VoxRecordingControlProtocolVersion;
+  },
 ): RecordingControlSignedClaims {
   const webhookBaseUrl = normalizeRecordingWebhookOrigin(claims.webhookBaseUrl);
   if (!webhookBaseUrl) {
@@ -177,6 +199,7 @@ function sanitizeClaims(
   }
 
   const requestId = toTrimmedString(claims.requestId);
+  const recordingAttemptId = toTrimmedString(claims.recordingAttemptId);
   const sessionId = toTrimmedString(claims.sessionId);
   const conferenceName = toTrimmedString(claims.conferenceName);
   const participantId = toTrimmedString(claims.participantId);
@@ -185,6 +208,29 @@ function sanitizeClaims(
   const nonce = toTrimmedString(claims.nonce);
 
   if (!requestId) throw new Error("requestId is required.");
+  const protocolVersion =
+    claims.protocolVersion ??
+    (recordingAttemptId
+      ? VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+      : VOX_RECORDING_CONTROL_PROTOCOL_VERSION);
+  if (
+    protocolVersion !== VOX_RECORDING_CONTROL_PROTOCOL_VERSION &&
+    protocolVersion !== VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
+    throw new Error("protocolVersion is invalid.");
+  }
+  if (
+    protocolVersion === VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION &&
+    !recordingAttemptId
+  ) {
+    throw new Error("recordingAttemptId is required for the fenced protocol.");
+  }
+  if (
+    protocolVersion === VOX_RECORDING_CONTROL_PROTOCOL_VERSION &&
+    recordingAttemptId
+  ) {
+    throw new Error("recordingAttemptId is not valid in the legacy protocol.");
+  }
   if (!sessionId) throw new Error("sessionId is required.");
   if (!conferenceName) throw new Error("conferenceName is required.");
   if (!participantId) throw new Error("participantId is required.");
@@ -196,12 +242,20 @@ function sanitizeClaims(
   }
 
   return {
-    protocolVersion: VOX_RECORDING_CONTROL_PROTOCOL_VERSION,
+    protocolVersion,
     issuedAt,
     expiresAt,
     nonce: ensureNoNewLines(nonce, "nonce"),
     action: claims.action,
     requestId: ensureNoNewLines(requestId, "requestId"),
+    ...(recordingAttemptId
+      ? {
+          recordingAttemptId: ensureNoNewLines(
+            recordingAttemptId,
+            "recordingAttemptId",
+          ),
+        }
+      : {}),
     sessionId: ensureNoNewLines(sessionId, "sessionId"),
     conferenceName: ensureNoNewLines(conferenceName, "conferenceName"),
     participantId: ensureNoNewLines(participantId, "participantId"),
@@ -216,6 +270,7 @@ export function createSignedRecordingControlMessage(input: {
   secret: string;
   action: RecordingControlAction;
   requestId: string;
+  recordingAttemptId?: string;
   sessionId: string;
   conferenceName: string;
   participantId: string;
@@ -244,11 +299,15 @@ export function createSignedRecordingControlMessage(input: {
   const expiresAt = input.expiresAt ?? issuedAt + ttlSeconds;
 
   const claims = sanitizeClaims({
+    protocolVersion: input.recordingAttemptId
+      ? VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+      : VOX_RECORDING_CONTROL_PROTOCOL_VERSION,
     issuedAt,
     expiresAt,
     nonce: input.nonce ?? randomUUID(),
     action: input.action,
     requestId: input.requestId,
+    recordingAttemptId: input.recordingAttemptId,
     sessionId: input.sessionId,
     conferenceName: input.conferenceName,
     participantId: input.participantId,
@@ -266,7 +325,7 @@ export function createSignedRecordingControlMessage(input: {
 
   const message: RecordingControlSignedMessage = {
     type: "recording_control",
-    protocolVersion: VOX_RECORDING_CONTROL_PROTOCOL_VERSION,
+    protocolVersion: claims.protocolVersion,
     claims,
     signature,
   };
@@ -302,13 +361,20 @@ function normalizeSignedMessage(
   if (!value || typeof value !== "object") return null;
   const envelope = value as Record<string, unknown>;
   if (envelope.type !== "recording_control") return null;
-  if (envelope.protocolVersion !== VOX_RECORDING_CONTROL_PROTOCOL_VERSION) return null;
+  if (
+    envelope.protocolVersion !== VOX_RECORDING_CONTROL_PROTOCOL_VERSION &&
+    envelope.protocolVersion !== VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION
+  ) {
+    return null;
+  }
   if (typeof envelope.signature !== "string") return null;
   if (!envelope.claims || typeof envelope.claims !== "object") return null;
   const claimsRecord = envelope.claims as Record<string, unknown>;
 
   if (
-    claimsRecord.protocolVersion !== VOX_RECORDING_CONTROL_PROTOCOL_VERSION ||
+    (claimsRecord.protocolVersion !== VOX_RECORDING_CONTROL_PROTOCOL_VERSION &&
+      claimsRecord.protocolVersion !==
+        VOX_RECORDING_CONTROL_FENCED_PROTOCOL_VERSION) ||
     typeof claimsRecord.action !== "string" ||
     typeof claimsRecord.canControlRecording !== "boolean"
   ) {
@@ -317,11 +383,16 @@ function normalizeSignedMessage(
 
   try {
     const claims = sanitizeClaims({
+      protocolVersion: claimsRecord.protocolVersion as VoxRecordingControlProtocolVersion,
       issuedAt: Number(claimsRecord.issuedAt),
       expiresAt: Number(claimsRecord.expiresAt),
       nonce: String(claimsRecord.nonce ?? ""),
       action: claimsRecord.action as RecordingControlAction,
       requestId: String(claimsRecord.requestId ?? ""),
+      recordingAttemptId:
+        claimsRecord.recordingAttemptId === undefined
+          ? undefined
+          : String(claimsRecord.recordingAttemptId),
       sessionId: String(claimsRecord.sessionId ?? ""),
       conferenceName: String(claimsRecord.conferenceName ?? ""),
       participantId: String(claimsRecord.participantId ?? ""),
@@ -332,7 +403,7 @@ function normalizeSignedMessage(
     });
     return {
       type: "recording_control",
-      protocolVersion: VOX_RECORDING_CONTROL_PROTOCOL_VERSION,
+      protocolVersion: claims.protocolVersion,
       claims,
       signature: envelope.signature,
     };

@@ -81,6 +81,18 @@ function currentProductionHistoryRows(): MigrationHistoryRow[] {
   ];
 }
 
+function historyWithOnlyTheseActiveMigrationsPending(
+  pendingMigrationNames: readonly string[],
+): MigrationHistoryRow[] {
+  const pending = new Set(pendingMigrationNames);
+  return [
+    ...legacyRows(),
+    ...ACTIVE_MIGRATIONS.filter((name) => !pending.has(name)).map((name) =>
+      successfulRow(name),
+    ),
+  ];
+}
+
 function assertRefusal(
   fn: () => unknown,
   code: OverlayRefusalCode,
@@ -259,6 +271,65 @@ test("current production baseline accepts only approved Stage 3.13D/3.13E migrat
     result.recognizedLegacyMigrations,
     LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
   );
+});
+
+test("only the expected recording-attempt fencing migration pending is allowed", () => {
+  const recordingAttemptMigration =
+    "20260812111000_add_recording_attempt_fencing";
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([recordingAttemptMigration]),
+    ACTIVE_MIGRATIONS,
+  );
+
+  assert.deepEqual(result.pendingActiveMigrations, [recordingAttemptMigration]);
+});
+
+test("existing expected migrations plus recording-attempt fencing are allowed", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending(
+      EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
+    ),
+    ACTIVE_MIGRATIONS,
+  );
+
+  assert.deepEqual(
+    result.pendingActiveMigrations,
+    [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
+  );
+});
+
+test("recording-attempt fencing plus one unknown pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([
+          "20260812111000_add_recording_attempt_fencing",
+        ]),
+        [...ACTIVE_MIGRATIONS, "20260812120000_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("an unknown pending migration by itself is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([]),
+        [...ACTIVE_MIGRATIONS, "20260812120000_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("no pending active migrations is clean and up to date", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([]),
+    ACTIVE_MIGRATIONS,
+  );
+
+  assert.deepEqual(result.pendingActiveMigrations, []);
+  assert.deepEqual(result.appliedActiveMigrations, ACTIVE_MIGRATIONS);
 });
 
 test("an additional unknown pending migration is refused", () => {

@@ -3,6 +3,7 @@ import { getEventsForUser } from "@/lib/event-overview-stats";
 import { getSessionsForUser } from "@/lib/session-overview-stats";
 import { requireActiveUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { isCompletedSessionDisplayStatus } from "@/lib/session-display-status";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +29,10 @@ export default async function DashboardPage() {
     (event) => event.status !== "COMPLETED" && event.status !== "CANCELLED",
   );
   const activeSessions = allSessions.filter(
-    (session) => session.negotiationState !== "FINISHED" && !session.closedByEventAt,
+    (session) => !isCompletedSessionDisplayStatus(session.status),
   );
   const completedSessions = allSessions.filter(
-    (session) => session.negotiationState === "FINISHED" || Boolean(session.closedByEventAt),
+    (session) => isCompletedSessionDisplayStatus(session.status),
   );
   const hostedEvents = allEvents.filter((event) => event.canManage);
   const toRoleKey = (role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null) =>

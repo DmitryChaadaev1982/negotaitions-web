@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import type {
+  RoomLifecycle,
+  SessionStatus,
+} from "@/app/generated/prisma/client";
 import { CompleteSessionButton } from "@/components/complete-session-button";
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import {
@@ -34,7 +38,10 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
-import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import {
+  isCompletedSessionDisplayStatus,
+  type SessionDisplayStatus,
+} from "@/lib/session-display-status";
 import {
   isSessionActiveForPresence,
 } from "@/lib/session-overview-shared";
@@ -54,7 +61,9 @@ type SessionRow = {
   eventStatus: "DRAFT" | "LOBBY_OPEN" | "SESSION_CREATED" | "COMPLETED" | "CANCELLED" | null;
   eventLobbyUrl: string | null;
   status: SessionDisplayStatus;
+  sessionStatus: SessionStatus;
   negotiationState: "PREPARATION" | "PREPARATION_RUNNING" | "PREPARATION_PAUSED" | "READY_TO_START" | "RUNNING" | "PAUSED" | "FINISHED";
+  roomLifecycle: RoomLifecycle | null;
   closedByEventAt: string | null;
   // facilitatorJoinToken is intentionally absent — tokens must not be embedded
   // in list HTML. Session detail and materials are accessible via /sessions/[id].
@@ -137,7 +146,9 @@ function matchesSessionStatusFilter(
   filter: SessionStatusFilter,
 ): boolean {
   if (filter === "all") return true;
-  if (filter === "unfinished") return session.status !== "FINISHED";
+  if (filter === "unfinished") {
+    return !isCompletedSessionDisplayStatus(session.status);
+  }
   if (filter === "draft") return session.status === "DRAFT" || session.status === "READY";
   if (filter === "preparation") {
     return (
@@ -148,7 +159,9 @@ function matchesSessionStatusFilter(
     );
   }
   if (filter === "active") return session.status === "RUNNING" || session.status === "PAUSED";
-  if (filter === "completed") return session.status === "FINISHED";
+  if (filter === "completed") {
+    return isCompletedSessionDisplayStatus(session.status);
+  }
   if (filter === "cancelled") return session.closedByEventAt != null;
   return true;
 }
@@ -162,7 +175,8 @@ const SESSION_STATUS_SORT_RANK: Record<SessionDisplayStatus, number> = {
   READY_TO_START: 6,
   RUNNING: 7,
   PAUSED: 8,
-  FINISHED: 9,
+  DEBRIEF: 9,
+  FINISHED: 10,
 };
 
 // ── AI pipeline status mini-badge ─────────────────────────────────────────
@@ -639,7 +653,12 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                       </span>
                       <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300">
                         {locale === "ru" ? "Онлайн" : "Online"}{" "}
-                        {isSessionActiveForPresence(session)
+                        {isSessionActiveForPresence({
+                          status: session.sessionStatus,
+                          negotiationState: session.negotiationState,
+                          roomLifecycle: session.roomLifecycle,
+                          closedByEventAt: session.closedByEventAt,
+                        })
                           ? session.onlineParticipantCount
                           : "—"}
                       </span>
@@ -657,7 +676,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           {t("events.openLobby")}
                         </ListActionLink>
                       ) : null}
-                      {session.status !== "FINISHED" ? (
+                      {!isCompletedSessionDisplayStatus(session.status) ? (
                         <ListActionLink
                           href={session.roomUrl}
                           variant="primary"
@@ -685,7 +704,7 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                           >
                             {t("common.manage")}
                           </ListActionLink>
-                          {session.status !== "FINISHED" ? (
+                          {!isCompletedSessionDisplayStatus(session.status) ? (
                             <CompleteSessionButton
                               sessionId={session.id}
                               className={getListActionButtonClassName(

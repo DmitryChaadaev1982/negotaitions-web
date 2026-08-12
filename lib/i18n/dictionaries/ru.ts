@@ -487,7 +487,8 @@ export const ru: Dictionary = {
       "Статус записи обновляется дольше обычного. Попробуйте обновить вручную.",
     autoTranscribeFailedHint:
       "Автоматическая транскрибация не удалась. Попробуйте ещё раз вручную.",
-    recordingStarting: "Запись запускается",
+    recordingStarting: "Запись запускается…",
+    recordingDidNotStart: "Запись не запустилась",
     recordingInProgress: "Запись идёт",
     recordingContinuesDuringPause: "Запись продолжается во время паузы.",
     recordingPaused: "Запись на паузе",
@@ -1211,6 +1212,7 @@ export const ru: Dictionary = {
     READY_TO_START: "Можно начинать",
     RUNNING: "В процессе",
     PAUSED: "Пауза",
+    DEBRIEF: "Дебриф",
     FINISHED: "Завершено",
     ANALYZED: "Проанализировано",
   },

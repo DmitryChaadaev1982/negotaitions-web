@@ -28,13 +28,11 @@ import { isExternalServicesMockMode } from "@/lib/test-mode";
 import {
   computeShouldPoll,
   hasRunningRawTranscription,
-  isStaleStartingRecording,
   resolveMaterialsNextPollMs,
   isRecordingReadyForTranscription,
   resolveTranscriptProcessingStage,
-  STALE_RECORDING_STARTING_FAILURE_CODE,
-  STALE_RECORDING_STARTING_TIMEOUT_SECONDS,
 } from "@/lib/materials-status-readiness";
+import { maybeReconcileVoximplantRecordingAttempt } from "@/lib/voximplant/recording-reconciliation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -166,12 +164,22 @@ export async function GET(request: Request, context: RouteContext) {
       )?.id,
   );
 
+  try {
+    await maybeReconcileVoximplantRecordingAttempt(sessionId);
+  } catch (error) {
+    console.warn(
+      "[materials-status] provider recording reconciliation deferred:",
+      error instanceof Error ? error.message : "unknown error",
+    );
+  }
+
   const session = await prisma.session.findFirst({
     where: { id: sessionId, deletedAt: null },
     include: {
       recording: {
         select: {
           id: true,
+          recordingAttemptId: true,
           status: true,
           fileKey: true,
           fileName: true,
@@ -248,55 +256,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  let recording = session.recording;
-  if (
-    recording &&
-    isStaleStartingRecording({
-      status: recording.status,
-      startedAt: recording.startedAt,
-      egressId: recording.egressId,
-    })
-  ) {
-    const reconciledAt = new Date();
-    const staleCutoff = new Date(
-      reconciledAt.getTime() -
-        STALE_RECORDING_STARTING_TIMEOUT_SECONDS * 1000,
-    );
-    const reconciled = await prisma.recording.updateMany({
-      where: {
-        id: recording.id,
-        status: RecordingStatus.STARTING,
-        egressId: null,
-        startedAt: { lte: staleCutoff },
-      },
-      data: {
-        status: RecordingStatus.FAILED,
-        endedAt: recording.endedAt ?? reconciledAt,
-        errorMessage: STALE_RECORDING_STARTING_FAILURE_CODE,
-      },
-    });
-    if (reconciled.count > 0) {
-      recording = {
-        ...recording,
-        status: RecordingStatus.FAILED,
-        endedAt: recording.endedAt ?? reconciledAt,
-        errorMessage: STALE_RECORDING_STARTING_FAILURE_CODE,
-      };
-      appendRecordingDebugEvent({
-        sessionId,
-        source: "materials-status",
-        level: "warn",
-        step: "materials-status:starting-timeout-reconciled",
-        message:
-          "stale STARTING reconciled to FAILED after timeout threshold",
-        data: {
-          recordingId: recording.id,
-          timeoutSeconds: STALE_RECORDING_STARTING_TIMEOUT_SECONDS,
-          failureCode: STALE_RECORDING_STARTING_FAILURE_CODE,
-        },
-      });
-    }
-  }
+  const recording = session.recording;
   const transcript = session.transcript;
   const aiAnalysis = session.aiAnalysis;
 
