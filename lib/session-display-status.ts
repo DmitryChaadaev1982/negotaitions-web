@@ -48,7 +48,7 @@ export function isPostNegotiationSessionDisplayStatus(
 export function isCanonicallyCompletedSession(
   session: SessionStatusInput,
 ): boolean {
-  if (session.status !== "COMPLETED") {
+  if (session.negotiationState !== "FINISHED") {
     return false;
   }
 
@@ -56,12 +56,13 @@ export function isCanonicallyCompletedSession(
     return true;
   }
 
-  // Compatibility for historical completed rows created before roomLifecycle
-  // was normalized. Explicit OPEN/DEBRIEF_OPEN always wins over this fallback.
-  return (
-    session.roomLifecycle == null &&
-    session.negotiationState === "FINISHED"
-  );
+  // Modern finish paths persist OPEN as a recovery fence before canonical
+  // completion changes it to DEBRIEF_OPEN, or assign DEBRIEF_OPEN/CLOSED in
+  // the same transaction. A FINISHED row that still has no lifecycle is
+  // therefore pre-lifecycle history. Room access already treats that legacy
+  // shape as CLOSED, so display/grouping must do the same. Explicit OPEN and
+  // DEBRIEF_OPEN remain nonterminal regardless of the coarse Session.status.
+  return session.roomLifecycle == null;
 }
 
 export function hasRequiredParticipants(
@@ -103,7 +104,7 @@ export function resolveSessionDisplayStatus(
 ): SessionDisplayStatus {
   if (isCanonicallyCompletedSession(session)) {
     // FINISHED is the existing terminal display code whose localized label is
-    // Completed. It is intentionally no longer derived from negotiationState.
+    // Completed. Room lifecycle, not coarse Session.status, is authoritative.
     return "FINISHED";
   }
 

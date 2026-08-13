@@ -1,4 +1,10 @@
 import { AccountDashboardView } from "@/components/account-dashboard-view";
+import {
+  selectDashboardActivity,
+  selectDashboardSessionForEvent,
+  sortDashboardEvents,
+  sortDashboardSessions,
+} from "@/lib/dashboard-activity-selection";
 import { getEventsForUser } from "@/lib/event-overview-stats";
 import { getSessionsForUser } from "@/lib/session-overview-stats";
 import { requireActiveUser } from "@/lib/auth";
@@ -25,15 +31,17 @@ export default async function DashboardPage() {
     getEventsForUser(user),
     getSessionsForUser(user),
   ]);
-  const activeEvents = allEvents.filter(
-    (event) => event.status !== "COMPLETED" && event.status !== "CANCELLED",
-  );
-  const activeSessions = allSessions.filter(
-    (session) => !isCompletedSessionDisplayStatus(session.status),
-  );
+  const selectionClock = new Date();
+  const activeEvents = sortDashboardEvents(allEvents, selectionClock);
+  const activeSessions = sortDashboardSessions(allSessions);
   const completedSessions = allSessions.filter(
     (session) => isCompletedSessionDisplayStatus(session.status),
   );
+  const selectedActivity = selectDashboardActivity({
+    sessions: activeSessions,
+    events: activeEvents,
+    now: selectionClock,
+  });
   const hostedEvents = allEvents.filter((event) => event.canManage);
   const toRoleKey = (role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null) =>
     role === "HOST"
@@ -45,52 +53,58 @@ export default async function DashboardPage() {
           : "dashboard.roleParticipant";
 
   const continueItem: ContinueItem | null =
-    activeSessions[0]
+    selectedActivity?.kind === "session"
       ? {
-          title: activeSessions[0].title,
-          subtitle: activeSessions[0].eventTitle ?? "",
-          action: { href: activeSessions[0].roomUrl, labelKey: "dashboard.openRoom" },
+          title: selectedActivity.item.title,
+          subtitle: selectedActivity.item.eventTitle ?? "",
+          action: {
+            href: selectedActivity.item.roomUrl,
+            labelKey: "dashboard.openRoom",
+          },
         }
-      : activeEvents[0]
+      : selectedActivity?.kind === "event"
         ? {
-            title: activeEvents[0].title,
+            title: selectedActivity.item.title,
             subtitle: "",
-            action: { href: `/events/${activeEvents[0].id}/lobby`, labelKey: "dashboard.openLobby" },
+            action: {
+              href: `/events/${selectedActivity.item.id}/lobby`,
+              labelKey: "dashboard.openLobby",
+            },
           }
-        : completedSessions[0]
-          ? {
-              title: completedSessions[0].title,
-              subtitle: completedSessions[0].eventTitle ?? "",
-              action: { href: completedSessions[0].materialsUrl, labelKey: "dashboard.openMaterials" },
-            }
-          : null;
+        : null;
 
   return (
     <AccountDashboardView
       continueItem={continueItem}
-      activeEvents={activeEvents.map((event) => ({
-        id: event.id,
-        title: event.title,
-        visibility: event.visibility,
-        status: event.status,
-        roleKey: event.canManage ? "dashboard.roleHost" : "dashboard.roleParticipant",
-        scheduledAt: event.scheduledAt,
-        timeZone: event.timeZone,
-        estimatedDurationSeconds: event.estimatedDurationSeconds,
-        totalSessions: event.totalSessions,
-        activeSessions: event.activeSessions,
-        finishedSessions: event.finishedSessions,
-        primaryAction: {
-          href:
-            event.activeSessions > 0 && event.primarySessionId
-              ? `/room/${event.primarySessionId}`
+      activeEvents={activeEvents.map((event) => {
+        const relevantSession = selectDashboardSessionForEvent(
+          activeSessions,
+          event.id,
+        );
+        return {
+          id: event.id,
+          title: event.title,
+          visibility: event.visibility,
+          status: event.status,
+          roleKey: event.canManage
+            ? "dashboard.roleHost"
+            : "dashboard.roleParticipant",
+          scheduledAt: event.scheduledAt,
+          timeZone: event.timeZone,
+          estimatedDurationSeconds: event.estimatedDurationSeconds,
+          totalSessions: event.totalSessions,
+          activeSessions: event.activeSessions,
+          finishedSessions: event.finishedSessions,
+          primaryAction: {
+            href: relevantSession
+              ? relevantSession.roomUrl
               : `/events/${event.id}/lobby`,
-          labelKey:
-            event.activeSessions > 0
+            labelKey: relevantSession
               ? "dashboard.continueSession"
               : "dashboard.openLobby",
-        },
-      }))}
+          },
+        };
+      })}
       activeSessions={activeSessions.map((session) => ({
         id: session.id,
         title: session.title,

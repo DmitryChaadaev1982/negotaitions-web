@@ -767,7 +767,7 @@ export const en = {
     archiveSummary: "{count} completed sessions",
     showArchive: "Show completed",
     hideArchive: "Hide completed",
-    noCurrentActivity: "No current activity.",
+    noCurrentActivity: "No active rooms available to join.",
     noUpcomingActivity: "No upcoming or active items.",
     noCompletedActivity: "No completed items yet.",
     managedMarker: "Managed by you",

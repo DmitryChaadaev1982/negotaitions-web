@@ -19,6 +19,7 @@ import { resolveEffectiveRecordingProvider } from "@/lib/recording/provider";
 import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
 import {
   deriveBackfillLifecycle,
+  deriveRoomLifecycleBackfillUpdate,
   isRelayDeliveringTimeoutCandidate,
   RELAY_DELIVERING_TRANSPORTS,
 } from "@/lib/stage-3-10-maintenance-utils";
@@ -676,6 +677,7 @@ export async function runRoomLifecycleBackfill(params?: {
     take: batchSize,
     select: {
       id: true,
+      roomLifecycle: true,
       deletedAt: true,
       closedByEventAt: true,
       negotiationState: true,
@@ -689,12 +691,18 @@ export async function runRoomLifecycleBackfill(params?: {
   let ambiguous = 0;
 
   for (const session of sessions) {
-    const next = deriveBackfillLifecycle({
+    const updateData = deriveRoomLifecycleBackfillUpdate({
+      roomLifecycle: session.roomLifecycle,
       deletedAt: session.deletedAt,
       closedByEventAt: session.closedByEventAt,
       negotiationState: session.negotiationState,
       eventStatus: session.event?.status ?? null,
     });
+    if (!updateData) {
+      ambiguous += 1;
+      continue;
+    }
+    const next = updateData.roomLifecycle;
     if (next === RoomLifecycle.OPEN) openDerived += 1;
     if (next === RoomLifecycle.CLOSED) closedDerived += 1;
 
@@ -704,7 +712,7 @@ export async function runRoomLifecycleBackfill(params?: {
 
     const result = await prisma.session.updateMany({
       where: { id: session.id, roomLifecycle: null },
-      data: { roomLifecycle: next },
+      data: updateData,
     });
     updated += result.count;
     if (result.count === 0) {

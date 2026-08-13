@@ -44,7 +44,8 @@
 - Build and dependency install happen on deployment host workflow.
 - Runtime permission normalization uses an explicit reviewed allowlist that
   includes transitive operational-script dependencies such as recording-attempt
-  fencing and exact-attempt recording reconciliation/policy.
+  fencing, exact-attempt recording reconciliation/policy, and the pure
+  legacy-session terminal normalization CLI guard.
 - This document does not introduce new deploy commands; it captures current documented model only.
 
 ### Recording attempt fencing rollout order

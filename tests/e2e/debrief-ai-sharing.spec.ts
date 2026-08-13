@@ -186,18 +186,24 @@ test("debrief: user stays in session room after session finish", async ({
   await expect(page.getByTestId("session-room-page")).toBeVisible({ timeout: 15000 });
 
   // Debrief panel should appear in the sidebar
-  await expect(page.getByTestId("debrief-panel")).toBeVisible({ timeout: 10000 });
-  await expect(page.getByTestId("debrief-title")).toBeVisible();
-  await expect(page.getByTestId("debrief-message")).toBeVisible();
+  const debriefPanel = page
+    .getByTestId("room-desktop-sidebar")
+    .getByTestId("debrief-panel");
+  await expect(debriefPanel).toBeVisible({ timeout: 10000 });
+  await expect(debriefPanel.getByTestId("debrief-title")).toBeVisible();
+  await expect(debriefPanel.getByTestId("debrief-message")).toBeVisible();
 
   // Debrief mode badge in header
   await expect(page.getByTestId("debrief-mode-badge")).toBeVisible();
+  await expect(page.getByTestId("debrief-mode-notice")).toHaveCount(0);
 
   // Facilitator controls are gone (FINISH is done, session closed)
   await expect(page.getByTestId("facilitator-start-button")).not.toBeVisible();
 
   // Key actions visible in debrief panel
-  await expect(page.getByTestId("debrief-open-materials-button")).toBeVisible();
+  await expect(
+    debriefPanel.getByTestId("debrief-open-materials-button"),
+  ).toBeVisible();
 });
 
 // ── Test 2: Run AI analysis from Sessions page ────────────────────────────

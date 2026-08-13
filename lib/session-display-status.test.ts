@@ -95,18 +95,43 @@ test("canonical facilitator, grace-expiry, and Event closes display Completed", 
   }
 });
 
-test("legacy completed rows with null lifecycle remain compatible", () => {
-  assert.equal(
-    resolve({
-      status: SessionStatus.COMPLETED,
-      negotiationState: NegotiationState.FINISHED,
-      roomLifecycle: null,
-    }),
-    "FINISHED",
-  );
+test("CLOSED is terminal display authority despite stale coarse status", () => {
+  for (const status of [
+    SessionStatus.COMPLETED,
+    SessionStatus.READY,
+    SessionStatus.DRAFT,
+  ]) {
+    assert.equal(
+      resolve({
+        status,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.CLOSED,
+      }),
+      "FINISHED",
+      status,
+    );
+  }
 });
 
-test("negotiation FINISHED alone never displays Completed", () => {
+test("legacy FINISHED rows with null lifecycle display Completed", () => {
+  for (const status of [
+    SessionStatus.COMPLETED,
+    SessionStatus.READY,
+    SessionStatus.DRAFT,
+  ]) {
+    assert.equal(
+      resolve({
+        status,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: null,
+      }),
+      "FINISHED",
+      status,
+    );
+  }
+});
+
+test("FINISHED with explicit OPEN remains recoverable Debrief", () => {
   assert.equal(
     resolve({
       status: SessionStatus.READY,

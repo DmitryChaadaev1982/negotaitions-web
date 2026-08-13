@@ -587,8 +587,6 @@ export function SharedRoomShell({
     sessionCloseState.isClosed &&
     sessionCloseState.closeMessageKey === "join.sessionFinishedMessage" &&
     !liveSessionUx.isFinishLineActive;
-  const showDebriefModeNotice =
-    isDebriefMode && sidebar.event?.status !== "COMPLETED";
 
   // Event-closed or other closures → blocking overlay
   const isEventClosed =
@@ -826,14 +824,6 @@ export function SharedRoomShell({
 
         {/* Left column: video + controls */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {showDebriefModeNotice ? (
-            <div
-              className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
-              data-testid="debrief-mode-notice"
-            >
-              {t("room.debriefModeNotice")}
-            </div>
-          ) : null}
           {staleConnection ? (
             <div
               className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"

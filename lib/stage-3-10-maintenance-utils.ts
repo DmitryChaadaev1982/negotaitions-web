@@ -1,6 +1,7 @@
 import {
   NegotiationState,
   RoomLifecycle,
+  SessionStatus,
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
 
@@ -32,6 +33,34 @@ export function deriveBackfillLifecycle(input: {
   }
 
   return RoomLifecycle.CLOSED;
+}
+
+export function deriveRoomLifecycleBackfillUpdate(input: {
+  roomLifecycle: RoomLifecycle | null;
+  deletedAt: Date | null;
+  closedByEventAt: Date | null;
+  negotiationState: NegotiationState;
+  eventStatus: TrainingEventStatus | null;
+}): {
+  roomLifecycle: RoomLifecycle;
+  status?: SessionStatus;
+} | null {
+  if (input.roomLifecycle !== null) {
+    return null;
+  }
+
+  const roomLifecycle = deriveBackfillLifecycle(input);
+  if (
+    roomLifecycle === RoomLifecycle.CLOSED &&
+    input.negotiationState === NegotiationState.FINISHED
+  ) {
+    return {
+      roomLifecycle,
+      status: SessionStatus.COMPLETED,
+    };
+  }
+
+  return { roomLifecycle };
 }
 
 const RELAY_DELIVERING_TRANSPORTS = [

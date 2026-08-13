@@ -378,6 +378,18 @@ sufficient.
 | FINISH_LINE / MANUAL_FINISH | authoritative `FINISHED`, `remainingSeconds>0`, fresh `negotiationEndedAt` deadline | **DERIVED PRESENTATION STATE** | Negotiations complete | Same; no controls | None | Do not show `00:00` or imply expiry | END once | Same strong treatment; exactly 2,500 ms from authoritative end |
 | FINISHED / DEBRIEF | `FINISHED` + room lifecycle after finish-line deadline | Persisted source + elapsed presentation deadline | Debrief/materials with persistent status card | Same | No negotiation controls | Frozen final time (`00:00` for expiry or authoritative remaining time for manual Finish) | None on hydration | Uses neutral `status-debrief.png`; `DEBRIEF_OPEN` remains re-enterable; `CLOSED` redirects |
 
+Post-release presentation clarification:
+
+- `DEBRIEF_OPEN` keeps the neutral Debrief timer/status card, header badge,
+  Debrief panel, frozen final timer, and accessibility behavior.
+- The additional persistent yellow completion notice was duplicate status
+  presentation and has been removed. This does not change either 2,500 ms
+  finish-line variant or the transition announcement live region.
+- CLOSED is terminal room and display authority when negotiation is FINISHED;
+  stale coarse `Session.status` cannot turn it back into Debrief. A historical
+  FINISHED row with null lifecycle is also terminal because authoritative
+  modern finish paths always persist an explicit recovery/lifecycle value.
+
 ## 8. ROOM_READY and preparation lifecycle
 
 **DESIGN DECISION**

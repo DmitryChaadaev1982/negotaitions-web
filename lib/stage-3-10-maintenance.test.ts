@@ -8,6 +8,7 @@ import {
 } from "@/app/generated/prisma/client";
 import {
   deriveBackfillLifecycle,
+  deriveRoomLifecycleBackfillUpdate,
   isRelayDeliveringTimeoutCandidate,
   nextRetryAtFromAttempt,
 } from "@/lib/stage-3-10-maintenance-utils";
@@ -46,6 +47,45 @@ test("deriveBackfillLifecycle marks finished rows as CLOSED", () => {
     eventStatus: null,
   });
   assert.equal(lifecycle, RoomLifecycle.CLOSED);
+});
+
+test("room lifecycle backfill atomically synchronizes FINISHED terminal status", () => {
+  const input = {
+    roomLifecycle: null,
+    deletedAt: null,
+    closedByEventAt: null,
+    negotiationState: NegotiationState.FINISHED,
+    eventStatus: null,
+  };
+
+  assert.deepEqual(deriveRoomLifecycleBackfillUpdate(input), {
+    roomLifecycle: RoomLifecycle.CLOSED,
+    status: "COMPLETED",
+  });
+  assert.deepEqual(
+    deriveRoomLifecycleBackfillUpdate(input),
+    deriveRoomLifecycleBackfillUpdate(input),
+    "repeated derivation is idempotent",
+  );
+});
+
+test("room lifecycle backfill leaves explicit Debrief and CLOSED rows untouched", () => {
+  for (const roomLifecycle of [
+    RoomLifecycle.DEBRIEF_OPEN,
+    RoomLifecycle.CLOSED,
+  ]) {
+    assert.equal(
+      deriveRoomLifecycleBackfillUpdate({
+        roomLifecycle,
+        deletedAt: null,
+        closedByEventAt: null,
+        negotiationState: NegotiationState.FINISHED,
+        eventStatus: null,
+      }),
+      null,
+      roomLifecycle,
+    );
+  }
 });
 
 test("deriveBackfillLifecycle keeps completed events CLOSED", () => {

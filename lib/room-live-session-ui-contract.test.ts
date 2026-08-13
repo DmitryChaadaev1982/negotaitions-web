@@ -35,6 +35,16 @@ test("timer panel has reduced-motion-safe emphasis and no live second announceme
   );
 });
 
+test("Debrief keeps status surfaces without the duplicate persistent notice", () => {
+  const shellSource = readFileSync("components/shared-room-shell.tsx", "utf-8");
+
+  assert.match(shellSource, /data-testid="debrief-mode-badge"/);
+  assert.match(shellSource, /<DebriefPanel/);
+  assert.match(shellSource, /liveSessionUx\.isFinishLineActive/);
+  assert.doesNotMatch(shellSource, /data-testid="debrief-mode-notice"/);
+  assert.doesNotMatch(shellSource, /showDebriefModeNotice/);
+});
+
 test("room notifications control is rendered as an accessible keyboard button", () => {
   const shellSource = readFileSync("components/shared-room-shell.tsx", "utf-8");
   assert.match(shellSource, /data-testid="room-notifications-control"/);

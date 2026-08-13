@@ -250,14 +250,14 @@ test("standalone and Event-created overview statuses distinguish Debrief from ca
 
   await query(
     `UPDATE "Session"
-     SET "status"='COMPLETED',"roomLifecycle"='CLOSED',
+     SET "status"='READY',"roomLifecycle"='CLOSED',
          "endedAt"=NOW(),"closeReason"='DEBRIEF_EMPTY_TIMEOUT',"updatedAt"=NOW()
      WHERE "id"=$1`,
     [fixture.standaloneSessionId],
   );
   await query(
     `UPDATE "Session"
-     SET "status"='COMPLETED',"roomLifecycle"='CLOSED',
+     SET "status"='DRAFT',"roomLifecycle"='CLOSED',
          "endedAt"=NOW(),"closeReason"='FACILITATOR_SESSION_COMPLETE',"updatedAt"=NOW()
      WHERE "id"=$1`,
     [fixture.explicitSessionId],
@@ -270,7 +270,7 @@ test("standalone and Event-created overview statuses distinguish Debrief from ca
   );
   await query(
     `UPDATE "Session"
-     SET "status"='COMPLETED',"roomLifecycle"='CLOSED',"endedAt"=NOW(),
+     SET "status"='READY',"roomLifecycle"=NULL,"endedAt"=NOW(),
          "closeReason"='EVENT_COMPLETED',"closedByEventAt"=NOW(),
          "closedByEventId"=$2,"updatedAt"=NOW()
      WHERE "id"=$1`,
@@ -297,4 +297,23 @@ test("standalone and Event-created overview statuses distinguish Debrief from ca
     await expect(page.getByTestId("materials-open-room-button")).toHaveCount(0);
     await expectRejoinAction(page.request, sessionId, joinToken, "materials");
   }
+
+  await page.goto("/dashboard");
+  const terminalCurrentSection = page.getByTestId("dashboard-current-section");
+  await expect(terminalCurrentSection).toContainText(
+    "Нет активных комнат для подключения.",
+  );
+  for (const title of [
+    fixture.standaloneTitle,
+    fixture.eventSessionTitle,
+    fixture.explicitSessionTitle,
+  ]) {
+    await expect(terminalCurrentSection).not.toContainText(title);
+  }
+  const archive = page.getByTestId("dashboard-archive-disclosure");
+  await expect(archive).toBeVisible();
+  await archive.locator("summary").click();
+  await expect(archive).toContainText(fixture.standaloneTitle);
+  await expect(archive).toContainText(fixture.eventSessionTitle);
+  await expect(archive).toContainText(fixture.explicitSessionTitle);
 });

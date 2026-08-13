@@ -772,7 +772,7 @@ export const ru: Dictionary = {
     archiveSummary: "{count} завершённых сессий",
     showArchive: "Показать завершённые",
     hideArchive: "Скрыть завершённые",
-    noCurrentActivity: "Сейчас нет активного действия.",
+    noCurrentActivity: "Нет активных комнат для подключения.",
     noUpcomingActivity: "Нет предстоящих или активных элементов.",
     noCompletedActivity: "Завершённых элементов пока нет.",
     managedMarker: "Вы управляете",

@@ -59,11 +59,22 @@
   Session completion. `negotiationState=FINISHED` with
   `roomLifecycle=DEBRIEF_OPEN` displays `Debrief` / `Дебриф`, including while
   the room is empty within its grace window and while recording, transcription,
-  or analysis finishes. The existing terminal display code `FINISHED`
-  (`Completed` / `Завершено`) is emitted only for `status=COMPLETED` plus
-  `roomLifecycle=CLOSED`; historical completed rows with a null lifecycle
-  remain a compatibility exception. Dashboard active/archive grouping uses the
-  same shared display derivation rather than `negotiationState` alone.
+  or analysis finishes. `roomLifecycle=CLOSED` is terminal display authority:
+  with `negotiationState=FINISHED`, the existing terminal display code
+  `FINISHED` (`Completed` / `Завершено`) is emitted even if the coarse
+  `Session.status` is stale. Explicit `OPEN` and `DEBRIEF_OPEN` always win over
+  coarse status.
+- Authoritative modern finish paths either persist `OPEN` as a recoverable
+  finish-side-effect fence before canonical completion, or write
+  `DEBRIEF_OPEN`/`CLOSED` in the canonical transaction. They therefore cannot
+  legitimately leave a FINISHED row with `roomLifecycle=NULL`. Room access
+  already derives such pre-lifecycle FINISHED history as CLOSED; shared display
+  and Dashboard grouping use the same narrow compatibility rule without a
+  migration-date heuristic.
+- The Stage 3.10 lifecycle backfill synchronizes `status=COMPLETED` in the same
+  update whenever it derives CLOSED for a FINISHED row. Existing historical
+  rows are normalized only by the separate dry-run-default ops command; normal
+  room completion is not broadened into a data-repair mechanism.
 - Room-return eligibility uses that same canonical terminal derivation.
   `FINISHED + DEBRIEF_OPEN` remains returnable for standalone and Event-created
   Sessions, including an empty-room grace interval and a reconnect during that
@@ -76,6 +87,60 @@
 Long-horizon cleanup for an empty `OPEN` Session or empty Event is separate
 backlog work. Any future policy must be measured in hours or bounded by Event
 lifetime; it must not reuse the short debrief grace.
+
+## Dashboard Current And Upcoming Selection
+
+- Dashboard current-activity selection is a presentation concern, independent
+  from Event lobby and Session room entry authorization. Session candidates use
+  terminal display compatibility: `FINISHED + CLOSED` and legacy
+  `FINISHED + NULL` are history, while `FINISHED + DEBRIEF_OPEN` and normal
+  nonterminal states may remain current. Deleted Sessions and Sessions owned by
+  completed or cancelled Events are excluded.
+- Current standalone and Event-created Sessions share one deterministic
+  presentation priority: live negotiation, paused negotiation, active
+  preparation, ready/preparation, then genuine Debrief. State ties use newest
+  `createdAt` and stable ID ordering.
+- A current Session takes precedence over Event activity. If there is no
+  Session, non-deleted `DRAFT`, `LOBBY_OPEN`, and `SESSION_CREATED` Events are
+  eligible; completed and cancelled Events are excluded. Unscheduled
+  non-future activity may precede future activity, and future Events use nearest
+  `scheduledAt` first.
+- Event cards select their relevant current Session through the same
+  presentation helper instead of using database relation order or the
+  first-created Session.
+- Completed/materials-only history remains in the archive and is never a
+  current-card fallback. If neither a current Session nor an eligible Event
+  exists, the current card renders the no-active-rooms empty state.
+- Whether a displayed Event or Session can actually be entered remains governed
+  independently by the existing Event-access and Session-room-access logic;
+  Dashboard selection does not grant or redefine access.
+
+## Legacy Terminal Metadata Normalization
+
+`npx tsx scripts/ops/normalize-legacy-session-terminal-state.ts` is read-only
+by default. It reports bounded samples and two candidate counts:
+
+- Category A: non-deleted `FINISHED + CLOSED + status<>COMPLETED`;
+- Category B: non-deleted `FINISHED + roomLifecycle=NULL` with authoritative
+  `negotiationEndedAt`.
+
+Category B needs no calendar cutoff: every modern interactive FINISH writes
+`OPEN` as its recoverable intermediate fence before canonical completion, and
+all other canonical finish paths assign `DEBRIEF_OPEN` or `CLOSED` in their
+transaction. The existing room-access compatibility already treats
+`FINISHED + NULL` as CLOSED.
+
+Writes require `--apply` plus both `--expected-category-a` and
+`--expected-category-b`. Apply mode rechecks counts in a serializable
+transaction, never selects deleted/DEBRIEF_OPEN/non-FINISHED rows, synchronizes
+only `status=COMPLETED` for Category A, and assigns only
+`status=COMPLETED, roomLifecycle=CLOSED` for Category B. It preserves
+`endedAt`, `updatedAt`, and all other selected historical metadata, verifies
+that preservation after the update, and emits before/after values for
+separately reviewed rollback. Preserving `updatedAt` prevents historical repair
+from reordering the account rejoin/materials target selected by
+`lib/rejoin/account.ts` and the user-facing Event list's latest-activity value,
+which includes `Session.updatedAt` in `lib/event-overview-stats.ts`.
 
 The approximately 120-second passive-disconnect lease expiry is independent
 from the 30-second empty-Debrief grace: it determines when a network-lost room

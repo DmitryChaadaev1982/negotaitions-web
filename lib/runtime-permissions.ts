@@ -115,6 +115,7 @@ const LIB_RUNTIME_SOURCE_FILES = new Set([
   "lib/livekit-egress.ts",
   "lib/livekit-participant-metadata.ts",
   "lib/livekit.ts",
+  "lib/legacy-session-terminal-normalization.ts",
   "lib/operational-env.ts",
   "lib/prisma-connection-string.ts",
   "lib/prisma-production-migration-overlay.ts",
