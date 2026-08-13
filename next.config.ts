@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
     ? ["127.0.0.1", "local.negotaitions.ru"]
     : [],
   experimental: {
+    useTypeScriptCli: false,
     serverActions: {
       allowedOrigins: resolveServerActionAllowedOriginsFromEnv(
         process.env.NODE_ENV,
