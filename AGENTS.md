@@ -63,17 +63,21 @@ never infer production commands from historical stage notes.
 
 ## Delegation and model economy
 
-- **Luna:** repository exploration, mechanical work, and targeted lint/test
-  investigation.
+- **Luna:** repository exploration, test discovery, mechanical work, and
+  deterministic validation/test execution.
 - **Terra:** default production implementation and normal architecture or
   root-cause work.
 - **Sol / stronger expensive review:** only for a justified high-risk
   privacy, authorization, database, or deployment review.
 
-Use `.cursor/agents/codebase-explorer.md` or
-`.cursor/agents/test-explorer.md` only when delegation will reduce discovery
-cost. Give agents a bounded question, relevant docs/source paths, and require
-concise evidence. They do not implement unless explicitly delegated.
+Use `.cursor/agents/codebase-explorer.md` for codebase exploration and
+`.cursor/agents/test-explorer.md` for test discovery when delegation reduces
+discovery cost. Use `.cursor/agents/validation-runner.md` for parent-delegated
+deterministic validation/test execution; keep raw validation logs in that
+subagent context whenever practical. Terra remains responsible for
+implementation, failure-remediation decisions, and the final engineering
+report. The validation-runner workflow is the candidate underpinning for a
+future `validate-wave` Skill after a successful real product wave.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
