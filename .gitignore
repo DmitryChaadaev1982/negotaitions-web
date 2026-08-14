@@ -79,10 +79,12 @@ voxengine-ci/
 # Local scenario sync state (non-sensitive, but machine-specific)
 .vox-scenario-build-id
 
-# Version-controlled Cursor task-routing configuration. Other local Cursor
-# state remains excluded by the repository-level Git info exclude policy.
-!.cursor/
+# Version-controlled Cursor task-routing configuration. Keep unrelated local
+# Cursor state excluded while allowing shared agents, rules, and Skills.
+.cursor/*
 !.cursor/agents/
 !.cursor/agents/*.md
 !.cursor/rules/
 !.cursor/rules/*.mdc
+!.cursor/skills/
+!.cursor/skills/**

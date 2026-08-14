@@ -76,8 +76,10 @@ discovery cost. Use `.cursor/agents/validation-runner.md` for parent-delegated
 deterministic validation/test execution; keep raw validation logs in that
 subagent context whenever practical. Terra remains responsible for
 implementation, failure-remediation decisions, and the final engineering
-report. The validation-runner workflow is the candidate underpinning for a
-future `validate-wave` Skill after a successful real product wave.
+report. Use `.cursor/skills/stage-start/SKILL.md` as the canonical reusable
+workflow for a new stage/worktree and `.cursor/skills/validate-wave/SKILL.md`
+for post-implementation validation orchestration. Skills reuse these Luna
+subagents and do not override scoped safety rules or authoritative documents.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
