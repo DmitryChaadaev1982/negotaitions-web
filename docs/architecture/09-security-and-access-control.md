@@ -12,6 +12,10 @@
 - Account preference writes are self-only; `sessionSoundEnabled` is read/updated
   via authenticated current-user routes/actions without cross-user targeting.
 - Participant and observer views are constrained through serializer and response shaping.
+- Participant and Observer are distinct privacy projections: an Observer must
+  not receive participant-private recommendations or facilitator-private
+  analysis. The authoritative AI publication contract and its documented
+  recipient-grant implementation gap are in `08-ai-analysis-and-debrief.md`.
 - Admin diagnostics are separated from standard user surfaces.
 - Event lobby remote media controls are owner-only and are authorized server-side
   with `resolveEventAccess(...).isEventOwner`. A participant/observer/facilitator

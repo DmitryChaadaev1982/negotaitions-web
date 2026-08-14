@@ -1,0 +1,14 @@
+---
+description: Deployment, environment, and production-operation safety
+globs: "{deploy/**,scripts/ops/**,docs/operations/**,lib/config/**,lib/runtime-permissions.ts,lib/prisma-production-migration-overlay.ts}"
+alwaysApply: false
+---
+
+Read `docs/operations/deployment-runbook.md` and
+`docs/architecture/11-deployment-architecture.md` before changing deployment,
+runtime configuration, or operational scripts.
+
+Never expose, copy into source control, or modify secret values. Production
+access, deploys, provider changes, infrastructure changes, and production
+migration commands require explicit user authorization and the runbook's
+preflight/rollback steps.

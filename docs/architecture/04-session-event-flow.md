@@ -4,8 +4,9 @@
 
 1. Facilitator creates a session from case context.
 2. Session participants and roles are assigned.
-3. Participants enter room (`/room/[sessionId]` or join flow).
-4. Facilitator drives preparation and negotiation state transitions.
+3. Participants enter a room-ready, pre-Preparation state (`PREPARATION`).
+4. Facilitator explicitly starts Preparation, then drives the canonical
+   preparation and negotiation transitions.
 5. Recording lifecycle is tied to negotiation control flow.
 6. Materials API exposes recording/transcript/analysis progression.
 
@@ -212,6 +213,10 @@ these timers changes the Debrief grace.
 - Preparation lifecycle is authoritative and non-bypassable:
   `PREPARATION -> START_PREPARATION -> (PAUSE/RESUME)* -> STOP_PREPARATION -> READY_TO_START`.
 - Direct `START` from `PREPARATION` and direct `SKIP_PREPARATION` are invalid.
+- Preparation and negotiation both support pause/resume. Normal room UX must not
+  expose `SKIP_PREPARATION`; any early-finish control must invoke the canonical
+  `STOP_PREPARATION` or `FINISH` action rather than implementing an alternate
+  lifecycle transition.
 - Negotiation `FINISH` is valid only after negotiation start (`RUNNING`/`PAUSED`);
   pre-start finish requests are rejected.
 

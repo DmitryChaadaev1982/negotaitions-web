@@ -1,0 +1,14 @@
+---
+description: AI analysis publication and role-projection privacy constraints
+globs: "{app/api/sessions/**/ai-analysis/**,lib/ai/**,lib/privacy/**}"
+alwaysApply: false
+---
+
+Read `docs/architecture/08-ai-analysis-and-debrief.md` and
+`docs/architecture/09-security-and-access-control.md` before changing analysis
+or publication code.
+
+Fail closed for private role/facilitator data. Treat participant and Observer
+payloads as distinct projections. The approved per-publication recipient-grant
+contract is documented as a current implementation gap; do not silently claim
+or emulate it without an explicitly scoped design and data-model change.

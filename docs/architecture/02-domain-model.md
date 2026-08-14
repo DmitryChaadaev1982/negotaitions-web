@@ -15,6 +15,10 @@
 - `analysisJson` remains the complete validated report;
 - `sharedAnalysisJson` remains the sanitized participant/observer publication.
 
+Publication authorization, role-specific projection, and the documented
+recipient-grant implementation gap are owned by
+`08-ai-analysis-and-debrief.md`, not by this aggregate summary.
+
 Queued/analyzing section placeholders are derived from operation status and do
 not persist or expose nonterminal provider output.
 
@@ -44,13 +48,21 @@ not persist or expose nonterminal provider output.
   TrainingEvent.id`.
 - Event participants may be assigned into specific session participants.
 - Sessions can be linked to events and carry snapshot data from case context.
+- A `TrainingEvent` is the parent aggregate for its Event-created Sessions;
+  standalone Sessions have no `eventId` and remain a separate product group.
+- Event completion is Event authority. It moves the Event and its child Sessions
+  to history/archive presentation together; completing a child Session alone
+  does not complete its Event.
 
 ## Event Scheduling Invariant
 
 - Product invariant (application level): every newly created `TrainingEvent`
-  receives a non-null `scheduledAt`.
+  receives a non-null `scheduledAt`; date/time is mandatory in persisted product
+  semantics.
 - Create path fallback: when `scheduledAt` input is omitted, server actions set
   `scheduledAt` to current server time.
+- `scheduledAt=NULL` is legacy schema compatibility only, never a normal
+  nonterminal Event state or a scheduling signal.
 - Explicit invalid datetime/timezone combinations are rejected as validation
   errors and are never silently rewritten to current time.
 - Event update preserves existing schedule when `scheduledAt` is omitted and

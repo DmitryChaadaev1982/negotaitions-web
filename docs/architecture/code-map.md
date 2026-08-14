@@ -6,7 +6,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 - Product and domain orchestration
   - Code: `app/actions/cases.ts`, `app/actions/sessions.ts`, `app/actions/events.ts`, `lib/event-scheduling.ts`, `lib/timezones.ts`, `components/new-event-form.tsx`, `components/event-edit-form.tsx`, `prisma/schema.prisma`
-  - Docs: `01-product-context.md`, `02-domain-model.md`
+  - Docs: `01-product-context.md`, `02-domain-model.md`, `04-session-event-flow.md`
   - Tests: `tests/e2e/current-product-workflow.spec.ts`, `tests/e2e/event-flow.spec.ts`
 
 - Account preferences
@@ -16,17 +16,17 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 - Session/event lifecycle and control
   - Code: `app/api/sessions/[sessionId]/control/route.ts`, `app/api/sessions/[sessionId]/control-state/route.ts`, `app/api/sessions/[sessionId]/display-status/route.ts`, `app/api/sessions/[sessionId]/media-status/route.ts`, `app/api/sessions/[sessionId]/complete/route.ts`, `app/api/events/[id]/host/route.ts`, `app/api/events/[id]/state/route.ts`, `app/api/events/[id]/media-status/route.ts`, `app/api/events/[id]/media-control/route.ts`, `app/(app)/dashboard/page.tsx`, `components/account-dashboard-view.tsx`, `components/object-pictogram.tsx`, `components/join-page-view.tsx`, `components/session-detail-view.tsx`, `components/session-status-badge.tsx`, `components/sessions-list-view.tsx`, `lib/account-session-materials.ts`, `lib/dashboard-activity-selection.ts`, `lib/object-pictograms.ts`, `lib/event-active-assignment.ts`, `lib/legacy-session-terminal-normalization.ts`, `lib/rejoin/account.ts`, `lib/rejoin/validate.ts`, `lib/session-completion.ts`, `lib/session-display-status.ts`, `lib/session-empty-room-reconciliation.ts`, `lib/session-overview-shared.ts`, `lib/session-overview-stats.ts`, `lib/session-room-occupancy-policy.ts`, `lib/session-room-occupancy.ts`, `lib/session-facilitator.ts`, `scripts/ops/normalize-legacy-session-terminal-state.ts`
-  - Docs: `04-session-event-flow.md`, `09-security-and-access-control.md`, `docs/implementation/stage-3-13e-debrief-recording-reconciliation.md`
+  - Docs: `04-session-event-flow.md`, `09-security-and-access-control.md`
   - Tests: `tests/e2e/session-lifecycle.spec.ts`, `tests/e2e/session-finish-canonical.spec.ts`, `tests/e2e/session-overview-status.spec.ts`, `tests/e2e/voximplant-room-presence.spec.ts`, `tests/e2e/event-multi-session.spec.ts`, `tests/e2e/voximplant-room-parity.spec.ts`, `tests/e2e/voximplant-event-lobby.spec.ts`, `tests/e2e/stage-3-13e-standalone-remediation.spec.ts`, `lib/dashboard-activity-selection.test.ts`, `lib/legacy-session-terminal-normalization.test.ts`, `lib/session-display-status.test.ts`, `lib/session-return-to-room.test.ts`, `lib/session-room-occupancy.test.ts`, `lib/negotiation-control.test.ts`, `app/api/sessions/[sessionId]/control/route.test.ts`
 
 - Voximplant media integration
   - Code: `components/voximplant-negotiation-room-page.tsx`, `components/event-lobby-view.tsx`, `components/event-lobby-voximplant-room.tsx`, `lib/client/connection-id.ts`, `lib/client/stale-connection.ts`, `lib/voximplant/use-voximplant-room.ts`, `lib/voximplant/media-status-store.ts`, `lib/voximplant/event-media-control-store.ts`, `lib/voximplant/recording-dispatch.ts`, `lib/voximplant/recording-reconciliation-policy.ts`, `lib/voximplant/recording-reconciliation.ts`, `lib/voximplant/recording-status-fencing.ts`, `lib/voximplant/server-stop-client.ts`, `lib/voximplant/reinvite-scheme-sanitizer.ts`, `lib/voximplant/websdk-log-filter.ts`, `app/api/sessions/[sessionId]/voximplant/access/route.ts`, `app/api/events/[id]/voximplant-access/route.ts`, `app/api/events/[id]/media-control/route.ts`
-  - Docs: `05-voximplant-integration.md`, `09-security-and-access-control.md`, `docs/implementation/stage-3-13e-debrief-recording-reconciliation.md`
+  - Docs: `05-voximplant-integration.md`, `09-security-and-access-control.md`
   - Tests: `tests/e2e/voximplant-room-presence.spec.ts`, `tests/e2e/voximplant-recording-attempt-fencing.spec.ts`, `tests/e2e/voximplant-room-parity.spec.ts`, `tests/e2e/voximplant-event-lobby.spec.ts`, `lib/voximplant/recording-reconciliation-policy.test.ts`, `lib/voximplant/recording-reconciliation.test.ts`, `lib/voximplant/server-stop-client.test.ts`, `lib/voximplant/main-room-scenario.test.ts`, `lib/voximplant/main-room-scenario.runtime.test.ts`, `lib/client/connection-id.test.ts`, `lib/voximplant/participant-presence-media-model.test.ts`, `lib/voximplant/reinvite-scheme-sanitizer.test.ts`
 
 - Recording and transcription pipeline
   - Code: `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/materials/transcribe/route.ts`, `app/api/sessions/[sessionId]/materials/retranscribe/route.ts`, `app/api/sessions/[sessionId]/materials/enhance-transcript/route.ts`, `components/recording-indicator.tsx`, `components/recording-transcription-section.tsx`, `lib/recording-display-state.ts`, `lib/services/transcription-run-claim.ts`, `lib/services/transcription-runner.ts`, `lib/services/transcription-provider.ts`, `lib/services/yandex-speechkit-transcription.ts`, `lib/services/yandex-transcript-enhancement.ts`, `lib/services/transcript-enhancement-persistence.ts`, `lib/services/transcript-enhancement-orchestration.ts`, `lib/transcription/active-audio-timeline.ts`, `lib/transcription/active-audio-builder.ts`, `lib/transcription/pause-segment-processing.ts`, `lib/transcription/pause-processing-mode.ts`, `lib/transcription/transcript-timing.ts`, `lib/recording/provider.ts`, `lib/voximplant/recording-reconciliation-policy.ts`, `lib/voximplant/recording-reconciliation.ts`, `lib/voximplant/recording-status-fencing.ts`
-  - Docs: `06-recording-transcription-pipeline.md`, `docs/implementation/stage-3-13e-debrief-recording-reconciliation.md`
+  - Docs: `06-recording-transcription-pipeline.md`
   - Tests: `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/voximplant-recording-attempt-fencing.spec.ts`, `tests/e2e/stage-3-13e-standalone-remediation.spec.ts`, `tests/e2e/two-pass-transcription.spec.ts`, `lib/recording/recording-attempt-fencing.test.ts`, `lib/recording-display-state.test.ts`, `lib/voximplant/recording-reconciliation-policy.test.ts`, `lib/voximplant/recording-reconciliation.test.ts`, `lib/voximplant/recording-status-fencing.test.ts`, `lib/transcription/transcript-timing.test.ts`, `lib/services/yandex-transcript-enhancement.test.ts`, `lib/services/transcript-enhancement-orchestration.test.ts`, `lib/services/transcript-enhancement-persistence.test.ts`, `lib/env.transcript-enhancement.test.ts`, `lib/transcription/pause-interval-filter.test.ts`, `lib/transcription/pause-segment-processing.test.ts`
 
 - Speaker mapping and telemetry
@@ -35,8 +35,8 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Tests: `tests/e2e/diarization-speaker-mapping.spec.ts`, `lib/transcription/mapping-ui-presentation.test.ts`
 
 - AI analysis and debrief
-  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-input-budget.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/session-analysis-context.ts`, `lib/ai/session-analysis-prompt.ts`, `components/session-post-processing-panel.tsx`, `components/session-materials-dashboard.tsx`
-  - Docs: `08-ai-analysis-and-debrief.md`, `ai-analysis-operation-lifecycle.md`
+  - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-input-budget.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/session-analysis-context.ts`, `lib/ai/session-analysis-prompt.ts`, `lib/analysis-visibility.ts`, `lib/privacy/serializers.ts`, `lib/ai-publication-aggregate.ts`, `components/session-post-processing-panel.tsx`, `components/session-materials-dashboard.tsx`
+  - Docs: `08-ai-analysis-and-debrief.md`, `09-security-and-access-control.md`
   - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`, `lib/ai/analysis-operation.test.ts`, `lib/ai/negotiation-analysis.test.ts`, `lib/ai/session-analysis-prompt.test.ts`
 
 - Security and access control
@@ -47,8 +47,12 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 - Deployment and external systems
   - Code: `lib/env.ts`, `lib/config.ts`, `lib/config/server-runtime-settings.ts`, `lib/config/provider-runtime.ts`, `lib/prisma-production-migration-overlay.ts`, `lib/runtime-permissions.ts`, `lib/storage/s3.ts`, `lib/services/admin-env-display.ts`, `lib/services/admin-health-route-handler.ts`, `components/admin-diagnostics-emergency-state.tsx`, `app/api/admin/health/route.ts`, `scripts/verify-runtime-config-drift.ts`, `scripts/ops/prisma-production-migration-overlay.ts`, `scripts/ops/email-*.ts`, `scripts/ops/password-reset-backlog-quarantine.ts`, `deploy/systemd/negotiations-email-*`
-  - Docs: `11-deployment-architecture.md`, `12-external-systems.md`, `email-runtime-and-yandex-cloud.md`, `docs/operations/admin-configuration-diagnostics.md`, `docs/operations/deployment-runbook.md`, `docs/operations/prisma-production-history-repair-20260804.md`
+  - Docs: `11-deployment-architecture.md`, `12-external-systems.md`, `email-runtime-and-yandex-cloud.md`, `docs/operations/admin-configuration-diagnostics.md`, `docs/operations/deployment-runbook.md`
   - Tests: `tests/e2e/admin-diagnostics-env.spec.ts`, `app/api/admin/health/route.test.ts`, `lib/prisma-production-migration-overlay.test.ts`, `lib/services/admin-health-emergency-ui.test.ts`, `lib/services/admin-env-display.test.ts`, `lib/config/server-runtime-settings.test.ts`
+
+- Test tooling and E2E fixtures
+  - Code: `scripts/agent-tooling/**`, `scripts/run-playwright-mode.mjs`, `playwright*.config.ts`, `tests/e2e/helpers/db.ts`, `tests/e2e/helpers/e2e-database.ts`, `tests/e2e/**`
+  - Docs: `docs/testing/e2e-strategy.md`, `docs/testing/observer-test-execution-policy.md`, `docs/testing/validation-checklist.md`
 
 ## Required Doc-Update Rule
 

@@ -116,6 +116,19 @@
 - Manual stop/cancel state is represented with explicit transcript failure sentinel.
 - Session pause windows (`SessionPauseInterval`) are converted to recording-relative offsets and classified against transcript segments before persistence.
 
+## Materials Freshness Contract
+
+- Materials UI and room/debrief consumers read authoritative backend
+  `Recording`, `Transcript`, enhancement, speaker-mapping, and AI operation
+  state through the materials/control APIs; client relay or provider messages
+  are not freshness authority.
+- A status is publishable only after its corresponding durable persistence and
+  attempt/run fencing succeeds. Delayed callbacks, stale workers, and abandoned
+  browser sessions cannot make older material state look newer.
+- Recording, transcription, enhancement, mapping, and analysis are independent
+  progress dimensions. A ready material in one dimension must not imply that
+  another dimension is complete or accessible.
+
 ## Single-Run Admission
 
 - Initial transcription and manual retranscription serialize admission by

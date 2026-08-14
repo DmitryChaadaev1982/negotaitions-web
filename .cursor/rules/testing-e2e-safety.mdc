@@ -1,0 +1,13 @@
+---
+description: Test selection, managed-server, and E2E fixture safety
+globs: "{tests/**,playwright*.config.ts,scripts/agent-tooling/**,scripts/run-playwright-mode.mjs}"
+alwaysApply: false
+---
+
+Read `docs/testing/e2e-strategy.md` before changing or running E2E coverage.
+Use run-scoped fixture helpers and `E2E_DATABASE_URL`; never fall back to the
+development database or broad-clean shared data.
+
+Run managed browser suites sequentially and do not edit the tree while one is
+running. The observer layout suite is selected only by
+`docs/testing/observer-test-execution-policy.md`.

@@ -138,6 +138,29 @@ Produce structured post-session coaching output from transcript/materials and ex
 - No role receives partial provider output through the status API.
 - Sharing state controls materials access for observer-facing debrief behavior.
 
+## Approved Publication and Privacy Contract
+
+The following is the approved target contract for future publication work:
+
+- A publish operation targets only users eligible and present under canonical
+  presence truth at that publication time.
+- Recipient grants persist across a recipient's leave/rejoin. An absent user
+  receives no automatic access to that publication.
+- A later explicit Publish may add grants for recipients then eligible/present;
+  it must not infer access from a prior session-wide publication.
+- Participant and Observer projections are separate role-specific contracts.
+  Observers must not receive participant-private recommendations or
+  facilitator-private analysis.
+
+**Current implementation gap (documented; runtime intentionally unchanged):**
+`app/api/sessions/[sessionId]/ai-analysis/share/route.ts` writes one
+session-wide `AiAnalysis.sharedAnalysisJson` with
+`visibility=SHARED_WITH_SESSION`. It neither records publication-time recipient
+presence nor persists per-recipient grants. The materials delivery path does
+apply role-aware sanitization, but it cannot implement the approved
+publication-time grant semantics from a single shared payload. Do not claim that
+the current runtime already satisfies the target recipient-grant contract.
+
 ## Facilitator UI State Model
 
 - `QUEUED`: accepted and waiting for detached execution; duplicate start is
@@ -166,6 +189,10 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Source Notes
 
 - `lib/ai/negotiation-analysis.ts`
+- `lib/analysis-visibility.ts`
+- `lib/privacy/serializers.ts`
+- `lib/ai-publication-aggregate.ts`
 - `app/api/sessions/[sessionId]/materials/status/route.ts`
+- `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`
+- `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`
 - `tests/e2e/debrief-ai-sharing.spec.ts`
-- `docs/audits/archive/old-root-reports/PRIVACY_SERIALIZERS.md`

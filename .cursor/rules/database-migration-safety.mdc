@@ -1,0 +1,13 @@
+---
+description: Database and migration safety for Prisma schema work
+globs: prisma/**
+alwaysApply: false
+---
+
+Before a schema or migration change, read `prisma/schema.prisma`, generated
+Prisma types, `docs/architecture/02-domain-model.md`, and
+`docs/architecture/10-data-storage-and-retention.md`.
+
+Never guess columns, rewrite migration history, or run production-targeted
+commands. Treat migration changes as explicit, reviewable work and select
+non-production test coverage from `docs/testing/e2e-strategy.md`.

@@ -1,0 +1,13 @@
+---
+description: Canonical Session room lifecycle and control invariants
+globs: "{app/api/sessions/**,lib/{negotiation-control,session-control-*,session-completion,session-room-*,live-session-*}.ts,components/voximplant-*.tsx}"
+alwaysApply: false
+---
+
+Read `docs/architecture/04-session-event-flow.md` and the mapped tests before
+changing room control, access, presence, or lifecycle code.
+
+Preserve the canonical state authority, facilitator lease/CAS checks, and
+role-gated access. Preparation is explicit and non-bypassable; early finish
+must use canonical actions. Select observer coverage only through
+`docs/testing/observer-test-execution-policy.md`.
