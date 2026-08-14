@@ -1,6 +1,6 @@
 ---
 name: verify-requirements
-description: Independently verifies every approved requirement in a product wave using Luna evidence collection and a complete coverage matrix.
+description: Independently verifies every approved requirement in a product wave using Grok evidence collection and a complete coverage matrix. Parent judgment follows docs/testing/agent-model-routing.md.
 ---
 
 # Verify Requirements

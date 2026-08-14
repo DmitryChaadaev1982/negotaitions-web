@@ -68,27 +68,34 @@ Deployment work must follow
 [`docs/operations/deployment-runbook.md`](docs/operations/deployment-runbook.md);
 never infer production commands from historical stage notes.
 
-## Delegation and model economy
+## Model routing (temporary)
 
-- **Luna:** repository exploration, test discovery, mechanical work, and
-  deterministic validation/test execution.
-- **Terra:** default production implementation and normal architecture or
-  root-cause work.
-- **Sol / stronger expensive review:** only for a justified high-risk
-  privacy, authorization, database, or deployment review.
+Authoritative policy:
+[`docs/testing/agent-model-routing.md`](docs/testing/agent-model-routing.md).
+
+- **Default parent:** Grok 4.6 (`grok-4.6`) for implementation, remediation,
+  exploration, test selection, requirements judgment, architecture, and
+  audits.
+- **Validation execution:** GPT-5.6 Luna Medium via
+  `.cursor/agents/validation-runner.md` only. Do not move implementation or
+  remediation decisions into that profile.
+- **Terra / Sol:** not defaults. Escalate only when the routing policy's
+  evidence-based criteria are met. The user controls any return to the prior
+  OpenAI-default workflow.
 
 Use `.cursor/agents/codebase-explorer.md` for codebase exploration and
 `.cursor/agents/test-explorer.md` for test discovery when delegation reduces
-discovery cost. Use `.cursor/agents/validation-runner.md` for parent-delegated
-deterministic validation/test execution; keep raw validation logs in that
-subagent context whenever practical. Terra remains responsible for
-implementation, failure-remediation decisions, and the final engineering
-report. Use `.cursor/skills/stage-start/SKILL.md` as the canonical reusable
-workflow for a new stage/worktree and `.cursor/skills/validate-wave/SKILL.md`
-for post-implementation validation orchestration, and
-`.cursor/skills/verify-requirements/SKILL.md` for independent completeness
-verification. Skills reuse these Luna subagents and do not override scoped
-safety rules or authoritative documents.
+discovery cost. Use `.cursor/agents/requirements-evidence-collector.md` for
+factual requirement evidence. Use `.cursor/agents/validation-runner.md` for
+parent-delegated deterministic validation/test execution; keep raw validation
+logs in that subagent context whenever practical. The parent remains
+responsible for implementation, failure-remediation decisions, and the final
+engineering report. Use `.cursor/skills/stage-start/SKILL.md` as the canonical
+reusable workflow for a new stage/worktree and
+`.cursor/skills/validate-wave/SKILL.md` for post-implementation validation
+orchestration, and `.cursor/skills/verify-requirements/SKILL.md` for
+independent completeness verification. Skills reuse these subagent profiles
+and do not override scoped safety rules or authoritative documents.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

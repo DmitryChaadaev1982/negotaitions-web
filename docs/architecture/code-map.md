@@ -52,7 +52,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 - Test tooling and E2E fixtures
   - Code: `scripts/agent-tooling/**`, `scripts/run-playwright-mode.mjs`, `playwright*.config.ts`, `tests/e2e/helpers/db.ts`, `tests/e2e/helpers/e2e-database.ts`, `tests/e2e/**`
-  - Docs: `docs/testing/e2e-strategy.md`, `docs/testing/observer-test-execution-policy.md`, `docs/testing/validation-checklist.md`
+  - Docs: `docs/testing/e2e-strategy.md`, `docs/testing/observer-test-execution-policy.md`, `docs/testing/validation-checklist.md`, `docs/testing/agent-model-routing.md`
 
 ## Required Doc-Update Rule
 
