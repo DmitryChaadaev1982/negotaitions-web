@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useSyncExternalStore } from "react";
+import { useActionState, useCallback, useState, useSyncExternalStore } from "react";
 
 import { Badge } from "@/components/badge";
 import { PageHeader } from "@/components/page-header";
@@ -24,6 +24,10 @@ import {
   getSessionLeftFlagSnapshot,
   sessionLeftSubscribe,
 } from "@/lib/session-room-leave";
+import {
+  areNotesDirty,
+  reconcileSavedNotes,
+} from "@/lib/participant-notes-state";
 
 type Props = AccountMaterialsData;
 
@@ -178,10 +182,23 @@ function NotesForm({
   variant: "preparation" | "observer" | "facilitator";
 }) {
   const { t } = useI18n();
+  const [draftNotes, setDraftNotes] = useState(initialNotes);
+  const [savedBaseline, setSavedBaseline] = useState(initialNotes);
+  const saveNotes = useCallback(
+    async (previousState: SaveParticipantNotesState, formData: FormData) => {
+      const result = await saveAccountParticipantNotes(previousState, formData);
+      setSavedBaseline((currentBaseline) => reconcileSavedNotes(currentBaseline, result));
+      return result;
+    },
+    [],
+  );
   const [state, formAction, isPending] = useActionState<
     SaveParticipantNotesState,
     FormData
-  >(saveAccountParticipantNotes, {});
+  >(saveNotes, {});
+
+  const isDirty = areNotesDirty(draftNotes, savedBaseline);
+  const showSaved = !isDirty && state.success === true;
 
   const placeholder =
     variant === "facilitator"
@@ -199,13 +216,16 @@ function NotesForm({
         rows={6}
         className="w-full rounded-lg bg-slate-900/60 px-3 py-2 text-sm text-slate-200 ring-1 ring-inset ring-slate-700/40 placeholder:text-slate-600 focus:outline-none focus:ring-cyan-500/60"
         placeholder={placeholder}
-        defaultValue={state.notes ?? initialNotes}
+        value={draftNotes}
+        onChange={(event) => setDraftNotes(event.target.value)}
         data-testid="materials-notes-textarea"
       />
       {state.errors?.form ? (
         <p className="text-xs text-rose-400">{state.errors.form[0]}</p>
       ) : null}
-      {state.success ? (
+      {isDirty ? (
+        <p className="text-xs text-amber-300">{t("common.unsavedNotes")}</p>
+      ) : showSaved ? (
         <p className="text-xs text-emerald-400">{t("common.notesSaved")}</p>
       ) : null}
       <button

@@ -1033,11 +1033,17 @@ export const en = {
     pausePreparation: "Pause preparation",
     resumePreparation: "Resume preparation",
     stopPreparation: "Stop preparation",
+    finishPreparationConfirmTitle: "Finish preparation early?",
+    finishPreparationConfirmBody:
+      "Preparation will end now and participants can begin the negotiation when you start it.",
     skipPreparation: "Skip preparation",
     startNegotiation: "Start negotiation",
     pauseNegotiation: "Pause negotiation",
     resumeNegotiation: "Resume negotiation",
     finishEarly: "Finish early",
+    finishNegotiationConfirmTitle: "Finish negotiations early?",
+    finishNegotiationConfirmBody:
+      "This ends the negotiation and opens the session debrief.",
     save: "Save",
     min: "min",
     preparationMin: "prep min",

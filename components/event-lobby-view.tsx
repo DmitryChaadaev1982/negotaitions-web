@@ -930,6 +930,7 @@ export function EventLobbyView({
       ?.eventPresenceStatus === "IN_LOBBY"
       ? state.mediaControlCommands.find((command) => command.action === "enable_request") ?? null
       : null;
+  const deviceWarningMessage = deviceWarningLabel(deviceWarning, t);
 
   return (
     <div className="fixed inset-0 flex min-h-0 flex-col overflow-hidden bg-[#020617]" data-testid="event-lobby-page">
@@ -1028,9 +1029,9 @@ export function EventLobbyView({
                 </div>
               </div>
             ) : null}
-            {deviceWarning ? (
+            {deviceWarningMessage ? (
               <p className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
-                {deviceWarningLabel(deviceWarning, t)}
+                {deviceWarningMessage}
               </p>
             ) : null}
             {staleConnection ? (

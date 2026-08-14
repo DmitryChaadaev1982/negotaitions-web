@@ -217,8 +217,17 @@ these timers changes the Debrief grace.
   expose `SKIP_PREPARATION`; any early-finish control must invoke the canonical
   `STOP_PREPARATION` or `FINISH` action rather than implementing an alternate
   lifecycle transition.
+- The facilitator early-finish confirmation is a client-side safety wrapper
+  only. Opening or cancelling it never pauses, resumes, freezes, or otherwise
+  mutates the phase; confirming dispatches the existing canonical
+  `STOP_PREPARATION` or `FINISH` request once with the normal lease/CAS fields.
 - Negotiation `FINISH` is valid only after negotiation start (`RUNNING`/`PAUSED`);
   pre-start finish requests are rejected.
+- Participant Notes, including the account Materials view, keeps a local
+  current draft separate from its saved baseline. A successful Notes action
+  advances only that baseline to the returned persisted notes; a newer local
+  edit remains visible and dirty, and a failed action cannot report saved
+  state.
 
 ## Stage 3.13E Wave 2 Acceptance Remediation Notes
 

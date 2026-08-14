@@ -13,8 +13,10 @@ import {
   secondsToDisplayMinutes,
 } from "@/lib/negotiation-duration";
 import { useI18n } from "@/lib/i18n/useI18n";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RecordingConsentModal } from "@/components/recording-consent-modal";
-import { useCallback, useState } from "react";
+import { DangerButton } from "@/components/ui/buttons";
+import { useCallback, useRef, useState } from "react";
 
 /** Modal that gates the start-negotiation action behind recording consent. */
 function NegotiationStartConsentModal({
@@ -218,13 +220,21 @@ export function FacilitatorRoomControls({
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
   const [showRecordingConsent, setShowRecordingConsent] = useState(false);
   const [pendingStartAction, setPendingStartAction] = useState<ControlAction | null>(null);
+  const [pendingFinishAction, setPendingFinishAction] = useState<
+    "STOP_PREPARATION" | "FINISH" | null
+  >(null);
+  const actionInFlightRef = useRef(false);
 
   const runAction = useCallback(
     async (action: ControlAction) => {
+      if (actionInFlightRef.current) {
+        return;
+      }
       if (!connectionId || !controlState.controlToken) {
         setRecordingWarning("Connection lease missing. Rejoin the room.");
         return;
       }
+      actionInFlightRef.current = true;
       setIsSubmitting(true);
       setRecordingWarning(null);
 
@@ -273,6 +283,7 @@ export function FacilitatorRoomControls({
       } catch (actionError) {
         console.error(actionError);
       } finally {
+        actionInFlightRef.current = false;
         setIsSubmitting(false);
       }
     },
@@ -289,12 +300,16 @@ export function FacilitatorRoomControls({
     ],
   );
 
-  /** For START action, show consent modal first. All other actions run directly. */
+  /** START and early finish actions use local safety dialogs before the canonical action. */
   const requestAction = useCallback(
     (action: ControlAction) => {
       if (action === "START") {
         setPendingStartAction(action);
         setShowRecordingConsent(true);
+        return;
+      }
+      if (action === "STOP_PREPARATION" || action === "FINISH") {
+        setPendingFinishAction(action);
         return;
       }
       void runAction(action);
@@ -313,6 +328,21 @@ export function FacilitatorRoomControls({
   const handleRecordingConsentCancel = useCallback(() => {
     setShowRecordingConsent(false);
     setPendingStartAction(null);
+  }, []);
+
+  const handleFinishConfirm = useCallback(() => {
+    if (!pendingFinishAction || actionInFlightRef.current) {
+      return;
+    }
+    const action = pendingFinishAction;
+    setPendingFinishAction(null);
+    void runAction(action);
+  }, [pendingFinishAction, runAction]);
+
+  const handleFinishCancel = useCallback(() => {
+    if (!actionInFlightRef.current) {
+      setPendingFinishAction(null);
+    }
   }, []);
 
   const { negotiationState } = controlState;
@@ -340,6 +370,28 @@ export function FacilitatorRoomControls({
         onCancel={handleRecordingConsentCancel}
       />
     ) : null}
+    <ConfirmDialog
+      open={pendingFinishAction !== null}
+      title={
+        pendingFinishAction === "STOP_PREPARATION"
+          ? t("room.finishPreparationConfirmTitle")
+          : t("room.finishNegotiationConfirmTitle")
+      }
+      description={
+        pendingFinishAction === "STOP_PREPARATION"
+          ? t("room.finishPreparationConfirmBody")
+          : t("room.finishNegotiationConfirmBody")
+      }
+      cancelLabel={t("common.cancel")}
+      confirmLabel={
+        pendingFinishAction === "STOP_PREPARATION"
+          ? t("room.stopPreparation")
+          : t("room.finishEarly")
+      }
+      confirming={isSubmitting}
+      onCancel={handleFinishCancel}
+      onConfirm={handleFinishConfirm}
+    />
     <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -396,15 +448,15 @@ export function FacilitatorRoomControls({
           >
             {t("room.pausePreparation")}
           </button>
-          <button
+          <DangerButton
             type="button"
             data-testid="stop-preparation-button"
             disabled={isSubmitting}
-            onClick={() => void runAction("STOP_PREPARATION")}
-            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+            onClick={() => requestAction("STOP_PREPARATION")}
+            className="px-4 py-2"
           >
             {t("room.stopPreparation")}
-          </button>
+          </DangerButton>
         </div>
       ) : null}
 
@@ -419,15 +471,15 @@ export function FacilitatorRoomControls({
           >
             {t("room.resumePreparation")}
           </button>
-          <button
+          <DangerButton
             type="button"
             data-testid="stop-preparation-button"
             disabled={isSubmitting}
-            onClick={() => void runAction("STOP_PREPARATION")}
-            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+            onClick={() => requestAction("STOP_PREPARATION")}
+            className="px-4 py-2"
           >
             {t("room.stopPreparation")}
-          </button>
+          </DangerButton>
         </div>
       ) : null}
 
@@ -454,15 +506,15 @@ export function FacilitatorRoomControls({
           >
             {t("room.pauseNegotiation")}
           </button>
-          <button
+          <DangerButton
             type="button"
             data-testid="finish-negotiation-button"
             disabled={isSubmitting}
-            onClick={() => void runAction("FINISH")}
-            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+            onClick={() => requestAction("FINISH")}
+            className="px-4 py-2"
           >
             {t("room.finishEarly")}
-          </button>
+          </DangerButton>
         </div>
       ) : null}
 
@@ -477,15 +529,15 @@ export function FacilitatorRoomControls({
           >
             {t("room.resumeNegotiation")}
           </button>
-          <button
+          <DangerButton
             type="button"
             data-testid="finish-negotiation-button"
             disabled={isSubmitting}
-            onClick={() => void runAction("FINISH")}
-            className={`${actionButtonClass} border border-slate-600 text-white hover:bg-slate-800`}
+            onClick={() => requestAction("FINISH")}
+            className="px-4 py-2"
           >
             {t("room.finishEarly")}
-          </button>
+          </DangerButton>
         </div>
       ) : null}
 

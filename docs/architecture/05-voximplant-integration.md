@@ -137,6 +137,10 @@ switching application versions.
   - Connected + ON = green
   - Connected + OFF = red
   - Disconnected/unknown = gray
+- Event-lobby device warnings are presentation-only and render only recognized
+  existing media/device/permission failures. Credential/bootstrap/lease state
+  and normal provider connection/retry status do not become device warnings;
+  provider-specific retry/error surfaces remain their own authority.
 
 ## Room Tile Metadata Contract (Stage 3.2)
 

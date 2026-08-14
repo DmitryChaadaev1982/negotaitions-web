@@ -364,3 +364,158 @@ test("Event duplicate transcription admission keeps existing single-run behavior
     await createSessionFixture({ eventLinked: true }),
   );
 });
+
+test("account Materials Notes becomes clean after persisting its edited draft", async ({ page }) => {
+  const fixture = await createSessionFixture();
+  await query(`UPDATE "SessionParticipant" SET notes = $2 WHERE id = $1`, [
+    fixture.facilitator.id,
+    "A",
+  ]);
+  await authenticatePage(page, fixture.facilitator.userId);
+
+  await page.goto(`/sessions/${fixture.sessionId}/materials`);
+  const notes = page.getByTestId("materials-notes-textarea");
+  await expect(notes).toHaveValue("A");
+  await notes.fill("A");
+
+  await notes.fill("B");
+  await page.getByTestId("materials-notes-save-button").click();
+
+  await expect(notes).toHaveValue("B");
+  await expect(page.getByText("Notes saved.")).toBeVisible();
+  await expect(page.getByText("Unsaved notes")).toHaveCount(0);
+});
+
+test("account Materials Notes keeps an in-flight newer draft dirty and preserves its baseline after failure", async ({
+  page,
+}) => {
+  const fixture = await createSessionFixture();
+  await query(`UPDATE "SessionParticipant" SET notes = $2 WHERE id = $1`, [
+    fixture.facilitator.id,
+    "A",
+  ]);
+  await authenticatePage(page, fixture.facilitator.userId);
+
+  await page.goto(`/sessions/${fixture.sessionId}/materials`);
+  const notes = page.getByTestId("materials-notes-textarea");
+  await expect(notes).toHaveValue("A");
+  await notes.fill("A");
+
+  let releaseSaveResponse: (() => void) | undefined;
+  let notifySaveRequest: (() => void) | undefined;
+  const saveRequestIntercepted = new Promise<void>((resolve) => {
+    notifySaveRequest = resolve;
+  });
+  let holdNextSaveResponse = true;
+
+  await page.route(`**/sessions/${fixture.sessionId}/materials`, async (route) => {
+    const request = route.request();
+    if (
+      !holdNextSaveResponse ||
+      request.method() !== "POST" ||
+      !(await request.headerValue("next-action"))
+    ) {
+      await route.continue();
+      return;
+    }
+
+    holdNextSaveResponse = false;
+    const response = await route.fetch();
+    notifySaveRequest?.();
+    await new Promise<void>((resolve) => {
+      releaseSaveResponse = resolve;
+    });
+    await route.fulfill({ response });
+  });
+
+  await notes.fill("B");
+  await page.getByTestId("materials-notes-save-button").click();
+  await saveRequestIntercepted;
+
+  await notes.fill("C");
+  releaseSaveResponse?.();
+
+  await expect(notes).toHaveValue("C");
+  await expect(page.getByText("Unsaved notes")).toBeVisible();
+  await expect(page.getByText("Notes saved.")).toHaveCount(0);
+
+  await page.locator('input[name="participantId"]').evaluate((input) => {
+    (input as HTMLInputElement).value = "missing-participant";
+  });
+  await page.getByTestId("materials-notes-save-button").click();
+
+  await expect(page.getByText("invalidRequest")).toBeVisible();
+  await expect(notes).toHaveValue("C");
+  await expect(page.getByText("Unsaved notes")).toBeVisible();
+
+  await notes.fill("B");
+  await expect(page.getByText("Unsaved notes")).toHaveCount(0);
+});
+
+test("early preparation finish waits for confirmation before one canonical control request", async ({
+  page,
+  request,
+}) => {
+  const fixture = await createSessionFixture();
+  const seededConnectionId = await createRoomConnectionForParticipant({
+    sessionId: fixture.sessionId,
+    userId: fixture.facilitator.userId,
+    role: "FACILITATOR",
+  });
+  const cookie = await createUserSessionCookie(fixture.facilitator.userId);
+  const startedPreparation = await postControl(request, {
+    sessionId: fixture.sessionId,
+    participantId: fixture.facilitator.id,
+    connectionId: seededConnectionId,
+    cookie,
+    action: "START_PREPARATION",
+  });
+  expect(startedPreparation.ok()).toBeTruthy();
+  await authenticatePage(page, fixture.facilitator.userId);
+
+  const controlActions: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes(`/api/sessions/${fixture.sessionId}/control`)
+    ) {
+      const payload = JSON.parse(request.postData() ?? "{}") as { action?: string };
+      controlActions.push(payload.action ?? "");
+    }
+  });
+
+  await page.goto(`/room/${fixture.sessionId}?media=off`);
+  const stopButton = page.getByTestId("stop-preparation-button");
+  await expect(stopButton).toBeVisible();
+  const cookieBanner = page.getByTestId("cookie-banner");
+  if (await cookieBanner.isVisible().catch(() => false)) {
+    await page.getByTestId("cookie-accept-all").click();
+    await expect(cookieBanner).toHaveCount(0);
+  }
+
+  await stopButton.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  expect(controlActions).toEqual([]);
+
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(controlActions).toEqual([]);
+
+  await stopButton.click();
+  await expect(dialog).toBeVisible();
+  const confirmedControl = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().includes(`/api/sessions/${fixture.sessionId}/control`),
+  );
+  await dialog.getByRole("button", { name: "Stop preparation", exact: true }).click();
+
+  const controlRequest = await confirmedControl;
+  expect(JSON.parse(controlRequest.postData() ?? "{}")).toMatchObject({
+    action: "STOP_PREPARATION",
+  });
+  await expect.poll(() => controlActions).toEqual(["STOP_PREPARATION"]);
+  expect(controlActions).not.toContain("PAUSE");
+  expect(controlActions).not.toContain("RESUME");
+});

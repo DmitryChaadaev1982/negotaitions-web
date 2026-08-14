@@ -436,3 +436,15 @@ test("lobby camera busy path reports localized warning key and keeps controls sh
   expect(tileSource).toContain("participant-tile-camera-status-icon");
   expect(viewSource).toContain("events.cameraBusyOrUnavailable");
 });
+
+test("lobby renders a warning only for recognized device/media failures", () => {
+  const viewSource = readFileSync("components/event-lobby-view.tsx", "utf-8");
+
+  expect(viewSource).toContain(
+    'const deviceWarningMessage = deviceWarningLabel(deviceWarning, t);',
+  );
+  expect(viewSource).toContain("{deviceWarningMessage ? (");
+  expect(viewSource).not.toContain("{deviceWarning ? (");
+  expect(viewSource).toContain('warning === "cameraUnavailable"');
+  expect(viewSource).toContain('warning === "microphoneUnavailable"');
+});

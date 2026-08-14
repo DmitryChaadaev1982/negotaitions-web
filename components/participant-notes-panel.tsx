@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useCallback, useState } from "react";
 
 import {
   saveParticipantNotes,
@@ -14,6 +14,10 @@ import {
   inputClassName,
 } from "@/components/ui/form-styles";
 import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  areNotesDirty,
+  reconcileSavedNotes,
+} from "@/lib/participant-notes-state";
 
 type ParticipantNotesPanelProps = {
   initialNotes: string;
@@ -37,17 +41,23 @@ export function ParticipantNotesPanel({
       ? saveAccountParticipantNotes
       : saveParticipantNotes;
 
+  const [draftNotes, setDraftNotes] = useState(initialNotes);
+  const [savedNotes, setSavedNotes] = useState(initialNotes);
+  const saveNotes = useCallback(
+    async (previousState: SaveParticipantNotesState, formData: FormData) => {
+      const result = await saveAction(previousState, formData);
+      setSavedNotes((currentBaseline) => reconcileSavedNotes(currentBaseline, result));
+      return result;
+    },
+    [saveAction],
+  );
   const [state, formAction, isPending] = useActionState<
     SaveParticipantNotesState,
     FormData
-  >(saveAction, { notes: initialNotes });
+  >(saveNotes, {});
 
-  const savedNotes = state.notes ?? initialNotes;
-  const [draftNotes, setDraftNotes] = useState(initialNotes);
-
-  const isDirty = draftNotes !== savedNotes;
-  const showSaved =
-    !isDirty && (savedNotes.length > 0 || state.success === true);
+  const isDirty = areNotesDirty(draftNotes, savedNotes);
+  const showSaved = !isDirty && state.success === true;
 
   return (
     <form action={formAction} className="space-y-3">

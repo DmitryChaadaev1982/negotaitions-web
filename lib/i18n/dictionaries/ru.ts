@@ -1038,11 +1038,17 @@ export const ru: Dictionary = {
     pausePreparation: "Поставить подготовку на паузу",
     resumePreparation: "Продолжить подготовку",
     stopPreparation: "Завершить подготовку",
+    finishPreparationConfirmTitle: "Завершить подготовку досрочно?",
+    finishPreparationConfirmBody:
+      "Подготовка завершится сейчас, а участники смогут начать переговоры после вашего запуска.",
     skipPreparation: "Пропустить подготовку",
     startNegotiation: "Начать переговоры",
     pauseNegotiation: "Поставить на паузу",
     resumeNegotiation: "Продолжить переговоры",
     finishEarly: "Завершить досрочно",
+    finishNegotiationConfirmTitle: "Завершить переговоры досрочно?",
+    finishNegotiationConfirmBody:
+      "Переговоры завершатся, и сессия перейдёт в режим дебрифинга.",
     save: "Сохранить",
     min: "мин",
     preparationMin: "подг. мин",

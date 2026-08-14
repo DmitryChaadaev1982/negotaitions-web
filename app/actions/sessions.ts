@@ -679,6 +679,7 @@ export async function saveParticipantNotes(
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
     return {
+      notes: _prevState.notes,
       errors: {
         notes: fieldErrors.notes,
       },
@@ -701,6 +702,7 @@ export async function saveParticipantNotes(
 
   if (!participant) {
     return {
+      notes: _prevState.notes,
       errors: {
         form: ["Invalid join link."],
       },
@@ -709,6 +711,7 @@ export async function saveParticipantNotes(
 
   if (participant.session.deletedAt) {
     return {
+      notes: _prevState.notes,
       errors: {
         form: ["Session has been deleted."],
       },
@@ -741,7 +744,7 @@ export async function saveAccountParticipantNotes(
   const notes = String(formData.get("notes") ?? "");
 
   if (!participantId) {
-    return { errors: { form: ["invalidRequest"] } };
+    return { notes: _prevState.notes, errors: { form: ["invalidRequest"] } };
   }
 
   const isAdminUser = (await import("@/lib/auth/admin")).isAdmin(user);
@@ -760,16 +763,16 @@ export async function saveAccountParticipantNotes(
   });
 
   if (!participant) {
-    return { errors: { form: ["invalidRequest"] } };
+    return { notes: _prevState.notes, errors: { form: ["invalidRequest"] } };
   }
 
   if (participant.session.deletedAt) {
-    return { errors: { form: ["Session has been deleted."] } };
+    return { notes: _prevState.notes, errors: { form: ["Session has been deleted."] } };
   }
 
   // Phase 6.11B: PARTICIPANT must have an assigned role before writing notes.
   if (participant.type === ParticipantType.PARTICIPANT && !participant.sessionRoleId) {
-    return { errors: { form: ["preparationLockedNoRole"] } };
+    return { notes: _prevState.notes, errors: { form: ["preparationLockedNoRole"] } };
   }
 
   await prisma.sessionParticipant.update({
