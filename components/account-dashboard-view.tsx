@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/badge";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
 import { SemanticActionLink } from "@/components/semantic-action";
 import { SessionStatusBadge } from "@/components/session-status-badge";
@@ -51,6 +52,11 @@ type DashboardSessionItem = {
   eventLobbyHref: string | null;
 };
 
+type DashboardEventGroupItem = {
+  event: DashboardEventItem;
+  sessions: DashboardSessionItem[];
+};
+
 type ContinueItem = {
   title: string;
   subtitle: string;
@@ -59,9 +65,11 @@ type ContinueItem = {
 
 type AccountDashboardViewProps = {
   continueItem: ContinueItem | null;
-  activeEvents: DashboardEventItem[];
-  activeSessions: DashboardSessionItem[];
-  completedSessions: DashboardSessionItem[];
+  currentEventGroups: DashboardEventGroupItem[];
+  futureEventGroups: DashboardEventGroupItem[];
+  standaloneActiveSessions: DashboardSessionItem[];
+  archiveEventGroups: DashboardEventGroupItem[];
+  archiveStandaloneSessions: DashboardSessionItem[];
   hostedEvents: DashboardEventItem[];
   isAdmin: boolean;
 };
@@ -78,17 +86,30 @@ function semanticKindForDashboardAction(action: DashboardAction): SemanticAction
 
 export function AccountDashboardView({
   continueItem,
-  activeEvents,
-  activeSessions,
-  completedSessions,
+  currentEventGroups,
+  futureEventGroups,
+  standaloneActiveSessions,
+  archiveEventGroups,
+  archiveStandaloneSessions,
   hostedEvents,
   isAdmin,
 }: AccountDashboardViewProps) {
   const { t, locale } = useI18n();
   const dateTimeLocale = locale === "ru" ? "ru-RU" : "en-US";
-  const activeEventIds = new Set(activeEvents.map((event) => event.id));
+  const activeEventIds = new Set(
+    [...currentEventGroups, ...futureEventGroups].map((group) => group.event.id),
+  );
   const managedOnlyEvents = hostedEvents.filter((event) => !activeEventIds.has(event.id));
-  const hasUpcomingOrActive = activeEvents.length > 0 || activeSessions.length > 0;
+  const hasUpcomingOrActive =
+    currentEventGroups.length > 0 ||
+    futureEventGroups.length > 0 ||
+    standaloneActiveSessions.length > 0;
+  const archivedSessionCount =
+    archiveStandaloneSessions.length +
+    archiveEventGroups.reduce(
+      (count, group) => count + group.sessions.length,
+      0,
+    );
 
   const formatDate = (iso: string | null, timeZone: string) => {
     if (!iso) return "—";
@@ -174,17 +195,36 @@ export function AccountDashboardView({
           <EmptyState message={t("dashboard.noUpcomingActivity")} />
         ) : (
           <div className="space-y-5">
-            {activeEvents.length > 0 ? (
-              <DashboardEventCards
-                events={activeEvents}
+            {currentEventGroups.length > 0 ? (
+              <DashboardEventHierarchyCards
+                groups={currentEventGroups}
                 formatDate={formatDate}
                 formatTime={formatTime}
                 formatDuration={formatDuration}
                 managedEventIds={new Set(hostedEvents.map((event) => event.id))}
               />
             ) : null}
-            {activeSessions.length > 0 ? (
-              <SessionCards sessions={activeSessions} archived={false} />
+            {futureEventGroups.length > 0 ? (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                  {t("dashboard.futureEvents")}
+                </h3>
+                <DashboardEventHierarchyCards
+                  groups={futureEventGroups}
+                  formatDate={formatDate}
+                  formatTime={formatTime}
+                  formatDuration={formatDuration}
+                  managedEventIds={new Set(hostedEvents.map((event) => event.id))}
+                />
+              </div>
+            ) : null}
+            {standaloneActiveSessions.length > 0 ? (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                  {t("dashboard.standaloneSessions")}
+                </h3>
+                <SessionCards sessions={standaloneActiveSessions} archived={false} />
+              </div>
             ) : null}
           </div>
         )}
@@ -193,8 +233,8 @@ export function AccountDashboardView({
       {managedOnlyEvents.length > 0 ? (
         <section className="space-y-3" data-testid="dashboard-managed-events-section">
           <h2 className="text-lg font-semibold text-slate-100">{t("dashboard.managedEvents")}</h2>
-          <DashboardEventCards
-            events={managedOnlyEvents}
+          <DashboardEventHierarchyCards
+            groups={managedOnlyEvents.map((event) => ({ event, sessions: [] }))}
             formatDate={formatDate}
             formatTime={formatTime}
             formatDuration={formatDuration}
@@ -206,15 +246,32 @@ export function AccountDashboardView({
 
       <section className="space-y-3" data-testid="dashboard-archive-section">
         <h2 className="text-lg font-semibold text-slate-100">{t("dashboard.archiveCompleted")}</h2>
-        {completedSessions.length === 0 ? (
+        {archivedSessionCount === 0 ? (
           <EmptyState message={t("dashboard.noCompletedActivity")} />
         ) : (
           <details className="rounded-2xl border border-slate-700/40 bg-slate-900/25" data-testid="dashboard-archive-disclosure">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-100">
-              {t("dashboard.archiveSummary", { count: completedSessions.length })}
+              {t("dashboard.archiveSummary", { count: archivedSessionCount })}
             </summary>
-            <div className="border-t border-slate-700/30 p-3">
-              <SessionCards sessions={completedSessions} archived />
+            <div className="space-y-4 border-t border-slate-700/30 p-3">
+              {archiveEventGroups.length > 0 ? (
+                <DashboardEventHierarchyCards
+                  groups={archiveEventGroups}
+                  formatDate={formatDate}
+                  formatTime={formatTime}
+                  formatDuration={formatDuration}
+                  managedEventIds={new Set(hostedEvents.map((event) => event.id))}
+                  archived
+                />
+              ) : null}
+              {archiveStandaloneSessions.length > 0 ? (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                    {t("dashboard.standaloneSessions")}
+                  </h3>
+                  <SessionCards sessions={archiveStandaloneSessions} archived />
+                </div>
+              ) : null}
             </div>
           </details>
         )}
@@ -227,28 +284,38 @@ export function AccountDashboardView({
   );
 }
 
-function DashboardEventCards({
-  events,
+function DashboardEventHierarchyCards({
+  groups,
   formatDate,
   formatTime,
   formatDuration,
   managedEventIds,
+  archived = false,
   compact = false,
 }: {
-  events: DashboardEventItem[];
+  groups: DashboardEventGroupItem[];
   formatDate: (iso: string | null, timeZone: string) => string;
   formatTime: (iso: string | null, timeZone: string) => string;
   formatDuration: (seconds: number | null) => string;
   managedEventIds: Set<string>;
+  archived?: boolean;
   compact?: boolean;
 }) {
   const { t } = useI18n();
   return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {events.map((event) => (
-        <GlassCard key={event.id}>
+    <div className={`grid gap-3 ${archived ? "" : "md:grid-cols-2"}`}>
+      {groups.map(({ event, sessions }) => (
+        <GlassCard
+          key={event.id}
+          className={archived ? "bg-slate-950/30" : undefined}
+        >
           <GlassCardHeader>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <ObjectPictogram
+                objectType="event"
+                size={40}
+                className="h-10 w-10 shrink-0"
+              />
               <p className="min-w-0 truncate font-semibold text-slate-100">{event.title}</p>
               <VisibilityBadge visibility={event.visibility} showLabel={false} />
             </div>
@@ -282,6 +349,57 @@ function DashboardEventCards({
                 {t(event.primaryAction.labelKey)}
               </SemanticActionLink>
             ) : null}
+            <div className="rounded-xl border border-slate-700/40 bg-slate-900/25 p-2">
+              <p className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                {t("events.sessions")}
+              </p>
+              {sessions.length > 0 ? (
+                <div className="mt-2 space-y-2">
+                  {sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="rounded-lg border border-slate-700/30 bg-slate-900/35 px-2 py-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ObjectPictogram
+                          objectType="room"
+                          size={24}
+                          className="h-6 w-6 shrink-0"
+                        />
+                        <p className="min-w-0 flex-1 truncate font-medium text-slate-100">
+                          {session.title}
+                        </p>
+                        <SessionStatusBadge status={session.status} />
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {!archived ? (
+                          <SemanticActionLink
+                            href={session.openRoomHref}
+                            actionKind="PRIMARY_PROGRESS"
+                            actionTarget={session.openRoomHref}
+                            size="compact"
+                          >
+                            {t("dashboard.openRoom")}
+                          </SemanticActionLink>
+                        ) : null}
+                        <SemanticActionLink
+                          href={session.openMaterialsHref}
+                          actionKind="REVIEW_RESULTS"
+                          actionTarget={session.openMaterialsHref}
+                          size="compact"
+                        >
+                          {t("dashboard.openMaterials")}
+                        </SemanticActionLink>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="px-1 py-2 text-xs text-slate-500">
+                  {t("events.noSessionsCreatedYet")}
+                </p>
+              )}
+            </div>
           </GlassCardContent>
         </GlassCard>
       ))}
@@ -303,6 +421,11 @@ function SessionCards({
         <GlassCard key={session.id} className={archived ? "bg-slate-950/30" : undefined}>
           <GlassCardContent className={archived ? "space-y-2 py-3" : "space-y-2 py-4"}>
             <div className="flex items-center gap-2">
+              <ObjectPictogram
+                objectType="room"
+                size={archived ? 24 : 32}
+                className={archived ? "h-6 w-6 shrink-0" : "h-8 w-8 shrink-0"}
+              />
               <p className="min-w-0 truncate font-semibold text-slate-100">{session.title}</p>
               <VisibilityBadge visibility={session.visibility} showLabel={false} />
             </div>

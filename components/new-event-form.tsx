@@ -21,6 +21,7 @@ import {
   labelClassName,
 } from "@/components/ui/form-styles";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
+import { formatDateTimeLocalInputValue } from "@/lib/datetime-local";
 import { useI18n } from "@/lib/i18n/useI18n";
 import {
   getClientTimeZone,
@@ -73,6 +74,10 @@ export function NewEventForm({
   const facilitatorOptions = canAssignFacilitator ? activeUsers : [selfOption];
   const ownerOptions = canAssignFacilitator ? activeUsers : [selfOption];
   const timeZoneOptions = useMemo(() => getSupportedTimeZones(), []);
+  const defaultScheduledAt = useMemo(
+    () => formatDateTimeLocalInputValue(new Date()),
+    [],
+  );
 
   return (
     <div className="space-y-8">
@@ -174,9 +179,15 @@ export function NewEventForm({
                 id="scheduledAt"
                 name="scheduledAt"
                 type="datetime-local"
-                className={inputClassName(false)}
+                defaultValue={defaultScheduledAt}
+                className={inputClassName(Boolean(state.errors?.scheduledAt))}
               />
               <p className={hintClassName}>{t("events.scheduledAtHint")}</p>
+              {state.errors?.scheduledAt ? (
+                <p className={errorClassName}>
+                  {state.errors.scheduledAt.map((key) => tv(key)).join(", ")}
+                </p>
+              ) : null}
             </div>
 
             <div>

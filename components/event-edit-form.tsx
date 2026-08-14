@@ -227,9 +227,14 @@ export function EventEditForm({
                 name="scheduledAt"
                 type="datetime-local"
                 defaultValue={defaultScheduledAt}
-                className={inputClassName(false)}
+                className={inputClassName(Boolean(state.errors?.scheduledAt))}
               />
               <p className={hintClassName}>{t("events.scheduledAtHint")}</p>
+              {state.errors?.scheduledAt ? (
+                <p className={errorClassName}>
+                  {state.errors.scheduledAt.map((key) => tv(key)).join(", ")}
+                </p>
+              ) : null}
             </div>
 
             <div>

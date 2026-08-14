@@ -3,9 +3,14 @@ import test from "node:test";
 
 import { RoomLifecycle } from "@/app/generated/prisma/client";
 import {
+  groupDashboardArchiveHierarchy,
+  groupDashboardEventSessionHierarchy,
   isEligibleDashboardSession,
+  isFutureDashboardEvent,
   selectDashboardActivity,
   selectDashboardSessionForEvent,
+  sortArchivedDashboardEvents,
+  sortArchivedDashboardSessions,
   sortDashboardEvents,
   sortDashboardSessions,
   type DashboardEventCandidate,
@@ -293,4 +298,144 @@ test("deleted, cancelled, and completed Events are excluded deterministically", 
   );
 
   assert.deepEqual(ordered.map((candidate) => candidate.id), [eligible.id]);
+});
+
+test("active hierarchy includes Event with zero child Sessions", () => {
+  const grouped = groupDashboardEventSessionHierarchy({
+    events: [event({ id: "event-1" })],
+    sessions: [],
+  });
+
+  assert.equal(grouped.eventGroups.length, 1);
+  assert.equal(grouped.eventGroups[0]?.event.id, "event-1");
+  assert.deepEqual(grouped.eventGroups[0]?.sessions, []);
+  assert.deepEqual(grouped.standaloneSessions, []);
+});
+
+test("active hierarchy nests child Sessions by canonical eventId", () => {
+  const grouped = groupDashboardEventSessionHierarchy({
+    events: [event({ id: "event-1" }), event({ id: "event-2" })],
+    sessions: [
+      session({
+        id: "event-1-child-a",
+        eventId: "event-1",
+        negotiationState: "PAUSED",
+        createdAt: "2026-08-13T09:00:00.000Z",
+      }),
+      session({
+        id: "event-1-child-b",
+        eventId: "event-1",
+        negotiationState: "RUNNING",
+        createdAt: "2026-08-13T08:30:00.000Z",
+      }),
+      session({
+        id: "event-2-child",
+        eventId: "event-2",
+        negotiationState: "PREPARATION",
+      }),
+    ],
+  });
+
+  assert.deepEqual(
+    grouped.eventGroups.find((group) => group.event.id === "event-1")?.sessions.map((candidate) => candidate.id),
+    ["event-1-child-b", "event-1-child-a"],
+  );
+  assert.deepEqual(
+    grouped.eventGroups.find((group) => group.event.id === "event-2")?.sessions.map((candidate) => candidate.id),
+    ["event-2-child"],
+  );
+});
+
+test("active hierarchy keeps standalone Sessions separate and de-duplicated", () => {
+  const grouped = groupDashboardEventSessionHierarchy({
+    events: [event({ id: "event-1" })],
+    sessions: [
+      session({ id: "standalone", eventId: null, negotiationState: "RUNNING" }),
+      session({ id: "event-child", eventId: "event-1", negotiationState: "RUNNING" }),
+    ],
+  });
+
+  assert.deepEqual(
+    grouped.eventGroups[0]?.sessions.map((candidate) => candidate.id),
+    ["event-child"],
+  );
+  assert.deepEqual(
+    grouped.standaloneSessions.map((candidate) => candidate.id),
+    ["standalone"],
+  );
+});
+
+test("active hierarchy preserves authorization-filtered child visibility", () => {
+  const grouped = groupDashboardEventSessionHierarchy({
+    events: [event({ id: "event-1" })],
+    sessions: [
+      session({ id: "authorized-child", eventId: "event-1", negotiationState: "RUNNING" }),
+    ],
+  });
+
+  assert.deepEqual(
+    grouped.eventGroups[0]?.sessions.map((candidate) => candidate.id),
+    ["authorized-child"],
+  );
+});
+
+test("legacy null scheduledAt Event is not treated as future", () => {
+  assert.equal(
+    isFutureDashboardEvent(
+      event({
+        id: "legacy-null-event",
+        scheduledAt: null,
+      }),
+      now,
+    ),
+    false,
+  );
+});
+
+test("archived hierarchy groups Event Sessions and standalone Sessions", () => {
+  const archivedEvents = sortArchivedDashboardEvents([
+    event({
+      id: "completed-event",
+      status: "COMPLETED",
+      scheduledAt: "2026-08-13T11:00:00.000Z",
+    }),
+  ]);
+  const grouped = groupDashboardArchiveHierarchy({
+    events: archivedEvents,
+    sessions: [
+      session({
+        id: "archived-child",
+        eventId: "completed-event",
+        negotiationState: "FINISHED",
+        roomLifecycle: RoomLifecycle.CLOSED,
+        createdAt: "2026-08-13T10:00:00.000Z",
+      }),
+      session({
+        id: "archived-standalone",
+        eventId: null,
+        negotiationState: "FINISHED",
+        roomLifecycle: RoomLifecycle.CLOSED,
+        createdAt: "2026-08-13T11:00:00.000Z",
+      }),
+    ],
+  });
+
+  assert.deepEqual(
+    grouped.eventGroups[0]?.sessions.map((candidate) => candidate.id),
+    ["archived-child"],
+  );
+  assert.deepEqual(
+    grouped.standaloneSessions.map((candidate) => candidate.id),
+    ["archived-standalone"],
+  );
+});
+
+test("archived Session ordering is deterministic", () => {
+  const ordered = sortArchivedDashboardSessions([
+    session({ id: "b", createdAt: "2026-08-13T09:00:00.000Z" }),
+    session({ id: "a", createdAt: "2026-08-13T09:00:00.000Z" }),
+    session({ id: "newest", createdAt: "2026-08-13T10:00:00.000Z" }),
+  ]);
+
+  assert.deepEqual(ordered.map((candidate) => candidate.id), ["newest", "a", "b"]);
 });

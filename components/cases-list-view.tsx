@@ -11,6 +11,7 @@ import {
   ListActionLink,
 } from "@/components/list-action-button";
 import { DifficultyBadge } from "@/components/badge";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
 import {
   ListFilterBar,
@@ -461,12 +462,21 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
                     return (
                       <>
                   <DataTableCell className="px-3 py-2.5 align-top text-xs">
-                    <div className="font-medium text-slate-50">
-                      {negotiationCase.title}
+                    <div className="flex items-start gap-2">
+                      <ObjectPictogram
+                        objectType="case"
+                        size={32}
+                        className="mt-0.5 h-8 w-8 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-slate-50">
+                          {negotiationCase.title}
+                        </div>
+                        <p className="mt-1 line-clamp-2 max-w-md leading-5 text-slate-400">
+                          {negotiationCase.businessContext}
+                        </p>
+                      </div>
                     </div>
-                    <p className="mt-1 line-clamp-2 max-w-md leading-5 text-slate-400">
-                      {negotiationCase.businessContext}
-                    </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {negotiationCase.isMyCase
                         ? t("cases.myCase")

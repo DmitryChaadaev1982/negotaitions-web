@@ -22,9 +22,9 @@ import {
   minutesToSeconds,
 } from "@/lib/negotiation-duration";
 import {
-  normalizeTimeZone,
-  zonedDateTimeInputToUtcDate,
-} from "@/lib/timezones";
+  resolveCreateEventSchedule,
+  resolveUpdateEventSchedule,
+} from "@/lib/event-scheduling";
 import { prisma } from "@/lib/prisma";
 import {
   createEventSchema,
@@ -41,6 +41,14 @@ type ActionErrors = {
   form?: string[];
 };
 
+type ScheduledAtField = {
+  fieldPresent: boolean;
+  hasValue: boolean;
+  isExplicitClear: boolean;
+  isInvalidType: boolean;
+  value: string | null;
+};
+
 function isRedirectError(error: unknown) {
   return (
     error &&
@@ -48,6 +56,50 @@ function isRedirectError(error: unknown) {
     "digest" in error &&
     String((error as { digest?: string }).digest).startsWith("NEXT_REDIRECT")
   );
+}
+
+function readScheduledAtField(formData: FormData): ScheduledAtField {
+  const fieldPresent = formData.has("scheduledAt");
+  const rawValue = formData.get("scheduledAt");
+
+  if (rawValue == null) {
+    return {
+      fieldPresent,
+      hasValue: false,
+      isExplicitClear: false,
+      isInvalidType: false,
+      value: null,
+    };
+  }
+
+  if (typeof rawValue !== "string") {
+    return {
+      fieldPresent,
+      hasValue: false,
+      isExplicitClear: false,
+      isInvalidType: true,
+      value: null,
+    };
+  }
+
+  const normalized = rawValue.trim();
+  if (normalized.length === 0) {
+    return {
+      fieldPresent,
+      hasValue: false,
+      isExplicitClear: fieldPresent,
+      isInvalidType: false,
+      value: null,
+    };
+  }
+
+  return {
+    fieldPresent,
+    hasValue: true,
+    isExplicitClear: false,
+    isInvalidType: false,
+    value: normalized,
+  };
 }
 
 function isSerializableConflict(error: unknown) {
@@ -78,11 +130,12 @@ export async function createTrainingEvent(
 
   const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
   const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
+  const scheduledAtField = readScheduledAtField(formData);
 
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
     description: formData.get("description") || undefined,
-    scheduledAt: formData.get("scheduledAt") || undefined,
+    scheduledAt: scheduledAtField.value ?? undefined,
     timeZone: formData.get("timeZone") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
@@ -96,6 +149,7 @@ export async function createTrainingEvent(
     return {
       errors: {
         title: fieldErrors.title,
+        scheduledAt: fieldErrors.scheduledAt,
         timeZone: fieldErrors.timeZone,
         estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
         invitedEmail: fieldErrors.invitedEmails,
@@ -106,10 +160,18 @@ export async function createTrainingEvent(
   try {
     const { title, description, scheduledAt, timeZone, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
-    const normalizedTimeZone = normalizeTimeZone(timeZone);
-    const scheduledAtUtc = scheduledAt
-      ? zonedDateTimeInputToUtcDate(scheduledAt, normalizedTimeZone)
-      : null;
+
+    if (scheduledAtField.isInvalidType) {
+      return { errors: { scheduledAt: ["invalidDateTime"] } };
+    }
+    const scheduleResolution = resolveCreateEventSchedule({
+      scheduledAt: scheduledAt ?? null,
+      timeZone,
+      now: new Date(),
+    });
+    if (!scheduleResolution.ok) {
+      return { errors: { scheduledAt: [scheduleResolution.errorKey] } };
+    }
 
     // Enforce facilitator assignment rules server-side.
     if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
@@ -160,8 +222,8 @@ export async function createTrainingEvent(
       data: {
         title,
         description: description || null,
-        scheduledAt: scheduledAtUtc,
-        timeZone: normalizedTimeZone,
+        scheduledAt: scheduleResolution.scheduledAt,
+        timeZone: scheduleResolution.timeZone,
         status: TrainingEventStatus.LOBBY_OPEN,
         hostUserId: resolvedHostUserId,
         facilitatorUserId: resolvedFacilitatorUserId,
@@ -311,11 +373,12 @@ export async function updateTrainingEvent(
 
   const rawInvitedUserIds = formData.getAll("invitedUserId").map(String).filter(Boolean);
   const rawInvitedEmails = formData.getAll("invitedEmail").map(String).filter(Boolean);
+  const scheduledAtField = readScheduledAtField(formData);
 
   const parsed = createEventSchema.safeParse({
     title: formData.get("title"),
     description: formData.get("description") || undefined,
-    scheduledAt: formData.get("scheduledAt") || undefined,
+    scheduledAt: scheduledAtField.value ?? undefined,
     timeZone: formData.get("timeZone") || undefined,
     estimatedEventDurationMinutes: formData.get("estimatedEventDurationMinutes"),
     visibility: formData.get("visibility") || "PRIVATE",
@@ -329,6 +392,7 @@ export async function updateTrainingEvent(
     return {
       errors: {
         title: fieldErrors.title,
+        scheduledAt: fieldErrors.scheduledAt,
         timeZone: fieldErrors.timeZone,
         estimatedEventDurationMinutes: fieldErrors.estimatedEventDurationMinutes,
         invitedEmail: fieldErrors.invitedEmails,
@@ -343,6 +407,8 @@ export async function updateTrainingEvent(
         id: true,
         hostUserId: true,
         facilitatorUserId: true,
+        scheduledAt: true,
+        timeZone: true,
         deletedAt: true,
         status: true,
       },
@@ -361,10 +427,21 @@ export async function updateTrainingEvent(
 
     const { title, description, scheduledAt, timeZone, estimatedEventDurationMinutes, visibility, facilitatorUserId, invitedUserIds, invitedEmails } =
       parsed.data;
-    const normalizedTimeZone = normalizeTimeZone(timeZone);
-    const scheduledAtUtc = scheduledAt
-      ? zonedDateTimeInputToUtcDate(scheduledAt, normalizedTimeZone)
-      : null;
+
+    if (scheduledAtField.isInvalidType) {
+      return { errors: { scheduledAt: ["invalidDateTime"] } };
+    }
+    const scheduleResolution = resolveUpdateEventSchedule({
+      scheduledAtFieldPresent: scheduledAtField.fieldPresent,
+      scheduledAt: scheduledAt ?? null,
+      isExplicitClear: scheduledAtField.isExplicitClear,
+      timeZone,
+      existingScheduledAt: event.scheduledAt,
+      existingTimeZone: event.timeZone,
+    });
+    if (!scheduleResolution.ok) {
+      return { errors: { scheduledAt: [scheduleResolution.errorKey] } };
+    }
 
     if (!userIsAdmin && facilitatorUserId && facilitatorUserId !== user.id) {
       return { errors: { form: ["facilitatorSelectionNotAllowed"] } };
@@ -406,8 +483,8 @@ export async function updateTrainingEvent(
       data: {
         title,
         description: description || null,
-        scheduledAt: scheduledAtUtc,
-        timeZone: normalizedTimeZone,
+        scheduledAt: scheduleResolution.scheduledAt,
+        timeZone: scheduleResolution.timeZone,
         facilitatorUserId: facilitatorUser.id,
         ...(userIsAdmin ? { hostUserId: resolvedHostUserId } : {}),
         visibility,

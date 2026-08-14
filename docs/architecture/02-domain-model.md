@@ -40,8 +40,24 @@ not persist or expose nonterminal provider output.
 ## Event-to-Session Model
 
 - Events can generate multiple sessions.
+- Session-to-event membership is canonical through `Session.eventId ->
+  TrainingEvent.id`.
 - Event participants may be assigned into specific session participants.
 - Sessions can be linked to events and carry snapshot data from case context.
+
+## Event Scheduling Invariant
+
+- Product invariant (application level): every newly created `TrainingEvent`
+  receives a non-null `scheduledAt`.
+- Create path fallback: when `scheduledAt` input is omitted, server actions set
+  `scheduledAt` to current server time.
+- Explicit invalid datetime/timezone combinations are rejected as validation
+  errors and are never silently rewritten to current time.
+- Event update preserves existing schedule when `scheduledAt` is omitted and
+  rejects explicit clear attempts.
+- Database schema remains `TrainingEvent.scheduledAt DateTime?` in this stage
+  for legacy-row compatibility; no migration/backfill is implied by this
+  invariant.
 
 ## Operational Telemetry Model
 

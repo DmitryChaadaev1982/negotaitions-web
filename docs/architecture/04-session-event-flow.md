@@ -108,12 +108,34 @@ lifetime; it must not reuse the short debrief grace.
 - Event cards select their relevant current Session through the same
   presentation helper instead of using database relation order or the
   first-created Session.
+- Dashboard activity lanes render Event-first hierarchy:
+  `Event -> Session[]`, grouped only by canonical `Session.eventId`.
+- Standalone Sessions (no `eventId`) render in a separate standalone group and
+  are never heuristically attached to Events.
+- Child Sessions remain authorization-scoped: grouping is applied only after
+  existing Event/Session visibility filters and does not broaden access.
 - Completed/materials-only history remains in the archive and is never a
   current-card fallback. If neither a current Session nor an eligible Event
   exists, the current card renders the no-active-rooms empty state.
+- Archive rendering uses the same Event->Session hierarchy shape plus a
+  standalone Session group, while preserving canonical completion
+  classification inputs.
 - Whether a displayed Event or Session can actually be entered remains governed
   independently by the existing Event-access and Session-room-access logic;
   Dashboard selection does not grant or redefine access.
+
+## Object Pictogram Presentation Semantics
+
+- Approved runtime assets live under `public/icons/objects/{light,dark}` for
+  `event`, `room`, and `case` semantics.
+- `components/object-pictogram.tsx` is the single reusable presentation
+  primitive for object identity pictograms.
+- The pictogram component is visual-only: no lifecycle logic, no data loading,
+  and no navigation rules.
+- Dashboard parent Event cards use larger Event pictograms; nested/standalone
+  Session cards use smaller Room pictograms to preserve hierarchy readability.
+- Primary Case list rows use the same Case pictogram family for consistent
+  object-language.
 
 ## Legacy Terminal Metadata Normalization
 

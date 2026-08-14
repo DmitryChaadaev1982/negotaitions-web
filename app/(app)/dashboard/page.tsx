@@ -1,7 +1,10 @@
 import { AccountDashboardView } from "@/components/account-dashboard-view";
 import {
+  groupDashboardArchiveHierarchy,
+  groupDashboardEventSessionHierarchy,
+  isFutureDashboardEvent,
   selectDashboardActivity,
-  selectDashboardSessionForEvent,
+  sortArchivedDashboardEvents,
   sortDashboardEvents,
   sortDashboardSessions,
 } from "@/lib/dashboard-activity-selection";
@@ -24,6 +27,11 @@ export default async function DashboardPage() {
     subtitle: string;
     action: { href: string; labelKey: ActionLabelKey };
   };
+  type EventRoleKey =
+    | "dashboard.roleHost"
+    | "dashboard.roleFacilitator"
+    | "dashboard.roleParticipant"
+    | "dashboard.roleObserver";
   const user = await requireActiveUser("/dashboard");
   const isAdminUser = isAdmin(user);
 
@@ -34,16 +42,45 @@ export default async function DashboardPage() {
   const selectionClock = new Date();
   const activeEvents = sortDashboardEvents(allEvents, selectionClock);
   const activeSessions = sortDashboardSessions(allSessions);
+  const activeHierarchy = groupDashboardEventSessionHierarchy({
+    events: activeEvents,
+    sessions: activeSessions,
+  });
+  const activeCurrentEventGroups = activeHierarchy.eventGroups.filter(
+    (group) => !isFutureDashboardEvent(group.event, selectionClock),
+  );
+  const activeFutureEventGroups = activeHierarchy.eventGroups.filter((group) =>
+    isFutureDashboardEvent(group.event, selectionClock),
+  );
   const completedSessions = allSessions.filter(
     (session) => isCompletedSessionDisplayStatus(session.status),
   );
+  const completedSessionEventIds = new Set(
+    completedSessions
+      .map((session) => session.eventId)
+      .filter((eventId): eventId is string => Boolean(eventId)),
+  );
+  const archivedEvents = sortArchivedDashboardEvents(
+    allEvents.filter(
+      (event) =>
+        event.status === "COMPLETED" ||
+        event.status === "CANCELLED" ||
+        completedSessionEventIds.has(event.id),
+    ),
+  );
+  const archiveHierarchy = groupDashboardArchiveHierarchy({
+    events: archivedEvents,
+    sessions: completedSessions,
+  });
   const selectedActivity = selectDashboardActivity({
     sessions: activeSessions,
     events: activeEvents,
     now: selectionClock,
   });
   const hostedEvents = allEvents.filter((event) => event.canManage);
-  const toRoleKey = (role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null) =>
+  const toRoleKey = (
+    role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null,
+  ): EventRoleKey =>
     role === "HOST"
       ? "dashboard.roleHost"
       : role === "FACILITATOR"
@@ -72,69 +109,68 @@ export default async function DashboardPage() {
             },
           }
         : null;
+  const toSessionItem = (session: (typeof allSessions)[number]) => ({
+    id: session.id,
+    title: session.title,
+    visibility: session.visibility,
+    eventTitle: session.eventTitle,
+    status: session.status,
+    roleKey: toRoleKey(session.userRole),
+    recordingStage: session.recordingStage,
+    transcriptStage: session.transcriptStage,
+    speakerMappingStage: session.speakerMappingStage,
+    aiStage: session.aiStage,
+    openRoomHref: session.roomUrl,
+    openMaterialsHref: session.materialsUrl,
+    eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
+  });
+
+  const toEventItem = (
+    event: (typeof allEvents)[number],
+    primarySession: (typeof allSessions)[number] | null,
+  ) => ({
+    id: event.id,
+    title: event.title,
+    visibility: event.visibility,
+    status: event.status,
+    roleKey: (event.canManage
+      ? "dashboard.roleHost"
+      : "dashboard.roleParticipant") as EventRoleKey,
+    scheduledAt: event.scheduledAt,
+    timeZone: event.timeZone,
+    estimatedDurationSeconds: event.estimatedDurationSeconds,
+    totalSessions: event.totalSessions,
+    activeSessions: event.activeSessions,
+    finishedSessions: event.finishedSessions,
+    primaryAction: {
+      href: primarySession ? primarySession.roomUrl : `/events/${event.id}/lobby`,
+      labelKey: (primarySession
+        ? "dashboard.continueSession"
+        : "dashboard.openLobby") as ActionLabelKey,
+    },
+  });
 
   return (
     <AccountDashboardView
       continueItem={continueItem}
-      activeEvents={activeEvents.map((event) => {
-        const relevantSession = selectDashboardSessionForEvent(
-          activeSessions,
-          event.id,
-        );
-        return {
-          id: event.id,
-          title: event.title,
-          visibility: event.visibility,
-          status: event.status,
-          roleKey: event.canManage
-            ? "dashboard.roleHost"
-            : "dashboard.roleParticipant",
-          scheduledAt: event.scheduledAt,
-          timeZone: event.timeZone,
-          estimatedDurationSeconds: event.estimatedDurationSeconds,
-          totalSessions: event.totalSessions,
-          activeSessions: event.activeSessions,
-          finishedSessions: event.finishedSessions,
-          primaryAction: {
-            href: relevantSession
-              ? relevantSession.roomUrl
-              : `/events/${event.id}/lobby`,
-            labelKey: relevantSession
-              ? "dashboard.continueSession"
-              : "dashboard.openLobby",
-          },
-        };
-      })}
-      activeSessions={activeSessions.map((session) => ({
-        id: session.id,
-        title: session.title,
-        visibility: session.visibility,
-        eventTitle: session.eventTitle,
-        status: session.status,
-        roleKey: toRoleKey(session.userRole),
-        recordingStage: session.recordingStage,
-        transcriptStage: session.transcriptStage,
-        speakerMappingStage: session.speakerMappingStage,
-        aiStage: session.aiStage,
-        openRoomHref: session.roomUrl,
-        openMaterialsHref: session.materialsUrl,
-        eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
+      currentEventGroups={activeCurrentEventGroups.map((group) => ({
+        event: toEventItem(group.event, group.sessions[0] ?? null),
+        sessions: group.sessions.map(toSessionItem),
       }))}
-      completedSessions={completedSessions.map((session) => ({
-        id: session.id,
-        title: session.title,
-        visibility: session.visibility,
-        eventTitle: session.eventTitle,
-        status: session.status,
-        roleKey: toRoleKey(session.userRole),
-        recordingStage: session.recordingStage,
-        transcriptStage: session.transcriptStage,
-        speakerMappingStage: session.speakerMappingStage,
-        aiStage: session.aiStage,
-        openRoomHref: session.roomUrl,
-        openMaterialsHref: session.materialsUrl,
-        eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
+      futureEventGroups={activeFutureEventGroups.map((group) => ({
+        event: toEventItem(group.event, group.sessions[0] ?? null),
+        sessions: group.sessions.map(toSessionItem),
       }))}
+      standaloneActiveSessions={activeHierarchy.standaloneSessions.map(
+        toSessionItem,
+      )}
+      archiveEventGroups={archiveHierarchy.eventGroups.map((group) => ({
+        event: toEventItem(group.event, null),
+        sessions: group.sessions.map(toSessionItem),
+      }))}
+      archiveStandaloneSessions={archiveHierarchy.standaloneSessions.map(
+        toSessionItem,
+      )}
       hostedEvents={hostedEvents.map((event) => ({
         id: event.id,
         title: event.title,
