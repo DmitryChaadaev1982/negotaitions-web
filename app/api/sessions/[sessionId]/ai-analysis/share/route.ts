@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 
-import { AiAnalysisStatus, ParticipantType } from "@/app/generated/prisma/client";
+import {
+  AiAnalysisStatus,
+  ParticipantType,
+  Prisma,
+} from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { sanitizeSharedAiAnalysisForParticipant } from "@/lib/privacy/serializers";
+import { selectPublicationRecipients } from "@/lib/ai-publication";
+import {
+  isAiPublicationSerializationConflict,
+  retryAiPublicationTransaction,
+} from "@/lib/ai-publication-transaction";
+import { activeHumanSessionConnectionWhere } from "@/lib/session-room-connection-lease";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -100,59 +110,215 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const aiAnalysis = await prisma.aiAnalysis.findUnique({
-    where: { sessionId },
-    select: {
-      id: true,
-      status: true,
-      analysisJson: true,
-      executiveSummary: true,
-      visibility: true,
-    },
-  });
+  let publication;
+  try {
+    publication = await retryAiPublicationTransaction(() => prisma.$transaction(
+    async (tx) => {
+      // Serializes Publish against re-analysis and another Publish before the
+      // canonical lease snapshot is read.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id
+        FROM "AiAnalysis"
+        WHERE "sessionId" = ${sessionId}
+        FOR UPDATE
+      `);
+      if (!locked[0]) {
+        return { state: "analysis_not_found" as const };
+      }
 
-  if (!aiAnalysis) {
+      const aiAnalysis = await tx.aiAnalysis.findUnique({
+        where: { id: locked[0].id },
+        select: {
+          id: true,
+          status: true,
+          transcriptId: true,
+          transcriptRetranscribeCount: true,
+          analysisVersion: true,
+          publicationEpoch: true,
+          analysisJson: true,
+          executiveSummary: true,
+          publications: {
+            where: { revokedAt: null },
+            select: {
+              id: true,
+              analysisVersion: true,
+              publicationEpoch: true,
+              publishedAt: true,
+            },
+          },
+        },
+      });
+      if (!aiAnalysis) {
+        return { state: "analysis_not_found" as const };
+      }
+      if (aiAnalysisId && aiAnalysis.id !== aiAnalysisId) {
+        return { state: "analysis_id_mismatch" as const };
+      }
+      if (aiAnalysis.status !== AiAnalysisStatus.COMPLETED) {
+        return { state: "analysis_not_completed" as const };
+      }
+      const currentTranscript = await tx.transcript.findUnique({
+        where: { sessionId },
+        select: { id: true, retranscribeCount: true },
+      });
+      if (
+        !currentTranscript ||
+        aiAnalysis.transcriptId !== currentTranscript.id ||
+        aiAnalysis.transcriptRetranscribeCount !==
+          currentTranscript.retranscribeCount
+      ) {
+        return { state: "analysis_outdated" as const };
+      }
+
+      // One logical timestamp fences lease eligibility, the snapshot, and each
+      // resulting grant. Do not sample wall time again in this transaction.
+      const publishedAt = new Date();
+      const activeConnections = await tx.sessionRoomConnection.findMany({
+        where: {
+          ...activeHumanSessionConnectionWhere({ sessionId, now: publishedAt }),
+          user: { status: "ACTIVE" },
+        },
+        select: { userId: true },
+      });
+      const activeUserIds = [...new Set(activeConnections.map((connection) => connection.userId))];
+      const candidates =
+        activeUserIds.length === 0
+          ? []
+          : await tx.sessionParticipant.findMany({
+              where: {
+                sessionId,
+                userId: { in: activeUserIds },
+                type: { in: [ParticipantType.PARTICIPANT, ParticipantType.OBSERVER] },
+              },
+              select: { id: true, userId: true, type: true },
+            });
+      const recipients = selectPublicationRecipients(activeConnections, candidates);
+
+      const currentPublication = aiAnalysis.publications.find(
+        (candidate) => candidate.analysisVersion === aiAnalysis.analysisVersion,
+      );
+
+      const fullAnalysis = aiAnalysis.analysisJson as NegotiationAnalysisOutput | null;
+      // Key presence itself is a privacy failure; forbidden keys must be removed,
+      // never re-added as null/empty placeholders.
+      const sanitized = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
+
+      const targetPublication = currentPublication
+        ? currentPublication
+        : await (async () => {
+            // A new analysis version or post-unshare Publish starts a fresh
+            // epoch. It never revives grants from a prior epoch.
+            await tx.aiAnalysisPublication.updateMany({
+              where: { aiAnalysisId: aiAnalysis.id, revokedAt: null },
+              data: { revokedAt: publishedAt },
+            });
+            const epoch = aiAnalysis.publicationEpoch + 1;
+            await tx.aiAnalysis.update({
+              where: { id: aiAnalysis.id },
+              data: { publicationEpoch: epoch },
+            });
+            return tx.aiAnalysisPublication.create({
+              data: {
+                aiAnalysisId: aiAnalysis.id,
+                analysisVersion: aiAnalysis.analysisVersion,
+                publicationEpoch: epoch,
+                sharedAnalysisJson: sanitized ?? Prisma.JsonNull,
+                sharedExecutiveSummary: aiAnalysis.executiveSummary,
+                publishedAt,
+                publishedBy: participant.displayName,
+              },
+              select: {
+                id: true,
+                analysisVersion: true,
+                publicationEpoch: true,
+                publishedAt: true,
+              },
+            });
+          })();
+
+      for (const recipient of recipients) {
+        await tx.aiAnalysisPublicationGrant.upsert({
+          where: {
+            publicationId_sessionParticipantId: {
+              publicationId: targetPublication.id,
+              sessionParticipantId: recipient.sessionParticipantId,
+            },
+          },
+          create: {
+            publicationId: targetPublication.id,
+            sessionParticipantId: recipient.sessionParticipantId,
+            userId: recipient.userId,
+            projection: recipient.projection,
+            grantedAt: publishedAt,
+          },
+          // Keep the original projection as the maximum authorized view. A
+          // later membership-role change cannot upgrade an existing grant.
+          update: { revokedAt: null },
+        });
+      }
+
+      const updated = await tx.aiAnalysis.update({
+        where: { id: aiAnalysis.id },
+        data: {
+          visibility: "SHARED_WITH_SESSION",
+          sharedAnalysisJson: sanitized ?? Prisma.JsonNull,
+          sharedExecutiveSummary: aiAnalysis.executiveSummary,
+          sharedAt: targetPublication.publishedAt,
+          sharedBy: participant.displayName,
+          unsharedAt: null,
+        },
+        select: {
+          id: true,
+          visibility: true,
+          sharedAt: true,
+          sharedBy: true,
+        },
+      });
+
+      return {
+        state: "published" as const,
+        updated,
+        publicationEpoch: targetPublication.publicationEpoch,
+        recipientCount: recipients.length,
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ));
+  } catch (error) {
+    if (isAiPublicationSerializationConflict(error)) {
+      return NextResponse.json(
+        { error: "AI analysis publication is busy. Please retry." },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
+
+  if (publication.state === "analysis_not_found") {
     return NextResponse.json({ error: "AI analysis not found." }, { status: 404 });
   }
-
-  if (aiAnalysisId && aiAnalysis.id !== aiAnalysisId) {
+  if (publication.state === "analysis_id_mismatch") {
     return NextResponse.json({ error: "AI analysis ID mismatch." }, { status: 400 });
   }
-
-  if (aiAnalysis.status !== AiAnalysisStatus.COMPLETED) {
+  if (publication.state === "analysis_not_completed") {
     return NextResponse.json(
       { error: "AI analysis must be completed before sharing." },
       { status: 409 },
     );
   }
-
-  const fullAnalysis = aiAnalysis.analysisJson as NegotiationAnalysisOutput | null;
-  // Key presence itself is a privacy failure; forbidden keys must be removed,
-  // never re-added as null/empty placeholders.
-  const sanitized = fullAnalysis ? sanitizeAnalysisForParticipants(fullAnalysis) : null;
-
-  const updated = await prisma.aiAnalysis.update({
-    where: { id: aiAnalysis.id },
-    data: {
-      visibility: "SHARED_WITH_SESSION",
-      sharedAnalysisJson: sanitized ?? undefined,
-      sharedExecutiveSummary: aiAnalysis.executiveSummary,
-      sharedAt: new Date(),
-      sharedBy: participant.displayName,
-      unsharedAt: null,
-    },
-    select: {
-      id: true,
-      visibility: true,
-      sharedAt: true,
-      sharedBy: true,
-    },
-  });
+  if (publication.state === "analysis_outdated") {
+    return NextResponse.json(
+      { error: "AI analysis is outdated and must be regenerated before sharing." },
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({
     success: true,
-    visibility: updated.visibility,
-    sharedAt: updated.sharedAt?.toISOString() ?? null,
-    sharedBy: updated.sharedBy,
+    visibility: publication.updated.visibility,
+    sharedAt: publication.updated.sharedAt?.toISOString() ?? null,
+    sharedBy: publication.updated.sharedBy,
+    publicationEpoch: publication.publicationEpoch,
+    recipientCount: publication.recipientCount,
   });
 }

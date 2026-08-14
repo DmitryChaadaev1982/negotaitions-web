@@ -80,3 +80,18 @@ export function isAiAnalysisOutdated(
   const transcriptVersion = transcriptRetranscribeCount ?? 0;
   return analysisRetranscribeCount < transcriptVersion;
 }
+
+/** The persisted input identity required for a completed analysis to be current. */
+export function isAiAnalysisCurrentForTranscript(input: {
+  transcriptId: string | null | undefined;
+  transcriptRetranscribeCount: number | null | undefined;
+  analysisTranscriptId: string | null | undefined;
+  analysisTranscriptRetranscribeCount: number | null | undefined;
+}): boolean {
+  return (
+    Boolean(input.transcriptId) &&
+    input.analysisTranscriptId === input.transcriptId &&
+    (input.analysisTranscriptRetranscribeCount ?? 0) ===
+      (input.transcriptRetranscribeCount ?? 0)
+  );
+}

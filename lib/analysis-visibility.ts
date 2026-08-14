@@ -9,6 +9,12 @@ type ParticipantIdentity = {
   displayName: string;
 };
 
+type SessionParticipantIdentity = {
+  id: string;
+  displayName: string;
+  type: string;
+};
+
 export function getAnalysisForFacilitator(
   fullAnalysis: NegotiationAnalysisOutput | null,
 ): NegotiationAnalysisOutput | null {
@@ -18,6 +24,7 @@ export function getAnalysisForFacilitator(
 export function getAnalysisForParticipant(
   sharedAnalysis: NegotiationAnalysisOutput | null,
   participant: ParticipantIdentity,
+  participants: SessionParticipantIdentity[],
 ): NegotiationAnalysisOutput | null {
   if (!sharedAnalysis) {
     return null;
@@ -28,7 +35,7 @@ export function getAnalysisForParticipant(
   return filterPersonalFeedbackForParticipant(sanitizedShared, {
     participantId: participant.participantId,
     displayName: participant.displayName,
-  });
+  }, participants);
 }
 
 export function getAnalysisForObserver(

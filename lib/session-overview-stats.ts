@@ -98,7 +98,22 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         select: { status: true, hasSpeakerDiarization: true, speakerMappingStatus: true },
       },
       aiAnalysis: {
-        select: { status: true, visibility: true, sharedAnalysisJson: true },
+        select: {
+          status: true,
+          visibility: true,
+          sharedAnalysisJson: true,
+          publications: {
+            where: { revokedAt: null },
+            orderBy: { publicationEpoch: "desc" },
+            take: 1,
+            select: {
+              grants: {
+                where: { revokedAt: null },
+                select: { sessionParticipantId: true, projection: true },
+              },
+            },
+          },
+        },
       },
     },
   });
@@ -150,6 +165,12 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       aiStatus,
       aiVisibility: session.aiAnalysis?.visibility ?? null,
       sharedAnalysisJson: session.aiAnalysis?.sharedAnalysisJson ?? null,
+      grants: session.aiAnalysis
+        ? (session.aiAnalysis.publications[0]?.grants ?? []).map((grant) => ({
+            sessionParticipantId: grant.sessionParticipantId,
+            projection: grant.projection,
+          }))
+        : undefined,
       participants: session.participants.map((participant) => ({
         id: participant.id,
         userId: participant.userId,

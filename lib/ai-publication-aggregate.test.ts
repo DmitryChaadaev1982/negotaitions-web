@@ -77,6 +77,42 @@ describe("aggregateAiPublicationStatus", () => {
     });
   });
 
+  it("does not infer legacy grants from a session-wide shared payload", () => {
+    const result = aggregateAiPublicationStatus({
+      aiStatus: "COMPLETED",
+      aiVisibility: "SHARED_WITH_SESSION",
+      sharedAnalysisJson: {
+        participantPersonalFeedback: [{ sessionParticipantId: "sp-1" }],
+      },
+      // A migrated legacy row has no durable recipient snapshot. Its payload
+      // must not become an authorization/backfill source.
+      grants: [],
+      participants: [participant("sp-1", "Player One")],
+    });
+
+    assert.deepEqual(result, {
+      status: "none",
+      requiredRecipientCount: 1,
+      publishedRecipientCount: 0,
+    });
+  });
+
+  it("uses durable grants rather than embedded feedback for current publication status", () => {
+    const result = aggregateAiPublicationStatus({
+      aiStatus: "COMPLETED",
+      aiVisibility: "SHARED_WITH_SESSION",
+      sharedAnalysisJson: { participantPersonalFeedback: [] },
+      grants: [{ sessionParticipantId: "sp-1", projection: "PARTICIPANT" }],
+      participants: [participant("sp-1", "Player One")],
+    });
+
+    assert.deepEqual(result, {
+      status: "full",
+      requiredRecipientCount: 1,
+      publishedRecipientCount: 1,
+    });
+  });
+
   it("returns none when there are zero required recipients", () => {
     const result = aggregateAiPublicationStatus({
       aiStatus: "COMPLETED",

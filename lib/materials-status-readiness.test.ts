@@ -117,8 +117,95 @@ test("enhancement failed with retained transcript keeps readiness", () => {
   assert.equal(stage, "ready");
 });
 
-test("participant debrief polling stops once shared analysis is available", () => {
-  const pendingShare = computeShouldPoll(
+test("no-grant participant polls while processing is pending", () => {
+  assert.equal(
+    computeShouldPoll(
+      RecordingStatus.COMPLETED,
+      true,
+      TranscriptStatus.COMPLETED,
+      false,
+      AiAnalysisStatus.ANALYZING,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+    ),
+    true,
+  );
+});
+
+test("no-grant participant stops polling after terminal processing failure", () => {
+  assert.equal(
+    computeShouldPoll(
+      RecordingStatus.COMPLETED,
+      true,
+      TranscriptStatus.COMPLETED,
+      false,
+      AiAnalysisStatus.FAILED,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+    ),
+    false,
+  );
+});
+
+test("current completed AI keeps no-grant polling through obsolete upstream failures", () => {
+  for (const [recordingStatus, transcriptStatus] of [
+    [RecordingStatus.FAILED, TranscriptStatus.COMPLETED],
+    [RecordingStatus.COMPLETED, TranscriptStatus.FAILED],
+  ] as const) {
+    assert.equal(
+      computeShouldPoll(
+        recordingStatus,
+        true,
+        transcriptStatus,
+        false,
+        AiAnalysisStatus.COMPLETED,
+        true,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+      ),
+      true,
+    );
+  }
+});
+
+test("stale completed AI does not override terminal upstream failure", () => {
+  assert.equal(
+    computeShouldPoll(
+      RecordingStatus.FAILED,
+      true,
+      TranscriptStatus.COMPLETED,
+      false,
+      AiAnalysisStatus.COMPLETED,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+    ),
+    false,
+  );
+});
+
+test("participant polling waits for a later Publish and stops once granted", () => {
+  const completedWithoutGrant = computeShouldPoll(
     RecordingStatus.COMPLETED,
     true,
     TranscriptStatus.COMPLETED,
@@ -132,7 +219,7 @@ test("participant debrief polling stops once shared analysis is available", () =
     false,
     false,
   );
-  const shared = computeShouldPoll(
+  const granted = computeShouldPoll(
     RecordingStatus.COMPLETED,
     true,
     TranscriptStatus.COMPLETED,
@@ -147,8 +234,8 @@ test("participant debrief polling stops once shared analysis is available", () =
     false,
   );
 
-  assert.equal(pendingShare, true);
-  assert.equal(shared, false);
+  assert.equal(completedWithoutGrant, true);
+  assert.equal(granted, false);
 });
 
 test("stale STARTING recording is detected when no provider artifact appears", () => {

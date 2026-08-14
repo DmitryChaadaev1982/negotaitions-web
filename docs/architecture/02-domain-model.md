@@ -13,11 +13,19 @@
 - `runToken`, `leaseExpiresAt`, and `providerResponseId` own and recover the
   current durable provider operation;
 - `analysisJson` remains the complete validated report;
-- `sharedAnalysisJson` remains the sanitized participant/observer publication.
+- `analysisVersion` identifies the mutable-row generation;
+- `sharedAnalysisJson` is legacy compatibility state, while
+  `AiAnalysisPublication` is the immutable published snapshot;
+- `AiAnalysisPublicationGrant` binds an eligible present recipient's
+  `SessionParticipant`, account, and maximum role projection for that snapshot.
 
-Publication authorization, role-specific projection, and the documented
-recipient-grant implementation gap are owned by
-`08-ai-analysis-and-debrief.md`, not by this aggregate summary.
+Recipient authorization, role-specific projection, stale-input checks, and
+publication lifecycle semantics are implemented server-side and specified in
+`08-ai-analysis-and-debrief.md`.
+
+Multi-row `SessionParticipant` role and privacy-finalization transactions lock
+participant rows by stable primary key (`id ASC`) before reading or writing
+them, so concurrent roster changes have a deterministic serial order.
 
 Queued/analyzing section placeholders are derived from operation status and do
 not persist or expose nonterminal provider output.

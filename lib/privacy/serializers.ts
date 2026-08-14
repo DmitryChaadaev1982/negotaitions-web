@@ -320,8 +320,9 @@ export function sanitizeSharedAiAnalysisForParticipant<T>(analysis: T): T {
 /**
  * Filter participantPersonalFeedback to only the entry for this participant.
  *
- * Falls back to displayName matching when sessionParticipantId is unavailable
- * in legacy AI output. Documents the limitation.
+ * Legacy name-only entries are eligible only when normalization resolves the
+ * name to exactly one negotiating SessionParticipant. Never guess between
+ * duplicate display names.
  */
 export function filterPersonalFeedbackForParticipant<
   T extends {
@@ -333,16 +334,37 @@ export function filterPersonalFeedbackForParticipant<
 >(
   analysis: T,
   opts: { participantId: string; displayName: string },
+  participants: Array<{ id: string; displayName: string; type: string }> = [],
 ): T {
   if (!analysis.participantPersonalFeedback) {
     return analysis;
   }
+  const normalizeName = (value: string) =>
+    value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+  const participantById = new Map(
+    participants
+      .filter((participant) => participant.type === "PARTICIPANT")
+      .map((participant) => [participant.id, participant]),
+  );
   const filtered = analysis.participantPersonalFeedback.filter(
-    (entry) =>
-      // Prefer ID-based match (reduces displayName collision risk)
-      (entry.sessionParticipantId && entry.sessionParticipantId === opts.participantId) ||
-      // Fall back to displayName match for legacy AI output without IDs
-      (!entry.sessionParticipantId && entry.participantName === opts.displayName),
+    (entry) => {
+      // New output uses an explicit stable ID. An invalid ID must never fall
+      // through to the legacy name matcher.
+      if (entry.sessionParticipantId) {
+        return (
+          entry.sessionParticipantId === opts.participantId &&
+          participantById.has(entry.sessionParticipantId)
+        );
+      }
+      if (!entry.participantName) return false;
+      const matches = participants.filter(
+        (candidate) =>
+          candidate.type === "PARTICIPANT" &&
+          normalizeName(candidate.displayName) ===
+            normalizeName(entry.participantName!),
+      );
+      return matches.length === 1 && matches[0]?.id === opts.participantId;
+    },
   );
   return { ...analysis, participantPersonalFeedback: filtered };
 }

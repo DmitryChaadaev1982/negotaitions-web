@@ -9,6 +9,9 @@ Read `docs/architecture/08-ai-analysis-and-debrief.md` and
 or publication code.
 
 Fail closed for private role/facilitator data. Treat participant and Observer
-payloads as distinct projections. The approved per-publication recipient-grant
-contract is documented as a current implementation gap; do not silently claim
-or emulate it without an explicitly scoped design and data-model change.
+payloads as distinct projections. Durable `AiAnalysisPublication` snapshots
+and `AiAnalysisPublicationGrant` rows are the current authorization boundary:
+require an active grant bound to current account/session membership and enforce
+its stored maximum projection server-side. Do not reconstruct legacy grants or
+use display names as the authorization key for personal feedback. The
+authoritative contract is `docs/architecture/08-ai-analysis-and-debrief.md`.

@@ -110,7 +110,7 @@ function renderAnalysisPrompt(
     `- Output language: ${context.session.caseLanguage === "RU" ? "Russian" : "English"}.`,
   );
   lines.push(
-    "- For participantPersonalFeedback: generate one entry per NEGOTIATING participant (exclude facilitators and observers). Each entry must be specific to that individual's behaviour in the transcript. Include concrete evidence. Achievements should highlight genuine strengths. CouldHaveDoneBetter should name specific missed opportunities or mistakes with actionable tips.",
+    "- For participantPersonalFeedback: generate one entry per NEGOTIATING participant (exclude facilitators and observers). Copy that participant's exact SessionParticipant ID from the roster into sessionParticipantId; never invent or reuse an ID. Each entry must be specific to that individual's behaviour in the transcript. Include concrete evidence. Achievements should highlight genuine strengths. CouldHaveDoneBetter should name specific missed opportunities or mistakes with actionable tips.",
   );
   lines.push("");
 
@@ -154,7 +154,9 @@ function renderAnalysisPrompt(
     lines.push("## Participants");
     for (const p of context.participants) {
       const roleLabel = p.roleName ? ` (Role: ${p.roleName})` : "";
-      lines.push(`- ${p.displayName}${roleLabel} [${p.type}]`);
+      lines.push(
+        `- ${p.displayName}${roleLabel} [${p.type}] (SessionParticipant ID: ${p.id ?? "unavailable"})`,
+      );
       if (p.notes?.trim()) {
         lines.push(`  Notes: ${p.notes.trim()}`);
       }

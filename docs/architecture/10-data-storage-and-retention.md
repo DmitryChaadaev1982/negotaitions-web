@@ -10,6 +10,12 @@
 
 - Business entities: cases, sessions, events, participants.
 - Runtime artifacts: recordings, transcripts, transcript segments, AI analyses.
+- AI publication snapshots: `AiAnalysisPublication` persists an immutable
+  sanitized shared artifact for one analysis version/publication epoch;
+  `AiAnalysisPublicationGrant` persists its per-recipient account,
+  `SessionParticipant`, maximum projection, and revocation state. Full AI
+  output remains singular on `AiAnalysis` and is never duplicated per
+  recipient.
 - Telemetry and diagnostics: audio activity, external service events, usage counters.
 
 ## Object/File Storage Behavior

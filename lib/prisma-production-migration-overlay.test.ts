@@ -19,6 +19,7 @@ import {
   EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   isExpectedPendingStatusOutput,
   LEGACY_PRODUCTION_MIGRATIONS,
+  listActiveMigrationNames,
   loadLegacyManifest,
   PrismaProductionOverlayError,
   readMigrationHistoryFromDatabase,
@@ -295,6 +296,28 @@ test("existing expected migrations plus recording-attempt fencing are allowed", 
   assert.deepEqual(
     result.pendingActiveMigrations,
     [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
+  );
+});
+
+test("Wave C publication-grant migration is filesystem-present and explicitly admitted", async () => {
+  const publicationGrantMigration =
+    "20260814161500_add_ai_analysis_publication_grants";
+  const activeMigrationNames = await listActiveMigrationNames(process.cwd());
+  assert.ok(activeMigrationNames.includes(publicationGrantMigration));
+
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([publicationGrantMigration]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(result.pendingActiveMigrations, [publicationGrantMigration]);
+
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([publicationGrantMigration]),
+        [...ACTIVE_MIGRATIONS, "20260814161600_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
   );
 });
 

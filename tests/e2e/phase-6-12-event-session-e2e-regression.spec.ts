@@ -543,12 +543,14 @@ test.describe("Phase 6.12 - DB/API regression", () => {
         { sessionParticipantId: b.participantId, participantName: "B", summary: "B only" },
       ],
     };
+    const aiAnalysisId = uid("ai612");
+    const publicationId = uid("pub612");
     await query(
       `INSERT INTO "AiAnalysis"
          ("id","sessionId","status","analysisJson","sharedAnalysisJson","sharedExecutiveSummary","visibility","executiveSummary","overallScore","createdAt","updatedAt")
        VALUES ($1,$2,'COMPLETED',$3,$4,'shared','SHARED_WITH_SESSION','private summary',9,NOW(),NOW())`,
       [
-        uid("ai612"),
+        aiAnalysisId,
         sessionId,
         JSON.stringify({
           ...sharedJson,
@@ -559,6 +561,32 @@ test.describe("Phase 6.12 - DB/API regression", () => {
         JSON.stringify(sharedJson),
       ],
     );
+    await query(
+      `INSERT INTO "AiAnalysisPublication"
+         ("id","aiAnalysisId","analysisVersion","publicationEpoch","sharedAnalysisJson",
+          "sharedExecutiveSummary","publishedAt","createdAt","updatedAt")
+       VALUES ($1,$2,0,1,$3,'shared',NOW(),NOW(),NOW())`,
+      [publicationId, aiAnalysisId, JSON.stringify(sharedJson)],
+    );
+    for (const recipient of [
+      { participantId: a.participantId, userId: partA.id, projection: "PARTICIPANT" },
+      { participantId: b.participantId, userId: partB.id, projection: "PARTICIPANT" },
+      { participantId: obs.participantId, userId: observer.id, projection: "OBSERVER" },
+    ]) {
+      await query(
+        `INSERT INTO "AiAnalysisPublicationGrant"
+           ("id","publicationId","sessionParticipantId","userId","projection",
+            "grantedAt","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),NOW())`,
+        [
+          uid("grant612"),
+          publicationId,
+          recipient.participantId,
+          recipient.userId,
+          recipient.projection,
+        ],
+      );
+    }
 
     const res = await request.get(`/api/sessions/${sessionId}/materials/status?participantId=${a.participantId}`, {
       headers: { Cookie: aCookie },

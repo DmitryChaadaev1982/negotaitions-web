@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  AiAnalysisPublicationProjection,
   AiAnalysisStatus,
   ParticipantType,
   RecordingStatus,
@@ -17,8 +18,12 @@ import {
   getAnalysisForObserver,
   getAnalysisForParticipant,
 } from "@/lib/analysis-visibility";
+import { isGrantProjectionCompatibleWithParticipant } from "@/lib/ai-publication";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
-import { isAiAnalysisOutdated } from "@/lib/transcription/speaker-mapping-readiness";
+import {
+  isAiAnalysisCurrentForTranscript,
+  isAiAnalysisOutdated,
+} from "@/lib/transcription/speaker-mapping-readiness";
 import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
@@ -224,10 +229,18 @@ export async function GET(request: Request, context: RouteContext) {
           },
         },
       },
+      participants: {
+        select: {
+          id: true,
+          displayName: true,
+          type: true,
+        },
+      },
       aiAnalysis: {
         select: {
           id: true,
           status: true,
+          transcriptId: true,
           model: true,
           executiveSummary: true,
           overallScore: true,
@@ -244,6 +257,31 @@ export async function GET(request: Request, context: RouteContext) {
           runToken: true,
           leaseExpiresAt: true,
           updatedAt: true,
+          publications: {
+            where: { revokedAt: null },
+            orderBy: { publicationEpoch: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              analysisVersion: true,
+              publicationEpoch: true,
+              sharedAnalysisJson: true,
+              sharedExecutiveSummary: true,
+              publishedAt: true,
+              publishedBy: true,
+              grants: {
+                where: {
+                  sessionParticipantId: participant.id,
+                  userId: participant.userId ?? "",
+                  revokedAt: null,
+                },
+                select: {
+                  projection: true,
+                  userId: true,
+                },
+              },
+            },
+          },
         },
       },
       event: {
@@ -325,19 +363,20 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptEnhancementStatus === "IN_PROGRESS";
 
   const canViewRecording = true;
-  // Phase 5 observer transcript decision (Part 7):
-  // Observer sees transcript only if the facilitator has published a shared AI analysis
-  // (shared debrief). This prevents silent exposure of potentially private discussion
-  // to observers before the facilitator reviews and publishes the debrief.
-  // Participants and facilitators always have access to transcripts.
-  const aiVisibilityForObserver = isObserver
-    ? (await prisma.aiAnalysis.findUnique({
-        where: { sessionId },
-        select: { visibility: true },
-      }))?.visibility ?? "FACILITATOR_ONLY"
-    : "N/A";
+  const activePublication = aiAnalysis?.publications[0] ?? null;
+  const viewerGrant = activePublication?.grants[0] ?? null;
+  const hasValidPublicationGrant = Boolean(
+    viewerGrant &&
+      participant.userId &&
+      viewerGrant.userId === participant.userId &&
+      isGrantProjectionCompatibleWithParticipant(viewerGrant.projection, participant.type),
+  );
+
+  // Observer transcript access is publication-grant based. This preserves
+  // granted access across a reconnect but denies a late joiner even when a
+  // session has an active published snapshot.
   const canViewTranscript = isObserver
-    ? aiVisibilityForObserver === "SHARED_WITH_SESSION"
+    ? hasValidPublicationGrant
     : true;
   const canRunTranscription = isFacilitator;
   const canRetryFailedProcessing = isFacilitator;
@@ -360,6 +399,20 @@ export async function GET(request: Request, context: RouteContext) {
     transcript?.retranscribeCount,
     aiAnalysis?.transcriptRetranscribeCount,
   );
+  const analysisCurrent = Boolean(
+    aiAnalysis &&
+      isAiAnalysisCurrentForTranscript({
+        transcriptId: transcript?.id,
+        transcriptRetranscribeCount: transcript?.retranscribeCount,
+        analysisTranscriptId: aiAnalysis.transcriptId,
+        analysisTranscriptRetranscribeCount:
+          aiAnalysis.transcriptRetranscribeCount,
+      }),
+  );
+  const hasCurrentPublishableAiAnalysis =
+    aiStatus === AiAnalysisStatus.COMPLETED &&
+    analysisCurrent &&
+    aiAnalysis?.analysisJson != null;
 
   const canRunAiAnalysis =
     isFacilitator &&
@@ -384,13 +437,16 @@ export async function GET(request: Request, context: RouteContext) {
     !hasRunningAiAnalysis &&
     aiStatus === AiAnalysisStatus.COMPLETED;
   const canShareAiAnalysis =
-    isFacilitator && aiStatus === AiAnalysisStatus.COMPLETED;
+    isFacilitator &&
+    aiStatus === AiAnalysisStatus.COMPLETED &&
+    analysisCurrent;
 
   const aiVisibility = aiAnalysis?.visibility ?? "FACILITATOR_ONLY";
-  const isSharedWithSession = aiVisibility === "SHARED_WITH_SESSION";
+  const isSharedWithSession = Boolean(activePublication);
 
-  // Facilitator sees full analysis; participants see shared version if published
-  const canViewAiAnalysis = isFacilitator || isSharedWithSession;
+  // Processing status stays canonical on AiAnalysis. Access to a participant or
+  // observer projection additionally requires that recipient's durable grant.
+  const canViewAiAnalysis = isFacilitator || hasValidPublicationGrant;
   const canOpenMaterials = isObserver
     ? isEventHostOwner || canViewTranscript || canViewAiAnalysis
     : true;
@@ -442,14 +498,15 @@ export async function GET(request: Request, context: RouteContext) {
     recordingHasFileKey,
     transcriptStatus,
     hasRunningTranscriptEnhancement,
-    hasRunningAiAnalysis ? aiStatus : null,
+    aiStatus,
     isParticipantOrObserver,
     transcriptHasText,
     hasRunningTranscription,
     autoTranscribeAfterRecording,
     sessionIsFinished,
-    isSharedWithSession,
+    hasValidPublicationGrant,
     speakerMappingRequired,
+    hasCurrentPublishableAiAnalysis,
   );
 
   const canStartTranscription =
@@ -494,22 +551,22 @@ export async function GET(request: Request, context: RouteContext) {
   const fullAnalysisJson =
     (aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null;
   const sharedAnalysisJson =
-    (aiAnalysis?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null;
+    (activePublication?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null;
   const analysisJsonForUser = isFacilitator
     ? getAnalysisForFacilitator(fullAnalysisJson)
-    : isSharedWithSession
-      ? isObserver
+    : hasValidPublicationGrant
+      ? viewerGrant?.projection === AiAnalysisPublicationProjection.OBSERVER
         ? getAnalysisForObserver(sharedAnalysisJson)
         : getAnalysisForParticipant(sharedAnalysisJson, {
             participantId: participant.id,
             displayName: participant.displayName,
-          })
+          }, session.participants)
       : null;
 
   const executiveSummaryForUser = isFacilitator
     ? (aiAnalysis?.executiveSummary ?? null)
-    : isSharedWithSession
-      ? (aiAnalysis?.sharedExecutiveSummary ?? null)
+    : hasValidPublicationGrant
+      ? (activePublication?.sharedExecutiveSummary ?? null)
       : null;
 
   const aiAnalysisResponse = {
@@ -530,17 +587,23 @@ export async function GET(request: Request, context: RouteContext) {
     canView: canViewAiAnalysis,
     canShare: canShareAiAnalysis,
     speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
-    participantPlaceholder: !isFacilitator && !isSharedWithSession,
+    participantPlaceholder: !isFacilitator && !hasValidPublicationGrant,
     // Analysis version tracking
     analysisFromOlderTranscript: isFacilitator && analysisOutdated,
     // Sharing metadata
     visibility: isFacilitator ? aiVisibility : null,
     isSharedWithSession,
-    sharedAt: isFacilitator ? (aiAnalysis?.sharedAt?.toISOString() ?? null) : null,
-    sharedBy: isFacilitator ? (aiAnalysis?.sharedBy ?? null) : null,
+    sharedAt: isFacilitator
+      ? (activePublication?.publishedAt?.toISOString() ?? aiAnalysis?.sharedAt?.toISOString() ?? null)
+      : null,
+    sharedBy: isFacilitator
+      ? (activePublication?.publishedBy ?? aiAnalysis?.sharedBy ?? null)
+      : null,
     notSharedMessage:
-      !isFacilitator && !isSharedWithSession && aiStatus !== null
-        ? "AI analysis has not been shared yet."
+      !isFacilitator && !hasValidPublicationGrant && aiStatus !== null
+        ? isSharedWithSession
+          ? "AI analysis was not published for this recipient."
+          : "AI analysis has not been shared yet."
         : null,
   };
 
@@ -639,32 +702,37 @@ export async function GET(request: Request, context: RouteContext) {
           speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
           speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,
           processingMetadata: isFacilitator ? (transcript.processingMetadata ?? null) : null,
-          enhancement: isFacilitator
-            ? {
-                status: transcriptEnhancementStatus,
-                available:
-                  asMetadata(transcript.processingMetadata).transcriptionProvider ===
-                  "yandex_speechkit",
-                suggested:
-                  asMetadata(
-                    asMetadata(transcript.processingMetadata)
-                      .transcriptEnhancementRecommendation,
-                  ).suggested === true,
-                reasons:
-                  (asMetadata(
-                    asMetadata(transcript.processingMetadata)
-                      .transcriptEnhancementRecommendation,
-                  ).reasons as string[] | undefined) ?? [],
-                error:
-                  (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
-                    .error as string | undefined) ?? null,
-                skipReason:
-                  (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
-                    .skipReason as string | undefined) ?? null,
-                inProgress: hasRunningTranscriptEnhancement,
-                canRetry: canRetryTranscriptEnhancement,
-              }
-            : null,
+          enhancement: {
+            // Completion/freshness is shared operational status, not access to
+            // transcript content or private diagnostics. Observers receive the
+            // safe status projection so they cannot fall back to NOT_STARTED.
+            status: transcriptEnhancementStatus,
+            available:
+              asMetadata(transcript.processingMetadata).transcriptionProvider ===
+              "yandex_speechkit",
+            suggested: isFacilitator
+              ? asMetadata(
+                  asMetadata(transcript.processingMetadata)
+                    .transcriptEnhancementRecommendation,
+                ).suggested === true
+              : false,
+            reasons: isFacilitator
+              ? (asMetadata(
+                  asMetadata(transcript.processingMetadata)
+                    .transcriptEnhancementRecommendation,
+                ).reasons as string[] | undefined) ?? []
+              : [],
+            error: isFacilitator
+              ? (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
+                  .error as string | undefined) ?? null
+              : null,
+            skipReason: isFacilitator
+              ? (asMetadata(asMetadata(transcript.processingMetadata).transcriptEnhancement)
+                  .skipReason as string | undefined) ?? null
+              : null,
+            inProgress: hasRunningTranscriptEnhancement,
+            canRetry: isFacilitator ? canRetryTranscriptEnhancement : false,
+          },
         }
       : {
           id: null,

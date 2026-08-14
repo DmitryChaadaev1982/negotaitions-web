@@ -133,8 +133,9 @@ export function computeShouldPoll(
   hasRunningTranscription = false,
   autoTranscribeEnabled = false,
   sessionIsFinished = false,
-  isSharedWithSession = false,
+  hasValidPublicationGrant = false,
   speakerMappingRequired = false,
+  hasCurrentPublishableAiAnalysis = false,
 ): boolean {
   if (
     recordingStatus &&
@@ -164,7 +165,17 @@ export function computeShouldPoll(
   if (!isParticipantOrObserver && speakerMappingRequired) {
     return true;
   }
-  if (isParticipantOrObserver && sessionIsFinished && !isSharedWithSession) {
+  const terminalProcessingFailure =
+    !hasCurrentPublishableAiAnalysis &&
+    (recordingStatus === RecordingStatus.FAILED ||
+      transcriptStatus === TranscriptStatus.FAILED ||
+      aiStatus === AiAnalysisStatus.FAILED);
+  if (
+    isParticipantOrObserver &&
+    sessionIsFinished &&
+    !hasValidPublicationGrant &&
+    !terminalProcessingFailure
+  ) {
     return true;
   }
   return false;

@@ -5,6 +5,8 @@ import { AiAnalysisStatus } from "@/app/generated/prisma/client";
 import {
   claimAiAnalysisRun,
   completeAiAnalysisRun,
+  completeAiAnalysisRunWithCurrentParticipants,
+  createPrismaAiAnalysisOperationStore,
   failAiAnalysisRun,
   persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
@@ -12,6 +14,10 @@ import {
   type AiAnalysisOperationStore,
   type AiAnalysisRunOwner,
 } from "@/lib/ai/analysis-operation";
+import {
+  bindParticipantPersonalFeedback,
+  createMockAnalysisOutput,
+} from "@/lib/ai/negotiation-analysis";
 
 type Row = NonNullable<
   Awaited<ReturnType<AiAnalysisOperationStore["findBySession"]>>
@@ -218,6 +224,160 @@ test("two simultaneous initial claims produce exactly one owner", async () => {
     [first, second].filter((result) => result.state === "active").length,
     1,
   );
+});
+
+test("the production reclaim path increments analysisVersion before regenerated content can replace a publication", async () => {
+  const now = new Date("2026-08-14T12:00:00.000Z");
+  let updateData: Record<string, unknown> | null = null;
+  const existing = {
+    id: "analysis-1",
+    status: AiAnalysisStatus.COMPLETED,
+    runToken: null,
+    leaseExpiresAt: null,
+    providerResponseId: null,
+    transcriptId: "transcript-1",
+    transcriptRetranscribeCount: 0,
+    language: "en",
+    updatedAt: new Date("2026-08-14T11:00:00.000Z"),
+  };
+  const fakeClient = {
+    aiAnalysis: {
+      findUnique: async () => existing,
+      create: async () => null,
+      updateMany: async (params: { data: Record<string, unknown> }) => {
+        updateData = params.data;
+        return { count: 1 };
+      },
+    },
+  };
+  const store = createPrismaAiAnalysisOperationStore(
+    fakeClient as never,
+  );
+
+  const claimed = await claimAiAnalysisRun({
+    ...claimInput,
+    now,
+    runToken: "reclaimed-token",
+    store,
+  });
+
+  assert.equal(claimed.state, "claimed");
+  assert.deepEqual(updateData?.analysisVersion, { increment: 1 });
+  assert.equal(updateData?.status, AiAnalysisStatus.QUEUED);
+});
+
+test("completion locks the current roster before filtering and persisting personal feedback", async () => {
+  const owner: AiAnalysisRunOwner = {
+    analysisId: "analysis-atomic",
+    runToken: "atomic-token",
+    leaseExpiresAt: new Date("2026-08-14T12:10:00.000Z"),
+    providerResponseId: null,
+  };
+  const providerOutput = createMockAnalysisOutput("en");
+  providerOutput.participantPersonalFeedback = [
+    {
+      ...providerOutput.participantPersonalFeedback[0]!,
+      sessionParticipantId: "participant-a",
+      participantName: "Prompt-time name",
+    },
+  ];
+
+  for (const scenario of [
+    {
+      name: "removal wins before completion lock",
+      roster: [] as Array<{ id: string; displayName: string; type: string }>,
+      expectedFeedbackCount: 0,
+    },
+    {
+      name: "role change wins before completion lock",
+      roster: [{ id: "participant-a", displayName: "A", type: "OBSERVER" }],
+      expectedFeedbackCount: 0,
+    },
+    {
+      name: "unchanged participant persists",
+      roster: [
+        {
+          id: "participant-a",
+          displayName: "Canonical participant name",
+          type: "PARTICIPANT",
+        },
+      ],
+      expectedFeedbackCount: 1,
+    },
+  ]) {
+    const trace: string[] = [];
+    let persistedAnalysis: unknown = null;
+    const transactionClient = {
+      $transaction: async (
+        operation: (tx: {
+          $queryRaw: () => Promise<unknown[]>;
+          sessionParticipant: {
+            findMany: () => Promise<
+              Array<{ id: string; displayName: string; type: string }>
+            >;
+          };
+          aiAnalysis: {
+            updateMany: (input: { data: { analysisJson: unknown } }) => Promise<{
+              count: number;
+            }>;
+          };
+        }) => Promise<boolean>,
+      ) =>
+        operation({
+          $queryRaw: async () => {
+            trace.push("lock-roster");
+            return [];
+          },
+          sessionParticipant: {
+            findMany: async () => {
+              trace.push("read-current-roster");
+              return scenario.roster;
+            },
+          },
+          aiAnalysis: {
+            updateMany: async ({ data }) => {
+              trace.push("persist-completion");
+              persistedAnalysis = data.analysisJson;
+              return { count: 1 };
+            },
+          },
+        }),
+    };
+
+    assert.equal(
+      await completeAiAnalysisRunWithCurrentParticipants({
+        sessionId: "session-atomic",
+        owner,
+        completedAt: new Date("2026-08-14T12:00:00.000Z"),
+        client: transactionClient as never,
+        buildFields: (participants) => {
+          const bound = bindParticipantPersonalFeedback(
+            providerOutput,
+            participants,
+          );
+          return {
+            ...successFields,
+            analysisJson: bound,
+          };
+        },
+      }),
+      true,
+      scenario.name,
+    );
+    assert.deepEqual(
+      trace,
+      ["lock-roster", "read-current-roster", "persist-completion"],
+      scenario.name,
+    );
+    const persisted = persistedAnalysis as {
+      participantPersonalFeedback: unknown[];
+    };
+    assert.equal(
+      persisted.participantPersonalFeedback.length,
+      scenario.expectedFeedbackCount,
+      scenario.name,
+    );
+  }
 });
 
 test("second request while a valid lease is active is busy", async () => {

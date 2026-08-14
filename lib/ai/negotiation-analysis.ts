@@ -550,6 +550,7 @@ const OneMinuteFeedbackSchema = z.object({
 });
 
 const ParticipantPersonalFeedbackSchema = z.object({
+  sessionParticipantId: z.string().min(1),
   participantName: z.string(),
   achievements: z.array(z.string()),
   couldHaveDoneBetter: z.array(z.string()),
@@ -588,6 +589,38 @@ export const NegotiationAnalysisOutputSchema = z.object({
 export type NegotiationAnalysisOutput = z.infer<
   typeof NegotiationAnalysisOutputSchema
 >;
+
+/**
+ * Provider output may only bind personal feedback through the stable
+ * SessionParticipant identifier that was supplied in the prompt. This keeps
+ * duplicate display names from becoming an authorization key.
+ */
+export function bindParticipantPersonalFeedback(
+  output: NegotiationAnalysisOutput,
+  participants: Array<{ id: string; displayName: string; type: string }>,
+): NegotiationAnalysisOutput {
+  const participantsById = new Map(
+    participants
+      .filter((participant) => participant.type === "PARTICIPANT")
+      .map((participant) => [participant.id, participant]),
+  );
+
+  return {
+    ...output,
+    participantPersonalFeedback: output.participantPersonalFeedback.flatMap(
+      (feedback) => {
+        const participant = participantsById.get(feedback.sessionParticipantId);
+        if (!participant) return [];
+        return [{
+          ...feedback,
+          // The current server-side participant record, rather than model text,
+          // is the canonical display label saved with the report.
+          participantName: participant.displayName,
+        }];
+      },
+    ),
+  };
+}
 
 // ── System prompt ──────────────────────────────────────────────────────────
 
@@ -644,7 +677,7 @@ const YANDEX_ANALYSIS_SCHEMA_DESCRIPTION = `Respond with a JSON object matching 
   nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>; // exercise text must include success criterion and next negotiation application
   facilitatorDebriefQuestions: string[]; // 4-6 facilitator-grade questions
   oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; }; // concise coach-style
-  participantPersonalFeedback: Array<{ participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // role-specific, actionable
+  participantPersonalFeedback: Array<{ sessionParticipantId: string; participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // use only a supplied negotiating participant ID; role-specific, actionable
 }`;
 
 const YANDEX_POLL_MAX_TRANSIENT_GET_ERRORS = 20;
@@ -845,6 +878,7 @@ export function createMockAnalysisOutput(language: string): NegotiationAnalysisO
     },
     participantPersonalFeedback: [
       {
+        sessionParticipantId: "mock-participant-a",
         participantName: "Participant A",
         achievements: isRu
           ? [
@@ -884,6 +918,7 @@ export function createMockAnalysisOutput(language: string): NegotiationAnalysisO
             ],
       },
       {
+        sessionParticipantId: "mock-participant-b",
         participantName: "Participant B",
         achievements: isRu
           ? [
@@ -976,7 +1011,8 @@ async function runOpenAiNegotiationAnalysis(
   facilitatorDebriefQuestions: string[];
   oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; };
   participantPersonalFeedback: Array<{
-    participantName: string; // exact name of the negotiating participant (not facilitator/observer)
+    sessionParticipantId: string; // exact supplied SessionParticipant ID of the negotiating participant
+    participantName: string; // matching display label, for presentation only
     achievements: string[]; // 2-4 specific things this participant did well, with evidence
     couldHaveDoneBetter: string[]; // 2-4 specific areas where this participant underperformed, with evidence and concrete improvement tips
     keyMoments: string[]; // 2-3 key moments that were decisive for this participant (good or missed)

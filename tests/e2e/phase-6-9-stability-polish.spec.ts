@@ -37,6 +37,40 @@ function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+async function createPublicationWithGrants(params: {
+  aiAnalysisId: string;
+  sharedAnalysisJson: string;
+  recipients: Array<{
+    sessionParticipantId: string;
+    userId: string;
+    projection?: "PARTICIPANT" | "OBSERVER";
+  }>;
+}) {
+  const publicationId = uid("pub69");
+  await query(
+    `INSERT INTO "AiAnalysisPublication"
+       ("id","aiAnalysisId","analysisVersion","publicationEpoch","sharedAnalysisJson",
+        "publishedAt","createdAt","updatedAt")
+     VALUES ($1,$2,0,1,$3,NOW(),NOW(),NOW())`,
+    [publicationId, params.aiAnalysisId, params.sharedAnalysisJson],
+  );
+  for (const recipient of params.recipients) {
+    await query(
+      `INSERT INTO "AiAnalysisPublicationGrant"
+         ("id","publicationId","sessionParticipantId","userId","projection",
+          "grantedAt","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),NOW())`,
+      [
+        uid("grant69"),
+        publicationId,
+        recipient.sessionParticipantId,
+        recipient.userId,
+        recipient.projection ?? "PARTICIPANT",
+      ],
+    );
+  }
+}
+
 async function createActiveUser(prefix: string, name: string, opts: { admin?: boolean } = {}) {
   const id = uid(prefix);
   const email = `${id}@test.negotaitions.local`;
@@ -508,6 +542,16 @@ test.describe("Phase 6.9 - Part 5: AI report visibility for participants", () =>
        VALUES ($1,$2,'COMPLETED',$3,$3,'Great negotiation','SHARED_WITH_SESSION','Great negotiation',8,NOW(),NOW())`,
       [aiId, sessionId, sharedAnalysis],
     );
+    await createPublicationWithGrants({
+      aiAnalysisId: aiId,
+      sharedAnalysisJson: sharedAnalysis,
+      recipients: [
+        {
+          sessionParticipantId: partParticipantId,
+          userId: participantUser.id,
+        },
+      ],
+    });
 
     const participantToken = await createUserSession(participantUser.id);
     const statusRes = await request.get(
@@ -657,6 +701,14 @@ test.describe("Phase 6.9 - Part 5: AI report visibility for participants", () =>
        VALUES ($1,$2,'COMPLETED',$3,$3,'Shared summary','SHARED_WITH_SESSION','Shared summary',7,NOW(),NOW())`,
       [aiId, sessionId, sharedAnalysis],
     );
+    await createPublicationWithGrants({
+      aiAnalysisId: aiId,
+      sharedAnalysisJson: sharedAnalysis,
+      recipients: [
+        { sessionParticipantId: partAId, userId: participantA.id },
+        { sessionParticipantId: partBId, userId: participantB.id },
+      ],
+    });
 
     // Participant A fetches status — should see own feedback but NOT B's.
     const tokenA = await createUserSession(participantA.id);

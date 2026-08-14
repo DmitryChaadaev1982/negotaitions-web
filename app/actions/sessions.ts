@@ -24,6 +24,10 @@ import { minutesToSeconds } from "@/lib/negotiation-duration";
 import { updateParticipantPresence } from "@/lib/participant-presence";
 import { prisma } from "@/lib/prisma";
 import { reassignSessionFacilitator } from "@/lib/session-facilitator";
+import {
+  lockSessionParticipantsById,
+  orderSessionParticipantIds,
+} from "@/lib/session-participant-locking";
 import { resolvePrepStatus } from "@/lib/session-display-status";
 import { mapCaseRolesToSessionRoleCreate } from "@/lib/session-role";
 import { activeCaseWhere, activeSessionWhere } from "@/lib/soft-delete";
@@ -926,10 +930,24 @@ export async function assignParticipantRole(
       }
     }
 
-    await prisma.$transaction(
-      parsed.data.assignments.map((assignment) =>
-        prisma.sessionParticipant.update({
-          where: { id: assignment.sessionParticipantId },
+    await prisma.$transaction(async (tx) => {
+      await lockSessionParticipantsById(
+        tx,
+        session.id,
+        sessionParticipantIds,
+      );
+      const assignmentsByParticipantId = new Map(
+        parsed.data.assignments.map((assignment) => [
+          assignment.sessionParticipantId,
+          assignment,
+        ]),
+      );
+      for (const participantId of orderSessionParticipantIds(
+        sessionParticipantIds,
+      )) {
+        const assignment = assignmentsByParticipantId.get(participantId)!;
+        await tx.sessionParticipant.update({
+          where: { id: participantId },
           data: {
             type: assignment.sessionParticipantType,
             sessionRoleId:
@@ -937,9 +955,9 @@ export async function assignParticipantRole(
                 ? assignment.sessionRoleId
                 : null,
           },
-        }),
-      ),
-    );
+        });
+      }
+    });
 
     await syncSessionPrepStatus(session.id);
     revalidatePath(`/sessions/${session.id}`);

@@ -15,6 +15,7 @@ import {
 } from "@/lib/ai/session-analysis-context";
 import {
   AiAnalysisProviderError,
+  bindParticipantPersonalFeedback,
   canRecoverProviderResponseAfterFailure,
   classifyAiAnalysisError,
   createMockAnalysisOutput,
@@ -26,7 +27,7 @@ import {
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import {
   claimAiAnalysisRun,
-  completeAiAnalysisRun,
+  completeAiAnalysisRunWithCurrentParticipants,
   failAiAnalysisRun,
   persistAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
@@ -410,15 +411,22 @@ async function processMockAnalysis(
     await new Promise((resolve) => setTimeout(resolve, 6_000));
   }
   const completedAt = new Date();
-  const terminalized = await completeAiAnalysisRun({
+  const terminalized = await completeAiAnalysisRunWithCurrentParticipants({
+    sessionId,
     owner,
     completedAt,
-    fields: {
-      model: "mock-analysis",
-      executiveSummary: mockOutput.executiveSummary,
-      overallScore: mockOutput.overallScore,
-      analysisJson: mockOutput as Prisma.InputJsonValue,
-      rawModelOutput: { mock: true },
+    buildFields: (currentParticipants) => {
+      const boundMockOutput = bindParticipantPersonalFeedback(
+        mockOutput,
+        currentParticipants,
+      );
+      return {
+        model: "mock-analysis",
+        executiveSummary: boundMockOutput.executiveSummary,
+        overallScore: boundMockOutput.overallScore,
+        analysisJson: boundMockOutput as Prisma.InputJsonValue,
+        rawModelOutput: { mock: true },
+      };
     },
   });
   if (!terminalized) {
@@ -487,46 +495,53 @@ async function processRealAnalysis(
         return false;
       }
       completion.completedAt = new Date();
-      return completeAiAnalysisRun({
+      return completeAiAnalysisRunWithCurrentParticipants({
+        sessionId,
         owner,
         completedAt: completion.completedAt,
-        fields: {
-          model,
-          executiveSummary: output.executiveSummary,
-          overallScore: output.overallScore,
-          analysisJson: output as Prisma.InputJsonValue,
-          rawModelOutput: {
-            providerEnvelope: rawOutput as Prisma.InputJsonValue,
-            diagnostics: {
-              totalDurationMs: metrics.totalDurationMs,
-              preProviderDurationMs: metrics.preProviderDurationMs,
-              generationPostDurationMs: metrics.generationPostDurationMs,
-              pollingDurationMs: metrics.pollingDurationMs,
-              parsingValidationDurationMs:
-                metrics.parsingValidationDurationMs,
-              optionalDepthDurationMs: metrics.optionalDepthDurationMs,
-              promptChars: metrics.promptChars,
-              estimatedPromptTokens: metrics.estimatedPromptTokens,
-              instructionChars: metrics.instructionChars,
-              inputChars: metrics.inputChars,
-              estimatedInputTokens: metrics.estimatedInputTokens,
-              outputSchemaInstructionChars:
-                metrics.outputSchemaInstructionChars,
-              primaryMaxOutputTokensConfigured:
-                metrics.primaryMaxOutputTokensConfigured,
-              operationAttemptCount: metrics.operationAttemptCount,
-              outerRetryCount: metrics.outerRetryCount,
-              generationCallCount: metrics.generationCallCount,
-              compactFallbackCount: metrics.compactFallbackCount,
-              optionalDepthCallCount: metrics.optionalDepthCallCount,
-              pollingRequestCount: metrics.pollingRequestCount,
-              retrievalRetryCount: metrics.retrievalRetryCount,
-              optionalDepthOutcome: metrics.optionalDepthOutcome,
-              optionalDepthFailureClass: metrics.optionalDepthFailureClass,
-              responseLength: metrics.responseLength,
-              outputChars: metrics.outputChars,
-            },
-          } as Prisma.InputJsonValue,
+        buildFields: (currentParticipants) => {
+          const boundOutput = bindParticipantPersonalFeedback(
+            output,
+            currentParticipants,
+          );
+          return {
+            model,
+            executiveSummary: boundOutput.executiveSummary,
+            overallScore: boundOutput.overallScore,
+            analysisJson: boundOutput as Prisma.InputJsonValue,
+            rawModelOutput: {
+              providerEnvelope: rawOutput as Prisma.InputJsonValue,
+              diagnostics: {
+                totalDurationMs: metrics.totalDurationMs,
+                preProviderDurationMs: metrics.preProviderDurationMs,
+                generationPostDurationMs: metrics.generationPostDurationMs,
+                pollingDurationMs: metrics.pollingDurationMs,
+                parsingValidationDurationMs:
+                  metrics.parsingValidationDurationMs,
+                optionalDepthDurationMs: metrics.optionalDepthDurationMs,
+                promptChars: metrics.promptChars,
+                estimatedPromptTokens: metrics.estimatedPromptTokens,
+                instructionChars: metrics.instructionChars,
+                inputChars: metrics.inputChars,
+                estimatedInputTokens: metrics.estimatedInputTokens,
+                outputSchemaInstructionChars:
+                  metrics.outputSchemaInstructionChars,
+                primaryMaxOutputTokensConfigured:
+                  metrics.primaryMaxOutputTokensConfigured,
+                operationAttemptCount: metrics.operationAttemptCount,
+                outerRetryCount: metrics.outerRetryCount,
+                generationCallCount: metrics.generationCallCount,
+                compactFallbackCount: metrics.compactFallbackCount,
+                optionalDepthCallCount: metrics.optionalDepthCallCount,
+                pollingRequestCount: metrics.pollingRequestCount,
+                retrievalRetryCount: metrics.retrievalRetryCount,
+                optionalDepthOutcome: metrics.optionalDepthOutcome,
+                optionalDepthFailureClass: metrics.optionalDepthFailureClass,
+                responseLength: metrics.responseLength,
+                outputChars: metrics.outputChars,
+              },
+            } as Prisma.InputJsonValue,
+          };
         },
       });
     },

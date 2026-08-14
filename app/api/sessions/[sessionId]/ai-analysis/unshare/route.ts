@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
+import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import {
+  isAiPublicationSerializationConflict,
+  retryAiPublicationTransaction,
+} from "@/lib/ai-publication-transaction";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,31 +63,79 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const aiAnalysis = await prisma.aiAnalysis.findUnique({
-    where: { sessionId },
-    select: { id: true, visibility: true },
-  });
+  let result;
+  try {
+    result = await retryAiPublicationTransaction(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // This canonical row lock must precede every publication lookup,
+          // revocation, and legacy mutable-field clear so Publish and Unshare
+          // have one serializable order.
+          const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id
+            FROM "AiAnalysis"
+            WHERE "sessionId" = ${sessionId}
+            FOR UPDATE
+          `);
+          if (!locked[0]) {
+            return { state: "analysis_not_found" as const };
+          }
 
-  if (!aiAnalysis) {
+          const aiAnalysisId = locked[0].id;
+          const unsharedAt = new Date();
+          await tx.aiAnalysisPublicationGrant.updateMany({
+            where: {
+              revokedAt: null,
+              publication: {
+                aiAnalysisId,
+                revokedAt: null,
+              },
+            },
+            data: { revokedAt: unsharedAt },
+          });
+          await tx.aiAnalysisPublication.updateMany({
+            where: { aiAnalysisId, revokedAt: null },
+            data: { revokedAt: unsharedAt },
+          });
+
+          const updated = await tx.aiAnalysis.update({
+            where: { id: aiAnalysisId },
+            data: {
+              visibility: "FACILITATOR_ONLY",
+              sharedAnalysisJson: Prisma.JsonNull,
+              sharedExecutiveSummary: null,
+              sharedAt: null,
+              sharedBy: null,
+              unsharedAt,
+            },
+            select: {
+              id: true,
+              visibility: true,
+              unsharedAt: true,
+            },
+          });
+          return { state: "unshared" as const, updated };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+  } catch (error) {
+    if (isAiPublicationSerializationConflict(error)) {
+      return NextResponse.json(
+        { error: "AI analysis publication is busy. Please retry." },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
+
+  if (result.state === "analysis_not_found") {
     return NextResponse.json({ error: "AI analysis not found." }, { status: 404 });
   }
 
-  const updated = await prisma.aiAnalysis.update({
-    where: { id: aiAnalysis.id },
-    data: {
-      visibility: "FACILITATOR_ONLY",
-      unsharedAt: new Date(),
-    },
-    select: {
-      id: true,
-      visibility: true,
-      unsharedAt: true,
-    },
-  });
-
   return NextResponse.json({
     success: true,
-    visibility: updated.visibility,
-    unsharedAt: updated.unsharedAt?.toISOString() ?? null,
+    visibility: result.updated.visibility,
+    unsharedAt: result.updated.unsharedAt?.toISOString() ?? null,
   });
 }

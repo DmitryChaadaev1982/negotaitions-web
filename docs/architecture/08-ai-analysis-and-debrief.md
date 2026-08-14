@@ -22,8 +22,9 @@ Produce structured post-session coaching output from transcript/materials and ex
 6. Yandex creates one durable background response and retrieves that same
    response by ID until it reaches a terminal provider state.
 7. The complete provider output is parsed and validated against the canonical
-   schema. Only then is `analysisJson` persisted and status changed to
-   `COMPLETED`.
+   schema. Personal feedback identifies its recipient by supplied
+   `SessionParticipant` ID, which is validated against the current negotiating
+   roster before `analysisJson` is persisted and status changed to `COMPLETED`.
 
 ## Large-session input contract
 
@@ -66,8 +67,8 @@ Produce structured post-session coaching output from transcript/materials and ex
   generations would require additional recoverable stage state, add cost, and
   risk evidence loss. The quality stop condition therefore prefers an explicit
   supported boundary over a lossy report presented as complete.
-7. A completed analysis can be shared to session participants/observers through
-   the existing sanitized publication flow.
+7. A completed analysis can be explicitly published as a role-scoped snapshot
+   to recipients present under canonical room-lease truth.
 
 ## Provider Selection And Fail-Closed Contract
 
@@ -138,28 +139,70 @@ Produce structured post-session coaching output from transcript/materials and ex
 - No role receives partial provider output through the status API.
 - Sharing state controls materials access for observer-facing debrief behavior.
 
-## Approved Publication and Privacy Contract
+## Publication Recipient and Snapshot Contract
 
-The following is the approved target contract for future publication work:
+- `AiAnalysis` remains a mutable, one-per-session execution row. Each reclaimed
+  analysis run increments `analysisVersion`; a prior recipient grant never
+  authorizes the regenerated report automatically.
+- An explicit Publish locks the analysis row and takes one logical
+  `publishedAt` timestamp. It derives recipients from active
+  `SessionRoomConnection` leases at that timestamp: active account, no
+  disconnect/supersede/revoke terminal marker, unexpired lease, and current
+  `SessionParticipant` membership of type `PARTICIPANT` or `OBSERVER`.
+- Publish persists one immutable `AiAnalysisPublication` snapshot per
+  `(analysisVersion, publicationEpoch)`, plus normalized
+  `AiAnalysisPublicationGrant` rows. A grant binds the recipient's
+  `SessionParticipant`, account user, and maximum allowed projection.
+- A recipient absent at Publish receives no grant. Joining later alone creates
+  no access. An Observer who joined after negotiation start is eligible when
+  their active lease exists at Publish.
+- Repeating Publish while the same snapshot remains active expands grants
+  monotonically to newly eligible/present recipients. Existing valid grants
+  remain valid when their holders later leave or reconnect.
+- Unshare revokes the active publication and all of its grants. The next Publish
+  always opens a new epoch and captures only recipients currently eligible then;
+  it never reactivates old grants for absent recipients.
+- Publish with zero recipients still creates a publication snapshot but zero
+  grants. A subsequent explicit Publish is required to grant anyone.
+- Participant projection is the sanitized shared report plus only that
+  participant's personal feedback. Observer projection explicitly removes all
+  `participantPersonalFeedback` as well as the shared sanitizer's blocked
+  facilitator/private fields. These projections are selected server-side from
+  the stored grant, never from client visibility.
+- Delivery checks a non-revoked snapshot, a non-revoked grant, the bound
+  account/session membership, and the grant's stored projection. A later role
+  change cannot upgrade an old grant.
+- Publish and Unshare use serializable transactions, lock the same
+  `AiAnalysis` row before examining publication state, and retry one bounded
+  PostgreSQL serialization conflict. Their successful results therefore have
+  one serial order: an Unshare after Publish revokes it, while a Publish after
+  Unshare creates the next epoch.
+- Publish additionally verifies that the completed analysis's persisted
+  `transcriptId` and `transcriptRetranscribeCount` still match the canonical
+  current transcript. A stale completed report cannot be shared, and status
+  exposes `canShare=false` for it.
+- New provider output carries `sessionParticipantId` for each personal-feedback
+  entry. The prompt supplies this ID only as a model correlation value and the
+  server locks every current `SessionParticipant` row by stable primary key
+  (`id ASC`), re-queries, and validates current `PARTICIPANT` membership in the
+  same short transaction that persists the run-token-fenced completion.
+  Multi-row participant-role mutations use that same lock/write order. A
+  membership/role mutation therefore serializes before validation or after
+  completion persistence; provider execution never runs inside this lock.
+  Legacy name-only feedback is delivered only when normalized display-name
+  matching produces exactly one negotiating participant; zero or duplicate
+  matches are omitted.
 
-- A publish operation targets only users eligible and present under canonical
-  presence truth at that publication time.
-- Recipient grants persist across a recipient's leave/rejoin. An absent user
-  receives no automatic access to that publication.
-- A later explicit Publish may add grants for recipients then eligible/present;
-  it must not infer access from a prior session-wide publication.
-- Participant and Observer projections are separate role-specific contracts.
-  Observers must not receive participant-private recommendations or
-  facilitator-private analysis.
+### Legacy publication compatibility
 
-**Current implementation gap (documented; runtime intentionally unchanged):**
-`app/api/sessions/[sessionId]/ai-analysis/share/route.ts` writes one
-session-wide `AiAnalysis.sharedAnalysisJson` with
-`visibility=SHARED_WITH_SESSION`. It neither records publication-time recipient
-presence nor persists per-recipient grants. The materials delivery path does
-apply role-aware sanitization, but it cannot implement the approved
-publication-time grant semantics from a single shared payload. Do not claim that
-the current runtime already satisfies the target recipient-grant contract.
+Pre-grant `AiAnalysis.sharedAnalysisJson` rows are retained for facilitator
+review but receive no reconstructed recipient grants. They did not persist
+publication-time lease eligibility, and embedded personal-feedback identifiers
+cannot prove historical presence. Therefore no participant or Observer gets
+legacy shared access automatically after migration; the facilitator must
+explicitly republish to capture current eligible recipients. This preserves
+stored artifacts without guessing historical access or broadly granting
+Observers.
 
 ## Facilitator UI State Model
 
@@ -185,6 +228,14 @@ the current runtime already satisfies the target recipient-grant contract.
 - Observer fallback excludes participant private instructions.
 - Materials action is independent from "leave room" and remains available in debrief (new-tab open in sidebar mode).
 - Processing/partial/failed AI states are surfaced without hiding fallback context.
+- AI/transcript-enhancement completion is canonical artifact freshness and is
+  reported independently from whether the viewer owns a publication grant.
+- Participant/Observer polling completion is viewer-specific: an active
+  publication with no grant does not stop polling for a viewer who could gain a
+  grant on a later explicit Publish.
+- A current completed usable analysis remains publishable for no-grant polling
+  even if obsolete recording/transcript processing later reports failure. When
+  no such artifact exists, terminal processing failure stops polling.
 
 ## Source Notes
 

@@ -128,6 +128,15 @@
 - Recording, transcription, enhancement, mapping, and analysis are independent
   progress dimensions. A ready material in one dimension must not imply that
   another dimension is complete or accessible.
+- Non-facilitator materials projections retain safe canonical enhancement and
+  analysis completion status even when the viewer has no publication grant.
+  Processing freshness never grants transcript or AI-report access; publication
+  authorization is defined separately by `08-ai-analysis-and-debrief.md`.
+- No-grant debrief polling receives canonical AI status distinctly from absent
+  analysis state: pending/running continues polling, a current completed report
+  remains publishable despite later upstream failure, and terminal AI failure
+  without such a report stops polling. This readiness outcome never changes
+  authorization.
 
 ## Single-Run Admission
 
@@ -143,6 +152,10 @@
   Sessions. It preserves the existing post-transcription enhancement trigger
   while preventing duplicate provider cost and competing raw/enhancement
   persistence for one transcript generation.
+- AI analysis persists the canonical transcript ID and `retranscribeCount` it
+  consumed. Materials status and AI publication use that same identity to mark
+  older completed analysis stale; a report from an earlier transcript
+  generation is not publishable.
 
 ## Observability
 

@@ -14,8 +14,19 @@
 - Participant and observer views are constrained through serializer and response shaping.
 - Participant and Observer are distinct privacy projections: an Observer must
   not receive participant-private recommendations or facilitator-private
-  analysis. The authoritative AI publication contract and its documented
-  recipient-grant implementation gap are in `08-ai-analysis-and-debrief.md`.
+  analysis. Published AI delivery also requires a non-revoked server-side
+  recipient grant bound to the current account/session membership and its
+  publication-time maximum projection; current role alone never authorizes
+  access. The authoritative publication contract is in
+  `08-ai-analysis-and-debrief.md`.
+- AI Publish and Unshare lock the canonical `AiAnalysis` row in serializable
+  transactions and use one bounded retry for PostgreSQL serialization conflicts.
+  This prevents a successful Unshare from leaving a concurrently-created,
+  unseen active recipient grant.
+- AI completion-time personal-feedback validation locks current
+  `SessionParticipant` rows in stable primary-key order (`id ASC`). Multi-row
+  participant role changes use the same order, preventing a cycle while
+  preserving the short, run-token-fenced privacy transaction.
 - Admin diagnostics are separated from standard user surfaces.
 - Event lobby remote media controls are owner-only and are authorized server-side
   with `resolveEventAccess(...).isEventOwner`. A participant/observer/facilitator

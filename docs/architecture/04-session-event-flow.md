@@ -255,6 +255,10 @@ these timers changes the Debrief grace.
   refresh, while the demoted facilitator loses strict control authority
   immediately. Expired/finalized leases remain terminal and fresh claims read
   the current participant type.
+- Multi-row role assignment and facilitator reassignment lock affected
+  `SessionParticipant` rows by stable primary key (`id ASC`) and apply their
+  participant-row writes in that same order. This matches AI completion-time
+  roster validation without expanding either transaction boundary.
 
 ## Event Presence DTO
 

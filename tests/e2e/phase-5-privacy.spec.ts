@@ -471,7 +471,10 @@ test.describe("Privacy serializers — unit", () => {
     const aliceFiltered = filterPersonalFeedbackForParticipant(analysis, {
       participantId: "p1",
       displayName: "Alice",
-    });
+    }, [
+      { id: "p1", displayName: "Alice", type: "PARTICIPANT" },
+      { id: "p2", displayName: "Bob", type: "PARTICIPANT" },
+    ]);
     const aliceStr = JSON.stringify(aliceFiltered);
 
     expect(aliceStr).toContain("Alice feedback");
@@ -745,6 +748,60 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
         }),
       ],
     );
+    const facilitatorRows = await query<{ facilitatorId: string }>(
+      `SELECT "facilitatorId" FROM "Session" WHERE "id" = $1`,
+      [fixture.sessionId],
+    );
+    const facilitatorId = facilitatorRows[0]!.facilitatorId;
+    await query(
+      `UPDATE "SessionParticipant" SET "userId" = $2
+       WHERE "id" = $1`,
+      [fixture.roleAParticipantId, facilitatorId],
+    );
+    const publicationId = uid("ai-pub");
+    const sharedPayload = JSON.stringify({
+      summary: "Test analysis",
+      roleObjectivesAnalysis: [
+        {
+          role: "Role A",
+          hiddenObjective: HIDDEN_OBJECTIVE_SECRET_DO_NOT_LEAK,
+          fallback: FALLBACK_SECRET_DO_NOT_LEAK,
+          batna: BATNA_SECRET_DO_NOT_LEAK,
+        },
+      ],
+      rawPrompt: ROLE_A_PRIVATE_SECRET_DO_NOT_LEAK,
+      facilitatorNotes: FACILITATOR_SECRET_DO_NOT_LEAK,
+      participantPersonalFeedback: [
+        {
+          participantName: "Alice",
+          sessionParticipantId: fixture.roleAParticipantId,
+          feedback: "Alice feedback",
+        },
+        {
+          participantName: "Bob",
+          sessionParticipantId: fixture.roleBParticipantId,
+          feedback: OTHER_PARTICIPANT_FEEDBACK_SECRET,
+        },
+      ],
+    });
+    const aiRows = await query<{ id: string }>(
+      `SELECT id FROM "AiAnalysis" WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    );
+    await query(
+      `INSERT INTO "AiAnalysisPublication"
+         ("id","aiAnalysisId","analysisVersion","publicationEpoch","sharedAnalysisJson",
+          "publishedAt","createdAt","updatedAt")
+       VALUES ($1,$2,0,1,$3,NOW(),NOW(),NOW())`,
+      [publicationId, aiRows[0]!.id, sharedPayload],
+    );
+    await query(
+      `INSERT INTO "AiAnalysisPublicationGrant"
+         ("id","publicationId","sessionParticipantId","userId","projection",
+          "grantedAt","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,'PARTICIPANT',NOW(),NOW(),NOW())`,
+      [uid("ai-grant"), publicationId, fixture.roleAParticipantId, facilitatorId],
+    );
   });
 
   test.afterAll(async () => {
@@ -754,12 +811,7 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
   test("Shared AI report via materials/status does not expose private data to participant", async ({
     request,
   }) => {
-    // First share the analysis (as facilitator — ignore result, may fail if session not in right state)
-    await request.post(`/api/sessions/${fixture.sessionId}/ai-analysis/share`, {
-      data: { joinToken: fixture.facilitatorToken, shareDebriefConfirmed: true },
-    });
-
-    // Now check what participant receives
+    // The fixture has an active durable grant and immutable publication snapshot.
     const statusRes = await request.get(
       `/api/sessions/${fixture.sessionId}/materials/status?joinToken=${fixture.roleAToken}`,
     );
@@ -803,6 +855,13 @@ test.describe("Phase 5 — AI shared report sanitization (API)", () => {
            "sharedExecutiveSummary" = NULL, "sharedAt" = NULL, "sharedBy" = NULL,
            "updatedAt" = NOW()
        WHERE "sessionId" = $1`,
+      [fixture.sessionId],
+    );
+    await query(
+      `UPDATE "AiAnalysisPublication"
+       SET "revokedAt" = NOW()
+       WHERE "aiAnalysisId" = (SELECT id FROM "AiAnalysis" WHERE "sessionId" = $1)
+         AND "revokedAt" IS NULL`,
       [fixture.sessionId],
     );
 

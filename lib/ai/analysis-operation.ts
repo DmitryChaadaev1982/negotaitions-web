@@ -6,6 +6,7 @@ import {
   type PrismaClient,
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { lockSessionParticipantsForSession } from "@/lib/session-participant-locking";
 
 const DEFAULT_LEASE_DURATION_MS = 180_000;
 const MIN_LEASE_DURATION_MS = 150_000;
@@ -148,6 +149,13 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 type AiAnalysisPrismaClient = Pick<PrismaClient, "aiAnalysis">;
+type AiAnalysisCompletionPrismaClient = Pick<PrismaClient, "$transaction">;
+
+export type CurrentAnalysisParticipant = {
+  id: string;
+  displayName: string;
+  type: string;
+};
 
 export function createPrismaAiAnalysisOperationStore(
   client: AiAnalysisPrismaClient = prisma,
@@ -206,6 +214,7 @@ export function createPrismaAiAnalysisOperationStore(
         data: {
           transcriptId: params.transcriptId,
           transcriptRetranscribeCount: params.transcriptRetranscribeCount,
+          analysisVersion: { increment: 1 },
           status: AiAnalysisStatus.QUEUED,
           language: params.language,
           runToken: params.runToken,
@@ -522,6 +531,53 @@ export async function completeAiAnalysisRun(params: {
     owner: params.owner,
     fields: params.fields,
     completedAt: params.completedAt ?? new Date(),
+  });
+}
+
+/**
+ * Locks the current session roster and persists a terminal analysis result in
+ * one short transaction. Provider work stays outside this boundary.
+ */
+export async function completeAiAnalysisRunWithCurrentParticipants(params: {
+  sessionId: string;
+  owner: AiAnalysisRunOwner;
+  completedAt: Date;
+  buildFields: (
+    currentParticipants: CurrentAnalysisParticipant[],
+  ) => AiAnalysisSuccessFields;
+  client?: AiAnalysisCompletionPrismaClient;
+}): Promise<boolean> {
+  const client = params.client ?? prisma;
+  return client.$transaction(async (tx) => {
+    // A membership/role update or deletion touching an existing participant
+    // serializes before this lock (and is observed) or waits until completion
+    // commits. This is the privacy decision's transaction boundary.
+    await lockSessionParticipantsForSession(tx, params.sessionId);
+    const currentParticipants = await tx.sessionParticipant.findMany({
+      where: { sessionId: params.sessionId },
+      select: { id: true, displayName: true, type: true },
+    });
+    const fields = params.buildFields(currentParticipants);
+    const completed = await tx.aiAnalysis.updateMany({
+      where: {
+        id: params.owner.analysisId,
+        status: AiAnalysisStatus.ANALYZING,
+        runToken: params.owner.runToken,
+      },
+      data: {
+        status: AiAnalysisStatus.COMPLETED,
+        leaseExpiresAt: null,
+        model: fields.model,
+        executiveSummary: fields.executiveSummary,
+        overallScore: fields.overallScore,
+        analysisJson: fields.analysisJson,
+        rawModelOutput: fields.rawModelOutput,
+        completedAt: params.completedAt,
+        providerResponseId: null,
+        errorMessage: null,
+      },
+    });
+    return completed.count === 1;
   });
 }
 

@@ -290,6 +290,7 @@ model User {
   eventParticipants   EventParticipant[]
   sessionParticipants SessionParticipant[]
   roomConnections   SessionRoomConnection[]
+  aiAnalysisPublicationGrants AiAnalysisPublicationGrant[]
   videoProviderIdentities VideoProviderIdentity[]
   userSessions        UserSession[]
   passwordResetTokens PasswordResetToken[]
@@ -543,6 +544,7 @@ model SessionParticipant {
   eventParticipant   EventParticipant?   @relation("EventParticipantLink", fields: [eventParticipantId], references: [id], onDelete: SetNull)
   eventAssignment    EventParticipant?   @relation("EventParticipantAssignment")
   transcriptSegments TranscriptSegment[]
+  aiAnalysisPublicationGrants AiAnalysisPublicationGrant[]
 
   @@index([sessionId])
   @@index([userId])
@@ -850,6 +852,12 @@ model AiAnalysis {
   transcriptId                String?
   // Tracks which retranscribeCount version of the transcript this analysis was built on
   transcriptRetranscribeCount Int              @default(0)
+  // Incremented when a new analysis run claims this mutable per-session row.
+  // Publication snapshots bind to this version; grants never authorize a
+  // regenerated report until a facilitator explicitly publishes it.
+  analysisVersion             Int              @default(0)
+  // Monotonic publication epoch for explicit Publish/Unshare boundaries.
+  publicationEpoch            Int              @default(0)
   status                      AiAnalysisStatus @default(QUEUED)
   // Durable owner fence for the current/most recent analysis operation.
   runToken                    String?
@@ -877,8 +885,61 @@ model AiAnalysis {
   updatedAt              DateTime         @updatedAt
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  publications AiAnalysisPublication[]
 
   @@index([status, leaseExpiresAt])
+}
+
+enum AiAnalysisPublicationProjection {
+  PARTICIPANT
+  OBSERVER
+}
+
+/// Immutable shared-artifact snapshot for one explicit publication epoch.
+/// AiAnalysis is intentionally mutable across reruns, so recipient grants bind
+/// here rather than directly authorizing the current AiAnalysis row.
+model AiAnalysisPublication {
+  id                     String   @id @default(cuid())
+  aiAnalysisId           String
+  analysisVersion        Int
+  publicationEpoch       Int
+  sharedAnalysisJson     Json?
+  sharedExecutiveSummary String?  @db.Text
+  publishedAt            DateTime
+  publishedBy            String?
+  revokedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  aiAnalysis AiAnalysis                    @relation(fields: [aiAnalysisId], references: [id], onDelete: Cascade)
+  grants     AiAnalysisPublicationGrant[]
+
+  @@unique([aiAnalysisId, publicationEpoch])
+  @@index([aiAnalysisId, revokedAt])
+  @@index([aiAnalysisId, analysisVersion, revokedAt])
+}
+
+/// Durable recipient grant captured from canonical room presence at publication
+/// time. The stored projection is an upper bound and cannot be upgraded by a
+/// later role change.
+model AiAnalysisPublicationGrant {
+  id                   String                          @id @default(cuid())
+  publicationId        String
+  sessionParticipantId String
+  userId               String
+  projection           AiAnalysisPublicationProjection
+  grantedAt            DateTime
+  revokedAt            DateTime?
+  createdAt            DateTime                        @default(now())
+  updatedAt            DateTime                        @updatedAt
+
+  publication        AiAnalysisPublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  sessionParticipant SessionParticipant    @relation(fields: [sessionParticipantId], references: [id], onDelete: Cascade)
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([publicationId, sessionParticipantId])
+  @@index([sessionParticipantId, userId, revokedAt])
+  @@index([publicationId, revokedAt])
 }
 
 model ExternalServiceEvent {

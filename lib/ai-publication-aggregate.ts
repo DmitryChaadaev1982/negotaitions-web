@@ -4,6 +4,10 @@ type AiPublicationAggregateInput = {
   aiStatus: string | null;
   aiVisibility: string | null;
   sharedAnalysisJson: unknown | null;
+  grants?: Array<{
+    sessionParticipantId: string;
+    projection: "PARTICIPANT" | "OBSERVER";
+  }>;
   participants: Array<{
     id: string;
     userId: string | null;
@@ -151,6 +155,30 @@ export function aggregateAiPublicationStatus(
       status: "none",
       requiredRecipientCount,
       publishedRecipientCount: 0,
+    };
+  }
+
+  // Durable grants are authoritative once the publication-grant migration is
+  // present. JSON feedback inspection remains only for legacy callers/tests;
+  // it must never be used by artifact delivery authorization.
+  if (input.grants !== undefined) {
+    const grantedParticipantIds = new Set(
+      input.grants
+        .filter((grant) => grant.projection === "PARTICIPANT")
+        .map((grant) => grant.sessionParticipantId),
+    );
+    const publishedCount = [...requiredRecipients.keys()].filter((id) =>
+      grantedParticipantIds.has(id),
+    ).length;
+    return {
+      status:
+        publishedCount <= 0
+          ? "none"
+          : publishedCount < requiredRecipientCount
+            ? "partial"
+            : "full",
+      requiredRecipientCount,
+      publishedRecipientCount: publishedCount,
     };
   }
 

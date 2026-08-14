@@ -1,6 +1,10 @@
 import { ParticipantType } from "@/app/generated/prisma/enums";
 import { prisma } from "@/lib/prisma";
 import { isAssignableCaseRole } from "@/lib/case-roles";
+import {
+  lockSessionParticipantsForSession,
+  orderSessionParticipantIds,
+} from "@/lib/session-participant-locking";
 
 type FacilitatorCandidate = {
   id: string;
@@ -109,6 +113,7 @@ export async function reassignSessionFacilitator(
       return { ok: false, error: "sessionNotFound" };
     }
 
+    await lockSessionParticipantsForSession(tx, params.sessionId);
     const participants = await tx.sessionParticipant.findMany({
       where: { sessionId: params.sessionId },
       select: {
@@ -206,30 +211,39 @@ export async function reassignSessionFacilitator(
       data: { facilitatorId: nextFacilitator.userId },
     });
 
-    await tx.sessionParticipant.update({
-      where: { id: nextFacilitator.id },
-      data: {
-        type: ParticipantType.FACILITATOR,
-        sessionRoleId: null,
-      },
-    });
-
-    if (
-      canonicalFacilitator &&
-      canonicalFacilitator.id !== nextFacilitator.id
-    ) {
-      await tx.sessionParticipant.update({
-        where: { id: canonicalFacilitator.id },
-        data:
+    const participantUpdates = new Map<
+      string,
+      {
+        type: ParticipantType;
+        sessionRoleId: string | null;
+      }
+    >([
+      [
+        nextFacilitator.id,
+        {
+          type: ParticipantType.FACILITATOR,
+          sessionRoleId: null,
+        },
+      ],
+    ]);
+    if (canonicalFacilitator && canonicalFacilitator.id !== nextFacilitator.id) {
+      participantUpdates.set(canonicalFacilitator.id, {
+        type:
           params.previousFacilitatorType === "PARTICIPANT"
-            ? {
-                type: ParticipantType.PARTICIPANT,
-                sessionRoleId: params.previousFacilitatorSessionRoleId ?? null,
-              }
-            : {
-                type: ParticipantType.OBSERVER,
-                sessionRoleId: null,
-              },
+            ? ParticipantType.PARTICIPANT
+            : ParticipantType.OBSERVER,
+        sessionRoleId:
+          params.previousFacilitatorType === "PARTICIPANT"
+            ? (params.previousFacilitatorSessionRoleId ?? null)
+            : null,
+      });
+    }
+    for (const participantId of orderSessionParticipantIds(
+      [...participantUpdates.keys()],
+    )) {
+      await tx.sessionParticipant.update({
+        where: { id: participantId },
+        data: participantUpdates.get(participantId)!,
       });
     }
 
