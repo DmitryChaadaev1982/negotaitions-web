@@ -48,6 +48,13 @@ order: `npm run validate:fast`, `npm run validate:deploy`,
 `npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`. Docs-only and
 audit-only work does not require these gates.
 
+Capture approved product requirements as an atomic manifest before or during
+implementation, then derive/select acceptance evidence before implementation.
+Run `verify-requirements` as the completeness gate before `validate-wave`,
+expensive targeted high-risk review, and packaging; it must not rely solely on
+the implementing model's completion report. Run `validate-wave` separately as
+the correctness/regression gate.
+
 Use [`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md)
 for mandatory gate commands and ordering, and
 [`docs/testing/e2e-strategy.md`](docs/testing/e2e-strategy.md) for test
@@ -78,8 +85,10 @@ subagent context whenever practical. Terra remains responsible for
 implementation, failure-remediation decisions, and the final engineering
 report. Use `.cursor/skills/stage-start/SKILL.md` as the canonical reusable
 workflow for a new stage/worktree and `.cursor/skills/validate-wave/SKILL.md`
-for post-implementation validation orchestration. Skills reuse these Luna
-subagents and do not override scoped safety rules or authoritative documents.
+for post-implementation validation orchestration, and
+`.cursor/skills/verify-requirements/SKILL.md` for independent completeness
+verification. Skills reuse these Luna subagents and do not override scoped
+safety rules or authoritative documents.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
