@@ -1,7 +1,7 @@
 ---
 name: test-explorer
 description: Targeted regression discovery and low-cost test investigation
-model: gpt-5.6-luna-medium
+model: grok-4.6
 readonly: true
 ---
 

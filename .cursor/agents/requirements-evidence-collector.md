@@ -1,7 +1,7 @@
 ---
 name: requirements-evidence-collector
 description: Collects compact factual evidence per approved requirement without implementation judgment. Use for requirement-completeness verification.
-model: gpt-5.6-luna-medium
+model: grok-4.6
 readonly: true
 ---
 

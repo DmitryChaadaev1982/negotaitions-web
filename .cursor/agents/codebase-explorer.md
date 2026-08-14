@@ -1,7 +1,7 @@
 ---
 name: codebase-explorer
 description: Read-only repository exploration with concise evidence
-model: gpt-5.6-luna-medium
+model: grok-4.6
 readonly: true
 ---
 
