@@ -21,16 +21,11 @@ import type { RoomAuthToken } from "@/lib/room-auth";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
-  NegotiationAnalysisOutputSchema,
-  type NegotiationAnalysisOutput,
-} from "@/lib/ai/negotiation-analysis";
-import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
-
-// sharedAnalysisJson stored for participants has roleObjectivesAnalysis stripped.
-// Allow that field to be absent so the parse succeeds for participant view.
-const ParticipantAnalysisSchema = NegotiationAnalysisOutputSchema.partial({
-  roleObjectivesAnalysis: true,
-});
+  parseCanonicalAnalysisOutput,
+  parsePublishedViewerAnalysis,
+  resolveAiAnalysisRenderState,
+} from "@/lib/materials-ai-analysis-view";
+import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { TranslationKey } from "@/lib/i18n/translate";
 
@@ -390,9 +385,10 @@ export function SessionPostProcessingPanel({
     aiStage: (ai?.processingStage ?? "waiting_for_transcript") as ProcessingAiAnalysisStatus,
     canViewAiAnalysis: canViewAi,
     analysisJson: ai?.analysisJson ?? null,
-    parseAnalysisJson: isFacilitatorView
-      ? (value) => NegotiationAnalysisOutputSchema.safeParse(value)
-      : (value) => ParticipantAnalysisSchema.safeParse(value),
+    parseAnalysisJson:
+      participantType === "FACILITATOR"
+        ? parseCanonicalAnalysisOutput
+        : parsePublishedViewerAnalysis,
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
@@ -1220,7 +1216,12 @@ export function SessionPostProcessingPanel({
         ) : null}
 
         {aiRenderValidationError ? (
-          <p className="text-sm text-rose-400">{aiRenderValidationError}</p>
+          <p
+            className="text-sm text-rose-400"
+            data-testid="ai-analysis-invalid-result"
+          >
+            {aiRenderValidationError}
+          </p>
         ) : null}
 
         {canViewAi && analysisJson ? (

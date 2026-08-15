@@ -1378,6 +1378,7 @@ export const en = {
     sessionMaterials: "Session materials",
     openSessionMaterials: "Open session materials",
     joinAsObserver: "Join as observer",
+    joinAsObserverDebrief: "Join debrief",
     materials: "Materials",
     negotiationRoom: "Negotiation room",
     assignedToRoom: "You have been assigned to a negotiation room.",

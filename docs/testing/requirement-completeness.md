@@ -49,7 +49,8 @@ fixture, or local-runtime blocker must be recorded precisely.
 | PARTIAL | Evidence demonstrates that only part of the atomic implementation exists. Missing evidence alone is not PARTIAL. |
 | FAIL | Evidence shows the implementation omits or contradicts the requirement. |
 | UNVERIFIABLE | Required evidence cannot currently be obtained; this is not PASS, even when source appears correct. |
-| DEFERRED | An explicit user/product decision has deferred the requirement. |
+| DEFERRED | An explicit user/product decision has postponed the requirement; future implementation is still expected unless a later decision supersedes it. |
+| SUPERSEDED | The original requirement was replaced by named later IDs. It remains as history, must not be re-implemented, and does not imply remaining work. |
 
 An implementing model’s completion report is not evidence by itself. An asset
 on disk does not prove it appears on the required runtime surface. A backend
@@ -61,6 +62,14 @@ An asset on disk, JSX import, conditional source branch, CSS class, backend
 handler, or matching test name cannot independently prove runtime appearance or
 behavior. Record factual evidence per ID, including `NO_EVIDENCE_FOUND`, before
 making a judgment.
+
+### Scope of visual-pattern implementation
+
+Implementing a visual requirement on one named surface does not authorize
+spreading the same pattern to neighboring surfaces that were not requested.
+A page-header pictogram requirement is not a table-row pictogram requirement.
+A Dashboard card pictogram does not imply dense list/table row pictograms.
+Do not treat visual consistency with an unimplemented neighbor as acceptance.
 
 ### Executed-test evidence
 
@@ -99,10 +108,11 @@ pixel-perfect comparison unless it is genuinely necessary.
 
 ## Packaging rule
 
-A product wave is requirement-complete only if every manifest ID is PASS or
-explicitly DEFERRED. PARTIAL, FAIL, and UNVERIFIABLE are unresolved and block
-packaging. The coverage matrix must reconcile its manifest count with the sum
-of all status counts; silent omissions are not permitted.
+A product wave is requirement-complete only if every manifest ID is PASS,
+explicitly DEFERRED, or SUPERSEDED / REPLACED_BY named later IDs. PARTIAL,
+FAIL, and UNVERIFIABLE are unresolved and block packaging. The coverage matrix
+must reconcile its manifest count with the sum of all status counts; silent
+omissions are not permitted.
 
 After remediation, re-check failed/partial IDs first, then re-establish full
 manifest coverage.

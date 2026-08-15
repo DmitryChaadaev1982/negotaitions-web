@@ -48,6 +48,7 @@ export type TrainingEventListItem = {
   totalSessionParticipantCount: number;
   createdAt?: string;
   ownerLabel?: string | null;
+  ownerUserId: string | null;
 };
 
 export function isEventActiveForPresence(status: TrainingEventStatus) {

@@ -9,7 +9,7 @@ import {
 } from "@/lib/ai/negotiation-analysis";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { ru } from "@/lib/i18n/dictionaries/ru";
-import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
+import { resolveAiAnalysisRenderState, parsePublishedViewerAnalysis } from "@/lib/materials-ai-analysis-view";
 
 const VALID_ANALYSIS = createMockAnalysisOutput("en");
 
@@ -160,4 +160,73 @@ test("invalid-result message is localized in RU and EN dictionaries", () => {
     ru.sessionMaterials.aiAnalysisInvalidResult,
     "Результат ИИ-разбора некорректен. Запустите анализ повторно.",
   );
+});
+
+test("observer-safe projection is invalid under the full Participant/Facilitator schema", () => {
+  const observerSafe = { ...VALID_ANALYSIS } as Record<string, unknown>;
+  delete observerSafe.participantPersonalFeedback;
+  const parsed = NegotiationAnalysisOutputSchema.safeParse(observerSafe);
+  assert.equal(parsed.success, false);
+});
+
+test("authorized published analysis renders when recording is not available", () => {
+  const observerSafe = { ...VALID_ANALYSIS } as Record<string, unknown>;
+  delete observerSafe.participantPersonalFeedback;
+  delete observerSafe.roleObjectivesAnalysis;
+
+  const state = resolveAiAnalysisRenderState({
+    recordingStage: "not_available",
+    transcriptionStage: "waiting_for_recording",
+    aiStage: "ready",
+    canViewAiAnalysis: true,
+    analysisJson: observerSafe,
+    parseAnalysisJson: parsePublishedViewerAnalysis,
+  });
+
+  assert.equal(state.stage, "ANALYSIS_READY");
+  assert.equal(state.showInvalidResultError, false);
+  assert.equal(state.analysis?.executiveSummary, VALID_ANALYSIS.executiveSummary);
+});
+
+test("facilitator in-progress still hides a previous payload behind the pending outline", () => {
+  const state = resolveAiAnalysisRenderState({
+    recordingStage: "ready",
+    transcriptionStage: "ready",
+    aiStage: "analyzing",
+    canViewAiAnalysis: true,
+    analysisJson: VALID_ANALYSIS,
+  });
+
+  assert.equal(state.stage, "ANALYSIS_IN_PROGRESS");
+  assert.equal(state.analysis, null);
+});
+
+test("observer-safe projection renders with the published-viewer parser", () => {
+  const observerSafe = { ...VALID_ANALYSIS } as Record<string, unknown>;
+  delete observerSafe.participantPersonalFeedback;
+  delete observerSafe.roleObjectivesAnalysis;
+
+  const state = resolveAiAnalysisRenderState({
+    recordingStage: "ready",
+    transcriptionStage: "ready",
+    aiStage: "ready",
+    canViewAiAnalysis: true,
+    analysisJson: observerSafe,
+    parseAnalysisJson: parsePublishedViewerAnalysis,
+  });
+  assert.equal(state.stage, "ANALYSIS_READY");
+  assert.equal(state.showInvalidResultError, false);
+  assert.equal(state.analysis?.executiveSummary, VALID_ANALYSIS.executiveSummary);
+  assert.equal(state.analysis?.participantPersonalFeedback, undefined);
+});
+
+test("getAnalysisForObserver mock output parses after JSON round-trip", async () => {
+  const { getAnalysisForObserver } = await import("@/lib/analysis-visibility");
+  const observer = getAnalysisForObserver(VALID_ANALYSIS);
+  const roundTrip = JSON.parse(JSON.stringify(observer));
+  const parsed = parsePublishedViewerAnalysis(roundTrip);
+  if (!parsed.success) {
+    assert.fail(JSON.stringify(parsed, null, 2));
+  }
+  assert.equal(parsed.success, true);
 });

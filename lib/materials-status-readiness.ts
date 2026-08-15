@@ -137,6 +137,7 @@ export function computeShouldPoll(
   speakerMappingRequired = false,
   hasCurrentPublishableAiAnalysis = false,
 ): boolean {
+  void hasValidPublicationGrant;
   if (
     recordingStatus &&
     (ACTIVE_RECORDING_STATUSES.has(recordingStatus) ||
@@ -173,7 +174,6 @@ export function computeShouldPoll(
   if (
     isParticipantOrObserver &&
     sessionIsFinished &&
-    !hasValidPublicationGrant &&
     !terminalProcessingFailure
   ) {
     return true;

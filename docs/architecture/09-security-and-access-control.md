@@ -16,13 +16,18 @@
   not receive participant-private recommendations or facilitator-private
   analysis. Published AI delivery also requires a non-revoked server-side
   recipient grant bound to the current account/session membership and its
-  publication-time maximum projection; current role alone never authorizes
-  access. The authoritative publication contract is in
+  stored maximum projection (`PARTICIPANT` or `OBSERVER`); current role or
+  session-wide share flags never authorize Observer access. Eligibility for a
+  grant is historical Session room-shell entry (`SessionRoomConnection`
+  claim after authorized `/room` bootstrap), not active presence at Publish
+  and not confirmed live media. Event Lobby presence does not qualify.
+  First room entry while a publication is active materializes a current-epoch
+  grant. The authoritative publication contract is in
   `08-ai-analysis-and-debrief.md`.
-- AI Publish and Unshare lock the canonical `AiAnalysis` row in serializable
-  transactions and use one bounded retry for PostgreSQL serialization conflicts.
-  This prevents a successful Unshare from leaving a concurrently-created,
-  unseen active recipient grant.
+- AI Publish, Unshare, and late-entry grant materialization lock the canonical
+  `AiAnalysis` row in serializable transactions and use one bounded retry for
+  PostgreSQL serialization conflicts. This prevents a successful Unshare from
+  leaving a concurrently-created, unseen active recipient grant.
 - AI completion-time personal-feedback validation locks current
   `SessionParticipant` rows in stable primary-key order (`id ASC`). Multi-row
   participant role changes use the same order, preventing a cycle while
@@ -31,6 +36,13 @@
 - Event lobby remote media controls are owner-only and are authorized server-side
   with `resolveEventAccess(...).isEventOwner`. A participant/observer/facilitator
   who is not the Event owner can control only their own local media.
+- Late Observer Session membership is created only for authenticated Event
+  members through `canCreateLateObserverParticipant`. That helper now follows
+  `decideSessionRoomAccess` for `DEBRIEF_OPEN` (`ALLOW_DEBRIEF`) as well as
+  active rooms (`ALLOW_ACTIVE_ROOM`). Direct `/room/[sessionId]` uses the same
+  gate. Non-members, completed Events, deleted Sessions, and `CLOSED` rooms
+  remain denied. Participant first-entry is not broadened. Room entry does not
+  by itself grant a revoked AI publication.
 - Remote media commands verify that the target belongs to the current Event and
   is actively in the Event lobby according to the server Event-state model.
   Generic online presence is not sufficient: targets in a Session, temporarily

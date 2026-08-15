@@ -68,7 +68,7 @@ Produce structured post-session coaching output from transcript/materials and ex
   risk evidence loss. The quality stop condition therefore prefers an explicit
   supported boundary over a lossy report presented as complete.
 7. A completed analysis can be explicitly published as a role-scoped snapshot
-   to recipients present under canonical room-lease truth.
+   to historically eligible Participant/Observer room entrants.
 
 ## Provider Selection And Fail-Closed Contract
 
@@ -141,42 +141,83 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 ## Publication Recipient and Snapshot Contract
 
+Distinguish three concepts:
+
+- **CURRENT PRESENCE** — who is canonically in the room *now* / at a specific
+  instant. Predicate: `activeHumanSessionConnectionWhere` and
+  `summarizeLogicalPresenceByUser`. Used for occupancy, live UI, attendance,
+  and future presence-gated features. Not publication authorization.
+- **HISTORICAL ROOM ENTRY ELIGIBILITY** — whether a valid Participant or
+  Observer has successfully entered the authorized Session room surface at
+  least once. Durable evidence is any `SessionRoomConnection` row for that
+  `(session, user)`, including disconnected, superseded, revoked, or expired
+  rows. That row is created by canonical room-shell claim
+  (`claimSessionRoomConnectionLease`) after authorized `/room` bootstrap.
+  Confirmed Vox/media connection is not additionally required. Event Lobby
+  presence, membership, invitation, join-token, unauthorized room URL access,
+  and Event-lobby provider credentials are not sufficient.
+- **PUBLICATION GRANT AUTHORIZATION** — a non-revoked
+  `AiAnalysisPublicationGrant` bound to current Participant/Observer
+  membership, account identity, and a stored maximum projection. Delivery
+  never uses session-wide `SHARED_WITH_SESSION` alone. That older flag is why
+  Observers previously received an unsafe shared payload; Observer access
+  remains grant-plus-`OBSERVER` projection.
+
 - `AiAnalysis` remains a mutable, one-per-session execution row. Each reclaimed
   analysis run increments `analysisVersion`; a prior recipient grant never
   authorizes the regenerated report automatically.
 - An explicit Publish locks the analysis row and takes one logical
-  `publishedAt` timestamp. It derives recipients from active
-  `SessionRoomConnection` leases at that timestamp: active account, no
-  disconnect/supersede/revoke terminal marker, unexpired lease, and current
+  `publishedAt` timestamp. It derives recipients from historical room-entry
+  eligibility: any `SessionRoomConnection` for an ACTIVE account plus current
   `SessionParticipant` membership of type `PARTICIPANT` or `OBSERVER`.
+  Active presence at Publish is not required. A viewer who entered and later
+  left remains eligible. A lobby-only membership is not eligible.
 - Publish persists one immutable `AiAnalysisPublication` snapshot per
   `(analysisVersion, publicationEpoch)`, plus normalized
   `AiAnalysisPublicationGrant` rows. A grant binds the recipient's
-  `SessionParticipant`, account user, and maximum allowed projection.
-- A recipient absent at Publish receives no grant. Joining later alone creates
-  no access. An Observer who joined after negotiation start is eligible when
-  their active lease exists at Publish.
+  `SessionParticipant`, account user, and maximum allowed projection
+  (`PARTICIPANT` or `OBSERVER`). Facilitator privileges stay separate;
+  facilitators are not converted into ordinary viewer-grant recipients.
+- First canonical room entry (`claimSessionRoomConnectionLease`) while an
+  unrevoked publication exists materializes a grant for the current epoch with
+  the same selector, upsert, `AiAnalysis` row lock, and serializable retry as
+  Publish. This covers an Observer or Participant who first enters during
+  `DEBRIEF_OPEN` after Publish. Ordinary materials/status reconciliation then
+  sees the grant. Client-only authorization is not used.
 - Repeating Publish while the same snapshot remains active expands grants
-  monotonically to newly eligible/present recipients. Existing valid grants
-  remain valid when their holders later leave or reconnect.
-- Unshare revokes the active publication and all of its grants. The next Publish
-  always opens a new epoch and captures only recipients currently eligible then;
-  it never reactivates old grants for absent recipients.
-- Publish with zero recipients still creates a publication snapshot but zero
-  grants. A subsequent explicit Publish is required to grant anyone.
+  monotonically to newly historically eligible recipients. Existing valid
+  grants remain valid when their holders later leave or reconnect.
+  Reconnects upsert the same `(publicationId, sessionParticipantId)` and do
+  not duplicate authorization.
+- Unshare revokes the active publication and all of its grants. Room entry
+  after Unshare does not create a grant and cannot resurrect a revoked
+  epoch. The next Publish always opens a new epoch and recomputes recipients
+  from historical room-entry truth at that moment, including viewers who
+  first entered during Debrief or after the previous Unshare.
+- Publish with zero eligible recipients still creates a publication snapshot
+  but zero grants. Later lobby/membership alone has no access. Later
+  authorized Session room-shell entry while that snapshot remains active does
+  create a grant. Confirmed live media is not an extra eligibility gate.
 - Participant projection is the sanitized shared report plus only that
   participant's personal feedback. Observer projection explicitly removes all
   `participantPersonalFeedback` as well as the shared sanitizer's blocked
   facilitator/private fields. These projections are selected server-side from
   the stored grant, never from client visibility.
+- Client rendering must parse Observer-safe payloads without requiring
+  `participantPersonalFeedback`. Facilitator/full analysis still uses the
+  canonical schema. Published Participant/Observer views share
+  `parsePublishedViewerAnalysis` in `lib/materials-ai-analysis-view.ts`.
+  The report UI does not re-add private personal feedback or facilitator-only
+  debrief questions to satisfy parsing.
 - Delivery checks a non-revoked snapshot, a non-revoked grant, the bound
   account/session membership, and the grant's stored projection. A later role
   change cannot upgrade an old grant.
-- Publish and Unshare use serializable transactions, lock the same
-  `AiAnalysis` row before examining publication state, and retry one bounded
+- Publish, Unshare, and late-entry grant materialization lock the same
+  `AiAnalysis` row in serializable transactions and retry one bounded
   PostgreSQL serialization conflict. Their successful results therefore have
-  one serial order: an Unshare after Publish revokes it, while a Publish after
-  Unshare creates the next epoch.
+  one serial order: an Unshare after Publish or late-entry grant creation
+  revokes the epoch; a Publish after Unshare creates the next epoch; entry
+  after Unshare is a no-op.
 - Publish additionally verifies that the completed analysis's persisted
   `transcriptId` and `transcriptRetranscribeCount` still match the canonical
   current transcript. A stale completed report cannot be shared, and status
@@ -197,12 +238,12 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 Pre-grant `AiAnalysis.sharedAnalysisJson` rows are retained for facilitator
 review but receive no reconstructed recipient grants. They did not persist
-publication-time lease eligibility, and embedded personal-feedback identifiers
-cannot prove historical presence. Therefore no participant or Observer gets
-legacy shared access automatically after migration; the facilitator must
-explicitly republish to capture current eligible recipients. This preserves
-stored artifacts without guessing historical access or broadly granting
-Observers.
+historical room-entry eligibility or Observer-safe grant projections.
+Therefore no participant or Observer gets legacy shared access automatically
+after migration; the facilitator must explicitly republish to capture current
+historically eligible recipients. This preserves stored artifacts without
+guessing historical access or broadly granting Observers the old session-wide
+payload.
 
 ## Facilitator UI State Model
 
@@ -224,6 +265,14 @@ Observers.
 - In `DEBRIEF_OPEN`, participant/observer panel never renders empty:
   - if published personalized/shared analysis exists and validates, show AI report;
   - otherwise show permitted fallback context from room sidebar payload.
+- The canonical live recipient surface is the room sidebar `DebriefPanel` →
+  `SessionPostProcessingPanel` (`variant="sidebar"`). Account materials at
+  `/sessions/[id]/materials` mounts the same panel (`variant="page"`) and also
+  renders the published report. `/join/[joinToken]` redirects there.
+- `resolveAiAnalysisRenderState` must not hide an authorized, schema-valid
+  published payload behind upstream recording/transcript waiting stages
+  (including `recordingStage=not_available`). Facilitator `QUEUED`/`ANALYZING`
+  still shows the pending outline instead of a previous payload.
 - Participant fallback includes own role private instructions.
 - Observer fallback excludes participant private instructions.
 - Materials action is independent from "leave room" and remains available in debrief (new-tab open in sidebar mode).
@@ -232,7 +281,14 @@ Observers.
   reported independently from whether the viewer owns a publication grant.
 - Participant/Observer polling completion is viewer-specific: an active
   publication with no grant does not stop polling for a viewer who could gain a
-  grant on a later explicit Publish.
+  grant on a later explicit Publish or on first canonical room entry while the
+  publication remains active.
+- After a viewer already has a valid grant, polling still continues while the
+  materials/debrief surface is mounted, the session is finished, and processing
+  is not in a terminal failure without a current publishable analysis. This lets
+  an already-open recipient observe remote Unshare without navigation. Polling
+  uses `processing.shouldPoll` / `nextPollMs` from canonical `materials/status`
+  (default 3500 ms) and stops on unmount or that terminal-failure condition.
 - A current completed usable analysis remains publishable for no-grant polling
   even if obsolete recording/transcript processing later reports failure. When
   no such artifact exists, terminal processing failure stops polling.
@@ -242,7 +298,9 @@ Observers.
 - `lib/ai/negotiation-analysis.ts`
 - `lib/analysis-visibility.ts`
 - `lib/privacy/serializers.ts`
-- `lib/ai-publication-aggregate.ts`
+- `lib/ai-publication.ts`
+- `lib/ai-publication-entry-grant.ts`
+- `lib/session-room-connection-lease.ts`
 - `app/api/sessions/[sessionId]/materials/status/route.ts`
 - `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`
 - `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`

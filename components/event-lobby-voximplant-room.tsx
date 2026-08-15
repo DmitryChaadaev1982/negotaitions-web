@@ -47,6 +47,10 @@ import {
 } from "@/lib/voximplant/reinvite-scheme-sanitizer";
 import type { EventStateParticipant } from "@/lib/event-state";
 import { isStaleConnectionResponse } from "@/lib/client/stale-connection";
+import {
+  hasLiveMediaTrack,
+  reconcileLobbyDeviceWarning,
+} from "@/lib/voximplant/lobby-device-warning";
 
 type VoxWatchable<T> = {
   value: T;
@@ -443,6 +447,16 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
   const speakerMeterCleanupByTrackRef = useRef(new Map<string, () => void>());
   const micUnknownTimerByParticipantRef = useRef(new Map<string, number>());
   const lastPublishedMediaStatusRef = useRef<string | null>(null);
+  const simulatedMediaStreamRef = useRef<MediaStream | null>(null);
+  const onDeviceWarningRef = useRef(onDeviceWarning);
+  const onStaleConnectionRef = useRef(onStaleConnection);
+  const tRef = useRef(t);
+
+  useEffect(() => {
+    onDeviceWarningRef.current = onDeviceWarning;
+    onStaleConnectionRef.current = onStaleConnection;
+    tRef.current = t;
+  }, [onDeviceWarning, onStaleConnection, t]);
 
   // Owns the shared SDK log callback while the lobby is the active surface, so
   // provider errors are classified against the lobby lifecycle rather than by a
@@ -542,6 +556,12 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       return cleanupPromiseRef.current;
     }
     const runtime = runtimeRef.current;
+    setJoined(false);
+    setLocalParticipant(null);
+    setRemoteParticipants([]);
+    setIsCameraOn(false);
+    setCameraUnavailable(false);
+    onDeviceWarningRef.current?.(null);
     if (!runtime) return;
     runtimeRef.current = null;
 
@@ -614,9 +634,36 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     return trackedCleanup;
   }, []);
 
+  const publishLobbyDeviceWarning = useCallback(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    onDeviceWarningRef.current?.(
+      reconcileLobbyDeviceWarning({
+        hasMicrophoneStream: hasLiveMediaTrack(
+          streamToMediaStream(runtime.localAudioStream),
+          "audio",
+        ),
+        hasCameraStream: hasLiveMediaTrack(
+          streamToMediaStream(runtime.localVideoStream),
+          "video",
+        ),
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     let cancelled = false;
+    const t = (
+      key: Parameters<typeof tRef.current>[0],
+      params?: Parameters<typeof tRef.current>[1],
+    ) => tRef.current(key, params);
+    const onDeviceWarning = (message: string | null) => {
+      onDeviceWarningRef.current?.(message);
+    };
+    const onStaleConnection = () => {
+      onStaleConnectionRef.current?.();
+    };
 
     const upsertRemote = (next: VoxLobbyParticipant) => {
       setRemoteParticipants((current) => {
@@ -656,16 +703,45 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         throw createSyntheticProviderError(mode);
       }
 
+      let simulatedMediaStream: MediaStream | null = null;
+      if (mode === "healthy-media" || mode === "media-acquisition") {
+        try {
+          simulatedMediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: true,
+          });
+          simulatedMediaStreamRef.current = simulatedMediaStream;
+          if (mode === "healthy-media") {
+            onDeviceWarning?.("cameraBusyOrUnavailable");
+          }
+        } catch {
+          onDeviceWarning?.("cameraUnavailable");
+        }
+      }
+      const hasMicrophoneStream = Boolean(
+        simulatedMediaStream?.getAudioTracks().some((track) => track.readyState !== "ended"),
+      );
+      const hasCameraStream = Boolean(
+        simulatedMediaStream?.getVideoTracks().some((track) => track.readyState !== "ended"),
+      );
+      onDeviceWarning?.(
+        reconcileLobbyDeviceWarning({
+          hasMicrophoneStream,
+          hasCameraStream,
+        }),
+      );
       setJoined(true);
       setStatus(t("events.voxLobbyConnected"));
+      setIsMicMuted(!hasMicrophoneStream);
+      setIsCameraOn(hasCameraStream);
       setLocalParticipant({
         id: "local",
         identityKey: normalizeEndpointIdentity(connectionId) ?? connectionId,
         endpointUsername: null,
         displayName: t("common.you"),
-        stream: null,
-        micState: "off",
-        cameraState: "off",
+        stream: simulatedMediaStream,
+        micState: hasMicrophoneStream ? "on" : "off",
+        cameraState: hasCameraStream ? "on" : "off",
         firstSeenAtMs: Date.now(),
         updatedAtMs: Date.now(),
       });
@@ -824,9 +900,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             audioProcessing: true,
           });
         } catch (audioError) {
-          if (isRecoverableMediaError(audioError)) {
-            onDeviceWarning?.("microphoneUnavailable");
-          } else {
+          if (!isRecoverableMediaError(audioError)) {
             throw audioError;
           }
         }
@@ -842,7 +916,6 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         } catch (videoError) {
           if (isRecoverableMediaError(videoError)) {
             setCameraUnavailable(true);
-            onDeviceWarning?.("cameraBusyOrUnavailable");
           } else {
             throw videoError;
           }
@@ -867,6 +940,18 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           conferenceListeners: null,
         };
         runtimeRef.current = runtime;
+        const watchLocalTrackEnded = (stream: VoxStream | null) => {
+          const media = streamToMediaStream(stream);
+          for (const track of media?.getTracks() ?? []) {
+            track.addEventListener("ended", () => {
+              if (cancelled || !mountedRef.current) return;
+              publishLobbyDeviceWarning();
+            });
+          }
+        };
+        watchLocalTrackEnded(localAudioStream);
+        watchLocalTrackEnded(localVideoStream);
+        publishLobbyDeviceWarning();
 
         const getTrackEnabled = (
           stream: VoxStream | null,
@@ -1034,6 +1119,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         };
 
         runtime.endpointSyncIntervalId = window.setInterval(() => {
+          if (cancelled || !mountedRef.current) return;
           for (const endpoint of conference.endpoints.value.values()) {
             subscribeEndpoint(endpoint);
             applyRemoteVideo(endpoint);
@@ -1042,6 +1128,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           setRemoteParticipants((current) =>
             current.filter((participant) => liveEndpointIds.has(participant.id)),
           );
+          publishLobbyDeviceWarning();
         }, 1000);
 
         if (localAudioStream) {
@@ -1055,6 +1142,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
 
         setIsMicMuted(!localAudioStream);
         setIsCameraOn(Boolean(localVideoStream));
+        publishLobbyDeviceWarning();
         setLocalParticipant({
           id: "local",
           identityKey: normalizeEndpointIdentity(
@@ -1129,6 +1217,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       lifecyclePhaseRef.current = "intentional_teardown";
       runner.cancel();
       connectRunnerRef.current = null;
+      for (const track of simulatedMediaStreamRef.current?.getTracks() ?? []) {
+        track.stop();
+      }
+      simulatedMediaStreamRef.current = null;
       void cleanup();
     };
   }, [
@@ -1139,12 +1231,10 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     eventId,
     providerFaultSimulation,
     hostToken,
-    onDeviceWarning,
-    onStaleConnection,
     participantToken,
+    publishLobbyDeviceWarning,
     scheduleUnknownMicResolution,
     upsertSpeakerMeter,
-    t,
   ]);
 
   const toggleMic = useCallback(async () => {
@@ -1318,6 +1408,11 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
     participantToken,
   ]);
 
+  useEffect(() => {
+    if (!joined) return;
+    publishLobbyDeviceWarning();
+  }, [joined, isCameraOn, isMicMuted, localParticipant, publishLobbyDeviceWarning]);
+
   if (error) {
     return (
       <div
@@ -1350,6 +1445,14 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
       className="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f172a]"
       data-testid="event-lobby-voximplant-room"
     >
+      {providerFaultSimulation === "healthy-media" ||
+      providerFaultSimulation === "media-acquisition" ? (
+        <div
+          data-testid="event-lobby-media-health"
+          data-microphone={isMicMuted ? "unhealthy" : "healthy"}
+          data-camera={isCameraOn ? "healthy" : "unhealthy"}
+        />
+      ) : null}
       {isReconnectingVideo && !joined ? (
         <p
           className="shrink-0 border-b border-slate-700/50 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-300"

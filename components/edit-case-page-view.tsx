@@ -1,6 +1,7 @@
 "use client";
 
 import { PageHeader } from "@/components/page-header";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import {
   NewCaseForm,
   type CaseFormInitialValues,
@@ -39,6 +40,14 @@ export function EditCasePageView({
       <PageHeader
         title={t("cases.editCase")}
         description={t("cases.editCasePageDescription")}
+        pictogram={
+          <ObjectPictogram
+            objectType="case"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="case"
+          />
+        }
       />
       <NewCaseForm
         caseId={caseId}

@@ -204,7 +204,7 @@ test("stale completed AI does not override terminal upstream failure", () => {
   );
 });
 
-test("participant polling waits for a later Publish and stops once granted", () => {
+test("participant polling waits for Publish and stays active after a grant so Unshare can be observed", () => {
   const completedWithoutGrant = computeShouldPoll(
     RecordingStatus.COMPLETED,
     true,
@@ -235,7 +235,7 @@ test("participant polling waits for a later Publish and stops once granted", () 
   );
 
   assert.equal(completedWithoutGrant, true);
-  assert.equal(granted, false);
+  assert.equal(granted, true);
 });
 
 test("stale STARTING recording is detected when no provider artifact appears", () => {

@@ -23,6 +23,8 @@ export const VOX_PROVIDER_FAULT_MODES = [
   "terminal-auth",
   "recover-after-first-failure",
   "gateway-ws-close-connected",
+  "healthy-media",
+  "media-acquisition",
 ] as const;
 
 export type VoxProviderFaultMode = (typeof VOX_PROVIDER_FAULT_MODES)[number];
@@ -98,6 +100,8 @@ export function resolveVoxProviderFaultPlan(
     // The gateway-close scenario replays an SDK log line into an already
     // running room; it scripts no connect outcome of its own.
     case "gateway-ws-close-connected":
+    case "healthy-media":
+    case "media-acquisition":
       return base;
     case "transport-408":
     case "gateway-unavailable":

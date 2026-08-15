@@ -46,10 +46,21 @@ export default async function DashboardPage() {
     events: activeEvents,
     sessions: activeSessions,
   });
+  const hasRelevantActiveNestedSession = (
+    group: (typeof activeHierarchy.eventGroups)[number],
+  ) =>
+    group.sessions.some((session) =>
+      ["RUNNING", "PAUSED", "PREPARATION_RUNNING", "PREPARATION_PAUSED", "READY_TO_START", "PREPARATION"].includes(
+        session.negotiationState,
+      ),
+    );
   const activeCurrentEventGroups = activeHierarchy.eventGroups.filter(
-    (group) => !isFutureDashboardEvent(group.event, selectionClock),
+    (group) =>
+      hasRelevantActiveNestedSession(group) ||
+      !isFutureDashboardEvent(group.event, selectionClock),
   );
   const activeFutureEventGroups = activeHierarchy.eventGroups.filter((group) =>
+    !hasRelevantActiveNestedSession(group) &&
     isFutureDashboardEvent(group.event, selectionClock),
   );
   const completedSessions = allSessions.filter(
@@ -77,7 +88,6 @@ export default async function DashboardPage() {
     events: activeEvents,
     now: selectionClock,
   });
-  const hostedEvents = allEvents.filter((event) => event.canManage);
   const toRoleKey = (
     role: "HOST" | "FACILITATOR" | "PARTICIPANT" | "OBSERVER" | null,
   ): EventRoleKey =>
@@ -120,15 +130,14 @@ export default async function DashboardPage() {
     transcriptStage: session.transcriptStage,
     speakerMappingStage: session.speakerMappingStage,
     aiStage: session.aiStage,
+    ownerLabel: session.ownerLabel ?? null,
+    isOwnedByCurrentUser: session.ownerUserId === user.id,
     openRoomHref: session.roomUrl,
     openMaterialsHref: session.materialsUrl,
     eventLobbyHref: session.eventId ? `/events/${session.eventId}/lobby` : null,
   });
 
-  const toEventItem = (
-    event: (typeof allEvents)[number],
-    primarySession: (typeof allSessions)[number] | null,
-  ) => ({
+  const toEventItem = (event: (typeof allEvents)[number]) => ({
     id: event.id,
     title: event.title,
     visibility: event.visibility,
@@ -142,11 +151,11 @@ export default async function DashboardPage() {
     totalSessions: event.totalSessions,
     activeSessions: event.activeSessions,
     finishedSessions: event.finishedSessions,
+    ownerLabel: event.ownerLabel ?? null,
+    isOwnedByCurrentUser: event.ownerUserId === user.id,
     primaryAction: {
-      href: primarySession ? primarySession.roomUrl : `/events/${event.id}/lobby`,
-      labelKey: (primarySession
-        ? "dashboard.continueSession"
-        : "dashboard.openLobby") as ActionLabelKey,
+      href: `/events/${event.id}/lobby`,
+      labelKey: "dashboard.openLobby" as ActionLabelKey,
     },
   });
 
@@ -154,40 +163,23 @@ export default async function DashboardPage() {
     <AccountDashboardView
       continueItem={continueItem}
       currentEventGroups={activeCurrentEventGroups.map((group) => ({
-        event: toEventItem(group.event, group.sessions[0] ?? null),
+        event: toEventItem(group.event),
         sessions: group.sessions.map(toSessionItem),
       }))}
       futureEventGroups={activeFutureEventGroups.map((group) => ({
-        event: toEventItem(group.event, group.sessions[0] ?? null),
+        event: toEventItem(group.event),
         sessions: group.sessions.map(toSessionItem),
       }))}
       standaloneActiveSessions={activeHierarchy.standaloneSessions.map(
         toSessionItem,
       )}
       archiveEventGroups={archiveHierarchy.eventGroups.map((group) => ({
-        event: toEventItem(group.event, null),
+        event: toEventItem(group.event),
         sessions: group.sessions.map(toSessionItem),
       }))}
       archiveStandaloneSessions={archiveHierarchy.standaloneSessions.map(
         toSessionItem,
       )}
-      hostedEvents={hostedEvents.map((event) => ({
-        id: event.id,
-        title: event.title,
-        visibility: event.visibility,
-        status: event.status,
-        roleKey: "dashboard.roleHost",
-        scheduledAt: event.scheduledAt,
-        timeZone: event.timeZone,
-        estimatedDurationSeconds: event.estimatedDurationSeconds,
-        totalSessions: event.totalSessions,
-        activeSessions: event.activeSessions,
-        finishedSessions: event.finishedSessions,
-        primaryAction: {
-          href: `/events/${event.id}/lobby`,
-          labelKey: "dashboard.openLobby",
-        },
-      }))}
       isAdmin={isAdminUser}
     />
   );

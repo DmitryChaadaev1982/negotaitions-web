@@ -126,3 +126,22 @@ export function resolveSessionDisplayStatus(
 
   return "PREPARATION";
 }
+
+export function isJoinableObserverDebriefSession(session: {
+  negotiationState: string;
+  roomLifecycle: string | null;
+  sessionDisplayState?: string;
+  displayStatus?: string | null;
+}): boolean {
+  if (session.displayStatus === "DEBRIEF" || session.roomLifecycle === "DEBRIEF_OPEN") {
+    return true;
+  }
+
+  // A joinable Observer session cannot be terminal. FINISHED + joinable is Debrief
+  // even if the client payload is missing roomLifecycle.
+  return (
+    session.sessionDisplayState === "joinable" &&
+    session.negotiationState === "FINISHED" &&
+    session.roomLifecycle !== "CLOSED"
+  );
+}

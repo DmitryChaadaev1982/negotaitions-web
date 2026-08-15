@@ -12,7 +12,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 
 import {
   cleanupE2eData,
@@ -181,6 +181,87 @@ async function markPresent(
     userId: recipient.userId,
     role: recipient.type,
   });
+}
+
+async function openRecipientDebrief(
+  page: Page,
+  userId: string,
+  sessionId: string,
+  joinToken: string,
+) {
+  await login(page, userId);
+  await page.goto(`/room/${sessionId}?joinToken=${joinToken}`);
+  await expect(page.getByTestId("session-room-page")).toBeVisible({ timeout: 15000 });
+  const debriefPanel = page
+    .getByTestId("room-desktop-sidebar")
+    .getByTestId("debrief-panel");
+  await expect(debriefPanel).toBeVisible({ timeout: 15000 });
+  return debriefPanel;
+}
+
+async function claimRoomEntry(
+  request: APIRequestContext,
+  sessionId: string,
+  participant: { id: string },
+  userId: string,
+  connectionId?: string,
+) {
+  const claimedConnectionId =
+    connectionId ?? `entry-${participant.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await request.get(
+    `/api/sessions/${sessionId}/control-state?participantId=${participant.id}&connectionId=${claimedConnectionId}&claimLease=1`,
+    { headers: await authHeaders(userId) },
+  );
+  expect(response.ok()).toBeTruthy();
+  return claimedConnectionId;
+}
+
+async function countActiveViewerGrants(sessionId: string, userId?: string) {
+  const rows = await query<{ count: number }>(
+    userId
+      ? `SELECT COUNT(*)::int AS count
+         FROM "AiAnalysisPublicationGrant" g
+         JOIN "AiAnalysisPublication" p ON p.id = g."publicationId"
+         JOIN "AiAnalysis" a ON a.id = p."aiAnalysisId"
+         WHERE a."sessionId" = $1
+           AND p."revokedAt" IS NULL
+           AND g."revokedAt" IS NULL
+           AND g."userId" = $2`
+      : `SELECT COUNT(*)::int AS count
+         FROM "AiAnalysisPublicationGrant" g
+         JOIN "AiAnalysisPublication" p ON p.id = g."publicationId"
+         JOIN "AiAnalysis" a ON a.id = p."aiAnalysisId"
+         WHERE a."sessionId" = $1
+           AND p."revokedAt" IS NULL
+           AND g."revokedAt" IS NULL`,
+    userId ? [sessionId, userId] : [sessionId],
+  );
+  return rows[0]?.count ?? 0;
+}
+
+async function analyzeUntilCompleted(
+  request: APIRequestContext,
+  sessionId: string,
+  facilitatorJoinToken: string,
+  facilitatorUserId: string,
+) {
+  const analyze = await request.post(`/api/sessions/${sessionId}/analyze`, {
+    headers: await authHeaders(facilitatorUserId),
+    data: { joinToken: facilitatorJoinToken, aiProcessingConfirmed: true },
+  });
+  expect(analyze.ok()).toBeTruthy();
+  await expect(async () => {
+    expect((await getAiAnalysis(sessionId))?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 30000 });
+}
+
+async function expectVisibleRecipientReport(panel: Locator) {
+  await expect(panel.getByTestId("ai-report")).toBeVisible({ timeout: 20000 });
+  await expect(panel.getByTestId("executive-summary")).toBeVisible();
+  await expect(panel.getByTestId("executive-summary")).not.toHaveText("");
+  await expect(
+    panel.getByText("AI analysis result is invalid. Please rerun analysis."),
+  ).toHaveCount(0);
 }
 
 // ── Test 1: Stay in room after finish ─────────────────────────────────────
@@ -562,24 +643,14 @@ test("materials/status stops no-grant polling after terminal AI failure", async 
   await clearAiAnalysis(session.id);
 });
 
-test("publication snapshots only active recipients, including late observers, and zero-recipient publish grants nobody", async ({
+test("TEST C: lobby-only membership without room entry is not granted on Publish", async ({
   request,
 }) => {
-  const { session, facilitator, igor, serg, users } = await createAndAssignSession(request);
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
   await finishSession(session.id);
   await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
 
-  const analyze = await request.post(`/api/sessions/${session.id}/analyze`, {
-    headers: await authHeaders(users.facilitator.id),
-    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
-  });
-  expect(analyze.ok()).toBeTruthy();
-  await expect(async () => {
-    expect((await getAiAnalysis(session.id))?.status).toBe("COMPLETED");
-  }).toPass({ timeout: 30000 });
-
-  // A publish with no active participant/observer leases creates a snapshot but
-  // no grants. Joining later alone cannot read it.
   const emptyPublish = await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
     headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
@@ -588,27 +659,72 @@ test("publication snapshots only active recipients, including late observers, an
   expect((await emptyPublish.json()) as { recipientCount: number }).toMatchObject({
     recipientCount: 0,
   });
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(0);
 
-  await markPresent(session.id, igor);
-  const absentAtPublish = await request.get(
+  const neverEntered = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
     { headers: await authHeaders(users.igor.id) },
   );
-  const absentAtPublishBody = (await absentAtPublish.json()) as {
+  const neverEnteredBody = (await neverEntered.json()) as {
     aiAnalysis: { canView: boolean; processingStage: string };
   };
-  expect(absentAtPublishBody.aiAnalysis.canView).toBe(false);
-  expect(absentAtPublishBody.aiAnalysis.processingStage).toBe("ready");
+  expect(neverEnteredBody.aiAnalysis.canView).toBe(false);
+  expect(neverEnteredBody.aiAnalysis.processingStage).toBe("ready");
 
-  // A later explicit Publish snapshots the recipients who are active then.
-  await markPresent(session.id, serg);
-  const laterPublish = await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+  await clearAiAnalysis(session.id);
+});
+
+test("TEST A: Participant who left before Publish still receives a grant", async ({
+  request,
+}) => {
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
+
+  const igorConnection = await markPresent(session.id, igor);
+  await disconnectRoomConnection(igorConnection);
+
+  const publish = await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
     headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
-  expect((await laterPublish.json()) as { recipientCount: number }).toMatchObject({
-    recipientCount: 2,
+  expect(publish.ok()).toBeTruthy();
+  expect((await publish.json()) as { recipientCount: number }).toMatchObject({
+    recipientCount: 1,
   });
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(1);
+
+  const afterPublish = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
+  );
+  const afterPublishBody = (await afterPublish.json()) as {
+    aiAnalysis: { canView: boolean; analysisJson: { roleObjectivesAnalysis?: unknown[] } | null };
+  };
+  expect(afterPublishBody.aiAnalysis.canView).toBe(true);
+  expect(afterPublishBody.aiAnalysis.analysisJson?.roleObjectivesAnalysis ?? []).toHaveLength(0);
+
+  await clearAiAnalysis(session.id);
+});
+
+test("TEST B: Observer who left before Publish still receives an Observer grant", async ({
+  request,
+}) => {
+  const { session, facilitator, serg, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
+
+  const sergConnection = await markPresent(session.id, serg);
+  await disconnectRoomConnection(sergConnection);
+
+  const publish = await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  expect(publish.ok()).toBeTruthy();
+  expect(await countActiveViewerGrants(session.id, users.serg.id)).toBe(1);
 
   const observerStatus = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${serg.joinToken}`,
@@ -625,21 +741,175 @@ test("publication snapshots only active recipients, including late observers, an
   await clearAiAnalysis(session.id);
 });
 
-test("grants survive rejoin, republish expands recipients, and unshare starts a new epoch", async ({
+test("TEST E: Participant first room entry after Publish materializes the current grant", async ({
+  request,
+}) => {
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
+
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(0);
+
+  await claimRoomEntry(request, session.id, igor, users.igor.id);
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(1);
+
+  const afterEntry = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
+  );
+  expect((await afterEntry.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
+    aiAnalysis: { canView: true },
+  });
+
+  await clearAiAnalysis(session.id);
+});
+
+test("TEST D: Observer first enters during DEBRIEF after Publish and sees Observer-safe report", async ({
+  page,
+  request,
+}) => {
+  const { session, facilitator, serg, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
+
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+
+  const beforeEntry = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${serg.joinToken}`,
+    { headers: await authHeaders(users.serg.id) },
+  );
+  expect((await beforeEntry.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
+    aiAnalysis: { canView: false },
+  });
+
+  const debriefPanel = await openRecipientDebrief(
+    page,
+    users.serg.id,
+    session.id,
+    serg.joinToken,
+  );
+  await expectVisibleRecipientReport(debriefPanel);
+  expect(await countActiveViewerGrants(session.id, users.serg.id)).toBe(1);
+
+  const afterEntry = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${serg.joinToken}`,
+    { headers: await authHeaders(users.serg.id) },
+  );
+  const afterEntryBody = (await afterEntry.json()) as {
+    aiAnalysis: { canView: boolean; analysisJson: Record<string, unknown> | null };
+  };
+  expect(afterEntryBody.aiAnalysis.canView).toBe(true);
+  expect(JSON.stringify(afterEntryBody.aiAnalysis.analysisJson)).not.toContain(
+    "participantPersonalFeedback",
+  );
+  await expect(debriefPanel.getByTestId("ai-pending-section-participantPersonalFeedback")).toHaveCount(0);
+  await expect(debriefPanel.locator('[data-testid="ai-report"]')).not.toContainText("Personal feedback");
+  const pageContent = await page.content();
+  expect(pageContent).not.toContain("E2E_PRIVATE_IGOR_ONLY");
+  expect(pageContent).not.toContain("participantPersonalFeedback");
+
+  await clearAiAnalysis(session.id);
+});
+
+test("TEST F/G: entry after Unshare does not resurrect; Republish grants historical entrants", async ({
   request,
 }) => {
   const { session, facilitator, igor, alex, users } = await createAndAssignSession(request);
   await finishSession(session.id);
   await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
 
-  const analyze = await request.post(`/api/sessions/${session.id}/analyze`, {
+  await markPresent(session.id, igor);
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
     headers: await authHeaders(users.facilitator.id),
-    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
   });
-  expect(analyze.ok()).toBeTruthy();
-  await expect(async () => {
-    expect((await getAiAnalysis(session.id))?.status).toBe("COMPLETED");
-  }).toPass({ timeout: 30000 });
+  await request.post(`/api/sessions/${session.id}/ai-analysis/unshare`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken },
+  });
+
+  await claimRoomEntry(request, session.id, alex, users.alex.id);
+  expect(await countActiveViewerGrants(session.id, users.alex.id)).toBe(0);
+  const afterUnshareEntry = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${alex.joinToken}`,
+    { headers: await authHeaders(users.alex.id) },
+  );
+  expect((await afterUnshareEntry.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
+    aiAnalysis: { canView: false },
+  });
+
+  const republish = await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  expect(republish.ok()).toBeTruthy();
+  expect((await republish.json()) as { recipientCount: number }).toMatchObject({
+    recipientCount: 2,
+  });
+
+  for (const recipient of [
+    { participant: igor, user: users.igor },
+    { participant: alex, user: users.alex },
+  ]) {
+    const status = await request.get(
+      `/api/sessions/${session.id}/materials/status?joinToken=${recipient.participant.joinToken}`,
+      { headers: await authHeaders(recipient.user.id) },
+    );
+    expect((await status.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
+      aiAnalysis: { canView: true },
+    });
+  }
+
+  await clearAiAnalysis(session.id);
+});
+
+test("TEST H: reconnects do not duplicate the effective viewer grant", async ({
+  request,
+}) => {
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
+
+  await markPresent(session.id, igor);
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(1);
+
+  await claimRoomEntry(request, session.id, igor, users.igor.id, `reconnect-a-${igor.id}`);
+  await claimRoomEntry(request, session.id, igor, users.igor.id, `reconnect-b-${igor.id}`);
+  expect(await countActiveViewerGrants(session.id, users.igor.id)).toBe(1);
+
+  const afterReconnect = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
+    { headers: await authHeaders(users.igor.id) },
+  );
+  expect((await afterReconnect.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
+    aiAnalysis: { canView: true },
+  });
+
+  await clearAiAnalysis(session.id);
+});
+
+test("grants survive rejoin, and Unshare remains an epoch boundary", async ({
+  request,
+}) => {
+  const { session, facilitator, igor, alex, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+  await analyzeUntilCompleted(request, session.id, facilitator.joinToken, users.facilitator.id);
 
   const igorConnection = await markPresent(session.id, igor);
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
@@ -648,7 +918,7 @@ test("grants survive rejoin, republish expands recipients, and unshare starts a 
   });
 
   await disconnectRoomConnection(igorConnection);
-  const rejoinedIgorConnection = await markPresent(session.id, igor);
+  await markPresent(session.id, igor);
   const afterRejoin = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${igor.joinToken}`,
     { headers: await authHeaders(users.igor.id) },
@@ -658,7 +928,6 @@ test("grants survive rejoin, republish expands recipients, and unshare starts a 
   });
 
   await markPresent(session.id, alex);
-  await disconnectRoomConnection(rejoinedIgorConnection);
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
     headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
@@ -689,8 +958,6 @@ test("grants survive rejoin, republish expands recipients, and unshare starts a 
     aiAnalysis: { canView: false },
   });
 
-  // Igor remains absent: a fresh epoch may grant Alex, but cannot reactivate
-  // Igor's old grant.
   await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
     headers: await authHeaders(users.facilitator.id),
     data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
@@ -700,7 +967,7 @@ test("grants survive rejoin, republish expands recipients, and unshare starts a 
     { headers: await authHeaders(users.igor.id) },
   );
   expect((await igorAfterNewEpoch.json()) as { aiAnalysis: { canView: boolean } }).toMatchObject({
-    aiAnalysis: { canView: false },
+    aiAnalysis: { canView: true },
   });
 
   await clearAiAnalysis(session.id);
@@ -1022,6 +1289,173 @@ test("concurrent Publish and Unshare serialize, while concurrent Publish is idem
   } else {
     expect(activePublications[0]?.count).toBe(1);
   }
+
+  await clearAiAnalysis(session.id);
+});
+
+test("S313E-AIPUB-004: Observer with a valid grant sees the observer-safe report body", async ({
+  page,
+  request,
+}) => {
+  const { session, event, facilitator, serg, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+
+  const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
+  });
+  expect(analyzeRes.ok()).toBeTruthy();
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 30000 });
+
+  await markPresent(session.id, serg);
+  const debriefPanel = await openRecipientDebrief(
+    page,
+    users.serg.id,
+    session.id,
+    serg.joinToken,
+  );
+  await expect(debriefPanel.getByTestId("debrief-fallback-content")).toBeVisible({
+    timeout: 15000,
+  });
+
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+
+  const statusRes = await request.get(
+    `/api/sessions/${session.id}/materials/status?joinToken=${serg.joinToken}`,
+    { headers: await authHeaders(users.serg.id) },
+  );
+  expect(statusRes.ok()).toBeTruthy();
+  const statusBody = (await statusRes.json()) as {
+    aiAnalysis: {
+      canView: boolean;
+      analysisJson: { executiveSummary?: string; participantPersonalFeedback?: unknown } | null;
+    };
+  };
+  expect(statusBody.aiAnalysis.canView).toBe(true);
+  expect(statusBody.aiAnalysis.analysisJson?.executiveSummary).toBeTruthy();
+  expect(statusBody.aiAnalysis.analysisJson).not.toHaveProperty("participantPersonalFeedback");
+
+  await expectVisibleRecipientReport(debriefPanel);
+  await expect(debriefPanel.getByTestId("ai-pending-section-participantPersonalFeedback")).toHaveCount(0);
+  await expect(debriefPanel.locator('[data-testid="ai-report"]')).not.toContainText("Personal feedback");
+  const pageContent = await page.content();
+  expect(pageContent).not.toContain("E2E_PRIVATE_IGOR_ONLY");
+  expect(pageContent).not.toContain("participantPersonalFeedback");
+
+  await page.goto(`/events/${event.id}/lobby`);
+  await expect(page.getByTestId("event-lobby-page")).toBeVisible({ timeout: 15000 });
+  await page.goto(`/room/${session.id}?joinToken=${serg.joinToken}`);
+  await expect(page.getByTestId("session-room-page")).toBeVisible({ timeout: 15000 });
+  const reenteredPanel = page
+    .getByTestId("room-desktop-sidebar")
+    .getByTestId("debrief-panel");
+  await expect(reenteredPanel).toBeVisible({ timeout: 15000 });
+  await expectVisibleRecipientReport(reenteredPanel);
+
+  await clearAiAnalysis(session.id);
+});
+
+test("S313E-AIPUB-014: mounted Participant loses the report after canonical Unshare without navigation", async ({
+  page,
+  request,
+}) => {
+  const { session, facilitator, igor, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+
+  const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
+  });
+  expect(analyzeRes.ok()).toBeTruthy();
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 30000 });
+
+  await markPresent(session.id, igor);
+  const debriefPanel = await openRecipientDebrief(
+    page,
+    users.igor.id,
+    session.id,
+    igor.joinToken,
+  );
+
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  await expectVisibleRecipientReport(debriefPanel);
+
+  const unshareRes = await request.post(`/api/sessions/${session.id}/ai-analysis/unshare`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken },
+  });
+  expect(unshareRes.ok()).toBeTruthy();
+
+  await expect(debriefPanel.getByTestId("ai-report")).toHaveCount(0, { timeout: 20000 });
+  await expect(debriefPanel.getByTestId("debrief-fallback-content")).toBeVisible({
+    timeout: 20000,
+  });
+  await expect(debriefPanel.getByText("AI analysis has not been shared yet.")).toBeVisible({
+    timeout: 20000,
+  });
+
+  await clearAiAnalysis(session.id);
+});
+
+test("S313E-AIPUB-014: mounted Observer loses the report after canonical Unshare without navigation", async ({
+  page,
+  request,
+}) => {
+  const { session, facilitator, serg, users } = await createAndAssignSession(request);
+  await finishSession(session.id);
+  await createCompletedTranscript(session.id);
+
+  const analyzeRes = await request.post(`/api/sessions/${session.id}/analyze`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, aiProcessingConfirmed: true },
+  });
+  expect(analyzeRes.ok()).toBeTruthy();
+  await expect(async () => {
+    const analysis = await getAiAnalysis(session.id);
+    expect(analysis?.status).toBe("COMPLETED");
+  }).toPass({ timeout: 30000 });
+
+  await markPresent(session.id, serg);
+  const debriefPanel = await openRecipientDebrief(
+    page,
+    users.serg.id,
+    session.id,
+    serg.joinToken,
+  );
+
+  await request.post(`/api/sessions/${session.id}/ai-analysis/share`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken, shareDebriefConfirmed: true },
+  });
+  await expectVisibleRecipientReport(debriefPanel);
+
+  const unshareRes = await request.post(`/api/sessions/${session.id}/ai-analysis/unshare`, {
+    headers: await authHeaders(users.facilitator.id),
+    data: { joinToken: facilitator.joinToken },
+  });
+  expect(unshareRes.ok()).toBeTruthy();
+
+  await expect(debriefPanel.getByTestId("ai-report")).toHaveCount(0, { timeout: 20000 });
+  await expect(debriefPanel.getByTestId("debrief-fallback-content")).toBeVisible({
+    timeout: 20000,
+  });
+  await expect(debriefPanel.getByText("AI analysis has not been shared yet.")).toBeVisible({
+    timeout: 20000,
+  });
 
   await clearAiAnalysis(session.id);
 });

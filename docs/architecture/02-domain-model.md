@@ -16,8 +16,11 @@
 - `analysisVersion` identifies the mutable-row generation;
 - `sharedAnalysisJson` is legacy compatibility state, while
   `AiAnalysisPublication` is the immutable published snapshot;
-- `AiAnalysisPublicationGrant` binds an eligible present recipient's
+- `AiAnalysisPublicationGrant` binds a historically eligible room-entrant's
   `SessionParticipant`, account, and maximum role projection for that snapshot.
+  Historical entrant means successful authorized Session room-shell entry
+  (`SessionRoomConnection` claim), not confirmed live media and not Event
+  Lobby presence.
 
 Recipient authorization, role-specific projection, stale-input checks, and
 publication lifecycle semantics are implemented server-side and specified in

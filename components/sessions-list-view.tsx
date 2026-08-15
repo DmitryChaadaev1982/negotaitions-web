@@ -15,6 +15,7 @@ import {
   ListActionGroup,
   ListActionLink,
 } from "@/components/list-action-button";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import {
@@ -425,6 +426,14 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
       <PageHeader
         title={t("sessions.title")}
         description={t("sessions.description")}
+        pictogram={
+          <ObjectPictogram
+            objectType="room"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="room"
+          />
+        }
         action={
           <GradientButtonLink href="/sessions/new">
             {t("sessions.newSession")}

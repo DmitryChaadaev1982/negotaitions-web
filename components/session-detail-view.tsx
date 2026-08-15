@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader } from "@/components/card";
 import { DeleteSessionButton } from "@/components/delete-session-button";
 import { CompleteSessionButton } from "@/components/complete-session-button";
 import { PageHeader } from "@/components/page-header";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { ParticipantsTable } from "@/components/participants-table";
 import {
   ParticipantNotesModal,
@@ -248,6 +249,14 @@ export function SessionDetailView({
       <PageHeader
         title={session.title}
         description={t("sessions.sessionDetailsDescription")}
+        pictogram={
+          <ObjectPictogram
+            objectType="room"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="room"
+          />
+        }
         badge={session.visibility ? <VisibilityBadge visibility={session.visibility} /> : undefined}
         action={
           <div className="flex flex-wrap items-center gap-2">

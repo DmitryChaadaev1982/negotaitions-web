@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { NewSessionForm } from "@/components/new-session-form";
 import { PageHeader } from "@/components/page-header";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { SecondaryButtonLink } from "@/components/ui/buttons";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { alertErrorClassName } from "@/components/ui/form-styles";
@@ -49,6 +50,14 @@ export function NewSessionPageClient({
       <PageHeader
         title={t("sessions.newSession")}
         description={t("sessions.newSessionPageDescription")}
+        pictogram={
+          <ObjectPictogram
+            objectType="room"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="room"
+          />
+        }
         action={
           <SecondaryButtonLink href="/sessions">
             {t("sessions.backToSessions")}

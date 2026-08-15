@@ -8,6 +8,7 @@ import {
   ListActionGroup,
   ListActionLink,
 } from "@/components/list-action-button";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
 import {
   ListFilterBar,
@@ -542,6 +543,14 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
       <PageHeader
         title={t("events.title")}
         description={t("events.description")}
+        pictogram={
+          <ObjectPictogram
+            objectType="event"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="event"
+          />
+        }
         action={
           <GradientButtonLink href="/events/new" data-testid="create-event-button">
             {t("dashboard.createNewEvent")}

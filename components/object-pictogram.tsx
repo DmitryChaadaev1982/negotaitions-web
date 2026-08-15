@@ -20,7 +20,8 @@ type ObjectPictogramProps = {
   objectType: ObjectPictogramType;
   size?: number;
   className?: string;
-} & (DecorativeObjectPictogramProps | InformativeObjectPictogramProps);
+} & React.HTMLAttributes<HTMLSpanElement> &
+  (DecorativeObjectPictogramProps | InformativeObjectPictogramProps);
 
 export function ObjectPictogram({
   objectType,
@@ -28,6 +29,7 @@ export function ObjectPictogram({
   className,
   decorative = true,
   alt,
+  ...spanProps
 }: ObjectPictogramProps) {
   const sources = getObjectPictogramThemePaths({
     objectType,
@@ -37,6 +39,7 @@ export function ObjectPictogram({
 
   return (
     <span
+      {...spanProps}
       className={cn("inline-flex items-center justify-center", className)}
       aria-hidden={decorative ? true : undefined}
     >

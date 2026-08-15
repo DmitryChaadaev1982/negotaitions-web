@@ -8,6 +8,7 @@ import {
 } from "@/app/actions/events";
 import { PeoplePicker } from "@/components/people-picker";
 import { PageHeader } from "@/components/page-header";
+import { ObjectPictogram } from "@/components/object-pictogram";
 import {
   GradientButton,
   SecondaryButton,
@@ -84,6 +85,14 @@ export function NewEventForm({
       <PageHeader
         title={t("events.newTrainingEvent")}
         description={t("events.newTrainingEventDescription")}
+        pictogram={
+          <ObjectPictogram
+            objectType="event"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="event"
+          />
+        }
       />
 
       <form action={formAction} className="max-w-2xl space-y-6">

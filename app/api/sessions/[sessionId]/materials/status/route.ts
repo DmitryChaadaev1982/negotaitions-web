@@ -372,9 +372,11 @@ export async function GET(request: Request, context: RouteContext) {
       isGrantProjectionCompatibleWithParticipant(viewerGrant.projection, participant.type),
   );
 
-  // Observer transcript access is publication-grant based. This preserves
-  // granted access across a reconnect but denies a late joiner even when a
-  // session has an active published snapshot.
+  // Observer transcript access is publication-grant based. This keeps the
+  // Observer privacy boundary (grant + OBSERVER projection) while following
+  // historical room-entry eligibility: a grant from Publish or from first
+  // room entry during an active publication authorizes transcript; lobby-only
+  // membership and entry after Unshare do not.
   const canViewTranscript = isObserver
     ? hasValidPublicationGrant
     : true;

@@ -5,6 +5,7 @@ import { PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
+import { materializeActivePublicationGrantForRoomEntrantSafe } from "@/lib/ai-publication-entry-grant";
 import { sqlUtcWallClockNow } from "@/lib/sql-utc-wall-clock";
 
 type ClaimResult = {
@@ -107,6 +108,11 @@ function deriveConnectionFinalState(
   return "ACTIVE";
 }
 
+/**
+ * Canonical CURRENT room presence: active human lease at `now`.
+ * Not publication authorization. Publish uses historical SessionRoomConnection
+ * rows via `historicalSessionRoomEntryWhere`.
+ */
 export function activeHumanSessionConnectionWhere(params: {
   sessionId: string;
   now?: Date;
@@ -203,12 +209,13 @@ export async function claimSessionRoomConnectionLease(params: {
   connectionId: string;
   role?: ParticipantType;
 }): Promise<ClaimResult> {
+  let claimed: ClaimResult | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const now = new Date();
       const expiresAt = withExpiry(now);
 
-      return await prisma.$transaction(async (tx) => {
+      claimed = await prisma.$transaction(async (tx) => {
         const session = await tx.session.findUnique({
           where: { id: params.sessionId },
           select: {
@@ -372,6 +379,7 @@ export async function claimSessionRoomConnectionLease(params: {
           isCurrentConnectionActive: true,
         };
       });
+      break;
     } catch (error) {
       if (!isUniqueConstraintError(error) || attempt === 1) {
         throw error;
@@ -379,7 +387,16 @@ export async function claimSessionRoomConnectionLease(params: {
     }
   }
 
-  throw new Error("Unable to claim connection lease.");
+  if (!claimed) {
+    throw new Error("Unable to claim connection lease.");
+  }
+  if (claimed.isCurrentConnectionActive) {
+    await materializeActivePublicationGrantForRoomEntrantSafe({
+      sessionId: params.sessionId,
+      userId: params.userId,
+    });
+  }
+  return claimed;
 }
 
 export async function validateSessionRoomConnectionLease(params: {

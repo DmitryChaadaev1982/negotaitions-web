@@ -1385,6 +1385,7 @@ export const ru: Dictionary = {
     sessionMaterials: "Материалы сессии",
     openSessionMaterials: "Открыть материалы сессии",
     joinAsObserver: "Присоединиться как наблюдатель",
+    joinAsObserverDebrief: "Присоединиться к разбору",
     materials: "Материалы",
     negotiationRoom: "Переговорная комната",
     assignedToRoom: "Вы назначены в переговорную комнату.",

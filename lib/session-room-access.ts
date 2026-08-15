@@ -226,22 +226,6 @@ export function canCreateLateObserverParticipant(input: {
     };
   }
 
-  if (input.session.status === SessionStatus.COMPLETED) {
-    return {
-      allowed: false,
-      reason: "SESSION_FINISHED",
-      accessDecision: null,
-    };
-  }
-
-  if (input.session.negotiationState === NegotiationState.FINISHED) {
-    return {
-      allowed: false,
-      reason: "NEGOTIATION_FINISHED",
-      accessDecision: null,
-    };
-  }
-
   const accessDecision = decideSessionRoomAccess({
     user: input.user,
     session: input.session,
@@ -252,6 +236,33 @@ export function canCreateLateObserverParticipant(input: {
       preferEventResultsForEventOwner: false,
     },
   });
+
+  // First Observer entry is allowed for the same room-enterable lifecycles as
+  // an already-authorized member, including DEBRIEF_OPEN. Participant creation
+  // is not handled here. FINISHED+OPEN recovery remains denied below.
+  if (accessDecision.output === "ALLOW_DEBRIEF") {
+    return {
+      allowed: true,
+      reason: null,
+      accessDecision,
+    };
+  }
+
+  if (input.session.status === SessionStatus.COMPLETED) {
+    return {
+      allowed: false,
+      reason: "SESSION_FINISHED",
+      accessDecision,
+    };
+  }
+
+  if (input.session.negotiationState === NegotiationState.FINISHED) {
+    return {
+      allowed: false,
+      reason: "NEGOTIATION_FINISHED",
+      accessDecision,
+    };
+  }
 
   if (accessDecision.output !== "ALLOW_ACTIVE_ROOM") {
     return {

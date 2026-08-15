@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { summarizeLogicalPresenceByUser } from "@/lib/session-room-logical-presence";
 
+// CURRENT room presence at an instant. Not publication authorization.
+
 function row(
   overrides: Partial<{
     userId: string;

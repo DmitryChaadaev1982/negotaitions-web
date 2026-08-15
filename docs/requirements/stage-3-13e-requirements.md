@@ -15,6 +15,14 @@ names the user-facing state `ROOM_READY / before Preparation`. The packet is
 the authority for this Stage; verification must establish the required
 pre-Preparation behavior regardless of internal enum naming.
 
+Supersession recorded — `User design clarification — 2026-08-15`:
+S313E-AIPUB-002, S313E-AIPUB-006, S313E-AIPUB-007, S313E-AIPUB-011, and
+S313E-AIPUB-012 encoded active presence at Publish and “absent at Publish /
+late join gets no grant until a later Publish”. Those rows remain as history
+and must be judged SUPERSEDED / REPLACED_BY S313E-AIPUB-015–021, not
+re-implemented and not treated as still-pending work. Observer-safe grant
+projection (S313E-AIPUB-003–005, S313E-AIPUB-014) is not superseded.
+
 Each row is one independently judged requirement. “Source” refers to the
 approved packet section unless an architecture document is named. Evidence
 types are limited to CODE, DOM, SCREENSHOT, BEHAVIOR, TEST, API, DB, and
@@ -43,6 +51,8 @@ means an observed interaction plus an observed DOM state or API result.
 | S313E-DASH-020 | CODE + API/TEST | DOM, SCREENSHOT |
 | S313E-DASH-021–023 | BEHAVIOR + DOM/API | CODE, TEST |
 | S313E-DASH-024–026 | DOM or SCREENSHOT | CODE, TEST |
+| S313E-DASH-027 | DOM or SCREENSHOT | CODE, TEST |
+| S313E-DASH-028–030 | DOM or SCREENSHOT | CODE, TEST |
 | S313E-LOBBY-001–003 | BEHAVIOR + DOM/API | CODE, TEST |
 | S313E-LIFE-001–003 | BEHAVIOR + DOM/API | CODE, TEST |
 | S313E-LIFE-004–005 | DOM or SCREENSHOT | CODE, TEST |
@@ -51,6 +61,9 @@ means an observed interaction plus an observed DOM state or API result.
 | S313E-LIFE-019–020 | BEHAVIOR + DOM or SCREENSHOT | CODE, TEST |
 | S313E-NOTES-001–005 | BEHAVIOR + DOM/API | CODE, TEST |
 | S313E-AIPUB-001–013 | CODE + TEST/API/DB | DOM, SCREENSHOT |
+| S313E-AIPUB-014 | BEHAVIOR + DOM/API | CODE, TEST |
+| S313E-AIPUB-015–017, 019–021 | CODE + TEST/API/DB | DOM, SCREENSHOT |
+| S313E-AIPUB-018 | BEHAVIOR + DOM/API | CODE, TEST |
 | S313E-AIPRIV-001–011 | CODE + TEST/API/DB | DOM, SCREENSHOT |
 | S313E-READY-001,003,009–011 | CODE + TEST/API/DB | DOM, SCREENSHOT |
 | S313E-READY-002,004–008 | BEHAVIOR + DOM/API | CODE, TEST |
@@ -101,24 +114,33 @@ contradicted.
 | S313E-LIFE-018 | Destructive styling is confined to confirmation/destructive action without backend-flow redesign. | C9 | CODE, DOM, SCREENSHOT | Confirmation dialog | Visual destructive treatment is present and canonical server flow remains unchanged. |
 | S313E-LIFE-019 | Negotiation expiry exposes a clear finish-crossing state. | C10 | CODE, DOM, SCREENSHOT, BEHAVIOR, TEST | Negotiation room | `Time expired`/equivalent is obvious on expiry. |
 | S313E-LIFE-020 | Finish-crossing state remains visible approximately 2–3 seconds before Debrief. | C10 | CODE, DOM, BEHAVIOR, TEST | Negotiation room | Debrief does not replace the finish-crossing state immediately. |
+| S313E-LIFE-021 | A valid OBSERVER may make their first Session room-shell entry while the Session is `DEBRIEF_OPEN`. The existing Event Lobby "Доступно для наблюдения" / "Available to observe" block lists that Session with status `Дебриф` / `Debrief` and CTA `Присоединиться к разбору` / `Join debrief`. Direct `/room/[sessionId]` uses the same lifecycle authorization. Room entry remains possible after Unshare; an active publication still materializes the current Observer grant through historical-entry claim after that first entry. This is not public access. | User acceptance clarification — 2026-08-15 | CODE, API, DOM, BEHAVIOR, TEST | Event Lobby / room | Unentered authorized Observer sees the Debrief Session in the existing observe block, can enter from Lobby or the direct room path, lands in Debrief UI, and receives an Observer-safe report only when a current publication is active. |
 | S313E-NOTES-001 | Materials offers Back to session for every non-CLOSED room state. | D1; 04-session-event-flow return eligibility. | CODE, API, DOM, BEHAVIOR, TEST | Materials | Active and `DEBRIEF_OPEN` sessions show a working return action. |
 | S313E-NOTES-002 | Successful save promotes saved draft B to the clean baseline. | D2 | CODE, BEHAVIOR, TEST | Materials Notes | Saved A → edit B → save leaves B clean. |
 | S313E-NOTES-003 | A successful in-flight save of B does not overwrite later local edit C. | D2 | CODE, BEHAVIOR, TEST | Materials Notes | C remains visible and dirty relative to saved B. |
 | S313E-NOTES-004 | Failed save preserves previous baseline, local draft, and dirty state. | D2 | CODE, BEHAVIOR, TEST | Materials Notes | Failure does not falsely mark draft saved or lose edits. |
 | S313E-NOTES-005 | Controlled draft/baseline semantics apply to Materials Notes. | D3 | CODE, DOM, BEHAVIOR, TEST | Materials Notes | The Materials surface, not merely another Notes UI, meets S313E-NOTES-002–004. |
 | S313E-AIPUB-001 | Analysis completion does not automatically authorize participant/observer publication. | E1 | CODE, API, DB, TEST | Materials / debrief | Completed analysis alone grants no viewer report access. |
-| S313E-AIPUB-002 | Publish derives durable role-specific authorization from canonical active room presence. | E2 | CODE, API, DB, TEST | Publish API | Eligible participant/observer grants are persisted from active lease truth. |
-| S313E-AIPUB-003 | Present eligible Participant receives participant-safe analysis and only own personal feedback. | E3 | CODE, API, DB, TEST | Materials/debrief | Projection contains only the bound participant’s feedback. |
-| S313E-AIPUB-004 | Present eligible Observer receives reduced observer-safe projection. | E4 | CODE, API, DB, TEST | Materials/debrief | Projection is observer-specific. |
+| S313E-AIPUB-002 | SUPERSEDED by S313E-AIPUB-015–021 (`User design clarification — 2026-08-15`). Original: Publish derives durable role-specific authorization from canonical active room presence. | E2; superseded 2026-08-15 | CODE, API, DB, TEST | Publish API | Historical record only. Do not re-implement active-at-Publish recipient selection. |
+| S313E-AIPUB-003 | Eligible Participant receives participant-safe analysis and only own personal feedback. | E3 | CODE, API, DB, TEST | Materials/debrief | Projection contains only the bound participant’s feedback. |
+| S313E-AIPUB-004 | Eligible Observer receives reduced observer-safe projection. | E4 | CODE, API, DB, TEST | Materials/debrief | Projection is observer-specific. Grant + OBSERVER projection remains required; session-wide share is not sufficient. |
 | S313E-AIPUB-005 | Observer projection excludes participant-private, personal, and facilitator-private content. | E4 | CODE, API, TEST | Materials/debrief | All listed private content is absent server-side. |
-| S313E-AIPUB-006 | A user absent at Publish gets no grant and joining later alone grants no report access. | E5 | CODE, API, DB, BEHAVIOR, TEST | Publish/materials | No durable authorization is created for the absent user. |
-| S313E-AIPUB-007 | Late joining before a later Publish may make a user eligible for that later Publish. | E6 | CODE, API, DB, TEST | Publish API | A later presence snapshot can grant access. |
-| S313E-AIPUB-008 | Republish in one active epoch expands grants monotonically. | E7 | CODE, API, DB, TEST | Publish API | Existing grants persist and newly eligible present users can be added. |
+| S313E-AIPUB-006 | SUPERSEDED by S313E-AIPUB-015–018 (`User design clarification — 2026-08-15`). Original: a user absent at Publish gets no grant and joining later alone grants no report access. | E5; superseded 2026-08-15 | CODE, API, DB, BEHAVIOR, TEST | Publish/materials | Historical record only. Historical room entry now authorizes even when absent at Publish; first room entry during an active publication creates a grant. |
+| S313E-AIPUB-007 | SUPERSEDED by S313E-AIPUB-017–020 (`User design clarification — 2026-08-15`). Original: late joining before a later Publish may make a user eligible for that later Publish. | E6; superseded 2026-08-15 | CODE, API, DB, TEST | Publish API | Historical record only. Republish still includes historical entrants; first entry during an active publication no longer waits for Republish. |
+| S313E-AIPUB-008 | Republish in one active epoch expands grants monotonically. | E7 | CODE, API, DB, TEST | Publish API | Existing grants persist and newly historically eligible users can be added. |
 | S313E-AIPUB-009 | Leave/rejoin does not erase an existing valid grant. | E8 | CODE, API, DB, TEST | Materials/debrief | Rejoined recipient retains prior authorization. |
 | S313E-AIPUB-010 | Unshare revokes current publication grants as an authorization boundary. | E9 | CODE, API, DB, TEST | Unshare/materials | Revoked grants no longer authorize delivery. |
-| S313E-AIPUB-011 | Publish after Unshare starts a new epoch and grants only newly eligible recipients. | E10 | CODE, API, DB, TEST | Publish API | Old absent recipients are not resurrected. |
-| S313E-AIPUB-012 | Publish with zero eligible recipients is valid and creates no future authorization. | E11 | CODE, API, DB, TEST | Publish API | Snapshot may exist with zero grants; later join alone has no access. |
+| S313E-AIPUB-011 | SUPERSEDED by S313E-AIPUB-019–020 (`User design clarification — 2026-08-15`). Original: Publish after Unshare starts a new epoch and grants only newly eligible recipients; old absent recipients are not resurrected. | E10; superseded 2026-08-15 | CODE, API, DB, TEST | Publish API | Historical record only. Old-epoch grants stay revoked; a new epoch grants all historical room entrants eligible by that time, including previously absent attendees. |
+| S313E-AIPUB-012 | SUPERSEDED by S313E-AIPUB-016–017 (`User design clarification — 2026-08-15`). Original: Publish with zero eligible recipients is valid and creates no future authorization; later join alone has no access. | E11; superseded 2026-08-15 | CODE, API, DB, TEST | Publish API | Historical record only. Zero-recipient Publish remains valid. Later actual room entry while the snapshot is active does create a grant; lobby-only membership still does not. |
 | S313E-AIPUB-013 | Legacy shared payload does not become reconstructed durable recipient grants. | E12 | CODE, DB, MIGRATION, TEST | Migration/materials | Participants/Observers require explicit republish. |
+| S313E-AIPUB-014 | When publication authorization is revoked by Unshare, an already-open authorized Participant/Observer client stops displaying the revoked report within the normal application reconciliation interval without navigation, page reload, or Lobby exit/re-entry. Server-side revocation alone is insufficient. | User acceptance clarification / manual acceptance — 2026-08-14 | CODE, API, DOM, BEHAVIOR, TEST | Materials/debrief recipient UI | After canonical Unshare, the mounted recipient UI removes the report and shows the unpublished/unavailable state without the recipient navigating. |
+| S313E-AIPUB-015 | A Participant or Observer who has successfully entered the authorized Session room surface at least once is eligible for published post-session material even when absent at Publish. Confirmed Vox/media connection is not additionally required. | User design clarification — 2026-08-15; room-shell-entry clarification — 2026-08-15 | CODE, API, DB, TEST | Publish API / materials | Historical `SessionRoomConnection` from canonical room-shell claim plus current Participant/Observer membership produces a grant; active presence at Publish is not required. |
+| S313E-AIPUB-016 | Session/Event membership, Event Lobby presence, invitation, join-token, unauthorized room URL access, or Event-lobby provider credentials without a successful authorized Session room-shell entry are insufficient for a publication grant. | User design clarification — 2026-08-15; room-shell-entry clarification — 2026-08-15 | CODE, API, DB, TEST | Publish API / materials | A lobby-only SessionParticipant receives no grant on Publish. Event Lobby Vox connection does not qualify. |
+| S313E-AIPUB-017 | A Participant or Observer who first completes authorized Session room-shell entry while an unrevoked publication exists receives a durable grant for the current epoch without a manual Republish. Confirmed live media is not an extra gate. | User design clarification — 2026-08-15; room-shell-entry clarification — 2026-08-15 | CODE, API, DB, TEST | Room entry / materials | Canonical `claimSessionRoomConnectionLease` materializes the current grant server-side. |
+| S313E-AIPUB-018 | An Observer who first enters during `DEBRIEF_OPEN` after Publish immediately receives the current Observer-safe published report through ordinary client reconciliation. Private participant feedback remains absent. | User design clarification — 2026-08-15 | CODE, API, DOM, BEHAVIOR, TEST | Room debrief sidebar | Observer-safe report appears on the live debrief surface without Republish; `participantPersonalFeedback` is not delivered. |
+| S313E-AIPUB-019 | Room entry after Unshare does not resurrect a revoked publication or its grants. | User design clarification — 2026-08-15 | CODE, API, DB, TEST | Room entry / materials | No grant is created when there is no active publication. |
+| S313E-AIPUB-020 | A later Publish/new epoch recomputes recipients from historical room-entry truth and includes all viewers who have actually entered by that time. | User design clarification — 2026-08-15 | CODE, API, DB, TEST | Publish API | New-epoch grants are not copied from the previous recipient list or from who is online at Republish. |
+| S313E-AIPUB-021 | Canonical current-room-presence helpers and tests remain; they are no longer the AI publication authorization rule. | User design clarification — 2026-08-15 | CODE, TEST | Presence / Publish | `activeHumanSessionConnectionWhere` / logical presence behavior is preserved and unused as Publish recipient selection. |
 | S313E-AIPRIV-001 | Personal-feedback authorization identity is stable `SessionParticipant` identity. | F1 | CODE, API, DB, TEST | Analysis completion | Display name is not the access identity. |
 | S313E-AIPRIV-002 | Provider and persisted personal feedback bind `sessionParticipantId`. | F2 | CODE, API, DB, TEST | Analysis pipeline | Schema/persistence carries the stable ID. |
 | S313E-AIPRIV-003 | Display-name canonicalization may display names but does not authorize. | F3 | CODE, API, TEST | Analysis delivery | Name value cannot determine authorization. |
@@ -158,6 +180,10 @@ contradicted.
 | S313E-DASH-024 | Parent Event card top-level action is `Открыть лобби` / `Open lobby` and targets its Event lobby. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Dashboard Event card | Parent action label and href navigate to the Event lobby. |
 | S313E-DASH-025 | Nested Session card provides the action to enter/open its specific Session room. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Dashboard nested Session card | Session action targets that Session’s room. |
 | S313E-DASH-026 | Parent Event card does not expose `Continue session` or another duplicate Session-room entry action when nested Session provides it. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Dashboard Event card | Event level has no duplicate room-entry action. |
+| S313E-DASH-027 | Dense Cases table/list rows do not render entity pictograms; the compact row layout keeps management/action controls visible without horizontal scrolling at the normal supported desktop viewport. The large Case pictogram remains only in the Cases page header. | User acceptance clarification — 2026-08-14; overimplementation correction | DOM, SCREENSHOT | Cases table | Header pictogram remains; table body has no Case row pictogram; action controls are in the visible viewport without horizontal overflow. |
+| S313E-DASH-028 | Case create and Case edit interfaces show the large canonical Case pictogram in the top page/header/hero area. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Case create/edit | `/cases/new` and `/cases/[id]/edit` headers visibly contain the large Case pictogram. Pictograms are not inserted into form fields or dense table rows. |
+| S313E-DASH-029 | Event create and Event edit interfaces show the large canonical Event pictogram in the top page/header/hero area. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Event create/edit | Event create/edit headers visibly contain the large Event pictogram. Pictograms are not inserted into form fields or dense table rows. |
+| S313E-DASH-030 | Session create and Session edit/detail interfaces show the large canonical Session/Room pictogram in the top page/header/hero area. | User acceptance clarification — 2026-08-14 | DOM, SCREENSHOT | Session create/edit | Session create and Session edit/detail headers visibly contain the large Room/Session pictogram. Pictograms are not inserted into form fields or dense table rows. |
 
 ## Executable evidence register
 
@@ -170,11 +196,16 @@ acceptance criterion; a test filename or source inspection never does.
 | --- | --- | --- |
 | S313E-DASH-003–005, 011–013 | `tests/e2e/current-product-workflow.spec.ts`, `lib/dashboard-activity-selection.test.ts` | Dashboard fixtures and rendered DOM/computed-style or screenshot evidence. |
 | S313E-DASH-008–010 | `lib/object-pictogram-component.test.ts` and `lib/object-pictograms.test.ts` cover primitive assets only, not page headers. | Authenticated Cases, Events, and Sessions page DOM/screenshot. |
-| S313E-LOBBY-001–003 | `tests/e2e/stage-3-12b-wave1-corrections.spec.ts` and `tests/e2e/voximplant-event-lobby.spec.ts` are device-warning candidates. | Executed healthy-media browser state with warning absence. |
+| S313E-DASH-027–030 | `tests/e2e/stage-3-13e-dashboard-acceptance.spec.ts` | Executed Cases overflow/row-pictogram check and create/edit header pictogram DOM. |
+| S313E-LOBBY-001–003 | Previous mock-only healthy-media PASS is invalidated. `tests/e2e/stage-3-13e-dashboard-acceptance.spec.ts` must exercise the production lobby device-warning reconciliation path (healthy streams after a stale/recoverable media signal). | Executed healthy-media browser state with warning absence; acquisition-failure path still shows the warning. |
 | S313E-LIFE-001–020 | `tests/e2e/stage-3-13e-standalone-remediation.spec.ts`, `lib/facilitator-early-finish-ui.test.ts`, and timer presentation tests are candidates. | Executed room lifecycle interaction and rendered timing/confirmation state. |
+| S313E-LIFE-021 | `lib/session-room-access.test.ts`; `tests/e2e/late-observer-debrief-entry.spec.ts`; Event Lobby observe-block DOM. | Manual acceptance 2026-08-15: late-Observer first DEBRIEF_OPEN entry from Event Lobby; status `Дебриф`/`Debrief`; CTA `Присоединиться к разбору`/`Join debrief`; Observer-safe report after entry when Published. |
+| S313E-AIPUB-015–017, 019–021 | `lib/ai-publication.test.ts`; `tests/e2e/debrief-ai-sharing.spec.ts` TEST A/B/C/E/F/G/H | Executed grant DB/API assertions plus manual acceptance 2026-08-15 of historical Participant/Observer, lobby-only exclusion, late entry, Unshare, and Republish. Historical entrant = authorized room-shell entry (`SessionRoomConnection` claim), not confirmed live media. |
 | S313E-NOTES-001–005 | `lib/participant-notes-state.test.ts` and Stage 3.13E E2E remediation scenarios are candidates. | Executed Materials Notes draft/save/failure interactions. |
-| S313E-AIPUB-001–013, S313E-AIPRIV-001–011, S313E-READY-001–011 | `tests/e2e/debrief-ai-sharing.spec.ts`, publication/visibility/readiness unit and transaction tests are candidates. | Execute the relevant API/DB/E2E checks selected by `verify-requirements`. |
-| S313E-DASH-014–026 | No materially covering check is approved yet. | Requirement-derived deterministic dashboard acceptance checks planned below. |
+| S313E-AIPUB-001–013, S313E-AIPRIV-001–011, S313E-READY-001–011 | `tests/e2e/debrief-ai-sharing.spec.ts`, publication/visibility/readiness unit and transaction tests are candidates. Observer report-body evidence is the room debrief sidebar (`debrief-panel` → `ai-report`), not `/sessions/[id]/materials` as the primary live path. API `canView` alone is insufficient. | Execute Observer body-render on the room debrief surface plus Lobby exit/re-entry. |
+| S313E-AIPUB-014 | `tests/e2e/debrief-ai-sharing.spec.ts` live Unshare recipient UI check on the mounted room debrief panel. | Mounted Participant/Observer `debrief-panel` DOM after canonical Unshare, no navigation. Manual acceptance 2026-08-15: report disappears without navigation. |
+| S313E-AIPUB-018 | `tests/e2e/debrief-ai-sharing.spec.ts` TEST D on room debrief sidebar after first Observer entry in `DEBRIEF_OPEN`. | Observer-safe report body on `debrief-panel` without Republish; no private participant feedback. Manual acceptance 2026-08-15. |
+| S313E-DASH-014–026 | `tests/e2e/stage-3-13e-dashboard-acceptance.spec.ts` | Remaining visual dashboard checks as executed. |
 
 ## Subsequent remediation acceptance plan
 
@@ -194,7 +225,11 @@ new focused Playwright spec,
 | S313E-DASH-011 | DOM + computed style | Seed current Session and comparison card; assert shared semantic card structure/classes, computed `borderColor`/`backgroundColor`/`boxShadow`, and `data-action-kind="PRIMARY_PROGRESS"`. | Only if DOM/style cannot establish parity |
 | S313E-DASH-012 | DOM + computed style | Same fixture; assert current card accent differs from ordinary card through computed color/border/background token. | Only if style tokens are not exposed |
 | S313E-DASH-013 | DOM + computed style | Seed lobby-ready Event; assert `Open lobby` semantic action and primary-blue computed style. | No |
-| S313E-LOBBY-003 | Executed browser behavior + DOM | Extend the existing correction/lobby candidate with deterministic mock provider, healthy media state, visible media controls, and absent warning/stale banners. | No |
+| S313E-LOBBY-003 | Executed browser behavior + DOM | Healthy getUserMedia plus the production device-warning reconciliation used after local streams exist. A mock that only clears the warning inside the fault-simulation branch is not sufficient. Documented gap: Playwright cannot attach a live Voximplant camera; the check uses the closest provider/browser media path that invokes the same reconciliation helper. | No |
+| S313E-DASH-027 | DOM + viewport geometry | Authenticated Cases page at 1280×720; header pictogram present; table body has no Case pictogram images; action controls remain inside the viewport; no unintended table horizontal overflow. | No |
+| S313E-DASH-028 | DOM + computed dimensions | Authenticated `/cases/new` and `/cases/[id]/edit`; header Case pictogram. | No |
+| S313E-DASH-029 | DOM + computed dimensions | Authenticated Event create and Event edit; header Event pictogram. | No |
+| S313E-DASH-030 | DOM + computed dimensions | Authenticated `/sessions/new` and Session detail/edit; header Room pictogram. | No |
 | S313E-DASH-014 | DOM + locale fixture | RU authenticated dashboard fixture; assert exact `Активные` heading. | No |
 | S313E-DASH-015 | DOM + locale fixture | EN authenticated dashboard fixture; assert exact `Active` heading. | No |
 | S313E-DASH-016 | DOM | Both locale fixtures assert Managed meetings localized headings are absent. | No |
@@ -208,4 +243,14 @@ new focused Playwright spec,
 | S313E-DASH-025 | DOM | Same fixture; assert nested card has the Session-room href. | No |
 | S313E-DASH-026 | DOM | Same fixture; assert Event card has no `Continue session`/Session-room action. | No |
 
-**Manifest count: 93 requirements (80 original packet requirements + 13 user acceptance clarifications).**
+**Manifest count: 106 requirements (80 original packet requirements + 18 user acceptance clarifications — 2026-08-14 + 7 user design clarifications — 2026-08-15 + 1 late-Observer Debrief entry clarification — 2026-08-15).** Five original AIPUB rows (002, 006, 007, 011, 012) remain in the table as superseded history and are judged SUPERSEDED / REPLACED_BY S313E-AIPUB-015–021.
+
+## Transcript authorization — resolved, no change required
+
+`TRANSCRIPT_AUTHORIZATION_CHANGE_REQUIRED=NO`
+
+The user accepted current transcript behavior on 2026-08-15. Runtime transcript
+authorization is unchanged in this pass. Observer transcript continues to follow
+a valid publication grant. Participant transcript remains membership-based.
+There is no open follow-up to align transcript eligibility with historical
+room-entry grants.

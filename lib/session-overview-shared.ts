@@ -54,6 +54,7 @@ export type SessionListItem = {
   roomUrl: string;
   materialsUrl: string;
   ownerLabel?: string | null;
+  ownerUserId: string | null;
 };
 
 export function isSessionActiveForPresence(session: {

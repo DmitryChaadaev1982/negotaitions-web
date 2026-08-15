@@ -6,11 +6,12 @@ import {
   ParticipantType,
 } from "@/app/generated/prisma/client";
 import {
+  historicalSessionRoomEntryWhere,
   isGrantProjectionCompatibleWithParticipant,
   selectPublicationRecipients,
 } from "@/lib/ai-publication";
 
-test("publication recipient selector grants only active participant and observer membership", () => {
+test("publication recipient selector matches Participant/Observer identities from the supplied connection set", () => {
   const recipients = selectPublicationRecipients(
     [{ userId: "participant-user" }, { userId: "observer-user" }, { userId: "facilitator-user" }],
     [
@@ -31,6 +32,24 @@ test("publication recipient selector grants only active participant and observer
       sessionParticipantId: "observer",
       userId: "observer-user",
       projection: AiAnalysisPublicationProjection.OBSERVER,
+    },
+  ]);
+});
+
+test("publication recipient selector treats historical terminal connections as room-entry evidence", () => {
+  const recipients = selectPublicationRecipients(
+    [{ userId: "left-before-publish" }],
+    [
+      { id: "left", userId: "left-before-publish", type: ParticipantType.PARTICIPANT },
+      { id: "lobby-only", userId: "never-entered", type: ParticipantType.OBSERVER },
+    ],
+  );
+
+  assert.deepEqual(recipients, [
+    {
+      sessionParticipantId: "left",
+      userId: "left-before-publish",
+      projection: AiAnalysisPublicationProjection.PARTICIPANT,
     },
   ]);
 });
@@ -57,4 +76,15 @@ test("publication grant projection cannot be upgraded by a later role change", (
     ),
     false,
   );
+});
+
+test("historical room-entry where is distinct from an active-lease predicate", () => {
+  const where = historicalSessionRoomEntryWhere({ sessionId: "session-1", userId: "user-1" });
+  assert.deepEqual(where, {
+    sessionId: "session-1",
+    userId: "user-1",
+    user: { status: "ACTIVE" },
+  });
+  assert.equal("disconnectedAt" in where, false);
+  assert.equal("expiresAt" in where, false);
 });

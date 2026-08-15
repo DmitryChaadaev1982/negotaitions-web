@@ -280,6 +280,14 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
       <PageHeader
         title={t("cases.title")}
         description={t("cases.description")}
+        pictogram={
+          <ObjectPictogram
+            objectType="case"
+            size={64}
+            className="h-16 w-16 shrink-0"
+            data-object-type="case"
+          />
+        }
         action={
           <GradientButtonLink href="/cases/new">
             {t("cases.newCase")}
@@ -392,9 +400,9 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
             </ListFilterGroups>
           </ListFilterBar>
         <DataTable scrollAreaClassName="max-h-[calc(100vh-260px)] overflow-auto overscroll-contain">
-          <DataTableElement className="min-w-[920px] table-fixed xl:min-w-full">
+          <DataTableElement className="w-full table-fixed">
             <DataTableHead>
-              <DataTableHeaderCell className="w-[25%] px-3 py-2.5">
+              <DataTableHeaderCell className="w-[18%] px-3 py-2.5">
                 <SortHeaderButton
                   active={sortField === "title"}
                   direction={sortDirection}
@@ -451,7 +459,7 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
                   {t("common.created")}
                 </SortHeaderButton>
               </DataTableHeaderCell>
-              <DataTableHeaderCell align="right" className="w-[20%] px-3 py-2.5">{t("common.actions")}</DataTableHeaderCell>
+              <DataTableHeaderCell align="right" className="w-[22%] px-3 py-2.5">{t("common.actions")}</DataTableHeaderCell>
             </DataTableHead>
             <DataTableBody>
               {sortedCases.map((negotiationCase) => (
@@ -461,21 +469,14 @@ export function CasesListView({ cases, isAdminViewer }: CasesListViewProps) {
 
                     return (
                       <>
-                  <DataTableCell className="px-3 py-2.5 align-top text-xs">
-                    <div className="flex items-start gap-2">
-                      <ObjectPictogram
-                        objectType="case"
-                        size={32}
-                        className="mt-0.5 h-8 w-8 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="truncate font-medium text-slate-50">
-                          {negotiationCase.title}
-                        </div>
-                        <p className="mt-1 line-clamp-2 max-w-md leading-5 text-slate-400">
-                          {negotiationCase.businessContext}
-                        </p>
+                  <DataTableCell className="min-w-0 overflow-hidden px-3 py-2.5 align-top text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-50">
+                        {negotiationCase.title}
                       </div>
+                      <p className="mt-1 line-clamp-2 leading-5 text-slate-400">
+                        {negotiationCase.businessContext}
+                      </p>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {negotiationCase.isMyCase

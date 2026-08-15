@@ -11,6 +11,7 @@ import { en } from "@/lib/i18n/dictionaries/en";
 import { ru } from "@/lib/i18n/dictionaries/ru";
 import {
   isCompletedSessionDisplayStatus,
+  isJoinableObserverDebriefSession,
   isPostNegotiationSessionDisplayStatus,
   resolveSessionDisplayStatus,
   type SessionParticipantLike,
@@ -192,6 +193,35 @@ test("Preparation, Ready, Running, and Paused mappings remain unchanged", () => 
   );
   assert.equal(resolve({ negotiationState: NegotiationState.RUNNING }), "RUNNING");
   assert.equal(resolve({ negotiationState: NegotiationState.PAUSED }), "PAUSED");
+});
+
+test("joinable Observer sessions in FINISHED show Debrief, not Completed", () => {
+  assert.equal(
+    isJoinableObserverDebriefSession({
+      negotiationState: "FINISHED",
+      roomLifecycle: "DEBRIEF_OPEN",
+      sessionDisplayState: "joinable",
+      displayStatus: "DEBRIEF",
+    }),
+    true,
+  );
+  assert.equal(
+    isJoinableObserverDebriefSession({
+      negotiationState: "FINISHED",
+      roomLifecycle: null,
+      sessionDisplayState: "joinable",
+    }),
+    true,
+  );
+  assert.equal(
+    isJoinableObserverDebriefSession({
+      negotiationState: "FINISHED",
+      roomLifecycle: "CLOSED",
+      sessionDisplayState: "materials-only",
+      displayStatus: "FINISHED",
+    }),
+    false,
+  );
 });
 
 test("Debrief and Completed labels are localized in English and Russian", () => {

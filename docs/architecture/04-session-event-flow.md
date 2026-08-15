@@ -83,7 +83,21 @@
   completed Event authority makes it non-returnable. Recording, transcription,
   and AI-analysis states never decide room eligibility. Existing participant,
   account, token, and room-access authorization still applies after lifecycle
-  eligibility; this rule does not grant new access.
+  eligibility; return eligibility does not invent membership for users who were
+  never authorized.
+- A valid Event Observer who is not yet a `SessionParticipant` may make their
+  first actual Session room entry while the Session is `DEBRIEF_OPEN`. That
+  decision lives in `canCreateLateObserverParticipant`, which now admits
+  `decideSessionRoomAccess` output `ALLOW_DEBRIEF` in addition to
+  `ALLOW_ACTIVE_ROOM`. Event Lobby reuses the existing
+  "Available to observe" / "Доступно для наблюдения" block; it does not add a
+  Debrief-only panel. Those cards use the shared Session display status, so a
+  joinable `DEBRIEF_OPEN` Session shows `Debrief` / `Дебриф`, not terminal
+  `Completed` / `Завершено`. Direct `/room/[sessionId]` uses the same late-Observer
+  creation gate. This is not public access: unauthenticated users, non-members,
+  deleted Sessions, completed Events, and `CLOSED` rooms remain denied.
+  Participant first-entry is unchanged. Room-entry permission remains distinct
+  from AI publication grants.
 
 Long-horizon cleanup for an empty `OPEN` Session or empty Event is separate
 backlog work. Any future policy must be measured in hours or bounded by Event
@@ -111,6 +125,16 @@ lifetime; it must not reuse the short debrief grace.
   first-created Session.
 - Dashboard activity lanes render Event-first hierarchy:
   `Event -> Session[]`, grouped only by canonical `Session.eventId`.
+- A relevant active nested Session promotes its parent Event into the Active lane
+  even when the Event `scheduledAt` is future. An Event is assigned to exactly
+  one lifecycle lane, so this promotion excludes it from Future.
+- Dashboard grouping is lifecycle-driven only; management/ownership never
+  creates a separate user-facing lane. Owner identity is presentation metadata:
+  self-owned cards use an explicit localized self label/accent, while access
+  remains governed by the existing Event and Session authorization decisions.
+- Parent Event cards route their primary action to the Event lobby. Nested
+  Session cards own room-entry actions, preserving the Event-to-lobby and
+  Session-to-room hierarchy.
 - Standalone Sessions (no `eventId`) render in a separate standalone group and
   are never heuristically attached to Events.
 - Child Sessions remain authorization-scoped: grouping is applied only after
@@ -135,8 +159,11 @@ lifetime; it must not reuse the short debrief grace.
   and no navigation rules.
 - Dashboard parent Event cards use larger Event pictograms; nested/standalone
   Session cards use smaller Room pictograms to preserve hierarchy readability.
-- Primary Case list rows use the same Case pictogram family for consistent
-  object-language.
+- Cases, Events, and Sessions list pages, plus Case/Event/Session create and
+  edit/detail headers, use the large canonical entity pictogram in the page
+  header only. Dense Cases table rows do not repeat the pictogram; compact row
+  layout and in-viewport management actions take precedence over visual
+  consistency with the header.
 
 ## Legacy Terminal Metadata Normalization
 
@@ -186,6 +213,9 @@ these timers changes the Debrief grace.
 
 - Participant and observer actions are derived from `roomAccessDecision`: enter
   or rejoin an active room, return to debrief, or view materials.
+- Authorized Event Observers who are not yet Session members may first enter a
+  `DEBRIEF_OPEN` room through the same late-Observer creation policy used by
+  Lobby "Available to observe" and the direct account room path.
 - Facilitator actions use the same access decision for room/debrief/materials
   destination; administrative finish remains a separate authority-checked
   action.

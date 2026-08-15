@@ -140,7 +140,21 @@ switching application versions.
 - Event-lobby device warnings are presentation-only and render only recognized
   existing media/device/permission failures. Credential/bootstrap/lease state
   and normal provider connection/retry status do not become device warnings;
-  provider-specific retry/error surfaces remain their own authority.
+  provider-specific retry/error surfaces remain their own authority. The lobby
+  video-area header (title + local display name) stays empty of media copy when
+  camera and microphone are working; it does not show a precautionary
+  single-device hint. Recognized acquisition failures occupy that same header
+  slot via `event-lobby-device-warning`.
+- After local microphone and camera streams are known, the lobby reconciles the
+  warning from those streams (`lib/voximplant/lobby-device-warning.ts`). A stale
+  recoverable StreamManager error is cleared only when both tracks exist. One
+  healthy device does not hide a real failure of the other. The header warning
+  is published from live local tracks (`readyState !== "ended"`), not from a
+  one-shot catch during connect: a later SDK/device-busy log or reconnect
+  attempt must not keep the warning while the local tile still has live
+  camera and microphone tracks. Playwright cannot attach live Voximplant
+  hardware; the healthy-media fault mode still calls `getUserMedia` and then
+  the same reconciliation helper.
 
 ## Room Tile Metadata Contract (Stage 3.2)
 

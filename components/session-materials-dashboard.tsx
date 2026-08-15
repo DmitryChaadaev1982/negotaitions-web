@@ -18,7 +18,11 @@ import {
   type SessionMaterialsTranscriptSnapshot,
 } from "@/lib/session-materials-processing";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
-import { resolveAiAnalysisRenderState } from "@/lib/materials-ai-analysis-view";
+import {
+  parseCanonicalAnalysisOutput,
+  parsePublishedViewerAnalysis,
+  resolveAiAnalysisRenderState,
+} from "@/lib/materials-ai-analysis-view";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -531,12 +535,14 @@ export function AiAnalysisReport({
         >
           {reportCopied ? t("sessionMaterials.reportCopied") : t("sessionMaterials.copyReport")}
         </SecondaryButton>
-        <SecondaryButton
-          onClick={() => void handleCopyDebrief()}
-          data-testid="copy-debrief-button"
-        >
-          {debriefCopied ? t("sessionMaterials.debriefCopied") : t("sessionMaterials.copyDebriefQuestions")}
-        </SecondaryButton>
+        {isFacilitator ? (
+          <SecondaryButton
+            onClick={() => void handleCopyDebrief()}
+            data-testid="copy-debrief-button"
+          >
+            {debriefCopied ? t("sessionMaterials.debriefCopied") : t("sessionMaterials.copyDebriefQuestions")}
+          </SecondaryButton>
+        ) : null}
       </div>
 
       {/* 1. Executive summary */}
@@ -842,7 +848,7 @@ export function AiAnalysisReport({
       )}
 
       {/* 12. Facilitator debrief questions */}
-      {facilitatorDebriefQuestions.length > 0 && (
+      {isFacilitator && facilitatorDebriefQuestions.length > 0 && (
         <SectionCard title={t("sessionMaterials.facilitatorDebriefQuestions")}>
           <ol className="space-y-2">
             {facilitatorDebriefQuestions.map((q, i) => (
@@ -1124,6 +1130,9 @@ export function SessionMaterialsDashboard({
     aiStage: liveAiAnalysisStage,
     canViewAiAnalysis,
     analysisJson: analysisData?.analysisJson ?? null,
+    parseAnalysisJson: isFacilitatorView
+      ? parseCanonicalAnalysisOutput
+      : parsePublishedViewerAnalysis,
   });
   const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
   const aiRenderValidationError = aiRenderState.showInvalidResultError

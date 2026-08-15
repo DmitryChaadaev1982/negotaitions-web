@@ -37,6 +37,19 @@ export type ResolveAiAnalysisRenderStateOutput = {
   showInvalidResultError: boolean;
 };
 
+export const PublishedViewerAnalysisSchema = NegotiationAnalysisOutputSchema.partial({
+  roleObjectivesAnalysis: true,
+  participantPersonalFeedback: true,
+});
+
+export function parsePublishedViewerAnalysis(value: unknown) {
+  return PublishedViewerAnalysisSchema.safeParse(value);
+}
+
+export function parseCanonicalAnalysisOutput(value: unknown) {
+  return NegotiationAnalysisOutputSchema.safeParse(value);
+}
+
 const TRANSCRIPTION_ACTIVE_STAGES = new Set<ProcessingTranscriptionStatus>([
   "queued",
   "downloading",
@@ -50,6 +63,35 @@ const AI_ACTIVE_STAGES = new Set<ProcessingAiAnalysisStatus>(["queued", "analyzi
 export function resolveAiAnalysisRenderState(
   input: ResolveAiAnalysisRenderStateInput,
 ): ResolveAiAnalysisRenderStateOutput {
+  const parseAnalysisJson =
+    input.parseAnalysisJson ??
+    ((value: unknown) => NegotiationAnalysisOutputSchema.safeParse(value));
+
+  // An authorized, schema-valid published payload is the recipient render
+  // contract. Upstream recording/transcript waiting stages must not hide it.
+  // Facilitator QUEUED/ANALYZING still uses the pending outline instead.
+  if (
+    input.canViewAiAnalysis &&
+    input.analysisJson != null &&
+    !AI_ACTIVE_STAGES.has(input.aiStage)
+  ) {
+    const parsed = parseAnalysisJson(input.analysisJson);
+    if (parsed.success) {
+      return {
+        stage: "ANALYSIS_READY",
+        analysis: parsed.data as NegotiationAnalysisOutput,
+        showInvalidResultError: false,
+      };
+    }
+    if (input.aiStage === "ready") {
+      return {
+        stage: "ANALYSIS_INVALID",
+        analysis: null,
+        showInvalidResultError: true,
+      };
+    }
+  }
+
   if (input.recordingStage === "not_available") {
     return {
       stage: "WAITING_FOR_RECORDING",
@@ -117,9 +159,6 @@ export function resolveAiAnalysisRenderState(
       };
     }
 
-    const parseAnalysisJson =
-      input.parseAnalysisJson ??
-      ((value: unknown) => NegotiationAnalysisOutputSchema.safeParse(value));
     const parsed = parseAnalysisJson(input.analysisJson);
     if (parsed.success) {
       return {

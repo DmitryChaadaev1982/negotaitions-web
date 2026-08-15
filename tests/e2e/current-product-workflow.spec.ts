@@ -580,30 +580,39 @@ test("event participant can join active event sessions as observer from lobby", 
   await expect(page.getByTestId("assigned-session-card")).toHaveCount(0);
   await expect(page.getByTestId("my-sessions-in-event-section")).toContainText("Room A");
   await expect(page.getByTestId("joinable-event-session-list")).toHaveCount(0);
-  await expect(page.getByTestId("sessions-without-my-participation-section")).toContainText(
-    "Room B",
+  const debriefObserverCard = page
+    .getByTestId("available-observer-session-card")
+    .filter({ hasText: "Room B" });
+  await expect(page.getByTestId("available-observer-session-section")).toBeVisible();
+  await expect(debriefObserverCard).toBeVisible();
+  await expect(debriefObserverCard.getByTestId("available-observer-session-status")).toHaveText(
+    "Дебриф",
+  );
+  await expect(debriefObserverCard.getByTestId("join-session-as-observer")).toBeVisible();
+  await expect(debriefObserverCard.getByTestId("join-session-as-observer")).toContainText(
+    "Присоединиться к разбору",
   );
   await expect(page.getByTestId("sessions-without-my-participation-section")).not.toContainText(
-    "Room A",
+    "Room B",
   );
-  const finishedSessionCard = page
-    .getByTestId("sessions-without-my-participation-section")
-    .getByRole("article")
-    .filter({ hasText: "Room B" });
-  await expect(finishedSessionCard.getByTestId("open-observer-session-materials")).toBeVisible();
-  await dismissCookieBanner(page);
-  await finishedSessionCard.getByTestId("open-observer-session-materials").click();
-  await expect(page).toHaveURL(new RegExp(`/sessions/${sessionBBody.session.id}/observer-materials`));
-  await expect(page.getByTestId("observer-materials-page")).toBeVisible();
-  await page.goto(`/events/${event.id}/lobby`);
-  await dismissCookieBanner(page);
-
-  await page.goto(`/room/${sessionBBody.session.id}`);
-  await expect(
-    page.getByRole("heading", {
-      name: /You do not have access to this session|У вас нет доступа к этой сессии/i,
-    }),
-  ).toBeVisible();
+  const debriefStateResponse = await request.get(`/api/events/${event.id}/state`, {
+    headers: { Cookie: `auth_session=${participantCookie}` },
+  });
+  expect(debriefStateResponse.ok()).toBeTruthy();
+  const debriefState = (await debriefStateResponse.json()) as {
+    sessions: Array<{
+      id: string;
+      canJoinAsObserver: boolean;
+      observerJoinUrl: string | null;
+      sessionDisplayState: "joinable" | "materials-only" | "unavailable";
+    }>;
+  };
+  const debriefRoomB = debriefState.sessions.find(
+    (session) => session.id === sessionBBody.session.id,
+  );
+  expect(debriefRoomB?.canJoinAsObserver).toBe(true);
+  expect(debriefRoomB?.sessionDisplayState).toBe("joinable");
+  expect(debriefRoomB?.observerJoinUrl).toContain(`/room/${sessionBBody.session.id}`);
   await expect
     .poll(async () => {
       const rows = await query<{ count: string }>(
@@ -651,6 +660,15 @@ test("event participant can join active event sessions as observer from lobby", 
   expect(closedSessionState?.observerMaterialsUrl).toContain(
     `/sessions/${sessionBBody.session.id}/observer-materials`,
   );
+
+  await page.goto(`/events/${event.id}/lobby`);
+  await dismissCookieBanner(page);
+  const closedMaterialsCard = page
+    .getByTestId("sessions-without-my-participation-section")
+    .getByRole("article")
+    .filter({ hasText: "Room B" });
+  await expect(closedMaterialsCard).toBeVisible();
+  await expect(closedMaterialsCard.getByTestId("open-observer-session-materials")).toBeVisible();
 
   const ownerPage = await page.context().newPage();
   await loginWithUserSession(ownerPage, hostUser.id);

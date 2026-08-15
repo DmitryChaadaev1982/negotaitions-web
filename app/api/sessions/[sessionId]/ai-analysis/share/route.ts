@@ -11,12 +11,14 @@ import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { sanitizeSharedAiAnalysisForParticipant } from "@/lib/privacy/serializers";
-import { selectPublicationRecipients } from "@/lib/ai-publication";
+import {
+  historicalSessionRoomEntryWhere,
+  selectPublicationRecipients,
+} from "@/lib/ai-publication";
 import {
   isAiPublicationSerializationConflict,
   retryAiPublicationTransaction,
 } from "@/lib/ai-publication-transaction";
-import { activeHumanSessionConnectionWhere } from "@/lib/session-room-connection-lease";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -114,8 +116,8 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     publication = await retryAiPublicationTransaction(() => prisma.$transaction(
     async (tx) => {
-      // Serializes Publish against re-analysis and another Publish before the
-      // canonical lease snapshot is read.
+      // Serializes Publish against re-analysis, Unshare, and late-entry grant
+      // materialization before historical room-entry eligibility is read.
       const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT id
         FROM "AiAnalysis"
@@ -170,29 +172,27 @@ export async function POST(request: Request, context: RouteContext) {
         return { state: "analysis_outdated" as const };
       }
 
-      // One logical timestamp fences lease eligibility, the snapshot, and each
-      // resulting grant. Do not sample wall time again in this transaction.
+      // One logical timestamp fences the snapshot and each resulting grant.
+      // Recipient eligibility is historical room entry, not active presence.
       const publishedAt = new Date();
-      const activeConnections = await tx.sessionRoomConnection.findMany({
-        where: {
-          ...activeHumanSessionConnectionWhere({ sessionId, now: publishedAt }),
-          user: { status: "ACTIVE" },
-        },
+      const enteredConnections = await tx.sessionRoomConnection.findMany({
+        where: historicalSessionRoomEntryWhere({ sessionId }),
         select: { userId: true },
+        distinct: ["userId"],
       });
-      const activeUserIds = [...new Set(activeConnections.map((connection) => connection.userId))];
+      const enteredUserIds = enteredConnections.map((connection) => connection.userId);
       const candidates =
-        activeUserIds.length === 0
+        enteredUserIds.length === 0
           ? []
           : await tx.sessionParticipant.findMany({
               where: {
                 sessionId,
-                userId: { in: activeUserIds },
+                userId: { in: enteredUserIds },
                 type: { in: [ParticipantType.PARTICIPANT, ParticipantType.OBSERVER] },
               },
               select: { id: true, userId: true, type: true },
             });
-      const recipients = selectPublicationRecipients(activeConnections, candidates);
+      const recipients = selectPublicationRecipients(enteredConnections, candidates);
 
       const currentPublication = aiAnalysis.publications.find(
         (candidate) => candidate.analysisVersion === aiAnalysis.analysisVersion,

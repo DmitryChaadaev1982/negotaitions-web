@@ -5,6 +5,7 @@ type PageHeaderProps = {
   description?: string;
   action?: React.ReactNode;
   badge?: React.ReactNode;
+  pictogram?: React.ReactNode;
   className?: string;
 };
 
@@ -13,6 +14,7 @@ export function PageHeader({
   description,
   action,
   badge,
+  pictogram,
   className,
 }: PageHeaderProps) {
   return (
@@ -22,7 +24,11 @@ export function PageHeader({
         className,
       )}
     >
-      <div className="space-y-1.5">
+      <div className="flex items-start gap-4">
+        {pictogram ? (
+          <div data-testid="page-header-pictogram">{pictogram}</div>
+        ) : null}
+        <div className="space-y-1.5">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-slate-50 sm:text-3xl">
             {title}
@@ -34,6 +40,7 @@ export function PageHeader({
             {description}
           </p>
         ) : null}
+        </div>
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>

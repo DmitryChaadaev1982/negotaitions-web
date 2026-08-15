@@ -47,6 +47,10 @@ import {
   type RecordingDisplayState,
 } from "@/lib/recording-display-state";
 import {
+  resolveSessionDisplayStatus,
+  type SessionDisplayStatus,
+} from "@/lib/session-display-status";
+import {
   expirePendingEventMediaControlCommands,
   getPendingEventMediaControlCommands,
   type EventMediaControlCommand,
@@ -110,6 +114,7 @@ export type EventStateSession = {
   canViewObserverMaterials: boolean;
   observerMaterialsUrl: string | null;
   sessionDisplayState: "joinable" | "materials-only" | "unavailable";
+  displayStatus: SessionDisplayStatus;
   createdAt: string;
   recordingStatus: string | null;
   recordingStopOperationState: string | null;
@@ -923,6 +928,14 @@ function mapEventSession({
     canViewObserverMaterials,
     observerMaterialsUrl,
     sessionDisplayState,
+    displayStatus: resolveSessionDisplayStatus(
+      {
+        status: session.status,
+        negotiationState: session.negotiationState,
+        roomLifecycle: session.roomLifecycle,
+      },
+      session.participants,
+    ),
     createdAt: session.createdAt.toISOString(),
     recordingStatus: session.recording?.status ?? null,
     recordingStopOperationState: session.recording?.stopOperation?.state ?? null,

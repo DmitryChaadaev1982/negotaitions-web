@@ -147,7 +147,7 @@ describe("canCreateLateObserverParticipant", () => {
     existingSessionParticipant: false,
   } as const;
 
-  it("allows first observer creation only for OPEN rooms", () => {
+  it("allows first observer creation for OPEN rooms", () => {
     const decision = canCreateLateObserverParticipant(base);
     assert.equal(decision.allowed, true);
   });
@@ -164,13 +164,46 @@ describe("canCreateLateObserverParticipant", () => {
     assert.equal(decision.allowed, true);
   });
 
-  it("denies DEBRIEF_OPEN first observer creation", () => {
+  it("allows DEBRIEF_OPEN first observer creation", () => {
     const decision = canCreateLateObserverParticipant({
       ...base,
       session: {
         ...base.session,
         negotiationState: NegotiationState.FINISHED,
         roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+      },
+    });
+    assert.equal(decision.allowed, true);
+    if (!decision.allowed) {
+      return;
+    }
+    assert.equal(decision.accessDecision.output, "ALLOW_DEBRIEF");
+  });
+
+  it("allows DEBRIEF_OPEN first observer creation when Session.status is COMPLETED", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      session: {
+        ...base.session,
+        status: "COMPLETED",
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+      },
+    });
+    assert.equal(decision.allowed, true);
+    if (!decision.allowed) {
+      return;
+    }
+    assert.equal(decision.accessDecision.output, "ALLOW_DEBRIEF");
+  });
+
+  it("denies FINISHED recovery-fence rooms that are not DEBRIEF_OPEN", () => {
+    const decision = canCreateLateObserverParticipant({
+      ...base,
+      session: {
+        ...base.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.OPEN,
       },
     });
     assert.equal(decision.allowed, false);

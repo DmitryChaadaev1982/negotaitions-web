@@ -54,6 +54,7 @@ import {
   getEventLobbyPollDelayMs,
   shouldApplyEventStateResponse,
 } from "@/lib/event-state-polling";
+import { isJoinableObserverDebriefSession } from "@/lib/session-display-status";
 
 const LOBBY_BOOTSTRAP_RETRY_DELAYS_MS = [250, 500, 1000] as const;
 
@@ -1001,7 +1002,14 @@ export function EventLobbyView({
             <p className="text-xs text-slate-400">
               {liveKit?.displayName ?? state.currentParticipant?.displayName ?? ""}
             </p>
-            <p className="mt-1 text-[11px] text-slate-500">{t("events.singleDeviceHint")}</p>
+            {deviceWarningMessage ? (
+              <p
+                className="mt-1 text-[11px] text-amber-200"
+                data-testid="event-lobby-device-warning"
+              >
+                {deviceWarningMessage}
+              </p>
+            ) : null}
           </div>
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black/40">
             {staleConnection ? (
@@ -1028,11 +1036,6 @@ export function EventLobbyView({
                   </SecondaryButtonLink>
                 </div>
               </div>
-            ) : null}
-            {deviceWarningMessage ? (
-              <p className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
-                {deviceWarningMessage}
-              </p>
             ) : null}
             {staleConnection ? (
               <div className="flex h-full items-center justify-center p-6 text-center">
@@ -1110,34 +1113,34 @@ export function EventLobbyView({
                 </div>
                 <div className="space-y-2">
                   {observerActiveSessions.map((session) => {
-                    const statusLabel =
-                      t(
-                        `status.${session.negotiationState}` as
-                          | "status.PREPARATION"
-                          | "status.PREPARATION_RUNNING"
-                          | "status.PREPARATION_PAUSED"
-                          | "status.READY_TO_START"
-                          | "status.RUNNING"
-                          | "status.PAUSED"
-                          | "status.FINISHED",
-                      );
+                    const isDebrief = isJoinableObserverDebriefSession(session);
+                    const statusLabel = isDebrief
+                      ? t("status.DEBRIEF")
+                      : t(
+                          `status.${session.displayStatus ?? session.negotiationState}` as TranslationKey,
+                        );
+                    const joinLabel = isDebrief
+                      ? t("events.joinAsObserverDebrief")
+                      : t("events.joinAsObserver");
                     return (
                       <article
                         key={session.id}
-                        className="rounded-xl border border-cyan-400/35 bg-slate-950/60 px-3 py-3 shadow-[0_0_24px_rgba(34,211,238,0.08)]"
+                        className="min-w-0 rounded-xl border border-cyan-400/35 bg-slate-950/60 px-3 py-3 shadow-[0_0_24px_rgba(34,211,238,0.08)]"
                         data-testid="available-observer-session-card"
                         data-session-access-state={session.sessionDisplayState}
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="break-words text-sm font-semibold text-slate-50">
+                        <div className="flex min-w-0 flex-col gap-3">
+                          <div className="min-w-0 space-y-1">
+                            <p className="text-sm font-semibold leading-snug text-slate-50">
                               {session.roomLabel ?? session.title}
                             </p>
-                            <p className="mt-0.5 break-words text-xs text-slate-400">
-                              {session.caseTitle}
-                            </p>
+                            {session.caseTitle ? (
+                              <p className="text-xs leading-snug text-slate-400">
+                                {session.caseTitle}
+                              </p>
+                            ) : null}
                             <span
-                              className="mt-2 inline-flex rounded-full border border-emerald-400/45 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-100"
+                              className="mt-1 inline-flex rounded-full border border-emerald-400/45 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-100"
                               data-testid="available-observer-session-status"
                             >
                               {statusLabel}
@@ -1147,10 +1150,10 @@ export function EventLobbyView({
                             href={session.observerJoinUrl!}
                             actionKind="PRIMARY_PROGRESS"
                             actionTarget={session.observerJoinUrl!}
-                            className="shrink-0"
+                            className="w-full min-w-0 justify-center whitespace-normal text-center"
                             data-testid="join-session-as-observer"
                           >
-                            {t("events.joinAsObserver")}
+                            {joinLabel}
                           </SemanticActionLink>
                         </div>
                       </article>

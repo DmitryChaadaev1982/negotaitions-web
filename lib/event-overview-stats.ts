@@ -180,6 +180,7 @@ export async function getEventsForUser(
       primarySessionId: event.sessions[0]?.id ?? null,
       createdAt: event.createdAt.toISOString(),
       ownerLabel: event.hostUser?.name ?? event.hostUser?.email ?? null,
+      ownerUserId: event.hostUserId,
       lobbyParticipantCount: presenceActive
         ? participantsInLobby
         : 0,
