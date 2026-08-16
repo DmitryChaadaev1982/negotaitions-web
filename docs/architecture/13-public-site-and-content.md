@@ -17,19 +17,22 @@ separate chrome.
 - Public chrome: `components/public-header.tsx` plus root `SiteFooter`.
 - Homepage sections: hero, capabilities, high-level training flow, AI/human
   skills positioning, need-based audience cards, platform CTA.
-  Author/collaboration content is Wave 2 `/about`, not a homepage teaser.
+  Author/collaboration content lives on `/about`, not on the homepage.
 - Hero uses one shared photo (`public/images/landing/hero-negotiation-ai.jpg`)
   for both RU and EN. How-it-works still uses locale-specific PNGs from
   `public/images/public-site/` (`public-how-it-works-{ru|en}-no-heading.png`).
   Those bitmaps omit the section title so the HTML heading is not duplicated.
   The active public locale selects the How-it-works bitmap; the other locale’s
   flow image is not shown.
-- Wave 1 does not create `/about`, `/faq`, `/support`, or public Materials.
-  Public header and footer omit About and FAQ until those routes exist.
-  Support uses `mailto:support@negotaitions.ru`.
+- Wave 2A public communication routes: `/about`, `/support`, `/faq`.
+  Public header links About and FAQ to those routes. Footer Information links
+  About, Support, and FAQ. Support email remains
+  `mailto:support@negotaitions.ru` on the Support (and About/FAQ) copy.
+  The About page defines an author-photo slot and renders the supplied
+  portrait at `public/images/public-site/author-portrait.jpg`.
 - Legal routes remain at `/privacy`, `/terms`, `/cookie-policy`,
   `/data-processing-consent`, and `/ai-processing-notice`. Bodies are unchanged
-  in Wave 1.
+  in Wave 2A.
 
 ## Authenticated platform
 
@@ -60,7 +63,8 @@ surfaces, SEO/social metadata, footer).
 
 `lib/seo/indexing.ts` is the reusable metadata helper.
 
-- Public `/` and existing legal documents are indexable.
+- Public `/`, `/about`, `/support`, `/faq`, and existing legal documents are
+  indexable.
 - Auth, app, account-status, join/lobby/room/rejoin, and provider-test routes
   export `privateIndexingMetadata` (`noindex`).
 - `robots.ts`, sitemap, canonical, Open Graph, and Webmaster remain Wave 3.
@@ -68,9 +72,14 @@ surfaces, SEO/social metadata, footer).
 
 ## Source notes
 
-- `app/(public)/layout.tsx`, `app/(public)/page.tsx`
+- `app/(public)/layout.tsx`, `app/(public)/page.tsx`,
+  `app/(public)/about/page.tsx`, `app/(public)/support/page.tsx`,
+  `app/(public)/faq/page.tsx`
 - `components/public-header.tsx`, `components/public-home-page.tsx`,
-  `components/public-visual-frame.tsx`, `components/site-footer.tsx`
-- `lib/public-site/visuals.ts`, `public/images/public-site/`,
+  `components/public-about-page.tsx`, `components/public-support-page.tsx`,
+  `components/public-faq-page.tsx`, `components/public-visual-frame.tsx`,
+  `components/site-footer.tsx`
+- `lib/public-site/visuals.ts`, `lib/public-site/faq-items.ts`,
+  `lib/public-site/author-portrait.ts`, `public/images/public-site/`,
   `public/images/landing/`
 - `lib/seo/indexing.ts`, `lib/i18n/config.ts`

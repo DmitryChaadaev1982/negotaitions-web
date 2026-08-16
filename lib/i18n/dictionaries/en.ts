@@ -17,6 +17,7 @@ export const en = {
     capabilities: "Capabilities",
     howItWorks: "How it works",
     aboutAuthor: "About the author",
+    faq: "FAQ",
     goToPlatform: "Go to the platform",
     openMenu: "Open menu",
     closeMenu: "Close menu",
@@ -111,6 +112,95 @@ export const en = {
       "Training negotiation session with facilitation, observers, and AI support",
     howItWorksVisualAlt:
       "Training negotiation journey: lobby and preparation, negotiation, debrief and materials",
+  },
+  publicAbout: {
+    title: "About",
+    authorName: "Dmitry Chaadaev",
+    p1: "I have been interested in negotiation for more than ten years and currently serve as the captain of a negotiation club. To me, negotiation is first and foremost a practical skill: something that can be trained, tested through different approaches, reviewed through feedback and improved over time.",
+    p2: "Professionally, I work in IT and actively explore the possibilities of artificial intelligence. NegotAItions emerged at the intersection of these two interests: negotiation and AI.",
+    p3: "The project is being developed with an AI-first approach. AI tools are used at different stages — from exploring ideas and designing the product to development, testing and the analysis of negotiation practice.",
+    p4: "At the same time, the core idea is not to teach AI to negotiate instead of a person.",
+    p5: "What interests me much more is whether artificial intelligence can help people better understand the other person, their own behaviour and the negotiation process itself.",
+    p6: "NegotAItions is developing around this idea. The training negotiation platform is one element of the project. Over time, it may be joined by tools for preparation, analysis, learning, research and other ways of using AI to develop human negotiation skills.",
+    p7: "The platform is currently used primarily by the author's negotiation club and continues to evolve actively.",
+    p8: "If you are interested in using the project for training, team development, a negotiation club or another form of collaboration, contact support@negotaitions.ru.",
+    photoAlt: "Dmitry Chaadaev",
+    photoSlotLabel: "Author photograph slot",
+  },
+  publicSupport: {
+    title: "Support",
+    intro:
+      "If something is not working as expected in NegotAItions, or if you have a question, contact:",
+    tipsIntro:
+      "To help us investigate a technical issue faster, please include where possible:",
+    tip1: "what you were trying to do;",
+    tip2: "the page or section where the problem occurred;",
+    tip3: "the approximate time of the issue;",
+    tip4: "your browser and device;",
+    tip5: "the error message;",
+    tip6: "a screenshot if it helps explain the problem.",
+    secrets:
+      "Do not send passwords, verification codes, access tokens or other secret credentials.",
+    also:
+      "You can also use the same address for questions about using the platform, collaboration or the development of the project.",
+  },
+  publicFaq: {
+    title: "FAQ",
+    q1: "What is NegotAItions?",
+    a1p1:
+      "NegotAItions is a project about using artificial intelligence to develop human negotiation skills.",
+    a1p2:
+      "One of its elements is a platform for running training negotiations: it lets you work with negotiation cases and roles, organize sessions, record negotiations, obtain a transcript, and use AI in the later review.",
+    q2: "Who is the project for?",
+    a2p1:
+      "For anyone who wants to develop negotiation skills in practice: participants in negotiation clubs, trainers and facilitators, teams, and individual users.",
+    a2p2:
+      "You do not need to work with negotiation professionally to use the platform — the core idea is precisely the chance to practise and develop this skill.",
+    q3: "What are a case, event and session?",
+    a3p1:
+      "A case is a training negotiation situation with roles, shared information, and individual briefings.",
+    a3p2:
+      "An event brings together participants and one or more negotiation sessions.",
+    a3p3:
+      "A session is a specific negotiation between participants on a chosen case.",
+    q4: "What roles are available in a negotiation?",
+    a4p1:
+      "Depending on the format, a user can be a negotiation participant, an observer, or a facilitator.",
+    a4p2:
+      "The facilitator organizes the training and manages its main stages. Participants conduct the negotiation. Observers follow the process and may use the materials available to them in the later review.",
+    q5: "Are negotiation sessions recorded?",
+    a5p1:
+      "The platform supports recording a training negotiation session and then preparing a transcript.",
+    a5p2:
+      "If recording is used for a particular session, participants see the corresponding status in the interface.",
+    q6: "How is AI used?",
+    a6p1:
+      "AI is treated as an additional tool for developing negotiation skills.",
+    a6p2:
+      "It is currently used primarily to process and analyze negotiations that have already taken place. Over time, AI capabilities may also be applied in preparation, learning, and at other stages of negotiation practice.",
+    a6p3:
+      "AI should not negotiate instead of a person — its role is to help a person prepare better, see more, and obtain additional material for development.",
+    q7: "How objective is the AI review?",
+    a7p1:
+      "AI review is additional material for analysis, not an absolute score and not the only correct interpretation of the negotiation.",
+    a7p2:
+      "The quality of the result can be affected by the quality of the recording and transcript, the case context, and the information available to the system.",
+    a7p3:
+      "Results are better used together with independent review and feedback from participants, observers, and the facilitator.",
+    q8: "Who can see AI analysis results?",
+    a8p1:
+      "Access depends on the user's role and which results have been published.",
+    a8p2:
+      "The platform separates the full analysis from the presentations of results intended for specific users. Participants and observers receive only the information permitted for them.",
+    q9: "What information should not be used in training negotiations?",
+    a9p1:
+      "Do not include passwords and access credentials, payment details, state secrets, trade secrets, or other information that must not be shared with the data-processing services in use.",
+    a9p2:
+      "For training cases it is better, where possible, to use fictional names, organizations, amounts, and circumstances.",
+    q10: "What should I do if something is not working?",
+    a10p1: "Write to support@negotaitions.ru.",
+    a10p2:
+      "For a technical problem it is useful to include the page, the approximate time, the browser or device, the error message, and a screenshot.",
   },
   common: {
     create: "Create",

@@ -11,6 +11,9 @@ import {
 test("public homepage and legal documents remain indexable", () => {
   for (const path of [
     "/",
+    "/about",
+    "/support",
+    "/faq",
     "/privacy",
     "/terms",
     "/cookie-policy",

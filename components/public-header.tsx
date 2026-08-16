@@ -14,7 +14,7 @@ type PublicHeaderProps = {
 };
 
 const navLinkClass =
-  "rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/60 hover:text-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70";
+  "rounded-lg px-2.5 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/60 hover:text-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70";
 
 export function PublicHeader({
   isAuthenticated,
@@ -58,6 +58,22 @@ export function PublicHeader({
         onClick={close}
       >
         {t("nav.howItWorks")}
+      </Link>
+      <Link
+        href="/about"
+        data-testid="public-nav-author"
+        className={navLinkClass}
+        onClick={close}
+      >
+        {t("nav.aboutAuthor")}
+      </Link>
+      <Link
+        href="/faq"
+        data-testid="public-nav-faq"
+        className={navLinkClass}
+        onClick={close}
+      >
+        {t("nav.faq")}
       </Link>
     </>
   );

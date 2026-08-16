@@ -16,9 +16,10 @@ Visual requirements cannot PASS from source inspection alone.
 
 Wave ownership:
 
-- Wave 1 — Public shell + homepage (this implementation wave).
-- Wave 2 — About, Support, FAQ, legal rewrite, author portrait, product
-  screenshot visuals.
+- Wave 1 — Public shell + homepage (packaged).
+- Wave 2A — About, Support, FAQ public communication pages (this
+  implementation), including the supplied author portrait on `/about`.
+- Wave 2 — remaining legal rewrite and later product screenshot visuals.
 - Wave 3 — Analytics (after consent/legal sync), robots, sitemap, canonical,
   Open Graph, Webmaster, communication-page governance.
 
@@ -124,7 +125,7 @@ their wave starts.
 | S314A-COPY-003 | 1 | APPROVED | Four RU capability titles/bodies match the approved packet. | Packet I | DOM | Capabilities RU | Exact approved concepts/copy. |
 | S314A-COPY-004 | 1 | APPROVED | Four RU training-flow steps match the approved packet. | Packet J | DOM | Flow RU | Exact approved steps. |
 | S314A-COPY-005 | 1 | APPROVED | RU AI section headline and body match the approved packet. | Packet K | DOM | AI RU | Exact approved headline/body. |
-| S314A-COPY-006 | 2 | APPROVED | `/about` uses locale-specific author identity and product name: RU `Чаадаев Дмитрий Владимирович` and `ПереговорИИ (NegotAItions)`; EN `Dmitry Chaadaev` and `NegotAItions`. Include club-captain / 10+ years / professional IT / two-directions positioning plus the supplied portrait. | Packet M; user visual checkpoint 2026-08-16; branding/i18n correction 2026-08-16 | DOM, SCREENSHOT | `/about` | Factual positioning present on About; not on the Wave 1 homepage; EN About has no Cyrillic product or author name. |
+| S314A-COPY-006 | 2A | APPROVED | `/about` uses locale-specific author identity and product name: RU `Чаадаев Дмитрий Владимирович` and `ПереговорИИ (NegotAItions)`; EN `Dmitry Chaadaev` and `NegotAItions`. Include the approved Wave 2A About body (club captain, 10+ years, professional IT, AI-first, human-skills positioning, collaboration via support email). | Packet M; user visual checkpoint 2026-08-16; branding/i18n correction 2026-08-16; Wave 2A copy 2026-08-16 | DOM, SCREENSHOT | `/about` | Implemented Wave 2A. Factual positioning is on About, not the homepage; EN About has no Cyrillic product or author name. Portrait is on About only. |
 | S314A-COPY-007 | 1 | APPROVED | Footer copyright is locale-specific: RU `© 2026 Чаадаев Дмитрий Владимирович · ПереговорИИ (NegotAItions)`; EN `© 2026 Dmitry Chaadaev · NegotAItions`. | Packet O; branding/i18n correction 2026-08-16 | DOM | Footer | RU and EN copyright lines match the approved locale forms. |
 | S314A-LOC-001 | 1 | APPROVED | Saved user locale preference wins. | Packet P, decision 4 | CODE, TEST | i18n | Cookie/localStorage locale overrides Accept-Language. |
 | S314A-LOC-002 | 1 | APPROVED | When no saved locale exists, browser/Accept-Language may determine RU or EN. | Packet P | CODE, TEST | `detectBrowserLocale` | `ru*` → `ru`; `en*` → `en`. |
@@ -144,15 +145,15 @@ their wave starts.
 | S314A-APP-001 | 1 | APPROVED | Do not redesign negotiation-room functionality or modify recording/transcription/AI-analysis behavior. | Packet W | CODE | Room/materials | Wave 1 does not change those domains. |
 | S314A-APP-002 | 1 | APPROVED | Existing returnUrl/auth sanitization remains intact. | Packet Z | TEST | Login/register | `/` is a safe returnUrl; dashboard gating unchanged. |
 | S314A-APP-003 | 1 | APPROVED | Analytics remains OFF; do not add Yandex Metrika or another analytics script. | Packet V, decision 16 | CODE | Layout/scripts | No analytics tags in Wave 1. |
-| S314A-ABOUT-001 | 2 | APPROVED | Full `/about` author page is Wave 2. It includes the former homepage author/collaboration copy (developer identity, club captain, 10+ years, professional IT, two directions), the contact CTA `Связаться по использованию или сотрудничеству`, and the supplied portrait. Do not keep a homepage teaser in Wave 1. | Packet D/M; user visual checkpoint 2026-08-16 | MANUAL, SCREENSHOT | `/about` | About page exists only in Wave 2; Wave 1 has neither `/about` nor a homepage author section. |
-| S314A-ABOUT-002 | 2 | APPROVED | Supplied author portrait is a Wave 2 `/about` asset. Do not invent or copy a substitute on the homepage. | Packet M, decision 13 | SCREENSHOT | `/about` | Portrait used only on About. |
-| S314A-ABOUT-003 | 2 | APPROVED | When `/about` exists, public header and footer expose `Об авторе` / equivalent EN as a working link to `/about`. | Packet E/O; user visual checkpoint 2026-08-16 | DOM, TEST | Public header/footer | About nav is absent in Wave 1 and present in Wave 2 with a real destination. |
-| S314A-SUP-001 | 2 | APPROVED | Full `/support` contact page is Wave 2. | Packet T | MANUAL | `/support` | Not implemented in Wave 1. |
-| S314A-SUP-002 | 2 | APPROVED | Public contact/support address is `support@negotaitions.ru`. | Packet T, decision 14 | DOM | Support / mailto | Address is used as the public contact. |
+| S314A-ABOUT-001 | 2A | APPROVED | Full `/about` author page is Wave 2A. It includes the approved author copy (developer identity, club captain, 10+ years, professional IT, two directions / AI-first, collaboration via `support@negotaitions.ru`) and an author-photo slot. Do not keep a homepage teaser. | Packet D/M; user visual checkpoint 2026-08-16; Wave 2A copy 2026-08-16 | MANUAL, SCREENSHOT | `/about` | Implemented Wave 2A. Wave 1 homepage has neither `/about` content nor an author section. |
+| S314A-ABOUT-002 | 2A | APPROVED | Supplied author portrait is a Wave 2A `/about` asset. Do not invent or copy a substitute on the homepage. | Packet M, decision 13 | SCREENSHOT | `/about` | Implemented Wave 2A. Portrait used only on About at `public/images/public-site/author-portrait.jpg`. |
+| S314A-ABOUT-003 | 2A | APPROVED | When `/about` exists, public header and footer expose `Об авторе` / equivalent EN as a working link to `/about`. | Packet E/O; user visual checkpoint 2026-08-16 | DOM, TEST | Public header/footer | Implemented Wave 2A: About nav points to `/about`, not `/#author`. |
+| S314A-SUP-001 | 2A | APPROVED | Full `/support` contact page is Wave 2A. | Packet T; Wave 2A copy 2026-08-16 | MANUAL | `/support` | Implemented Wave 2A. |
+| S314A-SUP-002 | 2A | APPROVED | Public contact/support address is `support@negotaitions.ru`. | Packet T, decision 14 | DOM | Support / mailto | Implemented Wave 2A: address is a mailto on `/support` (and in About/FAQ copy). Footer Support goes to `/support`. |
 | S314A-SUP-003 | 2 | APPROVED | Do not change Yandex 360 or Postbox configuration in this stage; operational receive verification happens before Wave 2 publication if needed. | Packet T | CODE | Infra | No mail-provider config changes in Wave 1. |
-| S314A-FAQ-001 | 2 | APPROVED | FAQ page implementation is Wave 2. | Packet S | MANUAL | `/faq` | Not implemented in Wave 1. |
-| S314A-FAQ-002 | 2 | APPROVED | Wave 2 FAQ covers the twelve approved first-version questions. | Packet S | DOM | `/faq` | Questions 1–12 are present. |
-| S314A-FAQ-003 | 2 | APPROVED | FAQ must not become a detailed operating manual. | Packet S, decision 10 | MANUAL | `/faq` | No click-by-click product operation, full session walkthrough, facilitator manual, or detailed prep/negotiation/debrief instructions. |
+| S314A-FAQ-001 | 2A | APPROVED | FAQ page implementation is Wave 2A. | Packet S; Wave 2A copy 2026-08-16 | MANUAL | `/faq` | Implemented Wave 2A. |
+| S314A-FAQ-002 | 2A | APPROVED | Wave 2A FAQ covers the ten approved first-version questions. | Packet S; Wave 2A copy 2026-08-16 | DOM | `/faq` | Implemented Wave 2A. Questions 1–10 from the Wave 2A register are present. |
+| S314A-FAQ-003 | 2A | APPROVED | FAQ must not become a detailed operating manual. | Packet S, decision 10 | MANUAL | `/faq` | No click-by-click product operation, full session walkthrough, facilitator manual, or detailed prep/negotiation/debrief instructions. |
 | S314A-LEGAL-001 | 2 | APPROVED | Existing legal rewrite is Wave 2, not Wave 1. | Packet U, decision 20 | CODE | Legal pages | Bodies rewritten only in Wave 2. |
 | S314A-LEGAL-002 | 2 | APPROVED | Operator named as `Чаадаев Дмитрий Владимирович` in Russian legal/public copy and `Dmitry Chaadaev` in English legal/public copy. | Packet U; branding/i18n correction 2026-08-16 | DOM | Legal | Operator identity matches the locale. |
 | S314A-LEGAL-003 | 2 | APPROVED | Communication/legal copy must be synchronized with actual architecture. | Packet U | MANUAL | Legal | Claims match current providers/publication model. |
@@ -229,42 +230,48 @@ RU audience cards:
 
 EN audience is a natural equivalent, not a literal translation. Do not invent logos, statistics, or testimonials.
 
-## Wave 2 About copy register (not on the Wave 1 homepage)
+## Wave 2A About copy register
 
-RU author positioning for `/about`:
+RU page title: `Об авторе`
 
-ПереговорИИ (NegotAItions) развивает Чаадаев Дмитрий Владимирович — капитан переговорного клуба, более десяти лет занимающийся темой переговоров и профессионально работающий в IT.
+RU author: `Чаадаев Дмитрий Владимирович`
 
-Проект соединяет два направления: развитие человеческих переговорных навыков и практическое применение AI.
+RU body is the approved Wave 2A About copy in `lib/i18n/dictionaries/ru.ts`
+(`publicAbout.*`), including collaboration via `support@negotaitions.ru`.
 
-RU author contact CTA: Связаться по использованию или сотрудничеству
+EN page title: `About`
 
-EN author identity on `/about`: `Dmitry Chaadaev`. EN product name: `NegotAItions`.
+EN author: `Dmitry Chaadaev`
 
-Supplied author portrait belongs on `/about` only.
+EN product name: `NegotAItions`. EN About must not include `ПереговорИИ` or a
+Cyrillic author name.
 
-## Wave 2 FAQ question register (manifest only in Wave 1)
+Author portrait belongs on `/about` only, at
+`public/images/public-site/author-portrait.jpg`.
 
-1. Что такое ПереговорИИ (NegotAItions)?
-   English: What is NegotAItions?
-2. Для кого предназначена платформа?
-3. Что означают основные термины: кейс, встреча, сессия?
-4. Какие роли есть в сессии?
-5. Записываются ли переговоры и создаётся ли транскрипт?
-6. Как используется искусственный интеллект?
-7. Кто может видеть запись, транскрипт и AI-разбор?
-8. Нужно ли регистрироваться для участия?
-9. Какие данные нельзя использовать в кейсах и сессиях?
-10. Что делать, если что-то не получается?
-11. Как сообщить о проблеме?
-12. Как связаться по вопросу использования платформы или сотрудничества?
+## Wave 2A FAQ question register
+
+1. Что такое ПереговорИИ (NegotAItions)? / What is NegotAItions?
+2. Для кого предназначен проект? / Who is the project for?
+3. Что такое кейс, встреча и сессия? / What are a case, event and session?
+4. Какие роли есть в переговорах? / What roles are available in a negotiation?
+5. Записываются ли переговоры? / Are negotiation sessions recorded?
+6. Как используется искусственный интеллект? / How is AI used?
+7. Насколько объективен ИИ-разбор? / How objective is the AI review?
+8. Кто видит результаты ИИ-разбора? / Who can see AI analysis results?
+9. Какие данные не следует использовать в учебных переговорах? / What information should not be used in training negotiations?
+10. Что делать, если что-то не работает? / What should I do if something is not working?
+
+The earlier twelve-question packet list is superseded for Wave 2A by this
+ten-question register. Do not add facilitator walkthroughs or user-guide pages.
 
 ## Counts
 
 | Status / wave | Count |
 | --- | --- |
 | APPROVED Wave 1 | 72 |
-| APPROVED Wave 2 | 24 |
+| APPROVED Wave 2A | 9 |
+| APPROVED Wave 2 | 15 |
 | APPROVED Wave 3 | 8 |
 | PROPOSED | 1 |
 | OUT_OF_SCOPE | 7 |

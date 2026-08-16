@@ -55,9 +55,25 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Docs: `docs/testing/e2e-strategy.md`, `docs/testing/observer-test-execution-policy.md`, `docs/testing/validation-checklist.md`, `docs/testing/agent-model-routing.md`
 
 - Public website and content foundation
-  - Code: `app/(public)/layout.tsx`, `app/(public)/page.tsx`, `components/public-header.tsx`, `components/public-home-page.tsx`, `components/public-visual-frame.tsx`, `components/site-footer.tsx`, `components/app-header-nav.tsx`, `lib/public-site/visuals.ts`, `public/images/public-site/`, `public/images/landing/`, `lib/seo/indexing.ts`, `lib/i18n/config.ts`, `lib/i18n/dictionaries/en.ts`, `lib/i18n/dictionaries/ru.ts`, `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `app/room/layout.tsx`
+  - Code: `app/(public)/layout.tsx`, `app/(public)/page.tsx`,
+    `app/(public)/about/page.tsx`, `app/(public)/support/page.tsx`,
+    `app/(public)/faq/page.tsx`, `components/public-header.tsx`,
+    `components/public-home-page.tsx`, `components/public-about-page.tsx`,
+    `components/public-support-page.tsx`, `components/public-faq-page.tsx`,
+    `components/public-visual-frame.tsx`, `components/site-footer.tsx`,
+    `components/app-header-nav.tsx`, `lib/public-site/visuals.ts`,
+    `lib/public-site/faq-items.ts`, `lib/public-site/author-portrait.ts`,
+    `public/images/public-site/`, `public/images/landing/`,
+    `lib/seo/indexing.ts`, `lib/i18n/config.ts`,
+    `lib/i18n/dictionaries/en.ts`, `lib/i18n/dictionaries/ru.ts`,
+    `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `app/room/layout.tsx`
   - Docs: `13-public-site-and-content.md`, `03-application-architecture.md`, `01-product-context.md`
-  - Tests: `lib/seo/indexing.test.ts`, `lib/i18n/config.test.ts`, `lib/i18n/dictionaries/public-home.test.ts`, `lib/public-site/visuals.test.ts`, `tests/e2e/public-homepage.spec.ts`, `tests/e2e/phase-6-legal-consent.spec.ts`
+  - Tests: `lib/seo/indexing.test.ts`, `lib/i18n/config.test.ts`,
+    `lib/i18n/dictionaries/public-home.test.ts`,
+    `lib/i18n/dictionaries/public-communication.test.ts`,
+    `lib/public-site/visuals.test.ts`, `tests/e2e/public-homepage.spec.ts`,
+    `tests/e2e/public-communication.spec.ts`,
+    `tests/e2e/phase-6-legal-consent.spec.ts`
 
 ## Required Doc-Update Rule
 

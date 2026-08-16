@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 
 import { CookieSettingsButton } from "@/components/cookie-banner";
 import { useI18n } from "@/lib/i18n/useI18n";
-import { PUBLIC_CONTACT_MAILTO } from "@/lib/seo/indexing";
 
 const HIDDEN_FOOTER_ROUTE_PATTERNS = [
   /^\/room\//,
@@ -58,10 +57,19 @@ export function SiteFooter({
 
   const informationLinks: FooterLink[] = [
     {
-      href: PUBLIC_CONTACT_MAILTO,
-      label: t("footer.contact"),
-      testId: "footer-contact",
-      external: true,
+      href: "/about",
+      label: t("footer.about"),
+      testId: "footer-about",
+    },
+    {
+      href: "/support",
+      label: t("footer.support"),
+      testId: "footer-support",
+    },
+    {
+      href: "/faq",
+      label: t("footer.faq"),
+      testId: "footer-faq",
     },
   ];
 

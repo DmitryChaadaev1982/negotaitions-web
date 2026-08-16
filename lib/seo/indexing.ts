@@ -25,6 +25,9 @@ export const privateIndexingMetadata: Metadata = {
 
 const PUBLIC_INDEXABLE_PATHS = new Set([
   "/",
+  "/about",
+  "/support",
+  "/faq",
   "/privacy",
   "/terms",
   "/cookie-policy",

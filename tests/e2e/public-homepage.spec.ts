@@ -29,12 +29,19 @@ test("unauthenticated public homepage stays on / and exposes login and register 
     "/privacy",
   );
   await expect(page.getByTestId("footer-terms")).toHaveAttribute("href", "/terms");
-  await expect(page.getByTestId("footer-contact")).toHaveAttribute(
+  await expect(page.getByTestId("footer-about")).toHaveAttribute("href", "/about");
+  await expect(page.getByTestId("footer-support")).toHaveAttribute(
     "href",
-    "mailto:support@negotaitions.ru",
+    "/support",
   );
-  await expect(page.getByTestId("public-nav-author")).toHaveCount(0);
+  await expect(page.getByTestId("footer-faq")).toHaveAttribute("href", "/faq");
+  await expect(page.getByTestId("public-nav-author")).toHaveAttribute(
+    "href",
+    "/about",
+  );
+  await expect(page.getByTestId("public-nav-faq")).toHaveAttribute("href", "/faq");
   await expect(page.getByRole("heading", { name: /Автор и сотрудничество|Author and collaboration/ })).toHaveCount(0);
+  await expect(page.getByText("капитаном переговорного клуба")).toHaveCount(0);
   await expect(page.getByText("Материалы")).toHaveCount(0);
   const robots = page.locator('meta[name="robots"]');
   await expect(robots).toHaveAttribute("content", /^(?!.*noindex).*$/i);
