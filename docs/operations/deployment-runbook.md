@@ -19,6 +19,17 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
 - Service name: `negotaitions-poc`.
 - Runtime start command pattern: `npm run start` / `next start -H 127.0.0.1`.
 - Reverse proxy model: nginx in front of app service.
+- Access logs must use `deploy/nginx/sanitized-access-log.conf`
+  (`log_format negotaitions_sanitized`) from the nginx `http` context.
+  Do not log `$request`, `$request_uri`, query strings, raw token-bearing
+  pathname segments, or Referer. Keep `/etc/logrotate.d/nginx` retention
+  unchanged when applying or rolling back the format.
+- Recording debug is fail-closed in production: the debug API cannot
+  open when `NODE_ENV=production`, even if `RECORDING_DEBUG_PANEL` or
+  `NEXT_PUBLIC_RECORDING_DEBUG_PANEL` is `true`. Keep
+  `RECORDING_DEBUG_PANEL=false` in the application EnvironmentFile as
+  defense in depth. The endpoint is for controlled non-production
+  diagnostics only.
 - Trusted client IP: after controlled nginx activation, overwrite
   `X-NegotAItions-Client-IP` from `$remote_addr` and set
   `TRUSTED_PROXY_ENABLED=true`. See

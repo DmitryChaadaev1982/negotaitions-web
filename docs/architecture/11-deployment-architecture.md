@@ -25,7 +25,9 @@
   access. Registered secrets serialize only presence state with `value: null`.
 - Registry deployment settings have no application defaults. The web
   `.env.production` and `/etc/negotaitions/env.production` must explicitly
-  supply their applicable values and remain aligned as documented in
+  supply their applicable values. Shared identity, origin, and crypto
+  values must remain aligned. `EMAIL_PROVIDER` and `EMAIL_DELIVERY_ENABLED`
+  are process-local delivery gates and may differ as documented in
   `email-runtime-and-yandex-cloud.md`.
 - If normal admin-health assembly fails, its outer route catch returns a
   literal environment-independent unavailable contract; it never resolves or
@@ -66,6 +68,16 @@ Durable operational rule. Operator procedures live in
 ## Service Topology (Inferred)
 
 - nginx reverse proxy fronts Node.js app runtime.
+- nginx access logs use a centralized sanitized format
+  (`deploy/nginx/sanitized-access-log.conf`): query strings, raw
+  token-bearing pathname segments, `$request`, `$request_uri`, and
+  Referer are not logged. Recording debug is fail-closed in production:
+  `isRecordingDebugEnabled()` always returns false when
+  `NODE_ENV=production`, regardless of `RECORDING_DEBUG_PANEL` or
+  `NEXT_PUBLIC_RECORDING_DEBUG_PANEL`. The unauthenticated
+  `/api/debug/recording/[sessionId]` surface is for controlled
+  non-production diagnostics only. Keep `RECORDING_DEBUG_PANEL=false`
+  in the application EnvironmentFile as defense in depth.
 - systemd unit starts single app process for POC stability.
 - App process uses PostgreSQL, object storage, Voximplant APIs, and Yandex APIs.
 - Email provider-event ingestion is a separate disabled-by-default systemd

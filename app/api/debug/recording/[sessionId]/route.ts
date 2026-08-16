@@ -6,8 +6,9 @@
  * DELETE /api/debug/recording/[sessionId] — clear events for session
  *
  * Security:
- *   Only available when RECORDING_DEBUG_PANEL=true
- *   OR (NODE_ENV !== "production" AND NEXT_PUBLIC_RECORDING_DEBUG_PANEL=true).
+ *   Fail-closed when NODE_ENV === "production": the gate never opens, even if
+ *   RECORDING_DEBUG_PANEL or NEXT_PUBLIC_RECORDING_DEBUG_PANEL is "true".
+ *   Non-production: available when either flag is the exact string "true".
  *   Returns 404 in all other cases to prevent accidental exposure.
  *   Webhook secret is never returned — only webhookSecretConfigured: boolean.
  */
@@ -182,7 +183,7 @@ const clientEventSchema = z.object({
 /**
  * Smoke recording-control schema. When `smokeAction` is present, the handler
  * bypasses participant auth and invokes the same server helpers as recording-control.
- * Requires RECORDING_DEBUG_PANEL=true — never active in production.
+ * Requires recording debug enabled — unavailable when NODE_ENV=production.
  */
 const smokeActionSchema = z.object({
   smokeAction: z.enum(["start", "stop"]),

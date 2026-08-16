@@ -591,6 +591,33 @@ export type NegotiationAnalysisOutput = z.infer<
 >;
 
 /**
+ * Historical persisted-read compatibility only. Not the write/generation
+ * contract. Completed reports persisted before `sessionParticipantId` became
+ * required may omit that field on personal-feedback items, or omit
+ * `participantPersonalFeedback` entirely. Readers must not synthesize IDs or
+ * write this shape back as new provider output.
+ */
+export const HistoricalPersistedParticipantPersonalFeedbackSchema =
+  ParticipantPersonalFeedbackSchema.extend({
+    sessionParticipantId: z.string().min(1).optional(),
+  });
+
+export const HistoricalPersistedNegotiationAnalysisSchema =
+  NegotiationAnalysisOutputSchema.extend({
+    participantPersonalFeedback: z
+      .array(HistoricalPersistedParticipantPersonalFeedbackSchema)
+      .optional(),
+  });
+
+export type HistoricalPersistedParticipantPersonalFeedback = z.infer<
+  typeof HistoricalPersistedParticipantPersonalFeedbackSchema
+>;
+
+export type HistoricalPersistedNegotiationAnalysis = z.infer<
+  typeof HistoricalPersistedNegotiationAnalysisSchema
+>;
+
+/**
  * Provider output may only bind personal feedback through the stable
  * SessionParticipant identifier that was supplied in the prompt. This keeps
  * duplicate display names from becoming an authorization key.

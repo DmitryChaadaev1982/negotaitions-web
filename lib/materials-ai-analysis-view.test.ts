@@ -1,17 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { z } from "zod";
-
 import {
   createMockAnalysisOutput,
   NegotiationAnalysisOutputSchema,
 } from "@/lib/ai/negotiation-analysis";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { ru } from "@/lib/i18n/dictionaries/ru";
-import { resolveAiAnalysisRenderState, parsePublishedViewerAnalysis } from "@/lib/materials-ai-analysis-view";
+import {
+  parseCanonicalAnalysisOutput,
+  parsePublishedViewerAnalysis,
+  resolveAiAnalysisRenderState,
+  type PublishedViewerAnalysis,
+} from "@/lib/materials-ai-analysis-view";
 
 const VALID_ANALYSIS = createMockAnalysisOutput("en");
+
+function historicalNameOnlyAnalysis() {
+  return {
+    ...VALID_ANALYSIS,
+    participantPersonalFeedback: VALID_ANALYSIS.participantPersonalFeedback.map(
+      ({ sessionParticipantId: _ignored, ...rest }) => rest,
+    ),
+  };
+}
+
+function historicalMissingPersonalFeedback() {
+  const { participantPersonalFeedback: _ignored, ...rest } = VALID_ANALYSIS;
+  return rest;
+}
 
 test("recording not ready keeps AI panel waiting", () => {
   const state = resolveAiAnalysisRenderState({
@@ -143,7 +160,7 @@ test("participant shared payload passes with partial parser", () => {
     parseAnalysisJson: (value) =>
       participantParser.safeParse(value) as {
         success: boolean;
-        data?: z.infer<typeof NegotiationAnalysisOutputSchema>;
+        data?: PublishedViewerAnalysis;
       },
   });
 
@@ -218,6 +235,73 @@ test("observer-safe projection renders with the published-viewer parser", () => 
   assert.equal(state.showInvalidResultError, false);
   assert.equal(state.analysis?.executiveSummary, VALID_ANALYSIS.executiveSummary);
   assert.equal(state.analysis?.participantPersonalFeedback, undefined);
+});
+
+test("current persisted analysis with sessionParticipantId passes both read parsers", () => {
+  const canonical = parseCanonicalAnalysisOutput(VALID_ANALYSIS);
+  const published = parsePublishedViewerAnalysis(VALID_ANALYSIS);
+  assert.equal(canonical.success, true);
+  assert.equal(published.success, true);
+});
+
+test("historical name-only personal feedback passes read parsers and facilitator render", () => {
+  const historical = historicalNameOnlyAnalysis();
+  assert.equal(NegotiationAnalysisOutputSchema.safeParse(historical).success, false);
+
+  const canonical = parseCanonicalAnalysisOutput(historical);
+  const published = parsePublishedViewerAnalysis(historical);
+  assert.equal(canonical.success, true);
+  assert.equal(published.success, true);
+  if (canonical.success) {
+    assert.equal(canonical.data.participantPersonalFeedback?.length, 2);
+    assert.equal(
+      canonical.data.participantPersonalFeedback?.[0]?.sessionParticipantId,
+      undefined,
+    );
+  }
+
+  const state = resolveAiAnalysisRenderState({
+    recordingStage: "ready",
+    transcriptionStage: "ready",
+    aiStage: "ready",
+    canViewAiAnalysis: true,
+    analysisJson: historical,
+    parseAnalysisJson: parseCanonicalAnalysisOutput,
+  });
+  assert.equal(state.stage, "ANALYSIS_READY");
+  assert.equal(state.showInvalidResultError, false);
+  assert.equal(state.analysis?.executiveSummary, VALID_ANALYSIS.executiveSummary);
+});
+
+test("historical missing participantPersonalFeedback key passes read parsers", () => {
+  const historical = historicalMissingPersonalFeedback();
+  assert.equal(NegotiationAnalysisOutputSchema.safeParse(historical).success, false);
+
+  const canonical = parseCanonicalAnalysisOutput(historical);
+  const published = parsePublishedViewerAnalysis(historical);
+  assert.equal(canonical.success, true);
+  assert.equal(published.success, true);
+
+  const facilitatorState = resolveAiAnalysisRenderState({
+    recordingStage: "ready",
+    transcriptionStage: "ready",
+    aiStage: "ready",
+    canViewAiAnalysis: true,
+    analysisJson: historical,
+    parseAnalysisJson: parseCanonicalAnalysisOutput,
+  });
+  assert.equal(facilitatorState.stage, "ANALYSIS_READY");
+  assert.equal(facilitatorState.showInvalidResultError, false);
+  assert.equal(facilitatorState.analysis?.participantPersonalFeedback, undefined);
+});
+
+test("historical compatibility does not restore observer personal feedback", async () => {
+  const { getAnalysisForObserver } = await import("@/lib/analysis-visibility");
+  const observer = getAnalysisForObserver(historicalNameOnlyAnalysis());
+  assert.equal("participantPersonalFeedback" in (observer ?? {}), false);
+  const parsed = parsePublishedViewerAnalysis(JSON.parse(JSON.stringify(observer)));
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data?.participantPersonalFeedback, undefined);
 });
 
 test("getAnalysisForObserver mock output parses after JSON round-trip", async () => {

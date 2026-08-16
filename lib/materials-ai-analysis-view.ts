@@ -1,7 +1,4 @@
-import {
-  NegotiationAnalysisOutputSchema,
-  type NegotiationAnalysisOutput,
-} from "@/lib/ai/negotiation-analysis";
+import { HistoricalPersistedNegotiationAnalysisSchema } from "@/lib/ai/negotiation-analysis";
 import type {
   ProcessingAiAnalysisStatus,
   ProcessingRecordingStatus,
@@ -27,28 +24,33 @@ export type ResolveAiAnalysisRenderStateInput = {
   analysisJson: unknown;
   parseAnalysisJson?: (value: unknown) => {
     success: boolean;
-    data?: unknown;
+    data?: PublishedViewerAnalysis;
   };
 };
 
 export type ResolveAiAnalysisRenderStateOutput = {
   stage: AiAnalysisRenderStage;
-  analysis: NegotiationAnalysisOutput | null;
+  analysis: PublishedViewerAnalysis | null;
   showInvalidResultError: boolean;
 };
 
-export const PublishedViewerAnalysisSchema = NegotiationAnalysisOutputSchema.partial({
-  roleObjectivesAnalysis: true,
-  participantPersonalFeedback: true,
-});
+export const PublishedViewerAnalysisSchema =
+  HistoricalPersistedNegotiationAnalysisSchema.partial({
+    roleObjectivesAnalysis: true,
+    participantPersonalFeedback: true,
+  });
 
 export function parsePublishedViewerAnalysis(value: unknown) {
   return PublishedViewerAnalysisSchema.safeParse(value);
 }
 
 export function parseCanonicalAnalysisOutput(value: unknown) {
-  return NegotiationAnalysisOutputSchema.safeParse(value);
+  return HistoricalPersistedNegotiationAnalysisSchema.safeParse(value);
 }
+
+export type PublishedViewerAnalysis = NonNullable<
+  ReturnType<typeof parsePublishedViewerAnalysis>["data"]
+>;
 
 const TRANSCRIPTION_ACTIVE_STAGES = new Set<ProcessingTranscriptionStatus>([
   "queued",
@@ -65,7 +67,8 @@ export function resolveAiAnalysisRenderState(
 ): ResolveAiAnalysisRenderStateOutput {
   const parseAnalysisJson =
     input.parseAnalysisJson ??
-    ((value: unknown) => NegotiationAnalysisOutputSchema.safeParse(value));
+    ((value: unknown) =>
+      HistoricalPersistedNegotiationAnalysisSchema.safeParse(value));
 
   // An authorized, schema-valid published payload is the recipient render
   // contract. Upstream recording/transcript waiting stages must not hide it.
@@ -76,10 +79,10 @@ export function resolveAiAnalysisRenderState(
     !AI_ACTIVE_STAGES.has(input.aiStage)
   ) {
     const parsed = parseAnalysisJson(input.analysisJson);
-    if (parsed.success) {
+    if (parsed.success && parsed.data) {
       return {
         stage: "ANALYSIS_READY",
-        analysis: parsed.data as NegotiationAnalysisOutput,
+        analysis: parsed.data,
         showInvalidResultError: false,
       };
     }
@@ -160,10 +163,10 @@ export function resolveAiAnalysisRenderState(
     }
 
     const parsed = parseAnalysisJson(input.analysisJson);
-    if (parsed.success) {
+    if (parsed.success && parsed.data) {
       return {
         stage: "ANALYSIS_READY",
-        analysis: parsed.data as NegotiationAnalysisOutput,
+        analysis: parsed.data,
         showInvalidResultError: false,
       };
     }

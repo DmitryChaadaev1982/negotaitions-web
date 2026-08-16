@@ -17,11 +17,11 @@ import {
   type SessionMaterialsRecordingSnapshot,
   type SessionMaterialsTranscriptSnapshot,
 } from "@/lib/session-materials-processing";
-import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import {
   parseCanonicalAnalysisOutput,
   parsePublishedViewerAnalysis,
   resolveAiAnalysisRenderState,
+  type PublishedViewerAnalysis,
 } from "@/lib/materials-ai-analysis-view";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ function scoreBar(score: number) {
 }
 
 function buildReportMarkdown(
-  analysis: NegotiationAnalysisOutput,
+  analysis: PublishedViewerAnalysis,
   t: (key: TranslationKey) => string,
 ): string {
   const strengths = analysis.strengths ?? [];
@@ -461,7 +461,7 @@ export function AiAnalysisReport({
   analysis,
   isFacilitator = false,
 }: {
-  analysis: NegotiationAnalysisOutput;
+  analysis: PublishedViewerAnalysis;
   isFacilitator?: boolean;
 }) {
   const { t } = useI18n();
@@ -1134,7 +1134,8 @@ export function SessionMaterialsDashboard({
       ? parseCanonicalAnalysisOutput
       : parsePublishedViewerAnalysis,
   });
-  const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const analysisJson: PublishedViewerAnalysis | null =
+    aiRenderState.analysis;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;

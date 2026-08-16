@@ -12,7 +12,10 @@
 
 - `runToken`, `leaseExpiresAt`, and `providerResponseId` own and recover the
   current durable provider operation;
-- `analysisJson` remains the complete validated report;
+- `analysisJson` remains the complete validated report. New writes use the
+  strict current schema; readers accept previously persisted completed
+  reports that omit `sessionParticipantId` or `participantPersonalFeedback`
+  without rewriting stored JSON;
 - `analysisVersion` identifies the mutable-row generation;
 - `sharedAnalysisJson` is legacy compatibility state, while
   `AiAnalysisPublication` is the immutable published snapshot;

@@ -9,6 +9,7 @@ import {
   createMockAnalysisOutput,
   dispatchSelectedAiAnalysisProvider,
   getAiAnalysisPerformanceModel,
+  NegotiationAnalysisOutputSchema,
   runNegotiationAnalysis,
   type AiAnalysisExecutionOptions,
   type NegotiationAnalysisOutput,
@@ -786,4 +787,24 @@ test("performance model removes compact/depth multiplication", () => {
   assert.equal(model.maxOptionalDepthCalls, 0);
   assert.equal(model.maxPollingRequests, 40);
   assert.equal(model.theoreticalDefaultWorstCaseMs, 120_000);
+});
+
+test("strict write schema still rejects personal feedback without sessionParticipantId", () => {
+  const current = createMockAnalysisOutput("en");
+  const missingIds = {
+    ...current,
+    participantPersonalFeedback: current.participantPersonalFeedback.map(
+      ({ sessionParticipantId: _ignored, ...rest }) => rest,
+    ),
+  };
+
+  const parsed = NegotiationAnalysisOutputSchema.safeParse(missingIds);
+  assert.equal(parsed.success, false);
+  if (parsed.success) return;
+  const paths = parsed.error.issues.map((issue) => issue.path.join("."));
+  assert.ok(
+    paths.some((path) =>
+      path.startsWith("participantPersonalFeedback.0.sessionParticipantId"),
+    ),
+  );
 });

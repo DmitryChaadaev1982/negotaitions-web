@@ -46,6 +46,43 @@ test("real provider-shaped stable IDs bind duplicate names without cross-partici
   assert.doesNotMatch(rendered, /B-only achievement/);
 });
 
+test("unique legacy name-only feedback is delivered only to the matching participant", () => {
+  const uniqueRoster = [
+    { id: "participant-a", displayName: "Alex Kim", type: "PARTICIPANT" },
+    { id: "participant-b", displayName: "Jordan Lee", type: "PARTICIPANT" },
+  ];
+  const providerOutput = createMockAnalysisOutput("en");
+  const legacyShared = {
+    ...providerOutput,
+    participantPersonalFeedback: [
+      {
+        ...providerOutput.participantPersonalFeedback[0]!,
+        sessionParticipantId: undefined,
+        participantName: "Alex Kim",
+        achievements: ["unique-name-only achievement"],
+      },
+    ],
+  };
+
+  const participantA = getAnalysisForParticipant(
+    legacyShared,
+    { participantId: "participant-a", displayName: "Alex Kim" },
+    uniqueRoster,
+  );
+  const participantB = getAnalysisForParticipant(
+    legacyShared,
+    { participantId: "participant-b", displayName: "Jordan Lee" },
+    uniqueRoster,
+  );
+  const observer = getAnalysisForObserver(legacyShared);
+
+  assert.equal(participantA?.participantPersonalFeedback.length, 1);
+  assert.match(JSON.stringify(participantA), /unique-name-only achievement/);
+  assert.equal(participantB?.participantPersonalFeedback.length, 0);
+  assert.doesNotMatch(JSON.stringify(participantB), /unique-name-only achievement/);
+  assert.equal("participantPersonalFeedback" in (observer ?? {}), false);
+});
+
 test("ambiguous legacy name-only feedback is omitted and observers receive none", () => {
   const providerOutput = createMockAnalysisOutput("en");
   const legacyShared = {
@@ -64,7 +101,15 @@ test("ambiguous legacy name-only feedback is omitted and observers receive none"
     { participantId: "participant-a", displayName: "Alex Kim" },
     roster,
   );
+  const participantB = getAnalysisForParticipant(
+    legacyShared,
+    { participantId: "participant-b", displayName: "Alex Kim" },
+    roster,
+  );
   assert.equal(participantA?.participantPersonalFeedback.length, 0);
+  assert.doesNotMatch(JSON.stringify(participantA), /ambiguous legacy feedback/);
+  assert.equal(participantB?.participantPersonalFeedback.length, 0);
+  assert.doesNotMatch(JSON.stringify(participantB), /ambiguous legacy feedback/);
 
   const observer = getAnalysisForObserver(legacyShared);
   assert.equal("participantPersonalFeedback" in (observer ?? {}), false);
