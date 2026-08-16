@@ -5,8 +5,10 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { getVideoProvider } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { getVoxProviderFaultMode } from "@/lib/test-mode";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
+export const metadata = privateIndexingMetadata;
 
 type EventLobbyPageProps = {
   params: Promise<{ id: string }>;

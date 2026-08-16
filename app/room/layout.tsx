@@ -1,3 +1,7 @@
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
+
+export const metadata = privateIndexingMetadata;
+
 export default function RoomLayout({
   children,
 }: {

@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 
 import { findEventByPublicJoinCode } from "@/lib/event-auth";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
+export const metadata = privateIndexingMetadata;
 
 type PublicJoinPageProps = {
   params: Promise<{ publicJoinCode: string }>;

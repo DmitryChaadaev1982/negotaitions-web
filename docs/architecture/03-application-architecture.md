@@ -14,6 +14,15 @@
 - Integration adapters: `lib/voximplant/**`, `lib/services/**`, `lib/storage/**`, `lib/ai/**`.
 - Persistence: `prisma/schema.prisma`, `lib/prisma.ts`.
 
+## Public website and platform chrome
+
+- Public `/` is a marketing homepage in `app/(public)/`, not a dashboard
+  redirect.
+- Public chrome is `PublicHeader`; product chrome is `AppHeader` in
+  `app/(app)/`.
+- Indexing policy lives in `lib/seo/indexing.ts`. Details:
+  `13-public-site-and-content.md`.
+
 ## Provider Selection
 
 - Video provider: `getVideoProvider()` from `lib/env.ts`.
@@ -63,6 +72,8 @@
 
 - `lib/env.ts`
 - `lib/config.ts`
+- `app/(public)/page.tsx`
+- `components/public-header.tsx`
 - `components/voximplant-negotiation-room-page.tsx`
 - `lib/voximplant/use-voximplant-room.ts`
 - `app/api/sessions/**`

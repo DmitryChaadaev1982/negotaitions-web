@@ -2,7 +2,7 @@
 
 ## Purpose
 
-NegotAItions is a negotiation training platform for running case-based sessions and event-based training lobbies, with post-session transcript and AI debrief workflows.
+NegotAItions is a negotiation training platform for running case-based sessions and event-based training lobbies, with post-session transcript and AI debrief workflows. The same Next.js application also serves a public website at `/`. Public textual product name is `ПереговорИИ (NegotAItions)` in Russian and `NegotAItions` in English.
 
 ## Core Product Capabilities
 

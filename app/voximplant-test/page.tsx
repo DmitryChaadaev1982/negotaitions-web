@@ -1,6 +1,9 @@
 import VoximplantTestClient from "@/components/voximplant-test-client";
 
 import { getVoximplantTestConfig, isVoximplantRecordingPanelEnabled } from "@/lib/voximplant-test/config";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
+
+export const metadata = privateIndexingMetadata;
 
 export default function VoximplantTestPage() {
   let config: ReturnType<typeof getVoximplantTestConfig>;

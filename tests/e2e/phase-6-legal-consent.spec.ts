@@ -35,6 +35,7 @@ async function clearCookieConsent(page: import("@playwright/test").Page) {
 test.describe("Cookie banner", () => {
   test("1. New visitor sees cookie banner", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     await expect(page.locator('[data-testid="cookie-banner"]')).toBeVisible();
@@ -42,6 +43,7 @@ test.describe("Cookie banner", () => {
 
   test("2. Accept all stores consent and hides banner", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     await page.locator('[data-testid="cookie-accept-all"]').click();
@@ -61,6 +63,7 @@ test.describe("Cookie banner", () => {
 
   test("3. Reject optional stores analytics=false and marketing=false", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     await page.locator('[data-testid="cookie-reject-optional"]').click();
@@ -76,6 +79,7 @@ test.describe("Cookie banner", () => {
 
   test("4. Customize saves selected choices", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     await page.locator('[data-testid="cookie-customize"]').click();
@@ -93,6 +97,7 @@ test.describe("Cookie banner", () => {
 
   test("5. Cookie settings button reopens preferences", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     // Accept first to dismiss banner
@@ -104,6 +109,7 @@ test.describe("Cookie banner", () => {
 
   test("6. Consent storage contains no auth/session/token values", async ({ page }) => {
     await page.goto("/");
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/);
     await clearCookieConsent(page);
     await page.reload();
     await page.locator('[data-testid="cookie-accept-all"]').click();

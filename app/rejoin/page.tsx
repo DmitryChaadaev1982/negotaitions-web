@@ -6,8 +6,10 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { getAccountRejoinTargets } from "@/lib/rejoin/account";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
+export const metadata = privateIndexingMetadata;
 
 export default async function RejoinPage() {
   const user = await getOptionalCurrentUser();

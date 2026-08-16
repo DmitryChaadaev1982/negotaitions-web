@@ -36,6 +36,13 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
         priority
         className="sm:hidden"
       />
+      <Link
+        href="/"
+        data-testid="nav-public-site"
+        className="rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-slate-800/60 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
+      >
+        {t("nav.publicSite")}
+      </Link>
       <nav className="flex items-center gap-3">
         <Link
           href="/dashboard"

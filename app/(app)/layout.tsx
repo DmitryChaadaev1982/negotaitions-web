@@ -2,6 +2,9 @@ import { AppHeader } from "@/components/app-header";
 import { AppShell } from "@/components/ui/app-shell";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
+
+export const metadata = privateIndexingMetadata;
 
 export default async function AppLayout({
   children,

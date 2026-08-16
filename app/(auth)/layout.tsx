@@ -1,5 +1,8 @@
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { AuthLayoutNav } from "@/components/auth-layout-nav";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
+
+export const metadata = privateIndexingMetadata;
 
 export default function AuthLayout({
   children,

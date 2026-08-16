@@ -10,6 +10,7 @@ load stage history as default context.
 | Domain | Read first | Read when needed |
 | --- | --- | --- |
 | Product, cases, Events, Sessions, Dashboard, Archive | `01-product-context.md`, `02-domain-model.md`, `04-session-event-flow.md` | `code-map.md` |
+| Public website, homepage, public/app chrome, public indexing | `13-public-site-and-content.md`, `03-application-architecture.md` | `09-security-and-access-control.md` |
 | Room lifecycle, room access, facilitator control, presence | `04-session-event-flow.md`, `09-security-and-access-control.md` | `05-voximplant-integration.md` |
 | Room media and provider integration | `05-voximplant-integration.md` | `04-session-event-flow.md`, `11-deployment-architecture.md` |
 | Recording, materials freshness, transcription, enhancement | `06-recording-transcription-pipeline.md` | `07-speaker-mapping-and-telemetry.md`, `10-data-storage-and-retention.md` |
@@ -41,6 +42,7 @@ entries.
 14. `email-delivery-foundation.md`
 15. `account-security-email-flows.md`
 16. `email-runtime-and-yandex-cloud.md`
+17. `13-public-site-and-content.md`
 
 These files are the authoritative current-state architecture truth and must be kept aligned with code changes.
 

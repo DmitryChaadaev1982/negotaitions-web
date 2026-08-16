@@ -5,6 +5,7 @@ import "./globals.css";
 import { ClientI18nProvider } from "@/components/client-i18n-provider";
 import { CookieBanner } from "@/components/cookie-banner";
 import { BrowserCapabilityWarning } from "@/components/browser-capability-warning";
+import { getOptionalCurrentUser } from "@/lib/auth";
 import { getServerLocale } from "@/lib/i18n/server";
 import type { Locale } from "@/lib/i18n/config";
 import { SiteFooter } from "@/components/site-footer";
@@ -22,16 +23,16 @@ const geistMono = Geist_Mono({
 function getLocaleMetadata(locale: Locale): Metadata {
   const ruLocale = locale === "ru";
   const title = ruLocale
-    ? "ПереговорИИ — AI-тренажер переговоров"
-    : "NegotAItions — AI-powered negotiation training";
+    ? "ПереговорИИ (NegotAItions) — учебные переговоры с AI-разбором"
+    : "NegotAItions — training negotiations with AI review";
   const description = ruLocale
-    ? "Платформа для тренировки переговоров с AI-поддержкой для фасилитаторов и команд."
-    : "AI-powered negotiation training platform for facilitators and teams.";
+    ? "ПереговорИИ (NegotAItions) — платформа для учебных переговорных сессий: от кейса и ролей до записи, транскрипта и AI-разбора."
+    : "NegotAItions is a platform for training negotiation sessions: from a case and roles through recording, transcript, and AI review.";
 
   return {
     title: {
       default: title,
-      template: `%s | ${ruLocale ? "ПереговорИИ" : "NegotAItions"}`,
+      template: `%s | ${ruLocale ? "ПереговорИИ (NegotAItions)" : "NegotAItions"}`,
     },
     description,
     icons: {
@@ -74,6 +75,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getServerLocale();
+  const user = await getOptionalCurrentUser();
 
   return (
     <html
@@ -84,7 +86,10 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col bg-[#020617] text-slate-50">
         <ClientI18nProvider initialLocale={locale}>
           {children}
-          <SiteFooter />
+          <SiteFooter
+            isAuthenticated={Boolean(user)}
+            isActive={user?.status === "ACTIVE"}
+          />
           <CookieBanner />
           <BrowserCapabilityWarning />
         </ClientI18nProvider>

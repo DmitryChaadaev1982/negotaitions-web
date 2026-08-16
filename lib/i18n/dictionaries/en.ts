@@ -13,6 +13,13 @@ export const en = {
     adminEmail: "Email",
     negotiationTrainings: "Negotiation trainings",
     administration: "Administration",
+    publicSite: "Website",
+    capabilities: "Capabilities",
+    howItWorks: "How it works",
+    aboutAuthor: "About the author",
+    goToPlatform: "Go to the platform",
+    openMenu: "Open menu",
+    closeMenu: "Close menu",
   },
   brand: {
     alt: "NegotAItions — AI-powered negotiation training",
@@ -20,14 +27,90 @@ export const en = {
   footer: {
     legalInformation: "Legal information",
     support: "Support",
-    about: "About",
+    about: "About the author",
     termsOfUse: "Terms of use",
     faq: "FAQ",
     comingSoon: "Coming soon",
     open: "Open",
-    copyright: "© 2026 Dmitry Chaadaev. All rights reserved.",
+    copyright:
+      "© 2026 Dmitry Chaadaev · NegotAItions",
     ipNotice:
       "All materials, design, training scenarios, texts, product structure, and software code are protected by copyright law. Unauthorized use, copying, or distribution is prohibited.",
+    platform: "Platform",
+    information: "Information",
+    documents: "Documents",
+    home: "Home",
+    privacy: "Privacy Policy",
+    cookie: "Cookie Policy",
+    dataProcessingConsent: "Personal data processing consent",
+    aiProcessingNotice: "AI and external providers",
+    contact: "Contact",
+  },
+  publicHome: {
+    productName: "NegotAItions",
+    heroHeadline1: "Train negotiations.",
+    heroHeadline2: "Use the capabilities of AI.",
+    heroHeadline3: "Become stronger in negotiations.",
+    heroBody1:
+      "NegotAItions is a platform for training negotiation sessions: from a case and role assignment through recording, transcript, and AI review.",
+    heroBody2:
+      "AI does not negotiate for you. It helps you see what is hard to notice during the conversation.",
+    ctaLogin: "Enter the platform",
+    ctaRegister: "Register",
+    ctaHowItWorks: "See how it works",
+    ctaGoToPlatform: "Go to the platform",
+    capabilitiesTitle: "Capabilities",
+    cap1Title: "Training negotiation cases",
+    cap1Body:
+      "Create and use scenarios with different roles, interests, and briefings for participants.",
+    cap2Title: "Full training cycle",
+    cap2Body:
+      "Organize a meeting, assign roles, and run preparation and negotiation in one platform.",
+    cap3Title: "Recording and transcript",
+    cap3Body:
+      "Return to a past session with more than memory: use the recording and the negotiation text for review.",
+    cap4Title: "AI review",
+    cap4Body:
+      "Get an additional view of the negotiation process and publish results to participants and observers in a controlled way.",
+    flowTitle: "How training works",
+    flowIntro:
+      "A high-level path from a case to review — not a step-by-step operating manual.",
+    flow1Title: "Choose a case",
+    flow1Body: "Participants receive their roles and briefings.",
+    flow2Title: "Prepare",
+    flow2Body: "Check your connection and form your negotiation position.",
+    flow3Title: "Hold the negotiation",
+    flow3Body: "The platform guides participants through a training session.",
+    flow4Title: "Review the result",
+    flow4Body:
+      "Recording, transcript, AI analysis, and discussion after the negotiation.",
+    aiHeadline1: "AI is not a substitute for the other person.",
+    aiHeadline2: "AI is there so you can understand them better.",
+    aiBody1:
+      "Most AI products help a person do something instead of them. In NegotAItions we explore a different possibility: using artificial intelligence so a person can better see their own behavior, notice the other person's reaction, and understand the dynamics of the conversation.",
+    aiBody2:
+      "The goal of analysis is not to get a “right answer” from AI, but additional material for human review, discussion, and the development of negotiation skills.",
+    audienceTitle: "Negotiation is a skill you can train",
+    audience1Title: "Build negotiation skill",
+    audience1Body:
+      "Practice on training cases, try different strategies, and review what happened.",
+    audience2Title: "Prepare for important conversations",
+    audience2Body:
+      "Use practice and AI to get clearer on your aims, your arguments, and the other person’s likely position.",
+    audience3Title: "Get more from practice",
+    audience3Body:
+      "Come back to the recording, transcript, and review to notice what is hard to see in the moment.",
+    audience4Title: "Train with others",
+    audience4Body:
+      "Use the platform on your own, in a negotiation club, with a trainer, with colleagues, or as a team.",
+    platformCtaTitle: "Ready to run a training session?",
+    platformCtaBody:
+      "Sign in or create an account to work with cases, meetings, and sessions.",
+    visualLabel: "Product visual composition",
+    heroVisualAlt:
+      "Training negotiation session with facilitation, observers, and AI support",
+    howItWorksVisualAlt:
+      "Training negotiation journey: lobby and preparation, negotiation, debrief and materials",
   },
   common: {
     create: "Create",

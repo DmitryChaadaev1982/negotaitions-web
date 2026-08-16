@@ -13,8 +13,10 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import { eventVisibilityWhere } from "@/lib/visibility";
 import { normalizeUserEmail } from "@/lib/invite-email";
 import Link from "next/link";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
+export const metadata = privateIndexingMetadata;
 
 type JoinEventPageProps = {
   params: Promise<{ id: string }>;

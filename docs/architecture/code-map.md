@@ -54,6 +54,11 @@ Use this map before changing code. If you touch mapped files, update the linked 
   - Code: `scripts/agent-tooling/**`, `scripts/run-playwright-mode.mjs`, `playwright*.config.ts`, `tests/e2e/helpers/db.ts`, `tests/e2e/helpers/e2e-database.ts`, `tests/e2e/**`
   - Docs: `docs/testing/e2e-strategy.md`, `docs/testing/observer-test-execution-policy.md`, `docs/testing/validation-checklist.md`, `docs/testing/agent-model-routing.md`
 
+- Public website and content foundation
+  - Code: `app/(public)/layout.tsx`, `app/(public)/page.tsx`, `components/public-header.tsx`, `components/public-home-page.tsx`, `components/public-visual-frame.tsx`, `components/site-footer.tsx`, `components/app-header-nav.tsx`, `lib/public-site/visuals.ts`, `public/images/public-site/`, `public/images/landing/`, `lib/seo/indexing.ts`, `lib/i18n/config.ts`, `lib/i18n/dictionaries/en.ts`, `lib/i18n/dictionaries/ru.ts`, `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `app/room/layout.tsx`
+  - Docs: `13-public-site-and-content.md`, `03-application-architecture.md`, `01-product-context.md`
+  - Tests: `lib/seo/indexing.test.ts`, `lib/i18n/config.test.ts`, `lib/i18n/dictionaries/public-home.test.ts`, `lib/public-site/visuals.test.ts`, `tests/e2e/public-homepage.spec.ts`, `tests/e2e/phase-6-legal-consent.spec.ts`
+
 ## Required Doc-Update Rule
 
 1. Before coding, inspect this map.

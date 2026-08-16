@@ -3,8 +3,10 @@ import { notFound, redirect } from "next/navigation";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
+import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
+export const metadata = privateIndexingMetadata;
 
 type JoinPageProps = {
   params: Promise<{ joinToken: string }>;
