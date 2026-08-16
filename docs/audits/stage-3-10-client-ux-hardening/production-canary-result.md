@@ -25,6 +25,12 @@
 - Server backup was created at `/var/www/negotaitions-secure-backups/stage310-client-ux-20260730-163605`.
 - Rollback branch was created: `rollback/stage310-client-ux-20260730-163605`.
 
+> **Current policy note (does not rewrite this canary record):** `.next-pre-deploy`
+> and historical env-snapshot patterns used in this stage are **not** the
+> current production rollback policy. Current rollback is Git SHA / build with
+> the current valid authoritative runtime env. See
+> `docs/operations/deployment-runbook.md`.
+
 ## 3. Automated validation
 
 - Focused helper tests: 26 PASS.
@@ -125,6 +131,11 @@ Safe rollback uses the retained rollback branch and runtime backup:
 - Do not use `git reset --hard`.
 - Do not leave the repository in detached HEAD.
 - Recovery returns to `deploy/yandex-poc` using `git switch` and `git pull --ff-only`.
+
+> **Current policy note:** the `.next-pre-deploy` path above is a historical
+> canary artifact. It is not the current durable rollback mechanism. Rebuild
+> from the accepted Git SHA; keep the current valid production env. See
+> `docs/operations/deployment-runbook.md`.
 
 No untested rollback commands are introduced here.
 

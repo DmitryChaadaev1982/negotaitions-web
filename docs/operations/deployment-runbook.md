@@ -9,7 +9,10 @@ This runbook captures current deployment/runtime expectations for the Yandex POC
 - Canonical source path on server: `/var/www/negotaitions/app-git`.
 - Runtime app path: `/var/www/negotaitions/app` (symlink to `app-git`).
 - Artifact storage root: `/var/www/negotaitions-artifacts`.
-- Secure env backup root: `/var/www/negotaitions-secure-backups`.
+- Secure backup root: `/var/www/negotaitions-secure-backups`.
+  This is the host-local protected operational metadata root. It is not a
+  long-lived plaintext secret archive. See **Production env backup retention**
+  below.
 
 ## Process Model
 
@@ -90,6 +93,119 @@ password-reset dispatch with PostgreSQL **session** advisory locks
   mode `600`. Do not make either file readable by `www-data`.
 - Secret creation/staging may use `umask 077` and explicit `600`; do not run the
   whole application deployment under a broad restrictive umask.
+- Authoritative runtime env is those two live files only. Historical `.env`
+  copies are not the normal application rollback mechanism.
+
+## Production env backup retention
+
+Terminology:
+
+- **Authoritative runtime env**: live `/var/www/negotaitions/app/.env.production`
+  and `/etc/negotaitions/env.production`.
+- **Temporary plaintext env backup**: a short-lived rollback copy of one of
+  those files while an env/config change is unvalidated.
+- **Secure backup root**: `/var/www/negotaitions-secure-backups`.
+- **Current-env rollback**: restore application code by Git SHA / build while
+  keeping the current valid production env.
+- **Managed DB backup**: Yandex Managed PostgreSQL backup/restore. Separate
+  from env retention. Local empty `.dump` placeholders are not database backups.
+
+### Temporary plaintext env backups
+
+A plaintext copy may exist only as a temporary pre-change rollback artifact,
+and only while the corresponding env/config change is unvalidated.
+
+Maximum in flight:
+
+- one app env copy;
+- one worker/system env copy;
+- or one timestamped pair representing the same change.
+
+Do not accumulate historical generations. Do not place long-lived
+`.env.production.bak-*` files next to the live app env. Do not use
+`$HOME/.env-backups` (or similar host-local directories) as a permanent
+plaintext secret archive. Those directories may exist, but leftover copies
+are security debt.
+
+If a temporary plaintext env rollback copy is genuinely required:
+
+1. Create it only under the secure backup root, in a change-tied path
+   (for example
+   `/var/www/negotaitions-secure-backups/temp-env/<change-id>/`).
+2. Parent directory mode `700`; file mode `600`.
+3. Avoid app-adjacent `.env.production.bak-*`.
+
+After the production change, validate before deleting the copy:
+
+- env parsing;
+- service start;
+- DB/provider connectivity as relevant;
+- public health.
+
+After validation PASS, delete the temporary plaintext env copy immediately.
+
+Hard stop / cleanup:
+
+```text
+TEMP_ENV_BACKUP_RETENTION_MAX=24h
+```
+
+If a temporary env backup older than 24 hours is found:
+
+- treat it as security debt;
+- inventory before deletion if its role is unclear;
+- do not allow silent indefinite accumulation.
+
+### CODE ROLLBACK != ENV ROLLBACK
+
+Default application rollback:
+
+- restore the accepted previous Git SHA / build;
+- retain additive compatible DB migrations unless explicit recovery requires
+  otherwise;
+- use the **current** valid authoritative runtime env;
+- do **not** restore a historical env snapshot merely because code is rolled
+  back.
+
+Historical env restore is exceptional and must be explicitly justified. It can
+restore revoked/rotated credentials, restore a stale `DATABASE_URL`, undo
+provider configuration changes, and weaken the current security state.
+
+Normal secret recovery source is the current authoritative runtime env. If a
+secret is lost or invalid, restore, re-issue, or rotate through the
+corresponding provider / secret-management mechanism. Do not rely on
+indefinite historical plaintext env archives. Lockbox is not a mandatory
+runtime dependency of this policy.
+
+### Secure backup root contents
+
+Allowed long-term (non-secret deployment metadata):
+
+- commit SHA, branch, git status;
+- deployment timestamp, build status, runtime/service status;
+- rollback target;
+- relevant non-secret logs/metadata.
+
+Temporary only:
+
+- plaintext env copy while an env-changing operation is unvalidated.
+
+Not allowed long-term:
+
+- historical `.env` generations;
+- persistent credential archives;
+- obsolete `.next` runtime snapshots.
+
+### Lifecycle caps
+
+| Artifact | Retention |
+| --- | --- |
+| Temporary plaintext env | Delete after successful validation. Absolute max 24h. |
+| Non-secret deploy metadata | Up to 90 days **or** last 3 production deployments, whichever is smaller. |
+| `.next` / build runtime snapshot | Not a durable rollback mechanism. Delete after successful deployment validation. Rebuild from the accepted Git SHA if rollback is required. |
+| Database backup | Managed separately by Yandex Managed PostgreSQL policy. |
+
+Do not create a complex archival subsystem for these rules.
 
 ## Runtime Permission Normalization
 
@@ -326,7 +442,9 @@ The migration is additive. Application rollback leaves it applied and leaves
 RC4 active. Stop the new runtime, repeat the transient-work preflight, restore
 application `601704bafde7da219fe1f1e37737e7769a09a6f9`, generate its Prisma
 client/build as required, normalize permissions, start it, and run the rollback
-canary. Do not reverse the migration or rewrite migration history.
+canary. Do not reverse the migration or rewrite migration history. This is
+current-env rollback: keep the current valid production env. Do not restore a
+historical `.env` copy as part of the SHA rollback.
 
 No exact RC3 source exists in repository files or Git history, and Voximplant's
 scenario API exports only the current source rather than version history. This

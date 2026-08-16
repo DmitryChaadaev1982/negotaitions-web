@@ -260,3 +260,8 @@ Safe rollback uses the retained rollback branch and runtime backup:
 - Do not use `git reset --hard`.
 - Do not leave the repository in detached HEAD.
 - Recovery returns to `deploy/yandex-poc` using `git switch` and `git pull --ff-only`.
+
+> **Current policy note:** `.next-pre-deploy` and old env-snapshot patterns in
+> this report are historical stage procedures, not current production rollback
+> policy. Current rollback is Git SHA / build with the current valid
+> authoritative runtime env. See `docs/operations/deployment-runbook.md`.

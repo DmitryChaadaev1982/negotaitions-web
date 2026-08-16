@@ -11,7 +11,9 @@
 - Canonical app git working path: `/var/www/negotaitions/app-git`.
 - Runtime path served by process manager: `/var/www/negotaitions/app` -> symlink to `app-git`.
 - Artifact storage root: `/var/www/negotaitions-artifacts`.
-- Secure env backup root: `/var/www/negotaitions-secure-backups`.
+- Secure backup root: `/var/www/negotaitions-secure-backups`.
+  Host-local protected operational metadata root. Not a long-lived plaintext
+  secret archive. See **Env backup and rollback policy** below.
 
 ## Runtime Secrets
 
@@ -28,6 +30,38 @@
 - If normal admin-health assembly fails, its outer route catch returns a
   literal environment-independent unavailable contract; it never resolves or
   serializes endpoint, webhook override, parser, or exception details.
+
+## Env backup and rollback policy
+
+Durable operational rule. Operator procedures live in
+`docs/operations/deployment-runbook.md`.
+
+- **Authoritative runtime env** is the live application `.env.production` and
+  `/etc/negotaitions/env.production`. Those files are the normal secret
+  recovery source.
+- A **temporary plaintext env backup** may exist only while an env/config
+  change is unvalidated, only under the **secure backup root**, mode `600`,
+  with a restricted parent directory. Maximum: one in-flight app copy and one
+  in-flight worker/system copy, or one timestamped pair for the same change.
+  Delete immediately after successful validation. Absolute cap: 24 hours.
+  Do not accumulate historical `.env` generations. Do not keep long-lived
+  `.env.production.bak-*` next to the live app env.
+- **CODE ROLLBACK != ENV ROLLBACK.** Default application rollback restores the
+  accepted previous Git SHA / build and uses **current-env rollback** (the
+  current valid production env). Historical env restore is exceptional and
+  must be explicitly justified.
+- **`.next` / build runtime snapshots** are not a durable rollback mechanism.
+  Delete after successful deployment validation. Rebuild from the accepted
+  Git SHA when rollback is required.
+- **Non-secret deployment metadata** (SHA, branch, git status, timestamps,
+  build/runtime/service status, rollback target, non-secret logs) may be
+  retained under the secure backup root for up to 90 days or the last 3
+  production deployments, whichever is smaller.
+- **Managed DB backup** is a separate Yandex Managed PostgreSQL policy. Do not
+  conflate it with env backup retention.
+- Secret loss is recovered by restoring, re-issuing, or rotating through the
+  corresponding provider / secret-management mechanism. This policy does not
+  introduce Lockbox as a mandatory runtime dependency.
 
 ## Service Topology (Inferred)
 
@@ -89,4 +123,6 @@ preflight predicates and rollback steps are in
 
 - `docs/deployment/yandex-poc-server-parameters.md`
 - `docs/deployment/yandex-poc-runtime-audit.md`
-- `docs/voximplant/yandex-deployment-runbook.md`
+- `docs/voximplant/yandex-deployment-runbook.md` (historical; env-backup steps superseded)
+- `docs/operations/deployment-runbook.md` (authoritative env backup retention
+  and current-env rollback)

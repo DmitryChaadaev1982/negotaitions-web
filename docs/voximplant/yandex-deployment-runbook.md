@@ -1,5 +1,18 @@
 # Yandex Deployment Runbook (Voximplant Stack)
 
+> **CURRENT POLICY (supersedes env-backup and env-snapshot steps below).**
+> This file is a historical Voximplant/Yandex stage runbook. For production
+> env backup, retention, and rollback, follow
+> `docs/operations/deployment-runbook.md`.
+>
+> - Do not create long-lived app-adjacent `.env.production.bak-*` files.
+> - Do not restore a historical env snapshot merely because code/SHA is rolled
+>   back (`CODE ROLLBACK != ENV ROLLBACK`).
+> - Temporary plaintext env copies, if required at all, live only under
+>   `/var/www/negotaitions-secure-backups`, mode `600`, and are deleted after
+>   successful validation (hard cap 24 hours).
+> - `.next-pre-deploy` snapshots are not a current durable rollback mechanism.
+
 ## 1) Local validation before deploy
 
 ```bash
@@ -170,13 +183,21 @@ NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
 
 ## 13) Rollback/checkpoint instructions
 
+> **Current policy:** default rollback is Git SHA / build plus the **current**
+> valid authoritative runtime env. Do not restore a historical env snapshot as
+> a routine companion to code rollback. See
+> `docs/operations/deployment-runbook.md`.
+
 - Keep deploy aligned with checkpoint tags:
   - `checkpoint/vox-room-parity-stage-1`
   - `checkpoint/vox-event-lobby-stage-2`
-- For regression rollback, redeploy the previous approved stable image and env
-  snapshot, then run runtime-permission apply/check after its final
+- For regression rollback, redeploy the previous approved stable image, keep
+  the current valid production env unless an exceptional env restore is
+  explicitly justified, then run runtime-permission apply/check after its final
   checkout/install/Prisma generation and before restarting the runtime. The
   rollback bundle must include the normalizer; do not substitute `chmod -R`.
+  The historical “image and env snapshot” pairing below this note is not
+  current operational guidance.
 - If transcription quality regresses, return to `standard` profile and re-run A/B procedure.
 - For transcript enhancement rollout rollback, switch `TRANSCRIPT_ENHANCEMENT_MODE=single` and restart service.
   Single mode prefers one provider request only when the input fits the
@@ -190,6 +211,11 @@ NEXT_PUBLIC_RECORDING_DEBUG_PANEL=false
 Do not edit real env files from CI/agent automation. Apply manually after validated deploy.
 
 ### Local activation
+
+> Historical local sequence. Adjacent `$path.bak-<timestamp>` copies are not
+> current guidance. Treat any local plaintext copy as temporary (delete after
+> validation; 24h hard cap). Production policy:
+> `docs/operations/deployment-runbook.md`.
 
 Target file:
 
@@ -235,6 +261,13 @@ Rollback:
 
 ### Server activation
 
+> **Historical procedure.** The adjacent
+> `.env.production.bak-<timestamp>` pattern below must **not** be used for new
+> deployments. If a temporary plaintext env copy is genuinely required, create
+> it only under `/var/www/negotaitions-secure-backups` (mode `600`, restricted
+> parent), delete it after validation PASS, and never keep it longer than 24h.
+> Authoritative steps: `docs/operations/deployment-runbook.md`.
+
 Target file:
 
 - `/var/www/negotaitions/app/.env.production`
@@ -243,7 +276,8 @@ Required value:
 
 - `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE="json_schema"`
 
-Procedure (bash):
+Procedure (bash) — historical sequence retained for stage traceability; do not
+repeat the `BACKUP=...bak-*` copy for new work:
 
 ```bash
 set -euo pipefail
