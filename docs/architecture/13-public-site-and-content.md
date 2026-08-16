@@ -18,6 +18,8 @@ separate chrome.
 - Homepage sections: hero, capabilities, high-level training flow, AI/human
   skills positioning, need-based audience cards, platform CTA.
   Author/collaboration content lives on `/about`, not on the homepage.
+  The hero headline is two lines: practice negotiation, then AI-assisted
+  skill development (RU/EN dictionaries). There is no third slogan line.
 - Hero uses one shared photo (`public/images/landing/hero-negotiation-ai.jpg`)
   for both RU and EN. How-it-works still uses locale-specific PNGs from
   `public/images/public-site/` (`public-how-it-works-{ru|en}-no-heading.png`).
@@ -29,7 +31,8 @@ separate chrome.
   About, Support, and FAQ. Support email remains
   `mailto:support@negotaitions.ru` on the Support (and About/FAQ) copy.
   The About page defines an author-photo slot and renders the supplied
-  portrait at `public/images/public-site/author-portrait.jpg`.
+  full-length portrait at `public/images/public-site/author-portrait-full.jpg`
+  with `object-contain` so the standing pose is not cropped to a headshot.
 - Legal routes remain at `/privacy`, `/terms`, `/cookie-policy`,
   `/data-processing-consent`, and `/ai-processing-notice`. Bodies are unchanged
   in Wave 2A.

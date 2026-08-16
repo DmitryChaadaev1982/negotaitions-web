@@ -46,7 +46,7 @@ test("RU About, Support and FAQ render public chrome and approved copy @smoke", 
   );
   await expect(page.getByTestId("about-author-photo")).toHaveAttribute(
     "src",
-    /author-portrait\.jpg/,
+    /author-portrait-full\.jpg/,
   );
   await expect(page.getByTestId("public-about")).toContainText(
     "ПереговорИИ (NegotAItions)",
@@ -91,7 +91,7 @@ test("EN communication pages use English branding and working navigation @browse
   );
   await expect(page.getByTestId("about-author-photo")).toHaveAttribute(
     "src",
-    /author-portrait\.jpg/,
+    /author-portrait-full\.jpg/,
   );
   await expect(page.getByTestId("public-about")).not.toContainText("ПереговорИИ");
   await expect(page.getByTestId("public-about")).not.toContainText("Чаадаев");

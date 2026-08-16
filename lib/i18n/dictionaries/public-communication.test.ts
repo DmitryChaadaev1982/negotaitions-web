@@ -30,10 +30,13 @@ test("RU and EN About copy use locale-specific product and author names", () => 
   assert.doesNotMatch(JSON.stringify(en.publicAbout), /ПереговорИИ|Чаадаев/);
   assert.equal(ru.publicAbout.photoAlt, "Чаадаев Дмитрий Владимирович");
   assert.equal(en.publicAbout.photoAlt, "Dmitry Chaadaev");
-  assert.equal(AUTHOR_PORTRAIT_PUBLIC_PATH, "/images/public-site/author-portrait.jpg");
+  assert.equal(
+    AUTHOR_PORTRAIT_PUBLIC_PATH,
+    "/images/public-site/author-portrait-full.jpg",
+  );
   assert.equal(AUTHOR_PORTRAIT_AVAILABLE, true);
-  assert.equal(AUTHOR_PORTRAIT_WIDTH, 1024);
-  assert.equal(AUTHOR_PORTRAIT_HEIGHT, 768);
+  assert.equal(AUTHOR_PORTRAIT_WIDTH, 682);
+  assert.equal(AUTHOR_PORTRAIT_HEIGHT, 1024);
   assert.equal(
     existsSync(
       path.join(process.cwd(), "public", AUTHOR_PORTRAIT_PUBLIC_PATH.replace(/^\//, "")),

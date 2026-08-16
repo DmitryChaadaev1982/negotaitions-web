@@ -26,12 +26,12 @@ export function PublicAboutPage() {
 
   return (
     <PublicContentShell testId="public-about" width="wide">
-      <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)] lg:gap-14">
+      <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-14">
         <figure
           data-testid="about-author-photo-slot"
-          className="mx-auto w-full max-w-64 lg:mx-0"
+          className="mx-auto w-full max-w-xs lg:mx-0 lg:max-w-none"
         >
-          <div className="glass-panel overflow-hidden rounded-2xl">
+          <div className="glass-panel overflow-hidden rounded-2xl bg-slate-900">
             {AUTHOR_PORTRAIT_AVAILABLE ? (
               <img
                 src={AUTHOR_PORTRAIT_PUBLIC_PATH}
@@ -39,7 +39,7 @@ export function PublicAboutPage() {
                 width={AUTHOR_PORTRAIT_WIDTH}
                 height={AUTHOR_PORTRAIT_HEIGHT}
                 data-testid="about-author-photo"
-                className="h-auto w-full object-cover object-center"
+                className="mx-auto h-auto w-full max-h-[28rem] object-contain object-top sm:max-h-[32rem] lg:max-h-[36rem]"
                 decoding="async"
               />
             ) : (

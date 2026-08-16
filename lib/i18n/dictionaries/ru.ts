@@ -52,8 +52,7 @@ export const ru: Dictionary = {
   publicHome: {
     productName: "ПереговорИИ (NegotAItions)",
     heroHeadline1: "Тренируйте переговоры.",
-    heroHeadline2: "Используйте возможности ИИ.",
-    heroHeadline3: "Становитесь сильнее в переговорах.",
+    heroHeadline2: "Используйте возможности ИИ для совершенствования своих навыков.",
     heroBody1:
       "ПереговорИИ (NegotAItions) — платформа для учебных переговорных сессий: от кейса и распределения ролей до записи, транскрипта и AI-разбора.",
     heroBody2:

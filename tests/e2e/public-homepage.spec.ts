@@ -100,6 +100,12 @@ test("RU locale cookie renders approved homepage copy", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
     "Тренируйте переговоры.",
   );
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Используйте возможности ИИ для совершенствования своих навыков",
+  );
+  await expect(page.getByRole("heading", { level: 1 })).not.toContainText(
+    "Становитесь сильнее в переговорах.",
+  );
   await expect(page.getByText("ПереговорИИ (NegotAItions)").first()).toBeVisible();
   await expect(page.getByText("ИИ — не вместо собеседника.")).toBeVisible();
   await expect(page.getByTestId("site-footer")).toContainText(
@@ -133,7 +139,16 @@ test("EN locale cookie renders equivalent homepage copy", async ({ page }) => {
   ]);
   await gotoHome(page);
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Train negotiations.",
+    "Practice negotiation.",
+  );
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Use AI to improve your skills.",
+  );
+  await expect(page.getByRole("heading", { level: 1 })).not.toContainText(
+    "Become a stronger negotiator.",
+  );
+  await expect(page.getByRole("heading", { level: 1 })).not.toContainText(
+    "Become stronger in negotiations.",
   );
   await expect(page.getByTestId("public-hero-brand")).toHaveText("NegotAItions");
   await expect(page.getByTestId("public-hero-brand")).not.toContainText("ПереговорИИ");

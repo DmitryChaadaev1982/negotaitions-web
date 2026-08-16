@@ -134,7 +134,6 @@ export function PublicHomePage({
             >
               <span className="block">{t("publicHome.heroHeadline1")}</span>
               <span className="block">{t("publicHome.heroHeadline2")}</span>
-              <span className="block text-slate-200">{t("publicHome.heroHeadline3")}</span>
             </h1>
             <div className="max-w-2xl space-y-3 text-base leading-7 text-slate-300 sm:text-lg">
               <p>{t("publicHome.heroBody1")}</p>

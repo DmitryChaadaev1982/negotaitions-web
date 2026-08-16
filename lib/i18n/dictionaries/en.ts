@@ -49,9 +49,8 @@ export const en = {
   },
   publicHome: {
     productName: "NegotAItions",
-    heroHeadline1: "Train negotiations.",
-    heroHeadline2: "Use the capabilities of AI.",
-    heroHeadline3: "Become stronger in negotiations.",
+    heroHeadline1: "Practice negotiation.",
+    heroHeadline2: "Use AI to improve your skills.",
     heroBody1:
       "NegotAItions is a platform for training negotiation sessions: from a case and role assignment through recording, transcript, and AI review.",
     heroBody2:

@@ -21,8 +21,14 @@ test("public homepage dictionaries use locale-specific product and author names"
   assert.match(ru.brand.alt, /ПереговорИИ \(NegotAItions\)/);
   assert.doesNotMatch(en.brand.alt, /ПереговорИИ|Чаадаев/);
   assert.equal(ru.publicHome.heroHeadline1, "Тренируйте переговоры.");
-  assert.equal(ru.publicHome.heroHeadline2, "Используйте возможности ИИ.");
-  assert.equal(ru.publicHome.heroHeadline3, "Становитесь сильнее в переговорах.");
+  assert.equal(
+    ru.publicHome.heroHeadline2,
+    "Используйте возможности ИИ для совершенствования своих навыков.",
+  );
+  assert.equal("heroHeadline3" in ru.publicHome, false);
+  assert.equal(en.publicHome.heroHeadline1, "Practice negotiation.");
+  assert.equal(en.publicHome.heroHeadline2, "Use AI to improve your skills.");
+  assert.equal("heroHeadline3" in en.publicHome, false);
   assert.equal(en.publicHome.ctaLogin, "Enter the platform");
   assert.equal(
     ru.publicHome.audienceTitle,
