@@ -24,8 +24,8 @@ import {
   parseCanonicalAnalysisOutput,
   parsePublishedViewerAnalysis,
   resolveAiAnalysisRenderState,
+  type PublishedViewerAnalysis,
 } from "@/lib/materials-ai-analysis-view";
-import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { TranslationKey } from "@/lib/i18n/translate";
 
@@ -390,7 +390,8 @@ export function SessionPostProcessingPanel({
         ? parseCanonicalAnalysisOutput
         : parsePublishedViewerAnalysis,
   });
-  const analysisJson: NegotiationAnalysisOutput | null = aiRenderState.analysis;
+  const analysisJson: PublishedViewerAnalysis | null =
+    aiRenderState.analysis;
   const aiRenderValidationError = aiRenderState.showInvalidResultError
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;

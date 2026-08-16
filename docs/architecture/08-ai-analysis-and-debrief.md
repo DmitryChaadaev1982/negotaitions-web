@@ -204,11 +204,24 @@ Distinguish three concepts:
   facilitator/private fields. These projections are selected server-side from
   the stored grant, never from client visibility.
 - Client rendering must parse Observer-safe payloads without requiring
-  `participantPersonalFeedback`. Facilitator/full analysis still uses the
-  canonical schema. Published Participant/Observer views share
+  `participantPersonalFeedback`. Facilitator/full analysis uses
+  `parseCanonicalAnalysisOutput` (historical persisted-read contract).
+  Published Participant/Observer views share
   `parsePublishedViewerAnalysis` in `lib/materials-ai-analysis-view.ts`.
   The report UI does not re-add private personal feedback or facilitator-only
   debrief questions to satisfy parsing.
+- New AI analysis writes keep the strict current
+  `NegotiationAnalysisOutputSchema`, including required
+  `sessionParticipantId` on every personal-feedback item. Readers use a
+  separate historical persisted-read contract
+  (`HistoricalPersistedNegotiationAnalysisSchema` via
+  `parseCanonicalAnalysisOutput` / `parsePublishedViewerAnalysis`) so
+  previously completed reports remain renderable when they omit that ID or
+  omit `participantPersonalFeedback` entirely. Compatibility is read-only: it
+  does not synthesize IDs, rewrite stored JSON, or weaken write validation.
+  Historical name-only delivery still requires a unique negotiating-participant
+  display-name match; duplicate names omit the entry. Observer projections
+  continue to strip all personal feedback.
 - Delivery checks a non-revoked snapshot, a non-revoked grant, the bound
   account/session membership, and the grant's stored projection. A later role
   change cannot upgrade an old grant.
