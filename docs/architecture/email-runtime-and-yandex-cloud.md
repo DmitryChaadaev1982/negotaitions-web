@@ -32,18 +32,22 @@ password-reset payloads with the dedicated configured encryption key.
 
 `EmailMessage` is the source of truth for queued mail. It stores the selected
 From and Reply-To addresses at enqueue time, so changing later environment
-configuration does not silently rewrite an already-journaled message. Claim
-tokens, leases, attempt counters, suppression checks, and idempotency keys
-protect concurrent delivery.
+configuration does not silently rewrite an already-journaled message. Enqueue
+stamps `providerName` from the producing process; claim selection does not
+filter on that field. Claim tokens, leases, attempt counters, suppression
+checks, and idempotency keys protect concurrent delivery.
 
 ### Delivery worker
 
 `negotiations-email-worker.timer` starts the oneshot delivery worker. The worker
 loads `/etc/negotaitions/env.production`, claims eligible messages, rechecks
-suppression and password-reset authorization, and sends through the selected
-provider. A Postbox request is permitted only when delivery is enabled, the
-provider is `yandex_postbox`, all provider settings and credentials are present,
-and every configured sender role is in the explicit Postbox sender allowlist.
+suppression and password-reset authorization, and sends through the provider
+selected from process-local `EMAIL_PROVIDER` / `EMAIL_DELIVERY_ENABLED`. On
+provider acceptance it overwrites `EmailMessage.providerName` and records the
+same name on `EmailDeliveryAttempt.provider`. A Postbox request is permitted
+only when delivery is enabled, the provider is `yandex_postbox`, all provider
+settings and credentials are present, and every configured sender role is in
+the explicit Postbox sender allowlist.
 
 ### Provider-event consumer
 
@@ -80,14 +84,21 @@ Environment files are deployment inputs and are never committed.
 - Production email worker, provider-event consumer, reconciliation, retention,
   and canary units: `/etc/negotaitions/env.production`.
 
-The application and operational service environments must agree on shared
-email behavior. Admin diagnostics inspect only the web application's process
-environment; they cannot attest to a different systemd process environment.
+Shared identity, origin, and crypto values must agree across the application
+and operational service environments. `EMAIL_PROVIDER` and
+`EMAIL_DELIVERY_ENABLED` are process-local delivery gates: the Next.js
+process may keep them `disabled` / `false` while the dedicated worker
+enables Postbox delivery. That split is the outbox delivery fence, not a
+requirement that both files match. Admin diagnostics inspect only the web
+application's process environment; they cannot attest to a different
+systemd process environment.
 
 | Ownership | Variables |
 | --- | --- |
-| App and worker/service env | `EMAIL_PROVIDER`, `EMAIL_DELIVERY_ENABLED`, `EMAIL_CANONICAL_BASE_URL`, `EMAIL_OPERATOR_NAME`, all `EMAIL_FROM_*`, all `EMAIL_REPLY_TO_*`, `EMAIL_SENSITIVE_PAYLOAD_KEY`, worker/retry/timeout/retention settings, all applicable `YANDEX_POSTBOX_*`, and provider-event flags/settings |
+| Shared app and worker identity/crypto | `EMAIL_CANONICAL_BASE_URL`, `EMAIL_OPERATOR_NAME`, all `EMAIL_FROM_*`, all `EMAIL_REPLY_TO_*`, `EMAIL_SENSITIVE_PAYLOAD_KEY` |
+| Process-local delivery gates | `EMAIL_PROVIDER`, `EMAIL_DELIVERY_ENABLED`. The web application may be `disabled` / `false` while the worker is `yandex_postbox` / `true`. |
 | Delivery worker required when Postbox delivery is active | `YANDEX_POSTBOX_REGION`, `YANDEX_POSTBOX_ENDPOINT`, `YANDEX_POSTBOX_ALLOWED_SENDERS`, `YANDEX_POSTBOX_ACCESS_KEY_ID`, `YANDEX_POSTBOX_SECRET_ACCESS_KEY`; configuration set is optional but must be explicit when used |
+| Worker/retry/timeout/retention and provider-event settings | Required in the process that runs the corresponding worker. Shared only when that process actually uses them. |
 | Provider-event consumer required when ingestion is active | `YANDEX_DATA_STREAMS_ENDPOINT`, `YANDEX_DATA_STREAMS_REGION`, `YANDEX_DATA_STREAMS_STREAM_NAME`, `YANDEX_DATA_STREAMS_ACCESS_KEY_ID`, `YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY`, and all `EMAIL_PROVIDER_EVENT_*` consumer controls |
 | App-only presentation/queue semantics | No separate hidden defaults. The canonical origin, operator identity, sender roles, and reply-to roles are shared contract values. |
 

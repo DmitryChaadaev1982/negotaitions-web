@@ -52,6 +52,9 @@
 - Reverse-proxy + process-manager model:
   - nginx in front of Node runtime.
   - systemd service `negotaitions-poc` running app process.
+  - nginx access logs use the sanitized format in
+    `deploy/nginx/sanitized-access-log.conf` so query strings and
+    token-bearing pathname segments are not persisted.
 
 ## SSH Reverse Tunnel Role
 

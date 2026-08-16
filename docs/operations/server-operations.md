@@ -23,6 +23,34 @@
   for non-secret deployment metadata and, at most, a temporary plaintext env
   copy during an unvalidated env change. See
   `docs/operations/deployment-runbook.md`.
+- Recording debug is fail-closed in production: `isRecordingDebugEnabled()`
+  always returns false when `NODE_ENV=production`, so neither
+  `RECORDING_DEBUG_PANEL=true` nor `NEXT_PUBLIC_RECORDING_DEBUG_PANEL=true`
+  can expose `/api/debug/recording/[sessionId]` (including smoke
+  start/stop). Keep `RECORDING_DEBUG_PANEL=false` in the application
+  EnvironmentFile (`/var/www/negotaitions/app/.env.production`) as
+  defense in depth. The endpoint is for controlled non-production
+  diagnostics only.
+- Keep nginx access logging enabled, but never persist query strings, raw
+  token-bearing pathname segments, `$request`, `$request_uri`, or Referer.
+  Use `deploy/nginx/sanitized-access-log.conf` from the nginx `http`
+  context. Do not change logrotate retention when rotating this format.
+
+## Nginx Access-Log Sanitization
+
+Effective production files:
+
+- `/etc/nginx/snippets/negotaitions-sanitized-access-log.conf`
+  (`map` + `log_format negotaitions_sanitized`; http context only)
+- `/etc/nginx/nginx.conf` includes that snippet and writes
+  `/var/log/nginx/access.log` with the sanitized format
+- `/etc/nginx/sites-available/negotaitions-local-dev` uses the same
+  format for `/var/log/nginx/negotaitions-local-dev.access.log`
+
+Pathname families redacted: `/join/:joinToken` and
+`/events/join/:publicJoinCode`. Query-borne secrets are dropped because
+the logged path is query-free `$uri` after sanitization. Existing
+`/etc/logrotate.d/nginx` retention stays unchanged.
 
 ## Daily/Pre-Release Checks
 

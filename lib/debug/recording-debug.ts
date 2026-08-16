@@ -5,9 +5,9 @@
  * Next.js dev server but is intentionally lost on a full server restart
  * (safe for dev only — never persisted to DB).
  *
- * Production guard: all exports are no-ops when
- *   RECORDING_DEBUG_PANEL !== "true"  AND
- *   NODE_ENV === "production"
+ * Production guard: all exports are no-ops when NODE_ENV === "production",
+ * regardless of RECORDING_DEBUG_PANEL or NEXT_PUBLIC_RECORDING_DEBUG_PANEL.
+ * Non-production: enabled when either flag is the exact string "true".
  *
  * Do NOT import this file into production-critical code paths without
  * wrapping the call in an isRecordingDebugEnabled() check, or rely on
@@ -64,14 +64,13 @@ function getStore(): DebugStore {
 // ─── Feature gate ─────────────────────────────────────────────────────────────
 
 export function isRecordingDebugEnabled(): boolean {
-  if (process.env.RECORDING_DEBUG_PANEL === "true") return true;
-  if (
-    process.env.NODE_ENV !== "production" &&
-    process.env.NEXT_PUBLIC_RECORDING_DEBUG_PANEL === "true"
-  ) {
-    return true;
+  if (process.env.NODE_ENV === "production") {
+    return false;
   }
-  return false;
+  return (
+    process.env.RECORDING_DEBUG_PANEL === "true" ||
+    process.env.NEXT_PUBLIC_RECORDING_DEBUG_PANEL === "true"
+  );
 }
 
 // ─── Redaction ────────────────────────────────────────────────────────────────
