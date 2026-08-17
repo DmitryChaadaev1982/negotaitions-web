@@ -66,14 +66,35 @@ Use this map before changing code. If you touch mapped files, update the linked 
     `public/images/public-site/`, `public/images/landing/`,
     `lib/seo/indexing.ts`, `lib/i18n/config.ts`,
     `lib/i18n/dictionaries/en.ts`, `lib/i18n/dictionaries/ru.ts`,
-    `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `app/room/layout.tsx`
-  - Docs: `13-public-site-and-content.md`, `03-application-architecture.md`, `01-product-context.md`
+- `lib/legal/`, `lib/consent/user-consent.ts`, `lib/auth/registration.ts`,
+    `app/privacy/page.tsx`, `app/terms/page.tsx`, `app/cookie-policy/page.tsx`,
+    `app/data-processing-consent/page.tsx`, `app/ai-processing-notice/page.tsx`,
+    `app/legal-update/page.tsx`, `app/actions/legal-release.ts`,
+    `components/legal-document-page.tsx`, `components/legal-document-header.tsx`,
+    `components/legal-update-view.tsx`, `components/legal-release-checkboxes.tsx`,
+    `app/(auth)/register/page.tsx`,
+    `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `app/room/layout.tsx`,
+    `lib/legal/require-current-release.ts`,
+    `lib/legal/legal-update-return-url.ts`,
+    `lib/legal/legal-document-return.ts`,
+    `lib/legal/legal-update-draft.ts`
+  - Docs: `13-public-site-and-content.md`, `03-application-architecture.md`,
+    `01-product-context.md`, `09-security-and-access-control.md`,
+    `10-data-storage-and-retention.md`,
+    `docs/operations/personal-data-erasure-runbook.md`
   - Tests: `lib/seo/indexing.test.ts`, `lib/i18n/config.test.ts`,
     `lib/i18n/dictionaries/public-home.test.ts`,
     `lib/i18n/dictionaries/public-communication.test.ts`,
+    `lib/legal/legal-copy.test.ts`, `lib/legal/release.test.ts`,
+    `lib/legal/require-current-release.test.ts`,
+    `lib/legal/legal-document-return.test.ts`,
+    `lib/legal/legal-update-draft.test.ts`,
+    `lib/consent/user-consent.test.ts`,
     `lib/public-site/visuals.test.ts`, `tests/e2e/public-homepage.spec.ts`,
     `tests/e2e/public-communication.spec.ts`,
-    `tests/e2e/phase-6-legal-consent.spec.ts`
+    `tests/e2e/phase-6-legal-consent.spec.ts`,
+    `tests/e2e/legal-update.spec.ts`,
+    `tests/e2e/legal-document-navigation.spec.ts`
 
 ## Required Doc-Update Rule
 

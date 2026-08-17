@@ -50,6 +50,7 @@ const PRIVATE_PREFIXES = [
   "/join",
   "/rejoin",
   "/room",
+  "/legal-update",
   "/voximplant-test",
 ];
 

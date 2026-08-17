@@ -5,6 +5,24 @@
 - Account auth uses custom cookie session (`auth_session`) and `UserSession`.
 - Route/API guards use `requireActiveUser`, `apiRequireActiveUser`, and role checks.
 - Session/event runtime authorization resolves participant access by account or token-based paths where supported.
+- New registration writes `UserConsent` records from
+  `getCurrentLegalRelease()` (`TERMS_PRIVACY_ACK_V2`,
+  `PERSONAL_DATA_PROCESSING_V2`, `TRAINING_SESSION_NOTICE_V2`, version
+  `"2"`). Historical version `"1"` rows (`TERMS_PRIVACY_V1`,
+  `MVP_DATA_LIMITATION_V1`, `EXTERNAL_INFRASTRUCTURE_V1`) are never
+  rewritten. `consentType` is a free-form string; current identifiers did
+  not require a schema migration. Existing authenticated users who lack
+  the current release’s required records are redirected to `/legal-update`
+  at authenticated user-entry navigation: the `app/(app)/` shell, after
+  login, room layout, event lobby, authenticated event join, authenticated
+  session join (before invite claim), and `/rejoin`. Public legal pages,
+  `/support`, logout, anonymous token-based lobby, and provider
+  callbacks/webhooks remain reachable without that gate. Invite tokens are
+  never copied into the `/legal-update` URL; credential-bearing return
+  paths fall back to `/dashboard`. The same sanitizer rejects those
+  credentials as `returnTo` on public legal-document URLs; a token-bearing
+  source falls back to `/dashboard` (app) or `/` (site) instead of
+  embedding the secret.
 
 ## Role-Based Controls
 
@@ -134,6 +152,20 @@ suppression, notification, and local-preview contracts.
 - `app/api/events/**`
 - `app/api/sessions/**`
 - `lib/auth/**`
+- `lib/consent/user-consent.ts`
+- `lib/legal/release.ts`
+- `lib/legal/status.ts`
+- `lib/legal/accept-release.ts`
+- `lib/legal/require-current-release.ts`
+- `lib/legal/legal-update-return-url.ts`
+- `lib/legal/legal-document-return.ts`
+- `lib/legal/legal-update-draft.ts`
+- `components/legal-document-header.tsx`
+- `app/(app)/layout.tsx`
+- `app/room/layout.tsx`
+- `app/legal-update/page.tsx`
+- `app/actions/legal-release.ts`
+- `docs/operations/personal-data-erasure-runbook.md`
 - `lib/email/account-security.ts`
 - `lib/email/local-preview.ts`
 - `app/api/auth/forgot-password/route.ts`

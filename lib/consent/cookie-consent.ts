@@ -14,13 +14,17 @@
 
 export const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v1";
 
-export const CONSENT_TYPES = {
-  TERMS_PRIVACY_V1: "TERMS_PRIVACY_V1",
-  MVP_DATA_LIMITATION_V1: "MVP_DATA_LIMITATION_V1",
-  EXTERNAL_INFRASTRUCTURE_V1: "EXTERNAL_INFRASTRUCTURE_V1",
-} as const;
-
-export type ConsentType = (typeof CONSENT_TYPES)[keyof typeof CONSENT_TYPES];
+export {
+  CONSENT_TYPES,
+  CURRENT_CONSENT_TYPES,
+  LEGACY_CONSENT_TYPES,
+  LEGACY_CONSENT_VERSION,
+} from "@/lib/consent/user-consent";
+export type { ConsentType } from "@/lib/consent/user-consent";
+export {
+  CURRENT_CONSENT_VERSION,
+  CURRENT_REGISTRATION_CONSENT_TYPES,
+} from "@/lib/legal/release";
 
 export type CookieConsentCategory = "necessary" | "analytics" | "marketing";
 

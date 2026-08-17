@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { EventLobbyView } from "@/components/event-lobby-view";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { getVideoProvider } from "@/lib/env";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 import { prisma } from "@/lib/prisma";
 import { getVoxProviderFaultMode } from "@/lib/test-mode";
 import { privateIndexingMetadata } from "@/lib/seo/indexing";
@@ -25,6 +26,9 @@ export default async function EventLobbyPage({
   const { id } = await params;
   const { hostToken, participantToken } = await searchParams;
   const user = await getOptionalCurrentUser();
+  await requireCurrentLegalRelease(user, {
+    returnUrl: `/events/${id}/lobby`,
+  });
   const videoProvider = getVideoProvider();
 
   const event = await prisma.trainingEvent.findUnique({

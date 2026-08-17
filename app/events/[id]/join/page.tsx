@@ -12,6 +12,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { eventVisibilityWhere } from "@/lib/visibility";
 import { normalizeUserEmail } from "@/lib/invite-email";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 import Link from "next/link";
 import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
@@ -107,6 +108,10 @@ export default async function JoinEventPage({ params }: JoinEventPageProps) {
       notFound();
     }
   }
+
+  await requireCurrentLegalRelease(currentUser, {
+    returnUrl: `/events/${id}/join`,
+  });
 
   // Authenticated ACTIVE user — show preference selection join view.
   return (

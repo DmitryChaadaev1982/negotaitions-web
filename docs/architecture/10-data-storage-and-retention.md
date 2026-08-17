@@ -32,6 +32,13 @@
 - Durable summaries remain in repository docs.
 - Raw or high-volume generated artifacts should stay outside repo in project artifact storage.
 - Historical report markdowns were moved to `docs/audits/archive/old-root-reports/` to remove root clutter while preserving history.
+- The product does not currently enforce fixed retention periods for accounts,
+  sessions, recordings, transcripts, or AI analyses.
+- Account-deletion requests are support-operated. The approved model is a
+  controlled combination of deletion and anonymization, documented in
+  `docs/operations/personal-data-erasure-runbook.md`. That runbook is not a
+  user-facing product function and does not authorize unreviewed destructive
+  SQL.
 
 ## Source Notes
 
@@ -39,4 +46,5 @@
 - `lib/storage/s3.ts`
 - `lib/services/transcription-runner.ts`
 - `docs/operations/project-hygiene.md`
+- `docs/operations/personal-data-erasure-runbook.md`
 - `docs/decisions/ADR-2026-07-07-project-artifact-hygiene.md`

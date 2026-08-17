@@ -51,6 +51,7 @@ test("private auth, app, and runtime categories are noindex", () => {
     "/join/token",
     "/rejoin",
     "/room/session-1",
+    "/legal-update",
     "/voximplant-test",
   ];
 

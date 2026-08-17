@@ -26,9 +26,12 @@ test("unauthenticated public homepage stays on / and exposes login and register 
   );
   await expect(page.getByTestId("footer-privacy")).toHaveAttribute(
     "href",
-    "/privacy",
+    "/privacy?returnTo=%2F&returnContext=site",
   );
-  await expect(page.getByTestId("footer-terms")).toHaveAttribute("href", "/terms");
+  await expect(page.getByTestId("footer-terms")).toHaveAttribute(
+    "href",
+    "/terms?returnTo=%2F&returnContext=site",
+  );
   await expect(page.getByTestId("footer-about")).toHaveAttribute("href", "/about");
   await expect(page.getByTestId("footer-support")).toHaveAttribute(
     "href",

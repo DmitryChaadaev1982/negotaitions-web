@@ -411,8 +411,8 @@ test("registration notifies only active database admins", async ({ page }) => {
   await page.locator("#confirmPassword").fill(registrationPassword);
   await page.locator("#preferredLocale").selectOption("en");
   await page.getByTestId("consent-terms-privacy").check();
-  await page.getByTestId("consent-mvp-data-limitation").check();
-  await page.getByTestId("consent-external-infrastructure").check();
+  await page.getByTestId("consent-personal-data-processing").check();
+  await page.getByTestId("consent-training-session-notice").check();
   await page.locator('form button[type="submit"]').click();
 
   await expect(page).toHaveURL(/\/pending-approval$/);

@@ -12,11 +12,14 @@ type LanguageSwitcherProps = {
    * auth, and legal pages perform no server call for unauthenticated visitors.
    */
   persistToServer?: boolean;
+  /** Enlarge RU/EN buttons toward a 44px touch target (legal-document header). */
+  touchTarget?: boolean;
 };
 
 export function LanguageSwitcher({
   className,
   persistToServer = false,
+  touchTarget = false,
 }: LanguageSwitcherProps) {
   const { locale, setLocale } = useI18n();
 
@@ -54,7 +57,8 @@ export function LanguageSwitcher({
           data-testid={`language-switch-${option}`}
           onClick={() => handleSelect(option)}
           className={cn(
-            "rounded-md px-3 py-1 uppercase transition-all duration-200",
+            "rounded-md px-3 py-1 uppercase transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70",
+            touchTarget && "min-h-11 min-w-11 px-3.5",
             locale === option
               ? "bg-gradient-to-r from-blue-600/80 to-violet-600/80 text-white shadow-sm shadow-blue-500/20 ring-1 ring-cyan-400/30"
               : "text-slate-400 hover:text-slate-200",

@@ -33,6 +33,7 @@ export function PublicSupportPage() {
           ))}
         </ul>
         <p>{t("publicSupport.secrets")}</p>
+        <p data-testid="support-privacy">{t("publicSupport.privacy")}</p>
         <p>{t("publicSupport.also")}</p>
       </div>
     </PublicContentShell>

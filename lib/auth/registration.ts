@@ -1,4 +1,4 @@
-import { CONSENT_TYPES } from "@/lib/consent/cookie-consent";
+import { getCurrentLegalRelease } from "@/lib/legal/release";
 import { prisma } from "@/lib/prisma";
 
 export async function createRegisteredUserWithConsents(params: {
@@ -12,6 +12,8 @@ export async function createRegisteredUserWithConsents(params: {
   ipHash?: string | null;
   userAgent?: string | null;
 }) {
+  const release = getCurrentLegalRelease();
+
   return prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
@@ -27,32 +29,14 @@ export async function createRegisteredUserWithConsents(params: {
     });
 
     await tx.userConsent.createMany({
-      data: [
-        {
-          userId: created.id,
-          consentType: CONSENT_TYPES.TERMS_PRIVACY_V1,
-          version: "1",
-          acceptedAt: params.now,
-          ipHash: params.ipHash ?? null,
-          userAgent: params.userAgent ?? null,
-        },
-        {
-          userId: created.id,
-          consentType: CONSENT_TYPES.MVP_DATA_LIMITATION_V1,
-          version: "1",
-          acceptedAt: params.now,
-          ipHash: params.ipHash ?? null,
-          userAgent: params.userAgent ?? null,
-        },
-        {
-          userId: created.id,
-          consentType: CONSENT_TYPES.EXTERNAL_INFRASTRUCTURE_V1,
-          version: "1",
-          acceptedAt: params.now,
-          ipHash: params.ipHash ?? null,
-          userAgent: params.userAgent ?? null,
-        },
-      ],
+      data: release.requiredConsentTypes.map((consentType) => ({
+        userId: created.id,
+        consentType,
+        version: release.legalVersion,
+        acceptedAt: params.now,
+        ipHash: params.ipHash ?? null,
+        userAgent: params.userAgent ?? null,
+      })),
     });
 
     return created;

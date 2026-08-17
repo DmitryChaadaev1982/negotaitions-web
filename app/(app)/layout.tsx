@@ -2,6 +2,7 @@ import { AppHeader } from "@/components/app-header";
 import { AppShell } from "@/components/ui/app-shell";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const metadata = privateIndexingMetadata;
@@ -13,6 +14,8 @@ export default async function AppLayout({
 }>) {
   const user = await getOptionalCurrentUser();
   const adminFlag = user ? isAdmin(user) : false;
+
+  await requireCurrentLegalRelease(user);
 
   return (
     <div className="min-h-full bg-[#020617]">

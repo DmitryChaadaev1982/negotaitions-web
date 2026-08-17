@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 import { prisma } from "@/lib/prisma";
 import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
@@ -63,6 +64,12 @@ export default async function JoinPage({ params }: JoinPageProps) {
   const existingUserParticipant = await prisma.sessionParticipant.findFirst({
     where: { sessionId: participant.sessionId, userId: currentUser.id },
     select: { id: true },
+  });
+
+  await requireCurrentLegalRelease(currentUser, {
+    returnUrl: existingUserParticipant
+      ? `/sessions/${participant.sessionId}/materials`
+      : null,
   });
 
   if (!existingUserParticipant) {

@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
 import { CookieSettingsButton } from "@/components/cookie-banner";
 import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  buildLegalDocumentHref,
+  legalReturnFromLocation,
+} from "@/lib/legal/legal-document-return";
 
 const HIDDEN_FOOTER_ROUTE_PATTERNS = [
   /^\/room\//,
@@ -27,16 +32,27 @@ type SiteFooterProps = {
   isActive?: boolean;
 };
 
-export function SiteFooter({
+const LEGAL_DOCUMENT_HREFS = new Set([
+  "/privacy",
+  "/terms",
+  "/cookie-policy",
+  "/data-processing-consent",
+  "/ai-processing-notice",
+]);
+
+function SiteFooterInner({
   isAuthenticated = false,
   isActive = false,
-}: SiteFooterProps) {
+  search = "",
+}: SiteFooterProps & { search?: string }) {
   const pathname = usePathname();
   const { t } = useI18n();
 
   if (shouldHideFooter(pathname)) {
     return null;
   }
+
+  const currentReturn = legalReturnFromLocation(pathname, search);
 
   const platformLinks: FooterLink[] = [
     { href: "/", label: t("footer.home"), testId: "footer-home" },
@@ -87,7 +103,12 @@ export function SiteFooter({
       label: t("footer.aiProcessingNotice"),
       testId: "footer-ai-notice",
     },
-  ];
+  ].map((link) => ({
+    ...link,
+    href: LEGAL_DOCUMENT_HREFS.has(link.href)
+      ? buildLegalDocumentHref(link.href, currentReturn)
+      : link.href,
+  }));
 
   const groups = [
     { title: t("footer.platform"), links: platformLinks },
@@ -141,5 +162,19 @@ export function SiteFooter({
         </div>
       </div>
     </footer>
+  );
+}
+
+function SiteFooterWithSearch(props: SiteFooterProps) {
+  const searchParams = useSearchParams();
+  const search = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return <SiteFooterInner {...props} search={search} />;
+}
+
+export function SiteFooter(props: SiteFooterProps) {
+  return (
+    <Suspense fallback={null}>
+      <SiteFooterWithSearch {...props} />
+    </Suspense>
   );
 }

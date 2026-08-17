@@ -23,8 +23,11 @@ import {
 } from "@/lib/auth/credential-concurrency";
 import { createRegisteredUserWithConsents } from "@/lib/auth/registration";
 import { sanitizeReturnUrl } from "@/lib/auth/return-url";
+import { consentFieldName } from "@/lib/consent/user-consent";
 import { notifyActiveAdminsOfPendingRegistration } from "@/lib/email/account-security";
 import { isLocale, LOCALE_COOKIE_NAME } from "@/lib/i18n/config";
+import { getCurrentLegalRelease } from "@/lib/legal/release";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 
 type ActionResult = {
   errors?: Record<string, string[]>;
@@ -41,9 +44,10 @@ export async function registerUser(
   const rawLocale = String(formData.get("preferredLocale") ?? "ru").trim();
   const preferredLocale = isLocale(rawLocale) ? rawLocale : "ru";
 
-  const consentTermsPrivacy = formData.get("consentTermsPrivacy") === "1";
-  const consentMvpDataLimitation = formData.get("consentMvpDataLimitation") === "1";
-  const consentExternalInfrastructure = formData.get("consentExternalInfrastructure") === "1";
+  const release = getCurrentLegalRelease();
+  const acceptedAllCurrentAcknowledgements = release.requiredConsentTypes.every(
+    (consentType) => formData.get(consentFieldName(consentType)) === "1",
+  );
 
   const errors: Record<string, string[]> = {};
 
@@ -57,7 +61,7 @@ export async function registerUser(
   if (rawPassword && rawConfirm && rawPassword !== rawConfirm)
     errors.confirmPassword = ["auth.passwordMismatch"];
 
-  if (!consentTermsPrivacy || !consentMvpDataLimitation || !consentExternalInfrastructure) {
+  if (!acceptedAllCurrentAcknowledgements) {
     errors.consents = ["legal.consentRequired"];
   }
 
@@ -226,21 +230,21 @@ export async function loginUser(
 
   const safeReturnUrl = sanitizeReturnUrl(returnUrl);
 
-  if (isAdmin(user)) {
-    redirect(safeReturnUrl ?? "/dashboard");
+  if (!isAdmin(user)) {
+    if (user.status === "PENDING_APPROVAL") {
+      redirect("/pending-approval");
+    }
+
+    if (user.status === "REJECTED") {
+      redirect("/account/rejected");
+    }
+
+    if (user.status === "BLOCKED") {
+      redirect("/account/blocked");
+    }
   }
 
-  if (user.status === "PENDING_APPROVAL") {
-    redirect("/pending-approval");
-  }
-
-  if (user.status === "REJECTED") {
-    redirect("/account/rejected");
-  }
-
-  if (user.status === "BLOCKED") {
-    redirect("/account/blocked");
-  }
+  await requireCurrentLegalRelease(user, { returnUrl: safeReturnUrl });
 
   redirect(safeReturnUrl ?? "/dashboard");
 }

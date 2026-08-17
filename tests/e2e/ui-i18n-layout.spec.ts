@@ -184,7 +184,7 @@ test.describe("Phase 6.2 — Language switcher on legal pages", () => {
       document.cookie = "negotaitions_locale=ru;path=/";
     });
     await page.goto("/privacy");
-    await expect(page.getByText("Политика конфиденциальности")).toBeVisible();
+    await expect(page.getByText("Политика обработки персональных данных")).toBeVisible();
   });
 
   test("/privacy renders EN content when locale is en", async ({ page }) => {

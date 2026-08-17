@@ -51,8 +51,12 @@ test("RU and EN Support copy keep the public contact address and EN branding", (
 
   assert.equal(ru.publicSupport.title, "Поддержка");
   assert.match(ru.publicSupport.intro, /ПереговорИИ \(NegotAItions\)/);
+  assert.match(ru.publicSupport.privacy, /персональн/);
+  assert.match(ru.publicSupport.privacy, /support@negotaitions.ru/);
   assert.equal(en.publicSupport.title, "Support");
   assert.match(en.publicSupport.intro, /NegotAItions/);
+  assert.match(en.publicSupport.privacy, /personal data/);
+  assert.match(en.publicSupport.privacy, /support@negotaitions.ru/);
   assert.doesNotMatch(en.publicSupport.intro, /ПереговорИИ/);
   assert.doesNotMatch(JSON.stringify(en.publicSupport), /ПереговорИИ|Чаадаев/);
 });
@@ -68,4 +72,21 @@ test("FAQ has ten Wave 2A items and EN answers omit Russian branding", () => {
   assert.match(ru.publicFaq.a10p1, new RegExp(PUBLIC_CONTACT_EMAIL));
   assert.match(en.publicFaq.a10p1, new RegExp(PUBLIC_CONTACT_EMAIL));
   assert.doesNotMatch(en.publicFaq.a7p1, /absolute truth|guaranteed|always correct/i);
+});
+
+test("legal document return labels stay locale-specific", () => {
+  const ru = getDictionary("ru");
+  const en = getDictionary("en");
+  assert.equal(ru.legal.returnLegalUpdate, "Вернуться к подтверждению");
+  assert.equal(ru.legal.returnLegalUpdateShort, "К подтверждению");
+  assert.equal(ru.legal.returnRegister, "Вернуться к регистрации");
+  assert.equal(ru.legal.returnApp, "Вернуться в платформу");
+  assert.equal(ru.legal.returnSite, "Вернуться на сайт");
+  assert.equal(ru.legal.returnHome, "На главную");
+  assert.equal(en.legal.returnLegalUpdate, "Back to confirmation");
+  assert.equal(en.legal.returnRegister, "Back to registration");
+  assert.equal(en.legal.returnApp, "Back to platform");
+  assert.equal(en.legal.returnSite, "Back to site");
+  assert.equal(en.legal.returnHome, "Home");
+  assert.doesNotMatch(JSON.stringify(en.legal), /ПереговорИИ/);
 });

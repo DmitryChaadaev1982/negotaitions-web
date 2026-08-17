@@ -42,9 +42,9 @@ export const en = {
     documents: "Documents",
     home: "Home",
     privacy: "Privacy Policy",
-    cookie: "Cookie Policy",
+    cookie: "Cookie and Browser Storage Policy",
     dataProcessingConsent: "Personal data processing consent",
-    aiProcessingNotice: "AI and external providers",
+    aiProcessingNotice: "AI and external services",
     contact: "Contact",
   },
   publicHome: {
@@ -140,8 +140,18 @@ export const en = {
     tip6: "a screenshot if it helps explain the problem.",
     secrets:
       "Do not send passwords, verification codes, access tokens or other secret credentials.",
+    privacy:
+      "For questions about personal data, including a request to delete an account, contact support@negotaitions.ru.",
     also:
       "You can also use the same address for questions about using the platform, collaboration or the development of the project.",
+  },
+  legalUpdate: {
+    title: "Updated terms of use and data processing",
+    body:
+      "We have updated the NegotAItions documents to describe more precisely how data is processed during audio recording of training negotiations, transcription, AI analysis, and the use of external services. Please review the updated documents and confirm the required terms to continue using the platform.",
+    confirm: "Confirm and continue",
+    confirming: "Saving…",
+    support: "If you do not wish to confirm these terms, log out and write to",
   },
   publicFaq: {
     title: "FAQ",
@@ -1766,29 +1776,52 @@ export const en = {
     draftNotice: "Draft placeholder for legal review before production launch.",
     privacyPolicy: "Privacy Policy",
     termsOfUse: "Terms of Use",
-    cookiePolicy: "Cookie Policy",
+    cookiePolicy: "Cookie and Browser Storage Policy",
     dataProcessingConsent: "Personal Data Processing Consent",
-    aiProcessingNotice: "AI Processing & External Provider Notice",
+    aiProcessingNotice: "AI & External Services Notice",
     cookieSettings: "Cookie settings",
+    lastUpdated: "Last updated",
+    documentVersion: "Version",
+    returnLegalUpdate: "Back to confirmation",
+    returnLegalUpdateShort: "Back to confirmation",
+    returnRegister: "Back to registration",
+    returnRegisterShort: "Back to registration",
+    returnApp: "Back to platform",
+    returnAppShort: "Back to platform",
+    returnSite: "Back to site",
+    returnSiteShort: "Back to site",
+    returnHome: "Home",
+    returnHomeShort: "Home",
     // Cookie banner
     cookieBannerText:
-      "We use necessary cookies and local storage to keep the site working, secure sign-in, and restore guest sessions. Optional analytics and marketing cookies are not currently used and will be enabled only with your consent. You can accept all, reject optional cookies, or customize your choice.",
+      "We use necessary cookies and browser storage to keep the site working, secure sign-in, and store technical rejoin hints. Optional analytics and marketing cookies are not currently used and will be enabled only with your consent. You can accept all, reject optional cookies, or customize your choice.",
     acceptAll: "Accept all",
     rejectOptional: "Reject optional",
     customize: "Customize",
     saveChoices: "Save choices",
     cookieCategoryNecessary: "Necessary",
-    cookieCategoryNecessaryHint: "Always active — required for sign-in, session security, and guest rejoin.",
+    cookieCategoryNecessaryHint: "Always active — required for sign-in, session security, and technical rejoin hints.",
     cookieCategoryAnalytics: "Analytics",
     cookieCategoryAnalyticsHint: "Usage analytics to improve the platform. Not currently used.",
     cookieCategoryMarketing: "Marketing",
     cookieCategoryMarketingHint: "Marketing and retargeting. Not currently used.",
     // Registration consent checkboxes
-    consentTermsPrivacy: "I accept the Terms of Use and Privacy Policy.",
-    consentMvpDataLimitation:
-      "I understand that NegotAItions is a training MVP platform and is not intended for uploading real personal data of third parties, trade secrets, confidential information, medical data, financial credentials, or other sensitive data.",
-    consentExternalInfrastructure:
-      "I understand that data is stored and processed on infrastructure located in the Russian Federation.",
+    consentTermsPrivacyStart: "I accept the ",
+    consentTermsPrivacyMiddle: " and confirm that I have reviewed the ",
+    consentTermsPrivacyEnd: ".",
+    consentPrivacyPolicyLink: "Privacy Policy",
+    consentTermsPrivacy:
+      "I accept the Terms of Use and confirm that I have reviewed the Privacy Policy.",
+    consentPersonalDataStart:
+      "I consent to the processing of my personal data on the terms of the ",
+    consentPersonalDataEnd: ".",
+    consentPersonalDataProcessing:
+      "I consent to the processing of my personal data on the terms of the Personal Data Processing Consent.",
+    consentTrainingSessionStart:
+      "I confirm that I understand that participation in training negotiations may include audio recording, transcription, transcript enhancement, and AI analysis using external services, as described in the ",
+    consentTrainingSessionEnd: ".",
+    consentTrainingSessionNotice:
+      "I confirm that I understand that participation in training negotiations may include audio recording, transcription, transcript enhancement, and AI analysis using external services, as described in the AI & External Services Notice.",
     consentRequired: "You must accept all required agreements to register.",
     // Recording consent
     recordingConsentTitle: "Recording consent required",

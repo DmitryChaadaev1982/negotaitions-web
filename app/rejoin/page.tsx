@@ -6,6 +6,7 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { getAccountRejoinTargets } from "@/lib/rejoin/account";
+import { requireCurrentLegalRelease } from "@/lib/legal/require-current-release";
 import { privateIndexingMetadata } from "@/lib/seo/indexing";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,8 @@ export default async function RejoinPage() {
   if (user.status === "BLOCKED") {
     redirect("/account/blocked");
   }
+
+  await requireCurrentLegalRelease(user, { returnUrl: "/rejoin" });
 
   const targets = await getAccountRejoinTargets(user);
   if (targets.length === 0) {

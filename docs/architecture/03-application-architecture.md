@@ -19,7 +19,18 @@
 - Public `/` is a marketing homepage in `app/(public)/`, not a dashboard
   redirect.
 - Public chrome is `PublicHeader`; product chrome is `AppHeader` in
-  `app/(app)/`.
+  `app/(app)/`. Legal document routes (`/privacy`, `/terms`,
+  `/cookie-policy`, `/data-processing-consent`, `/ai-processing-notice`)
+  use a compact `LegalDocumentHeader` (brand, contextual return, locale)
+  instead of marketing or platform navigation.
+- Authenticated product pages in `app/(app)/` and fresh authenticated
+  room/lobby/join/rejoin entry are gated by the current legal release when
+  `requiresExistingUserAction` is true and required `UserConsent` records
+  are missing. Public legal routes, anonymous token-based lobby, and
+  provider callbacks are outside that gate. Already-open room tabs and
+  active media connections are not force-terminated by a legal-version
+  change; the next server navigation, reload, or fresh authenticated entry
+  applies the gate.
 - Indexing policy lives in `lib/seo/indexing.ts`. Details:
   `13-public-site-and-content.md`.
 

@@ -17,7 +17,7 @@ load stage history as default context.
 | Speaker mapping and operational observability | `07-speaker-mapping-and-telemetry.md` | `12-external-systems.md` |
 | AI analysis, publication, recipient privacy, debrief | `08-ai-analysis-and-debrief.md` | `09-security-and-access-control.md`, `04-session-event-flow.md` |
 | Accounts, email, roles, authorization | `09-security-and-access-control.md`, `account-security-email-flows.md` | `email-delivery-foundation.md`, `email-runtime-and-yandex-cloud.md` |
-| Data retention and database changes | `10-data-storage-and-retention.md` | `02-domain-model.md`, `11-deployment-architecture.md` |
+| Data retention and database changes | `10-data-storage-and-retention.md` | `02-domain-model.md`, `11-deployment-architecture.md`, `docs/operations/personal-data-erasure-runbook.md` |
 | Deployment and external services | `11-deployment-architecture.md`, `12-external-systems.md` | `docs/operations/deployment-runbook.md` |
 | Test selection and E2E fixtures | `docs/testing/validation-checklist.md`, `docs/testing/e2e-strategy.md` | `docs/testing/observer-test-execution-policy.md` |
 

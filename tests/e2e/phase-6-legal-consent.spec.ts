@@ -13,6 +13,27 @@ import { expect, test } from "@playwright/test";
 
 import { cleanupE2eData, e2eEmail } from "./helpers/db";
 
+function baseUrl() {
+  return test.info().project.use.baseURL ?? "http://127.0.0.1:3100";
+}
+
+async function setLocale(
+  page: import("@playwright/test").Page,
+  locale: "ru" | "en",
+) {
+  await page.addInitScript((value) => {
+    window.localStorage.setItem("negotaitions_locale", value);
+    document.cookie = `negotaitions_locale=${value};path=/;max-age=31536000;samesite=lax`;
+  }, locale);
+  await page.context().addCookies([
+    {
+      name: "negotaitions_locale",
+      value: locale,
+      url: baseUrl(),
+    },
+  ]);
+}
+
 // The registration consent test creates a `test-*@example.com` account via the
 // signup form; clean it (and any other leftovers) up around this file.
 test.beforeAll(cleanupE2eData);
@@ -145,18 +166,73 @@ test.describe("Registration consent", () => {
     await expect(page).toHaveURL(/register/);
   });
 
-  test("8. Register page has all three consent checkboxes", async ({ page }) => {
+  test("8. Register page has all three v2 consent checkboxes", async ({ page }) => {
+    await setLocale(page, "ru");
     await page.goto("/register");
     await expect(page.locator('[data-testid="consent-terms-privacy"]')).toBeVisible();
-    await expect(page.locator('[data-testid="consent-mvp-data-limitation"]')).toBeVisible();
-    await expect(page.locator('[data-testid="consent-external-infrastructure"]')).toBeVisible();
+    await expect(page.locator('[data-testid="consent-personal-data-processing"]')).toBeVisible();
+    await expect(page.locator('[data-testid="consent-training-session-notice"]')).toBeVisible();
+    await expect(page.locator('[data-testid="consent-mvp-data-limitation"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="consent-external-infrastructure"]')).toHaveCount(0);
+    await expect(page.locator("body")).toContainText(
+      "Я даю согласие на обработку моих персональных данных на условиях документа «Согласие на обработку персональных данных».",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "на условиях Согласие на обработку",
+    );
+    await expect(
+      page.getByRole("link", { name: "Согласие на обработку персональных данных" }).first(),
+    ).toBeVisible();
   });
 
   test("9. Consent checkboxes link to legal pages", async ({ page }) => {
     await page.goto("/register");
     // Terms and privacy links should be visible near the first checkbox
     await expect(page.getByRole("link", { name: /terms|соглашение/i }).first()).toBeVisible();
-    await expect(page.getByRole("link", { name: /privacy|конфиденциальн/i }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: /privacy|политик/i }).first()).toBeVisible();
+  });
+
+  test("9b. EN registration consent links open EN legal documents", async ({
+    page,
+  }) => {
+    await setLocale(page, "en");
+    await page.goto("/register");
+    await expect(page.locator("body")).toContainText(
+      "I consent to the processing of my personal data on the terms of the Personal Data Processing Consent.",
+    );
+
+    const privacyPopupPromise = page.waitForEvent("popup");
+    await page.getByRole("link", { name: "Privacy Policy" }).first().click();
+    const privacyPopup = await privacyPopupPromise;
+    await expect(privacyPopup).toHaveURL(/\/privacy/);
+    await expect(privacyPopup.url()).toContain("returnContext=register");
+    await expect(privacyPopup.getByTestId("legal-document-return")).toContainText(
+      "Back to registration",
+    );
+    await expect(privacyPopup.getByRole("heading", { level: 1 })).toHaveText(
+      "Privacy Policy",
+    );
+    await expect(privacyPopup.getByTestId("legal-document")).toHaveAttribute(
+      "data-legal-locale",
+      "en",
+    );
+    await privacyPopup.close();
+
+    const consentPopupPromise = page.waitForEvent("popup");
+    await page
+      .getByRole("link", { name: "Personal Data Processing Consent" })
+      .first()
+      .click();
+    const consentPopup = await consentPopupPromise;
+    await expect(consentPopup).toHaveURL(/\/data-processing-consent/);
+    await expect(consentPopup.getByRole("heading", { level: 1 })).toHaveText(
+      "Personal Data Processing Consent",
+    );
+    await expect(consentPopup.getByTestId("legal-document")).toHaveAttribute(
+      "data-legal-locale",
+      "en",
+    );
+    await consentPopup.close();
   });
 });
 
@@ -194,40 +270,192 @@ test.describe("AI processing warnings", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Legal pages", () => {
-  test("15. /privacy opens", async ({ page }) => {
+  test("15. /privacy opens as version 2 without draft banner", async ({ page }) => {
     await page.goto("/privacy");
-    await expect(page).toHaveTitle(/Privacy|Конфиденциальн/i);
-    // Draft notice visible
-    const warning = page.locator("text=Draft placeholder").or(page.locator("text=Черновик"));
-    await expect(warning.first()).toBeVisible();
+    await expect(page).toHaveTitle(/Privacy|персональных данных/i);
+    await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+    await expect(page.locator("text=Draft placeholder")).toHaveCount(0);
+    await expect(page.locator("text=Черновик")).toHaveCount(0);
+    await expect(page.locator("body")).toContainText(
+      /Чаадаев Дмитрий Владимирович|Dmitry Chaadaev/,
+    );
+    await expect(page.locator("body")).toContainText("support@negotaitions.ru");
+    await expect(page.locator("body")).toContainText("Voximplant");
+    await expect(page.locator("body")).not.toContainText("LiveKit");
+    await expect(page.locator("body")).not.toContainText("Whisper");
+    await expect(page.locator("body")).not.toContainText("OpenAI");
+    await expect(page.locator("body")).not.toContainText(
+      "данные хранятся и обрабатываются на инфраструктуре, размещённой в Российской Федерации",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "исходный IP-адрес в таком виде не хранится",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "the raw IP address is not stored",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "Отдельное уведомление уполномоченного органа о трансграничной передаче",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "Unused alternative implementations",
+    );
+    await expect(page.locator("body")).not.toContainText(
+      "неиспользуемых альтернативных реализаций",
+    );
   });
 
   test("16. /terms opens", async ({ page }) => {
     await page.goto("/terms");
     await expect(page).toHaveTitle(/Terms|Соглашение/i);
-    const warning = page.locator("text=Draft placeholder").or(page.locator("text=Черновик"));
-    await expect(warning.first()).toBeVisible();
+    await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+    await expect(page.locator("text=Draft placeholder")).toHaveCount(0);
   });
 
-  test("17. /cookie-policy opens", async ({ page }) => {
+  test("17. /cookie-policy opens with browser-storage facts", async ({ page }) => {
     await page.goto("/cookie-policy");
     await expect(page).toHaveTitle(/Cookie/i);
-    const warning = page.locator("text=Draft placeholder").or(page.locator("text=Черновик"));
-    await expect(warning.first()).toBeVisible();
+    await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+    await expect(page.locator("body")).toContainText("negotaitions.recovery.v1");
+    await expect(page.locator("body")).toContainText("negotiations.session-left:");
+    await expect(page.locator("body")).not.toContainText(
+      "Stores access tokens for the current session to allow guest reconnection",
+    );
   });
 
   test("18. /data-processing-consent opens", async ({ page }) => {
     await page.goto("/data-processing-consent");
     await expect(page).toHaveTitle(/Consent|Согласие/i);
-    const warning = page.locator("text=Draft placeholder").or(page.locator("text=Черновик"));
-    await expect(warning.first()).toBeVisible();
+    await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+    await expect(page.locator("text=Draft placeholder")).toHaveCount(0);
   });
 
   test("19. /ai-processing-notice opens", async ({ page }) => {
     await page.goto("/ai-processing-notice");
-    await expect(page).toHaveTitle(/AI Processing|Уведомление/i);
-    const warning = page.locator("text=Draft placeholder").or(page.locator("text=Черновик"));
-    await expect(warning.first()).toBeVisible();
+    await expect(page).toHaveTitle(/AI|ИИ/i);
+    await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+    await expect(page.locator("body")).toContainText("Yandex SpeechKit");
+    await expect(page.locator("body")).not.toContainText("OpenAI");
+  });
+
+  const localizedDocuments = [
+    {
+      path: "/privacy",
+      ruTitle: "Политика обработки персональных данных",
+      enTitle: "Privacy Policy",
+      ruMarker: "Чаадаев Дмитрий Владимирович",
+      enMarker: "Dmitry Chaadaev (Чаадаев Дмитрий Владимирович)",
+    },
+    {
+      path: "/terms",
+      ruTitle: "Пользовательское соглашение",
+      enTitle: "Terms of Use",
+      ruMarker: "учебных переговорных сессий",
+      enMarker: "training negotiation sessions",
+    },
+    {
+      path: "/cookie-policy",
+      ruTitle: "Политика использования cookie и хранения данных в браузере",
+      enTitle: "Cookie and Browser Storage Policy",
+      ruMarker: "Гостевые токены доступа в этом хранилище не сохраняются",
+      enMarker: "Guest access tokens are not stored in this key",
+    },
+    {
+      path: "/data-processing-consent",
+      ruTitle: "Согласие на обработку персональных данных",
+      enTitle: "Personal Data Processing Consent",
+      ruMarker: "блокирование, удаление, уничтожение и обезличивание",
+      enMarker: "block, delete, destroy, and anonymize",
+    },
+    {
+      path: "/ai-processing-notice",
+      ruTitle: "Уведомление об ИИ и внешних сервисах",
+      enTitle: "AI & External Services Notice",
+      ruMarker: "География обработки на стороне этого провайдера уточняется",
+      enMarker: "processing geography is being clarified",
+    },
+  ] as const;
+
+  for (const doc of localizedDocuments) {
+    test(`${doc.path} renders complete RU and EN bodies from the current locale`, async ({
+      page,
+    }) => {
+      await setLocale(page, "ru");
+      await page.goto(doc.path);
+      await expect(page.getByTestId("legal-document")).toHaveAttribute(
+        "data-legal-locale",
+        "ru",
+      );
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(doc.ruTitle);
+      await expect(page.locator("body")).toContainText(doc.ruMarker);
+      await expect(page.getByTestId("legal-document-meta")).toContainText("2");
+      await expect(page.getByTestId("legal-document-meta")).toContainText(
+        "17 августа 2026",
+      );
+
+      await setLocale(page, "en");
+      await page.goto(doc.path);
+      await expect(page.getByTestId("legal-document")).toHaveAttribute(
+        "data-legal-locale",
+        "en",
+      );
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(doc.enTitle);
+      await expect(page.locator("body")).toContainText(doc.enMarker);
+      await expect(page.locator("body")).not.toContainText("ПереговорИИ (NegotAItions)");
+      await expect(page.locator("body")).not.toContainText("OpenAI");
+      await expect(page.locator("body")).not.toContainText("Whisper");
+      await expect(page.locator("body")).not.toContainText("LiveKit");
+      await expect(page.getByTestId("legal-document-meta")).toContainText(
+        "17 August 2026",
+      );
+    });
+  }
+
+  test("locale switch on /privacy immediately shows EN on the same route", async ({
+    page,
+  }) => {
+    await page.context().addCookies([
+      {
+        name: "negotaitions_locale",
+        value: "ru",
+        url: baseUrl(),
+      },
+    ]);
+    await page.goto("/privacy");
+    await page.evaluate(() => {
+      window.localStorage.setItem("negotaitions_locale", "ru");
+      document.cookie =
+        "negotaitions_locale=ru;path=/;max-age=31536000;samesite=lax";
+      window.dispatchEvent(new Event("negotaitions-locale-change"));
+    });
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      "Политика обработки персональных данных",
+    );
+    const cookieBanner = page.getByTestId("cookie-banner");
+    if (await cookieBanner.isVisible()) {
+      await cookieBanner.getByRole("button", { name: "Принять все" }).click();
+    }
+    await page
+      .getByTestId("legal-document-locale")
+      .getByTestId("language-switch-en")
+      .click();
+    await expect(
+      page.getByTestId("legal-document-locale").getByTestId("language-switch-en"),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(page).toHaveURL(/\/privacy(?:\?.*)?$/);
+    await expect(page.getByTestId("legal-document")).toHaveAttribute(
+      "data-legal-locale",
+      "en",
+    );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Privacy Policy");
+    await expect(page.locator("body")).toContainText(
+      "Dmitry Chaadaev (Чаадаев Дмитрий Владимирович)",
+    );
+    await page.reload();
+    await expect(page.getByTestId("legal-document")).toHaveAttribute(
+      "data-legal-locale",
+      "en",
+    );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Privacy Policy");
   });
 });
 

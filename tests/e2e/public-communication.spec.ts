@@ -64,6 +64,12 @@ test("RU About, Support and FAQ render public chrome and approved copy @smoke", 
     "mailto:support@negotaitions.ru",
   );
   await expect(page.getByText("Не отправляйте пароль")).toBeVisible();
+  await expect(page.getByTestId("support-privacy")).toContainText(
+    "персональн",
+  );
+  await expect(page.getByTestId("support-privacy")).toContainText(
+    "support@negotaitions.ru",
+  );
 
   await page.goto("/faq", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("public-header")).toBeVisible();
@@ -110,6 +116,9 @@ test("EN communication pages use English branding and working navigation @browse
   await expect(page.getByTestId("support-email")).toHaveAttribute(
     "href",
     "mailto:support@negotaitions.ru",
+  );
+  await expect(page.getByTestId("support-privacy")).toContainText(
+    "personal data",
   );
 
   await page.goto("/faq", { waitUntil: "domcontentloaded" });

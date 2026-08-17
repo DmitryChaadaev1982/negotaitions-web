@@ -244,11 +244,13 @@ export async function createActiveUser(input?: {
   password?: string;
   passwordHash?: string;
   preferredLocale?: "ru" | "en";
+  legalRelease?: "current" | "v1" | "none";
 }) {
   const email = input?.email ?? e2eEmail(`locale-user-${id("u")}`);
   const password = input?.password ?? "e2e-pass-1234";
   const passwordHash = input?.passwordHash ?? (await hash(password, 12));
   const userId = id("user");
+  const legalRelease = input?.legalRelease ?? "current";
 
   await query(
     `INSERT INTO "User"
@@ -257,10 +259,76 @@ export async function createActiveUser(input?: {
     [userId, email, passwordHash, input?.preferredLocale ?? "ru"],
   );
 
+  if (legalRelease === "current") {
+    await insertCurrentLegalReleaseConsents(userId);
+  } else if (legalRelease === "v1") {
+    await insertLegacyV1Consents(userId);
+  }
+
   return { id: userId, email, password };
 }
 
-export async function createUserSessionCookie(userId: string) {
+const CURRENT_E2E_CONSENT_TYPES = [
+  "TERMS_PRIVACY_ACK_V2",
+  "PERSONAL_DATA_PROCESSING_V2",
+  "TRAINING_SESSION_NOTICE_V2",
+] as const;
+const LEGACY_E2E_CONSENT_TYPES = [
+  "TERMS_PRIVACY_V1",
+  "MVP_DATA_LIMITATION_V1",
+  "EXTERNAL_INFRASTRUCTURE_V1",
+] as const;
+
+export async function insertUserConsent(
+  userId: string,
+  consentType: string,
+  version: string,
+) {
+  await query(
+    `INSERT INTO "UserConsent" ("id", "userId", "consentType", "version", "acceptedAt")
+     VALUES ($1, $2, $3, $4, NOW())`,
+    [id("consent"), userId, consentType, version],
+  );
+}
+
+export async function insertCurrentLegalReleaseConsents(userId: string) {
+  for (const consentType of CURRENT_E2E_CONSENT_TYPES) {
+    await insertUserConsent(userId, consentType, "2");
+  }
+}
+
+export async function insertLegacyV1Consents(userId: string) {
+  for (const consentType of LEGACY_E2E_CONSENT_TYPES) {
+    await insertUserConsent(userId, consentType, "1");
+  }
+}
+
+export async function listUserConsents(userId: string) {
+  return query<{ consentType: string; version: string }>(
+    `SELECT "consentType", "version" FROM "UserConsent" WHERE "userId" = $1 ORDER BY "consentType"`,
+    [userId],
+  );
+}
+
+export async function createUserSessionCookie(
+  userId: string,
+  options?: { grantCurrentLegalRelease?: boolean },
+) {
+  const grantCurrentLegalRelease = options?.grantCurrentLegalRelease ?? true;
+  if (grantCurrentLegalRelease) {
+    const existing = await query<{ consentType: string }>(
+      `SELECT "consentType" FROM "UserConsent"
+       WHERE "userId" = $1 AND "consentType" = ANY($2::text[])`,
+      [userId, [...CURRENT_E2E_CONSENT_TYPES]],
+    );
+    const present = new Set(existing.map((row) => row.consentType));
+    for (const consentType of CURRENT_E2E_CONSENT_TYPES) {
+      if (!present.has(consentType)) {
+        await insertUserConsent(userId, consentType, "2");
+      }
+    }
+  }
+
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   await query(
