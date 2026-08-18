@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 
 import { PublicAboutPage } from "@/components/public-about-page";
-import { getDictionary } from "@/lib/i18n/dictionaries";
 import { getServerLocale } from "@/lib/i18n/server";
+import { buildPublicMarketingMetadata } from "@/lib/seo/page-metadata";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getServerLocale();
-  return { title: getDictionary(locale).publicAbout.title };
+  return buildPublicMarketingMetadata({ locale, pathname: "/about" });
 }
 
 export default function AboutPage() {

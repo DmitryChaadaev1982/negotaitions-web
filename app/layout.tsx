@@ -9,6 +9,7 @@ import { getOptionalCurrentUser } from "@/lib/auth";
 import { getServerLocale } from "@/lib/i18n/server";
 import type { Locale } from "@/lib/i18n/config";
 import { SiteFooter } from "@/components/site-footer";
+import { getPublicSeoCopy } from "@/lib/seo/copy";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,46 +22,14 @@ const geistMono = Geist_Mono({
 });
 
 function getLocaleMetadata(locale: Locale): Metadata {
-  const ruLocale = locale === "ru";
-  const title = ruLocale
-    ? "ПереговорИИ (NegotAItions) — учебные переговоры с AI-разбором"
-    : "NegotAItions — training negotiations with AI review";
-  const description = ruLocale
-    ? "ПереговорИИ (NegotAItions) — платформа для учебных переговорных сессий: от кейса и ролей до записи, транскрипта и AI-разбора."
-    : "NegotAItions is a platform for training negotiation sessions: from a case and roles through recording, transcript, and AI review.";
+  const copy = getPublicSeoCopy(locale);
 
   return {
     title: {
-      default: title,
-      template: `%s | ${ruLocale ? "ПереговорИИ (NegotAItions)" : "NegotAItions"}`,
+      default: copy.pages["/"].title,
+      template: `%s | ${copy.siteName}`,
     },
-    description,
-    icons: {
-      icon: [
-        {
-          url: "/brand/negotaitions-icon-32.png?v=20260703-localized",
-          type: "image/png",
-          sizes: "32x32",
-        },
-        {
-          url: "/brand/negotaitions-icon-16.png?v=20260703-localized",
-          type: "image/png",
-          sizes: "16x16",
-        },
-        {
-          url: "/icon.png?v=20260703-localized",
-          type: "image/png",
-          sizes: "512x512",
-        },
-        {
-          url: "/brand/negotaitions-icon.png?v=20260703-localized",
-          type: "image/png",
-          sizes: "512x512",
-        },
-      ],
-      apple: [{ url: "/apple-icon.png?v=20260703-localized", sizes: "180x180" }],
-      shortcut: ["/brand/negotaitions-icon-32.png?v=20260703-localized"],
-    },
+    description: copy.pages["/"].description,
   };
 }
 

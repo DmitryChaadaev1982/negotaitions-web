@@ -19,7 +19,7 @@ const ruCookies: LegalDocument = {
         },
         {
           type: "p",
-          text: "Аналитические и маркетинговые трекеры в настоящее время не подключены. Предпочтения в отношении аналитики и маркетинга тем не менее могут сохраняться, даже если соответствующие сценарии сейчас не активны.",
+          text: "Необязательная аналитика публичного сайта может использовать Яндекс Метрику только после согласия на аналитику. Маркетинговые трекеры не подключены.",
         },
       ],
     },
@@ -36,7 +36,7 @@ const ruCookies: LegalDocument = {
         },
         {
           type: "p",
-          text: "negotaitions.cookieConsent.v1 — localStorage, не HTTP-cookie. Сохраняет выбор в отношении необходимых, аналитических и маркетинговых категорий. Аналитические и маркетинговые сценарии сейчас не используются.",
+          text: "negotaitions.cookieConsent.v2 — localStorage, не HTTP-cookie. Сохраняет выбор в отношении необходимых, аналитических и маркетинговых категорий. Исторический ключ v1 не используется как согласие на аналитику.",
         },
         {
           type: "p",
@@ -53,7 +53,7 @@ const ruCookies: LegalDocument = {
       blocks: [
         {
           type: "p",
-          text: "Аналитические и маркетинговые cookie и скрипты в настоящее время не используются. Если они будут подключены позднее, это будет возможно только после обновления этой Политики и при наличии соответствующего согласия, где оно требуется.",
+          text: "Яндекс Метрика может загружаться только на публичных страницах сайта (главная, Об авторе, FAQ, Поддержка) и только если вы дали согласие на аналитику. Она использует cookie и хранилище браузера для учёта посещаемости публичного сайта. Вебвизор (запись сессий) в этой конфигурации не включается. Метрика не загружается в личном кабинете, комнате переговоров, на страницах входа и регистрации и на странице /legal-update. Маркетинговые cookie и скрипты не используются. Отзыв согласия на аналитику останавливает дальнейшую работу Яндекс Метрики в этом приложении; сведения, уже переданные в Яндекс Метрику, это действие не удаляет.",
         },
       ],
     },
@@ -86,7 +86,7 @@ const enCookies: LegalDocument = {
         },
         {
           type: "p",
-          text: "Analytics and marketing trackers are not currently enabled. Analytics and marketing preferences may still be stored even though those scripts are not active.",
+          text: "Optional public-site analytics may use Yandex Metrica only after analytics consent. Marketing trackers are not enabled.",
         },
       ],
     },
@@ -103,7 +103,7 @@ const enCookies: LegalDocument = {
         },
         {
           type: "p",
-          text: "negotaitions.cookieConsent.v1 — localStorage, not an HTTP cookie. Stores the choice for necessary, analytics, and marketing categories. Analytics and marketing scripts are not currently used.",
+          text: "negotaitions.cookieConsent.v2 — localStorage, not an HTTP cookie. Stores the choice for necessary, analytics, and marketing categories. The historical v1 key is not treated as analytics consent.",
         },
         {
           type: "p",
@@ -120,7 +120,7 @@ const enCookies: LegalDocument = {
       blocks: [
         {
           type: "p",
-          text: "Analytics and marketing cookies and scripts are not currently used. If they are added later, that will happen only after this Policy is updated and with the relevant consent where required.",
+          text: "Yandex Metrica may load only on public site pages (home, About, FAQ, Support) and only if you have given analytics consent. It uses cookies and browser storage for public-site traffic statistics. Webvisor / session replay is not enabled in this configuration. Metrica does not load in the authenticated application, negotiation room, sign-in or registration pages, or /legal-update. Marketing cookies and scripts are not used. Withdrawing analytics consent stops further Yandex Metrica use by this application; it does not erase data already sent to Yandex Metrica.",
         },
       ],
     },

@@ -90,7 +90,7 @@ test("cookie policy describes actual browser storage and not guest tokens", () =
   const ruCookies = flattenAllLegalText("ru");
   assert.match(ruCookies, /auth_session/);
   assert.match(ruCookies, /negotaitions_locale/);
-  assert.match(ruCookies, /negotaitions\.cookieConsent\.v1/);
+  assert.match(ruCookies, /negotaitions\.cookieConsent\.v2/);
   assert.match(ruCookies, /negotaitions\.recovery\.v1/);
   assert.match(ruCookies, /negotiations\.session-left:/);
   assert.match(ruCookies, /localStorage/);
@@ -101,6 +101,47 @@ test("cookie policy describes actual browser storage and not guest tokens", () =
   const enCookies = flattenAllLegalText("en");
   assert.match(enCookies, /Guest access tokens are not stored in this key/);
   assert.doesNotMatch(enCookies, /Stores access tokens for the current session to allow guest reconnection/);
+  assert.match(ruCookies, /Яндекс Метрика/);
+  assert.match(ruCookies, /Вебвизор/);
+  assert.match(enCookies, /Yandex Metrica/);
+  assert.match(enCookies, /Webvisor/);
+  assert.match(
+    ruCookies,
+    /Отзыв согласия на аналитику останавливает дальнейшую работу Яндекс Метрики в этом приложении; сведения, уже переданные в Яндекс Метрику, это действие не удаляет/,
+  );
+  assert.match(
+    enCookies,
+    /Withdrawing analytics consent stops further Yandex Metrica use by this application; it does not erase data already sent to Yandex Metrica/,
+  );
+  assert.match(
+    ruLegal,
+    /не означает удаление сведений, уже переданных в Яндекс Метрику/,
+  );
+  assert.match(enLegal, /does not erase data already sent to Yandex Metrica/);
+  assert.doesNotMatch(ruLegal, /уже переданных оператору сведений/);
+  assert.doesNotMatch(enLegal, /already sent to the operator/);
+  assert.doesNotMatch(ruCookies, /оператору Метрики/);
+  assert.doesNotMatch(enCookies, /Metrica operator/);
+  assert.doesNotMatch(ruCookies, /останавливает дальнейшую загрузку Метрики/);
+  assert.doesNotMatch(enCookies, /stops further Metrica loading/);
+  assert.match(
+    ruLegal,
+    /Яндекс Метрика — необязательная аналитика посещаемости публичных страниц сайта; используется только после согласия пользователя на аналитику/,
+  );
+  assert.match(
+    enLegal,
+    /Yandex Metrica — optional traffic analytics for public site pages; used only after the user gives analytics consent/,
+  );
+  assert.match(
+    getDictionary("ru").legal.cookieCategoryAnalyticsHint,
+    /останавливает дальнейшую работу Яндекс Метрики в этом приложении/,
+  );
+  assert.match(
+    getDictionary("en").legal.cookieCategoryAnalyticsHint,
+    /stops further Yandex Metrica use by this application/,
+  );
+  assert.doesNotMatch(ruCookies, /Аналитические и маркетинговые трекеры в настоящее время не подключены/);
+  assert.doesNotMatch(enCookies, /Analytics and marketing trackers are not currently enabled/);
 });
 
 test("privacy policy describes request-based deletion and grant-based AI access", () => {
@@ -254,9 +295,10 @@ test("standalone consent lists destruction and does not treat Privacy as accepta
 
 test("each public legal document has non-empty RU and EN bodies with structural parity", () => {
   assert.equal(LEGAL_DOCUMENT_VERSION, "2");
-  assert.equal(LEGAL_DOCUMENT_UPDATED_ON, "2026-08-17");
-  assert.equal(formatLegalUpdatedOn("ru"), "17 августа 2026 г.");
-  assert.equal(formatLegalUpdatedOn("en"), "17 August 2026");
+  assert.equal(LEGAL_DOCUMENT_UPDATED_ON, "2026-08-18");
+  assert.equal(formatLegalUpdatedOn("ru"), "18 августа 2026 г.");
+  assert.equal(formatLegalUpdatedOn("en"), "18 August 2026");
+  assert.equal(CURRENT_LEGAL_RELEASE.effectiveDate, "2026-08-18");
   assert.equal(CURRENT_LEGAL_RELEASE.id, "2026-08-v2");
   assert.equal(CURRENT_LEGAL_RELEASE.legalVersion, "2");
 

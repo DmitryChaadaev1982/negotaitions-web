@@ -9,6 +9,8 @@
 - Yandex AI / YandexGPT-compatible model endpoint usage (analysis and transcript enhancement paths).
 - Yandex Cloud Postbox (email sending through SES-compatible API when enabled).
 - Yandex Data Streams (disabled-by-default Postbox provider-event ingestion).
+- Yandex Metrica (optional public-site traffic analytics after cookie consent).
+- Yandex Webmaster (external ownership already confirmed via DNS TXT; used after deploy for robots/sitemap/re-crawl/diagnostics).
 - Yandex infrastructure VM runtime hosting app process.
 
 ## Roles By System
@@ -39,6 +41,17 @@
   - No public webhook route is part of this architecture.
 - Object storage:
   - Recording file persistence and retrieval for processing.
+- Yandex Metrica:
+  - Optional public-site traffic statistics after analytics cookie consent.
+  - SPA init uses `defer: true` plus explicit pathname `hit`; `destruct` on
+    consent withdrawal and when leaving public routes.
+  - Not used for authenticated product, room, join, admin, or legal-update.
+  - Webvisor / session replay is not enabled.
+- Yandex Webmaster:
+  - Ownership of `https://negotaitions.ru` is already confirmed via DNS TXT.
+  - Application code does not participate in ownership verification.
+  - After public-site SEO deploy: check `/favicon.ico`, robots.txt,
+    sitemap.xml, re-crawl important public pages, and review site diagnostics.
 
 ## Network And Runtime Model
 

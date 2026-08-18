@@ -26,7 +26,7 @@ const ARTIFACT_ROOT = path.join(
   "artifacts",
   "stage-3-12b-observer-scaling",
 );
-const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v1";
+const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v2";
 
 /**
  * Suite split (see `docs/testing/observer-test-execution-policy.md`):
@@ -163,7 +163,7 @@ async function seedCookieConsent(page: Page) {
     localStorage.setItem(
       storageKey,
       JSON.stringify({
-        version: 1,
+        version: 2,
         necessary: true,
         analytics: false,
         marketing: false,

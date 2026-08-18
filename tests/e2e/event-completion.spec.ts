@@ -19,6 +19,7 @@ import {
   query,
   upsertRecordingForSession,
 } from "./helpers/db";
+import { seedCookieConsent } from "./helpers/cookie-consent";
 
 // Stage 3.10 traceability:
 // ST310-EVENT-001..010, ST310-NAV-005, ST310-RACE-007, ST310-RACE-010
@@ -39,26 +40,13 @@ test.afterEach(async ({ request }) => {
   });
 });
 
-async function seedCookieConsent(page: import("@playwright/test").Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      "negotaitions.cookieConsent.v1",
-      JSON.stringify({
-        necessary: true,
-        analytics: true,
-        marketing: true,
-        timestamp: Date.now(),
-      }),
-    );
-  });
-}
-
 async function dismissCookieBannerIfVisible(page: import("@playwright/test").Page) {
   const banner = page.getByTestId("cookie-banner");
-  if (await banner.isVisible().catch(() => false)) {
-    await page.getByTestId("cookie-accept-all").click();
-    await expect(banner).toHaveCount(0);
+  const accept = page.getByTestId("cookie-accept-all");
+  if ((await accept.count()) > 0) {
+    await accept.click();
   }
+  await expect(banner).toHaveCount(0);
 }
 
 async function createUserSessionCookie(userId: string) {
@@ -302,7 +290,7 @@ test("complete event from lobby closes event and disables session creation @brow
     /Complete entire event|Завершить всю встречу/i,
   );
   await expect(page.getByTestId("complete-event-button")).toBeVisible();
-  await page.getByTestId("cookie-accept-all").click({ force: true }).catch(() => {});
+  await dismissCookieBannerIfVisible(page);
   await page.getByTestId("complete-event-button").click();
   await expect(page.getByRole("heading", { name: /Complete entire event\?|Завершить всю встречу\?/i })).toBeVisible();
   await page.getByTestId("confirm-complete-event-button").click();

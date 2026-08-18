@@ -45,7 +45,7 @@ test.afterAll(cleanupE2eData);
 
 async function clearCookieConsent(page: import("@playwright/test").Page) {
   await page.evaluate(() => {
-    localStorage.removeItem("negotaitions.cookieConsent.v1");
+    localStorage.removeItem("negotaitions.cookieConsent.v2");
   });
 }
 
@@ -72,11 +72,11 @@ test.describe("Cookie banner", () => {
     await expect(page.locator('[data-testid="cookie-banner"]')).not.toBeVisible();
     // Storage should contain consent
     const stored = await page.evaluate(() =>
-      localStorage.getItem("negotaitions.cookieConsent.v1"),
+      localStorage.getItem("negotaitions.cookieConsent.v2"),
     );
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.necessary).toBe(true);
     expect(parsed.analytics).toBe(true);
     expect(parsed.marketing).toBe(true);
@@ -90,7 +90,7 @@ test.describe("Cookie banner", () => {
     await page.locator('[data-testid="cookie-reject-optional"]').click();
     await expect(page.locator('[data-testid="cookie-banner"]')).not.toBeVisible();
     const stored = await page.evaluate(() =>
-      localStorage.getItem("negotaitions.cookieConsent.v1"),
+      localStorage.getItem("negotaitions.cookieConsent.v2"),
     );
     const parsed = JSON.parse(stored!);
     expect(parsed.necessary).toBe(true);
@@ -109,7 +109,7 @@ test.describe("Cookie banner", () => {
     await page.locator('[data-testid="cookie-save-choices"]').click();
     await expect(page.locator('[data-testid="cookie-banner"]')).not.toBeVisible();
     const stored = await page.evaluate(() =>
-      localStorage.getItem("negotaitions.cookieConsent.v1"),
+      localStorage.getItem("negotaitions.cookieConsent.v2"),
     );
     const parsed = JSON.parse(stored!);
     expect(parsed.analytics).toBe(true);
@@ -135,7 +135,7 @@ test.describe("Cookie banner", () => {
     await page.reload();
     await page.locator('[data-testid="cookie-accept-all"]').click();
     const stored = await page.evaluate(() =>
-      localStorage.getItem("negotaitions.cookieConsent.v1"),
+      localStorage.getItem("negotaitions.cookieConsent.v2"),
     );
     expect(stored).not.toBeNull();
     // Must not contain any token/auth-related values
@@ -389,7 +389,7 @@ test.describe("Legal pages", () => {
       await expect(page.locator("body")).toContainText(doc.ruMarker);
       await expect(page.getByTestId("legal-document-meta")).toContainText("2");
       await expect(page.getByTestId("legal-document-meta")).toContainText(
-        "17 августа 2026",
+        "18 августа 2026",
       );
 
       await setLocale(page, "en");
@@ -405,7 +405,7 @@ test.describe("Legal pages", () => {
       await expect(page.locator("body")).not.toContainText("Whisper");
       await expect(page.locator("body")).not.toContainText("LiveKit");
       await expect(page.getByTestId("legal-document-meta")).toContainText(
-        "17 August 2026",
+        "18 August 2026",
       );
     });
   }
@@ -637,7 +637,7 @@ test.describe("Regression — Phase 5 protections intact", () => {
     if (authCookie) {
       // Auth session cookie should be httpOnly — cannot be read by JS
       const storedConsent = await page.evaluate(() =>
-        localStorage.getItem("negotaitions.cookieConsent.v1"),
+        localStorage.getItem("negotaitions.cookieConsent.v2"),
       );
       // Consent storage should not contain auth cookie value
       if (storedConsent) {

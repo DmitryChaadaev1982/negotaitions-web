@@ -75,7 +75,7 @@ Current release:
 
 - `id`: `2026-08-v2`
 - `legalVersion`: `2`
-- `effectiveDate`: `2026-08-17`
+- `effectiveDate`: `2026-08-18`
 - `requiresExistingUserAction`: `true`
 - `requiredConsentTypes`: `TERMS_PRIVACY_ACK_V2`,
   `PERSONAL_DATA_PROCESSING_V2`, `TRAINING_SESSION_NOTICE_V2`
@@ -136,33 +136,81 @@ surfaces, SEO/social metadata, footer).
 
 ## Indexing
 
-`lib/seo/indexing.ts` is the reusable metadata helper.
+`lib/seo/indexing.ts` is the reusable metadata helper. Canonical host is
+`https://negotaitions.ru`. RU and EN share the same public pathnames
+(`HREFLANG_IMPLEMENTED = NO`).
 
-- Public `/`, `/about`, `/support`, `/faq`, and existing legal documents are
-  indexable.
+- Indexable marketing pages: `/`, `/about`, `/support`, `/faq`.
+- Public legal documents remain reachable and use `noindex, follow`. They are
+  excluded from the sitemap.
 - Auth, app, `/legal-update`, account-status, join/lobby/room/rejoin, and
-  provider-test routes export `privateIndexingMetadata` (`noindex`).
-- `robots.ts`, sitemap, canonical, Open Graph, and Webmaster remain Wave 3.
-- Analytics remains off.
+  provider-test routes use `privateIndexingMetadata` (`noindex, nofollow`) and
+  omit canonical/Open Graph URLs so token-bearing pathnames are not published.
+- `app/robots.ts` and `app/sitemap.ts` emit production robots and a
+  deterministic marketing-page sitemap. `robots.txt` is not an access-control
+  boundary.
+-   Public Open Graph / Twitter preview is a programmatically composed branded
+  card in `app/opengraph-image.tsx` using the approved icon, product
+  name, and homepage value proposition. The author portrait is not the default
+  OG image.
+- Canonical browser favicon is `app/favicon.ico`, served anonymously at
+  `/favicon.ico`. It is a multi-size ICO generated from the approved
+  NegotAItions pictogram (`public/brand/negotaitions-icon-*.png`); it is not
+  the author portrait. `app/icon.png` and `app/apple-icon.png` remain the
+  larger PNG / Apple touch icons. `robots.txt` does not disallow `/favicon.ico`.
+- Yandex Webmaster ownership of `https://negotaitions.ru` is already
+  confirmed via DNS TXT. The application does not emit a verification meta
+  tag and does not read a Webmaster verification env value. Preserve the
+  existing DNS record. After deploy, check robots.txt, sitemap.xml, re-crawl
+  of marketing pages, and Webmaster diagnostics.
+
+## Public-site analytics
+
+Optional Yandex Metrica is public-marketing analytics only.
+
+- Counter ID: `NEXT_PUBLIC_YANDEX_METRICA_ID`. Absent ID means no script.
+- Loads only from `app/(public)/` after cookie-consent `analytics=true` on
+  `negotaitions.cookieConsent.v2`. Historical v1 choices are not migrated.
+- Not loaded on authenticated app chrome, room/join/rejoin, auth,
+  `/legal-update`, legal documents, or APIs.
+- Init uses the official SPA model: `ym(id, "init", { defer: true, ... })`
+  with Webvisor, ecommerce, clickmap, and identity `userParams` disabled.
+  The first public page view is an explicit `ym(id, "hit", pathname)` after
+  init, not an automatic init pageview. Subsequent public App Router
+  navigations send exactly one pathname-only hit. Query strings and tokens
+  are not sent. Revoking analytics consent, or leaving `app/(public)/` so the
+  analytics component unmounts, calls `ym(id, "destruct")`. Already
+  transmitted provider data is not remotely erased. The downloaded script
+  may remain in the document; no further hits run while consent is false.
+
+Operator setup: `docs/operations/public-site-seo-and-analytics.md`.
 
 ## Source notes
 
 - `app/(public)/layout.tsx`, `app/(public)/page.tsx`,
   `app/(public)/about/page.tsx`, `app/(public)/support/page.tsx`,
-  `app/(public)/faq/page.tsx`
+    `app/(public)/faq/page.tsx`, `app/opengraph-image.tsx`,
+    `app/favicon.ico`, `app/icon.png`, `app/apple-icon.png`,
+  `app/robots.ts`, `app/sitemap.ts`, `app/(legal)/layout.tsx`
 - `components/public-header.tsx`, `components/public-home-page.tsx`,
   `components/public-about-page.tsx`, `components/public-support-page.tsx`,
   `components/public-faq-page.tsx`, `components/public-visual-frame.tsx`,
-  `components/site-footer.tsx`
+  `components/site-footer.tsx`, `components/public-site-analytics.tsx`,
+  `components/cookie-banner.tsx`
 - `lib/public-site/visuals.ts`, `lib/public-site/faq-items.ts`,
   `lib/public-site/author-portrait.ts`, `public/images/public-site/`,
   `public/images/landing/`
-- `lib/seo/indexing.ts`, `lib/i18n/config.ts`,
+- `lib/seo/indexing.ts`, `lib/seo/canonical.ts`, `lib/seo/copy.ts`,
+  `lib/seo/page-metadata.ts`, `lib/seo/robots-policy.ts`,
+  `lib/seo/sitemap-pages.ts`, `lib/seo/site.ts`,
+  `lib/analytics/yandex-metrica.ts`, `lib/analytics/yandex-metrica-client.ts`,
+  `lib/consent/cookie-consent.ts`, `lib/i18n/config.ts`,
   `lib/i18n/dictionaries/en.ts`, `lib/i18n/dictionaries/ru.ts`,
   `lib/legal/`, `lib/consent/user-consent.ts`,
-  `lib/auth/registration.ts`, `app/privacy/page.tsx`, `app/terms/page.tsx`,
-  `app/cookie-policy/page.tsx`, `app/data-processing-consent/page.tsx`,
-  `app/ai-processing-notice/page.tsx`, `app/legal-update/page.tsx`,
+  `lib/auth/registration.ts`, `app/(legal)/privacy/page.tsx`,
+  `app/(legal)/terms/page.tsx`, `app/(legal)/cookie-policy/page.tsx`,
+  `app/(legal)/data-processing-consent/page.tsx`,
+  `app/(legal)/ai-processing-notice/page.tsx`, `app/legal-update/page.tsx`,
   `app/actions/legal-release.ts`, `components/legal-document-page.tsx`,
   `components/legal-document-header.tsx`, `components/legal-update-view.tsx`,
   `components/legal-release-checkboxes.tsx`,

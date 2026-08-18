@@ -55,8 +55,9 @@ async function login(page: Page, userId: string) {
 async function seedCookieConsent(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem(
-      "negotaitions.cookieConsent.v1",
+      "negotaitions.cookieConsent.v2",
       JSON.stringify({
+        version: 2,
         necessary: true,
         analytics: true,
         marketing: true,

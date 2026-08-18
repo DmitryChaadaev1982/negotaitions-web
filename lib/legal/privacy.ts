@@ -197,7 +197,8 @@ const ruPrivacy: LegalDocument = {
             "Yandex SpeechKit — транскрибация;",
             "ИИ-сервисы, предоставляемые в инфраструктуре Yandex Cloud, — улучшение транскрипта и ИИ-анализ;",
             "Yandex Cloud Postbox — доставка сервисной электронной почты;",
-            "Yandex Data Streams / инфраструктура событий Yandex Cloud — обработка или передача служебных сведений о доставке, отказе или жалобе.",
+            "Yandex Data Streams / инфраструктура событий Yandex Cloud — обработка или передача служебных сведений о доставке, отказе или жалобе;",
+            "Яндекс Метрика — необязательная аналитика посещаемости публичных страниц сайта; используется только после согласия пользователя на аналитику.",
           ],
         },
         {
@@ -224,7 +225,7 @@ const ruPrivacy: LegalDocument = {
       blocks: [
         {
           type: "p",
-          text: `Состав cookie, localStorage и sessionStorage описан в [[Политике использования cookie и хранения данных в браузере|/cookie-policy]]. Аналитические и маркетинговые средства сбора статистики в настоящее время не подключены.`,
+          text: `Состав cookie, localStorage и sessionStorage описан в [[Политике использования cookie и хранения данных в браузере|/cookie-policy]]. На публичных страницах сайта после согласия на аналитику может загружаться Яндекс Метрика для учёта посещаемости; она может использовать cookie и хранилище браузера. Вебвизор не включается. Метрика не используется в личном кабинете, комнате переговоров и на страницах входа. Маркетинговые средства сбора статистики не подключены. Отзыв согласия на аналитику останавливает дальнейшую работу Яндекс Метрики в этом приложении и не означает удаление сведений, уже переданных в Яндекс Метрику.`,
         },
       ],
     },
@@ -485,7 +486,8 @@ const enPrivacy: LegalDocument = {
             "Yandex SpeechKit — transcription;",
             "AI services provided through Yandex Cloud infrastructure — transcript enhancement and AI analysis;",
             "Yandex Cloud Postbox — delivery of service email;",
-            "Yandex Data Streams / Yandex Cloud event infrastructure — processing or transport of technical delivery, bounce, or complaint events.",
+            "Yandex Data Streams / Yandex Cloud event infrastructure — processing or transport of technical delivery, bounce, or complaint events;",
+            "Yandex Metrica — optional traffic analytics for public site pages; used only after the user gives analytics consent.",
           ],
         },
         {
@@ -512,7 +514,7 @@ const enPrivacy: LegalDocument = {
       blocks: [
         {
           type: "p",
-          text: `Cookies, localStorage, and sessionStorage are described in the [[Cookie and Browser Storage Policy|/cookie-policy]]. Analytics and marketing tracking are not currently enabled.`,
+          text: `Cookies, localStorage, and sessionStorage are described in the [[Cookie and Browser Storage Policy|/cookie-policy]]. After analytics consent, Yandex Metrica may load on public site pages for traffic statistics and may use cookies and browser storage. Webvisor is not enabled. Metrica is not used in the authenticated application, negotiation room, or sign-in pages. Marketing tracking is not enabled. Withdrawing analytics consent stops further application-enabled Metrica use; it does not erase data already sent to Yandex Metrica.`,
         },
       ],
     },

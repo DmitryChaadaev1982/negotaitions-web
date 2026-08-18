@@ -4,16 +4,16 @@ import { LegalDocumentPage } from "@/components/legal-document-page";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { getServerLocale } from "@/lib/i18n/server";
 import { getLocalizedLegalDocuments } from "@/lib/legal/documents";
-import { publicIndexingMetadata } from "@/lib/seo/indexing";
+import { buildLegalDocumentMetadata } from "@/lib/seo/page-metadata";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getServerLocale();
-  return {
-    ...publicIndexingMetadata,
+  return buildLegalDocumentMetadata({
+    pathname: "/privacy",
     title: getDictionary(locale).legal.privacyPolicy,
-  };
+  });
 }
 
 export default function PrivacyPage() {

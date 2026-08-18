@@ -29,8 +29,9 @@ test.afterAll(async () => {
 async function seedCookieConsent(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
     localStorage.setItem(
-      "negotaitions.cookieConsent.v1",
+      "negotaitions.cookieConsent.v2",
       JSON.stringify({
+        version: 2,
         necessary: true,
         analytics: true,
         marketing: true,

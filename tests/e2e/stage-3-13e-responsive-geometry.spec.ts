@@ -13,7 +13,7 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
-const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v1";
+const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v2";
 
 const VIEWPORT_MATRIX = [
   { width: 1920, height: 1080, label: "1920x1080" },
@@ -85,7 +85,7 @@ async function seedCookieConsent(page: Page) {
     localStorage.setItem(
       storageKey,
       JSON.stringify({
-        version: 1,
+        version: 2,
         necessary: true,
         analytics: false,
         marketing: false,

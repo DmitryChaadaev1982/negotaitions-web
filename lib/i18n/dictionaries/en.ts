@@ -1794,7 +1794,7 @@ export const en = {
     returnHomeShort: "Home",
     // Cookie banner
     cookieBannerText:
-      "We use necessary cookies and browser storage to keep the site working, secure sign-in, and store technical rejoin hints. Optional analytics and marketing cookies are not currently used and will be enabled only with your consent. You can accept all, reject optional cookies, or customize your choice.",
+      "We use necessary cookies and browser storage to keep the site working, secure sign-in, and store technical rejoin hints. Optional public-site analytics (Yandex Metrica) load only with your consent. Marketing cookies are not currently used. You can accept all, reject optional cookies, or customize your choice.",
     acceptAll: "Accept all",
     rejectOptional: "Reject optional",
     customize: "Customize",
@@ -1802,7 +1802,7 @@ export const en = {
     cookieCategoryNecessary: "Necessary",
     cookieCategoryNecessaryHint: "Always active — required for sign-in, session security, and technical rejoin hints.",
     cookieCategoryAnalytics: "Analytics",
-    cookieCategoryAnalyticsHint: "Usage analytics to improve the platform. Not currently used.",
+    cookieCategoryAnalyticsHint: "Public-site traffic statistics via Yandex Metrica (cookies and browser storage). Loads only after your consent. Session Replay / Webvisor is not used. Turning this off stops further Yandex Metrica use by this application; it does not erase data already sent to Yandex Metrica.",
     cookieCategoryMarketing: "Marketing",
     cookieCategoryMarketingHint: "Marketing and retargeting. Not currently used.",
     // Registration consent checkboxes

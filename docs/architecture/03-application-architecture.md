@@ -31,8 +31,10 @@
   active media connections are not force-terminated by a legal-version
   change; the next server navigation, reload, or fresh authenticated entry
   applies the gate.
-- Indexing policy lives in `lib/seo/indexing.ts`. Details:
-  `13-public-site-and-content.md`.
+- Indexing policy lives in `lib/seo/indexing.ts`. Canonical host, robots,
+  sitemap, Open Graph, and public-site Metrica:
+  `13-public-site-and-content.md` and
+  `docs/operations/public-site-seo-and-analytics.md`.
 
 ## Provider Selection
 

@@ -296,6 +296,11 @@ Run from repository before deployment:
 - `npm run test:unit`
 - `npm run test:stage310` (provider-free Stage 3.10 foundation regression)
 
+Public-site SEO and optional Yandex Metrica operator inputs are documented
+in `docs/operations/public-site-seo-and-analytics.md`. Yandex Webmaster
+ownership for `https://negotaitions.ru` is already confirmed via DNS TXT
+and does not require an application setting.
+
 ## Prisma Migration Paths
 
 Use standard Prisma commands for clean databases, development databases, CI databases, and new environments:

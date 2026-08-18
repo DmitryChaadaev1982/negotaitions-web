@@ -20,7 +20,7 @@ export type LegalRelease = {
 export const CURRENT_LEGAL_RELEASE: LegalRelease = {
   id: "2026-08-v2",
   legalVersion: "2",
-  effectiveDate: "2026-08-17",
+  effectiveDate: "2026-08-18",
   requiresExistingUserAction: true,
   requiredConsentTypes: [
     CURRENT_CONSENT_TYPES.TERMS_PRIVACY_ACK_V2,
