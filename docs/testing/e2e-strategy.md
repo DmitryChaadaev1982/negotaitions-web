@@ -20,7 +20,10 @@
 
 ## Recommended Commands
 
-Routine local validation:
+Command catalog only. When to run L1–L4 is in
+[validation-checklist.md](./validation-checklist.md).
+
+Routine L3 checkpoint:
 
 - `npm run validate:fast`
 
@@ -119,9 +122,17 @@ Tunnel preflight and classified suites (opt-in only):
 - `npm run test:e2e:live:list`
 - `npm run test:e2e:live`
 
-## Mandatory validation gates
+## L4 / final validation gates
 
-For implementation phases that modify code, tests, config, or runtime behavior, run and report all gates below:
+When to run broad gates is defined by the L1–L4 ladder in
+[validation-checklist.md](./validation-checklist.md) and
+[engineering-workflow.md](./engineering-workflow.md). This section is the command set for **L4** — a final code/config/test/runtime
+package boundary, material high-risk boundary, or deploy readiness — not an
+instruction to rerun product suites after every small edit or every docs-only
+commit.
+
+For L4 of implementation that modifies code, tests, config, or runtime
+behavior, run and report all gates below:
 
 - `npm run validate:fast`
 - `npm run validate:deploy`
@@ -130,16 +141,20 @@ For implementation phases that modify code, tests, config, or runtime behavior, 
 
 Rules:
 
-- All four gates are mandatory unless the task is strictly audit-only or docs-only.
-- If a gate cannot run, report the exact blocker; do not silently omit gates.
+- Intermediate checkpoints may stop at L1–L3 when the current approved packet
+  does not yet justify L4. That does not waive these gates at the later
+  commit/deploy/package boundary.
+- When L4 applies, all four gates are mandatory unless the task is strictly
+  audit-only or docs-only.
+- If a required gate cannot run, report the exact blocker; do not silently omit gates.
 - Do not hide failures via retries or by skipping tests.
 - `npm run test:e2e:full` remains manual/nightly unless explicitly requested.
 - Tunnel/live-provider suites are opt-in and never part of default mandatory gates.
-- A change is not merge-ready until applicable mandatory gates pass, or the user explicitly accepts a documented exception.
+- A change is not merge-ready until applicable L4 gates pass, or the user explicitly accepts a documented exception.
 
 ### Gate execution order
 
-- Run gates sequentially in this exact order:
+- When L4 runs, run gates sequentially in this exact order:
   1. `npm run validate:fast`
   2. `npm run validate:deploy`
   3. `npm run test:e2e:smoke`
@@ -180,7 +195,9 @@ Rules:
 
 ## Validation Gate Model
 
-`validate:fast` includes:
+`validate:fast` is the existing L3 checkpoint gate (not universally exhaustive;
+see the coverage note in [validation-checklist.md](./validation-checklist.md)).
+It includes:
 
 - Lint
 - Prisma validate
@@ -313,6 +330,7 @@ Intentionally not covered in Phase 2 smoke:
 ## Canonical References
 
 - `tests/e2e/**`
+- `docs/testing/engineering-workflow.md`
 - `docs/testing/observer-test-execution-policy.md`
 - `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
 - `docs/testing/stage-3-10-session-lifecycle-traceability.csv`

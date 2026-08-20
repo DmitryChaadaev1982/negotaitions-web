@@ -1,12 +1,83 @@
 # Validation Checklist
 
-Use this checklist for architecture/documentation-affecting changes and release readiness checks.
+This is the validation **command catalog** and **L1–L4 mapping** for meaningful
+engineering changes and for release readiness where those gates apply.
+
+How to decompose work, select eval classes, write a Validation Plan before
+implementation, and execute it afterward is defined in
+[`engineering-workflow.md`](./engineering-workflow.md). Do not treat every
+small change or every docs-only commit as an automatic product L4 run.
+
+## Validation ladder
+
+Select a level for the **current checkpoint**. Lower levels delay broad
+validation; they never waive required final/deploy gates for code that
+repository policy still gates.
+
+| Level | Purpose | Typical evidence |
+| --- | --- | --- |
+| **L1 — Focused** | Fast proof for the current Change Unit. | Targeted unit test, single static guard, single component/helper/domain test. |
+| **L2 — Relevant / coupled** | Completed coupled cluster, High-Risk Kernel, or important transition group. | Relevant integration group, Lab subset, focused E2E, historical cohort tests, migration verifier. |
+| **L3 — Checkpoint** | Meaningful accumulated engineering checkpoint. | Existing `npm run validate:fast`, **plus** the focused/relevant evals selected for the changed area. |
+| **L4 — Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, **or** a material high-risk / deploy-readiness boundary. Not every commit. | Existing `validate:deploy` and the required smoke/browser/deploy gates below. |
+
+L3 accuracy: `validate:fast` is the current cheap project checkpoint gate
+(lint, Prisma validate/generate, unit tests, Playwright `--list`). It is
+**not** universally exhaustive. The unit glob is currently
+`lib/**/*.test.ts`; deterministic tests under `app/**` or `components/**` may
+be omitted from that gate. Closing that gap is future CU-12. Always run the
+focused/relevant evals for the changed area in addition to whatever L3 covers.
+
+### Safety rule
+
+A lower level may be selected only because the **current checkpoint** does not
+yet justify broad validation. It is not permission to skip required FINAL
+validation before commit/deploy for code that requires it.
+
+For high-risk areas (DB, auth, privacy, access, publication, concurrency,
+migration, deployment), preserve existing scoped safety requirements in
+`.cursor/rules/` and the mapped architecture/operations documents. The ladder
+does not relax those rules.
+
+Do not interpret “this Change Unit is LOW risk” as “operator may skip L4 on
+the later code/config/test/runtime package of that change.”
+
+The actual implementation/diff may **raise** the planned level or add evals.
+It must **not** silently lower an approved Validation Plan because the diff
+looks small.
+
+### When L4 should not run yet
+
+Staged validation is allowed. Examples:
+
+- Trivial docs-only / audit-only change: no product suite for ritual. Docs-only
+  commits do not mechanically run product L4.
+- Presentation/UI change awaiting visual acceptance: focused test/render
+  first; operator acceptance before expensive broad rerun.
+- Several small related Change Units: L1 per unit, L2/L3 after an accumulated
+  checkpoint, L4 at the meaningful final boundary.
+
+This is an optimization of **when** broad validation runs, not an elimination
+of final gates.
+
+### Validation evidence
+
+The stage/change plan should record:
+
+- required eval classes / later eval IDs
+- validation level required for the current checkpoint
+- commands/evidence actually run
+- unresolved findings
+
+Do not add automation for this log in Stage 3.16A Checkpoint 1–2.
 
 ## Recommended Validation Commands
 
 - `git status`
 - `git diff --stat`
 - `git diff --name-status`
+- `git diff --check`
+- `npm run eval:registry:check` (Eval Registry structural validator)
 - `npm run validate:fast`
 - `npm run validate:deploy`
 - `npm run test:e2e:list` (inventory only)
@@ -36,9 +107,18 @@ Use this checklist for architecture/documentation-affecting changes and release 
 - `npm run test:e2e:live` (opt-in live-provider suite)
 - `npm run test:e2e:full` (broad regression; manual/nightly until stabilized)
 
-## Mandatory validation gates
+## L4 / final validation gates
 
-For all non-audit, non-doc-only implementation phases, run and report:
+L4 is a **final CODE / CONFIGURATION / TEST / RUNTIME package** boundary where
+existing repository policy requires broad final gates, **or** a material
+high-risk boundary, **or** deploy readiness.
+
+It is **not** every commit. Docs-only and audit-only changes use applicable
+documentation/focused evidence. Presentation/UI work can reach operator visual
+acceptance before expensive L4. Code/config/test/runtime changes still receive
+applicable L4 gates at their final package/deploy boundary.
+
+When L4 applies, these four commands remain that boundary:
 
 - `npm run validate:fast`
 - `npm run validate:deploy`
@@ -47,21 +127,31 @@ For all non-audit, non-doc-only implementation phases, run and report:
 
 Rules:
 
-- All four commands are mandatory unless the task is strictly audit-only or docs-only.
-- If any gate cannot run, document the exact blocker and do not silently skip it.
+- Intermediate checkpoints may stop at L1–L3 when the current approved
+  Validation Plan does not yet justify L4.
+- When L4 applies, all four commands are mandatory unless the task is
+  strictly audit-only or docs-only.
+- Docs-only and audit-only work still does not require these product gates.
+- If any required gate cannot run, document the exact blocker and do not
+  silently skip it.
 - Do not hide failures with retries or skipped tests.
-- `npm run test:e2e:full` is manual/nightly and is not mandatory unless explicitly requested.
+- `npm run test:e2e:full` is manual/nightly and is not mandatory unless
+  explicitly requested.
 - Tunnel/live-provider suites are opt-in and not part of default gates.
-- Changes are not merge-ready until applicable gates pass or a user-approved exception is documented.
+- Changes are not merge-ready until applicable L4 gates pass or a
+  user-approved exception is documented.
 
-Sequential requirement:
+Sequential requirement (when L4 runs):
 
-- Run mandatory gates in strict order: `validate:fast` -> `validate:deploy` -> `test:e2e:smoke` -> `test:e2e:smoke:browser`.
-- Do not overlap browser smoke with other local Playwright runs because localhost port `3100` is shared.
+- Run L4 gates in strict order: `validate:fast` -> `validate:deploy` ->
+  `test:e2e:smoke` -> `test:e2e:smoke:browser`.
+- Do not overlap browser smoke with other local Playwright runs because
+  localhost port `3100` is shared.
 
 ## Validation Gate Intent
 
-- `validate:fast` is the routine local gate:
+- `validate:fast` is the routine L3 checkpoint gate (subject to the coverage
+  note in the ladder above):
   - lint
   - `prisma validate`
   - `prisma generate`
@@ -169,4 +259,5 @@ Notes:
 ## Source Notes
 
 - `tests/e2e/**`
+- `docs/testing/engineering-workflow.md`
 - `docs/testing/yandex-poc-smoke-regression-plan.md`

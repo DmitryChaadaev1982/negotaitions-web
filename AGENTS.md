@@ -15,6 +15,12 @@ workflows. This file is deliberately a router, not a project history.
    behavior.
 4. Do not load unrelated stage, audit, or implementation history unless the
    current document links to it for a specific question.
+5. Before implementing a meaningful change, follow
+   [`docs/testing/engineering-workflow.md`](docs/testing/engineering-workflow.md)
+   for Change Impact Analysis, change-unit decomposition, high-risk kernel,
+   eval selection, and a Validation Plan. Execute that plan after
+   implementation using the validation ladder. Existing scoped rules remain
+   authoritative for database, privacy, access, and deploy safety.
 
 Read the relevant guide under `node_modules/next/dist/docs/` before changing
 Next.js code; this repository uses a version with breaking changes.
@@ -43,10 +49,16 @@ Next.js code; this repository uses a version with breaking changes.
 
 ## Testing and release safety
 
-For code, configuration, test, or runtime behavior changes, run and report in
-order: `npm run validate:fast`, `npm run validate:deploy`,
-`npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`. Docs-only and
-audit-only work does not require these gates.
+Select validation using the L1–L4 ladder in
+[`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md).
+Intermediate checkpoints may stop at L1–L3. That is timing, not a waiver.
+
+L4 is a final **code / configuration / test / runtime** package or
+deploy/high-risk boundary, not every commit. Docs-only and audit-only work
+does not require product L4 suites. When L4 applies, run and report in order:
+`npm run validate:fast`, `npm run validate:deploy`,
+`npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`. Low current
+Change Unit risk does not authorize skipping those final gates later.
 
 Capture approved product requirements as an atomic manifest before or during
 implementation, then derive/select acceptance evidence before implementation.
@@ -56,7 +68,7 @@ the implementing model's completion report. Run `validate-wave` separately as
 the correctness/regression gate.
 
 Use [`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md)
-for mandatory gate commands and ordering, and
+for ladder selection and L4 gate commands/ordering, and
 [`docs/testing/e2e-strategy.md`](docs/testing/e2e-strategy.md) for test
 selection, E2E database isolation, and managed/live modes.
 Use [`docs/testing/observer-test-execution-policy.md`](docs/testing/observer-test-execution-policy.md)

@@ -39,6 +39,7 @@
     "agent:baseline:record": "node scripts/agent-validation-baseline.mjs record",
     "agent:baseline:clear": "node scripts/agent-validation-baseline.mjs clear",
     "test:agent:tooling": "node --test \"scripts/__tests__/*.test.mjs\"",
+    "eval:registry:check": "node scripts/eval-registry-check.mjs",
     "test:e2e:db:check": "tsx scripts/e2e/check-database.ts",
     "test:e2e:tunnel:check": "node scripts/e2e/check-reverse-tunnel.mjs",
     "test:e2e:tunnel:list": "playwright test --list --grep @requires-tunnel",

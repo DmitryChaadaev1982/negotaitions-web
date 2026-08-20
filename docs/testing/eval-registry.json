@@ -1,0 +1,409 @@
+{
+  "version": 1,
+  "idPolicy": "Stable Eval IDs are EVAL-<DOMAIN>-<SLUG> and must not be filenames. Preserve or link existing Lab/business IDs (S10, I03, PT-25, S316A-RET-001) in `requirements` rather than competing with them.",
+  "maintenance": "Update this Registry only when an important invariant/eval is introduced, materially changed, retired, found stale, or found missing because of a defect. Do not add an entry for every new unit test. Future manifests should reference Eval IDs where they materially prove a requirement.",
+  "evals": [
+    {
+      "id": "EVAL-PP-S10-AI-CURRENT",
+      "invariant": "A completed current AI stage is presented as current, without a mapping-required contradiction, when the canonical projection says AI is complete.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "STATE_FIXTURE",
+      "expectedDomainResult": "Canonical projection reports AI complete/current; mapping is informational, not blocking.",
+      "expectedUiResult": "Materials, rail, and /sessions do not show mapping-required while AI is the completed current stage.",
+      "automation": "MIXED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S10", "PT-17", "PT-24"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "tests/e2e/helpers/post-transcription-lab-catalog.ts",
+        "tests/e2e/post-transcription-lab.spec.ts",
+        "lib/post-processing/projection.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PP-CANONICAL-PROJECTION",
+      "invariant": "One server-side post-processing projection supplies semantic stage state; clients do not independently reinterpret AUTO_SUGGESTED/CONFIRMED/readiness.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "projectPostProcessingStages is the canonical semantic source.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["PT-17"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/post-processing/projection.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PP-ENH-MOUNTED-RUNNING-COMPLETED",
+      "invariant": "The same already-mounted materials UI converges from enhancement RUNNING to COMPLETED without reload or remount.",
+      "risk": "HIGH",
+      "evalType": "MOUNTED_TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Successive materials/status payloads project RUNNING then COMPLETED.",
+      "expectedUiResult": "Rail and expanded transcript section on the same mounted tree both show COMPLETED.",
+      "automation": "AUTOMATED",
+      "transitionKind": "MOUNTED_TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S316A-RET-001", "PT-05"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/post-processing/enhancement-live-transition.test.ts"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-AI-HIST-NULL-READ",
+      "invariant": "Historical AiAnalysis rows with inputFingerprint NULL remain readable using legacy transcriptId/retranscribeCount currentness.",
+      "risk": "HIGH",
+      "evalType": "HISTORICAL_READ",
+      "fixtureType": "SYNTHETIC_HISTORICAL",
+      "expectedDomainResult": "NULL fingerprint rows evaluate as legacy_current when transcript identity matches.",
+      "expectedUiResult": "Historical materials/AI can open without treating NULL as missing/corrupt.",
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": "NULL_FINGERPRINT",
+      "requirements": ["PT-22", "I05", "S316A-RET-002"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/analysis-currentness.test.ts",
+        "lib/post-processing/historical-session-compatibility.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-HIST-NULL-FIRST-MATERIAL-EDIT",
+      "invariant": "First facilitator material mutation under new code binds a still-legacy-current NULL fingerprint to the pre-mutation envelope so the old AI becomes non-current.",
+      "risk": "HIGH",
+      "evalType": "HISTORICAL_FIRST_MUTATION",
+      "fixtureType": "SYNTHETIC_HISTORICAL",
+      "expectedDomainResult": "EDIT binds NULL → pre-mutation hash; retranscribeCount unchanged; analysis no longer current.",
+      "expectedUiResult": "Facilitator workflow presents AI as needing rerun after that first edit, not as still-completed current output.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": "NULL_FINGERPRINT",
+      "requirements": ["S316A-RET-002", "PT-22", "PT-23", "PT-24"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/legacy-null-material-edit.test.ts",
+        "docs/handoffs/stage-3-15a-local-operator-acceptance.md"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-MIG-FINGERPRINT-COMPAT",
+      "invariant": "Additive nullable AiAnalysis.inputFingerprint is deploy-ordered: new client must not read a database that lacks the column, and NEW CODE + OLD DB is fail-closed or prevented.",
+      "risk": "HIGH",
+      "evalType": "MIGRATION_COMPATIBILITY",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "NEW CODE + NEW DB works. OLD CODE + NEW DB remains compatible because the column is nullable. NEW CODE + OLD DB is prevented by apply-schema-before-new-process or fails closed.",
+      "expectedUiResult": "Materials status must not 500 solely because the column is absent after a new client starts.",
+      "automation": "MIXED",
+      "transitionKind": "NOT_APPLICABLE",
+      "historicalCohort": "PRE_FINGERPRINT_SCHEMA",
+      "requirements": ["S316A-RET-003", "PT-18"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/prisma-production-migration-overlay.test.ts",
+        "docs/architecture/11-deployment-architecture.md",
+        "docs/requirements/stage-3-15a-post-processing-workflow.md"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-PP-RETRANSCRIBE-CONFIRM",
+      "invariant": "Save transcript then Retranscribe uses the real confirmation interaction, not only a seeded final state.",
+      "risk": "HIGH",
+      "evalType": "INTERACTION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "Confirmed retranscription invalidates downstream once: new transcript generation, old AI non-current, active publication revoked in the claim transaction.",
+      "expectedUiResult": "The facilitator sees and acts on the real confirmation control before rewind proceeds.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S316A-RET-004", "PT-25"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/retranscription-downstream-invalidation.test.ts",
+        "lib/post-processing/retranscription-confirmation-ui.test.ts"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-LAB-I03-NATIVE-VS-APP-DIALOG",
+      "invariant": "Lab I03 material-change confirmation uses the same application ConfirmDialog surface as production, not a native browser dialog.",
+      "risk": "MEDIUM",
+      "evalType": "INTERACTION",
+      "fixtureType": "STATE_FIXTURE",
+      "expectedDomainResult": "Material save with active publication requires confirmation then revokes via Unshare.",
+      "expectedUiResult": "Site ConfirmDialog is the operator-visible control; native window.confirm is not the product path.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S316A-RET-005", "I03", "PT-25"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "tests/e2e/post-transcription-lab.spec.ts",
+        "lib/ai/retranscription-downstream-invalidation.test.ts",
+        "lib/ai/material-input-invalidation.test.ts"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-PP-ENH-RACE-AND-LATENCY",
+      "invariant": "Optional transcript enhancement has race/correctness controls distinct from a bounded UX latency budget; late enhancement cannot overwrite later transcript/mapping/AI input.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "No concurrent successful owners; timeout/failure leaves the current usable transcript terminal and non-authoritative for overwrite.",
+      "expectedUiResult": "Visible workflow is not blocked beyond the enhancement UX latency budget (default 7000ms).",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S316A-RET-006", "PT-05", "PT-10"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/services/transcription-phase-f-race.test.ts",
+        "lib/env.transcript-enhancement.test.ts",
+        "lib/services/transcript-enhancement-orchestration.test.ts"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-AI-MATERIAL-CHANGE-REVOKE",
+      "invariant": "A facilitator-controlled material save against current published AI revokes the active publication as part of rewind.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "409 MATERIAL_CHANGE_CONFIRMATION_REQUIRED then revoke via existing Unshare; old row kept but not current.",
+      "expectedUiResult": "AI is presented as not current / needs rerun after confirmed rewind.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["PT-23", "PT-25", "PT-26", "I01"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/material-input-invalidation.test.ts",
+        "tests/e2e/helpers/post-transcription-lab-catalog.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-RECIPIENT-STALE-FAIL-CLOSED",
+      "invariant": "Recipient access to a fingerprint-mismatched published analysis fails closed; grant existence is not enough.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "Stale/current-fingerprint-mismatched publication is not readable by recipients.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["PT-27", "I04"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/analysis-visibility.test.ts",
+        "lib/ai-publication.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PP-MAPPING-INCOMPLETE-BLOCKS-AI",
+      "invariant": "Structurally incomplete speaker mapping blocks AI start.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "PIPELINE_FIXTURE",
+      "expectedDomainResult": "Canonical structural completeness is the blocker, not AUTO_SUGGESTED string alone.",
+      "expectedUiResult": "AI start is unavailable while mapping is incomplete / NEEDS_REVIEW / REQUIRED.",
+      "automation": "MIXED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["PT-11", "PT-13", "AM03", "AM05"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/transcription/speaker-mapping-completeness.test.ts",
+        "tests/e2e/helpers/post-transcription-lab-catalog.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PP-PIPELINE-AUTO-MAPPING",
+      "invariant": "PIPELINE_FIXTURE transcription runs the real auto-speaker-mapping path and can reach AUTO_SUGGESTED without the algorithm writing CONFIRMED.",
+      "risk": "MEDIUM",
+      "evalType": "TRANSITION",
+      "fixtureType": "PIPELINE_FIXTURE",
+      "expectedDomainResult": "autoTriggerSpeakerMappingAfterTranscription produces AUTO_SUGGESTED only; AM01 does not persist CONFIRMED.",
+      "expectedUiResult": "Complete AUTO_SUGGESTED is informational, not an unresolved blocker.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["PT-12", "PT-14", "AM01"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "tests/e2e/helpers/post-transcription-lab-pipeline.ts",
+        "tests/e2e/helpers/post-transcription-lab-catalog.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-ROOM-FINISH-CANONICAL",
+      "invariant": "Canonical session finish/close follows the server lifecycle contract rather than a client-only terminal label.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "E2E",
+      "expectedDomainResult": "Finish lands on the canonical terminal session state owned by session-event flow.",
+      "expectedUiResult": "Room/session surfaces stop presenting an open room after canonical close.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "tests/e2e/session-finish-canonical.spec.ts",
+        "lib/session-display-status.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PROV-MOCK-SMOKE",
+      "invariant": "Default smoke suites prove critical journeys against mock providers without live Voximplant/Yandex side effects.",
+      "risk": "MEDIUM",
+      "evalType": "PROVIDER_INTEGRATION",
+      "fixtureType": "E2E",
+      "expectedDomainResult": "Mock-mode smoke covers curated @smoke journeys without real provider calls.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "NOT_APPLICABLE",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "docs/testing/e2e-strategy.md",
+        "docs/testing/validation-checklist.md",
+        "package.json"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PROV-LIVE-OPT-IN",
+      "invariant": "Live-provider tests are explicit, opt-in, cost-bearing, and never part of default L4 gates.",
+      "risk": "HIGH",
+      "evalType": "PROVIDER_INTEGRATION",
+      "fixtureType": "E2E",
+      "expectedDomainResult": "@live-provider suites exist and are excluded from default smoke/L4.",
+      "expectedUiResult": null,
+      "automation": "MANUAL",
+      "transitionKind": "NOT_APPLICABLE",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": true,
+      "productionSafe": false,
+      "evidence": [
+        "docs/testing/e2e-strategy.md",
+        "package.json"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-MANUAL-PREDEPLOY-HIST-AND-NEW",
+      "invariant": "High-risk product stages, where practical, accept 1 realistic historical session and 1 new happy-flow session before deploy.",
+      "risk": "HIGH",
+      "evalType": "MANUAL_PRODUCTION",
+      "fixtureType": "MANUAL",
+      "expectedDomainResult": "Historical cohort remains operable under new code; new session completes the happy path.",
+      "expectedUiResult": "Operator can complete the real local/production-like surfaces without Lab-only fixtures.",
+      "automation": "MANUAL",
+      "transitionKind": "NOT_APPLICABLE",
+      "historicalCohort": "REALISTIC_LOCAL_HISTORICAL",
+      "requirements": ["PT-35"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "docs/handoffs/stage-3-15a-local-operator-acceptance.md",
+        "docs/testing/engineering-workflow.md"
+      ],
+      "coverageStatus": "MANUAL"
+    },
+    {
+      "id": "EVAL-PP-HIST-MATERIALS-OPEN",
+      "invariant": "A synthetic historical post-processing shape opens and projects readable materials/AI without requiring a production data copy.",
+      "risk": "MEDIUM",
+      "evalType": "HISTORICAL_READ",
+      "fixtureType": "SYNTHETIC_HISTORICAL",
+      "expectedDomainResult": "Historical mapped/confirmed shapes remain readable and project coherent stages.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": "CONFIRMED_MAPPED_HISTORICAL",
+      "requirements": ["PT-22"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/post-processing/historical-session-compatibility.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-ACCESS-SMOKE-GUARDS",
+      "invariant": "Curated smoke covers public/private authorization and invite/ownership integrity without live providers.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "E2E",
+      "expectedDomainResult": "Private resources stay authorization-gated; invite/ownership integrity holds in mock mode.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "docs/testing/e2e-strategy.md",
+        "docs/testing/yandex-poc-smoke-regression-plan.md"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-PP-ENH-RUNNING-BLOCKS-MATERIAL-EDIT",
+      "invariant": "Transcript/material edit that can conflict with enhancement is blocked while enhancement is RUNNING, on both client and server.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "View remains allowed; transcript/mapping/manual-attribution writes return 409 while enhancement is RUNNING.",
+      "expectedUiResult": "Edit/save controls are blocked or explain the in-progress enhancement.",
+      "automation": "MIXED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["PT-07", "E02", "E06", "E07"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/post-processing/enhancement-live-transition.test.ts",
+        "tests/e2e/helpers/post-transcription-lab-catalog.ts"
+      ],
+      "coverageStatus": "COVERED"
+    }
+  ]
+}
