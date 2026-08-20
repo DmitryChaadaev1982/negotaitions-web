@@ -77,6 +77,15 @@ export const EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS = [
 ] as const;
 
 /**
+ * The exact Stage 3.15A additive migration explicitly approved for the
+ * production overlay. It adds nullable `AiAnalysis.inputFingerprint` with no
+ * backfill. Historical rows remain NULL.
+ */
+export const EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS = [
+  "20260819120000_add_ai_analysis_input_fingerprint",
+] as const;
+
+/**
  * The complete, explicit production pending-migration allowlist. Keep this as
  * a union of stage-specific lists so future migrations cannot pass implicitly.
  */
@@ -84,6 +93,7 @@ export const EXPECTED_PRODUCTION_PENDING_MIGRATIONS = [
   ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
   ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
   ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
+  ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";

@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
+import { applyFacilitatorMaterialInputChange, materialChangeGuardErrorBody } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
+import {
+  ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE,
+} from "@/lib/transcription/processing-metadata";
+import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
 
 export const runtime = "nodejs";
@@ -19,6 +25,7 @@ const schema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
   turns: z.array(turnSchema).min(1, "At least one turn is required"),
+  confirmRewindPublication: z.boolean().optional(),
 }).refine((data) => Boolean(data.joinToken || data.participantId), {
   message: "joinToken or participantId is required",
 });
@@ -45,7 +52,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { turns } = parsed.data;
+  const { turns, confirmRewindPublication } = parsed.data;
 
   const facilitator = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!facilitator || facilitator.type !== ParticipantType.FACILITATOR) {
@@ -67,6 +74,22 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (session.deletedAt) {
     return NextResponse.json({ error: "Session is read-only." }, { status: 403 });
+  }
+
+  const existingTranscript = await prisma.transcript.findUnique({
+    where: { sessionId },
+    select: { id: true, processingMetadata: true },
+  });
+  if (
+    existingTranscript &&
+    (await isAuthoritativeEnhancementLockActive({
+      transcriptId: existingTranscript.id,
+    }))
+  ) {
+    return NextResponse.json(
+      { error: ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE },
+      { status: 409 },
+    );
   }
 
   const participants = await prisma.sessionParticipant.findMany({
@@ -103,20 +126,29 @@ export async function POST(request: Request, context: RouteContext) {
     }
   }
 
-  const participantLabels = participants.reduce<Record<string, string>>((acc, participant) => {
-    const roleSuffix = participant.sessionRole?.name
-      ? ` / ${participant.sessionRole.name}`
-      : "";
-    acc[participant.id] = `${participant.displayName}${roleSuffix}`;
-    return acc;
-  }, {});
-
   const plainText = turns.map((turn) => turn.text.trim()).join("\n\n");
-  const diarizedText = turns
-    .map((turn) => `[${participantLabels[turn.participantId]}] ${turn.text.trim()}`)
-    .join("\n\n");
+  const diarizedText = buildCanonicalDiarizedText({
+    segments: turns.map((turn, orderIndex) => ({
+      speakerLabel: speakerLabelByParticipantId.get(turn.participantId) ?? null,
+      displaySpeakerLabel: null,
+      startSeconds: turn.startSeconds ?? null,
+      endSeconds: turn.endSeconds ?? null,
+      text: turn.text.trim(),
+      orderIndex,
+    })),
+    speakerMapping: mapping,
+    participants: participants.map((participant) => ({
+      id: participant.id,
+      displayName: participant.displayName,
+      type: participant.type,
+      roleName: participant.sessionRole?.name ?? null,
+    })),
+  });
 
-  const transcript = await prisma.$transaction(async (tx) => {
+  const change = await applyFacilitatorMaterialInputChange({
+    sessionId,
+    confirmRewindPublication,
+    mutate: async (tx) => {
     const saved = await tx.transcript.upsert({
       where: { sessionId },
       create: {
@@ -168,7 +200,14 @@ export async function POST(request: Request, context: RouteContext) {
         },
       },
     });
+    },
   });
+  if (!change.ok) {
+    return NextResponse.json(materialChangeGuardErrorBody(change), {
+      status: change.status,
+    });
+  }
+  const transcript = change.result;
 
   return NextResponse.json({
     transcript: {
@@ -192,5 +231,6 @@ export async function POST(request: Request, context: RouteContext) {
         orderIndex: segment.orderIndex,
       })),
     },
+    publicationRevoked: change.publicationRevoked,
   });
 }

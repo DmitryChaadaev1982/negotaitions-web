@@ -31,18 +31,35 @@ export type DebriefVisibleNotesParticipant = {
   } | null;
 };
 
+export function isPostNegotiationParticipantNotesRevealState(input: {
+  roomLifecycle?: RoomLifecycle | null;
+  negotiationState?: string | null;
+}): boolean {
+  return (
+    input.negotiationState === "FINISHED" ||
+    input.roomLifecycle === "DEBRIEF_OPEN"
+  );
+}
+
 export function resolveDebriefVisibleNotes({
   roomLifecycle,
+  negotiationState,
   viewerParticipantId,
   viewerType,
   participants,
 }: {
   roomLifecycle: RoomLifecycle | null;
+  negotiationState?: string | null;
   viewerParticipantId: string;
   viewerType: ParticipantType;
   participants: DebriefVisibleNotesParticipant[];
 }): DebriefVisibleNote[] {
-  if (roomLifecycle !== "DEBRIEF_OPEN") {
+  if (
+    !isPostNegotiationParticipantNotesRevealState({
+      roomLifecycle,
+      negotiationState,
+    })
+  ) {
     return [];
   }
 
@@ -58,9 +75,8 @@ export function resolveDebriefVisibleNotes({
   const viewer = participants.find((participant) => participant.id === viewerParticipantId) ?? null;
   const canSeeParticipantNotes =
     viewerType === ParticipantType.OBSERVER || viewerType === ParticipantType.FACILITATOR;
-  const visibleParticipantNotes = participantNotes.slice(0, 2);
   const orderedCandidates = canSeeParticipantNotes
-    ? [...visibleParticipantNotes, ...(viewer ? [viewer] : [])]
+    ? [...participantNotes, ...(viewer ? [viewer] : [])]
     : viewer
       ? [viewer]
       : [];
@@ -103,4 +119,22 @@ export function resolveDebriefVisibleNotes({
   }
 
   return result;
+}
+
+export function projectPostNegotiationParticipantPreparationNotes(
+  notes: DebriefVisibleNote[],
+): Array<{
+  participantId: string;
+  displayName: string;
+  roleName: string | null;
+  notes: string;
+}> {
+  return notes
+    .filter((note) => note.participantType === ParticipantType.PARTICIPANT)
+    .map((note) => ({
+      participantId: note.participantId,
+      displayName: note.displayName,
+      roleName: note.roleName,
+      notes: note.notes,
+    }));
 }

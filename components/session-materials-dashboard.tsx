@@ -23,6 +23,11 @@ import {
   resolveAiAnalysisRenderState,
   type PublishedViewerAnalysis,
 } from "@/lib/materials-ai-analysis-view";
+import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
+import {
+  materialsRetranscribePath,
+  materialsTranscribePath,
+} from "@/lib/transcription/transcription-routes";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +105,11 @@ type MaterialsStatusResponse = {
     currentStage: string;
     message: string | null;
     autoTranscribeEnabled: boolean;
+  };
+  postProcessing?: {
+    stages: {
+      TRANSCRIPT_ENHANCEMENT: { semantic: string };
+    };
   };
 };
 
@@ -1097,12 +1107,17 @@ export function SessionMaterialsDashboard({
     (liveTranscriptionStage === "ready" || liveTranscriptionStage === "enhancing");
   const enhancementStatus = liveData?.transcription?.enhancement?.status ?? null;
   const enhancementError = liveData?.transcription?.enhancement?.error ?? null;
-  const enhancementRunning = enhancementStatus === "IN_PROGRESS";
+  const enhancementRunning =
+    liveData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic === "running" ||
+    (liveData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT == null &&
+      isEnhancementStatusRunning(enhancementStatus));
   const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
   const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 
-  const canStartAiAnalysis = liveData?.aiAnalysis?.canStart ?? false;
-  const canRetryAiAnalysis = liveData?.aiAnalysis?.canRetry ?? false;
+  const canStartAiAnalysis =
+    (liveData?.aiAnalysis?.canStart ?? false) && !enhancementRunning;
+  const canRetryAiAnalysis =
+    (liveData?.aiAnalysis?.canRetry ?? false) && !enhancementRunning;
   const canViewAiAnalysis = liveData?.aiAnalysis?.canView ?? false;
   const canShareAiAnalysis = liveData?.aiAnalysis?.canShare ?? false;
   const participantPlaceholder = liveData?.aiAnalysis?.participantPlaceholder ?? false;
@@ -1243,7 +1258,7 @@ export function SessionMaterialsDashboard({
     setTranscriptionBusy(true);
     setTranscriptionError(null);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/materials/transcribe`, {
+      const res = await fetch(materialsTranscribePath(sessionId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ joinToken }),
@@ -1275,7 +1290,7 @@ export function SessionMaterialsDashboard({
     setRerunBusy(true);
     setRerunError(null);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/materials/retranscribe`, {
+      const res = await fetch(materialsRetranscribePath(sessionId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ joinToken, reason: "manual_rerun" }),
@@ -1655,7 +1670,7 @@ export function SessionMaterialsDashboard({
               ) : null}
             </div>
           ) : null}
-          {enhancementStatus === "IN_PROGRESS" ? (
+          {enhancementRunning ? (
             <p className="text-sm text-violet-300">
               {t("sessionMaterials.transcriptEnhancementInProgress")}
             </p>

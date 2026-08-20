@@ -7,11 +7,15 @@ const baseTranscript = {
   hasSpeakerDiarization: true,
   speakerMapping: {
     speaker_1: "A",
-    speaker_2: "A",
+    speaker_2: "B",
   },
+  participants: [
+    { id: "A", type: "PARTICIPANT" },
+    { id: "B", type: "PARTICIPANT" },
+  ],
   segments: [
-    { speakerLabel: "speaker_1", mappedParticipantId: null, text: "hello" },
-    { speakerLabel: "speaker_2", mappedParticipantId: null, text: "world" },
+    { speakerLabel: "speaker_1", mappedParticipantId: "A", text: "hello" },
+    { speakerLabel: "speaker_2", mappedParticipantId: "B", text: "world" },
   ],
 };
 
@@ -23,14 +27,22 @@ test("REQUIRED mapping blocks AI readiness even if mapping object is populated",
   assert.equal(ready, false);
 });
 
-test("AUTO_SUGGESTED mapping can unlock AI readiness", () => {
+test("AUTO_SUGGESTED mapping unlocks AI only when segments are structurally complete", () => {
   const ready = isSpeakerMappingReadyForAnalysis({
     ...baseTranscript,
     speakerMappingStatus: "AUTO_SUGGESTED",
-    speakerMapping: {
-      speaker_1: "A",
-      speaker_2: "B",
-    },
   });
   assert.equal(ready, true);
+});
+
+test("AUTO_SUGGESTED without mappedParticipantId does not unlock AI", () => {
+  const ready = isSpeakerMappingReadyForAnalysis({
+    ...baseTranscript,
+    speakerMappingStatus: "AUTO_SUGGESTED",
+    segments: [
+      { speakerLabel: "speaker_1", mappedParticipantId: null, text: "hello" },
+      { speakerLabel: "speaker_2", mappedParticipantId: null, text: "world" },
+    ],
+  });
+  assert.equal(ready, false);
 });

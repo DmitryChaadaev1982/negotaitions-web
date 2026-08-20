@@ -9,9 +9,12 @@ import {
   ParticipantType,
   Prisma,
 } from "@/app/generated/prisma/client";
+import { MATERIAL_INPUT_SCHEMA_VERSION } from "@/lib/ai/material-input-envelope";
 import {
   buildAnalysisPrompt,
   buildSessionAnalysisContext,
+  fingerprintSessionAnalysisContext,
+  type SessionAnalysisContext,
 } from "@/lib/ai/session-analysis-context";
 import {
   AiAnalysisProviderError,
@@ -25,6 +28,8 @@ import {
   type AiAnalysisRunMetrics,
 } from "@/lib/ai/negotiation-analysis";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
+import { ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE } from "@/lib/transcription/processing-metadata";
+import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 import {
   claimAiAnalysisRun,
   completeAiAnalysisRunWithCurrentParticipants,
@@ -48,6 +53,7 @@ import {
 } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { getAiAnalysisProvider } from "@/lib/env";
+import { shouldConfirmAutoSuggestedMappingAfterAiAdmission } from "@/lib/transcription/confirm-mapping-after-ai-admission";
 
 export const runtime = "nodejs";
 export const maxDuration = 610;
@@ -233,27 +239,34 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const transcript = await prisma.transcript.findUnique({
-    where: { sessionId },
-    select: {
-      id: true,
-      status: true,
-      text: true,
-      diarizedText: true,
-      language: true,
-      hasSpeakerDiarization: true,
-      speakerMappingStatus: true,
-      speakerMapping: true,
-      retranscribeCount: true,
-      segments: {
-        select: {
-          speakerLabel: true,
-          mappedParticipantId: true,
-          text: true,
+  const [transcript, sessionParticipants] = await Promise.all([
+    prisma.transcript.findUnique({
+      where: { sessionId },
+      select: {
+        id: true,
+        status: true,
+        text: true,
+        diarizedText: true,
+        language: true,
+        hasSpeakerDiarization: true,
+        speakerMappingStatus: true,
+        speakerMapping: true,
+        processingMetadata: true,
+        retranscribeCount: true,
+        segments: {
+          select: {
+            speakerLabel: true,
+            mappedParticipantId: true,
+            text: true,
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.sessionParticipant.findMany({
+      where: { sessionId },
+      select: { id: true, type: true },
+    }),
+  ]);
 
   if (!transcript) {
     return NextResponse.json(
@@ -261,7 +274,24 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 400 },
     );
   }
-  const readiness = evaluateAiAnalysisReadiness(transcript);
+  const enhancementLockActive = await isAuthoritativeEnhancementLockActive({
+    transcriptId: transcript.id,
+  });
+  if (enhancementLockActive) {
+    return NextResponse.json(
+      {
+        error: ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE,
+        errorCode: "ENHANCEMENT_RUNNING",
+      },
+      { status: 409 },
+    );
+  }
+
+  const readiness = evaluateAiAnalysisReadiness({
+    ...transcript,
+    participants: sessionParticipants,
+    enhancementStatus: enhancementLockActive ? "IN_PROGRESS" : null,
+  });
   if (readiness.reason === "TRANSCRIPT_NOT_COMPLETED") {
     return NextResponse.json(
       { error: "Transcript must be completed before running AI analysis." },
@@ -279,6 +309,16 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  if (readiness.reason === "ENHANCEMENT_RUNNING") {
+    return NextResponse.json(
+      {
+        error: ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE,
+        errorCode: "ENHANCEMENT_RUNNING",
+      },
+      { status: 409 },
+    );
+  }
+
   if (readiness.reason === "SPEAKER_MAPPING_REQUIRED") {
     return NextResponse.json(
       {
@@ -292,6 +332,17 @@ export async function POST(request: Request, context: RouteContext) {
 
   const analysisLanguage =
     language ?? transcript.language ?? session.snapshotCaseLanguage.toLowerCase();
+
+  const analysisContext = await buildSessionAnalysisContext(sessionId);
+  if (!analysisContext) {
+    return NextResponse.json({ error: "Session not found." }, { status: 404 });
+  }
+  const inputFingerprint = fingerprintSessionAnalysisContext(analysisContext);
+  console.info("[AI analysis] material_input_fingerprint", {
+    sessionId,
+    schemaVersion: MATERIAL_INPUT_SCHEMA_VERSION,
+    inputFingerprint,
+  });
 
   const now = new Date();
 
@@ -314,6 +365,29 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  if (
+    shouldConfirmAutoSuggestedMappingAfterAiAdmission({
+      speakerMappingStatus: transcript.speakerMappingStatus,
+      hasSpeakerDiarization: transcript.hasSpeakerDiarization,
+      segments: transcript.segments,
+      participants: sessionParticipants,
+    })
+  ) {
+    await prisma.transcript.update({
+      where: { id: transcript.id },
+      data: {
+        speakerMappingStatus: "CONFIRMED",
+        speakerMappingConfirmedAt: now,
+        speakerMappingConfirmedBy: participant.id,
+      },
+    });
+  }
+
+  await prisma.aiAnalysis.update({
+    where: { id: claimedRun.owner.analysisId },
+    data: { inputFingerprint },
+  });
+
   const mockMode = isAiAnalysisMockMode();
   const simulatedError = mockMode ? getMockExternalServiceError() : null;
   after(async () => {
@@ -335,6 +409,7 @@ export async function POST(request: Request, context: RouteContext) {
           owner,
           analysisLanguage,
           operationStartedAtMonotonic,
+          analysisContext,
         );
       }
     } catch (error) {
@@ -439,6 +514,7 @@ async function processRealAnalysis(
   initialOwner: AiAnalysisRunOwner,
   language: string,
   operationStartedAtMonotonic: number,
+  analysisContext: SessionAnalysisContext,
 ) {
   const provider = getAiAnalysisProvider();
   let owner = initialOwner;
@@ -459,16 +535,6 @@ async function processRealAnalysis(
           code: "OWNERSHIP_LOST",
           provider,
           message: "AI analysis ownership was lost before context loading.",
-          allowsRegeneration: false,
-        });
-      }
-      const analysisContext = await buildSessionAnalysisContext(sessionId);
-      if (!analysisContext) {
-        throw new AiAnalysisProviderError({
-          code: "INTERNAL_ERROR",
-          provider,
-          message: "Session not found during analysis.",
-          userMessage: "Session not found.",
           allowsRegeneration: false,
         });
       }

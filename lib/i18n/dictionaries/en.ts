@@ -526,6 +526,8 @@ export const en = {
     // Unassigned participant messages (Phase 6.11B)
     waitingForRoleAssignment: "The facilitator has not assigned your role yet. Materials will unlock after a role is assigned.",
     preparationLockedNoRole: "Preparation notes will become available after a role is assigned.",
+    preparationLockedAfterNegotiation:
+      "Preparation notes are locked after the negotiation ends.",
     noRoleAssignedBadge: "Awaiting role assignment",
     // Add participant: unassigned option
     assignRoleLater: "Assign later",
@@ -687,6 +689,12 @@ export const en = {
     manualTranscript: "Manual transcript",
     saveTranscript: "Save transcript",
     transcriptSaved: "Transcript saved",
+    materialChangeConfirmTitle: "AI analysis will become outdated",
+    materialChangeAiOnlyWarning:
+      "This change will invalidate the current AI analysis. You will need to run a new analysis.",
+    materialChangePublicationWarning:
+      "This change will invalidate the current AI analysis and require a new analysis. If the analysis is published, that publication will be revoked and recipients will lose access.",
+    materialChangeConfirm: "Continue",
     language: "Language",
     auto: "Auto",
     russian: "Russian",
@@ -732,6 +740,7 @@ export const en = {
     confirmSpeakerMapping: "Confirm mapping",
     speakerMappingConfirmed: "Speaker mapping confirmed",
     speakerMappingRequired: "Speaker mapping required",
+    speakerMappingSuggested: "Speaker mapping suggested",
     confirmSpeakerMappingBeforeAi: "Confirm speaker mapping before AI analysis.",
     speakerMappingRequiredBeforeAi: "Speaker mapping is required before AI analysis.",
     suggestAutomatically: "Suggest automatically",
@@ -785,7 +794,7 @@ export const en = {
       partiallyMapped:
         "Speaker mapping is partially complete. Assign the remaining speakers.",
       appliedNeedsConfirmation:
-        "Speaker mapping was applied. Review and confirm it.",
+        "Automatic speaker mapping has been applied. Review or edit it if necessary.",
     },
     suggested: "Suggested",
     confidenceHigh: "High",
@@ -828,7 +837,7 @@ export const en = {
     manualSpeakerTurn: "Turn #{number}",
     removeManualSpeakerTurn: "Remove",
     addManualSpeakerTurn: "Add turn",
-    saveManualSpeakerAttribution: "Save manual attribution",
+    saveManualSpeakerAttribution: "Save transcript",
     manualSpeakerTurnPlaceholder: "Turn text",
     selectParticipant: "Select participant",
     transcriptEnhancementSuggested:
@@ -862,7 +871,7 @@ export const en = {
     rerunTranscription: "Re-run transcription",
     rerunTranscriptionConfirmTitle: "Re-run transcription?",
     rerunTranscriptionConfirmBody:
-      "This will create a new transcript attempt. Existing transcript and AI analysis will be preserved but a new analysis may be required.",
+      "A new transcript version will be created. After retranscription, AI analysis will need to be run again. If the current result is published, that publication will be revoked. Existing data is not deleted.",
     rerunTranscriptionConfirm: "Re-run transcription",
     rerunTranscriptionCancel: "Cancel",
     transcriptionAlreadyRunning: "Transcription is already running.",
@@ -1019,7 +1028,7 @@ export const en = {
     transcriptReady: "Transcript is ready.",
     transcriptionFailed: "Transcription failed.",
     rerunTranscriptionConfirmBody:
-      "This will create a new transcript attempt. Existing transcript and AI analysis will be preserved but a new analysis may be required.",
+      "A new transcript version will be created. After retranscription, AI analysis will need to be run again. If the current result is published, that publication will be revoked. Existing data is not deleted.",
     analysisFromOlderTranscript: "Analysis was generated from an older transcript.",
     rerunWithQualityEnhancement: "Re-run with quality enhancement",
     strategyDiarizeOnly: "Diarization only",
@@ -1032,6 +1041,20 @@ export const en = {
       "Transcript quality enhancement failed. Using base diarized transcript.",
     speakerMapping: "Speaker mapping",
     speakerMappingReady: "Speaker mapping is ready.",
+    speakerMappingInformational: "Automatic speaker mapping is ready for review.",
+    speakerMappingActionRequired: "Speaker mapping needs facilitator action.",
+    speakerMappingPending: "Speaker mapping is waiting for the transcript.",
+    speakerMappingNotApplicable: "Speaker mapping is not required.",
+    stagePending: "Pending",
+    stageRunning: "In progress",
+    stageReady: "Ready",
+    stageActionRequired: "Action required",
+    stageInformational: "Informational",
+    stageFailed: "Failed",
+    stageNotApplicable: "Not applicable",
+    enhancementFailedContinueHint:
+      "You can retry enhancement or continue AI analysis with the current transcript.",
+    continueWithCurrentTranscript: "Continue with current transcript",
     aiAnalysis: "AI analysis",
     waitingForTranscript: "Waiting for transcript readiness.",
     transcriptReadyForAnalysis: "Transcript is ready. AI analysis can be started.",
@@ -1378,6 +1401,7 @@ export const en = {
     analysisFacilitatorOnly: "Analysis is facilitator-only",
     speakerMapping: "Speaker mapping",
     speakerMappingRequired: "Speaker mapping required",
+    speakerMappingSuggested: "Speaker mapping suggested",
     confirmSpeakerMappingBeforeAi: "Confirm speaker mapping before AI analysis.",
     speakerMappingConfirmed: "Speaker mapping confirmed",
     saveMappingButton: "Save mapping",

@@ -4,6 +4,7 @@ import { aggregateAiPublicationStatus } from "@/lib/ai-publication-aggregate";
 import { normalizeUserEmail } from "@/lib/invite-email";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
 import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
+import { listMappingStageFromTranscript } from "@/lib/post-processing/projection";
 import { prisma } from "@/lib/prisma";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import {
@@ -96,7 +97,18 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         select: { status: true },
       },
       transcript: {
-        select: { status: true, hasSpeakerDiarization: true, speakerMappingStatus: true },
+        select: {
+          status: true,
+          hasSpeakerDiarization: true,
+          speakerMappingStatus: true,
+          segments: {
+            select: {
+              speakerLabel: true,
+              mappedParticipantId: true,
+              text: true,
+            },
+          },
+        },
       },
       aiAnalysis: {
         select: {
@@ -147,13 +159,15 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
           : "in_progress"
       : null;
 
-    const speakerMappingStage: string | null = (() => {
-      if (!session.transcript?.hasSpeakerDiarization) return null;
-      const mappingStatus = session.transcript.speakerMappingStatus ?? "NOT_REQUIRED";
-      if (mappingStatus === "CONFIRMED") return "confirmed";
-      if (mappingStatus === "NOT_REQUIRED") return null;
-      return "required";
-    })();
+    const speakerMappingStage: string | null = listMappingStageFromTranscript({
+      transcriptPresent: Boolean(session.transcript),
+      mappingInput: {
+        hasSpeakerDiarization: session.transcript?.hasSpeakerDiarization ?? false,
+        speakerMappingStatus: session.transcript?.speakerMappingStatus ?? null,
+        segments: session.transcript?.segments ?? [],
+        participants: session.participants,
+      },
+    });
 
     const aiStage = aiStatus
       ? aiStatus === "COMPLETED"

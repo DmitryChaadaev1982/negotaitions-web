@@ -530,6 +530,8 @@ export const ru: Dictionary = {
     // Unassigned participant messages (Phase 6.11B)
     waitingForRoleAssignment: "Фасилитатор ещё не назначил вам роль. Материалы откроются после назначения роли.",
     preparationLockedNoRole: "Поле подготовки станет доступно после назначения роли.",
+    preparationLockedAfterNegotiation:
+      "Заметки подготовки заблокированы после окончания переговоров.",
     noRoleAssignedBadge: "Ожидание назначения роли",
     // Add participant: unassigned option
     assignRoleLater: "Назначить позже",
@@ -692,6 +694,12 @@ export const ru: Dictionary = {
     manualTranscript: "Ручной транскрипт",
     saveTranscript: "Сохранить транскрипт",
     transcriptSaved: "Транскрипт сохранён",
+    materialChangeConfirmTitle: "ИИ-разбор станет неактуальным",
+    materialChangeAiOnlyWarning:
+      "Это изменение сделает текущий ИИ-разбор неактуальным — его нужно будет запустить заново.",
+    materialChangePublicationWarning:
+      "Это изменение сделает текущий ИИ-разбор неактуальным — его нужно будет запустить заново. Если разбор опубликован, публикация будет отозвана и получатели потеряют доступ.",
+    materialChangeConfirm: "Продолжить",
     language: "Язык",
     auto: "Авто",
     russian: "Русский",
@@ -752,7 +760,7 @@ export const ru: Dictionary = {
     manualSpeakerTurn: "Реплика #{number}",
     removeManualSpeakerTurn: "Удалить",
     addManualSpeakerTurn: "Добавить реплику",
-    saveManualSpeakerAttribution: "Сохранить ручное присвоение",
+    saveManualSpeakerAttribution: "Сохранить транскрипт",
     manualSpeakerTurnPlaceholder: "Текст реплики",
     selectParticipant: "Выберите участника",
     transcriptEnhancementSuggested:
@@ -775,6 +783,7 @@ export const ru: Dictionary = {
     confirmSpeakerMapping: "Подтвердить сопоставление",
     speakerMappingConfirmed: "Сопоставление подтверждено",
     speakerMappingRequired: "Требуется сопоставление говорящих",
+    speakerMappingSuggested: "Сопоставление предложено автоматически",
     confirmSpeakerMappingBeforeAi: "Подтвердите сопоставление говорящих перед ИИ-разбором.",
     speakerMappingRequiredBeforeAi: "Перед ИИ-разбором нужно сопоставить говорящих.",
     suggestAutomatically: "Предложить автоматически",
@@ -828,7 +837,7 @@ export const ru: Dictionary = {
       partiallyMapped:
         "Сопоставление заполнено частично. Назначьте оставшихся говорящих.",
       appliedNeedsConfirmation:
-        "Сопоставление применено. Проверьте и подтвердите его.",
+        "Сопоставление применено автоматически. При необходимости проверьте или измените его.",
     },
     suggested: "Предложено",
     confidenceHigh: "Высокая",
@@ -867,7 +876,7 @@ export const ru: Dictionary = {
     rerunTranscription: "Повторить транскрибацию",
     rerunTranscriptionConfirmTitle: "Повторить транскрибацию?",
     rerunTranscriptionConfirmBody:
-      "Будет создана новая попытка транскрибации. Существующий транскрипт и AI-разбор будут сохранены, но может потребоваться новый AI-разбор.",
+      "Будет создана новая версия транскрипта. После повторной транскрибации ИИ-разбор потребуется запустить заново. Если текущий результат опубликован, публикация будет отозвана. Существующие данные не удаляются.",
     rerunTranscriptionConfirm: "Повторить транскрибацию",
     rerunTranscriptionCancel: "Отмена",
     transcriptionAlreadyRunning: "Транскрибация уже выполняется.",
@@ -1024,7 +1033,7 @@ export const ru: Dictionary = {
     transcriptReady: "Транскрипт готов.",
     transcriptionFailed: "Ошибка транскрибации.",
     rerunTranscriptionConfirmBody:
-      "Будет создана новая попытка транскрибации. Существующий транскрипт и ИИ-разбор будут сохранены, но может потребоваться новый ИИ-разбор.",
+      "Будет создана новая версия транскрипта. После повторной транскрибации ИИ-разбор потребуется запустить заново. Если текущий результат опубликован, публикация будет отозвана. Существующие данные не удаляются.",
     analysisFromOlderTranscript: "Разбор был создан по предыдущей версии транскрипта.",
     rerunWithQualityEnhancement: "Повторить с улучшением качества",
     strategyDiarizeOnly: "Только диаризация",
@@ -1037,6 +1046,20 @@ export const ru: Dictionary = {
       "Улучшение качества транскрипта не удалось. Используется базовый транскрипт с говорящими.",
     speakerMapping: "Сопоставление говорящих",
     speakerMappingReady: "Сопоставление говорящих готово.",
+    speakerMappingInformational: "Автоматическое сопоставление готово к просмотру.",
+    speakerMappingActionRequired: "Нужно сопоставить говорящих.",
+    speakerMappingPending: "Сопоставление ожидает транскрипт.",
+    speakerMappingNotApplicable: "Сопоставление говорящих не требуется.",
+    stagePending: "Ожидание",
+    stageRunning: "В процессе",
+    stageReady: "Готово",
+    stageActionRequired: "Требуется действие",
+    stageInformational: "Информация",
+    stageFailed: "Ошибка",
+    stageNotApplicable: "Не применяется",
+    enhancementFailedContinueHint:
+      "Можно повторить улучшение или продолжить ИИ-разбор с текущим транскриптом.",
+    continueWithCurrentTranscript: "Продолжить с текущим транскриптом",
     aiAnalysis: "ИИ-разбор",
     waitingForTranscript: "Ожидаем готовности транскрипта.",
     transcriptReadyForAnalysis: "Транскрипт готов. Можно запустить ИИ-разбор.",
@@ -1384,6 +1407,7 @@ export const ru: Dictionary = {
     analysisFacilitatorOnly: "Анализ доступен только фасилитатору",
     speakerMapping: "Сопоставление говорящих",
     speakerMappingRequired: "Требуется сопоставление говорящих",
+    speakerMappingSuggested: "Сопоставление предложено автоматически",
     confirmSpeakerMappingBeforeAi: "Подтвердите сопоставление говорящих перед ИИ-разбором.",
     speakerMappingConfirmed: "Сопоставление подтверждено",
     saveMappingButton: "Сохранить сопоставление",

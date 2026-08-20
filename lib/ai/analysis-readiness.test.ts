@@ -66,6 +66,7 @@ for (const speakerMappingStatus of ["REQUIRED", "NEEDS_REVIEW"]) {
       transcript({
         hasSpeakerDiarization: true,
         speakerMappingStatus,
+        participants: [{ id: "A", type: "PARTICIPANT" }],
         segments: [
           {
             speakerLabel: "speaker-1",
@@ -92,9 +93,26 @@ for (const status of [
   });
 }
 
-test("enhancement state is independent when valid raw transcript is ready", () => {
-  // Enhancement is intentionally absent from the canonical helper input.
+test("idle enhancement remains optional when valid raw transcript is ready", () => {
   assert.equal(evaluateAiAnalysisReadiness(transcript()).ready, true);
+  assert.equal(
+    evaluateAiAnalysisReadiness(transcript({ enhancementStatus: "COMPLETED" })).ready,
+    true,
+  );
+  assert.equal(
+    evaluateAiAnalysisReadiness(transcript({ enhancementStatus: "FAILED" })).ready,
+    true,
+  );
+});
+
+test("enhancement RUNNING blocks analysis readiness", () => {
+  for (const enhancementStatus of ["IN_PROGRESS", "RUNNING", "QUEUED"]) {
+    const readiness = evaluateAiAnalysisReadiness(
+      transcript({ enhancementStatus }),
+    );
+    assert.equal(readiness.ready, false, enhancementStatus);
+    assert.equal(readiness.reason, "ENHANCEMENT_RUNNING", enhancementStatus);
+  }
 });
 
 test("enhancement cannot make invalid raw transcript ready", () => {

@@ -554,7 +554,7 @@ test("Diarization Test 6 — Re-transcription failure preserves original transcr
 
 // ── Diarization Test 7: AI analysis version warning ──────────────────────────
 
-test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after re-transcription", async ({
+test("Diarization Test 7 — AI analysis rewinds after re-transcription without an active older-transcript warning", async ({
   request,
 }) => {
   const { session, facilitator, users } = await createAssignedSession(request);
@@ -587,7 +587,7 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
   const info = await getTranscriptRetranscribeInfo(session.id);
   expect(info?.retranscribeCount).toBe(1);
 
-  // Status API: analysisFromOlderTranscript must be true
+  // Status API: hidden historical analysis must not keep the active older-transcript warning
   const statusRes = await request.get(
     `/api/sessions/${session.id}/materials/status?joinToken=${facilitator.joinToken}`,
     { headers: await authHeaders(users.facilitator.id) },
@@ -595,7 +595,8 @@ test("Diarization Test 7 — AI analysis shows analysisFromOlderTranscript after
   const statusBody = (await statusRes.json()) as {
     aiAnalysis: { analysisFromOlderTranscript: boolean; status: string };
   };
-  expect(statusBody.aiAnalysis.analysisFromOlderTranscript).toBe(true);
+  expect(statusBody.aiAnalysis.analysisFromOlderTranscript).toBe(false);
+  expect(statusBody.aiAnalysis.status).toBe("NOT_STARTED");
 
   await clearAiAnalysis(session.id);
   await clearTranscript(session.id);

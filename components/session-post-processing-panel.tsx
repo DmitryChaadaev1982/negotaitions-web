@@ -11,6 +11,12 @@ import { Card, CardContent, CardHeader } from "@/components/card";
 import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
+import { resolveRecordingTranscriptionPresentation } from "@/lib/transcription/recording-transcription-presentation";
+import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
+import {
+  materialsRetranscribePath,
+  materialsTranscribePath,
+} from "@/lib/transcription/transcription-routes";
 import { getTranscriptionSectionRefreshKey } from "@/lib/transcription/transcription-section-key";
 import type {
   ProcessingAiAnalysisStatus,
@@ -52,7 +58,17 @@ type MaterialsStatusResponse = {
       skipReason?: string | null;
       inProgress?: boolean;
       canRetry?: boolean;
+      canContinueWithCurrentTranscript?: boolean;
     } | null;
+  };
+  postProcessing?: {
+    stages: {
+      RECORDING: { semantic: string };
+      TRANSCRIPTION: { semantic: string };
+      TRANSCRIPT_ENHANCEMENT: { semantic: string };
+      SPEAKER_MAPPING: { semantic: string };
+      AI_ANALYSIS: { semantic: string };
+    };
   };
   aiAnalysis: {
     processingStage: string;
@@ -139,14 +155,44 @@ const enhancementStageKeys: Record<string, TranslationKey> = {
   SKIPPED: "sessionMaterials.transcriptEnhancementSkipped",
 };
 
+const semanticStageKeys: Record<string, TranslationKey> = {
+  pending: "sessionMaterials.stagePending",
+  running: "sessionMaterials.stageRunning",
+  ready: "sessionMaterials.stageReady",
+  action_required: "sessionMaterials.stageActionRequired",
+  informational: "sessionMaterials.stageInformational",
+  failed: "sessionMaterials.stageFailed",
+  not_applicable: "sessionMaterials.stageNotApplicable",
+};
+
 const speakerMappingStageKeys: Record<string, TranslationKey> = {
+  ...semanticStageKeys,
   ready: "sessionMaterials.speakerMappingReady",
-  required: "room.confirmSpeakerMappingBeforeAi",
-  not_available: "sessionMaterials.waitingForTranscript",
+  informational: "sessionMaterials.speakerMappingInformational",
+  action_required: "sessionMaterials.speakerMappingActionRequired",
+  pending: "sessionMaterials.speakerMappingPending",
+  not_applicable: "sessionMaterials.speakerMappingNotApplicable",
+  required: "sessionMaterials.speakerMappingActionRequired",
+  not_available: "sessionMaterials.speakerMappingPending",
+};
+
+const enhancementSemanticStageKeys: Record<string, TranslationKey> = {
+  ...semanticStageKeys,
+  ready: "sessionMaterials.transcriptEnhancementCompleted",
+  running: "sessionMaterials.transcriptEnhancementInProgress",
+  failed: "sessionMaterials.transcriptEnhancementFailedUsingBase",
+  informational: "sessionMaterials.transcriptEnhancementSkipped",
+  pending: "sessionMaterials.transcriptEnhancementNotStarted",
 };
 
 function stageTone(stage: string): string {
   const normalized = stage.toLowerCase();
+  if (normalized === "informational") {
+    return "border-sky-500/30 bg-sky-950/20 text-sky-200";
+  }
+  if (normalized === "action_required" || normalized === "required") {
+    return "border-amber-500/30 bg-amber-950/20 text-amber-200";
+  }
   if (normalized === "ready" || normalized === "completed") {
     return "border-emerald-500/30 bg-emerald-950/20 text-emerald-200";
   }
@@ -230,6 +276,9 @@ export function SessionPostProcessingPanel({
   const { t } = useI18n();
   const isFacilitator = participantType === "FACILITATOR";
   const isSidebar = variant === "sidebar";
+  const recordingTranscriptionPresentation = resolveRecordingTranscriptionPresentation(
+    isSidebar ? "roomSidebar" : "materialsPage",
+  );
   const materialsPath =
     roomAuth.type === "joinToken"
       ? buildSessionMaterialsPath(roomAuth.value)
@@ -347,13 +396,19 @@ export function SessionPostProcessingPanel({
   const canRerunTranscription =
     isFacilitator && !readOnly && permissions?.canRunTranscription && transcript?.canRerun;
   const enhancement = transcript?.enhancement ?? null;
-  const enhancementRunning =
-    Boolean(enhancement?.inProgress) ||
-    enhancement?.status === "QUEUED" ||
-    enhancement?.status === "IN_PROGRESS";
+  const enhancementStage = statusData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT;
+  const enhancementRunning = enhancementStage
+    ? enhancementStage.semantic === "running"
+    : isEnhancementStatusRunning(enhancement?.status);
   const enhancementFailedOrPartial =
     enhancement?.status === "FAILED" || enhancement?.status === "PARTIAL";
   const enhancementCompleted = enhancement?.status === "COMPLETED";
+  const canContinueCurrentTranscript = Boolean(
+    enhancement?.canContinueWithCurrentTranscript,
+  );
+  const mappingSemantic = statusData?.postProcessing?.stages.SPEAKER_MAPPING.semantic;
+  const mappingActionRequired =
+    mappingSemantic === "action_required" || Boolean(transcript?.speakerMappingRequired);
   const canStartTranscriptEnhancement =
     isFacilitator &&
     !readOnly &&
@@ -368,9 +423,9 @@ export function SessionPostProcessingPanel({
     !enhancementRunning;
   const canRunTranscriptEnhancement =
     canStartTranscriptEnhancement || canRetryTranscriptEnhancement;
-  const canStartAi = isFacilitator && !readOnly && ai?.canStart;
-  const canRetryAi = isFacilitator && !readOnly && ai?.canRetry;
-  const canRerunAi = isFacilitator && !readOnly && ai?.canRerun;
+  const canStartAi = isFacilitator && !readOnly && Boolean(ai?.canStart) && !enhancementRunning;
+  const canRetryAi = isFacilitator && !readOnly && Boolean(ai?.canRetry) && !enhancementRunning;
+  const canRerunAi = isFacilitator && !readOnly && Boolean(ai?.canRerun) && !enhancementRunning;
   const canViewAi = ai?.canView ?? false;
   const canShareAi = isFacilitator && !readOnly && ai?.canShare;
   const aiShared = ai?.isSharedWithSession ?? false;
@@ -399,7 +454,7 @@ export function SessionPostProcessingPanel({
   const handleStartTranscription = useCallback(async () => {
     setTranscriptionBusy(true);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/materials/transcribe`, {
+      const res = await fetch(materialsTranscribePath(sessionId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(roomAuthBody(roomAuth)),
@@ -422,7 +477,7 @@ export function SessionPostProcessingPanel({
     setRerunBusy(true);
     setRerunError(null);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/materials/retranscribe`, {
+      const res = await fetch(materialsRetranscribePath(sessionId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...roomAuthBody(roomAuth), reason: "manual_rerun" }),
@@ -621,6 +676,10 @@ export function SessionPostProcessingPanel({
   const transcriptionDone = transcriptionStage === "ready";
   const enhancementDone = enhancementCompleted || enhancementFailedOrPartial;
   const aiDone = aiStage === "ready";
+  const aiAdmissionCompleted =
+    aiDone ||
+    aiActive ||
+    aiStage === "failed";
   const aiStatusMessageKey: TranslationKey | null = (() => {
     switch (aiRenderState.stage) {
       case "WAITING_FOR_RECORDING":
@@ -730,9 +789,15 @@ export function SessionPostProcessingPanel({
       </div>
 
       {/* ── Step 2: Transcript enhancement ── */}
-      {transcriptionDone && enhancement?.available ? (
+      {transcriptionDone &&
+      (enhancement?.available ||
+        enhancementRunning ||
+        enhancementCompleted ||
+        enhancementFailedOrPartial ||
+        canContinueCurrentTranscript) ? (
         <div
           id="step-enhancement"
+          data-testid={enhancementRunning ? "transcript-enhancement-running-lock" : "step-enhancement"}
           className={`rounded-lg border px-4 py-3 transition-colors
             ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
         >
@@ -817,8 +882,13 @@ export function SessionPostProcessingPanel({
             ) : null}
           </div>
         </div>
-        {speakerMappingBlockingAi || transcript?.speakerMappingRequired ? (
+        {speakerMappingBlockingAi || mappingActionRequired ? (
           <p className="mt-2 text-xs text-amber-300">{t("room.confirmSpeakerMappingBeforeAi")}</p>
+        ) : null}
+        {canContinueCurrentTranscript && (canStartAi || canRetryAi) ? (
+          <p className="mt-2 text-xs text-sky-200" data-testid="enhancement-continue-current-transcript">
+            {t("sessionMaterials.enhancementFailedContinueHint")}
+          </p>
         ) : null}
         {aiError && !speakerMappingBlockingAi ? (
           <p className="mt-2 text-xs text-rose-400">{aiError}</p>
@@ -934,8 +1004,14 @@ export function SessionPostProcessingPanel({
       </div>
 
       {/* Step 2: Transcript enhancement */}
-      {transcriptionDone && enhancement?.available ? (
+      {transcriptionDone &&
+      (enhancement?.available ||
+        enhancementRunning ||
+        enhancementCompleted ||
+        enhancementFailedOrPartial ||
+        canContinueCurrentTranscript) ? (
         <div
+          data-testid={enhancementRunning ? "transcript-enhancement-running-lock" : "step-enhancement"}
           className={`rounded-lg border px-3 py-2.5 transition-colors
             ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
         >
@@ -1009,8 +1085,13 @@ export function SessionPostProcessingPanel({
             ) : null}
           </div>
         </div>
-        {speakerMappingBlockingAi || transcript?.speakerMappingRequired ? (
+        {speakerMappingBlockingAi || mappingActionRequired ? (
           <p className="mt-1 text-xs text-amber-300">{t("room.confirmSpeakerMappingBeforeAi")}</p>
+        ) : null}
+        {canContinueCurrentTranscript && (canStartAi || canRetryAi) ? (
+          <p className="mt-1 text-xs text-sky-200" data-testid="enhancement-continue-current-transcript">
+            {t("sessionMaterials.enhancementFailedContinueHint")}
+          </p>
         ) : null}
         {aiError && !speakerMappingBlockingAi ? (
           <p className="mt-1 text-xs text-rose-400">{aiError}</p>
@@ -1070,35 +1151,48 @@ export function SessionPostProcessingPanel({
     >
       <StatusPill
         title={t("sessionMaterials.recording")}
-        stage={recording?.processingStage ?? "not_available"}
-        stageKeys={recordingStageKeys}
+        stage={statusData.postProcessing?.stages.RECORDING.semantic ?? recording?.processingStage ?? "not_available"}
+        stageKeys={{ ...recordingStageKeys, ...semanticStageKeys }}
+        testId="post-processing-recording-status"
       />
       <StatusPill
         title={t("sessionMaterials.transcription")}
-        stage={transcript?.processingStage ?? "waiting_for_recording"}
-        stageKeys={transcriptionStageKeys}
+        stage={
+          statusData.postProcessing?.stages.TRANSCRIPTION.semantic ??
+          transcript?.processingStage ??
+          "waiting_for_recording"
+        }
+        stageKeys={{ ...transcriptionStageKeys, ...semanticStageKeys }}
+        testId="post-processing-transcription-status"
       />
       <StatusPill
         title={t("sessionMaterials.transcriptEnhancement")}
-        stage={enhancement?.status ?? "NOT_STARTED"}
-        stageKeys={enhancementStageKeys}
+        stage={
+          statusData.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic ??
+          enhancement?.status ??
+          "NOT_STARTED"
+        }
+        stageKeys={{ ...enhancementStageKeys, ...enhancementSemanticStageKeys }}
         testId="post-processing-enhancement-status"
       />
       <StatusPill
         title={t("sessionMaterials.speakerMapping")}
         stage={
-          transcript?.speakerMappingRequired
-            ? "required"
+          statusData.postProcessing?.stages.SPEAKER_MAPPING.semantic ??
+          (transcript?.speakerMappingRequired
+            ? "action_required"
             : transcript?.processingStage === "ready"
               ? "ready"
-              : "not_available"
+              : "pending")
         }
         stageKeys={speakerMappingStageKeys}
+        testId="post-processing-mapping-status"
       />
       <StatusPill
         title={t("sessionMaterials.aiAnalysis")}
-        stage={ai?.processingStage ?? "waiting_for_transcript"}
-        stageKeys={aiStageKeys}
+        stage={statusData.postProcessing?.stages.AI_ANALYSIS.semantic ?? ai?.processingStage ?? "waiting_for_transcript"}
+        stageKeys={{ ...aiStageKeys, ...semanticStageKeys }}
+        testId="post-processing-ai-status"
       />
     </div>
   ) : null;
@@ -1265,6 +1359,9 @@ export function SessionPostProcessingPanel({
               </p>
               <button
                 type="button"
+                data-testid="toggle-transcript-section"
+                aria-expanded={!transcriptCollapsed}
+                data-state={transcriptCollapsed ? "collapsed" : "expanded"}
                 onClick={() => setTranscriptCollapsed((v) => !v)}
                 className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
               >
@@ -1303,8 +1400,16 @@ export function SessionPostProcessingPanel({
                   autoTranscribeEnabled={false}
                   embedded
                   compact
+                  presentation={recordingTranscriptionPresentation}
                   hideRerunControls
                   isLocked={rerunBusy}
+                  aiAdmissionCompleted={aiAdmissionCompleted}
+                  canonicalEnhancementStatus={
+                    statusData ? (enhancement?.status ?? null) : undefined
+                  }
+                  canonicalEnhancementRunning={
+                    statusData ? enhancementRunning : undefined
+                  }
                   onProcessingChange={() => void fetchStatus()}
                 />
               </div>
@@ -1349,6 +1454,9 @@ export function SessionPostProcessingPanel({
               </h2>
               <button
                 type="button"
+                data-testid="toggle-transcript-section"
+                aria-expanded={!transcriptCollapsed}
+                data-state={transcriptCollapsed ? "collapsed" : "expanded"}
                 onClick={() => setTranscriptCollapsed((v) => !v)}
                 className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-1 rounded hover:bg-slate-700/40"
               >
@@ -1389,8 +1497,16 @@ export function SessionPostProcessingPanel({
                 // Keep child section auto-start disabled to prevent duplicate starts.
                 autoTranscribeEnabled={false}
                 embedded
+                presentation={recordingTranscriptionPresentation}
                 hideRerunControls
                 isLocked={rerunBusy}
+                aiAdmissionCompleted={aiAdmissionCompleted}
+                canonicalEnhancementStatus={
+                  statusData ? (enhancement?.status ?? null) : undefined
+                }
+                canonicalEnhancementRunning={
+                  statusData ? enhancementRunning : undefined
+                }
                 onProcessingChange={() => void fetchStatus()}
               />
             </CardContent>

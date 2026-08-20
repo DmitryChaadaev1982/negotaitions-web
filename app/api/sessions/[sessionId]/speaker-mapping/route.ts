@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
+import { applyFacilitatorMaterialInputChange, materialChangeGuardErrorBody } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import {
   resolveRoomParticipantFromParsedBody,
@@ -9,17 +10,19 @@ import {
 } from "@/lib/room-participant-resolver";
 import {
   applySpeakerMapping,
-  buildDiarizedText,
   getUniqueSpeakerLabels,
   getDisplaySpeakerLabel,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
+import {
+  ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE,
+  mergeProcessingMetadata,
+} from "@/lib/transcription/processing-metadata";
+import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 import { deriveSpeakerMappingStatus, resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
-import {
-  resolveSpeakerMappingCandidates,
-  resolveSpeakerMappingEvidenceInterval,
-} from "@/lib/transcription/speaker-mapping-candidates";
+import { loadCanonicalSpeakerMappingCandidates } from "@/lib/transcription/speaker-mapping-candidate-load";
 
 export const runtime = "nodejs";
 type RouteContext = {
@@ -39,72 +42,8 @@ function summarizeMappingValues(mapping: Record<string, string | null>) {
   );
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-async function getSpeakerMappingCandidates(sessionId: string, transcript: {
-  startedAt: Date | null;
-  completedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
-  const [session, sessionParticipants, connections] = await Promise.all([
-    prisma.session.findUnique({
-      where: { id: sessionId },
-      select: {
-        startedAt: true,
-        endedAt: true,
-        negotiationStartedAt: true,
-        negotiationEndedAt: true,
-        recording: {
-          select: {
-            startedAt: true,
-            endedAt: true,
-          },
-        },
-      },
-    }),
-    prisma.sessionParticipant.findMany({
-      where: { sessionId },
-      include: {
-        sessionRole: { select: { name: true, sortOrder: true } },
-      },
-      orderBy: { createdAt: "asc" },
-    }),
-    prisma.sessionRoomConnection.findMany({
-      where: { sessionId },
-      select: {
-        userId: true,
-        createdAt: true,
-        expiresAt: true,
-        disconnectedAt: true,
-        supersededAt: true,
-        revokedAt: true,
-      },
-    }),
-  ]);
-
-  const interval = resolveSpeakerMappingEvidenceInterval({
-    recordingStartedAt: session?.recording?.startedAt,
-    recordingEndedAt: session?.recording?.endedAt,
-    negotiationStartedAt: session?.negotiationStartedAt,
-    negotiationEndedAt: session?.negotiationEndedAt,
-    sessionStartedAt: session?.startedAt,
-    sessionEndedAt: session?.endedAt,
-    transcriptStartedAt: transcript.startedAt,
-    transcriptCompletedAt: transcript.completedAt,
-    transcriptCreatedAt: transcript.createdAt,
-    transcriptUpdatedAt: transcript.updatedAt,
-  });
-
-  return resolveSpeakerMappingCandidates({
-    participants: sessionParticipants,
-    connections,
-    interval,
-  });
+async function getSpeakerMappingCandidates(sessionId: string) {
+  return loadCanonicalSpeakerMappingCandidates(sessionId);
 }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
@@ -137,7 +76,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
 
-  const sessionParticipants = await getSpeakerMappingCandidates(sessionId, transcript);
+  const sessionParticipants = await getSpeakerMappingCandidates(sessionId);
 
   const existingMapping = resolveSpeakerMappingForUi({
     speakerMapping: transcript.speakerMapping,
@@ -201,6 +140,7 @@ const speakerMappingSchema = z.object({
   forceOverrideLocked: z.boolean().optional().default(false),
   /** Legacy: applyOnly means re-apply existing saved mapping, not save new one */
   applyOnly: z.boolean().optional(),
+  confirmRewindPublication: z.boolean().optional(),
 }).refine((data) => Boolean(data.joinToken || data.participantId), {
   message: "joinToken or participantId is required",
 });
@@ -229,7 +169,15 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const { mapping, confirm, applyToTranscript, applyOnly, suggestAutomatically, forceOverrideLocked } = parsed.data;
+  const {
+    mapping,
+    confirm,
+    applyToTranscript,
+    applyOnly,
+    suggestAutomatically,
+    forceOverrideLocked,
+    confirmRewindPublication,
+  } = parsed.data;
 
   const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
@@ -256,17 +204,26 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
 
-  const sessionParticipants = await getSpeakerMappingCandidates(sessionId, transcript);
+  if (await isAuthoritativeEnhancementLockActive({ transcriptId: transcript.id })) {
+    return NextResponse.json(
+      { error: ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE },
+      { status: 409 },
+    );
+  }
+
+  const sessionParticipants = await getSpeakerMappingCandidates(sessionId);
 
   // ── Suggest automatically ────────────────────────────────────────────────
   if (suggestAutomatically) {
     const suggestion = await suggestSpeakerMapping(sessionId, transcript);
-    const metadata = asRecord(transcript.processingMetadata);
+    const latest = await prisma.transcript.findUnique({
+      where: { id: transcript.id },
+      select: { processingMetadata: true },
+    });
     await prisma.transcript.update({
       where: { id: transcript.id },
       data: {
-        processingMetadata: {
-          ...metadata,
+        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
           mappingSuggestion: {
             candidateMapping: suggestion.mapping,
             confidence: suggestion.confidence,
@@ -276,7 +233,7 @@ export async function POST(request: Request, context: RouteContext) {
             unavailableReason: suggestion.unavailableReason,
             telemetryQuality: suggestion.telemetryQuality,
           },
-        } satisfies Prisma.InputJsonValue,
+        }) as Prisma.InputJsonValue,
       },
     });
 
@@ -358,11 +315,11 @@ export async function POST(request: Request, context: RouteContext) {
     roleName: p.roleName,
   }));
 
-  const diarizedText = buildDiarizedText(
-    normalizedSegments,
-    effectiveMapping,
-    participantDisplayInfo,
-  );
+  const diarizedText = buildCanonicalDiarizedText({
+    segments: normalizedSegments,
+    speakerMapping: effectiveMapping,
+    participants: participantDisplayInfo,
+  });
 
   const statusDecision = deriveSpeakerMappingStatus({
     hasSpeakerDiarization: transcript.hasSpeakerDiarization,
@@ -389,56 +346,79 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const newMappingStatus = statusDecision.status;
+  const keepExistingConfirmation =
+    !applyOnly &&
+    newMappingStatus === "CONFIRMED" &&
+    transcript.speakerMappingStatus === "CONFIRMED" &&
+    Boolean(transcript.speakerMappingConfirmedAt);
   const confirmedAt =
-    !applyOnly && newMappingStatus === "CONFIRMED" ? new Date() : null;
+    !applyOnly && newMappingStatus === "CONFIRMED"
+      ? keepExistingConfirmation
+        ? transcript.speakerMappingConfirmedAt
+        : new Date()
+      : null;
   const confirmedBy =
-    !applyOnly && newMappingStatus === "CONFIRMED" ? participant.id : null;
+    !applyOnly && newMappingStatus === "CONFIRMED"
+      ? keepExistingConfirmation
+        ? transcript.speakerMappingConfirmedBy
+        : participant.id
+      : null;
 
-  const updated = await prisma.$transaction(async (tx) => {
-    if (!applyOnly) {
-      await tx.transcript.update({
-        where: { id: transcript.id },
-        data: {
-          speakerMapping: sanitizedMapping,
-          diarizedText: applyToTranscript ? diarizedText : undefined,
-          speakerMappingStatus: newMappingStatus,
-          speakerMappingConfirmedAt: confirmedAt,
-          speakerMappingConfirmedBy: confirmedBy,
-        },
-      });
-
-      for (const segment of mappedSegments) {
-        const dbSegment = transcript.segments.find(
-          (item) => item.orderIndex === segment.orderIndex,
-        );
-        if (!dbSegment) continue;
-
-        // Skip locked segments unless facilitator explicitly requests override
-        if (dbSegment.mappingLocked && !forceOverrideLocked) continue;
-
-        await tx.transcriptSegment.update({
-          where: { id: dbSegment.id },
+  const change = await applyFacilitatorMaterialInputChange({
+    sessionId,
+    confirmRewindPublication,
+    mutate: async (tx) => {
+      if (!applyOnly) {
+        await tx.transcript.update({
+          where: { id: transcript.id },
           data: {
-            mappedParticipantId: segment.mappedParticipantId,
-            mappingSource: "CLUSTER_MAPPING",
-            mappingLocked: false,
+            speakerMapping: sanitizedMapping,
+            diarizedText: applyToTranscript ? diarizedText : undefined,
+            speakerMappingStatus: newMappingStatus,
+            speakerMappingConfirmedAt: confirmedAt,
+            speakerMappingConfirmedBy: confirmedBy,
           },
         });
-      }
-    } else {
-      await tx.transcript.update({
-        where: { id: transcript.id },
-        data: { diarizedText },
-      });
-    }
 
-    return tx.transcript.findUniqueOrThrow({
-      where: { id: transcript.id },
-      include: {
-        segments: { orderBy: { orderIndex: "asc" } },
-      },
-    });
+        for (const segment of mappedSegments) {
+          const dbSegment = transcript.segments.find(
+            (item) => item.orderIndex === segment.orderIndex,
+          );
+          if (!dbSegment) continue;
+
+          // Skip locked segments unless facilitator explicitly requests override
+          if (dbSegment.mappingLocked && !forceOverrideLocked) continue;
+
+          await tx.transcriptSegment.update({
+            where: { id: dbSegment.id },
+            data: {
+              mappedParticipantId: segment.mappedParticipantId,
+              mappingSource: "CLUSTER_MAPPING",
+              mappingLocked: false,
+            },
+          });
+        }
+      } else {
+        await tx.transcript.update({
+          where: { id: transcript.id },
+          data: { diarizedText },
+        });
+      }
+
+      return tx.transcript.findUniqueOrThrow({
+        where: { id: transcript.id },
+        include: {
+          segments: { orderBy: { orderIndex: "asc" } },
+        },
+      });
+    },
   });
+  if (!change.ok) {
+    return NextResponse.json(materialChangeGuardErrorBody(change), {
+      status: change.status,
+    });
+  }
+  const updated = change.result;
 
   console.info("[speaker-mapping][api] save_completed", {
     sessionId,
@@ -477,5 +457,6 @@ export async function POST(request: Request, context: RouteContext) {
       })),
     },
     confirmed: confirm,
+    publicationRevoked: change.publicationRevoked,
   });
 }

@@ -17,6 +17,7 @@ import {
   EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
+  EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
   isExpectedPendingStatusOutput,
   LEGACY_PRODUCTION_MIGRATIONS,
   listActiveMigrationNames,
@@ -236,7 +237,7 @@ test("failed migration history is refused", () => {
   );
 });
 
-test("exact approved Stage 3.13C/3.13D/3.13E sequence is accepted", () => {
+test("exact approved Stage 3.13C/3.13D/3.13E/3.15A sequence is accepted", () => {
   const result = validateMigrationHistoryRows(
     preApprovedProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
@@ -249,6 +250,7 @@ test("exact approved Stage 3.13C/3.13D/3.13E sequence is accepted", () => {
     ...EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
+    ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
   ]);
   assert.deepEqual(
     result.recognizedLegacyMigrations,
@@ -256,7 +258,7 @@ test("exact approved Stage 3.13C/3.13D/3.13E sequence is accepted", () => {
   );
 });
 
-test("current production baseline accepts only approved Stage 3.13D/3.13E migrations pending", () => {
+test("current production baseline accepts only approved Stage 3.13D/3.13E/3.15A migrations pending", () => {
   const result = validateMigrationHistoryRows(
     currentProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
@@ -266,6 +268,7 @@ test("current production baseline accepts only approved Stage 3.13D/3.13E migrat
     [
       ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
       ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
+      ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
     ],
   );
   assert.deepEqual(
@@ -296,6 +299,31 @@ test("existing expected migrations plus recording-attempt fencing are allowed", 
   assert.deepEqual(
     result.pendingActiveMigrations,
     [...EXPECTED_PRODUCTION_PENDING_MIGRATIONS],
+  );
+});
+
+test("Stage 3.15A inputFingerprint migration is filesystem-present and explicitly admitted", async () => {
+  const fingerprintMigration =
+    "20260819120000_add_ai_analysis_input_fingerprint";
+  const activeMigrationNames = await listActiveMigrationNames(process.cwd());
+  assert.ok(activeMigrationNames.includes(fingerprintMigration));
+  assert.deepEqual(EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS, [
+    fingerprintMigration,
+  ]);
+
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([fingerprintMigration]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(result.pendingActiveMigrations, [fingerprintMigration]);
+
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([fingerprintMigration]),
+        [...ACTIVE_MIGRATIONS, "20260819120100_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
   );
 });
 

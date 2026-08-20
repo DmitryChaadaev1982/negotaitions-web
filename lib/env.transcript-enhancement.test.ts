@@ -12,6 +12,8 @@ import {
   getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementMaxRetries,
   getTranscriptEnhancementMode,
+  getTranscriptEnhancementTimeoutMs,
+  DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS,
   getYandexTranscriptEnhancementFallbackModel,
 } from "@/lib/env";
 
@@ -146,6 +148,24 @@ test("fallback model env is disabled by default and trimmed when set", () => {
     } else {
       process.env.TRANSCRIPT_ENHANCEMENT_FALLBACK_MODEL = previous;
     }
+  }
+});
+
+test("TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS defaults to 7000 and is independent of chunk timeout", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS;
+  const previousChunk = process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS;
+  process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS = "120000";
+  try {
+    assert.equal(DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS, 7000);
+    assert.equal(getTranscriptEnhancementTimeoutMs(), 7000);
+    process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS = "2500";
+    assert.equal(getTranscriptEnhancementTimeoutMs(), 2500);
+  } finally {
+    if (previous === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS;
+    else process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS = previous;
+    if (previousChunk === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS;
+    else process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS = previousChunk;
   }
 });
 

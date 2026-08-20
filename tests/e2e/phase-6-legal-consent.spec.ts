@@ -370,8 +370,8 @@ test.describe("Legal pages", () => {
       path: "/ai-processing-notice",
       ruTitle: "Уведомление об ИИ и внешних сервисах",
       enTitle: "AI & External Services Notice",
-      ruMarker: "География обработки на стороне этого провайдера уточняется",
-      enMarker: "processing geography is being clarified",
+      ruMarker: "Это относится только к Voximplant",
+      enMarker: "This applies only to Voximplant",
     },
   ] as const;
 

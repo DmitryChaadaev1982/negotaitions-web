@@ -1,4 +1,8 @@
 import { ParticipantType } from "@/app/generated/prisma/client";
+import {
+  projectPostNegotiationParticipantPreparationNotes,
+  resolveDebriefVisibleNotes,
+} from "@/lib/debrief-visible-notes";
 import type { AuthUser } from "@/lib/auth";
 import {
   canAccessSession,
@@ -93,6 +97,12 @@ export type AccountMaterialsData = {
   roomUrl: string;
   /** "locked" means participant has no assigned role yet — notes input is hidden. */
   notesVariant: "preparation" | "observer" | "facilitator" | "locked";
+  postMeetingParticipantNotes: Array<{
+    participantId: string;
+    displayName: string;
+    roleName: string | null;
+    notes: string;
+  }>;
 };
 
 /**
@@ -148,6 +158,8 @@ export async function getAccountMaterialsData(
           displayName: true,
           type: true,
           notes: true,
+          userId: true,
+          updatedAt: true,
           joinedAt: true,
           lastSeenAt: true,
           sessionRoleId: true,
@@ -296,6 +308,28 @@ export async function getAccountMaterialsData(
         }
       : null,
     roomUrl: `/room/${sessionData.id}`,
+    postMeetingParticipantNotes: projectPostNegotiationParticipantPreparationNotes(
+      resolveDebriefVisibleNotes({
+        roomLifecycle: sessionData.roomLifecycle,
+        negotiationState: sessionData.negotiationState,
+        viewerParticipantId: viewerParticipant.id,
+        viewerType: viewerParticipant.type,
+        participants: sessionData.participants.map((sessionParticipant) => ({
+          id: sessionParticipant.id,
+          userId: sessionParticipant.userId,
+          displayName: sessionParticipant.displayName,
+          type: sessionParticipant.type,
+          notes: sessionParticipant.notes,
+          updatedAt: sessionParticipant.updatedAt,
+          sessionRole: sessionParticipant.sessionRole
+            ? {
+                name: sessionParticipant.sessionRole.name,
+                sortOrder: sessionParticipant.sessionRole.sortOrder,
+              }
+            : null,
+        })),
+      }),
+    ),
     // Phase 6.11B: unassigned PARTICIPANT sees "locked" variant (no notes input).
     notesVariant: isParticipantType
       ? hasAssignedRole

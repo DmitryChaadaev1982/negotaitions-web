@@ -4,8 +4,6 @@ import { z } from "zod";
 import {
   ParticipantType,
   RecordingStatus,
-  TranscriptSource,
-  TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -13,12 +11,11 @@ import {
   isTranscriptionConfiguredForSelectedProvider,
 } from "@/lib/services/transcription-provider";
 import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import { executeClaimedTranscription } from "@/lib/services/transcription-runner";
+import { admitTranscriptionRun } from "@/lib/services/transcription-run-claim";
 import {
-  isTranscriptionActive,
-  runMockTranscription,
-  runRealTranscription,
-} from "@/lib/services/transcription-runner";
-import { lockSessionTranscriptionClaim } from "@/lib/services/transcription-run-claim";
+  transcriptionConflictBody,
+} from "@/lib/services/transcription-ownership";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
 
 export const runtime = "nodejs";
@@ -105,94 +102,25 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const now = new Date();
-  const claim = await prisma.$transaction(async (tx) => {
-    const sessionLocked = await lockSessionTranscriptionClaim(tx, sessionId);
-    if (!sessionLocked) {
-      return { kind: "session_not_found" } as const;
-    }
-
-    const existingTranscript = await tx.transcript.findUnique({
-      where: { sessionId },
-      select: { id: true, status: true, text: true },
-    });
-
-    if (existingTranscript && isTranscriptionActive(existingTranscript.status)) {
-      return { kind: "already_active", transcript: existingTranscript } as const;
-    }
-
-    // A completed transcript must go through the explicit retranscription path.
-    if (
-      existingTranscript?.status === TranscriptStatus.COMPLETED &&
-      existingTranscript.text.trim()
-    ) {
-      return { kind: "already_completed", transcript: existingTranscript } as const;
-    }
-
-    const transcript = await tx.transcript.upsert({
-      where: { sessionId },
-      create: {
-        sessionId,
-        recordingId: recording.id,
-        source: TranscriptSource.GENERATED,
-        status: TranscriptStatus.QUEUED,
-        text: existingTranscript?.text ?? "",
-        language: language === "auto" ? null : language,
-        startedAt: now,
-        processingMetadata: {},
-      },
-      update: {
-        recordingId: recording.id,
-        source: TranscriptSource.GENERATED,
-        status: TranscriptStatus.QUEUED,
-        language: language === "auto" ? null : language,
-        startedAt: now,
-        completedAt: null,
-        errorMessage: null,
-        processingMetadata: {},
-      },
-    });
-
-    return { kind: "claimed", transcript } as const;
+  const claim = await admitTranscriptionRun({
+    sessionId,
+    recordingId: recording.id,
+    language,
+    mode: "initial",
   });
 
   if (claim.kind === "session_not_found") {
     return NextResponse.json({ error: "Session not found or deleted." }, { status: 404 });
   }
-  if (claim.kind === "already_active") {
-    return NextResponse.json(
-      {
-        error: "A transcription is already in progress.",
-        transcriptId: claim.transcript.id,
-        status: claim.transcript.status,
-      },
-      { status: 409 },
-    );
-  }
-  if (claim.kind === "already_completed") {
-    return NextResponse.json(
-      {
-        error: "A completed transcript already exists for this session.",
-        transcriptId: claim.transcript.id,
-        status: claim.transcript.status,
-      },
-      { status: 409 },
-    );
+  if (claim.kind === "already_active" || claim.kind === "already_completed") {
+    return NextResponse.json(transcriptionConflictBody(claim), { status: 409 });
   }
 
-  const { transcript } = claim;
-  if (isTranscriptionMockMode()) {
-    return await runMockTranscription(sessionId, recording, transcript.id, language);
-  }
-
-  if (!recording.fileKey) {
-    return NextResponse.json({ error: "Recording file key is missing." }, { status: 400 });
-  }
-
-  return await runRealTranscription(
+  return executeClaimedTranscription({
     sessionId,
-    { ...recording, fileKey: recording.fileKey },
-    transcript.id,
+    recording,
+    transcriptId: claim.transcript.id,
     language,
-  );
+    generation: claim.generation,
+  });
 }

@@ -10,7 +10,16 @@ import {
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
+import { evaluateAiAnalysisCurrentness, shouldPresentAnalysisFromOlderTranscript } from "@/lib/ai/analysis-currentness";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
+import { computeCurrentMaterialInputFingerprint } from "@/lib/ai/session-analysis-context";
+import { resolveTranscriptEnhancementStatus } from "@/lib/post-processing/enhancement-effective-state";
+import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
+import {
+  canContinueWithCurrentTranscript,
+  isEnhancementStatusRunning,
+  projectPostProcessingStages,
+} from "@/lib/post-processing/projection";
 import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import {
@@ -20,10 +29,7 @@ import {
 } from "@/lib/analysis-visibility";
 import { isGrantProjectionCompatibleWithParticipant } from "@/lib/ai-publication";
 import { getSignedDownloadUrl } from "@/lib/storage/s3";
-import {
-  isAiAnalysisCurrentForTranscript,
-  isAiAnalysisOutdated,
-} from "@/lib/transcription/speaker-mapping-readiness";
+import { isAiAnalysisOutdated } from "@/lib/transcription/speaker-mapping-readiness";
 import { MANUAL_TRANSCRIPTION_STOP_SENTINEL } from "@/lib/services/transcription-runner";
 import { headObject } from "@/lib/storage/s3";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
@@ -38,6 +44,10 @@ import {
   resolveTranscriptProcessingStage,
 } from "@/lib/materials-status-readiness";
 import { maybeReconcileVoximplantRecordingAttempt } from "@/lib/voximplant/recording-reconciliation";
+import {
+  projectPostNegotiationParticipantPreparationNotes,
+  resolveDebriefVisibleNotes,
+} from "@/lib/debrief-visible-notes";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,31 +58,6 @@ type RouteContext = {
 
 function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-export function resolveTranscriptEnhancementStatus(
-  processingMetadata: unknown,
-):
-  | "NOT_AVAILABLE"
-  | "IDLE"
-  | "SUGGESTED"
-  | "IN_PROGRESS"
-  | "COMPLETED"
-  | "PARTIAL"
-  | "FAILED"
-  | "SKIPPED" {
-  const metadata = asMetadata(processingMetadata);
-  const enhancement = asMetadata(metadata.transcriptEnhancement);
-  const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
-  const status = enhancement.status;
-  if (status === "IN_PROGRESS" || status === "RUNNING") return "IN_PROGRESS";
-  if (status === "FAILED") return "FAILED";
-  if (status === "PARTIAL") return "PARTIAL";
-  if (status === "COMPLETED") return "COMPLETED";
-  if (status === "SKIPPED") return "SKIPPED";
-  if (recommendation.suggested === true) return "SUGGESTED";
-  if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
-  return "NOT_AVAILABLE";
 }
 
 function resolveRecordingProcessingStage(input: {
@@ -254,6 +239,7 @@ export async function GET(request: Request, context: RouteContext) {
           sharedAt: true,
           sharedBy: true,
           transcriptRetranscribeCount: true,
+          inputFingerprint: true,
           runToken: true,
           leaseExpiresAt: true,
           updatedAt: true,
@@ -297,6 +283,13 @@ export async function GET(request: Request, context: RouteContext) {
   const recording = session.recording;
   const transcript = session.transcript;
   const aiAnalysis = session.aiAnalysis;
+  if (transcript) {
+    const reconciled = await reconcileTranscriptEnhancementTimeout({
+      db: prisma as never,
+      transcriptId: transcript.id,
+    });
+    transcript.processingMetadata = reconciled.metadata as typeof transcript.processingMetadata;
+  }
 
   const recordingStatus = recording?.status ?? null;
   const recordingHasFileKey = Boolean(recording?.fileKey);
@@ -356,11 +349,20 @@ export async function GET(request: Request, context: RouteContext) {
     processingMetadata: transcript?.processingMetadata ?? null,
   });
 
-  const aiAnalysisReadiness = evaluateAiAnalysisReadiness(transcript);
+  const aiAnalysisReadiness = evaluateAiAnalysisReadiness(
+    transcript
+      ? {
+          ...transcript,
+          enhancementStatus: transcriptEnhancementStatus,
+          participants: session.participants,
+        }
+      : null,
+  );
   const transcriptHasText = aiAnalysisReadiness.hasUsableContent;
   const hasRunningTranscription = hasRunningRawTranscription(transcriptStatus);
-  const hasRunningTranscriptEnhancement =
-    transcriptEnhancementStatus === "IN_PROGRESS";
+  const hasRunningTranscriptEnhancement = isEnhancementStatusRunning(
+    transcriptEnhancementStatus,
+  );
 
   const canViewRecording = true;
   const activePublication = aiAnalysis?.publications[0] ?? null;
@@ -396,21 +398,34 @@ export async function GET(request: Request, context: RouteContext) {
 
   const speakerMappingRequired =
     Boolean(transcript) && !speakerMappingReady;
+  const speakerMappingConfirmed =
+    isFacilitator &&
+    speakerMappingReady &&
+    transcript?.speakerMappingStatus === "CONFIRMED";
 
   const analysisOutdated = isAiAnalysisOutdated(
     transcript?.retranscribeCount,
     aiAnalysis?.transcriptRetranscribeCount,
   );
-  const analysisCurrent = Boolean(
-    aiAnalysis &&
-      isAiAnalysisCurrentForTranscript({
-        transcriptId: transcript?.id,
-        transcriptRetranscribeCount: transcript?.retranscribeCount,
-        analysisTranscriptId: aiAnalysis.transcriptId,
-        analysisTranscriptRetranscribeCount:
-          aiAnalysis.transcriptRetranscribeCount,
-      }),
-  );
+  const currentMaterialFingerprint = aiAnalysis
+    ? await computeCurrentMaterialInputFingerprint(sessionId)
+    : null;
+  const analysisCurrentness = evaluateAiAnalysisCurrentness({
+    analysis: aiAnalysis,
+    currentFingerprint: currentMaterialFingerprint,
+    transcriptId: transcript?.id,
+    transcriptRetranscribeCount: transcript?.retranscribeCount,
+  });
+  const analysisCurrent = analysisCurrentness.current;
+  if (aiAnalysis) {
+    console.info("[materials-status] ai_currentness", {
+      sessionId,
+      current: analysisCurrent,
+      reason: analysisCurrentness.reason,
+      schemaVersion: 1,
+      storedFingerprint: aiAnalysis.inputFingerprint ?? null,
+    });
+  }
   const hasCurrentPublishableAiAnalysis =
     aiStatus === AiAnalysisStatus.COMPLETED &&
     analysisCurrent &&
@@ -420,11 +435,13 @@ export async function GET(request: Request, context: RouteContext) {
     isFacilitator &&
     aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
+    !hasRunningTranscriptEnhancement &&
     (aiStatus === null ||
       aiStatus === AiAnalysisStatus.FAILED ||
       aiStatus === AiAnalysisStatus.QUEUED ||
       aiStatus === AiAnalysisStatus.ANALYZING ||
-      analysisOutdated);
+      analysisOutdated ||
+      !analysisCurrent);
   const canRetryAiAnalysis =
     isFacilitator &&
     aiAnalysisReadiness.ready &&
@@ -432,12 +449,15 @@ export async function GET(request: Request, context: RouteContext) {
       aiStatus === AiAnalysisStatus.QUEUED ||
       aiStatus === AiAnalysisStatus.ANALYZING) &&
     !hasRunningAiAnalysis &&
+    !hasRunningTranscriptEnhancement &&
     speakerMappingReady;
   const canRerunAiAnalysis =
     isFacilitator &&
     aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
-    aiStatus === AiAnalysisStatus.COMPLETED;
+    !hasRunningTranscriptEnhancement &&
+    aiStatus === AiAnalysisStatus.COMPLETED &&
+    analysisCurrent;
   const canShareAiAnalysis =
     isFacilitator &&
     aiStatus === AiAnalysisStatus.COMPLETED &&
@@ -448,7 +468,8 @@ export async function GET(request: Request, context: RouteContext) {
 
   // Processing status stays canonical on AiAnalysis. Access to a participant or
   // observer projection additionally requires that recipient's durable grant.
-  const canViewAiAnalysis = isFacilitator || hasValidPublicationGrant;
+  const canViewAiAnalysis =
+    isFacilitator || (hasValidPublicationGrant && analysisCurrent);
   const canOpenMaterials = isObserver
     ? isEventHostOwner || canViewTranscript || canViewAiAnalysis
     : true;
@@ -486,12 +507,31 @@ export async function GET(request: Request, context: RouteContext) {
     transcriptEnhancementStatus,
   );
 
+  const presentedAiStatus =
+    aiStatus === AiAnalysisStatus.COMPLETED && !analysisCurrent
+      ? null
+      : aiStatus;
   const aiAnalysisStage = resolveAiAnalysisProcessingStage(
-    aiStatus,
+    presentedAiStatus,
     transcriptStatus,
     transcriptHasText,
     hasRunningAiAnalysis,
   );
+
+  const postProcessing = projectPostProcessingStages({
+    recordingStage,
+    transcriptStage,
+    enhancementStatus: transcriptEnhancementStatus,
+    transcriptPresent: Boolean(transcript),
+    mappingInput: {
+      hasSpeakerDiarization: transcript?.hasSpeakerDiarization ?? false,
+      speakerMappingStatus: transcript?.speakerMappingStatus ?? null,
+      segments: transcript?.segments ?? [],
+      participants: session.participants,
+    },
+    aiStage: aiAnalysisStage,
+    conflictingOwnership: hasRunningAiAnalysis || hasRunningTranscription,
+  });
 
   const isParticipantOrObserver = !isFacilitator;
   const sessionIsFinished = session.negotiationState === "FINISHED";
@@ -550,13 +590,18 @@ export async function GET(request: Request, context: RouteContext) {
   });
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
+  const presentCurrentAnalysis = analysisCurrent;
   const fullAnalysisJson =
-    (aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null;
+    presentCurrentAnalysis
+      ? ((aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null)
+      : null;
   const sharedAnalysisJson =
-    (activePublication?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null;
+    presentCurrentAnalysis
+      ? ((activePublication?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null)
+      : null;
   const analysisJsonForUser = isFacilitator
     ? getAnalysisForFacilitator(fullAnalysisJson)
-    : hasValidPublicationGrant
+    : hasValidPublicationGrant && presentCurrentAnalysis
       ? viewerGrant?.projection === AiAnalysisPublicationProjection.OBSERVER
         ? getAnalysisForObserver(sharedAnalysisJson)
         : getAnalysisForParticipant(sharedAnalysisJson, {
@@ -566,14 +611,18 @@ export async function GET(request: Request, context: RouteContext) {
       : null;
 
   const executiveSummaryForUser = isFacilitator
-    ? (aiAnalysis?.executiveSummary ?? null)
-    : hasValidPublicationGrant
+    ? presentCurrentAnalysis
+      ? (aiAnalysis?.executiveSummary ?? null)
+      : null
+    : hasValidPublicationGrant && presentCurrentAnalysis
       ? (activePublication?.sharedExecutiveSummary ?? null)
       : null;
 
   const aiAnalysisResponse = {
     id: aiAnalysis?.id ?? null,
-    status: aiAnalysis?.status ?? "NOT_STARTED",
+    status: presentCurrentAnalysis
+      ? (aiAnalysis?.status ?? "NOT_STARTED")
+      : "NOT_STARTED",
     model: isFacilitator ? (aiAnalysis?.model ?? null) : null,
     executiveSummary: canViewAiAnalysis ? executiveSummaryForUser : null,
     overallScore:
@@ -588,10 +637,16 @@ export async function GET(request: Request, context: RouteContext) {
     canRerun: canRerunAiAnalysis,
     canView: canViewAiAnalysis,
     canShare: canShareAiAnalysis,
+    analysisCurrent: isFacilitator ? analysisCurrent : undefined,
+    historicalAnalysisExists: Boolean(aiAnalysis),
     speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
-    participantPlaceholder: !isFacilitator && !hasValidPublicationGrant,
+    participantPlaceholder: !isFacilitator && !canViewAiAnalysis,
     // Analysis version tracking
-    analysisFromOlderTranscript: isFacilitator && analysisOutdated,
+    analysisFromOlderTranscript: shouldPresentAnalysisFromOlderTranscript({
+      isFacilitator,
+      analysisCurrent,
+      analysisOutdated,
+    }),
     // Sharing metadata
     visibility: isFacilitator ? aiVisibility : null,
     isSharedWithSession,
@@ -602,10 +657,12 @@ export async function GET(request: Request, context: RouteContext) {
       ? (activePublication?.publishedBy ?? aiAnalysis?.sharedBy ?? null)
       : null,
     notSharedMessage:
-      !isFacilitator && !hasValidPublicationGrant && aiStatus !== null
-        ? isSharedWithSession
-          ? "AI analysis was not published for this recipient."
-          : "AI analysis has not been shared yet."
+      !isFacilitator && !canViewAiAnalysis && aiStatus !== null
+        ? isSharedWithSession && !analysisCurrent
+          ? "AI analysis is no longer current."
+          : isSharedWithSession
+            ? "AI analysis was not published for this recipient."
+            : "AI analysis has not been shared yet."
         : null,
   };
 
@@ -619,6 +676,32 @@ export async function GET(request: Request, context: RouteContext) {
   } else {
     currentStage = transcriptStage;
   }
+
+  const notesRoster = await prisma.sessionParticipant.findMany({
+    where: { sessionId },
+    select: {
+      id: true,
+      userId: true,
+      displayName: true,
+      type: true,
+      notes: true,
+      updatedAt: true,
+      sessionRole: {
+        select: { name: true, sortOrder: true },
+      },
+    },
+  });
+  const postNegotiationNotes = {
+    participantPreparation: projectPostNegotiationParticipantPreparationNotes(
+      resolveDebriefVisibleNotes({
+        roomLifecycle: session.roomLifecycle,
+        negotiationState: session.negotiationState,
+        viewerParticipantId: participant.id,
+        viewerType: participant.type,
+        participants: notesRoster,
+      }),
+    ),
+  };
 
   return NextResponse.json({
     session: {
@@ -702,7 +785,7 @@ export async function GET(request: Request, context: RouteContext) {
             ? mappingFailure.mappingSuggestionDiagnostics
             : null,
           speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
-          speakerMappingConfirmed: isFacilitator ? speakerMappingReady : null,
+          speakerMappingConfirmed: isFacilitator ? speakerMappingConfirmed : null,
           processingMetadata: isFacilitator ? (transcript.processingMetadata ?? null) : null,
           enhancement: {
             // Completion/freshness is shared operational status, not access to
@@ -734,6 +817,9 @@ export async function GET(request: Request, context: RouteContext) {
               : null,
             inProgress: hasRunningTranscriptEnhancement,
             canRetry: isFacilitator ? canRetryTranscriptEnhancement : false,
+            canContinueWithCurrentTranscript: canContinueWithCurrentTranscript(
+              transcriptEnhancementStatus,
+            ),
           },
         }
       : {
@@ -756,6 +842,8 @@ export async function GET(request: Request, context: RouteContext) {
           enhancement: null,
         },
     aiAnalysis: aiAnalysisResponse,
+    postNegotiationNotes,
+    postProcessing,
     processing: {
       shouldPoll,
       nextPollMs: resolveMaterialsNextPollMs(recordingStatus, shouldPoll),

@@ -202,6 +202,7 @@ function AiStatusCell({ session }: { session: SessionRow }) {
 
   const speakerMappingRequired = session.speakerMappingStage === "required";
   const speakerMappingConfirmed = session.speakerMappingStage === "confirmed";
+  const speakerMappingInformational = session.speakerMappingStage === "informational";
 
   const publicationLabel =
     session.aiPublicationStatus === "full"
@@ -223,6 +224,10 @@ function AiStatusCell({ session }: { session: SessionRow }) {
       {speakerMappingRequired ? (
         <span className="text-xs font-medium text-amber-400" data-testid="sessions-speaker-mapping-required-badge">
           {t("room.speakerMappingRequired")}
+        </span>
+      ) : speakerMappingInformational ? (
+        <span className="text-xs font-medium text-sky-300" data-testid="sessions-speaker-mapping-advisory-badge">
+          {t("room.speakerMappingSuggested")}
         </span>
       ) : speakerMappingConfirmed ? (
         <span className="text-xs font-medium text-emerald-400" data-testid="sessions-speaker-mapping-confirmed-badge">

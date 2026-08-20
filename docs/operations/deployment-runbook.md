@@ -400,14 +400,14 @@ OR (
     t."processingMetadata" #>> '{transcriptEnhancement,startedAt}' IS NULL
     OR (
       t."processingMetadata" #>> '{transcriptEnhancement,startedAt}'
-    )::timestamptz > NOW() - INTERVAL '10 minutes'
+    )::timestamptz > NOW() - INTERVAL '7 seconds'
   )
 );
 ```
 
-The ten-minute enhancement predicate matches
-`ENHANCEMENT_RUNNING_STALE_MS`. `COMPLETED`, `FAILED`, `PARTIAL`, and `SKIPPED`
-enhancement outcomes are terminal and do not block.
+The seven-second enhancement predicate matches
+`TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`). `COMPLETED`, `FAILED`,
+`PARTIAL`, and `SKIPPED` enhancement outcomes are terminal and do not block.
 
 Active AI analysis execution:
 

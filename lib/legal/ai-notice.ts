@@ -35,7 +35,7 @@ const ruNotice: LegalDocument = {
         {
           type: "ul",
           items: [
-            "Voximplant обеспечивает живые коммуникации и инфраструктуру записи. География обработки на стороне этого провайдера уточняется.",
+            "Voximplant (ООО «Фастком») обеспечивает живые коммуникации и инфраструктуру записи. По письменному подтверждению этого провайдера от 19.08.2026 его обработка, включая медиатрафик и техническую поддержку, выполняется в Российской Федерации; трансграничная передача этим провайдером не выполняется; при выборе клиентского хранилища запись сохраняется у клиента и копия на серверах провайдера не удерживается. Это относится только к Voximplant и не означает, что все данные платформы обрабатываются исключительно в Российской Федерации.",
             "Yandex SpeechKit выполняет преобразование аудиозаписи в текст.",
             "ИИ-сервисы, предоставляемые в инфраструктуре Yandex Cloud, используются для улучшения транскрипта и ИИ-анализа учебной сессии. Имя конкретной модели может меняться без изменения цели обработки.",
             "Yandex Object Storage хранит объекты записи приложения.",
@@ -124,7 +124,7 @@ const enNotice: LegalDocument = {
         {
           type: "ul",
           items: [
-            "Voximplant provides live communications and recording infrastructure. That provider’s processing geography is being clarified.",
+            "Voximplant (Fastcom LLC) provides live communications and recording infrastructure. Per that provider’s written confirmation dated 19 August 2026, its processing, including media traffic and technical support, is performed in the Russian Federation; that provider does not perform cross-border transfer; when client storage is selected, the recording is saved to the client’s storage and the provider does not retain a copy. This applies only to Voximplant and does not mean all platform data is processed only in the Russian Federation.",
             "Yandex SpeechKit converts the audio recording into text.",
             "AI services provided through Yandex Cloud infrastructure are used for transcript enhancement and AI analysis of a training session. The specific model name may change without changing the purpose of processing.",
             "Yandex Object Storage stores application recording objects.",

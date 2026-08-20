@@ -47,6 +47,7 @@ import { SessionRoomPresenceHeartbeat } from "@/components/session-room-presence
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { GlassCard, GlassCardContent } from "@/components/ui/glass-card";
 import { VisibilityBadge } from "@/components/visibility-badge";
+import { areMaterialNegotiationNotesLockedAfterNegotiation } from "@/lib/ai/material-negotiation-notes";
 import { SESSION_EXIT_DESTINATIONS } from "@/lib/client/session-exit-navigation";
 import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomAuthToken } from "@/lib/room-auth";
@@ -261,6 +262,10 @@ function RoomSidebar({
                   initialNotes={sidebar.notes}
                   description={notesConfig.description}
                   placeholder={notesConfig.placeholder}
+                  readOnly={areMaterialNegotiationNotesLockedAfterNegotiation({
+                    participantType: sidebar.participantType,
+                    negotiationState,
+                  })}
                 />
               )}
             </GlassCardContent>

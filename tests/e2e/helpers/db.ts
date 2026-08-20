@@ -707,14 +707,29 @@ export async function createRoomConnectionForParticipant(input: {
   userId: string;
   role: string;
   connectionId?: string;
+  createdAt?: Date;
+  expiresAt?: Date;
+  disconnectedAt?: Date | null;
 }) {
   const connectionId = input.connectionId ?? id("conn");
+  const createdAt = input.createdAt ?? new Date(Date.now() - 25 * 60 * 1000);
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + 30 * 60 * 1000);
   await query(
     `INSERT INTO "SessionRoomConnection"
-       ("id", "sessionId", "userId", "connectionId", "leaseVersion", "role", "expiresAt", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, 1, $5::"ParticipantType", NOW() + INTERVAL '30 minutes', NOW() - INTERVAL '5 minutes', NOW())
+       ("id", "sessionId", "userId", "connectionId", "leaseVersion", "role",
+        "expiresAt", "disconnectedAt", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, 1, $5::"ParticipantType", $6, $7, $8, NOW())
      ON CONFLICT ("connectionId") DO NOTHING`,
-    [id("room-conn"), input.sessionId, input.userId, connectionId, input.role],
+    [
+      id("room-conn"),
+      input.sessionId,
+      input.userId,
+      connectionId,
+      input.role,
+      expiresAt,
+      input.disconnectedAt ?? null,
+      createdAt,
+    ],
   );
   return connectionId;
 }

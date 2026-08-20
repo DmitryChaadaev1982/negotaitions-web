@@ -13,6 +13,7 @@ import {
   saveAccountParticipantNotes,
   type SaveParticipantNotesState,
 } from "@/app/actions/sessions";
+import { areMaterialNegotiationNotesLockedAfterNegotiation } from "@/lib/ai/material-negotiation-notes";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { AccountMaterialsData, AccountMaterialsRole } from "@/lib/account-session-materials";
 import {
@@ -176,10 +177,12 @@ function NotesForm({
   participantId,
   initialNotes,
   variant,
+  writeLocked = false,
 }: {
   participantId: string;
   initialNotes: string;
   variant: "preparation" | "observer" | "facilitator";
+  writeLocked?: boolean;
 }) {
   const { t } = useI18n();
   const [draftNotes, setDraftNotes] = useState(initialNotes);
@@ -207,6 +210,27 @@ function NotesForm({
         ? t("join.observerNotesPlaceholder")
         : t("join.preparationPlaceholder");
 
+  if (writeLocked) {
+    return (
+      <div className="space-y-3">
+        <textarea
+          name="notes"
+          rows={6}
+          readOnly
+          className="w-full rounded-lg bg-slate-900/60 px-3 py-2 text-sm text-slate-200 ring-1 ring-inset ring-slate-700/40 placeholder:text-slate-600"
+          value={initialNotes}
+          data-testid="materials-notes-textarea"
+        />
+        <p
+          className="text-xs text-amber-300"
+          data-testid="materials-notes-locked-after-negotiation"
+        >
+          {t("sessions.preparationLockedAfterNegotiation")}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <form action={formAction} className="space-y-3">
       {/* participantId is a non-secret DB record id — safe as a form field */}
@@ -221,7 +245,13 @@ function NotesForm({
         data-testid="materials-notes-textarea"
       />
       {state.errors?.form ? (
-        <p className="text-xs text-rose-400">{state.errors.form[0]}</p>
+        <p className="text-xs text-rose-400">
+          {state.errors.form[0] === "preparationLockedAfterNegotiation"
+            ? t("sessions.preparationLockedAfterNegotiation")
+            : state.errors.form[0] === "preparationLockedNoRole"
+              ? t("sessions.preparationLockedNoRole")
+              : state.errors.form[0]}
+        </p>
       ) : null}
       {isDirty ? (
         <p className="text-xs text-amber-300">{t("common.unsavedNotes")}</p>
@@ -259,6 +289,7 @@ export function AccountSessionMaterialsView({
   transcript,
   roomUrl,
   notesVariant,
+  postMeetingParticipantNotes,
 }: Props) {
   const { t } = useI18n();
   const participantHasLeftRoom = useSyncExternalStore(
@@ -280,6 +311,10 @@ export function AccountSessionMaterialsView({
 
   // Phase 6.11B: PARTICIPANT without role sees waiting message instead of notes/briefing.
   const isRoleLocked = notesVariant === "locked";
+  const notesWriteLocked = areMaterialNegotiationNotesLockedAfterNegotiation({
+    participantType,
+    negotiationState: session.negotiationState,
+  });
 
   const notesSectionTitle =
     notesVariant === "facilitator"
@@ -414,10 +449,43 @@ export function AccountSessionMaterialsView({
                   participantId={participantId}
                   initialNotes={notes}
                   variant={notesVariant as "preparation" | "observer" | "facilitator"}
+                  writeLocked={notesWriteLocked}
                 />
               )}
             </GlassCardContent>
           </GlassCard>
+
+          {participantType !== "PARTICIPANT" &&
+          postMeetingParticipantNotes.length > 0 ? (
+            <GlassCard data-testid="post-meeting-participant-notes">
+              <GlassCardHeader>
+                <p className="font-semibold text-slate-100">{t("room.meetingNotes")}</p>
+              </GlassCardHeader>
+              <GlassCardContent className="space-y-3 py-4">
+                <p className="text-xs text-slate-400">{t("room.meetingNotesReadOnly")}</p>
+                {postMeetingParticipantNotes.map((note) => (
+                  <article
+                    key={note.participantId}
+                    className="rounded-lg border border-slate-700/45 bg-slate-950/45 p-3"
+                    data-testid="post-meeting-participant-note"
+                    data-participant-id={note.participantId}
+                  >
+                    <p className="text-sm font-medium text-slate-100">
+                      {note.roleName
+                        ? `${note.displayName} · ${note.roleName}`
+                        : note.displayName}
+                    </p>
+                    <p
+                      className="mt-2 whitespace-pre-wrap text-sm text-slate-300"
+                      data-testid="post-meeting-participant-note-text"
+                    >
+                      {note.notes}
+                    </p>
+                  </article>
+                ))}
+              </GlassCardContent>
+            </GlassCard>
+          ) : null}
 
           {/* AI analysis / debrief — visible once facilitator shares the report */}
           <div data-testid="account-ai-analysis-section">

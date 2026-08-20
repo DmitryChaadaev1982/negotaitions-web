@@ -197,7 +197,7 @@ test("role privacy, preparation, negotiation recording, transcription, notes, an
   );
   expect(transcriptResponse.ok()).toBeTruthy();
   expect(await transcriptResponse.text()).toContain(
-    "Mock transcript for NegotAItions regression test.",
+    "Mock speaker 1 line.",
   );
 
   const editedText = "E2E edited transcript persists";

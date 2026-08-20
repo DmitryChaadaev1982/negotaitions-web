@@ -5,6 +5,7 @@ import { ParticipantType } from "@/app/generated/prisma/client";
 import {
   resolveSpeakerMappingCandidates,
   resolveSpeakerMappingEvidenceInterval,
+  selectNegotiationSpeakerMappingCandidates,
   type SpeakerMappingConnectionRow,
   type SpeakerMappingParticipantRow,
 } from "@/lib/transcription/speaker-mapping-candidates";
@@ -110,6 +111,31 @@ test("excludes connections outside the recording interval", () => {
   });
 
   assert.deepEqual(candidates.map((candidate) => candidate.displayName), ["during"]);
+});
+
+test("selectNegotiationSpeakerMappingCandidates keeps only PARTICIPANT rows", () => {
+  const present = resolveSpeakerMappingCandidates({
+    interval,
+    participants: [
+      participant("participant-a", "user-a"),
+      participant("participant-b", "user-b"),
+      participant("observer", "user-observer", ParticipantType.OBSERVER),
+      participant("facilitator", "user-facilitator", ParticipantType.FACILITATOR),
+      participant("invited", "user-invited"),
+    ],
+    connections: [
+      connection("user-a"),
+      connection("user-b"),
+      connection("user-observer"),
+      connection("user-facilitator"),
+    ],
+  });
+
+  const negotiation = selectNegotiationSpeakerMappingCandidates(present);
+  assert.deepEqual(
+    negotiation.map((candidate) => candidate.sessionParticipantId),
+    ["participant-a", "participant-b"],
+  );
 });
 
 test("uses recording interval before session or transcript fallback", () => {

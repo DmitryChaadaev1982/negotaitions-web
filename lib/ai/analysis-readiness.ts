@@ -1,4 +1,5 @@
 import { TranscriptStatus } from "@/app/generated/prisma/client";
+import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
 import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 
 export type TranscriptForAiAnalysisReadiness = {
@@ -8,6 +9,8 @@ export type TranscriptForAiAnalysisReadiness = {
   hasSpeakerDiarization: boolean;
   speakerMappingStatus: string | null;
   speakerMapping: unknown;
+  enhancementStatus?: string | null;
+  participants?: Array<{ id: string; type: string }>;
   segments: Array<{
     speakerLabel: string | null;
     mappedParticipantId?: string | null;
@@ -20,7 +23,8 @@ export type AiAnalysisReadinessReason =
   | "TRANSCRIPT_MISSING"
   | "TRANSCRIPT_NOT_COMPLETED"
   | "TRANSCRIPT_CONTENT_EMPTY"
-  | "SPEAKER_MAPPING_REQUIRED";
+  | "SPEAKER_MAPPING_REQUIRED"
+  | "ENHANCEMENT_RUNNING";
 
 export type AiAnalysisReadiness = {
   ready: boolean;
@@ -44,9 +48,10 @@ export function hasUsableTranscriptContent(
 
 /**
  * Canonical server-side readiness contract used by the materials UI and the
- * authoritative analyze endpoint. Transcript enhancement status is
- * intentionally absent: enhancement is optional once the raw transcript is
- * complete, usable, and speaker mapping is ready.
+ * authoritative analyze endpoint. Enhancement RUNNING blocks only while the
+ * authoritative run is still inside the configured timeout window; other
+ * enhancement states remain optional once the raw transcript is usable and
+ * mapping is structurally complete.
  */
 export function evaluateAiAnalysisReadiness(
   transcript: TranscriptForAiAnalysisReadiness | null,
@@ -63,6 +68,7 @@ export function evaluateAiAnalysisReadiness(
   const hasUsableContent = hasUsableTranscriptContent(transcript);
   const speakerMappingReady = isSpeakerMappingReadyForAnalysis({
     ...transcript,
+    participants: transcript.participants ?? [],
     segments: transcript.segments.map((segment) => ({
       ...segment,
       text: segment.text ?? undefined,
@@ -82,6 +88,14 @@ export function evaluateAiAnalysisReadiness(
       ready: false,
       reason: "TRANSCRIPT_CONTENT_EMPTY",
       hasUsableContent: false,
+      speakerMappingReady,
+    };
+  }
+  if (isEnhancementStatusRunning(transcript.enhancementStatus)) {
+    return {
+      ready: false,
+      reason: "ENHANCEMENT_RUNNING",
+      hasUsableContent: true,
       speakerMappingReady,
     };
   }

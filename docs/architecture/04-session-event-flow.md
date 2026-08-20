@@ -257,7 +257,12 @@ these timers changes the Debrief grace.
   current draft separate from its saved baseline. A successful Notes action
   advances only that baseline to the returned persisted notes; a newer local
   edit remains visible and dirty, and a failed action cannot report saved
-  state.
+  state. Negotiation-participant preparation notes become read-only after
+  `negotiationState === FINISHED`; they remain visible to authorized viewers
+  through `resolveDebriefVisibleNotes` (own notes for a negotiation
+  participant; all participant preparation notes for facilitator and
+  authorized session observer). Facilitator and observer own notes stay
+  editable. The same lock is enforced by the notes persist helper.
 
 ## Stage 3.13E Wave 2 Acceptance Remediation Notes
 

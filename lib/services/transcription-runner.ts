@@ -70,6 +70,14 @@ import {
 } from "@/lib/observability/transcription-observability";
 import { resolveInitialQualityText } from "@/lib/services/transcript-enhancement-persistence";
 import { executeTranscriptEnhancement } from "@/lib/services/transcript-enhancement-orchestration";
+import { applyOwnedTranscriptionUpdate } from "@/lib/services/transcription-generation-cas";
+import {
+  isSameTranscriptionGeneration,
+  shouldBindDownstreamToGeneration,
+  TRANSCRIPTION_GENERATION_CONFLICT_CODE,
+  TRANSCRIPTION_GENERATION_CONFLICT_ERROR,
+  type TranscriptionGenerationRef,
+} from "@/lib/services/transcription-ownership";
 import { autoTriggerSpeakerMappingAfterTranscription } from "@/lib/transcription/auto-trigger-mapping";
 import { applySpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
@@ -84,7 +92,7 @@ import {
   writeCalibrationRunArtifacts,
   writeRawCalibrationInputArtifact,
 } from "@/lib/transcription/pause-filter-calibration";
-import { getMockExternalServiceError } from "@/lib/test-mode";
+import { getMockExternalServiceError, isTranscriptionMockMode } from "@/lib/test-mode";
 import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
 import {
   buildActiveAudioTimeline,
@@ -145,10 +153,31 @@ async function throwIfTranscriptionStoppedManually(
 export async function setTranscriptStatus(
   transcriptId: string,
   status: TranscriptStatus,
+  generation?: TranscriptionGenerationRef | null,
 ): Promise<void> {
   await throwIfTranscriptionStoppedManually(transcriptId);
-  await prisma.transcript.update({
-    where: { id: transcriptId },
+  if (!generation) {
+    await prisma.transcript.update({
+      where: { id: transcriptId },
+      data: { status },
+    });
+    return;
+  }
+
+  await prisma.transcript.updateMany({
+    where: {
+      id: generation.transcriptId,
+      startedAt: generation.startedAt,
+      retranscribeCount: generation.retranscribeCount,
+      status: {
+        in: [
+          TranscriptStatus.QUEUED,
+          TranscriptStatus.DOWNLOADING_RECORDING,
+          TranscriptStatus.COMPRESSING_AUDIO,
+          TranscriptStatus.TRANSCRIBING,
+        ],
+      },
+    },
     data: { status },
   });
 }
@@ -156,9 +185,34 @@ export async function setTranscriptStatus(
 export async function failTranscript(
   transcriptId: string,
   errorMessage: string,
+  generation?: TranscriptionGenerationRef | null,
 ): Promise<void> {
-  await prisma.transcript.update({
-    where: { id: transcriptId },
+  if (!generation) {
+    await prisma.transcript.update({
+      where: { id: transcriptId },
+      data: {
+        status: TranscriptStatus.FAILED,
+        errorMessage,
+        completedAt: new Date(),
+      },
+    });
+    return;
+  }
+
+  await prisma.transcript.updateMany({
+    where: {
+      id: generation.transcriptId,
+      startedAt: generation.startedAt,
+      retranscribeCount: generation.retranscribeCount,
+      status: {
+        in: [
+          TranscriptStatus.QUEUED,
+          TranscriptStatus.DOWNLOADING_RECORDING,
+          TranscriptStatus.COMPRESSING_AUDIO,
+          TranscriptStatus.TRANSCRIBING,
+        ],
+      },
+    },
     data: {
       status: TranscriptStatus.FAILED,
       errorMessage,
@@ -167,12 +221,35 @@ export async function failTranscript(
   });
 }
 
+async function resolveTranscriptionGeneration(
+  transcriptId: string,
+  generation?: TranscriptionGenerationRef,
+): Promise<TranscriptionGenerationRef | null> {
+  if (generation) {
+    return generation;
+  }
+  const row = await prisma.transcript.findUnique({
+    where: { id: transcriptId },
+    select: { id: true, startedAt: true, retranscribeCount: true },
+  });
+  if (!row?.startedAt) {
+    return null;
+  }
+  return {
+    transcriptId: row.id,
+    startedAt: row.startedAt,
+    retranscribeCount: row.retranscribeCount,
+  };
+}
+
 type RecordingForTranscription = {
   id: string;
   recordingAttemptId: string | null;
   fileKey: string | null;
   fileName: string | null;
   mimeType: string | null;
+  startedAt?: Date | null;
+  endedAt?: Date | null;
 };
 
 async function updateRecordingForTranscriptionAttempt(
@@ -202,7 +279,9 @@ export async function runMockTranscription(
   recording: RecordingForTranscription,
   transcriptId: string,
   language: string,
+  generation?: TranscriptionGenerationRef,
 ): Promise<NextResponse> {
+  const ownedGeneration = await resolveTranscriptionGeneration(transcriptId, generation);
   const simulatedError = getMockExternalServiceError();
 
   if (simulatedError === "YANDEX_STORAGE_DOWNLOAD_FAILED") {
@@ -223,7 +302,7 @@ export async function runMockTranscription(
       recordingId: recording.id,
     });
 
-    await failTranscript(transcriptId, classified.message);
+    await failTranscript(transcriptId, classified.message, ownedGeneration);
     return NextResponse.json({ error: classified.message }, { status: 500 });
   }
 
@@ -257,20 +336,22 @@ export async function runMockTranscription(
       recordingId: recording.id,
     });
 
-    await failTranscript(transcriptId, classified.message);
+    await failTranscript(transcriptId, classified.message, ownedGeneration);
     return NextResponse.json({ error: classified.message }, { status: 500 });
   }
 
-  await setTranscriptStatus(transcriptId, TranscriptStatus.DOWNLOADING_RECORDING);
-  await setTranscriptStatus(transcriptId, TranscriptStatus.TRANSCRIBING);
+  await setTranscriptStatus(
+    transcriptId,
+    TranscriptStatus.DOWNLOADING_RECORDING,
+    ownedGeneration,
+  );
+  await setTranscriptStatus(transcriptId, TranscriptStatus.TRANSCRIBING, ownedGeneration);
 
   const mockStrategy = getTranscriptionStrategy();
   const isTwoPass = mockStrategy === "diarize_plus_quality";
   const mockInputSizeBytes = 1024;
 
-  const saved = await prisma.transcript.update({
-    where: { id: transcriptId },
-    data: {
+  const mockCompletionData = {
       status: TranscriptStatus.COMPLETED,
       text: isTwoPass
         ? "Mock speaker 1 enhanced line. Mock speaker 2 enhanced line."
@@ -305,37 +386,71 @@ export async function runMockTranscription(
       qualityModel: isTwoPass ? "mock-quality-transcription" : null,
       alignmentStatus: isTwoPass ? "ALIGNED" : null,
       alignmentConfidence: isTwoPass ? 0.92 : null,
-    },
+    };
+
+  if (!ownedGeneration) {
+    return NextResponse.json(
+      {
+        error: TRANSCRIPTION_GENERATION_CONFLICT_ERROR,
+        code: TRANSCRIPTION_GENERATION_CONFLICT_CODE,
+      },
+      { status: 409 },
+    );
+  }
+
+  const applied = await prisma.$transaction(async (tx) => {
+    const result = await applyOwnedTranscriptionUpdate({
+      tx,
+      generation: ownedGeneration,
+      data: mockCompletionData,
+    });
+    if (result !== "applied") {
+      return result;
+    }
+    await tx.transcriptSegment.deleteMany({ where: { transcriptId } });
+    await tx.transcriptSegment.createMany({
+      data: [
+        {
+          transcriptId,
+          speakerLabel: "speaker_1",
+          startSeconds: 0,
+          endSeconds: 3,
+          text: isTwoPass ? "Mock speaker 1 enhanced line." : "Mock speaker 1 line.",
+          orderIndex: 0,
+          mappingSource: "PROVIDER_DIARIZATION",
+          qualityText: isTwoPass ? "Mock speaker 1 enhanced line." : null,
+          alignmentConfidence: isTwoPass ? 0.92 : null,
+          textSource: isTwoPass ? "QUALITY" : null,
+        },
+        {
+          transcriptId,
+          speakerLabel: "speaker_2",
+          startSeconds: 4,
+          endSeconds: 7,
+          text: isTwoPass ? "Mock speaker 2 enhanced line." : "Mock speaker 2 line.",
+          orderIndex: 1,
+          mappingSource: "PROVIDER_DIARIZATION",
+          qualityText: isTwoPass ? "Mock speaker 2 enhanced line." : null,
+          alignmentConfidence: isTwoPass ? 0.88 : null,
+          textSource: isTwoPass ? "QUALITY" : null,
+        },
+      ],
+    });
+    return result;
   });
 
-  await prisma.transcriptSegment.deleteMany({ where: { transcriptId } });
-  await prisma.transcriptSegment.createMany({
-    data: [
+  if (applied !== "applied") {
+    return NextResponse.json(
       {
-        transcriptId,
-        speakerLabel: "speaker_1",
-        startSeconds: 0,
-        endSeconds: 3,
-        text: isTwoPass ? "Mock speaker 1 enhanced line." : "Mock speaker 1 line.",
-        orderIndex: 0,
-        mappingSource: "PROVIDER_DIARIZATION",
-        qualityText: isTwoPass ? "Mock speaker 1 enhanced line." : null,
-        alignmentConfidence: isTwoPass ? 0.92 : null,
-        textSource: isTwoPass ? "QUALITY" : null,
+        error: TRANSCRIPTION_GENERATION_CONFLICT_ERROR,
+        code: TRANSCRIPTION_GENERATION_CONFLICT_CODE,
       },
-      {
-        transcriptId,
-        speakerLabel: "speaker_2",
-        startSeconds: 4,
-        endSeconds: 7,
-        text: isTwoPass ? "Mock speaker 2 enhanced line." : "Mock speaker 2 line.",
-        orderIndex: 1,
-        mappingSource: "PROVIDER_DIARIZATION",
-        qualityText: isTwoPass ? "Mock speaker 2 enhanced line." : null,
-        alignmentConfidence: isTwoPass ? 0.88 : null,
-        textSource: isTwoPass ? "QUALITY" : null,
-      },
-    ],
+      { status: 409 },
+    );
+  }
+
+  const saved = await prisma.transcript.findUniqueOrThrow({
+    where: { id: transcriptId },
   });
 
   return NextResponse.json({
@@ -353,8 +468,10 @@ export async function runRealTranscription(
   recording: RecordingForRealTranscription,
   transcriptId: string,
   language: string,
+  generation?: TranscriptionGenerationRef,
 ): Promise<NextResponse> {
   const transcriptionProvider = getSelectedTranscriptionProvider();
+  const ownedGeneration = await resolveTranscriptionGeneration(transcriptId, generation);
   try {
     const keyNormalization = normalizeRecordingFileKey(recording.fileKey);
     if (keyNormalization.containsRawUrl || keyNormalization.containsEncodedUrl) {
@@ -385,7 +502,11 @@ export async function runRealTranscription(
     }
 
     await throwIfTranscriptionStoppedManually(transcriptId);
-    await setTranscriptStatus(transcriptId, TranscriptStatus.DOWNLOADING_RECORDING);
+    await setTranscriptStatus(
+      transcriptId,
+      TranscriptStatus.DOWNLOADING_RECORDING,
+      ownedGeneration,
+    );
     const originalBuffer = await downloadObjectToBuffer(effectiveFileKey, {
       sessionId,
       recordingId: recording.id,
@@ -508,7 +629,11 @@ export async function runRealTranscription(
       | null = null;
 
     if (shouldTranscode) {
-      await setTranscriptStatus(transcriptId, TranscriptStatus.COMPRESSING_AUDIO);
+      await setTranscriptStatus(
+        transcriptId,
+        TranscriptStatus.COMPRESSING_AUDIO,
+        ownedGeneration,
+      );
       compression = await compressAudioForTranscription(
         transcriptionSourceBuffer,
         transcriptionSourceFileName ?? "recording",
@@ -589,7 +714,7 @@ export async function runRealTranscription(
         recordingId: recording.id,
       });
 
-      await failTranscript(transcriptId, classified.message);
+      await failTranscript(transcriptId, classified.message, ownedGeneration);
       return NextResponse.json({ error: classified.message }, { status: 413 });
     }
 
@@ -600,7 +725,7 @@ export async function runRealTranscription(
       ? (await buildTranscriptionPrompt(sessionId)) ?? undefined
       : undefined;
 
-    await setTranscriptStatus(transcriptId, TranscriptStatus.TRANSCRIBING);
+    await setTranscriptStatus(transcriptId, TranscriptStatus.TRANSCRIBING, ownedGeneration);
     const transcription = await transcribeAudioBuffer(
       selectedBuffer,
       selectedFileName,
@@ -931,9 +1056,20 @@ export async function runRealTranscription(
           ? "FAILED"
           : null;
 
-    const saved = await prisma.$transaction(async (tx) => {
-      const updated = await tx.transcript.update({
-        where: { id: transcriptId },
+    if (!ownedGeneration) {
+      return NextResponse.json(
+        {
+          error: TRANSCRIPTION_GENERATION_CONFLICT_ERROR,
+          code: TRANSCRIPTION_GENERATION_CONFLICT_CODE,
+        },
+        { status: 409 },
+      );
+    }
+
+    const applied = await prisma.$transaction(async (tx) => {
+      const result = await applyOwnedTranscriptionUpdate({
+        tx,
+        generation: ownedGeneration,
         data: {
           status: TranscriptStatus.COMPLETED,
           text: normalizedTranscriptionText,
@@ -951,7 +1087,6 @@ export async function runRealTranscription(
           processingMetadata: processingMetadata as Prisma.InputJsonValue,
           completedAt: new Date(),
           errorMessage: null,
-          // Two-pass fields
           strategy: transcription.strategy ?? "diarize_only",
           qualityModel: transcription.qualityModel ?? null,
           diarizationPassStatus,
@@ -960,6 +1095,9 @@ export async function runRealTranscription(
           alignmentConfidence: alignmentResult?.overallConfidence ?? null,
         },
       });
+      if (result !== "applied") {
+        return result;
+      }
 
       await tx.transcriptSegment.deleteMany({ where: { transcriptId } });
 
@@ -976,7 +1114,6 @@ export async function runRealTranscription(
               text: segment.text,
               orderIndex: segment.orderIndex,
               mappingSource: segment.speakerLabel ? "PROVIDER_DIARIZATION" : null,
-              // Two-pass segment fields
               qualityText: resolveInitialQualityText(segment.text, null),
               alignmentConfidence: aligned?.alignmentConfidence ?? null,
               textSource: aligned?.alignmentSource ?? null,
@@ -985,8 +1122,45 @@ export async function runRealTranscription(
         });
       }
 
-      return updated;
+      return result;
     });
+
+    if (applied !== "applied") {
+      return NextResponse.json(
+        {
+          error: TRANSCRIPTION_GENERATION_CONFLICT_ERROR,
+          code: TRANSCRIPTION_GENERATION_CONFLICT_CODE,
+        },
+        { status: 409 },
+      );
+    }
+
+    const saved = await prisma.transcript.findUniqueOrThrow({
+      where: { id: transcriptId },
+    });
+    const bindDownstream = shouldBindDownstreamToGeneration({
+      applied: true,
+      generationMatches:
+        isSameTranscriptionGeneration(
+          {
+            id: saved.id,
+            startedAt: saved.startedAt,
+            retranscribeCount: saved.retranscribeCount,
+          },
+          ownedGeneration,
+        ) && saved.status === TranscriptStatus.COMPLETED,
+    });
+
+    if (!bindDownstream) {
+      return NextResponse.json({
+        transcriptId: saved.id,
+        status: saved.status,
+        text: saved.text,
+        language: saved.language,
+        model: saved.transcriptionModel,
+        completedAt: saved.completedAt?.toISOString() ?? null,
+      });
+    }
 
     // Stage 3.9F: auto-trigger transcript enhancement after raw persistence.
     // Non-fatal by design: completed transcription must remain usable.
@@ -1016,7 +1190,10 @@ export async function runRealTranscription(
     let mappingStatusForLog = speakerMappingStatus;
     if (transcription.hasSpeakerDiarization) {
       try {
-        const mappingDiag = await autoTriggerSpeakerMappingAfterTranscription(sessionId);
+        const mappingDiag = await autoTriggerSpeakerMappingAfterTranscription(sessionId, {
+          transcriptId: saved.id,
+          expectedRetranscribeCount: ownedGeneration.retranscribeCount,
+        });
         if (mappingDiag.appliedStatus) {
           mappingStatusForLog = mappingDiag.appliedStatus;
         }
@@ -1112,10 +1289,45 @@ export async function runRealTranscription(
     });
 
     const message = error instanceof Error ? error.message : "Transcription failed.";
-    await failTranscript(transcriptId, message);
+    await failTranscript(transcriptId, message, ownedGeneration);
 
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+export async function executeClaimedTranscription(input: {
+  sessionId: string;
+  recording: RecordingForRealTranscription | RecordingForTranscription;
+  transcriptId: string;
+  language: string;
+  generation: TranscriptionGenerationRef;
+}): Promise<NextResponse> {
+  if (isTranscriptionMockMode()) {
+    return runMockTranscription(
+      input.sessionId,
+      input.recording,
+      input.transcriptId,
+      input.language,
+      input.generation,
+    );
+  }
+
+  if (!input.recording.fileKey) {
+    return NextResponse.json({ error: "Recording file key is missing." }, { status: 400 });
+  }
+
+  return runRealTranscription(
+    input.sessionId,
+    {
+      ...input.recording,
+      fileKey: input.recording.fileKey,
+      startedAt: input.recording.startedAt ?? null,
+      endedAt: input.recording.endedAt ?? null,
+    },
+    input.transcriptId,
+    input.language,
+    input.generation,
+  );
 }
 
 export function isTranscriptionActive(status: TranscriptStatus): boolean {

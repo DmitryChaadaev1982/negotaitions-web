@@ -45,6 +45,7 @@ import {
   getPauseProcessingModeFromMetadata,
 } from "@/lib/transcription/pause-processing-mode";
 import { normalizeAudioActivityToActiveTimeline } from "@/lib/telemetry/active-timeline-normalization";
+import { loadCanonicalSpeakerMappingCandidates } from "@/lib/transcription/speaker-mapping-candidate-load";
 
 export type TelemetryParticipantHealth = {
   participantId: string;
@@ -90,6 +91,7 @@ export type AutoMappingSuggestion = {
   confidence: Record<string, number>;
   telemetryQuality: TelemetryQuality;
   telemetryHealth: TelemetryHealthReport;
+  candidateParticipantIds: string[];
 };
 
 type TranscriptWithSegments = {
@@ -191,6 +193,7 @@ function buildScoreMatrixFromScoringWindows(params: {
 
 function buildUnavailableSuggestion(params: {
   reason: string;
+  candidateParticipantIds?: string[];
   telemetryQuality: TelemetryQuality;
   telemetryHealth: TelemetryHealthReport;
   selectedWindowStrategy?: "provider_raw_windows" | "order_normalized_windows";
@@ -231,6 +234,7 @@ function buildUnavailableSuggestion(params: {
     rejectedCandidateMapping: {},
     mapping: {},
     confidence: {},
+    candidateParticipantIds: params.candidateParticipantIds ?? [],
     telemetryQuality: params.telemetryQuality,
     telemetryHealth: params.telemetryHealth,
   };
@@ -292,17 +296,14 @@ export async function suggestSpeakerMapping(
     where: { sessionId },
     orderBy: { startedAt: "asc" },
   });
-  const participants = await prisma.sessionParticipant.findMany({
-    where: { sessionId },
-    select: { id: true, displayName: true, type: true },
-  });
-
-  const candidateParticipants = participants.filter((participant) => participant.type !== "OBSERVER");
-  const negotiationParticipantPool =
-    candidateParticipants.filter((participant) => participant.type === "PARTICIPANT");
-  const participantPool =
-    negotiationParticipantPool.length > 0 ? negotiationParticipantPool : candidateParticipants;
-  const participantPoolIds = new Set(participantPool.map((participant) => participant.id));
+  const canonicalCandidates = await loadCanonicalSpeakerMappingCandidates(sessionId);
+  const participantPool = canonicalCandidates.map((candidate) => ({
+    id: candidate.sessionParticipantId,
+    displayName: candidate.displayName,
+    type: candidate.participantType,
+  }));
+  const candidateParticipantIds = participantPool.map((participant) => participant.id);
+  const participantPoolIds = new Set(candidateParticipantIds);
 
   // Load recording start time so we can compute offsets for activities
   // that were stored with absolute timestamps only (no startedOffsetSeconds)
@@ -339,6 +340,7 @@ export async function suggestSpeakerMapping(
   if (segmentsWithTimestamps.length === 0) {
     return buildUnavailableSuggestion({
       reason: "all_segments_in_paused_intervals",
+      candidateParticipantIds,
       telemetryQuality: emptyTelemetryQuality,
       telemetryHealth: emptyTelemetryHealth,
       sourceDecisionSummary: "All diarized transcript windows overlap paused intervals.",
@@ -392,6 +394,7 @@ export async function suggestSpeakerMapping(
     if (activities.length === 0) {
       const suggestion = buildUnavailableSuggestion({
         reason: "no_audio_activity",
+        candidateParticipantIds,
         telemetryQuality: emptyTelemetryQuality,
         telemetryHealth: emptyTelemetryHealth,
         selectedTelemetrySource: source,
@@ -415,6 +418,7 @@ export async function suggestSpeakerMapping(
     if (eligibleActivities.length === 0) {
       const suggestion = buildUnavailableSuggestion({
         reason: "no_participant_activity_for_source",
+        candidateParticipantIds,
         telemetryQuality: emptyTelemetryQuality,
         telemetryHealth: emptyTelemetryHealth,
         selectedTelemetrySource: source,
@@ -525,6 +529,7 @@ export async function suggestSpeakerMapping(
       });
       const suggestion = buildUnavailableSuggestion({
         reason: "no_audio_activity_with_offsets",
+        candidateParticipantIds,
         telemetryQuality,
         telemetryHealth: emptyTelemetryHealth,
         selectedTelemetrySource: source,
@@ -786,6 +791,7 @@ export async function suggestSpeakerMapping(
       confidence: selection.confidence,
       telemetryQuality,
       telemetryHealth,
+      candidateParticipantIds,
     };
     return {
       suggestion,
@@ -920,6 +926,7 @@ export async function suggestSpeakerMapping(
 
     return buildUnavailableSuggestion({
       reason: unavailableReason,
+      candidateParticipantIds,
       telemetryQuality: remote.suggestion.telemetryQuality,
       telemetryHealth: remote.suggestion.telemetryHealth,
       selectedWindowStrategy: "provider_raw_windows",

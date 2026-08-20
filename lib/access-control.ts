@@ -135,22 +135,6 @@ export function canManageSession(access: CurrentUserSessionAccess) {
   );
 }
 
-export function canAccessSessionMaterials(access: CurrentUserSessionAccess) {
-  return canAccessSession(access);
-}
-
-export function canRunTranscription(access: CurrentUserSessionAccess) {
-  return canManageSession(access);
-}
-
-export function canRunAiAnalysis(access: CurrentUserSessionAccess) {
-  return canManageSession(access);
-}
-
-export function canEditSpeakerMapping(access: CurrentUserSessionAccess) {
-  return canManageSession(access);
-}
-
 export async function getCurrentUserEventAccess(
   eventId: string,
   user: AuthUser | null,

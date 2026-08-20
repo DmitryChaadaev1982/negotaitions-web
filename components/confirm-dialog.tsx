@@ -15,6 +15,7 @@ type ConfirmDialogProps = {
   onConfirm: () => void;
   confirming?: boolean;
   className?: string;
+  testId?: string;
 };
 
 export function ConfirmDialog({
@@ -27,6 +28,7 @@ export function ConfirmDialog({
   onConfirm,
   confirming = false,
   className,
+  testId,
 }: ConfirmDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
@@ -73,6 +75,7 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
+        data-testid={testId}
         className={cn(
           "relative w-full max-w-md rounded-xl border border-slate-700/60 bg-slate-900/95 p-6 shadow-2xl shadow-black/50 ring-1 ring-slate-600/30",
           className,

@@ -10,6 +10,16 @@
 
 - Business entities: cases, sessions, events, participants.
 - Runtime artifacts: recordings, transcripts, transcript segments, AI analyses.
+  `AiAnalysis.inputFingerprint` is a nullable SHA-256 of the canonical
+  material AI-input envelope. For new analysis runs it is the prompted
+  snapshot. Historical rows may remain `NULL` and are not bulk-backfilled.
+  A facilitator material write may bind a still-legacy-current NULL row to
+  the pre-mutation envelope hash so later currentness can detect
+  same-generation lexical/mapping edits. That bound value is a PT-22
+  compatibility baseline (the last snapshot already treated as current),
+  not proven original model input. The column is additive; absence of the
+  column is schema drift, not a historical-NULL row, and 500s all
+  `materials/status` reads.
 - AI publication snapshots: `AiAnalysisPublication` persists an immutable
   sanitized shared artifact for one analysis version/publication epoch;
   `AiAnalysisPublicationGrant` persists its per-recipient account,

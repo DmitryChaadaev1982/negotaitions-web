@@ -6,7 +6,12 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 ## Flow
 
-1. Facilitator starts analysis when transcript is ready and mapping prerequisites are met.
+1. Facilitator starts analysis when the canonical projection says the
+   transcript is usable, enhancement is not `RUNNING` inside the configured
+   `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` window, speaker mapping is
+   structurally complete, and existing AI consent/permissions are present.
+   After enhancement becomes terminal (`COMPLETED` / `PARTIAL` / `FAILED` /
+   `SKIPPED` including timeout), enhancement no longer blocks AI.
 2. A fenced `QUEUED` operation is created and the route returns `202` without
    making the browser connection execution authority.
 3. Self-hosted Next.js `after()` starts the owned operation and transitions it
@@ -258,6 +263,114 @@ historically eligible recipients. This preserves stored artifacts without
 guessing historical access or broadly granting Observers the old session-wide
 payload.
 
+## Material input fingerprint and currentness
+
+- New `AiAnalysis` rows persist nullable `inputFingerprint` (SHA-256 of
+  envelope `schemaVersion = 1`). For **new runs**, that hash is the prompted
+  material snapshot (PT-19). Untouched historical rows stay `NULL` and are
+  not bulk-backfilled (PT-22). A facilitator material write may bind a
+  still-legacy-current NULL row to the pre-mutation envelope hash. That bind
+  is a **legacy compatibility baseline**: PT-22 already treated the
+  pre-mutation transcript generation as current, and the hash lets later
+  same-generation edits become durably non-current. It is not reconstructed
+  original-provider-prompt provenance. `retranscribeCount` remains ASR
+  generation identity; `analysisVersion` remains AI-run/publication identity.
+  The additive column must exist before `materials/status` can be read; a
+  missing column fails every session’s post-processing projection rather than
+  falling back to “waiting for recording.”
+- Canonical builder: `buildSessionAnalysisContext` loads one in-memory
+  snapshot. `buildMaterialInputEnvelope` / `fingerprintSessionAnalysisContext`
+  hash that snapshot; `buildAnalysisPrompt` renders the same object. The
+  analyze route computes the fingerprint before `claimAiAnalysisRun`, stores
+  it on the claimed row, and reuses the closed-over context for the prompt.
+  Consistency boundary: one in-memory `SessionAnalysisContext`, not two
+  independent reads.
+- Envelope includes prompted session/case/event title, role
+  objectives/constraints/hiddenInfo/fallbackPosition, negotiation-participant
+  roster identity and preparation notes, transcript lexical/diarized text,
+  segment timing, speaker labels, and mapped participant identity. It excludes
+  timestamps, publication grants, model/deploy/prompt implementation metadata,
+  unused `privateInstructions`, and facilitator/observer notes.
+- Notes predicate: `areNotesMaterialToNegotiationAnalysis` in
+  `lib/ai/material-negotiation-notes.ts`. Only `PARTICIPANT` notes are
+  material. Facilitator/observer notes stay editable and do not rewind AI.
+  After `Session.negotiationState === FINISHED`, material participant
+  preparation notes are locked by
+  `areMaterialNegotiationNotesLockedAfterNegotiation` on both UI and
+  `persistParticipantNotesAfterAccess`. Lock is not hide: stored participant
+  preparation notes remain readable to authorized viewers. There is no notes
+  publication entity and no AI-publication prerequisite.
+  `resolveDebriefVisibleNotes` in `lib/debrief-visible-notes.ts` is the
+  lifecycle-gated projection (`FINISHED` or `roomLifecycle === DEBRIEF_OPEN`).
+  Materials RSC (`getAccountMaterialsData`) and
+  `GET /api/sessions/:id/materials/status` (`postNegotiationNotes.participantPreparation`)
+  apply the same role matrix server-side: a negotiation participant receives
+  only their own notes; facilitator and authorized session observer receive all
+  negotiation-participant preparation notes. Pre-lock visibility is unchanged
+  (this projection is empty before the reveal state). Facilitator/observer
+  own notes stay writable and are not this projection. Viewing, read-only
+  transition, and reveal do not change `inputFingerprint`. N01/N02 may still
+  use controlled DB mutation.
+- Currentness: `evaluateAiAnalysisCurrentness`. A new transcript generation
+  (`transcriptId` + `retranscribeCount`) is a downstream invalidation boundary
+  even when a stored fingerprint would still match the queued/archived text.
+  Same-generation fingerprinted rows compare stored hash to the current
+  envelope. `NULL` fingerprints keep
+  `transcriptId` + `retranscribeCount` for **untouched** historical rows.
+  That fallback cannot see same-generation lexical or mapping edits.
+  Facilitator material writes (`applyFacilitatorMaterialInputChange`) bind a
+  still-legacy-current NULL row to the pre-mutation envelope hash, then persist
+  the mutation. After commit, currentness uses the fingerprinted path and the
+  old row becomes non-current unless materials later equal that bound baseline
+  (the same states PT-22 already accepted). This is not a bulk historical
+  backfill and not a reconstructed original-prompt identity. `retranscribeCount`
+  and `analysisVersion` are not used as generic edit counters. Mismatch
+  presents AI as `NOT_STARTED` / rerun-required via the Phase C projection;
+  the historical row is kept. The active-workflow string
+  `analysisFromOlderTranscript` is emitted only when a still-current analysis
+  is from an older generation; after rewind it stays off so Materials and room
+  Debrief show the next pipeline step instead of a hidden historical reminder.
+- Confirmed retranscription (`admitTranscriptionRun` in retranscribe mode)
+  revokes any active publication in the same claim transaction. That is the
+  single publication-revoke for the restart. Mapping/attribution/transcript
+  saves that follow on the new generation do not revoke again unless a new
+  current analysis exists.
+- Facilitator material writes (transcript, mapping, manual attribution) go
+  through `applyFacilitatorMaterialInputChange`. The destructive guard fires
+  only when a **current** completed analysis exists for the active generation
+  (published or not). Historical `AiAnalysis` rows, including a leftover
+  publication on an already non-current generation, do not warn. A current
+  unpublished analysis requires confirmation that a new AI run is needed and
+  does not claim that a publication will be revoked. A current published
+  analysis requires confirmation, then revoke via
+  `revokeActiveAiAnalysisPublicationInTransaction` (same mechanism as Unshare).
+  The three facilitator material-save UIs (plain transcript, speaker mapping,
+  and diarized manual attribution) share the site `ConfirmDialog` before
+  retrying with `confirmRewindPublication`. Recipients
+  fail closed on fingerprint mismatch even if an old grant row still exists.
+  Manual transcript enhancement retry is also blocked while AI is
+  `QUEUED`/`ANALYZING` with a live lease.
+- Diagnostic logs may include fingerprint, schema version, and
+  current/non-current reason. They must not dump transcript, hiddenInfo, or
+  notes.
+
+## Canonical Readiness And Presentation
+
+- AI admission uses `evaluateAiAnalysisReadiness` plus enhancement-running
+  ownership. `AUTO_SUGGESTED` is not a substitute for structural completeness.
+- Materials `canStart` and the analyze route share that contract. Enhancement
+  `FAILED` / `PARTIAL` / `SKIPPED` remain terminal and expose retry plus
+  continue-with-current-transcript; starting AI is the continue path.
+- The five-card rail, detailed rows, `/sessions`, and dashboard read speaker
+  mapping and AI semantic state from `lib/post-processing/projection.ts`. A
+  complete `AUTO_SUGGESTED` session is not shown as mapping-required beside
+  completed AI.
+- Transcript-enhancement running vs terminal is the same effective state for
+  the rail, Recording & Transcription locks, Materials, room Debrief, and
+  write guards (`lib/post-processing/enhancement-effective-state.ts`). A
+  polled `COMPLETED` status must unlock the nested transcript section even if
+  that child still holds a stale `/recording` `RUNNING` snapshot.
+
 ## Facilitator UI State Model
 
 - `QUEUED`: accepted and waiting for detached execution; duplicate start is
@@ -282,6 +395,13 @@ payload.
   `SessionPostProcessingPanel` (`variant="sidebar"`). Account materials at
   `/sessions/[id]/materials` mounts the same panel (`variant="page"`) and also
   renders the published report. `/join/[joinToken]` redirects there.
+- The shared recording/transcription child uses an explicit presentation
+  contract (`lib/transcription/recording-transcription-presentation.ts`):
+  room sidebar is `roomQuick` (no recording-status detail, no language
+  selector); Materials/session page is `materialsDetail` (both remain).
+  Transcript review/edit, speaker mapping, and rerun stay on both surfaces.
+  This is a presentation split only; readiness and mapping semantics do not
+  change.
 - `resolveAiAnalysisRenderState` must not hide an authorized, schema-valid
   published payload behind upstream recording/transcript waiting stages
   (including `recordingStage=not_available`). Facilitator `QUEUED`/`ANALYZING`

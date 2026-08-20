@@ -53,6 +53,45 @@ Curated deterministic browser smoke:
 
 - `npm run test:e2e:smoke:browser`
 
+Post-processing Facilitator Lab (Stage 3.15A, fail-closed, headed, real UI).
+`STATE_FIXTURE` seeds persisted UI states. `PIPELINE_FIXTURE` (AM01–AM14) seeds
+only transcription/telemetry inputs and then runs the real
+`autoTriggerSpeakerMappingAfterTranscription` path.
+
+- `npm run lab:post-transcription -- S10`
+- `npm run lab:post-transcription -- S10 E02`
+- `npm run lab:post-transcription -- S10 --smoke`
+- `npm run lab:post-transcription -- AM01 AM02 AM03 AM04 AM04B AM07A AM07B AM07C AM07D AM07E AM11 --smoke`
+- `npm run lab:post-transcription -- E05`
+- Headed Manual Checkpoint D pauses inside I01/I03 and after N03/N04/N05:
+  `I01-A → I01-B → I03-A → I03-B (warning visible) → I03-C → N03 → N04 → N05`.
+  Resume is the Playwright Inspector, not chat. I03-B must not auto-confirm
+  before the operator inspects the warning. Native `window.confirm` often
+  closes during Inspector pause; after Resume the Lab re-opens and confirms
+  that same save if the dialog is gone and rewind has not already happened.
+  A ready transcript auto-collapses `#transcription-section`. Checkpoint D
+  expands it via `toggle-transcript-section` (`aria-expanded` / `data-state`),
+  not localized Expand/Развернуть copy, then uses
+  `edit-diarized-transcript-button`.
+  N05 proves lock plus post-meeting visibility: participant own notes remain
+  visible and read-only; other participant notes are absent from that
+  participant's server projection; facilitator and authorized observer see
+  all negotiation-participant preparation notes as read-only; their own notes
+  stay writable. Headed N05 pauses are N05-PARTICIPANT, N05-FACILITATOR, and
+  N05-OBSERVER. Visibility is lifecycle-gated and independent of AI publication.
+- Headed Manual Checkpoint E starts on S03 (`S03-A` room Debrief quick panel,
+  then Start AI → `S03-B` CONFIRMED). Cheap Phase E Lab:
+  `S03 S10 S11 E03 I03 --smoke`. MANUAL_CHECKPOINT_E = ACCEPTED.
+- Phase F cheap check: ownership/adapter units plus speaker anchors
+  `AM01 AM02 AM03 AM04 AM04B AM07A AM07B AM07C AM07D AM07E AM11 --smoke`.
+  `/transcribe-recording` is `OLD_ROUTE_MODE=CANONICAL_ADAPTER`, not a fallback.
+  MANUAL_CHECKPOINT_F = ACCEPTED. Phase G cleanup is accepted. Phase H focused
+  units plus `validate:fast` / `validate:deploy` completed; headed Lab was not
+  re-run in Phase H (coverage remains Checkpoints A–G). Checkpoint H is
+  ACCEPTED (`docs/handoffs/stage-3-15a-final-validation.md`). Pre-deploy local
+  real-session acceptance is a separate operator gate (not Lab fixtures):
+  `docs/handoffs/stage-3-15a-local-operator-acceptance.md`.
+
 Stage 3.10 focused deterministic regression (unit + Playwright, includes the
 observer smoke suite; excludes the full observer layout matrix):
 

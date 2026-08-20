@@ -75,8 +75,9 @@ Before overlay `status` or `deploy`, the tool reads only `_prisma_migrations` me
 - no migration row is unfinished/failed;
 - no migration row exists outside the active migration set plus the two legacy evidence rows;
 - all Stage 3.13B migrations are already successful and every pending active
-  migration is one of the exact Stage 3.13C, Stage 3.13D, or Stage 3.13E names
-  listed below. There is no prefix, date, or stage-wide wildcard.
+  migration is one of the exact Stage 3.13C, Stage 3.13D, Stage 3.13E, or
+  Stage 3.15A names listed below. There is no prefix, date, or stage-wide
+  wildcard.
 
 Refusal codes are explicit, including `REFUSE_EMPTY_OR_NO_HISTORY`, `REFUSE_LEGACY_ROW_MISSING`, `REFUSE_LEGACY_CHECKSUM_MISMATCH`, `REFUSE_LEGACY_ROLLED_BACK`, `REFUSE_LEGACY_UNFINISHED`, `REFUSE_FAILED_MIGRATION_HISTORY`, `REFUSE_UNKNOWN_LEGACY_DIVERGENCE`, and `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
 
@@ -114,10 +115,12 @@ The complete pending-migration allowlist is:
 - `20260808210000_add_ai_analysis_provider_response_id`
 - `20260811112000_stage_3_13e_session_sound_preference`
 - `20260812111000_add_recording_attempt_fencing`
+- `20260814161500_add_ai_analysis_publication_grants`
+- `20260819120000_add_ai_analysis_input_fingerprint`
 
-The last entry is the recording-attempt fencing migration. It adds nullable
-`Recording.recordingAttemptId` plus its unique index. Any other pending active
-migration must produce `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
+The last entry is the Stage 3.15A additive nullable
+`AiAnalysis.inputFingerprint` column. No historical backfill. Any other
+pending active migration must produce `REFUSE_UNEXPECTED_PENDING_MIGRATIONS`.
 
 Local verification must use a simulated production-history database. It must
 not run this deploy command against production.

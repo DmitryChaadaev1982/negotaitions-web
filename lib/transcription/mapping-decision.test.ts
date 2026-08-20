@@ -41,6 +41,25 @@ test("returns speaker_count_mismatch when speakers exceed participants", () => {
   assert.equal(decision.reason, "speaker_count_mismatch_review_required");
 });
 
+test("AM04B many-to-one safety reason blocks auto-apply at the decision core", () => {
+  const decision = decideAutoMappingApplication({
+    allSpeakersCovered: true,
+    highConfidence: true,
+    weakMargin: false,
+    mappingSafetySafe: false,
+    mappingSafetyReason: "many_to_one_mapping_in_multi_participant_session",
+    rawSpeakerCount: 2,
+    expectedParticipantCount: 2,
+    activeParticipantsDuringRecording: 2,
+    hasOffsets: true,
+    hasDerivedOffsets: false,
+    telemetryWarnings: [],
+  });
+
+  assert.equal(decision.shouldApply, false);
+  assert.equal(decision.reason, "many_to_one_mapping_in_multi_participant_session");
+});
+
 test("returns high_confidence_prefilled when all gates pass", () => {
   const decision = decideAutoMappingApplication({
     allSpeakersCovered: true,

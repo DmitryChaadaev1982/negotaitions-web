@@ -1,3 +1,7 @@
+import {
+  fingerprintMaterialAnalysisSnapshot,
+  type MaterialAnalysisSnapshot,
+} from "@/lib/ai/material-input-envelope";
 import { prisma } from "@/lib/prisma";
 import { listPauseIntervals } from "@/lib/session-pause-intervals";
 import {
@@ -35,6 +39,7 @@ export type SessionAnalysisTranscript = {
   segments: Array<{
     orderIndex: number;
     speakerLabel: string | null;
+    mappedParticipantId: string | null;
     mappedParticipantName: string | null;
     startSeconds: number | null;
     endSeconds: number | null;
@@ -114,7 +119,7 @@ export async function buildSessionAnalysisContext(
             orderBy: { orderIndex: "asc" },
             include: {
               mappedParticipant: {
-                select: { displayName: true },
+                select: { id: true, displayName: true },
               },
             },
           },
@@ -185,6 +190,7 @@ export async function buildSessionAnalysisContext(
       segments: filteredSegments.map((seg) => ({
         orderIndex: seg.orderIndex,
         speakerLabel: seg.speakerLabel,
+        mappedParticipantId: seg.mappedParticipant?.id ?? null,
         mappedParticipantName: seg.mappedParticipant?.displayName ?? null,
         startSeconds: seg.startSeconds,
         endSeconds: seg.endSeconds,
@@ -222,4 +228,67 @@ export async function buildSessionAnalysisContext(
     participants,
     transcript,
   };
+}
+
+export function toMaterialAnalysisSnapshot(
+  context: SessionAnalysisContext,
+): MaterialAnalysisSnapshot {
+  return {
+    session: {
+      title: context.session.title,
+      caseTitle: context.session.caseTitle,
+      caseLanguage: context.session.caseLanguage,
+      publicInstructions: context.session.publicInstructions,
+      businessContext: context.session.businessContext,
+      preparationDurationSeconds: context.session.preparationDurationSeconds,
+      durationSeconds: context.session.durationSeconds,
+      sequenceNumber: context.session.sequenceNumber,
+    },
+    event: context.event ? { title: context.event.title } : null,
+    roles: context.roles.map((role) => ({
+      name: role.name,
+      objectives: role.objectives,
+      constraints: role.constraints,
+      hiddenInfo: role.hiddenInfo,
+      fallbackPosition: role.fallbackPosition,
+    })),
+    participants: context.participants,
+    transcript: context.transcript
+      ? {
+          text: context.transcript.text,
+          diarizedText: context.transcript.diarizedText,
+          language: context.transcript.language,
+          hasSpeakerDiarization: context.transcript.hasSpeakerDiarization,
+          segments: context.transcript.segments.map((segment) => ({
+            orderIndex: segment.orderIndex,
+            speakerLabel: segment.speakerLabel,
+            mappedParticipantId: segment.mappedParticipantId,
+            mappedParticipantName: segment.mappedParticipantName,
+            startSeconds: segment.startSeconds,
+            endSeconds: segment.endSeconds,
+            text: segment.text,
+          })),
+        }
+      : null,
+  };
+}
+
+/**
+ * Same-snapshot helper: hash the normalized envelope derived from the
+ * in-memory analysis context that is also used to build the prompt.
+ */
+export function fingerprintSessionAnalysisContext(
+  context: SessionAnalysisContext,
+): string {
+  return fingerprintMaterialAnalysisSnapshot(toMaterialAnalysisSnapshot(context));
+}
+
+export async function computeCurrentMaterialInputFingerprint(
+  sessionId: string,
+): Promise<string | null> {
+  const context = await buildSessionAnalysisContext(sessionId);
+  if (!context) {
+    return null;
+  }
+  return fingerprintSessionAnalysisContext(context);
 }

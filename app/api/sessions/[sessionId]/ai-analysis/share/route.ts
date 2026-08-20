@@ -11,6 +11,8 @@ import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { sanitizeSharedAiAnalysisForParticipant } from "@/lib/privacy/serializers";
+import { evaluateAiAnalysisCurrentness } from "@/lib/ai/analysis-currentness";
+import { computeCurrentMaterialInputFingerprint } from "@/lib/ai/session-analysis-context";
 import {
   historicalSessionRoomEntryWhere,
   selectPublicationRecipients,
@@ -135,6 +137,7 @@ export async function POST(request: Request, context: RouteContext) {
           status: true,
           transcriptId: true,
           transcriptRetranscribeCount: true,
+          inputFingerprint: true,
           analysisVersion: true,
           publicationEpoch: true,
           analysisJson: true,
@@ -163,12 +166,16 @@ export async function POST(request: Request, context: RouteContext) {
         where: { sessionId },
         select: { id: true, retranscribeCount: true },
       });
-      if (
-        !currentTranscript ||
-        aiAnalysis.transcriptId !== currentTranscript.id ||
-        aiAnalysis.transcriptRetranscribeCount !==
-          currentTranscript.retranscribeCount
-      ) {
+      const currentFingerprint = await computeCurrentMaterialInputFingerprint(
+        sessionId,
+      );
+      const currentness = evaluateAiAnalysisCurrentness({
+        analysis: aiAnalysis,
+        currentFingerprint,
+        transcriptId: currentTranscript?.id,
+        transcriptRetranscribeCount: currentTranscript?.retranscribeCount,
+      });
+      if (!currentness.current) {
         return { state: "analysis_outdated" as const };
       }
 

@@ -8,6 +8,8 @@ import {
   getUniqueSpeakerLabels,
 } from "@/lib/transcription/speaker-labels";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
+import { resolveTranscriptEnhancementStatus } from "@/lib/post-processing/enhancement-effective-state";
+import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 
 export const runtime = "nodejs";
@@ -72,6 +74,14 @@ export async function GET(_request: Request, context: RouteContext) {
 
     if (!session) {
       return NextResponse.json({ error: "Session not found." }, { status: 404 });
+    }
+
+    if (session.transcript) {
+      const reconciled = await reconcileTranscriptEnhancementTimeout({
+        db: prisma as never,
+        transcriptId: session.transcript.id,
+      });
+      session.transcript.processingMetadata = reconciled.metadata as typeof session.transcript.processingMetadata;
     }
 
     const labelOrder =
@@ -143,9 +153,9 @@ export async function GET(_request: Request, context: RouteContext) {
               mappingFailure?.mappingSuggestionDiagnostics ?? null,
             processingMetadata: session.transcript.processingMetadata ?? null,
             enhancement: {
-              status:
-                (asMetadata(asMetadata(session.transcript.processingMetadata).transcriptEnhancement)
-                  .status as string | undefined) ?? "NOT_AVAILABLE",
+              status: resolveTranscriptEnhancementStatus(
+                session.transcript.processingMetadata,
+              ),
               suggested:
                 asMetadata(
                   asMetadata(session.transcript.processingMetadata)

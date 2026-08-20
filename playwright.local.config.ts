@@ -82,6 +82,7 @@ export default defineConfig({
           EXTERNAL_SERVICES_MODE: "mock",
           RECORDING_MODE: "mock",
           TRANSCRIPTION_MODE: "mock",
+          POST_TRANSCRIPTION_LAB: process.env.POST_TRANSCRIPTION_LAB ?? "",
           LIVEKIT_URL: "wss://mock-livekit.invalid",
           LIVEKIT_API_KEY: "mock-livekit-key",
           LIVEKIT_API_SECRET: "mock-livekit-secret",

@@ -16,6 +16,7 @@ import { SessionStatusBadge } from "@/components/session-status-badge";
 import { AppShell } from "@/components/ui/app-shell";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { SecondaryButtonLink } from "@/components/ui/buttons";
+import { areMaterialNegotiationNotesLockedAfterNegotiation } from "@/lib/ai/material-negotiation-notes";
 import { buildSessionMaterialsPath, buildSessionRoomPath } from "@/lib/config";
 import { ensureSemanticRoomAudioContextRunning } from "@/lib/semantic-room-audio";
 import type { SessionDisplayStatus } from "@/lib/session-display-status";
@@ -416,6 +417,10 @@ export function JoinPageView({
                 initialNotes={participant.notes}
                 description={notesConfig.description}
                 placeholder={notesConfig.placeholder}
+                readOnly={areMaterialNegotiationNotesLockedAfterNegotiation({
+                  participantType: participant.type,
+                  negotiationState: session.negotiationState,
+                })}
               />
             </CardContent>
           </Card>

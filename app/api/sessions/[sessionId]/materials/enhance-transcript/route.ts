@@ -3,9 +3,16 @@ import { z } from "zod";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
 import { isYandexTranscriptEnhancementEnabled } from "@/lib/env";
+import {
+  decideFacilitatorMaterialChangeGuard,
+  MATERIAL_CHANGE_AI_RUNNING,
+  MATERIAL_CHANGE_AI_RUNNING_MESSAGE,
+} from "@/lib/ai/material-input-invalidation";
+import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { executeTranscriptEnhancement } from "@/lib/services/transcript-enhancement-orchestration";
+import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
 
 export const runtime = "nodejs";
 
@@ -71,7 +78,11 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
 
-  const metadata = asMetadata(transcript.processingMetadata);
+  const reconciled = await reconcileTranscriptEnhancementTimeout({
+    db: prisma as never,
+    transcriptId: transcript.id,
+  });
+  const metadata = asMetadata(reconciled.metadata);
   const provider =
     typeof metadata.transcriptionProvider === "string"
       ? metadata.transcriptionProvider
@@ -90,8 +101,39 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  const analysis = await prisma.aiAnalysis.findUnique({
+    where: { sessionId },
+    select: {
+      status: true,
+      runToken: true,
+      leaseExpiresAt: true,
+      updatedAt: true,
+    },
+  });
+  // Enhancement retry uses this guard only for the AI-running lock.
+  // Currentness/publication confirmation belongs to facilitator material saves.
+  const materialGuard = decideFacilitatorMaterialChangeGuard({
+    aiStatus: analysis?.status ?? null,
+    runLeaseActive: Boolean(analysis && isAiAnalysisRunLeaseActive(analysis)),
+    analysisCurrent: false,
+    hasActivePublication: false,
+    confirmRewindPublication: false,
+  });
+  if (!materialGuard.allow && materialGuard.errorCode === MATERIAL_CHANGE_AI_RUNNING) {
+    return NextResponse.json(
+      {
+        error: MATERIAL_CHANGE_AI_RUNNING_MESSAGE,
+        errorCode: MATERIAL_CHANGE_AI_RUNNING,
+      },
+      { status: 409 },
+    );
+  }
+
   const enhancementStatus = asMetadata(metadata.transcriptEnhancement).status;
-  if (enhancementStatus === "IN_PROGRESS" || enhancementStatus === "RUNNING") {
+  if (
+    !reconciled.timedOut &&
+    (enhancementStatus === "IN_PROGRESS" || enhancementStatus === "RUNNING")
+  ) {
     return NextResponse.json(
       { error: "Transcript enhancement is already in progress." },
       { status: 409 },

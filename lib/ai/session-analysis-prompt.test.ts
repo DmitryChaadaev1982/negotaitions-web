@@ -111,6 +111,37 @@ function parseCompactTimeline(prompt: string) {
   };
 }
 
+test("prompt includes negotiation-participant notes and excludes facilitator/observer notes", () => {
+  const context = makeContext(4, 40);
+  context.participants = [
+    {
+      id: "p1",
+      displayName: "Buyer",
+      type: "PARTICIPANT",
+      roleName: "Buyer",
+      notes: "Buyer prep note",
+    },
+    {
+      id: "p-fac",
+      displayName: "Facilitator",
+      type: "FACILITATOR",
+      roleName: null,
+      notes: "Facilitator secret note",
+    },
+    {
+      id: "p-obs",
+      displayName: "Observer",
+      type: "OBSERVER",
+      roleName: null,
+      notes: "Observer secret note",
+    },
+  ];
+  const packed = packAnalysisPrompt(context);
+  assert.match(packed.prompt, /Buyer prep note/);
+  assert.doesNotMatch(packed.prompt, /Facilitator secret note/);
+  assert.doesNotMatch(packed.prompt, /Observer secret note/);
+});
+
 test("normal analysis prompt keeps the existing direct whole-session representation", () => {
   const packed = packAnalysisPrompt(makeContext(12, 80));
   assert.equal(packed.mode, "direct");

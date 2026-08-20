@@ -232,6 +232,22 @@ export function getTranscriptEnhancementChunkTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.max(5000, Math.round(raw)) : 120000;
 }
 
+/**
+ * Hard wait window for the authoritative post-transcription enhancement run.
+ * This is not the per-chunk provider timeout.
+ */
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS = 7000;
+
+export function getTranscriptEnhancementTimeoutMs(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.round(raw)
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS;
+}
+
 export function getTranscriptEnhancementMaxRetries(): number {
   const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES ?? "1");
   if (!Number.isFinite(raw) || raw < 0) {

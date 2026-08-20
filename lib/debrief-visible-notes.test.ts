@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ParticipantType } from "@/app/generated/prisma/client";
-import { resolveDebriefVisibleNotes, type DebriefVisibleNotesParticipant } from "@/lib/debrief-visible-notes";
+import {
+  projectPostNegotiationParticipantPreparationNotes,
+  resolveDebriefVisibleNotes,
+  type DebriefVisibleNotesParticipant,
+} from "@/lib/debrief-visible-notes";
 
 const baseDate = new Date("2026-08-02T10:00:00.000Z");
 
@@ -66,7 +70,7 @@ test("participant sees only own debrief notes", () => {
   assert.deepEqual(notes.map((note) => note.displayName), ["Participant A"]);
 });
 
-test("observer sees participant A, participant B, and own notes only", () => {
+test("observer sees all negotiation-participant notes plus own notes only", () => {
   const notes = resolveDebriefVisibleNotes({
     roomLifecycle: "DEBRIEF_OPEN",
     viewerParticipantId: observer.id,
@@ -84,6 +88,7 @@ test("observer sees participant A, participant B, and own notes only", () => {
   assert.deepEqual(notes.map((note) => note.displayName), [
     "Participant A",
     "Participant B",
+    "Invited Participant",
     "Observer",
   ]);
 });
@@ -96,6 +101,63 @@ test("facilitator sees participant A, participant B, and own notes only", () => 
     participants: [participantA, participantB, observer, facilitator],
   });
 
+  assert.deepEqual(notes.map((note) => note.displayName), [
+    "Participant A",
+    "Participant B",
+    "Facilitator",
+  ]);
+});
+
+test("post-meeting participant projection is own-notes-only for a participant viewer", () => {
+  const notes = projectPostNegotiationParticipantPreparationNotes(
+    resolveDebriefVisibleNotes({
+      roomLifecycle: "OPEN",
+      negotiationState: "FINISHED",
+      viewerParticipantId: participantA.id,
+      viewerType: ParticipantType.PARTICIPANT,
+      participants: [participantA, participantB, observer, facilitator],
+    }),
+  );
+  assert.deepEqual(notes.map((note) => note.notes), [participantA.notes]);
+});
+
+test("post-meeting participant projection includes all participant notes for facilitator and observer", () => {
+  const facilitatorNotes = projectPostNegotiationParticipantPreparationNotes(
+    resolveDebriefVisibleNotes({
+      roomLifecycle: "OPEN",
+      negotiationState: "FINISHED",
+      viewerParticipantId: facilitator.id,
+      viewerType: ParticipantType.FACILITATOR,
+      participants: [participantA, participantB, invitedParticipant, observer, facilitator],
+    }),
+  );
+  const observerNotes = projectPostNegotiationParticipantPreparationNotes(
+    resolveDebriefVisibleNotes({
+      roomLifecycle: "OPEN",
+      negotiationState: "FINISHED",
+      viewerParticipantId: observer.id,
+      viewerType: ParticipantType.OBSERVER,
+      participants: [participantA, participantB, invitedParticipant, observer, facilitator],
+    }),
+  );
+  assert.deepEqual(
+    facilitatorNotes.map((note) => note.notes),
+    [participantA.notes, participantB.notes, invitedParticipant.notes],
+  );
+  assert.deepEqual(
+    observerNotes.map((note) => note.notes),
+    [participantA.notes, participantB.notes, invitedParticipant.notes],
+  );
+});
+
+test("FINISHED negotiation reveals notes even without DEBRIEF_OPEN", () => {
+  const notes = resolveDebriefVisibleNotes({
+    roomLifecycle: "OPEN",
+    negotiationState: "FINISHED",
+    viewerParticipantId: facilitator.id,
+    viewerType: ParticipantType.FACILITATOR,
+    participants: [participantA, participantB, facilitator],
+  });
   assert.deepEqual(notes.map((note) => note.displayName), [
     "Participant A",
     "Participant B",

@@ -23,6 +23,7 @@ type ParticipantNotesPanelProps = {
   initialNotes: string;
   description: string;
   placeholder: string;
+  readOnly?: boolean;
 } & (
   | { authMode?: "joinToken"; joinToken: string; participantId?: never }
   | { authMode: "account"; participantId: string; joinToken?: never }
@@ -32,6 +33,7 @@ export function ParticipantNotesPanel({
   initialNotes,
   description,
   placeholder,
+  readOnly = false,
   ...authProps
 }: ParticipantNotesPanelProps) {
   const { t, tv } = useI18n();
@@ -58,6 +60,25 @@ export function ParticipantNotesPanel({
 
   const isDirty = areNotesDirty(draftNotes, savedNotes);
   const showSaved = !isDirty && state.success === true;
+
+  if (readOnly) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <p className="mb-2 text-xs text-slate-400">{description}</p>
+          <textarea
+            id="notes"
+            name="notes"
+            rows={6}
+            value={initialNotes}
+            readOnly
+            className={inputClassName(false)}
+          />
+        </div>
+        <p className="text-sm text-amber-300">{t("sessions.preparationLockedAfterNegotiation")}</p>
+      </div>
+    );
+  }
 
   return (
     <form action={formAction} className="space-y-3">

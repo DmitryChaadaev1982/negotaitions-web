@@ -119,6 +119,14 @@ preflight predicates and rollback steps are in
 ## Constraints
 
 - No Prisma schema/migration changes are part of architecture-doc updates alone.
+- The Stage 3.15A additive `AiAnalysis.inputFingerprint` migration must be
+  applied on any database the new client reads, including local. Production
+  apply uses the guarded overlay
+  (`npm run prisma:production:status` /
+  `npm run prisma:production:deploy -- --confirm-legacy-production-history`)
+  after the migration is explicitly allowlisted as
+  `20260819120000_add_ai_analysis_input_fingerprint`. The column is nullable
+  with no backfill. Apply schema before starting the new application process.
 - Production nginx/systemd edits remain a controlled activation step documented in
   `docs/operations/deployment-runbook.md` and
   `docs/audits/stage-3-13c-proxy-readiness/`.

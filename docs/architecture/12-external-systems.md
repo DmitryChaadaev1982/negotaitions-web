@@ -88,6 +88,22 @@
 - Control-plane identifiers and the sender/template matrix are recorded in
   `email-runtime-and-yandex-cloud.md` without credentials.
 
+## Provider processing geography (Stage 3.15A amendment, recorded 2026-08-19)
+
+On 2026-08-19 ООО «Фастком» (Voximplant), ИНН 7702764401, confirmed in writing
+that processing performed by the provider, including media-traffic processing
+and technical support, is performed within the Russian Federation and that
+cross-border transfer by the provider is not performed. The provider also
+confirmed that client-selected recording storage means the recording is saved
+to the client's storage and ООО «Фастком» does not retain a copy on its own
+servers.
+
+This register entry is a factual summary only. The private correspondence is
+not published. After Manual Checkpoint D, Voximplant-scoped user-facing copy
+lives in `/ai-processing-notice` and the Privacy Policy. It must not be
+rewritten as a platform-wide claim that every NegotAItions data path stays
+inside the Russian Federation.
+
 ## Source Notes
 
 - `lib/services/yandex-speechkit-transcription.ts`

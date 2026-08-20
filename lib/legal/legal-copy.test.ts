@@ -264,12 +264,14 @@ test("public legal copy does not use internal audit or fallback-code wording", (
   );
   assert.doesNotMatch(ruLegal, /ИНН/);
   assert.doesNotMatch(ruLegal, /ОГРН/);
-  assert.match(ruLegal, /География обработки на стороне Voximplant уточняется/);
+  assert.match(ruLegal, /ООО «Фастком» \(Voximplant\)/);
+  assert.match(ruLegal, /подтверждение относится только к Voximplant/);
   assert.match(
     ruLegal,
     /требования законодательства Российской Федерации о трансграничной передаче персональных данных/,
   );
-  assert.match(enLegal, /Voximplant processing geography is being clarified/);
+  assert.match(enLegal, /Fastcom LLC \(Voximplant\)/);
+  assert.match(enLegal, /confirmation applies only to Voximplant/);
   assert.match(
     enLegal,
     /legislation on cross-border transfer of personal data/,

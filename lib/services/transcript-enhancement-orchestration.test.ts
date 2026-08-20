@@ -19,6 +19,15 @@ type InMemoryTranscript = {
   updatedAt: Date;
   retranscribeCount: number;
   processingMetadata: Record<string, unknown>;
+  speakerMapping?: Record<string, string> | null;
+  session?: {
+    participants: Array<{
+      id: string;
+      displayName: string;
+      type: string;
+      sessionRole: { name: string } | null;
+    }>;
+  };
   segments: InMemorySegment[];
 };
 
@@ -42,7 +51,11 @@ function createInMemoryDb(state: InMemoryTranscript) {
         if (selectKeys.length === 1 && args.select?.processingMetadata) {
           return { processingMetadata: { ...state.processingMetadata } };
         }
-        return cloneTranscript(state);
+        return {
+          ...cloneTranscript(state),
+          speakerMapping: state.speakerMapping ?? null,
+          session: state.session,
+        };
       },
       update: async (args: { data: Record<string, unknown> }) => {
         if ("text" in args.data && typeof args.data.text === "string") {
@@ -498,6 +511,235 @@ test("stale enhancement owner cannot overwrite a newer run", async () => {
         ).runId,
         "newer-run-owner",
       );
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("same-identity completed enhancement does not regress to SKIPPED", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const state: InMemoryTranscript = {
+        id: "tr_completed",
+        text: "already completed",
+        diarizedText: "[00:00:00-00:00:01] [Speaker 1] already completed",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 0,
+        processingMetadata: {
+          transcriptionProvider: "yandex_speechkit",
+          mappingSuggestion: { reason: "keep-me" },
+        },
+        segments: [
+          {
+            id: "seg-completed",
+            orderIndex: 0,
+            speakerLabel: "speaker_1",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: "buyer",
+            text: "already completed",
+            qualityText: "already completed",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      const enhance = async (segments: Array<{ index: number; originalText: string }>) => ({
+        segments: segments.map((segment) => ({
+          index: segment.index,
+          cleanedText: segment.originalText,
+        })),
+        globalWarnings: [],
+        meta: {
+          mode: "single",
+          model: "deepseek-v4-flash",
+          overallStatus: "COMPLETED" as const,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          totalLatencyMs: 1,
+          originalSegmentCount: 1,
+          originalCharacterCount: 17,
+          chunkCount: 1,
+          concurrency: 1,
+          successfulChunkCount: 1,
+          failedChunkCount: 0,
+          fallbackSegmentCount: 0,
+          changedSegmentCount: 0,
+          unchangedSegmentCount: 1,
+          retryCount: 0,
+          perChunk: [],
+          originalWordCount: 2,
+          enhancedWordCount: 2,
+          addedWordEstimate: 0,
+          removedWordEstimate: 0,
+          outputMode: "json_schema",
+          structuredOutputEnabled: true,
+          schemaVersion: "v1",
+          schemaChunkCount: 1,
+        },
+      });
+      const first = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "automatic_initial_transcription",
+        dependencies: { db: db as never, enhance: enhance as never },
+      });
+      assert.equal(first.outcome, "started");
+      assert.equal(
+        (state.processingMetadata.transcriptEnhancement as { status: string }).status,
+        "COMPLETED",
+      );
+      state.processingMetadata = {
+        ...state.processingMetadata,
+        mappingSuggestion: { reason: "keep-me" },
+      };
+      const second = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "automatic_initial_transcription",
+        dependencies: {
+          db: db as never,
+          enhance: async () => {
+            throw new Error("provider must not run on same-identity completed");
+          },
+        },
+      });
+      assert.equal(second.outcome, "skipped");
+      if (second.outcome === "skipped") {
+        assert.equal(second.reason, "skip_completed_same_identity");
+      }
+      assert.equal(
+        (state.processingMetadata.transcriptEnhancement as { status: string }).status,
+        "COMPLETED",
+      );
+      assert.deepEqual(state.processingMetadata.mappingSuggestion, { reason: "keep-me" });
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("enhancement completion preserves sibling mappingSuggestion and mapped names", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const state: InMemoryTranscript = {
+        id: "tr_names",
+        text: "hello buyer",
+        diarizedText: "[00:00:00-00:00:01] [Lab Buyer / Buyer] hello buyer",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 0,
+        speakerMapping: { speaker_0: "buyer" },
+        session: {
+          participants: [
+            {
+              id: "buyer",
+              displayName: "Lab Buyer",
+              type: "PARTICIPANT",
+              sessionRole: { name: "Buyer" },
+            },
+          ],
+        },
+        processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+        segments: [
+          {
+            id: "seg-name",
+            orderIndex: 0,
+            speakerLabel: "speaker_0",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: "buyer",
+            text: "hello buyer",
+            qualityText: "hello buyer",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      let resolveProvider: (() => void) | null = null;
+      const enhance = async (segments: Array<{ index: number; originalText: string }>) => {
+        await new Promise<void>((resolve) => {
+          resolveProvider = resolve;
+        });
+        return {
+          segments: segments.map((segment) => ({
+            index: segment.index,
+            cleanedText: `${segment.originalText} enhanced`,
+          })),
+          globalWarnings: [],
+          meta: {
+            mode: "single",
+            model: "deepseek-v4-flash",
+            overallStatus: "COMPLETED",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            totalLatencyMs: 1,
+            originalSegmentCount: 1,
+            originalCharacterCount: 11,
+            chunkCount: 1,
+            concurrency: 1,
+            successfulChunkCount: 1,
+            failedChunkCount: 0,
+            fallbackSegmentCount: 0,
+            changedSegmentCount: 1,
+            unchangedSegmentCount: 0,
+            retryCount: 0,
+            perChunk: [],
+            originalWordCount: 2,
+            enhancedWordCount: 3,
+            addedWordEstimate: 1,
+            removedWordEstimate: 0,
+            outputMode: "json_schema",
+            structuredOutputEnabled: true,
+            schemaVersion: "v1",
+            schemaChunkCount: 1,
+          },
+        };
+      };
+
+      const started = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "manual",
+        runInBackground: true,
+        dependencies: { db: db as never, enhance: enhance as never },
+      });
+      assert.equal(started.outcome, "started");
+      state.processingMetadata = {
+        ...state.processingMetadata,
+        mappingSuggestion: { reason: "auto_suggested", keep: true },
+      };
+      state.updatedAt = new Date(state.updatedAt.getTime() + 5);
+      resolveProvider?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(
+        (state.processingMetadata.transcriptEnhancement as { status: string }).status,
+        "COMPLETED",
+      );
+      assert.deepEqual(state.processingMetadata.mappingSuggestion, {
+        reason: "auto_suggested",
+        keep: true,
+      });
+      assert.match(state.diarizedText ?? "", /Lab Buyer \/ Buyer/);
+      assert.match(state.diarizedText ?? "", /hello buyer enhanced/);
     } finally {
       if (previousDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

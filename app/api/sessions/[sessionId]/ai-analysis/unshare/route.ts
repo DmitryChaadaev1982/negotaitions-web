@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import { revokeActiveAiAnalysisPublicationInTransaction } from "@/lib/ai-publication-revoke";
 import {
   isAiPublicationSerializationConflict,
   retryAiPublicationTransaction,
@@ -71,43 +72,15 @@ export async function POST(request: Request, context: RouteContext) {
           // This canonical row lock must precede every publication lookup,
           // revocation, and legacy mutable-field clear so Publish and Unshare
           // have one serializable order.
-          const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-            SELECT id
-            FROM "AiAnalysis"
-            WHERE "sessionId" = ${sessionId}
-            FOR UPDATE
-          `);
-          if (!locked[0]) {
+          const revoked = await revokeActiveAiAnalysisPublicationInTransaction(
+            tx,
+            sessionId,
+          );
+          if (!revoked.analysisId) {
             return { state: "analysis_not_found" as const };
           }
-
-          const aiAnalysisId = locked[0].id;
-          const unsharedAt = new Date();
-          await tx.aiAnalysisPublicationGrant.updateMany({
-            where: {
-              revokedAt: null,
-              publication: {
-                aiAnalysisId,
-                revokedAt: null,
-              },
-            },
-            data: { revokedAt: unsharedAt },
-          });
-          await tx.aiAnalysisPublication.updateMany({
-            where: { aiAnalysisId, revokedAt: null },
-            data: { revokedAt: unsharedAt },
-          });
-
-          const updated = await tx.aiAnalysis.update({
-            where: { id: aiAnalysisId },
-            data: {
-              visibility: "FACILITATOR_ONLY",
-              sharedAnalysisJson: Prisma.JsonNull,
-              sharedExecutiveSummary: null,
-              sharedAt: null,
-              sharedBy: null,
-              unsharedAt,
-            },
+          const updated = await tx.aiAnalysis.findUniqueOrThrow({
+            where: { id: revoked.analysisId },
             select: {
               id: true,
               visibility: true,

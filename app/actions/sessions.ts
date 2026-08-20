@@ -22,6 +22,10 @@ import { isAssignableCaseRole } from "@/lib/case-roles";
 import { generateJoinToken } from "@/lib/join-token";
 import { minutesToSeconds } from "@/lib/negotiation-duration";
 import { updateParticipantPresence } from "@/lib/participant-presence";
+import {
+  persistParticipantNotesAfterAccess,
+  type ParticipantNotesWriteDenial,
+} from "@/lib/participant-notes-write";
 import { prisma } from "@/lib/prisma";
 import { reassignSessionFacilitator } from "@/lib/session-facilitator";
 import {
@@ -46,6 +50,20 @@ type ActionErrors = {
   [key: string]: string[] | undefined;
   form?: string[];
 };
+
+function notesWriteDenialToFormError(denial: ParticipantNotesWriteDenial): string {
+  switch (denial) {
+    case "SESSION_DELETED":
+      return "Session has been deleted.";
+    case "PREPARATION_LOCKED_NO_ROLE":
+      return "preparationLockedNoRole";
+    case "PREPARATION_LOCKED_AFTER_NEGOTIATION":
+      return "preparationLockedAfterNegotiation";
+    case "NOT_FOUND":
+    default:
+      return "invalidRequest";
+  }
+}
 
 function isRedirectError(error: unknown) {
   return (
@@ -696,11 +714,6 @@ export async function saveParticipantNotes(
     where: { joinToken },
     select: {
       id: true,
-      session: {
-        select: {
-          deletedAt: true,
-        },
-      },
     },
   });
 
@@ -713,23 +726,23 @@ export async function saveParticipantNotes(
     };
   }
 
-  if (participant.session.deletedAt) {
+  const persisted = await persistParticipantNotesAfterAccess({
+    participantId: participant.id,
+    notes,
+    enforceUnassignedParticipantLock: false,
+  });
+  if (!persisted.ok) {
     return {
       notes: _prevState.notes,
       errors: {
-        form: ["Session has been deleted."],
+        form: [notesWriteDenialToFormError(persisted.denial)],
       },
     };
   }
 
-  await prisma.sessionParticipant.update({
-    where: { joinToken },
-    data: { notes },
-  });
-
   await recordParticipantPresence(joinToken);
   revalidatePath(`/join/${joinToken}`);
-  return { success: true, notes };
+  return { success: true, notes: persisted.notes };
 }
 
 /**
@@ -760,9 +773,6 @@ export async function saveAccountParticipantNotes(
     select: {
       id: true,
       sessionId: true,
-      type: true,
-      sessionRoleId: true,
-      session: { select: { deletedAt: true } },
     },
   });
 
@@ -770,22 +780,20 @@ export async function saveAccountParticipantNotes(
     return { notes: _prevState.notes, errors: { form: ["invalidRequest"] } };
   }
 
-  if (participant.session.deletedAt) {
-    return { notes: _prevState.notes, errors: { form: ["Session has been deleted."] } };
-  }
-
-  // Phase 6.11B: PARTICIPANT must have an assigned role before writing notes.
-  if (participant.type === ParticipantType.PARTICIPANT && !participant.sessionRoleId) {
-    return { notes: _prevState.notes, errors: { form: ["preparationLockedNoRole"] } };
-  }
-
-  await prisma.sessionParticipant.update({
-    where: { id: participantId },
-    data: { notes },
+  const persisted = await persistParticipantNotesAfterAccess({
+    participantId: participant.id,
+    notes,
+    enforceUnassignedParticipantLock: true,
   });
+  if (!persisted.ok) {
+    return {
+      notes: _prevState.notes,
+      errors: { form: [notesWriteDenialToFormError(persisted.denial)] },
+    };
+  }
 
   revalidatePath(`/sessions/${participant.sessionId}/materials`);
-  return { success: true, notes };
+  return { success: true, notes: persisted.notes };
 }
 
 export async function recordParticipantPresence(joinToken: string) {

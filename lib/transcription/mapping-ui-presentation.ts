@@ -49,8 +49,6 @@ export function resolveSpeakerMappingStatusDescriptionKey(params: {
   }
 
   if (params.speakerMappingStatus === "AUTO_SUGGESTED") {
-    // AUTO_SUGGESTED includes both auto-applied and complete unconfirmed manual saves.
-    // Current payload does not expose a reliable source discriminator.
     return "recording.mappingStatusDescription.appliedNeedsConfirmation";
   }
 

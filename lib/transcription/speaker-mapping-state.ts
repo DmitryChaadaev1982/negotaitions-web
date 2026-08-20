@@ -126,7 +126,7 @@ export function deriveSpeakerMappingStatus(params: {
   }
 
   if (allMapped) {
-    return { status: "AUTO_SUGGESTED", allMapped: true, canConfirm: true };
+    return { status: "CONFIRMED", allMapped: true, canConfirm: true };
   }
 
   if (hasAnyMapped) {

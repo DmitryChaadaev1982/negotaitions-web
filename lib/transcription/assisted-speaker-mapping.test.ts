@@ -99,6 +99,20 @@ test("auto-suggested status stays compact and non-blocking", () => {
   assert.equal(mode, "AUTO_APPLIED_NOTE");
 });
 
+test("AUTO_SUGGESTED advisory is hidden after AI admission", () => {
+  const mode = resolveSpeakerReviewMode({
+    speakerMappingStatus: "AUTO_SUGGESTED",
+    speakersCount: 2,
+    isEditable: true,
+    manualSpeakerModeEnabled: false,
+    transcriptSource: "GENERATED",
+    mappingReviewSkipped: false,
+    aiAdmissionCompleted: true,
+  });
+
+  assert.equal(mode, "NONE");
+});
+
 test("confidence level thresholds are stable", () => {
   assert.equal(resolveMappingConfidenceLevel(0.9), "HIGH");
   assert.equal(resolveMappingConfidenceLevel(0.7), "MEDIUM");

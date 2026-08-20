@@ -3,11 +3,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@/app/generated/prisma/client";
 import {
   getTranscriptEnhancementOutputMode,
+  getTranscriptEnhancementTimeoutMs,
   getYandexTranscriptEnhancementModel,
   isTranscriptEnhancementAutoTriggerEnabled,
   isYandexTranscriptEnhancementEnabled,
 } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import {
+  persistEnhancementTimeoutSkip,
+  waitForEnhancementTimeout,
+  buildTimeoutSkipMetadata,
+} from "@/lib/services/transcript-enhancement-timeout";
 import {
   buildSegmentEnhancementUpdates,
   resolveEnhancementOriginalText,
@@ -19,11 +25,18 @@ import {
   type TranscriptEnhancementMeta,
   type TranscriptEnhancementOverallStatus,
 } from "@/lib/services/yandex-transcript-enhancement";
-import { buildDiarizedText } from "@/lib/transcription/speaker-labels";
+import {
+  buildCanonicalDiarizedText,
+  toParticipantDisplayInfo,
+} from "@/lib/transcription/canonical-diarized-text";
+import {
+  asProcessingMetadata,
+  mergeProcessingMetadata,
+} from "@/lib/transcription/processing-metadata";
+import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
 
 const ENHANCEMENT_SCHEMA_VERSION = "v1";
 const ENHANCEMENT_PROMPT_VERSION = "stage-3.9f-auto-enhancement-v1";
-const ENHANCEMENT_RUNNING_STALE_MS = 10 * 60 * 1000;
 
 export type TranscriptEnhancementTriggerSource =
   | "automatic_initial_transcription"
@@ -43,6 +56,7 @@ type TranscriptEnhancementIdempotencyDecision =
   | "skip_completed_same_identity"
   | "coalesced_running_same_identity"
   | "recovered_stale_running"
+  | "timed_out"
   | "manual_forced_rerun"
   | "skipped_not_yandex"
   | "skipped_disabled"
@@ -77,6 +91,15 @@ type LoadedTranscriptForEnhancement = {
   updatedAt: Date;
   processingMetadata: unknown;
   retranscribeCount: number | null;
+  speakerMapping?: unknown;
+  session?: {
+    participants: Array<{
+      id: string;
+      displayName: string;
+      type: string;
+      sessionRole: { name: string } | null;
+    }>;
+  };
   segments: TranscriptSegmentForEnhancement[];
 };
 
@@ -90,11 +113,15 @@ type TranscriptEnhancementDbClient = {
     update: typeof prisma.transcriptSegment.update;
   };
   $transaction: typeof prisma.$transaction;
+  $queryRaw?: typeof prisma.$queryRaw;
 };
 
 type TranscriptEnhancementDependencies = {
   db: TranscriptEnhancementDbClient;
   enhance: typeof enhanceTranscriptWithYandexAi;
+  timeoutMs?: number;
+  now?: () => number;
+  waitForTimeout?: (timeoutMs: number, signal: AbortSignal) => Promise<void>;
 };
 
 export type TranscriptEnhancementRunResult =
@@ -124,7 +151,36 @@ export type TranscriptEnhancementRunResult =
     };
 
 function asMetadata(value: unknown): ProcessingMetadata {
-  return value && typeof value === "object" ? (value as ProcessingMetadata) : {};
+  return asProcessingMetadata(value);
+}
+
+async function lockTranscriptRowIfSupported(
+  db: { $queryRaw?: typeof prisma.$queryRaw },
+  transcriptId: string,
+) {
+  if (typeof db.$queryRaw !== "function") {
+    return;
+  }
+  await db.$queryRaw`SELECT "id" FROM "Transcript" WHERE "id" = ${transcriptId} FOR UPDATE`;
+}
+
+async function writeMergedEnhancementMetadata(params: {
+  db: TranscriptEnhancementDbClient;
+  transcriptId: string;
+  build: (current: ProcessingMetadata) => ProcessingMetadata;
+}): Promise<void> {
+  const latest = await params.db.transcript.findUnique({
+    where: { id: params.transcriptId },
+    select: { processingMetadata: true },
+  });
+  if (!latest) return;
+  const current = asMetadata(latest.processingMetadata);
+  await params.db.transcript.update({
+    where: { id: params.transcriptId },
+    data: {
+      processingMetadata: params.build(current) as Prisma.InputJsonValue,
+    },
+  });
 }
 
 function asIsoString(value: unknown): string | null {
@@ -396,6 +452,194 @@ function buildFailedMetadata(params: {
   };
 }
 
+function isAuthoritativeRunningEnhancement(params: {
+  latest: { processingMetadata: unknown; retranscribeCount: number | null } | null;
+  runId: string;
+  inputIdentity: string;
+  retranscribeCount: number | null;
+}): boolean {
+  if (!params.latest) return false;
+  const latestEnhancement = asMetadata(
+    asMetadata(params.latest.processingMetadata).transcriptEnhancement,
+  );
+  return (
+    latestEnhancement.runId === params.runId &&
+    latestEnhancement.inputIdentity === params.inputIdentity &&
+    resolveEnhancementStatus(latestEnhancement.status) === "RUNNING" &&
+    params.latest.retranscribeCount === params.retranscribeCount
+  );
+}
+
+async function persistEnhancementFailureIfAuthoritative(params: {
+  db: TranscriptEnhancementDbClient;
+  transcript: LoadedTranscriptForEnhancement;
+  triggerSource: TranscriptEnhancementTriggerSource;
+  inputIdentity: string;
+  runId: string;
+  startedAtMs: number;
+  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
+  error: unknown;
+}): Promise<void> {
+  if (params.error instanceof TranscriptEnhancementOwnershipLostError) {
+    return;
+  }
+  await params.db.$transaction(async (tx) => {
+    await lockTranscriptRowIfSupported(tx, params.transcript.id);
+    const latest = await tx.transcript.findUnique({
+      where: { id: params.transcript.id },
+      select: {
+        processingMetadata: true,
+        retranscribeCount: true,
+      },
+    });
+    if (
+      !isAuthoritativeRunningEnhancement({
+        latest,
+        runId: params.runId,
+        inputIdentity: params.inputIdentity,
+        retranscribeCount: params.transcript.retranscribeCount,
+      })
+    ) {
+      return;
+    }
+    const failedMetadata = buildFailedMetadata({
+      metadata: asMetadata(latest?.processingMetadata),
+      triggerSource: params.triggerSource,
+      inputIdentity: params.inputIdentity,
+      startedAtMs: params.startedAtMs,
+      idempotencyDecision: params.idempotencyDecision,
+      error: params.error,
+    });
+    await tx.transcript.update({
+      where: { id: params.transcript.id },
+      data: {
+        processingMetadata: failedMetadata as Prisma.InputJsonValue,
+      },
+    });
+  });
+}
+
+async function persistEnhancementSuccessIfAuthoritative(params: {
+  db: TranscriptEnhancementDbClient;
+  transcript: LoadedTranscriptForEnhancement;
+  enhancementInput: TranscriptEnhancementInputSegment[];
+  enhanced: Awaited<ReturnType<typeof enhanceTranscriptWithYandexAi>>;
+  triggerSource: TranscriptEnhancementTriggerSource;
+  inputIdentity: string;
+  runId: string;
+  startedAtMs: number;
+  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
+}): Promise<void> {
+  const {
+    db,
+    transcript,
+    enhanced,
+    triggerSource,
+    inputIdentity,
+    runId,
+    startedAtMs,
+    idempotencyDecision,
+  } = params;
+  const overallStatus =
+    enhanced.meta?.overallStatus ??
+    ("COMPLETED" satisfies TranscriptEnhancementOverallStatus);
+  const persistEnhanced = shouldPersistEnhancedText(overallStatus);
+  const byIndex = new Map(
+    enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
+  );
+  const segmentUpdates = buildSegmentEnhancementUpdates(transcript.segments, byIndex);
+
+  const normalizedSegments = transcript.segments.map((segment) => ({
+    speakerLabel: segment.speakerLabel,
+    displaySpeakerLabel: null,
+    startSeconds: segment.startSeconds,
+    endSeconds: segment.endSeconds,
+    text: byIndex.get(segment.orderIndex)?.trim() || segment.text,
+    orderIndex: segment.orderIndex,
+  }));
+
+  const enhancedTranscriptText = normalizedSegments
+    .map((segment) => segment.text.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const mapping =
+    transcript.speakerMapping &&
+    typeof transcript.speakerMapping === "object" &&
+    !Array.isArray(transcript.speakerMapping)
+      ? (transcript.speakerMapping as SpeakerMapping)
+      : null;
+  const participants = (transcript.session?.participants ?? []).map(
+    toParticipantDisplayInfo,
+  );
+  const enhancedDiarizedText =
+    normalizedSegments.length > 0
+      ? buildCanonicalDiarizedText({
+          segments: normalizedSegments,
+          speakerMapping: mapping,
+          participants,
+        })
+      : transcript.diarizedText;
+
+  await db.$transaction(async (tx) => {
+    await lockTranscriptRowIfSupported(tx, transcript.id);
+    const latest = await tx.transcript.findUnique({
+      where: { id: transcript.id },
+      select: {
+        processingMetadata: true,
+        retranscribeCount: true,
+      },
+    });
+    if (
+      !isAuthoritativeRunningEnhancement({
+        latest,
+        runId,
+        inputIdentity,
+        retranscribeCount: transcript.retranscribeCount,
+      })
+    ) {
+      return;
+    }
+
+    if (persistEnhanced) {
+      for (const segmentUpdate of segmentUpdates) {
+        await tx.transcriptSegment.update({
+          where: { id: segmentUpdate.id },
+          data: {
+            text: segmentUpdate.text,
+            qualityText: segmentUpdate.qualityText,
+          },
+        });
+      }
+    }
+
+    const completedMetadata = buildCompletedMetadata({
+      metadata: asMetadata(latest?.processingMetadata),
+      triggerSource,
+      inputIdentity,
+      startedAtMs,
+      overallStatus,
+      meta: enhanced.meta,
+      idempotencyDecision,
+    });
+
+    await tx.transcript.update({
+      where: { id: transcript.id },
+      data: {
+        text:
+          persistEnhanced && enhancedTranscriptText.length > 0
+            ? enhancedTranscriptText
+            : transcript.text,
+        diarizedText:
+          persistEnhanced && enhancedDiarizedText
+            ? enhancedDiarizedText
+            : transcript.diarizedText,
+        processingMetadata: completedMetadata as Prisma.InputJsonValue,
+      },
+    });
+  });
+}
+
 async function runEnhancementExecution(params: {
   db: TranscriptEnhancementDbClient;
   enhance: typeof enhanceTranscriptWithYandexAi;
@@ -406,6 +650,8 @@ async function runEnhancementExecution(params: {
   runId: string;
   startedAtMs: number;
   idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
+  timeoutMs?: number;
+  waitForTimeout?: (timeoutMs: number, signal: AbortSignal) => Promise<void>;
 }): Promise<void> {
   const {
     db,
@@ -418,138 +664,82 @@ async function runEnhancementExecution(params: {
     startedAtMs,
     idempotencyDecision,
   } = params;
+  const timeoutMs = params.timeoutMs ?? getTranscriptEnhancementTimeoutMs();
+  const waitForTimeout = params.waitForTimeout ?? waitForEnhancementTimeout;
+  const timeoutAbort = new AbortController();
 
-  try {
-    const enhanced = await enhance(enhancementInput);
-    const overallStatus =
-      enhanced.meta?.overallStatus ??
-      ("COMPLETED" satisfies TranscriptEnhancementOverallStatus);
-    const persistEnhanced = shouldPersistEnhancedText(overallStatus);
-    const byIndex = new Map(
-      enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
-    );
-    const segmentUpdates = buildSegmentEnhancementUpdates(transcript.segments, byIndex);
+  const enhancePromise = enhance(enhancementInput).then(
+    (result) => ({ kind: "result" as const, result }),
+    (error: unknown) => ({ kind: "error" as const, error }),
+  );
+  const timeoutPromise = waitForTimeout(timeoutMs, timeoutAbort.signal).then(
+    () => ({ kind: "timeout" as const }),
+    () => ({ kind: "aborted" as const }),
+  );
 
-    const normalizedSegments = transcript.segments.map((segment) => ({
-      speakerLabel: segment.speakerLabel,
-      displaySpeakerLabel: null,
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-      text: byIndex.get(segment.orderIndex)?.trim() || segment.text,
-      orderIndex: segment.orderIndex,
-    }));
-
-    const enhancedTranscriptText = normalizedSegments
-      .map((segment) => segment.text.trim())
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-    const enhancedDiarizedText =
-      normalizedSegments.length > 0
-        ? buildDiarizedText(normalizedSegments)
-        : transcript.diarizedText;
-
-    await db.$transaction(async (tx) => {
-      const latest = await tx.transcript.findUnique({
-        where: { id: transcript.id },
-        select: {
-          processingMetadata: true,
-          retranscribeCount: true,
-          updatedAt: true,
-        },
-      });
-      const latestMetadata = asMetadata(latest?.processingMetadata);
-      const latestEnhancement = asMetadata(
-        latestMetadata.transcriptEnhancement,
-      );
-      if (
-        !latest ||
-        latestEnhancement.runId !== runId ||
-        latestEnhancement.inputIdentity !== inputIdentity ||
-        resolveEnhancementStatus(latestEnhancement.status) !== "RUNNING" ||
-        latest.retranscribeCount !== transcript.retranscribeCount
-      ) {
-        return;
+  const first = await Promise.race([enhancePromise, timeoutPromise]);
+  if (first.kind === "timeout") {
+    await persistEnhancementTimeoutSkip({
+      db: db as never,
+      transcriptId: transcript.id,
+      runId,
+      inputIdentity,
+      retranscribeCount: transcript.retranscribeCount,
+    });
+    void enhancePromise.then((later) => {
+      if (later.kind === "result") {
+        return persistEnhancementSuccessIfAuthoritative({
+          db,
+          transcript,
+          enhancementInput,
+          enhanced: later.result,
+          triggerSource,
+          inputIdentity,
+          runId,
+          startedAtMs,
+          idempotencyDecision,
+        });
       }
-
-      if (persistEnhanced) {
-        for (const segmentUpdate of segmentUpdates) {
-          await tx.transcriptSegment.update({
-            where: { id: segmentUpdate.id },
-            data: {
-              text: segmentUpdate.text,
-              qualityText: segmentUpdate.qualityText,
-            },
-          });
-        }
-      }
-
-      const completedMetadata = buildCompletedMetadata({
-        metadata: latestMetadata,
+      return persistEnhancementFailureIfAuthoritative({
+        db,
+        transcript,
         triggerSource,
         inputIdentity,
+        runId,
         startedAtMs,
-        overallStatus,
-        meta: enhanced.meta,
         idempotencyDecision,
+        error: later.error,
       });
+    });
+    return;
+  }
 
-      const terminalized = await tx.transcript.updateMany({
-        where: { id: transcript.id, updatedAt: latest.updatedAt },
-        data: {
-          text:
-            persistEnhanced && enhancedTranscriptText.length > 0
-              ? enhancedTranscriptText
-              : transcript.text,
-          diarizedText:
-            persistEnhanced && enhancedDiarizedText
-              ? enhancedDiarizedText
-              : transcript.diarizedText,
-          processingMetadata: completedMetadata as Prisma.InputJsonValue,
-        },
-      });
-      if (terminalized.count === 0) {
-        throw new TranscriptEnhancementOwnershipLostError();
-      }
-    });
-  } catch (error) {
-    if (error instanceof TranscriptEnhancementOwnershipLostError) {
-      return;
-    }
-    const latest = await db.transcript.findUnique({
-      where: { id: transcript.id },
-      select: {
-        processingMetadata: true,
-        retranscribeCount: true,
-        updatedAt: true,
-      },
-    });
-    const latestMetadata = asMetadata(latest?.processingMetadata);
-    const latestEnhancement = asMetadata(
-      latestMetadata.transcriptEnhancement,
-    );
-    if (
-      !latest ||
-      latestEnhancement.runId !== runId ||
-      latestEnhancement.inputIdentity !== inputIdentity ||
-      resolveEnhancementStatus(latestEnhancement.status) !== "RUNNING" ||
-      latest.retranscribeCount !== transcript.retranscribeCount
-    ) {
-      return;
-    }
-    const failedMetadata = buildFailedMetadata({
-      metadata: latestMetadata,
+  timeoutAbort.abort();
+  const outcome = first.kind === "aborted" ? await enhancePromise : first;
+  if (outcome.kind === "error") {
+    await persistEnhancementFailureIfAuthoritative({
+      db,
+      transcript,
       triggerSource,
       inputIdentity,
+      runId,
       startedAtMs,
       idempotencyDecision,
-      error,
+      error: outcome.error,
     });
-    await db.transcript.updateMany({
-      where: { id: transcript.id, updatedAt: latest.updatedAt },
-      data: {
-        processingMetadata: failedMetadata as Prisma.InputJsonValue,
-      },
+    return;
+  }
+  if (outcome.kind === "result") {
+    await persistEnhancementSuccessIfAuthoritative({
+      db,
+      transcript,
+      enhancementInput,
+      enhanced: outcome.result,
+      triggerSource,
+      inputIdentity,
+      runId,
+      startedAtMs,
+      idempotencyDecision,
     });
   }
 }
@@ -570,6 +760,9 @@ export async function executeTranscriptEnhancement(params: {
   } = params;
   const db = dependencies?.db ?? prisma;
   const enhance = dependencies?.enhance ?? enhanceTranscriptWithYandexAi;
+  const timeoutMs = dependencies?.timeoutMs ?? getTranscriptEnhancementTimeoutMs();
+  const nowMs = (dependencies?.now ?? Date.now)();
+  const waitForTimeout = dependencies?.waitForTimeout ?? waitForEnhancementTimeout;
 
   const transcript = (await db.transcript.findUnique({
     where: { id: transcriptId },
@@ -580,6 +773,19 @@ export async function executeTranscriptEnhancement(params: {
       updatedAt: true,
       processingMetadata: true,
       retranscribeCount: true,
+      speakerMapping: true,
+      session: {
+        select: {
+          participants: {
+            select: {
+              id: true,
+              displayName: true,
+              type: true,
+              sessionRole: { select: { name: true } },
+            },
+          },
+        },
+      },
       segments: {
         orderBy: { orderIndex: "asc" },
         select: {
@@ -606,15 +812,16 @@ export async function executeTranscriptEnhancement(params: {
       ? metadata.transcriptionProvider
       : null;
   if (provider !== "yandex_speechkit") {
-    const nextMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity: null,
-      reason: "skipped_not_yandex",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: nextMetadata as Prisma.InputJsonValue },
+    await writeMergedEnhancementMetadata({
+      db,
+      transcriptId: transcript.id,
+      build: (current) =>
+        buildSkipMetadata({
+          metadata: current,
+          triggerSource,
+          inputIdentity: null,
+          reason: "skipped_not_yandex",
+        }),
     });
     return {
       outcome: "skipped",
@@ -626,15 +833,16 @@ export async function executeTranscriptEnhancement(params: {
   }
 
   if (!isYandexTranscriptEnhancementEnabled()) {
-    const nextMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity: null,
-      reason: "skipped_disabled",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: nextMetadata as Prisma.InputJsonValue },
+    await writeMergedEnhancementMetadata({
+      db,
+      transcriptId: transcript.id,
+      build: (current) =>
+        buildSkipMetadata({
+          metadata: current,
+          triggerSource,
+          inputIdentity: null,
+          reason: "skipped_disabled",
+        }),
     });
     return {
       outcome: "skipped",
@@ -649,15 +857,16 @@ export async function executeTranscriptEnhancement(params: {
     triggerSource.startsWith("automatic_") &&
     !isTranscriptEnhancementAutoTriggerEnabled()
   ) {
-    const nextMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity: null,
-      reason: "skipped_auto_run_disabled",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: nextMetadata as Prisma.InputJsonValue },
+    await writeMergedEnhancementMetadata({
+      db,
+      transcriptId: transcript.id,
+      build: (current) =>
+        buildSkipMetadata({
+          metadata: current,
+          triggerSource,
+          inputIdentity: null,
+          reason: "skipped_auto_run_disabled",
+        }),
     });
     return {
       outcome: "skipped",
@@ -670,15 +879,16 @@ export async function executeTranscriptEnhancement(params: {
 
   const enhancementInput = mapSegmentsToEnhancementInput(transcript.segments);
   if (enhancementInput.length === 0) {
-    const nextMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity: null,
-      reason: "skipped_empty_transcript",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: nextMetadata as Prisma.InputJsonValue },
+    await writeMergedEnhancementMetadata({
+      db,
+      transcriptId: transcript.id,
+      build: (current) =>
+        buildSkipMetadata({
+          metadata: current,
+          triggerSource,
+          inputIdentity: null,
+          reason: "skipped_empty_transcript",
+        }),
     });
     return {
       outcome: "skipped",
@@ -693,15 +903,16 @@ export async function executeTranscriptEnhancement(params: {
     (segment) => segment.originalText.trim().length > 0,
   );
   if (!hasCanonicalText) {
-    const nextMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity: null,
-      reason: "skipped_empty_raw_text",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: nextMetadata as Prisma.InputJsonValue },
+    await writeMergedEnhancementMetadata({
+      db,
+      transcriptId: transcript.id,
+      build: (current) =>
+        buildSkipMetadata({
+          metadata: current,
+          triggerSource,
+          inputIdentity: null,
+          reason: "skipped_empty_raw_text",
+        }),
     });
     return {
       outcome: "skipped",
@@ -728,27 +939,28 @@ export async function executeTranscriptEnhancement(params: {
   const runningStartedAt = parseTimestamp(currentEnhancement.startedAt);
   const isStaleRunning =
     currentStatus === "RUNNING" &&
-    runningStartedAt !== null &&
-    Date.now() - runningStartedAt.getTime() > ENHANCEMENT_RUNNING_STALE_MS;
+    (runningStartedAt === null || nowMs - runningStartedAt.getTime() > timeoutMs);
   const sameIdentity = currentIdentity === inputIdentity;
+  const alreadyTimedOutSkip =
+    currentStatus === "SKIPPED" && currentEnhancement.skipReason === "timeout";
 
   if (sameIdentity && currentStatus === "COMPLETED" && !forceReenhancement) {
-    const skippedMetadata = buildSkipMetadata({
-      metadata,
-      triggerSource,
-      inputIdentity,
-      reason: "skip_completed_same_identity",
-    });
-    await db.transcript.update({
-      where: { id: transcript.id },
-      data: { processingMetadata: skippedMetadata as Prisma.InputJsonValue },
-    });
     return {
       outcome: "skipped",
       transcriptId: transcript.id,
       inputIdentity,
       triggerSource,
       reason: "skip_completed_same_identity",
+    };
+  }
+
+  if (sameIdentity && alreadyTimedOutSkip && !forceReenhancement) {
+    return {
+      outcome: "skipped",
+      transcriptId: transcript.id,
+      inputIdentity,
+      triggerSource,
+      reason: "timed_out",
     };
   }
 
@@ -761,6 +973,24 @@ export async function executeTranscriptEnhancement(params: {
     };
   }
 
+  if (currentStatus === "RUNNING" && isStaleRunning && !forceReenhancement) {
+    await persistEnhancementTimeoutSkip({
+      db: db as never,
+      transcriptId: transcript.id,
+      runId: asIsoString(currentEnhancement.runId),
+      inputIdentity: currentIdentity,
+      retranscribeCount: transcript.retranscribeCount,
+      nowMs,
+    });
+    return {
+      outcome: "skipped",
+      transcriptId: transcript.id,
+      inputIdentity,
+      triggerSource,
+      reason: "timed_out",
+    };
+  }
+
   const idempotencyDecision: TranscriptEnhancementIdempotencyDecision =
     sameIdentity && isStaleRunning
       ? "recovered_stale_running"
@@ -769,23 +999,87 @@ export async function executeTranscriptEnhancement(params: {
         : "started_new";
 
   const runId = randomUUID();
-  const runningMetadata = buildRunningMetadata({
-    metadata,
-    triggerSource,
-    inputIdentity,
-    runId,
-    idempotencyDecision,
+  const lockResult = await db.$transaction(async (tx) => {
+    await lockTranscriptRowIfSupported(tx, transcript.id);
+    const latest = await tx.transcript.findUnique({
+      where: { id: transcript.id },
+      select: { processingMetadata: true, updatedAt: true },
+    });
+    if (!latest) {
+      return { count: 0 };
+    }
+    const latestEnhancement = asMetadata(
+      asMetadata(latest.processingMetadata).transcriptEnhancement,
+    );
+    const latestStatus = resolveEnhancementStatus(latestEnhancement.status);
+    if (
+      latestStatus === "COMPLETED" &&
+      latestEnhancement.inputIdentity === inputIdentity &&
+      !forceReenhancement
+    ) {
+      return { count: 0, alreadyCompleted: true as const };
+    }
+    const latestRunningStartedAt = parseTimestamp(latestEnhancement.startedAt);
+    const latestIsStaleRunning =
+      latestStatus === "RUNNING" &&
+      (latestRunningStartedAt === null ||
+        nowMs - latestRunningStartedAt.getTime() > timeoutMs);
+    if (
+      latestStatus === "RUNNING" &&
+      latestEnhancement.inputIdentity === inputIdentity &&
+      !latestIsStaleRunning
+    ) {
+      return { count: 0 };
+    }
+    if (latestStatus === "RUNNING" && latestIsStaleRunning && !forceReenhancement) {
+      await tx.transcript.update({
+        where: { id: transcript.id },
+        data: {
+          processingMetadata: buildTimeoutSkipMetadata({
+            metadata: asMetadata(latest.processingMetadata),
+            nowMs,
+          }) as Prisma.InputJsonValue,
+        },
+      });
+      return { count: 0, timedOut: true as const };
+    }
+    const runningMetadata = buildRunningMetadata({
+      metadata: asMetadata(latest.processingMetadata),
+      triggerSource,
+      inputIdentity,
+      runId,
+      idempotencyDecision,
+    });
+    return tx.transcript.updateMany({
+      where: {
+        id: transcript.id,
+        updatedAt: latest.updatedAt,
+      },
+      data: {
+        processingMetadata: runningMetadata as Prisma.InputJsonValue,
+      },
+    });
   });
 
-  const lockResult = await db.transcript.updateMany({
-    where: {
-      id: transcript.id,
-      updatedAt: transcript.updatedAt,
-    },
-    data: {
-      processingMetadata: runningMetadata as Prisma.InputJsonValue,
-    },
-  });
+  if ("alreadyCompleted" in lockResult && lockResult.alreadyCompleted) {
+    return {
+      outcome: "skipped",
+      transcriptId: transcript.id,
+      inputIdentity,
+      triggerSource,
+      reason: "skip_completed_same_identity",
+    };
+  }
+
+  if ("timedOut" in lockResult && lockResult.timedOut) {
+    return {
+      outcome: "skipped",
+      transcriptId: transcript.id,
+      inputIdentity,
+      triggerSource,
+      reason: "timed_out",
+    };
+  }
 
   if (lockResult.count === 0) {
     return {
@@ -796,7 +1090,7 @@ export async function executeTranscriptEnhancement(params: {
     };
   }
 
-  const startedAtMs = Date.now();
+  const startedAtMs = nowMs;
   if (runInBackground) {
     void runEnhancementExecution({
       db,
@@ -808,6 +1102,8 @@ export async function executeTranscriptEnhancement(params: {
       runId,
       startedAtMs,
       idempotencyDecision,
+      timeoutMs,
+      waitForTimeout,
     }).catch((backgroundError) => {
       console.warn(
         `[transcript-enhancement] background run failed for transcript ${transcript.id}: ${
@@ -828,6 +1124,8 @@ export async function executeTranscriptEnhancement(params: {
       runId,
       startedAtMs,
       idempotencyDecision,
+      timeoutMs,
+      waitForTimeout,
     });
   }
 

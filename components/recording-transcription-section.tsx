@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Card, CardContent, CardHeader } from "@/components/card";
-import { SecondaryButton } from "@/components/ui/buttons";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { GradientButton, SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
@@ -20,6 +21,11 @@ import {
   resolveSpeakerMappingStatusDescriptionKey,
 } from "@/lib/transcription/mapping-ui-presentation";
 import {
+  showRecordingStatusDetail,
+  showTranscriptLanguageSelector,
+  type RecordingTranscriptionPresentation,
+} from "@/lib/transcription/recording-transcription-presentation";
+import {
   formatTranscriptTimeRangeUi,
   formatTranscriptTimeRangeWithDurationUi,
   groupSegmentsIntoTurns,
@@ -30,6 +36,11 @@ import {
   type MappingConfidenceLevel,
 } from "@/lib/transcription/assisted-speaker-mapping";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
+import { resolveTranscriptSectionEnhancementRunning } from "@/lib/post-processing/enhancement-effective-state";
+import {
+  materialsRetranscribePath,
+  materialsTranscribePath,
+} from "@/lib/transcription/transcription-routes";
 
 type RecordingData = {
   id: string;
@@ -111,12 +122,30 @@ type RecordingTranscriptionSectionProps = {
   embedded?: boolean;
   /** Hides recording metadata grid and secondary info — for narrow sidebars. */
   compact?: boolean;
+  /**
+   * Presentation surface. `roomQuick` is the in-room Debrief facilitator
+   * panel; `materialsDetail` is the dedicated Materials/session page.
+   * Default keeps the detailed Materials controls.
+   */
+  presentation?: RecordingTranscriptionPresentation;
   /** Hides the built-in re-run transcription block (parent provides actions). */
   hideRerunControls?: boolean;
   /** Called after transcript/mapping changes so parent can refresh processing status. */
   onProcessingChange?: () => void;
   /** When true, disables all editing interactions (e.g. during retranscription). */
   isLocked?: boolean;
+  /** Hide the pre-AI AUTO_SUGGESTED advisory after successful AI admission. */
+  aiAdmissionCompleted?: boolean;
+  /**
+   * Canonical enhancement status from polled `materials/status`.
+   * When provided (including `null`), this wins over a stale `/recording` snapshot.
+   */
+  canonicalEnhancementStatus?: string | null;
+  /**
+   * Rail-owned running flag from the same `materials/status` poll.
+   * When provided, this is the lock authority and must match the five-card rail.
+   */
+  canonicalEnhancementRunning?: boolean;
 };
 
 function formatBytes(bytes: number | null) {
@@ -313,9 +342,13 @@ export function RecordingTranscriptionSection({
   autoTranscribeEnabled = false,
   embedded = false,
   compact = false,
+  presentation = "materialsDetail",
   hideRerunControls = false,
   onProcessingChange,
   isLocked = false,
+  aiAdmissionCompleted = false,
+  canonicalEnhancementStatus,
+  canonicalEnhancementRunning,
 }: RecordingTranscriptionSectionProps) {
   const { t, locale } = useI18n();
   const [recording, setRecording] = useState<RecordingData | null>(null);
@@ -328,6 +361,7 @@ export function RecordingTranscriptionSection({
     Record<string, string | null>
   >({});
   const speakerMappingDraftDirtyRef = useRef(false);
+  const enhancementWasRunningRef = useRef(false);
   const [transcriptText, setTranscriptText] = useState("");
   const [languageHint, setLanguageHint] = useState<"auto" | "ru" | "en">("auto");
   const [loading, setLoading] = useState(true);
@@ -353,6 +387,29 @@ export function RecordingTranscriptionSection({
   const speakerMappingDraftTranscriptIdRef = useRef<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [mappingReviewSkipped, setMappingReviewSkipped] = useState(false);
+  const [materialChangeDialog, setMaterialChangeDialog] = useState<{
+    willRevokePublication: boolean;
+  } | null>(null);
+  const materialChangeConfirmRef = useRef<{
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+
+  const requestMaterialChangeConfirmation = useCallback(
+    (willRevokePublication: boolean) =>
+      new Promise<boolean>((resolve) => {
+        materialChangeConfirmRef.current?.resolve(false);
+        materialChangeConfirmRef.current = { resolve };
+        setMaterialChangeDialog({ willRevokePublication });
+      }),
+    [],
+  );
+
+  const closeMaterialChangeDialog = useCallback((confirmed: boolean) => {
+    const pending = materialChangeConfirmRef.current;
+    materialChangeConfirmRef.current = null;
+    setMaterialChangeDialog(null);
+    pending?.resolve(confirmed);
+  }, []);
 
   const notifyProcessingChange = useCallback(() => {
     onProcessingChange?.();
@@ -452,6 +509,7 @@ export function RecordingTranscriptionSection({
     try {
       const response = await fetch(
         `/api/sessions/${sessionId}/recording?${roomAuthQuery(roomAuth)}`,
+        { cache: "no-store" },
       );
       const rawBody = await response.text();
 
@@ -631,16 +689,34 @@ export function RecordingTranscriptionSection({
     sessionStatus,
   ]);
 
+  const processingMetadata =
+    transcript?.processingMetadata && typeof transcript.processingMetadata === "object"
+      ? (transcript.processingMetadata as Record<string, unknown>)
+      : null;
+  const enhancementRunning = resolveTranscriptSectionEnhancementRunning({
+    canonicalEnhancementRunning,
+    canonicalEnhancementStatus,
+    localEnhancementStatus: transcript?.enhancement?.status ?? null,
+    processingMetadata,
+  });
+
   useEffect(() => {
     if (readOnly) return;
-    if (transcript?.enhancement?.status !== "IN_PROGRESS") return;
+    if (!enhancementRunning) return;
 
     const intervalId = window.setInterval(() => {
       void loadData();
     }, ENHANCEMENT_STATUS_POLL_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [loadData, readOnly, transcript?.enhancement?.status]);
+  }, [enhancementRunning, loadData, readOnly]);
+
+  useEffect(() => {
+    if (enhancementWasRunningRef.current && !enhancementRunning) {
+      void loadData();
+    }
+    enhancementWasRunningRef.current = enhancementRunning;
+  }, [enhancementRunning, loadData]);
 
   const applyTranscriptPayload = useCallback((
     payload: TranscriptData,
@@ -681,46 +757,27 @@ export function RecordingTranscriptionSection({
     setMessage(null);
 
     try {
-      const response = await fetch(
-        `/api/sessions/${sessionId}/transcribe-recording`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...roomAuthBody(roomAuth),
-            recordingId: recording.id,
-            languageHint,
-          }),
-        },
-      );
+      const response = await fetch(materialsTranscribePath(sessionId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...roomAuthBody(roomAuth),
+          language: languageHint,
+        }),
+      });
 
       const payload = (await response.json()) as {
         error?: string;
-        transcript?: TranscriptData;
         warnings?: TranscriptionWarningCode[];
-        recording?: Partial<RecordingData>;
       };
 
       if (!response.ok) {
         throw new Error(payload.error ?? "Transcription failed.");
       }
 
-      if (payload.transcript) {
-        applyTranscriptPayload(payload.transcript);
-      }
-
+      await loadData();
       setTranscriptionWarnings(payload.warnings ?? []);
       setTranscriptionAutoFailed(false);
-
-      if (payload.recording?.compressedSizeBytes != null && recording) {
-        setRecording({
-          ...recording,
-          compressedSizeBytes: payload.recording.compressedSizeBytes,
-          compressionStatus:
-            payload.recording.compressionStatus ?? recording.compressionStatus,
-        });
-      }
-
       setMessage(t("recording.transcriptSaved"));
       notifyProcessingChange();
     } catch (transcribeError) {
@@ -733,7 +790,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setBusyAction(null);
     }
-  }, [applyTranscriptPayload, roomAuth, languageHint, notifyProcessingChange, recording, sessionId, t]);
+  }, [loadData, roomAuth, languageHint, notifyProcessingChange, recording, sessionId, t]);
 
   const rerunTranscription = useCallback(async () => {
     setRerunConfirmOpen(false);
@@ -743,7 +800,7 @@ export function RecordingTranscriptionSection({
 
     try {
       const response = await fetch(
-        `/api/sessions/${sessionId}/materials/retranscribe`,
+        materialsRetranscribePath(sessionId),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -817,16 +874,38 @@ export function RecordingTranscriptionSection({
     setMessage(null);
 
     try {
-      const response = await fetch(`/api/sessions/${sessionId}/transcript`, {
+      const requestBody = { ...roomAuthBody(roomAuth), text: transcriptText };
+      let response = await fetch(`/api/sessions/${sessionId}/transcript`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...roomAuthBody(roomAuth), text: transcriptText }),
+        body: JSON.stringify(requestBody),
       });
-
-      const payload = (await response.json()) as {
+      let payload = (await response.json()) as {
         error?: string;
+        errorCode?: string;
+        willRevokePublication?: boolean;
         transcript?: TranscriptData;
       };
+      if (
+        response.status === 409 &&
+        payload.errorCode === "MATERIAL_CHANGE_CONFIRMATION_REQUIRED"
+      ) {
+        const confirmed = await requestMaterialChangeConfirmation(
+          payload.willRevokePublication === true,
+        );
+        if (!confirmed) {
+          return;
+        }
+        response = await fetch(`/api/sessions/${sessionId}/transcript`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...requestBody,
+            confirmRewindPublication: true,
+          }),
+        });
+        payload = (await response.json()) as typeof payload;
+      }
 
       if (!response.ok) {
         throw new Error(payload.error ?? "Save failed.");
@@ -876,7 +955,7 @@ export function RecordingTranscriptionSection({
     });
 
     try {
-      const response = await fetch(
+      let response = await fetch(
         `/api/sessions/${sessionId}/speaker-mapping`,
         {
           method: "POST",
@@ -889,16 +968,40 @@ export function RecordingTranscriptionSection({
           }),
         },
       );
+      let payload = (await response.json()) as {
+        error?: string;
+        errorCode?: string;
+        willRevokePublication?: boolean;
+        transcript?: TranscriptData;
+      };
+      if (
+        response.status === 409 &&
+        payload.errorCode === "MATERIAL_CHANGE_CONFIRMATION_REQUIRED"
+      ) {
+        const confirmed = await requestMaterialChangeConfirmation(
+          payload.willRevokePublication === true,
+        );
+        if (!confirmed) {
+          return;
+        }
+        response = await fetch(`/api/sessions/${sessionId}/speaker-mapping`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...roomAuthBody(roomAuth),
+            mapping: mappingToSave,
+            applyOnly,
+            confirm,
+            confirmRewindPublication: true,
+          }),
+        });
+        payload = (await response.json()) as typeof payload;
+      }
       debugSpeakerMappingClient("saveResponseStatus", {
         sessionId,
         transcriptId: transcript?.id ?? null,
         status: response.status,
       });
-
-      const payload = (await response.json()) as {
-        error?: string;
-        transcript?: TranscriptData;
-      };
 
       if (!response.ok) {
         throw new Error(payload.error ?? "Save failed.");
@@ -965,22 +1068,48 @@ export function RecordingTranscriptionSection({
     setMessage(null);
 
     try {
-      const response = await fetch(
+      const requestBody = {
+        ...roomAuthBody(roomAuth),
+        turns: normalizedTurns,
+      };
+      let response = await fetch(
         `/api/sessions/${sessionId}/manual-speaker-attribution`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...roomAuthBody(roomAuth),
-            turns: normalizedTurns,
-          }),
+          body: JSON.stringify(requestBody),
         },
       );
 
-      const payload = (await response.json()) as {
+      let payload = (await response.json()) as {
         error?: string;
+        errorCode?: string;
+        willRevokePublication?: boolean;
         transcript?: TranscriptData;
       };
+      if (
+        response.status === 409 &&
+        payload.errorCode === "MATERIAL_CHANGE_CONFIRMATION_REQUIRED"
+      ) {
+        const confirmed = await requestMaterialChangeConfirmation(
+          payload.willRevokePublication === true,
+        );
+        if (!confirmed) {
+          return;
+        }
+        response = await fetch(
+          `/api/sessions/${sessionId}/manual-speaker-attribution`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...requestBody,
+              confirmRewindPublication: true,
+            }),
+          },
+        );
+        payload = (await response.json()) as typeof payload;
+      }
 
       if (!response.ok || !payload.transcript) {
         throw new Error(payload.error ?? "Save failed.");
@@ -1000,7 +1129,7 @@ export function RecordingTranscriptionSection({
     } finally {
       setBusyAction(null);
     }
-  }, [applyTranscriptPayload, roomAuth, manualSpeakerTurns, notifyProcessingChange, sessionId, t]);
+  }, [applyTranscriptPayload, requestMaterialChangeConfirmation, roomAuth, manualSpeakerTurns, notifyProcessingChange, sessionId, t]);
 
   const copyDiarizedTranscript = async () => {
     const textToCopy = diarizedPreviewText || diarizedTurns
@@ -1087,6 +1216,10 @@ export function RecordingTranscriptionSection({
         ? "FAILED"
         : displayRecordingStatus;
 
+  const renderRecordingStatusDetail = showRecordingStatusDetail(presentation);
+  const renderLanguageSelector =
+    showTranscriptLanguageSelector(presentation) && !readOnly;
+
   const showPauseRecordingNotice = sessionStatus === "PAUSED";
   const showActiveRecordingNotice =
     sessionStatus === "RUNNING" &&
@@ -1104,10 +1237,7 @@ export function RecordingTranscriptionSection({
     transcript?.source === "GENERATED" &&
     !transcript.hasSpeakerDiarization &&
     hasUsableTranscript(transcript);
-  const processingMetadata =
-    transcript?.processingMetadata && typeof transcript.processingMetadata === "object"
-      ? (transcript.processingMetadata as Record<string, unknown>)
-      : null;
+  const editsLocked = isLocked || enhancementRunning;
   const preprocessingSkipped = processingMetadata?.preprocessingSkipped === true;
   const preprocessingReason =
     typeof processingMetadata?.preprocessingTriggerReason === "string"
@@ -1149,7 +1279,7 @@ export function RecordingTranscriptionSection({
   const shouldShowSpeakerMappingPanel =
     speakersForMapping.length > 0 &&
     !readOnly &&
-    !isLocked &&
+    !editsLocked &&
     !manualSpeakerModeEnabled &&
     transcript?.source !== "MANUAL" &&
     !hasFullyMappedSegments;
@@ -1194,10 +1324,11 @@ export function RecordingTranscriptionSection({
   const reviewMode = resolveSpeakerReviewMode({
     speakerMappingStatus: transcript?.speakerMappingStatus,
     speakersCount: speakersForMapping.length,
-    isEditable: !readOnly && !isLocked,
+    isEditable: !readOnly && !editsLocked,
     manualSpeakerModeEnabled,
     transcriptSource: transcript?.source,
     mappingReviewSkipped,
+    aiAdmissionCompleted,
   });
   const showAssistedReviewCard = reviewMode === "REVIEW_CARD";
   const showAutoAppliedNote = reviewMode === "AUTO_APPLIED_NOTE";
@@ -1208,6 +1339,15 @@ export function RecordingTranscriptionSection({
           <p className="text-sm text-slate-400">{t("common.loading")}...</p>
         ) : (
           <>
+            {enhancementRunning ? (
+              <div
+                data-testid="transcript-enhancement-running-lock"
+                className="rounded-xl border border-violet-500/30 bg-violet-950/20 px-4 py-3 text-sm text-violet-100"
+              >
+                {t("sessionMaterials.transcriptReadyEnhancementInProgress")}
+              </div>
+            ) : null}
+
             {showServiceAlert ? (
               <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                 <p>
@@ -1241,7 +1381,7 @@ export function RecordingTranscriptionSection({
               </p>
             ) : null}
 
-            {!compact ? (
+            {renderRecordingStatusDetail && !compact ? (
               <>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
@@ -1331,7 +1471,7 @@ export function RecordingTranscriptionSection({
                     : t("recording.compressionInfo")}
                 </p>
               </>
-            ) : (
+            ) : renderRecordingStatusDetail ? (
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2">
                 <p className="text-xs text-slate-500">{t("recording.recordingStatus")}</p>
                 <p
@@ -1350,7 +1490,7 @@ export function RecordingTranscriptionSection({
                     : t("recording.noRecordingYet")}
                 </p>
               </div>
-            )}
+            ) : null}
 
             {!readOnly &&
             (showAutoRefreshStatus ||
@@ -1389,7 +1529,7 @@ export function RecordingTranscriptionSection({
                       {t("recording.autoTranscribeFailedHint")}
                     </p>
                     <SecondaryButton
-                      data-testid="transcribe-recording-button"
+                      data-testid="retry-canonical-transcribe-button"
                       disabled={busyAction != null}
                       onClick={() => {
                         autoTranscribeStartedForSessionRef.current = null;
@@ -1403,12 +1543,17 @@ export function RecordingTranscriptionSection({
               </div>
             ) : null}
 
-            {!readOnly ? (
+            {renderLanguageSelector ? (
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-300">
+                <label
+                  className="text-sm font-medium text-slate-300"
+                  htmlFor="transcript-language-select"
+                >
                   {t("recording.language")}
                 </label>
                 <select
+                  id="transcript-language-select"
+                  data-testid="transcript-language-select"
                   value={languageHint}
                   onChange={(event) =>
                     setLanguageHint(event.target.value as "auto" | "ru" | "en")
@@ -1581,6 +1726,7 @@ export function RecordingTranscriptionSection({
                         )}
 
                         <textarea
+                          data-testid="manual-speaker-turn-text"
                           value={turn.text}
                           onChange={(event) => {
                             const value = event.target.value;
@@ -1619,7 +1765,7 @@ export function RecordingTranscriptionSection({
                       >
                         {t("recording.addManualSpeakerTurn")}
                       </SecondaryButton>
-                      <SecondaryButton
+                      <GradientButton
                         type="button"
                         disabled={busyAction != null}
                         onClick={() => void saveManualSpeakerAttribution()}
@@ -1627,8 +1773,8 @@ export function RecordingTranscriptionSection({
                       >
                         {busyAction === "manual-speaker-attribution"
                           ? t("common.saving")
-                          : t("recording.saveManualSpeakerAttribution")}
-                      </SecondaryButton>
+                          : t("recording.saveTranscript")}
+                      </GradientButton>
                       <SecondaryButton
                         type="button"
                         disabled={busyAction != null}
@@ -1643,12 +1789,12 @@ export function RecordingTranscriptionSection({
             ) : null}
 
             {showAutoAppliedNote ? (
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+              <div
+                className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
+                data-testid="auto-applied-mapping-note"
+              >
                 <p className="font-semibold">
                   {t("recording.mappingStatusDescription.appliedNeedsConfirmation")}
-                </p>
-                <p className="mt-1 text-emerald-200/90">
-                  {t("recording.speakerMappingCanChangeLater")}
                 </p>
               </div>
             ) : null}
@@ -1770,7 +1916,7 @@ export function RecordingTranscriptionSection({
                         : t("recording.applySuggestion")}
                     </SecondaryButton>
                   ) : null}
-                  <SecondaryButton
+                  <GradientButton
                     disabled={busyAction != null}
                     onClick={() =>
                       void saveSpeakerMapping({
@@ -1782,7 +1928,7 @@ export function RecordingTranscriptionSection({
                     {busyAction === "save-mapping" || busyAction === "confirm-mapping"
                       ? t("common.saving")
                       : t("recording.saveMappingAction")}
-                  </SecondaryButton>
+                  </GradientButton>
                   <SecondaryButton
                     disabled={busyAction != null}
                     onClick={() => {
@@ -1878,12 +2024,13 @@ export function RecordingTranscriptionSection({
                   </label>
                   <div className="flex flex-wrap gap-2">
                     <SecondaryButton
+                      data-testid="copy-diarized-transcript-button"
                       disabled={busyAction != null}
                       onClick={() => void copyDiarizedTranscript()}
                     >
                       {t("recording.copyDiarizedTranscript")}
                     </SecondaryButton>
-                    {!readOnly && !isLocked && !manualSpeakerModeEnabled ? (
+                    {!readOnly && !editsLocked && !manualSpeakerModeEnabled ? (
                       <SecondaryButton
                         data-testid="edit-diarized-transcript-button"
                         disabled={busyAction != null}
@@ -1900,6 +2047,7 @@ export function RecordingTranscriptionSection({
                     {diarizedTurns.map((turn, index) => (
                       <div
                         key={`${turn.speakerKey}-${index}`}
+                        data-testid="diarized-transcript-turn"
                         className="rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/80 to-slate-950/80 px-4 py-3 shadow-inner"
                       >
                         <p className="text-xs font-semibold uppercase tracking-wide text-cyan-300/90">
@@ -1954,13 +2102,13 @@ export function RecordingTranscriptionSection({
                   data-testid="transcript-textarea"
                   value={transcriptText}
                   onChange={(event) => setTranscriptText(event.target.value)}
-                  readOnly={readOnly || isLocked}
+                  readOnly={readOnly || editsLocked}
                   rows={10}
                   placeholder={t("recording.noTranscriptYet")}
                   className="w-full rounded-lg border border-slate-600/40 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
                 />
-                {!readOnly && !isLocked ? (
-                  <SecondaryButton
+                {!readOnly && !editsLocked ? (
+                  <GradientButton
                     data-testid="save-transcript-button"
                     disabled={busyAction != null}
                     onClick={() => void saveTranscript()}
@@ -1968,7 +2116,7 @@ export function RecordingTranscriptionSection({
                     {busyAction === "save"
                       ? t("common.saving")
                       : t("recording.saveTranscript")}
-                  </SecondaryButton>
+                  </GradientButton>
                 ) : null}
               </div>
             ) : null}
@@ -2027,6 +2175,20 @@ export function RecordingTranscriptionSection({
             {error ? <p className="text-sm text-amber-400">{error}</p> : null}
           </>
         )}
+      <ConfirmDialog
+        open={materialChangeDialog !== null}
+        title={t("recording.materialChangeConfirmTitle")}
+        description={
+          materialChangeDialog?.willRevokePublication
+            ? t("recording.materialChangePublicationWarning")
+            : t("recording.materialChangeAiOnlyWarning")
+        }
+        cancelLabel={t("common.cancel")}
+        confirmLabel={t("recording.materialChangeConfirm")}
+        testId="material-change-confirm-dialog"
+        onCancel={() => closeMaterialChangeDialog(false)}
+        onConfirm={() => closeMaterialChangeDialog(true)}
+      />
     </>
   );
 

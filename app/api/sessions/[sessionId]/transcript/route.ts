@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
+import {
+  applyFacilitatorMaterialInputChange,
+  materialChangeGuardErrorBody,
+} from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import { ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE } from "@/lib/transcription/processing-metadata";
+import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 
 export const runtime = "nodejs";
 
@@ -11,6 +17,7 @@ const transcriptSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
   text: z.string(),
+  confirmRewindPublication: z.boolean().optional(),
 }).refine((data) => Boolean(data.joinToken || data.participantId), {
   message: "joinToken or participantId is required",
 });
@@ -56,21 +63,48 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const transcript = await prisma.transcript.upsert({
+  const existingTranscript = await prisma.transcript.findUnique({
     where: { sessionId },
-    create: {
-      sessionId,
-      source: TranscriptSource.MANUAL,
-      text: parsed.data.text,
-      recordingId: session.recording?.id,
-    },
-    update: {
-      source: TranscriptSource.MANUAL,
-      text: parsed.data.text,
-      recordingId: session.recording?.id,
-    },
+    select: { id: true, processingMetadata: true },
   });
+  if (
+    existingTranscript &&
+    (await isAuthoritativeEnhancementLockActive({
+      transcriptId: existingTranscript.id,
+    }))
+  ) {
+    return NextResponse.json(
+      { error: ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE },
+      { status: 409 },
+    );
+  }
 
+  const change = await applyFacilitatorMaterialInputChange({
+    sessionId,
+    confirmRewindPublication: parsed.data.confirmRewindPublication,
+    mutate: (tx) =>
+      tx.transcript.upsert({
+        where: { sessionId },
+        create: {
+          sessionId,
+          source: TranscriptSource.MANUAL,
+          text: parsed.data.text,
+          recordingId: session.recording?.id,
+        },
+        update: {
+          source: TranscriptSource.MANUAL,
+          text: parsed.data.text,
+          recordingId: session.recording?.id,
+        },
+      }),
+  });
+  if (!change.ok) {
+    return NextResponse.json(materialChangeGuardErrorBody(change), {
+      status: change.status,
+    });
+  }
+
+  const transcript = change.result;
   return NextResponse.json({
     transcript: {
       id: transcript.id,
@@ -80,5 +114,6 @@ export async function POST(request: Request, context: RouteContext) {
       hasSpeakerDiarization: transcript.hasSpeakerDiarization,
       updatedAt: transcript.updatedAt.toISOString(),
     },
+    publicationRevoked: change.publicationRevoked,
   });
 }

@@ -238,7 +238,7 @@ const ruPrivacy: LegalDocument = {
         },
         {
           type: "p",
-          text: "Оператор не утверждает, что все персональные данные обрабатываются исключительно на территории Российской Федерации. География обработки на стороне Voximplant уточняется. При обработке персональных данных за пределами Российской Федерации к такой обработке применяются требования законодательства Российской Федерации о трансграничной передаче персональных данных.",
+          text: "Оператор не утверждает, что все персональные данные обрабатываются исключительно на территории Российской Федерации. По письменному подтверждению ООО «Фастком» (Voximplant) от 19.08.2026 обработка, выполняемая этим провайдером, включая медиатрафик и техническую поддержку, осуществляется в Российской Федерации, трансграничная передача этим провайдером не выполняется, а клиентская запись при выборе клиентского хранилища сохраняется у клиента. Это подтверждение относится только к Voximplant. При обработке персональных данных за пределами Российской Федерации к такой обработке применяются требования законодательства Российской Федерации о трансграничной передаче персональных данных.",
         },
       ],
     },
@@ -527,7 +527,7 @@ const enPrivacy: LegalDocument = {
         },
         {
           type: "p",
-          text: "The operator does not state that all personal data is processed only in the Russian Federation. Voximplant processing geography is being clarified. Where personal data is processed outside the Russian Federation, such processing is subject to the requirements of the Russian Federation’s legislation on cross-border transfer of personal data.",
+          text: "The operator does not state that all personal data is processed only in the Russian Federation. Per Fastcom LLC (Voximplant) written confirmation dated 19 August 2026, processing performed by that provider, including media traffic and technical support, is performed in the Russian Federation; that provider does not perform cross-border transfer; and client-selected recording storage is saved to the client’s storage. That confirmation applies only to Voximplant. Where personal data is processed outside the Russian Federation, such processing is subject to the requirements of the Russian Federation’s legislation on cross-border transfer of personal data.",
         },
       ],
     },

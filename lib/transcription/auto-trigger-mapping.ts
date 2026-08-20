@@ -1,4 +1,4 @@
-import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { decideAutoMappingApplication } from "@/lib/transcription/mapping-decision";
 import {
@@ -19,13 +19,64 @@ import {
   suggestSpeakerMapping,
   type TelemetryHealthReport,
 } from "@/lib/transcription/auto-speaker-mapping";
+import { loadCanonicalSpeakerMappingCandidates } from "@/lib/transcription/speaker-mapping-candidate-load";
+import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
+import {
+  mergeProcessingMetadata,
+} from "@/lib/transcription/processing-metadata";
 import {
   applySpeakerMapping,
-  buildDiarizedText,
   getDisplaySpeakerLabel,
   getUniqueSpeakerLabels,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
+
+async function writeTranscriptMappingSuggestion(
+  transcriptId: string,
+  data: {
+    mappingSuggestion: AutoMappingTriggerDiagnostics;
+    speakerMapping?: Prisma.InputJsonValue | typeof Prisma.JsonNull;
+    speakerMappingStatus?: string;
+    diarizedText?: string;
+  },
+  expectedRetranscribeCount?: number,
+) {
+  await prisma.$transaction(async (tx) => {
+    const latest = await tx.transcript.findUnique({
+      where: { id: transcriptId },
+      select: { processingMetadata: true, retranscribeCount: true },
+    });
+    if (
+      expectedRetranscribeCount != null &&
+      latest?.retranscribeCount !== expectedRetranscribeCount
+    ) {
+      return;
+    }
+    const mutation = await tx.transcript.updateMany({
+      where: {
+        id: transcriptId,
+        ...(expectedRetranscribeCount != null
+          ? { retranscribeCount: expectedRetranscribeCount }
+          : {}),
+      },
+      data: {
+        ...(data.speakerMapping !== undefined
+          ? { speakerMapping: data.speakerMapping }
+          : {}),
+        ...(data.speakerMappingStatus
+          ? { speakerMappingStatus: data.speakerMappingStatus }
+          : {}),
+        ...(data.diarizedText !== undefined ? { diarizedText: data.diarizedText } : {}),
+        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
+          mappingSuggestion: data.mappingSuggestion,
+        }) as Prisma.InputJsonValue,
+      },
+    });
+    if (mutation.count !== 1) {
+      return;
+    }
+  });
+}
 
 export {
   AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
@@ -97,6 +148,7 @@ export type AutoMappingTriggerDiagnostics = {
   globalMarginOverrideThreshold: number;
   minSelectedCoverageForOverride: number;
   effectiveHighConfidence: boolean;
+  candidateParticipantIds: string[];
 };
 
 function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
@@ -178,6 +230,7 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
     minSelectedCoverageForOverride:
       AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
     effectiveHighConfidence: false,
+    candidateParticipantIds: [],
   };
 }
 
@@ -194,6 +247,10 @@ function notAttempted(reason: string): AutoMappingTriggerDiagnostics {
  */
 export async function autoTriggerSpeakerMappingAfterTranscription(
   sessionId: string,
+  options?: {
+    transcriptId?: string;
+    expectedRetranscribeCount?: number;
+  },
 ): Promise<AutoMappingTriggerDiagnostics> {
   const transcript = await prisma.transcript.findUnique({
     where: { sessionId },
@@ -201,6 +258,15 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
   });
 
   if (!transcript) return notAttempted("no_transcript");
+  if (options?.transcriptId && transcript.id !== options.transcriptId) {
+    return notAttempted("generation_mismatch");
+  }
+  if (
+    options?.expectedRetranscribeCount != null &&
+    transcript.retranscribeCount !== options.expectedRetranscribeCount
+  ) {
+    return notAttempted("generation_mismatch");
+  }
   if (!transcript.hasSpeakerDiarization) return notAttempted("no_diarization");
   if (transcript.speakerMappingStatus === "CONFIRMED") {
     return notAttempted("already_confirmed");
@@ -238,15 +304,13 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       : {};
 
   const persistDiagnostics = async (diag: AutoMappingTriggerDiagnostics) => {
-    await prisma.transcript.update({
-      where: { id: transcript.id },
-      data: {
-        processingMetadata: {
-          ...existingMetadata,
-          mappingSuggestion: diag,
-        } as Prisma.InputJsonValue,
+    await writeTranscriptMappingSuggestion(
+      transcript.id,
+      {
+        mappingSuggestion: diag,
       },
-    });
+      options?.expectedRetranscribeCount,
+    );
   };
 
   if (!suggestion.available) {
@@ -308,6 +372,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       minSelectedCoverageForOverride:
         AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
       effectiveHighConfidence: false,
+      candidateParticipantIds: suggestion.candidateParticipantIds ?? [],
     };
     await persistDiagnostics(diag);
     return diag;
@@ -344,27 +409,30 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     sanitizedMapping[label] = suggestion.selectedMapping[label] ?? null;
   }
 
-  const participants = await prisma.sessionParticipant.findMany({
-    where: { sessionId, type: { not: ParticipantType.OBSERVER } },
-    include: { sessionRole: { select: { name: true } } },
-  });
-  const negotiationParticipantPool = participants.filter((p) => p.type === "PARTICIPANT");
-  const participantPool = negotiationParticipantPool.length > 0 ? negotiationParticipantPool : participants;
+  const canonicalCandidates = await loadCanonicalSpeakerMappingCandidates(sessionId);
+  const participantPoolIds = canonicalCandidates.map((candidate) => candidate.sessionParticipantId);
+  const participants = participantPoolIds.length
+    ? await prisma.sessionParticipant.findMany({
+        where: { id: { in: participantPoolIds } },
+        include: { sessionRole: { select: { name: true } } },
+      })
+    : [];
+  const participantPool = participants;
   const mappingSafety = evaluateMappingSafety({
     mapping: sanitizedMapping,
     rawSpeakerLabels: labelOrder,
-    participantIds: participantPool.map((participant) => participant.id),
+    participantIds: participantPoolIds,
     mode: detectMappingMode(existingMetadata),
   });
   const globalAssignment = computeGlobalAssignmentMargin({
     speakerLabels: labelOrder,
-    participantIds: participantPool.map((participant) => participant.id),
+    participantIds: participantPoolIds,
     scoreMatrix: suggestion.scoreMatrix,
   });
   const weakMarginOverriddenByGlobalEvidence = shouldAllowGlobalMarginOverride({
     weakMargin,
     speakerLabelCount: labelOrder.length,
-    participantCandidateCount: participantPool.length,
+    participantCandidateCount: participantPoolIds.length,
     allSpeakersCovered,
     mappingSafetySafe: mappingSafety.safe,
     globalAssignmentMargin: globalAssignment.margin,
@@ -381,7 +449,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     mappingSafetySafe: mappingSafety.safe,
     mappingSafetyReason: mappingSafety.reason,
     rawSpeakerCount: labelOrder.length,
-    expectedParticipantCount: participantPool.length,
+    expectedParticipantCount: participantPoolIds.length,
     activeParticipantsDuringRecording:
       suggestion.telemetryQuality.activeParticipantsDuringRecording,
     hasOffsets: suggestion.telemetryQuality.hasOffsets,
@@ -455,18 +523,17 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       minSelectedCoverageForOverride:
         AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
       effectiveHighConfidence,
+      candidateParticipantIds: participantPoolIds,
     };
-    await prisma.transcript.update({
-      where: { id: transcript.id },
-      data: {
+    await writeTranscriptMappingSuggestion(
+      transcript.id,
+      {
+        mappingSuggestion: diag,
         speakerMapping: Prisma.JsonNull,
         speakerMappingStatus: nonAppliedStatus,
-        processingMetadata: {
-          ...existingMetadata,
-          mappingSuggestion: diag,
-        } as Prisma.InputJsonValue,
       },
-    });
+      options?.expectedRetranscribeCount,
+    );
     return diag;
   }
 
@@ -489,11 +556,11 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     orderIndex: segment.orderIndex,
   }));
   const mappedSegments = applySpeakerMapping(normalizedSegments, sanitizedMapping);
-  const diarizedText = buildDiarizedText(
-    normalizedSegments,
-    sanitizedMapping,
-    participantDisplayInfo,
-  );
+  const diarizedText = buildCanonicalDiarizedText({
+    segments: normalizedSegments,
+    speakerMapping: sanitizedMapping,
+    participants: participantDisplayInfo,
+  });
 
   const diag: AutoMappingTriggerDiagnostics = {
     strategy: suggestion.strategy,
@@ -544,21 +611,39 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     globalMarginOverrideThreshold: AUTO_MAPPING_GLOBAL_MARGIN_OVERRIDE_THRESHOLD,
     minSelectedCoverageForOverride: AUTO_MAPPING_MIN_SELECTED_COVERAGE_FOR_OVERRIDE,
     effectiveHighConfidence,
+    candidateParticipantIds: participantPoolIds,
   };
 
   await prisma.$transaction(async (tx) => {
-    await tx.transcript.update({
+    const latest = await tx.transcript.findUnique({
       where: { id: transcript.id },
+      select: { processingMetadata: true, retranscribeCount: true },
+    });
+    if (
+      options?.expectedRetranscribeCount != null &&
+      latest?.retranscribeCount !== options.expectedRetranscribeCount
+    ) {
+      return;
+    }
+    const mutation = await tx.transcript.updateMany({
+      where: {
+        id: transcript.id,
+        ...(options?.expectedRetranscribeCount != null
+          ? { retranscribeCount: options.expectedRetranscribeCount }
+          : {}),
+      },
       data: {
         speakerMapping: sanitizedMapping as Prisma.InputJsonValue,
         speakerMappingStatus: "AUTO_SUGGESTED",
         diarizedText,
-        processingMetadata: {
-          ...existingMetadata,
+        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
           mappingSuggestion: diag,
-        } as Prisma.InputJsonValue,
+        }) as Prisma.InputJsonValue,
       },
     });
+    if (mutation.count !== 1) {
+      return;
+    }
 
     for (const segment of mappedSegments) {
       const dbSegment = transcript.segments.find(

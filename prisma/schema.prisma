@@ -858,6 +858,13 @@ model AiAnalysis {
   analysisVersion             Int              @default(0)
   // Monotonic publication epoch for explicit Publish/Unshare boundaries.
   publicationEpoch            Int              @default(0)
+  // SHA-256 of the canonical material AI-input envelope used for currentness.
+  // New analysis runs store the prompted snapshot (PT-19). Historical rows
+  // stay NULL (PT-22) until a facilitator material write binds the
+  // pre-mutation snapshot as a compatibility baseline — the last envelope
+  // PT-22 already treated as current — not proven original model input.
+  // Do not bulk-backfill. Do not overload retranscribeCount or analysisVersion.
+  inputFingerprint            String?
   status                      AiAnalysisStatus @default(QUEUED)
   // Durable owner fence for the current/most recent analysis operation.
   runToken                    String?

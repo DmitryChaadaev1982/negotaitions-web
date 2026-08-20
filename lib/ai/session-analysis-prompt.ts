@@ -2,6 +2,7 @@ import {
   YANDEX_DEEPSEEK_ANALYSIS_PROMPT_TOKEN_BUDGET,
   estimateAiAnalysisTokensFromChars,
 } from "@/lib/ai/analysis-input-budget";
+import { areNotesMaterialToNegotiationAnalysis } from "@/lib/ai/material-negotiation-notes";
 import { getAiAnalysisProvider } from "@/lib/env";
 
 export type BuildAnalysisPromptContext = {
@@ -53,6 +54,7 @@ export type BuildAnalysisPromptContext = {
     segments: Array<{
       orderIndex?: number;
       speakerLabel: string | null;
+      mappedParticipantId?: string | null;
       mappedParticipantName: string | null;
       startSeconds: number | null;
       endSeconds: number | null;
@@ -157,7 +159,10 @@ function renderAnalysisPrompt(
       lines.push(
         `- ${p.displayName}${roleLabel} [${p.type}] (SessionParticipant ID: ${p.id ?? "unavailable"})`,
       );
-      if (p.notes?.trim()) {
+      if (
+        areNotesMaterialToNegotiationAnalysis(p.type) &&
+        p.notes?.trim()
+      ) {
         lines.push(`  Notes: ${p.notes.trim()}`);
       }
     }

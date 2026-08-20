@@ -100,6 +100,31 @@ test("partial manual mapping remains PARTIALLY_MAPPED", () => {
   assert.equal(status.allMapped, false);
 });
 
+test("complete human mapping save persists CONFIRMED even without confirm=true", () => {
+  const status = deriveSpeakerMappingStatus({
+    hasSpeakerDiarization: true,
+    speakerLabels: ["speaker_1", "speaker_2"],
+    mapping: { speaker_1: "A", speaker_2: "B" },
+    confirm: false,
+    previousStatus: "AUTO_SUGGESTED",
+  });
+
+  assert.equal(status.status, "CONFIRMED");
+  assert.equal(status.allMapped, true);
+});
+
+test("complete CONFIRMED mapping does not revert to AUTO_SUGGESTED", () => {
+  const status = deriveSpeakerMappingStatus({
+    hasSpeakerDiarization: true,
+    speakerLabels: ["speaker_1", "speaker_2"],
+    mapping: { speaker_1: "A", speaker_2: "B" },
+    confirm: false,
+    previousStatus: "CONFIRMED",
+  });
+
+  assert.equal(status.status, "CONFIRMED");
+});
+
 test("complete manual mapping allows confirm status", () => {
   const status = deriveSpeakerMappingStatus({
     hasSpeakerDiarization: true,

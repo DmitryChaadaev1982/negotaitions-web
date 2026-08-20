@@ -126,3 +126,11 @@ export function resolveSpeakerMappingCandidates({
 
   return Array.from(candidatesByUserId.values());
 }
+
+export function selectNegotiationSpeakerMappingCandidates(
+  candidates: SpeakerMappingParticipantCandidate[],
+): SpeakerMappingParticipantCandidate[] {
+  return candidates.filter(
+    (candidate) => candidate.participantType === ParticipantType.PARTICIPANT,
+  );
+}

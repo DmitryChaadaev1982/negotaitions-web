@@ -109,9 +109,43 @@
 - Recording key normalization: `lib/storage/recording-file-key.ts`.
 - Storage adapter: `lib/storage/s3.ts`.
 
+## Transcription Entry Points
+
+- Canonical current orchestration is `POST /api/sessions/[sessionId]/materials/transcribe`
+  (initial) and `POST /api/sessions/[sessionId]/materials/retranscribe` (explicit
+  rerun). Both admit through `admitTranscriptionRun` /
+  `lockSessionTranscriptionClaim`, then `executeClaimedTranscription`.
+- Normal facilitator UI (Materials page and room Debrief `roomQuick` panel)
+  calls only the canonical routes. The child transcript section no longer
+  posts to `/transcribe-recording`.
+- `POST /api/sessions/[sessionId]/transcribe-recording` is a
+  **canonical adapter** (`OLD_ROUTE_MODE=CANONICAL_ADAPTER`), not a failover.
+  It is not deleted in this stage and is not invoked after a canonical failure.
+- The old route admits through the same `admitTranscriptionRun` primitive,
+  executes `executeClaimedTranscription`, then adapts the response to
+  `{ transcript, warnings, recording }`.
+- A competing request receives 409 (`TRANSCRIPTION_IN_PROGRESS` or
+  `TRANSCRIPTION_ALREADY_COMPLETED`) and must not call the provider, overwrite
+  text/segments, change generation identity, or start enhancement/mapping.
+- Completion and failure writes are generation-owned. A late compatibility
+  writer cannot replace a newer generation or attach enhancement/mapping to
+  the wrong run. Generation-fenced completion replaces that run's transcript
+  fields only when `id + startedAt + retranscribeCount + active status` still
+  match; a stale writer cannot restore an older `processingMetadata` snapshot.
+- Deprecation or removal of `/transcribe-recording` is deferred.
+
 ## Readiness Rules
 
 - Transcription starts only when recording is in ready terminal state and storage object is usable.
+- `materials/status` is the canonical post-processing projection for both
+  Materials and room Debrief. A completed historical recording with a storage
+  key is transcription-ready; clients must not invent “waiting for recording”
+  when this API is unavailable.
+- The Prisma client for `materials/status` reads nullable
+  `AiAnalysis.inputFingerprint`. That additive column must exist in the
+  database the client is using. A missing column is schema drift and 500s
+  every session’s materials payload; it is not evidence that the recording is
+  unready. Historical fingerprint values may be NULL.
 - Status progression is surfaced through `materials/status`.
 - Manual stop/cancel state is represented with explicit transcript failure sentinel.
 - Session pause windows (`SessionPauseInterval`) are converted to recording-relative offsets and classified against transcript segments before persistence.
@@ -149,13 +183,23 @@
 - Provider download/transcription starts only after the claim transaction
   commits, so the row lock is not held across external work.
 - This Session-scoped admission fence is shared by standalone and Event-created
-  Sessions. It preserves the existing post-transcription enhancement trigger
-  while preventing duplicate provider cost and competing raw/enhancement
-  persistence for one transcript generation.
+  Sessions, and by the `/transcribe-recording` canonical adapter. It preserves
+  the existing post-transcription enhancement trigger while preventing duplicate
+  provider cost and competing raw/enhancement persistence for one transcript
+  generation.
 - AI analysis persists the canonical transcript ID and `retranscribeCount` it
   consumed. Materials status and AI publication use that same identity to mark
   older completed analysis stale; a report from an earlier transcript
   generation is not publishable.
+- Confirmed retranscription is one downstream invalidation boundary. The
+  admission transaction increments `retranscribeCount`, archives the previous
+  transcript, and revokes any active AI publication through
+  `revokeActiveAiAnalysisPublicationInTransaction`. Currentness then treats the
+  old `AiAnalysis` row as non-current for the new generation (fingerprint
+  generation mismatch, or NULL-fingerprint `legacy_stale`). The historical
+  analysis artifact is kept. Speaker mapping, manual attribution, transcript
+  correction, and enhancement that prepare the new generation do not repeat
+  that invalidation warning.
 
 ## Observability
 
@@ -221,6 +265,10 @@
 - Concurrency and retry are bounded:
   - `TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY` (default `4`),
   - `TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS` (default `120000`).
+- The authoritative post-transcription wait window is
+  `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`). This is not the
+  per-chunk provider timeout. After this window the current run is made
+  non-authoritative (`SKIPPED` / `timeout`) and workflow unlocks.
 - Empty-output reliability policy per chunk is bounded to two attempts:
   - attempt 1: primary model with normal prompt;
   - attempt 2: primary model strict-JSON retry with increased bounded `max_output_tokens`;
@@ -255,9 +303,50 @@
   - each enhancement run has a metadata `runId`; completion/failure requires
     the same current run ID, input identity, `RUNNING` state, and transcript
     retranscription generation;
-  - terminal persistence uses a compare-and-swap on `Transcript.updatedAt`, so
-    a stale long-running chunk worker cannot overwrite a newer enhancement or
-    retranscription.
+  - terminal persistence rereads `processingMetadata` under a row lock and
+    merges the enhancement namespace into the latest snapshot. A competing
+    speaker-mapping write must not erase `transcriptEnhancement`, and an
+    enhancement write must not erase `mappingSuggestion` or unknown keys;
+  - a lost `updatedAt` CAS from a sibling namespace write does not leave the
+    current run stuck in `RUNNING`; ownership is the run ID + identity +
+    generation. A newer enhancement run ID still cannot be overwritten;
+  - same-identity already-`COMPLETED` enhancement does not rewrite status to
+    `SKIPPED`;
+  - `diarizedText` is rebuilt through `buildCanonicalDiarizedText` from current
+    lexical `segment.text` plus the current speaker mapping. Enhancement must
+    not strip mapped names; mapping must not rewrite lexical text;
+  - while enhancement is `RUNNING` and still inside the configured
+    `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` window (default `7000`), transcript/material
+    saves, speaker-mapping writes, and AI start are rejected. Facilitator/observer
+    notes are not locked by this rule.
+  - The timeout is enforced at the orchestration/domain write boundary using the
+    existing runId + generation + `RUNNING` CAS. A provider result arriving after
+    the timeout cannot modify `text`, `diarizedText`, mapped speaker identity, or
+    later AI input. Timeout recovery reuses Phase B stale-run handling and persists
+    terminal `SKIPPED` with `skipReason=timeout` instead of leaving `RUNNING`
+    forever or starting a second automatic run.
+  - After `COMPLETED` / `PARTIAL` / `FAILED` / `SKIPPED` (including timeout),
+    enhancement no longer blocks editing, mapping, or AI. AI may still be blocked
+    by structurally incomplete mapping or other existing readiness/consent rules.
+- Effective enhancement running/terminal state is owned by
+    `isEnhancementStatusRunning` / `isTranscriptEnhancementTerminal` in
+    `lib/post-processing/projection.ts`, applied to
+    `processingMetadata.transcriptEnhancement.status` through
+    `resolveTranscriptEnhancementStatus` after timeout reconciliation.
+    Persisted `RUNNING`/`QUEUED` map to API/UI `IN_PROGRESS`. The same
+    effective state — the five-stage rail semantic — drives Recording &
+    Transcription banner and edit/mapping locks, Materials, room Debrief,
+    and transcript/mapping/manual-attribution/AI write guards. A child
+    `/recording` snapshot cannot keep a running banner after the rail is
+    terminal.
+  - Room Debrief and Materials poll canonical `materials/status`. The nested
+    `RecordingTranscriptionSection` must apply that polled enhancement status
+    even when its own `/recording` snapshot still has a stale `RUNNING` alias.
+    A component-local running boolean must not outlive canonical terminal
+    state (`COMPLETED` / `PARTIAL` / `FAILED` / `SKIPPED`).
+  - Child enhancement refresh watches every running alias, not only
+    `IN_PROGRESS`. After a live RUNNING→terminal transition, transcript
+    content is reloaded without a page reload.
 - UI rendering path is unchanged and single-source:
   - transcript/materials UI reads persisted canonical text (`Transcript.text`, `Transcript.diarizedText`, `TranscriptSegment.text`);
   - UI does not currently expose side-by-side original vs enhanced transcript versions.
@@ -326,6 +415,13 @@
 - No overlap indicators are shown in facilitator transcript UI.
 - No per-segment ambiguity markers/counts are shown in facilitator transcript UI.
 - API contracts and transcript persistence fields are unchanged by this presentation layer.
+- Shared `RecordingTranscriptionSection` has two explicit presentations, decided
+  by the parent surface rather than route-name checks:
+  - `materialsDetail` (dedicated Materials / session page): keeps recording
+    status detail and the transcript language selector.
+  - `roomQuick` (in-room Debrief facilitator panel): omits those two detailed
+    controls. Diarized transcript, copy, Edit transcript, speaker mapping, and
+    parent rerun remain. Domain/readiness semantics are unchanged.
 
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
@@ -343,13 +439,47 @@
   `.debug/pause-filter-calibration/<sessionId>/`.
 - Calibration output is for review only; production defaults are unchanged.
 
+## Canonical Post-processing Projection
+
+- One server projection (`lib/post-processing/projection.ts`) supplies semantic
+  stage state for RECORDING, TRANSCRIPTION, TRANSCRIPT_ENHANCEMENT,
+  SPEAKER_MAPPING, and AI_ANALYSIS. Publication remains a separate downstream
+  action.
+- Semantic states are `pending`, `running`, `ready`, `action_required`,
+  `informational`, `failed`, and `not_applicable`. Raw diagnostic fields remain
+  on materials status for existing UI.
+- The five-card rail, detailed post-processing rows, materials status,
+  `/sessions` list, and account dashboard consume this projection. Clients do
+  not independently reinterpret `AUTO_SUGGESTED` / `CONFIRMED` / readiness.
+- Enhancement `RUNNING` is non-terminal only while it remains inside the
+  configured `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` window (default `7000`).
+  `COMPLETED`, `PARTIAL`, `FAILED`, and `SKIPPED` (including timeout) are
+  terminal. `FAILED`/`PARTIAL`/`SKIPPED` allow continue-with-current-transcript
+  without a new acknowledgement column. A late enhancement result after timeout
+  is discarded by runId/CAS ownership and cannot overwrite the current transcript.
+
 ## Source Notes
 
 - `lib/services/transcription-runner.ts`
+- `lib/services/transcription-run-claim.ts`
+- `lib/services/transcription-ownership.ts`
+- `lib/services/transcription-generation-cas.ts`
+- `lib/services/transcribe-recording-compatibility.ts`
+- `lib/transcription/transcription-routes.ts`
+- `app/api/sessions/[sessionId]/transcribe-recording/route.ts`
 - `lib/services/transcription-provider.ts`
 - `lib/services/yandex-speechkit-transcription.ts`
 - `lib/transcription/pause-filter-calibration.ts`
 - `lib/transcription/active-audio-timeline.ts`
 - `lib/transcription/active-audio-builder.ts`
+- `lib/post-processing/projection.ts`
+- `lib/post-processing/enhancement-effective-state.ts`
+- `lib/services/transcript-enhancement-orchestration.ts`
+- `lib/services/transcript-enhancement-timeout.ts`
+- `lib/services/transcription-run-claim.ts`
+- `lib/services/transcription-ownership.ts`
+- `lib/services/transcription-generation-cas.ts`
+- `lib/transcription/recording-transcription-presentation.ts`
+- `components/recording-transcription-section.tsx`
 - `app/api/sessions/[sessionId]/materials/status/route.ts`
 - `tests/e2e/session-materials-processing.spec.ts`

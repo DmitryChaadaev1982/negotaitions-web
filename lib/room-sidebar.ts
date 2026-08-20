@@ -29,6 +29,7 @@ const roomSidebarParticipantInclude = {
       facilitatorId: true,
       visibility: true,
       roomLifecycle: true,
+      negotiationState: true,
       durationSeconds: true,
       snapshotBusinessContext: true,
       snapshotPublicInstructions: true,
@@ -160,6 +161,7 @@ async function buildRoomSidebarData(
       : [];
   const debriefNotes = resolveDebriefVisibleNotes({
     roomLifecycle: participant.session.roomLifecycle,
+    negotiationState: participant.session.negotiationState,
     viewerParticipantId: participant.id,
     viewerType: currentParticipantEffectiveType,
     participants: participant.session.participants.map((sessionParticipant) => ({
