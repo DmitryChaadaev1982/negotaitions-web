@@ -73,30 +73,35 @@ export function BrandLogo({
   const { t, locale } = useI18n();
   const localeKey = locale === "ru" ? "ru" : "en";
 
+  const frameClassName = cn(
+    "inline-flex max-w-full shrink-0",
+    logoSizeClasses[variant][size],
+    glow && "drop-shadow-[0_0_20px_rgba(34,211,238,0.2)]",
+    href ? undefined : className,
+  );
+
   const content = (
-    <span
-      className={cn(
-        "inline-flex shrink-0",
-        logoSizeClasses[variant][size],
-        glow && "drop-shadow-[0_0_20px_rgba(34,211,238,0.2)]",
-        className,
-      )}
-    >
+    <span className={frameClassName}>
       <img
         src={localizedLogoSources[localeKey][variant]}
         alt={t("brand.alt")}
-        className="block h-full w-auto object-contain"
+        className="block h-full w-auto max-w-full object-contain"
         loading={_priority ? "eager" : "lazy"}
         decoding="async"
       />
     </span>
   );
 
+  const wrapperClassName = cn(
+    "inline-flex max-w-full shrink-0 transition-opacity hover:opacity-90",
+    className,
+  );
+
   if (href && onNavigate) {
     return (
       <button
         type="button"
-        className="inline-flex transition-opacity hover:opacity-90"
+        className={wrapperClassName}
         aria-label={t("brand.alt")}
         onClick={() => void onNavigate(href)}
       >
@@ -109,7 +114,7 @@ export function BrandLogo({
     return (
       <Link
         href={href}
-        className="inline-flex transition-opacity hover:opacity-90"
+        className={wrapperClassName}
         aria-label={t("brand.alt")}
       >
         {content}

@@ -37,7 +37,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 - AI analysis and debrief
   - Code: `app/api/sessions/[sessionId]/analyze/route.ts`, `app/api/sessions/[sessionId]/materials/status/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`, `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`, `lib/ai/negotiation-analysis.ts`, `lib/ai/analysis-input-budget.ts`, `lib/ai/analysis-operation.ts`, `lib/ai/analysis-currentness.ts`, `lib/ai/material-input-envelope.ts`, `lib/ai/material-input-invalidation.ts`, `lib/ai/material-negotiation-notes.ts`, `lib/participant-notes-write.ts`, `lib/debrief-visible-notes.ts`, `lib/ai/session-analysis-context.ts`, `lib/ai/session-analysis-prompt.ts`, `lib/ai-publication-revoke.ts`, `lib/analysis-visibility.ts`, `lib/privacy/serializers.ts`, `lib/ai-publication.ts`, `lib/ai-publication-entry-grant.ts`, `lib/ai-publication-aggregate.ts`, `lib/materials-ai-analysis-view.ts`, `components/session-post-processing-panel.tsx`, `components/session-materials-dashboard.tsx`, `components/account-session-materials-view.tsx`, `app/actions/sessions.ts`, `prisma/schema.prisma`
   - Docs: `08-ai-analysis-and-debrief.md`, `09-security-and-access-control.md`
-  - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`, `lib/ai/analysis-operation.test.ts`, `lib/ai/negotiation-analysis.test.ts`, `lib/ai/session-analysis-prompt.test.ts`, `lib/ai/analysis-currentness.test.ts`, `lib/ai/legacy-null-material-edit.test.ts`, `lib/ai/material-input-envelope.test.ts`, `lib/ai/material-input-invalidation.test.ts`, `lib/ai/retranscription-downstream-invalidation.test.ts`, `lib/ai/material-negotiation-notes.test.ts`, `lib/debrief-visible-notes.test.ts`, `lib/ai-publication.test.ts`, `lib/ai-publication-transaction.test.ts`, `lib/analysis-visibility.test.ts`, `lib/materials-ai-analysis-view.test.ts`, `lib/materials-status-readiness.test.ts`, `lib/post-processing/historical-session-compatibility.test.ts`
+  - Tests: `tests/e2e/debrief-ai-sharing.spec.ts`, `tests/e2e/session-materials-processing.spec.ts`, `tests/e2e/retranscription-confirmation-ui.spec.ts`, `lib/ai/analysis-operation.test.ts`, `lib/ai/negotiation-analysis.test.ts`, `lib/ai/session-analysis-prompt.test.ts`, `lib/ai/analysis-currentness.test.ts`, `lib/ai/legacy-null-material-edit.test.ts`, `lib/ai/material-input-envelope.test.ts`, `lib/ai/material-input-invalidation.test.ts`, `lib/ai/retranscription-downstream-invalidation.test.ts`, `lib/ai/material-negotiation-notes.test.ts`, `lib/debrief-visible-notes.test.ts`, `lib/ai-publication.test.ts`, `lib/ai-publication-transaction.test.ts`, `lib/analysis-visibility.test.ts`, `lib/materials-ai-analysis-view.test.ts`, `lib/materials-status-readiness.test.ts`, `lib/post-processing/historical-session-compatibility.test.ts`, `lib/post-processing/retranscription-confirmation-ui.test.ts`
 
 - Security and access control
   - Code: `lib/auth/**`, `lib/auth/client-ip.ts`, `lib/auth/credential-concurrency.ts`, `lib/auth/credential-dispatch-fence.ts`, `lib/auth/user-row-lock.ts`, `lib/auth/registration.ts`, `lib/auth/authenticated-password-change.ts`, `lib/auth/admin-account-status.ts`, `lib/auth/account-security-error-messages.ts`, `lib/auth/reset-fragment.ts`, `lib/auth/response-timing-floor.ts`, `lib/prisma.ts`, `lib/prisma-connection-string.ts`, `lib/email/rendered-content-guards.ts`, `lib/email/account-security.ts`, `lib/email/admin-journal.ts`, `lib/email/sensitive-payload.ts`, `lib/email/password-reset-dispatch.ts`, `lib/email/canary.ts`, `lib/email/operational-cli.ts`, `lib/email/local-preview.ts`, `lib/email/provider-event-consumer.ts`, `lib/email/yandex-postbox-provider-event-parser.ts`, `app/api/auth/forgot-password/route.ts`, `app/api/admin/email-journal/**`, `app/api/admin/email-preview/route.ts`, `app/(app)/admin/email/**`, `app/api/events/**`, `app/api/sessions/**`, `lib/room-participant-resolver.ts`
@@ -63,7 +63,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
     `components/public-home-page.tsx`, `components/public-about-page.tsx`,
     `components/public-support-page.tsx`, `components/public-faq-page.tsx`,
     `components/public-visual-frame.tsx`, `components/site-footer.tsx`,
-    `components/app-header-nav.tsx`, `components/public-site-analytics.tsx`,
+    `components/app-header.tsx`, `components/app-header-nav.tsx`, `components/ui/brand-logo.tsx`, `components/public-site-analytics.tsx`,
     `lib/public-site/visuals.ts`, `lib/public-site/faq-items.ts`, `lib/public-site/author-portrait.ts`,
     `public/images/public-site/`, `public/images/landing/`,
     `lib/seo/indexing.ts`, `lib/seo/canonical.ts`, `lib/seo/copy.ts`,
@@ -102,6 +102,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
     `lib/legal/legal-update-draft.test.ts`,
     `lib/consent/user-consent.test.ts`,
     `lib/public-site/visuals.test.ts`,
+    `lib/public-site/app-header-nav-layout.test.ts`,
     `tests/e2e/public-homepage.spec.ts`,
     `tests/e2e/public-communication.spec.ts`,
     `tests/e2e/public-site-seo.spec.ts`,

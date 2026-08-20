@@ -8,6 +8,7 @@ import {
   AiAnalysisReport,
 } from "@/components/session-materials-dashboard";
 import { Card, CardContent, CardHeader } from "@/components/card";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RecordingTranscriptionSection } from "@/components/recording-transcription-section";
 import { GradientButtonLink, SecondaryButton } from "@/components/ui/buttons";
 import { buildSessionMaterialsPath } from "@/lib/config";
@@ -473,6 +474,9 @@ export function SessionPostProcessingPanel({
   }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   const handleRerunTranscription = useCallback(async () => {
+    if (rerunBusy) {
+      return;
+    }
     setRerunConfirmOpen(false);
     setRerunBusy(true);
     setRerunError(null);
@@ -493,7 +497,7 @@ export function SessionPostProcessingPanel({
     } finally {
       setRerunBusy(false);
     }
-  }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, rerunBusy, roomAuth, sessionId]);
 
   const handleStopTranscription = useCallback(async () => {
     setStopTranscriptionBusy(true);
@@ -734,9 +738,9 @@ export function SessionPostProcessingPanel({
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
-            {canRerunTranscription && !rerunConfirmOpen ? (
+            {canRerunTranscription ? (
               <SecondaryButton
-                disabled={rerunBusy || transcriptionBusy}
+                disabled={rerunBusy || transcriptionBusy || rerunConfirmOpen}
                 onClick={() => setRerunConfirmOpen(true)}
                 data-testid="post-processing-rerun-transcription-button"
               >
@@ -768,23 +772,6 @@ export function SessionPostProcessingPanel({
             ) : null}
           </div>
         </div>
-        {rerunConfirmOpen ? (
-          <div className="mt-3 space-y-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
-            <p className="text-xs text-amber-100">{t("sessionMaterials.rerunTranscriptionConfirmBody")}</p>
-            <div className="flex flex-wrap gap-2">
-              <SecondaryButton
-                disabled={rerunBusy}
-                onClick={() => void handleRerunTranscription()}
-                data-testid="post-processing-confirm-rerun-button"
-              >
-                {t("recording.rerunTranscriptionConfirm")}
-              </SecondaryButton>
-              <SecondaryButton disabled={rerunBusy} onClick={() => setRerunConfirmOpen(false)}>
-                {t("recording.rerunTranscriptionCancel")}
-              </SecondaryButton>
-            </div>
-          </div>
-        ) : null}
         {rerunError ? <p className="mt-2 text-xs text-rose-400">{rerunError}</p> : null}
       </div>
 
@@ -957,9 +944,9 @@ export function SessionPostProcessingPanel({
             </p>
           </div>
           <div className="flex w-full flex-col gap-2 pt-2 sm:ml-auto sm:w-56 sm:pt-0">
-            {canRerunTranscription && !rerunConfirmOpen ? (
+            {canRerunTranscription ? (
               <SecondaryButton
-                disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy}
+                disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy || rerunConfirmOpen}
                 onClick={() => setRerunConfirmOpen(true)}
                 data-testid="post-processing-rerun-transcription-button"
                 className="w-full text-xs"
@@ -983,23 +970,6 @@ export function SessionPostProcessingPanel({
             ) : null}
           </div>
         </div>
-        {rerunConfirmOpen ? (
-          <div className="mt-2 space-y-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-2">
-            <p className="text-xs text-amber-100">{t("sessionMaterials.rerunTranscriptionConfirmBody")}</p>
-            <div className="flex flex-wrap gap-2">
-              <SecondaryButton
-                disabled={rerunBusy}
-                onClick={() => void handleRerunTranscription()}
-                data-testid="post-processing-confirm-rerun-button"
-              >
-                {t("recording.rerunTranscriptionConfirm")}
-              </SecondaryButton>
-              <SecondaryButton disabled={rerunBusy} onClick={() => setRerunConfirmOpen(false)}>
-                {t("recording.rerunTranscriptionCancel")}
-              </SecondaryButton>
-            </div>
-          </div>
-        ) : null}
         {rerunError ? <p className="mt-1 text-xs text-rose-400">{rerunError}</p> : null}
       </div>
 
@@ -1344,11 +1314,30 @@ export function SessionPostProcessingPanel({
     />
   ) : null;
 
+  const rerunConfirmDialog = (
+    <ConfirmDialog
+      open={rerunConfirmOpen}
+      title={t("recording.rerunTranscriptionConfirmTitle")}
+      description={t("sessionMaterials.rerunTranscriptionConfirmBody")}
+      cancelLabel={t("recording.rerunTranscriptionCancel")}
+      confirmLabel={t("recording.rerunTranscriptionConfirm")}
+      confirming={rerunBusy}
+      testId="retranscribe-confirm-dialog"
+      onCancel={() => {
+        if (!rerunBusy) {
+          setRerunConfirmOpen(false);
+        }
+      }}
+      onConfirm={() => void handleRerunTranscription()}
+    />
+  );
+
   if (isSidebar) {
     return (
       <>
         {aiWarningModal}
         {shareWarningModal}
+        {rerunConfirmDialog}
       <div className="space-y-4" data-testid="session-post-processing-panel">
         {sidebarStepsBar}
         {showTranscriptionSection ? (
@@ -1429,6 +1418,7 @@ export function SessionPostProcessingPanel({
     <>
       {aiWarningModal}
       {shareWarningModal}
+      {rerunConfirmDialog}
     <div className="space-y-6" data-testid="session-post-processing-panel">
       <Card>
         <CardHeader>

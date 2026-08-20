@@ -113,6 +113,14 @@ releases is deferred to a future email-expansion stage.
 
 - Route group: `app/(app)/` with `AppHeader` product IA.
 - App header includes a Website / Сайт control to `/`.
+- The authenticated header stays a compact composition based on the same
+  `72rem` / `max-w-6xl` content column as `AppShell`. Brand, Website / Сайт,
+  and the remaining primary navigation (including Administration when present)
+  keep intrinsic width. Rejoin, locale switcher, and profile stay a compact
+  `shrink-0` utility group. From `72rem` the inner wrapper is at least that
+  column width and may grow to `w-max` so Administration does not paint under
+  Rejoin; `justify-between` keeps leftover space inside that wrapper, not
+  across the viewport.
 - Dashboard, cases, events, sessions, admin, and room/lobby/join flows are
   unchanged in Wave 1.
 

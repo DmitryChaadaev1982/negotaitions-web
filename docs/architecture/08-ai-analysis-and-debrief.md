@@ -348,6 +348,12 @@ payload.
   and diarized manual attribution) share the site `ConfirmDialog` before
   retrying with `confirmRewindPublication`. Recipients
   fail closed on fingerprint mismatch even if an old grant row still exists.
+  Facilitator retranscription confirmation on Materials and room Debrief uses
+  the same site `ConfirmDialog`. The original rerun control stays on the
+  stable steps/status card. One click opens the modal; Cancel sends no
+  request; Confirm sends exactly one `POST /materials/retranscribe`. The
+  steps/status area does not transform into an inline amber confirmation
+  panel.
   Manual transcript enhancement retry is also blocked while AI is
   `QUEUED`/`ANALYZING` with a live lease.
 - Diagnostic logs may include fingerprint, schema version, and

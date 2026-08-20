@@ -13,8 +13,7 @@ type AppHeaderNavProps = {
 
 export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) {
   const pathname = usePathname();
-  const { t, locale } = useI18n();
-  const fullLogoSpacingClass = locale === "ru" ? "sm:mr-4 lg:mr-5" : "sm:mr-1 lg:mr-2";
+  const { t } = useI18n();
 
   const trainingsItems = [
     { href: "/cases", label: t("nav.cases"), testId: "nav-cases" },
@@ -23,12 +22,12 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
   ];
 
   return (
-    <div className="flex items-center gap-4 sm:gap-6">
+    <div className="flex shrink-0 items-center gap-4 sm:gap-6">
       <BrandLogo
         size="md"
         variant="full"
         priority
-        className={cn("hidden sm:inline-flex max-w-[320px]", fullLogoSpacingClass)}
+        className="hidden max-w-[320px] sm:inline-flex"
       />
       <BrandLogo
         size="md"
@@ -39,7 +38,7 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
       <Link
         href="/"
         data-testid="nav-public-site"
-        className="rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-slate-800/60 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
+        className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-slate-800/60 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
       >
         {t("nav.publicSite")}
       </Link>
@@ -48,7 +47,7 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
           href="/dashboard"
           data-testid="nav-dashboard"
           className={cn(
-            "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
+            "shrink-0 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
             pathname === "/dashboard"
               ? "nav-pill-active"
               : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
@@ -57,7 +56,7 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
           {t("nav.dashboard")}
         </Link>
 
-        <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 px-2 py-1">
+        <div className="shrink-0 rounded-xl border border-slate-700/50 bg-slate-900/40 px-2 py-1">
           <p className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-500">
             {t("nav.negotiationTrainings")}
           </p>
@@ -90,7 +89,7 @@ export function AppHeaderNav({ isAdmin: adminFlag = false }: AppHeaderNavProps) 
             href="/admin"
             data-testid="nav-admin"
             className={cn(
-              "rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
+              "shrink-0 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200",
               pathname === "/admin" || pathname.startsWith("/admin/")
                 ? "nav-pill-active"
                 : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",

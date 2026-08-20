@@ -421,7 +421,9 @@
     status detail and the transcript language selector.
   - `roomQuick` (in-room Debrief facilitator panel): omits those two detailed
     controls. Diarized transcript, copy, Edit transcript, speaker mapping, and
-    parent rerun remain. Domain/readiness semantics are unchanged.
+    parent rerun remain. Parent rerun confirms through the site
+    `ConfirmDialog` rather than an inline status-card panel.
+    Domain/readiness semantics are unchanged.
 
 ## Local Pause-Filter Calibration Harness (Stage 3.4.4)
 
