@@ -124,14 +124,14 @@ VALIDATION_PLAN: L1 for docs/skill kernel; L4 not justified until a later
 | CU-02 | Stage 3.16A requirement / change-plan manifest skeleton | MEDIUM | 1 | `AUTHORIZED` | `PASS` |
 | CU-03 | Eval Registry | MEDIUM | 2 | `AUTHORIZED` | `PASS` |
 | CU-04 | Validation ladder wiring | HIGH | 1 | `AUTHORIZED` | `PASS` |
-| CU-05 | Stale agent / model-routing cleanup | LOW | 3 | `AUTHORIZED` | `APPROVED` |
-| CU-06 | Checkpoint template standardization | LOW | 3 | `AUTHORIZED` | `APPROVED` |
-| CU-07 | Native-dialog guard | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-08 | Lab I03 ConfirmDialog alignment | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-09 | Documentation navigation / code-map | LOW | 3 | `AUTHORIZED` | `APPROVED` |
-| CU-10 | Minimal metrics fields | LOW | 3 | `AUTHORIZED` | `APPROVED` |
+| CU-05 | Stale agent / model-routing cleanup | LOW | 3 | `AUTHORIZED` | `PASS` |
+| CU-06 | Checkpoint template standardization | LOW | 3 | `AUTHORIZED` | `PASS` |
+| CU-07 | Native-dialog guard | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
+| CU-08 | Lab I03 ConfirmDialog alignment | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
+| CU-09 | Documentation navigation / code-map | LOW | 3 | `AUTHORIZED` | `PASS` |
+| CU-10 | Minimal metrics fields | LOW | 3 | `AUTHORIZED` | `PASS` |
 | CU-11 | Eval Registry structural validator | LOW | 2 | `AUTHORIZED` | `PASS` |
-| CU-12 | Fast/final validation integrity and cost | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
+| CU-12 | Fast/final validation integrity and cost | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
 
 ```
 HIGH_RISK_KERNEL = CU-01 + CU-04
@@ -185,13 +185,14 @@ CHECKPOINT_2_VALIDATOR = npm run eval:registry:check
 
 CHECKPOINT_3 = WORKFLOW_HYGIENE
 CHECKPOINT_3_SCOPE = CU-05 + CU-06 + CU-09 + CU-10
-CHECKPOINT_3_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
-CHECKPOINT_3_OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_3_STATUS = PASS
+CHECKPOINT_3_OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 
 CHECKPOINT_4 = INTERACTION_AND_FAST_GATE_INTEGRITY
 CHECKPOINT_4_SCOPE = CU-07 + CU-08 + CU-12
 CHECKPOINT_4_CU12_SCOPE = FAST_COVERAGE_GAP + VALIDATE_FAST_REEXECUTION_COST
-CHECKPOINT_4_STATUS = NOT_STARTED
+CHECKPOINT_4_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
+CHECKPOINT_4_OPERATOR_ACCEPTANCE = PENDING
 
 CHECKPOINT_5 = RETROSPECTIVE_VALIDATION_AND_FINALIZATION
 CHECKPOINT_5_STATUS = NOT_STARTED
@@ -229,9 +230,9 @@ Do not investigate or implement the pilot here.
 
 ## Requirements
 
-Every row is independently verifiable. Checkpoint 1 and Checkpoint 2 rows
-below are operator `PASS`. Checkpoint 3 rows may be implemented in this run
-but are not operator-accepted until review.
+Every row is independently verifiable. Checkpoint 1, Checkpoint 2, and
+Checkpoint 3 rows below are operator `PASS`. Checkpoint 4 rows may be
+implemented in this run but are not operator-accepted until review.
 
 ### Workflow contract (CU-01)
 
@@ -276,13 +277,13 @@ but are not operator-accepted until review.
 | --- | --- | --- | --- | --- | --- |
 | S316A-ER-001 | Eval Registry exists at `docs/testing/eval-registry.json` and can name evals by class from S316A-WF-007. | `DOC` | 2 | `AUTHORIZED` | `PASS` |
 | S316A-ER-002 | Eval Registry has a structural validator (`npm run eval:registry:check`) with negative cases for duplicate ID, missing field, and invalid enum/type. | `CODE` + `TEST` | 2 | `AUTHORIZED` | `PASS` |
-| S316A-HY-001 | Stale agent / model-routing text is cleaned up without weakening safety policy. | `DOC` + `SKILL` | 3 | `AUTHORIZED` | `APPROVED` |
-| S316A-HY-002 | Checkpoint template is standardized. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
-| S316A-HY-003 | Architecture README / code-map navigation includes the engineering workflow. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
-| S316A-HY-004 | Minimal metrics fields exist for later process measurement. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
-| S316A-IT-001 | Native-browser-dialog guard exists for interaction evals. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-IT-002 | Lab I03 is aligned with application `ConfirmDialog` rather than native dialog drift. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-IT-003 | Fast/final validation integrity and cost: `FAST_COVERAGE_GAP` (`validate:fast` unit glob currently misses deterministic tests outside `lib/**`, including known `app/**` / `components/**` candidates) and `VALIDATE_FAST_REEXECUTION_COST` (`validate:deploy` re-invokes `validate:fast` while the L4 sequence also calls `validate:fast` immediately beforehand). Close the gap by coverage or explicit policy, and examine redundant cost together in Checkpoint 4. Do not change package scripts or gate order in Checkpoint 3. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
+| S316A-HY-001 | Stale agent / model-routing text is cleaned up without weakening safety policy. | `DOC` + `SKILL` | 3 | `AUTHORIZED` | `PASS` |
+| S316A-HY-002 | Checkpoint template is standardized. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
+| S316A-HY-003 | Architecture README / code-map navigation includes the engineering workflow. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
+| S316A-HY-004 | Minimal metrics fields exist for later process measurement. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
+| S316A-IT-001 | Native-browser-dialog guard exists for interaction evals. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
+| S316A-IT-002 | Lab I03 is aligned with application `ConfirmDialog` rather than native dialog drift. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
+| S316A-IT-003 | Fast/final validation integrity and cost: `FAST_COVERAGE_GAP` (`validate:fast` unit glob currently misses deterministic tests outside `lib/**`, including known `app/**` / `components/**` candidates) and `VALIDATE_FAST_REEXECUTION_COST` (`validate:deploy` re-invokes `validate:fast` while the L4 sequence also calls `validate:fast` immediately beforehand). Close the gap by coverage or explicit policy, and examine redundant cost together in Checkpoint 4. Do not change package scripts or gate order in Checkpoint 3. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
 
 The six retrospective rows above are Checkpoint 5 acceptance scenarios, not
 Checkpoint 1 implementation work.
@@ -353,13 +354,13 @@ RETROSPECTIVE_MAP = S316A-RET-001→EVAL-PP-ENH-MOUNTED-RUNNING-COMPLETED PARTIA
 
 ## Checkpoint 3 evidence log
 
-Implementation complete in this run. Operator acceptance is **pending**.
-Do not treat CU-05/CU-06/CU-09/CU-10 as operator `PASS`.
+Operator accepted Checkpoint 3 on 2026-08-21 (`MANUAL`). CU-05, CU-06, CU-09,
+CU-10, S316A-HY-001, S316A-HY-002, S316A-HY-003, and S316A-HY-004 are `PASS`.
 
 ```
 CURRENT_CHECKPOINT = 3
-CHECKPOINT_3_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
-OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_3_STATUS = PASS
+OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 CHANGE_UNITS = CU-05, CU-06, CU-09, CU-10
 PLANNED_EVALS = DOC, SKILL
 RECONCILED_EVALS = DOC, SKILL
@@ -376,4 +377,50 @@ CU12_FUTURE_SCOPE = FAST_COVERAGE_GAP + VALIDATE_FAST_REEXECUTION_COST
 PACKAGE_SCRIPT_CHANGE = NO
 UNRESOLVED_FINDINGS = CU-07 native-dialog guard; CU-08 Lab I03 ConfirmDialog;
                       CU-12 FAST_COVERAGE_GAP and VALIDATE_FAST_REEXECUTION_COST
+```
+
+## Checkpoint 4 evidence log
+
+Implementation complete in this run, including operator-review corrections
+for allowlist occurrence counts, I03 post-resume dialog requirement, and
+`BROAD_VALIDATION_RUNS` vocabulary. Operator acceptance is **pending**,
+including headed Lab I03 interaction review. Do not treat CU-07/CU-08/CU-12
+as operator `PASS`.
+
+```
+CURRENT_CHECKPOINT = 4
+CHECKPOINT_4_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
+OPERATOR_ACCEPTANCE = PENDING
+CHANGE_UNITS = CU-07, CU-08, CU-12
+PLANNED_EVALS = EVAL-WF-NATIVE-DIALOG-GUARD, EVAL-LAB-I03-NATIVE-VS-APP-DIALOG,
+                EVAL-PP-RETRANSCRIBE-CONFIRM, FAST_COVERAGE_GAP,
+                VALIDATE_FAST_REEXECUTION_COST
+RECONCILED_EVALS = EVAL-WF-NATIVE-DIALOG-GUARD COVERED;
+                   EVAL-LAB-I03-NATIVE-VS-APP-DIALOG PARTIAL pending headed I03;
+                   EVAL-PP-RETRANSCRIBE-CONFIRM PARTIAL
+PLANNED_VALIDATION_LEVEL = L3
+ACTUAL_VALIDATION_LEVEL = L3
+NATIVE_DIALOG_GUARD = npm run check:native-dialogs
+NATIVE_DIALOG_ALLOWLIST = file + api + expectedCount + reason; current
+                          expectedCount = 1 for every exception
+FAST_UNIT_GLOBS = lib/**/*.test.ts, app/**/*.test.ts, components/**/*.test.ts,
+                  scripts/__tests__/*.test.mjs
+L4_SEQUENCE = validate:fast -> validate:build -> test:e2e:smoke ->
+              test:e2e:smoke:browser
+STANDALONE_DEPLOY_VALIDATION = validate:deploy remains validate:fast + validate:build
+BROAD_VALIDATION_RUNS = L3_VALIDATE_FAST, L4_VALIDATE_BUILD, L4_SMOKE,
+                        L4_BROWSER_SMOKE, STANDALONE_VALIDATE_DEPLOY
+L4_REQUIRED_NOW = NO
+PRODUCT_SUITE_REQUIRED_NOW = NO
+MANUAL_REQUIRED = headed Lab I03 ConfirmDialog inspection
+COMMANDS_RUN = check:native-dialogs; native-dialog focused tests;
+               lab-i03 source-contract; validate-gate-scripts focused;
+               eval:registry:check; git diff --check;
+               npm run validate:fast (actual composite)
+COMMANDS_RESULT = PASS
+ACTUAL_NPM_RUN_VALIDATE_FAST = PASS
+UNIT = 1663 passed, 8 skipped, 0 failed
+E2E_LIST = 831 tests in 67 files
+I03_LIST = headed Lab I03 not run; operator owns manual acceptance
+UNRESOLVED_FINDINGS = operator acceptance of CU-07/CU-08/CU-12; headed I03
 ```

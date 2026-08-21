@@ -139,7 +139,8 @@
       "productionSafe": true,
       "evidence": [
         "lib/ai/retranscription-downstream-invalidation.test.ts",
-        "lib/post-processing/retranscription-confirmation-ui.test.ts"
+        "lib/post-processing/retranscription-confirmation-ui.test.ts",
+        "tests/e2e/retranscription-confirmation-ui.spec.ts"
       ],
       "coverageStatus": "PARTIAL"
     },
@@ -159,10 +160,33 @@
       "productionSafe": true,
       "evidence": [
         "tests/e2e/post-transcription-lab.spec.ts",
+        "lib/post-processing/lab-i03-confirm-dialog.test.ts",
         "lib/ai/retranscription-downstream-invalidation.test.ts",
         "lib/ai/material-input-invalidation.test.ts"
       ],
       "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-WF-NATIVE-DIALOG-GUARD",
+      "invariant": "New production-source window.alert, window.confirm, and window.prompt uses fail closed unless they are on the explicit native-dialog allowlist with a matching expected occurrence count.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "The static guard passes the current allowlist, fails for new non-allowlisted alert/confirm/prompt, fails when an allowlisted file/API occurrence count does not match expectedCount, and fails for stale allowlist entries.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S316A-IT-001"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/check-native-dialogs.mjs",
+        "scripts/check-native-dialogs-lib.mjs",
+        "scripts/native-dialog-allowlist.json",
+        "scripts/__tests__/check-native-dialogs.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
     },
     {
       "id": "EVAL-PP-ENH-RACE-AND-LATENCY",

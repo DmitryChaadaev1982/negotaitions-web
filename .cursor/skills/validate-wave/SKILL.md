@@ -46,8 +46,10 @@ seems necessary.
   expensive L4.
 
 When L4 **is** required, preserve this order:
-`validate:fast` → `validate:deploy` → `test:e2e:smoke` →
-`test:e2e:smoke:browser`.
+`validate:fast` → `validate:build` → `test:e2e:smoke` →
+`test:e2e:smoke:browser`. `validate:deploy` remains the complete standalone
+deploy validation (`validate:fast` + `validate:build`) and must not be treated
+as build-only.
 
 L1–L3 never waive L4. Risk changes **when** broad validation runs. It does
 not let an operator skip required final validation because the current

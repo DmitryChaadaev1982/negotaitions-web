@@ -56,8 +56,10 @@ Intermediate checkpoints may stop at L1–L3. That is timing, not a waiver.
 L4 is a final **code / configuration / test / runtime** package or
 deploy/high-risk boundary, not every commit. Docs-only and audit-only work
 does not require product L4 suites. When L4 applies, run and report in order:
-`npm run validate:fast`, `npm run validate:deploy`,
-`npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`. Low current
+`npm run validate:fast`, `npm run validate:build`,
+`npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`.
+`npm run validate:deploy` remains the complete standalone deploy validation
+(`validate:fast` then `validate:build`). Low current
 Change Unit risk does not authorize skipping those final gates later.
 
 For **meaningful** work, capture approved product requirements in the existing

@@ -27,14 +27,17 @@ instruction to run product L4 after every small or docs-only change.
 Default L4 gates remain local-deterministic and must be reported when L4 applies:
 
 - `npm run validate:fast`
-- `npm run validate:deploy`
+- `npm run validate:build`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:smoke:browser`
+
+`npm run validate:deploy` remains the complete standalone deploy validation
+(`validate:fast` then `validate:build`).
 
 Execution order is mandatory:
 
 1. `npm run validate:fast`
-2. `npm run validate:deploy`
+2. `npm run validate:build`
 3. `npm run test:e2e:smoke`
 4. `npm run test:e2e:smoke:browser`
 

@@ -27,9 +27,13 @@ Routine L3 checkpoint:
 
 - `npm run validate:fast`
 
-Deploy validation:
+Standalone complete deploy validation:
 
 - `npm run validate:deploy`
+
+Production build only, after a known-green `validate:fast`:
+
+- `npm run validate:build`
 
 Test inventory only:
 
@@ -69,10 +73,11 @@ only transcription/telemetry inputs and then runs the real
 - Headed Manual Checkpoint D pauses inside I01/I03 and after N03/N04/N05:
   `I01-A → I01-B → I03-A → I03-B (warning visible) → I03-C → N03 → N04 → N05`.
   Resume is the Playwright Inspector, not chat. I03-B must not auto-confirm
-  before the operator inspects the warning. Native `window.confirm` often
-  closes during Inspector pause; after Resume the Lab re-opens and confirms
-  that same save if the dialog is gone and rewind has not already happened.
-  A ready transcript auto-collapses `#transcription-section`. Checkpoint D
+  before the operator inspects the warning. I03 uses the application
+  `ConfirmDialog` (`material-change-confirm-dialog`). After Resume the Lab
+  clicks Confirm on that same dialog; it does not wait for or replay a native
+  `window.confirm`. A ready transcript auto-collapses `#transcription-section`.
+  Checkpoint D
   expands it via `toggle-transcript-section` (`aria-expanded` / `data-state`),
   not localized Expand/Развернуть copy, then uses
   `edit-diarized-transcript-button`.
@@ -135,7 +140,7 @@ For L4 of implementation that modifies code, tests, config, or runtime
 behavior, run and report all gates below:
 
 - `npm run validate:fast`
-- `npm run validate:deploy`
+- `npm run validate:build`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:smoke:browser`
 
@@ -156,9 +161,11 @@ Rules:
 
 - When L4 runs, run gates sequentially in this exact order:
   1. `npm run validate:fast`
-  2. `npm run validate:deploy`
+  2. `npm run validate:build`
   3. `npm run test:e2e:smoke`
   4. `npm run test:e2e:smoke:browser`
+- `npm run validate:deploy` remains the complete standalone deploy validation
+  (`validate:fast` then `validate:build`). Do not treat it as build-only.
 - Do not overlap browser smoke with other local Playwright runs because local config binds port `3100`.
 
 ## Phase 4 fixture stabilization policy
@@ -199,10 +206,12 @@ Rules:
 see the coverage note in [validation-checklist.md](./validation-checklist.md)).
 It includes:
 
+- Native-dialog guard (`check:native-dialogs`)
 - Lint
 - Prisma validate
 - Prisma generate
-- Unit tests (`test:unit`)
+- Unit tests (`test:unit`, including deterministic tests under `lib/**`,
+  `app/**`, `components/**`, and `scripts/__tests__/**`)
 - Playwright test listing (`test:e2e:list`)
 
 Properties:
@@ -211,10 +220,18 @@ Properties:
 - No reverse tunnel requirement
 - No intentional DB mutation by Playwright
 
+`validate:build` includes:
+
+- Production build only
+
 `validate:deploy` includes:
 
 - `validate:fast`
-- Production build
+- `validate:build`
+
+Use `validate:deploy` when invoking deploy validation as a single standalone
+command. The L4 sequence uses `validate:fast` then `validate:build` so the fast
+gate is not executed twice.
 
 `test:e2e:full` is:
 

@@ -390,12 +390,16 @@ Authoritative ladder semantics and command mapping live in
 | **L1 Focused** | Fast proof for the current Change Unit | targeted unit, helper, component, or static guard |
 | **L2 Relevant / coupled** | Completed cluster, kernel, or important transition group | relevant integration, Lab subset, focused E2E, historical cohort, migration verifier |
 | **L3 Checkpoint** | Accumulated engineering checkpoint | existing `validate:fast`, plus focused/relevant evals for the changed area |
-| **L4 Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, or a material high-risk / deploy-readiness boundary | existing `validate:deploy` and required smoke/browser/deploy gates |
+| **L4 Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, or a material high-risk / deploy-readiness boundary | existing `validate:fast` then `validate:build` (standalone `validate:deploy` remains fast + build) and required smoke/browser/deploy gates |
 
 `validate:fast` is the current L3 checkpoint gate. It is **not** universally
-exhaustive; see the checklist coverage note. Fast-gate glob completeness and
-`validate:fast` re-execution cost inside L4 (`validate:deploy`) are future
-CU-12 (`FAST_COVERAGE_GAP` + `VALIDATE_FAST_REEXECUTION_COST`).
+exhaustive; see the checklist coverage note. The cheap unit gate includes
+deterministic tests under `lib/**`, `app/**`, `components/**`, and
+`scripts/__tests__/**`. Playwright specs and other browser/provider suites stay
+outside that gate. The L4 sequence uses `validate:fast` then `validate:build`
+so `validate:fast` is not re-executed inside the final package boundary.
+`validate:deploy` remains the complete standalone deploy validation
+(`validate:fast` + `validate:build`).
 
 L4 is **not** every commit. Docs-only and audit-only changes use applicable
 documentation/focused evidence. Presentation/UI work may reach operator visual
@@ -467,11 +471,13 @@ METRICS:
   CURSOR_IMPLEMENTATION_ITERATIONS:
   BROAD_VALIDATION_RUNS:
     L3_VALIDATE_FAST:
-    L4_VALIDATE_DEPLOY:
-    L4_OTHER:
+    L4_VALIDATE_BUILD:
+    L4_SMOKE:
+    L4_BROWSER_SMOKE:
+    STANDALONE_VALIDATE_DEPLOY:
   DEFECTS_BY_DISCOVERY_LAYER:
   ESCAPED_DEFECTS_AFTER_ACCEPTANCE:
-  MODEL_EFFORT_BY_ACCEPTED_CU:
+  MODEL_EFFORT_BY_CU_OR_BATCH:
   HUMAN_INTERVENTIONS:
 
 GIT_STATE:
@@ -489,17 +495,21 @@ AUTHORIZATION:
 `CURSOR_IMPLEMENTATION_ITERATIONS` counts meaningful implementation/remediation
 loops for the checkpoint, not every chat turn.
 
-`BROAD_VALIDATION_RUNS` makes repeated L3/L4 executions visible. Count
-`validate:fast` (L3) and `validate:deploy` (L4) separately when either ran;
-record other L4 gates under `L4_OTHER` when useful.
+`BROAD_VALIDATION_RUNS` makes repeated L3/L4 executions visible. Count the
+normal command graph: `validate:fast` as `L3_VALIDATE_FAST`, then L4
+`validate:build`, `test:e2e:smoke`, and `test:e2e:smoke:browser`. Record
+standalone `validate:deploy` (`validate:fast` + `validate:build`) only when
+that composite command actually ran. Do not treat `validate:deploy` as the
+normal L4 build step.
 
 `DEFECTS_BY_DISCOVERY_LAYER` uses only the vocabulary above unless repository
 evidence strongly requires another value.
 
 `ESCAPED_DEFECTS_AFTER_ACCEPTANCE` is a simple integer.
 
-`MODEL_EFFORT_BY_ACCEPTED_CU` records the actual routing/effort class used
-for accepted Change Units or batches. Do not invent token-cost accounting.
+`MODEL_EFFORT_BY_CU_OR_BATCH` records the actual routing/effort class used
+for Change Units or batches in this checkpoint, including work that is still
+awaiting operator acceptance. Do not invent token-cost accounting.
 
 `HUMAN_INTERVENTIONS` is optional: meaningful operator returns or rework
 decisions, not every message.

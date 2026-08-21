@@ -20,6 +20,10 @@ function createTempProject(envContents) {
 
 function runWithBootstrap({ cwd, parentDatabaseUrl, evalCode }) {
   const env = { ...process.env };
+  // The parent `test:unit` process already ran `@next/env` loadEnvConfig.
+  // That sets `__NEXT_PROCESSED_ENV`, which makes a child loadEnvConfig a no-op
+  // if the marker is inherited. Strip it so the child bootstrap can load cwd/.env.
+  delete env.__NEXT_PROCESSED_ENV;
   if (parentDatabaseUrl === undefined) {
     delete env.DATABASE_URL;
   } else {

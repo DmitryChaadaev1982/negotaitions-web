@@ -82,4 +82,8 @@ test("ConfirmDialog is recognizable when open and absent when closed", () => {
   assert.match(open, /data-testid="retranscribe-confirm-dialog"/);
   assert.match(open, /Re-run transcription\?/);
   assert.match(open, /Cancel/);
+  assert.match(
+    open,
+    /<button[^>]*>Cancel<\/button>[\s\S]*<button[^>]*>Re-run transcription<\/button>/,
+  );
 });

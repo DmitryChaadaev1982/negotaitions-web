@@ -12,6 +12,7 @@ const envBaseUrl =
 const fallbackBaseUrl = `http://127.0.0.1:${port}`;
 const resolvedBaseUrl = envBaseUrl || fallbackBaseUrl;
 const useExternalBaseUrl = Boolean(envBaseUrl);
+const isInventoryOnly = process.argv.includes("--list");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -41,7 +42,7 @@ export default defineConfig({
       },
     },
   ],
-  webServer: useExternalBaseUrl
+  webServer: useExternalBaseUrl || isInventoryOnly
     ? undefined
     : {
         command: `npx next dev -p ${port}`,

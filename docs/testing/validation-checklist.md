@@ -19,15 +19,14 @@ repository policy still gates.
 | **L1 — Focused** | Fast proof for the current Change Unit. | Targeted unit test, single static guard, single component/helper/domain test. |
 | **L2 — Relevant / coupled** | Completed coupled cluster, High-Risk Kernel, or important transition group. | Relevant integration group, Lab subset, focused E2E, historical cohort tests, migration verifier. |
 | **L3 — Checkpoint** | Meaningful accumulated engineering checkpoint. | Existing `npm run validate:fast`, **plus** the focused/relevant evals selected for the changed area. |
-| **L4 — Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, **or** a material high-risk / deploy-readiness boundary. Not every commit. | Existing `validate:deploy` and the required smoke/browser/deploy gates below. |
+| **L4 — Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, **or** a material high-risk / deploy-readiness boundary. Not every commit. | Existing `validate:fast` then `validate:build` (standalone `validate:deploy` remains fast + build) and the required smoke/browser/deploy gates below. |
 
 L3 accuracy: `validate:fast` is the current cheap project checkpoint gate
-(lint, Prisma validate/generate, unit tests, Playwright `--list`). It is
-**not** universally exhaustive. The unit glob is currently
-`lib/**/*.test.ts`; deterministic tests under `app/**` or `components/**` may
-be omitted from that gate. Closing that gap, and examining `validate:deploy`
-re-running `validate:fast` during L4, is future CU-12
-(`FAST_COVERAGE_GAP` + `VALIDATE_FAST_REEXECUTION_COST`). Always run the
+(native-dialog guard, lint, Prisma validate/generate, unit tests, Playwright
+`--list`). It is **not** universally exhaustive. The unit glob covers
+deterministic `lib/**`, `app/**`, `components/**`, and `scripts/__tests__/**`
+tests. Playwright specs, live/provider suites, and tests that require a real
+database to do more than skip remain outside this gate. Always run the
 focused/relevant evals for the changed area in addition to whatever L3 covers.
 
 ### Safety rule
@@ -82,8 +81,10 @@ boundaries. Do not add telemetry, dashboards, or a checkpoint platform.
 - `git diff --name-status`
 - `git diff --check`
 - `npm run eval:registry:check` (Eval Registry structural validator)
+- `npm run check:native-dialogs` (static production-source native-dialog guard)
 - `npm run validate:fast`
-- `npm run validate:deploy`
+- `npm run validate:build` (production build only; use after a known-green `validate:fast`)
+- `npm run validate:deploy` (standalone complete deploy validation: fast + build)
 - `npm run test:e2e:list` (inventory only)
 - `npm run test:e2e:local:list` (deterministic local inventory)
 - `npm run test:e2e:install` (explicit browser setup when needed)
@@ -125,9 +126,12 @@ applicable L4 gates at their final package/deploy boundary.
 When L4 applies, these four commands remain that boundary:
 
 - `npm run validate:fast`
-- `npm run validate:deploy`
+- `npm run validate:build`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:smoke:browser`
+
+`npm run validate:deploy` remains the complete standalone deploy validation
+(`validate:fast` then `validate:build`). Do not redefine it as build-only.
 
 Rules:
 
@@ -147,7 +151,7 @@ Rules:
 
 Sequential requirement (when L4 runs):
 
-- Run L4 gates in strict order: `validate:fast` -> `validate:deploy` ->
+- Run L4 gates in strict order: `validate:fast` -> `validate:build` ->
   `test:e2e:smoke` -> `test:e2e:smoke:browser`.
 - Do not overlap browser smoke with other local Playwright runs because
   localhost port `3100` is shared.
@@ -156,12 +160,16 @@ Sequential requirement (when L4 runs):
 
 - `validate:fast` is the routine L3 checkpoint gate (subject to the coverage
   note in the ladder above):
+  - native-dialog guard (`check:native-dialogs`)
   - lint
   - `prisma validate`
   - `prisma generate`
   - unit tests
-  - Playwright listing only (`--list`)
-- `validate:deploy` runs `validate:fast` and then production build.
+  - Playwright listing only (`--list`; inventory does not start a browser)
+- `validate:build` runs the production build only. Use it as the L4 build
+  proof after a known-green `validate:fast`.
+- `validate:deploy` remains complete standalone deploy validation:
+  `validate:fast` and then `validate:build`.
 - `test:e2e:smoke` runs critical browser/API smoke checks only (`@smoke`, Chromium).
 - `test:e2e:smoke:browser` runs critical browser-first smoke checks only (`@browser-smoke`) under deterministic local config.
 - `test:e2e:observer:smoke` is the routine observer regression suite and is also

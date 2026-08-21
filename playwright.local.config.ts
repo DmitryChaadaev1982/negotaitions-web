@@ -29,6 +29,7 @@ const resolvedBaseUrl = liveMode
     ? legacyExternalBaseUrl
     : localBaseUrl;
 const enableWebServer = managedMode || (!isExplicitMode && !useLegacyExternalBaseUrl);
+const isInventoryOnly = process.argv.includes("--list");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -58,7 +59,7 @@ export default defineConfig({
       },
     },
   ],
-  webServer: enableWebServer
+  webServer: enableWebServer && !isInventoryOnly
     ? {
         command: `npx next dev -p ${port}`,
         url: localBaseUrl,

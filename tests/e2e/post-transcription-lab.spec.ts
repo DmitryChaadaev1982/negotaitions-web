@@ -1,4 +1,4 @@
-import { expect, test, type Dialog, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { formatLabBriefing } from "./helpers/post-transcription-lab-briefing";
 import { LAB_ENHANCED_LEXICAL_MARKER } from "./helpers/post-transcription-lab-transcript";
@@ -176,6 +176,22 @@ async function prepareDiarizedMaterialEdit(
   }
   const current = await turnText.inputValue();
   await turnText.fill(`${current}\n${suffix}`);
+}
+
+function materialChangeConfirmDialog(page: Page) {
+  return page.getByTestId("material-change-confirm-dialog");
+}
+
+function materialChangeConfirmButton(page: Page) {
+  return materialChangeConfirmDialog(page).getByRole("button").nth(1);
+}
+
+async function confirmVisibleMaterialChangeDialog(page: Page) {
+  const dialog = materialChangeConfirmDialog(page);
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute("role", "alertdialog");
+  await materialChangeConfirmButton(page).click();
+  await expect(dialog).toHaveCount(0);
 }
 
 async function reloadFacilitatorMaterials(page: Page, sessionId: string) {
@@ -604,14 +620,8 @@ for (const scenarioId of scenarioIds) {
         aiState: `${materialsStatusBody.aiAnalysis.status}/${materialsStatusBody.aiAnalysis.processingStage}`,
         mappingState: String(materialsStatusBody.transcription.speakerMappingStatus ?? "none"),
       });
-      const saveResponsePromise = page.waitForResponse(
-        (response) =>
-          response.url().includes("/manual-speaker-attribution") &&
-          response.request().method() === "POST",
-      );
       await page.getByTestId("save-manual-speaker-attribution-button").click();
-      const saveResponse = await saveResponsePromise;
-      expect(saveResponse.ok(), `I01 material save HTTP ${saveResponse.status()}`).toBeTruthy();
+      await confirmVisibleMaterialChangeDialog(page);
       await expect
         .poll(async () => (await loadFacilitatorStatus()).aiAnalysis.status)
         .toBe("NOT_STARTED");
@@ -702,39 +712,33 @@ for (const scenarioId of scenarioIds) {
         aiState: `${materialsStatusBody.aiAnalysis.status}/${materialsStatusBody.aiAnalysis.processingStage}`,
         mappingState: String(materialsStatusBody.transcription.speakerMappingStatus ?? "none"),
       });
-      const dialogPromise = page.waitForEvent("dialog");
-      const saveClick = page.getByTestId("save-manual-speaker-attribution-button").click();
-      const warningDialog: Dialog = await dialogPromise;
-      console.log(`I03_WARNING_DIALOG_MESSAGE=${warningDialog.message()}`);
+      await page.getByTestId("save-manual-speaker-attribution-button").click();
+      const warningDialog = materialChangeConfirmDialog(page);
+      await expect(warningDialog).toBeVisible();
+      await expect(warningDialog).toHaveAttribute("role", "alertdialog");
+      console.log(`I03_WARNING_DIALOG_TEXT=${(await warningDialog.locator("p").innerText()).trim()}`);
+      const duringWarning = await loadFacilitatorStatus();
+      expect(duringWarning.aiAnalysis.status).toBe("COMPLETED");
+      expect(duringWarning.aiAnalysis.analysisCurrent).toBe(true);
+      expect(duringWarning.aiAnalysis.isSharedWithSession).toBe(true);
       await pauseCheckpoint(page, {
         label: "CHECKPOINT D / I03-B / MATERIAL CHANGE WARNING",
         scenario: "I03",
         substep: "I03-B",
-        changedSincePrevious: "A real facilitator material save was initiated. The warning is visible. Nothing has been confirmed or revoked yet.",
-        verify: "Warning says confirming will invalidate current AI, require rerun, and revoke/hide the active publication.",
-        resumeWill: "The Lab will confirm the warning. If the native dialog closed during Inspector pause, it will re-open the same save and confirm it, then pause at I03-C.",
+        changedSincePrevious: "A real facilitator material save was initiated. The application ConfirmDialog is visible. Nothing has been confirmed or revoked yet.",
+        verify: "The site ConfirmDialog warns that confirming will invalidate current AI, require rerun, and revoke/hide the active publication. This is not a native browser dialog.",
+        resumeWill: "The Lab will click Confirm on that same application dialog, then pause at I03-C. It will not open a native browser dialog.",
         operatorPrompt:
-          "Inspect the warning. Do not click OK or Cancel on the dialog, and do not manually stop sharing or rerun AI. Press Resume when ready to let the Lab confirm.",
+          "Inspect the application warning dialog. Do not click Confirm or Cancel, and do not manually stop sharing or rerun AI. Press Resume when ready to let the Lab confirm.",
       });
-      try {
-        await warningDialog.accept();
-        await saveClick;
-      } catch (error) {
-        console.log(
-          `I03_WARNING_DIALOG_GONE_AFTER_PAUSE=${
-            error instanceof Error ? error.message : String(error)
-          }`,
+      if ((await warningDialog.count()) === 0) {
+        throw new Error(
+          "I03 application ConfirmDialog disappeared during Inspector pause. The Lab requires that same dialog after Resume and will not treat an already-rewound AI as success.",
         );
-        const alreadyRewound = (await loadFacilitatorStatus()).aiAnalysis.status === "NOT_STARTED";
-        if (!alreadyRewound) {
-          const retryDialogPromise = page.waitForEvent("dialog");
-          const retrySave = page.getByTestId("save-manual-speaker-attribution-button").click();
-          const retryDialog = await retryDialogPromise;
-          console.log(`I03_WARNING_DIALOG_REPLAY_MESSAGE=${retryDialog.message()}`);
-          await retryDialog.accept();
-          await retrySave;
-        }
       }
+      await expect(warningDialog).toBeVisible();
+      await materialChangeConfirmButton(page).click();
+      await expect(warningDialog).toHaveCount(0);
       await expect
         .poll(async () => (await loadFacilitatorStatus()).aiAnalysis.status)
         .toBe("NOT_STARTED");
