@@ -161,10 +161,10 @@
       "evidence": [
         "tests/e2e/post-transcription-lab.spec.ts",
         "lib/post-processing/lab-i03-confirm-dialog.test.ts",
-        "lib/ai/retranscription-downstream-invalidation.test.ts",
-        "lib/ai/material-input-invalidation.test.ts"
+        "docs/testing/e2e-strategy.md",
+        "docs/requirements/stage-3-16a-engineering-workflow.md"
       ],
-      "coverageStatus": "PARTIAL"
+      "coverageStatus": "COVERED"
     },
     {
       "id": "EVAL-WF-NATIVE-DIALOG-GUARD",

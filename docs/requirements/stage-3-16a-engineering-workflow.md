@@ -126,12 +126,12 @@ VALIDATION_PLAN: L1 for docs/skill kernel; L4 not justified until a later
 | CU-04 | Validation ladder wiring | HIGH | 1 | `AUTHORIZED` | `PASS` |
 | CU-05 | Stale agent / model-routing cleanup | LOW | 3 | `AUTHORIZED` | `PASS` |
 | CU-06 | Checkpoint template standardization | LOW | 3 | `AUTHORIZED` | `PASS` |
-| CU-07 | Native-dialog guard | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
-| CU-08 | Lab I03 ConfirmDialog alignment | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
+| CU-07 | Native-dialog guard | MEDIUM | 4 | `AUTHORIZED` | `PASS` |
+| CU-08 | Lab I03 ConfirmDialog alignment | MEDIUM | 4 | `AUTHORIZED` | `PASS` |
 | CU-09 | Documentation navigation / code-map | LOW | 3 | `AUTHORIZED` | `PASS` |
 | CU-10 | Minimal metrics fields | LOW | 3 | `AUTHORIZED` | `PASS` |
 | CU-11 | Eval Registry structural validator | LOW | 2 | `AUTHORIZED` | `PASS` |
-| CU-12 | Fast/final validation integrity and cost | MEDIUM | 4 | `AUTHORIZED` | `APPROVED` |
+| CU-12 | Fast/final validation integrity and cost | MEDIUM | 4 | `AUTHORIZED` | `PASS` |
 
 ```
 HIGH_RISK_KERNEL = CU-01 + CU-04
@@ -168,6 +168,7 @@ Do not launch multiple implementation agents merely because twelve CUs exist.
 ```
 CHECKPOINT_1 = HIGH_RISK_KERNEL
 CHECKPOINT_1_SCOPE = CU-01 + CU-02 skeleton + CU-04
+CHECKPOINT_1_STATUS = PASS
 CHECKPOINT_1_IMPLEMENTATION = PASS
 CHECKPOINT_1_OPERATOR_ACCEPTANCE = PASS
 CHECKPOINT_1_OPERATOR_REVIEW = 2026-08-20 architecture PASS; required small
@@ -191,14 +192,19 @@ CHECKPOINT_3_OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 CHECKPOINT_4 = INTERACTION_AND_FAST_GATE_INTEGRITY
 CHECKPOINT_4_SCOPE = CU-07 + CU-08 + CU-12
 CHECKPOINT_4_CU12_SCOPE = FAST_COVERAGE_GAP + VALIDATE_FAST_REEXECUTION_COST
-CHECKPOINT_4_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
-CHECKPOINT_4_OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_4_STATUS = PASS
+CHECKPOINT_4_OPERATOR_ACCEPTANCE = PASS
+CHECKPOINT_4_OPERATOR_REVIEW = MANUAL 2026-08-21 including headed Lab I03 ConfirmDialog
 
 CHECKPOINT_5 = RETROSPECTIVE_VALIDATION_AND_FINALIZATION
-CHECKPOINT_5_STATUS = NOT_STARTED
+CHECKPOINT_5_STATUS = PASS
+STAGE_3_16A_STATUS = PASS
+STAGE_CLOSURE = PENDING_OPERATOR_PACKAGING_AUTHORIZATION
+DEPLOY = NOT_AUTHORIZED
 ```
 
-Do not mark later checkpoints completed in this run.
+Stage engineering status is `PASS`. Git `CLOSED` packaging still requires
+operator-authorized commit. Stage closure is not a production deploy.
 
 ## Retrospective acceptance scenarios
 
@@ -208,15 +214,17 @@ would have selected the right eval classes.
 
 | ID | Lesson | Required eval class | Status |
 | --- | --- | --- | --- |
-| S316A-RET-001 | Mounted `RUNNING` → `COMPLETED` without reload. | `MOUNTED_TRANSITION` | `APPROVED` |
-| S316A-RET-002 | Historical NULL fingerprint first material mutation. | `HISTORICAL_FIRST_MUTATION` | `APPROVED` |
-| S316A-RET-003 | NEW CODE + OLD DB migration compatibility. | `MIGRATION_COMPATIBILITY` | `APPROVED` |
-| S316A-RET-004 | Save → Retranscribe uses the real confirmation interaction. | `INTERACTION` + `TRANSITION` | `APPROVED` |
-| S316A-RET-005 | Lab native dialog vs application `ConfirmDialog` drift. | `INTERACTION` | `APPROVED` |
-| S316A-RET-006 | Optional enhancement race correctness + bounded UX latency. | race/correctness control distinct from UX latency budget | `APPROVED` |
+| S316A-RET-001 | Mounted `RUNNING` → `COMPLETED` without reload. | `MOUNTED_TRANSITION` | `PASS` |
+| S316A-RET-002 | Historical NULL fingerprint first material mutation. | `HISTORICAL_FIRST_MUTATION` | `PASS` |
+| S316A-RET-003 | NEW CODE + OLD DB migration compatibility. | `MIGRATION_COMPATIBILITY` | `PASS` |
+| S316A-RET-004 | Save → Retranscribe uses the real confirmation interaction. | `INTERACTION` + `TRANSITION` | `PASS` |
+| S316A-RET-005 | Lab native dialog vs application `ConfirmDialog` drift. | `INTERACTION` | `PASS` |
+| S316A-RET-006 | Optional enhancement race correctness + bounded UX latency. | race/correctness control distinct from UX latency budget | `PASS` |
 
-Judge these at Checkpoint 5 against the workflow contract and selected evals.
-Do not implement the underlying product fixes in this stage.
+Checkpoint 5 retrospective `PASS` means the Stage 3.16A workflow would have
+selected or detected the correct evidence class/problem before production. It
+does **not** upgrade an underlying product Eval Registry entry from `PARTIAL`
+to `COVERED`. Do not implement the underlying product fixes in this stage.
 
 ## Future pilot
 
@@ -230,9 +238,9 @@ Do not investigate or implement the pilot here.
 
 ## Requirements
 
-Every row is independently verifiable. Checkpoint 1, Checkpoint 2, and
-Checkpoint 3 rows below are operator `PASS`. Checkpoint 4 rows may be
-implemented in this run but are not operator-accepted until review.
+Every row is independently verifiable. Checkpoints 1–5 are `PASS`. Stage
+engineering status is `PASS`. Git packaging/`CLOSED` still requires operator
+commit authorization. Stage closure is not a production deploy.
 
 ### Workflow contract (CU-01)
 
@@ -261,7 +269,7 @@ implemented in this run but are not operator-accepted until review.
 | S316A-VL-002 | The ladder must not weaken existing mandatory high-risk or deploy gates. L1–L3 change timing of intermediate validation; they do not waive L4 when repository policy requires it. | `DOC` + `SKILL` | 1 | `AUTHORIZED` | `PASS` |
 | S316A-VL-003 | Staged validation is allowed: docs-only needs no product suite; UI-only awaits visual acceptance before L4; small related CUs may use L1 per CU and L3/L4 at accumulated boundaries. | `DOC` + `SKILL` | 1 | `AUTHORIZED` | `PASS` |
 | S316A-VL-004 | Change plans record required eval classes, current validation level, commands/evidence run, and unresolved findings. No new automation in this checkpoint. | `DOC` | 1 | `AUTHORIZED` | `PASS` |
-| S316A-VL-005 | L3 maps to existing `validate:fast` **subject to its current known coverage** plus focused/relevant evals for the changed area. Do not claim `validate:fast` is universally exhaustive. Glob completeness is CU-12. | `DOC` | 1 | `AUTHORIZED` | `PASS` |
+| S316A-VL-005 | L3 maps to existing `validate:fast` **subject to its classified cheap-deterministic coverage** plus focused/relevant evals for the changed area. Do not claim `validate:fast` is universally exhaustive. Classified fast-gate coverage is the current S316A-IT-003 / CU-12 contract. | `DOC` | 1 | `AUTHORIZED` | `PASS` |
 | S316A-VL-006 | `validate-wave` executes the approved Validation Plan after implementation. It may raise planned validation from the actual diff; it must not silently lower an approved plan, and must not claim that low current risk skips required final validation. | `SKILL` | 1 | `AUTHORIZED` | `PASS` |
 
 ### Manifest / change plan (CU-02)
@@ -281,9 +289,9 @@ implemented in this run but are not operator-accepted until review.
 | S316A-HY-002 | Checkpoint template is standardized. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
 | S316A-HY-003 | Architecture README / code-map navigation includes the engineering workflow. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
 | S316A-HY-004 | Minimal metrics fields exist for later process measurement. | `DOC` | 3 | `AUTHORIZED` | `PASS` |
-| S316A-IT-001 | Native-browser-dialog guard exists for interaction evals. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
-| S316A-IT-002 | Lab I03 is aligned with application `ConfirmDialog` rather than native dialog drift. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
-| S316A-IT-003 | Fast/final validation integrity and cost: `FAST_COVERAGE_GAP` (`validate:fast` unit glob currently misses deterministic tests outside `lib/**`, including known `app/**` / `components/**` candidates) and `VALIDATE_FAST_REEXECUTION_COST` (`validate:deploy` re-invokes `validate:fast` while the L4 sequence also calls `validate:fast` immediately beforehand). Close the gap by coverage or explicit policy, and examine redundant cost together in Checkpoint 4. Do not change package scripts or gate order in Checkpoint 3. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `APPROVED` |
+| S316A-IT-001 | Native-browser-dialog guard exists for interaction evals. Production `window.alert` / `window.confirm` / `window.prompt` uses fail closed unless allowlisted with a matching `expectedCount`. Duplicate and stale allowlist entries fail. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `PASS` |
+| S316A-IT-002 | Lab I03 is aligned with application `ConfirmDialog` rather than native dialog drift. Headed operator inspection of that same dialog is the manual acceptance evidence. | `CODE` + `TEST` + `MANUAL` | 4 | `AUTHORIZED` | `PASS` |
+| S316A-IT-003 | Fast/final validation integrity and cost remain the accepted current contract: `validate:fast` includes the native-dialog guard and all classified cheap deterministic tests selected for the routine fast gate (`lib/**`, `app/**`, `components/**`, `scripts/__tests__/**`); intentionally excluded suites (Playwright execution, live/provider, real-DB-beyond-skip) have explicit reasons; normal L4 is `validate:fast` → `validate:build` → `test:e2e:smoke` → `test:e2e:smoke:browser` and does not execute `validate:fast` twice; standalone `validate:deploy` remains a complete `validate:fast` + `validate:build` convenience/deploy-validation command. Do not weaken this evidence. Historical Checkpoint 3 notes (`FAST_COVERAGE_GAP`, `VALIDATE_FAST_REEXECUTION_COST`) describe the pre-fix problem and are not the current contract. | `CODE` + `TEST` | 4 | `AUTHORIZED` | `PASS` |
 
 The six retrospective rows above are Checkpoint 5 acceptance scenarios, not
 Checkpoint 1 implementation work.
@@ -381,38 +389,58 @@ UNRESOLVED_FINDINGS = CU-07 native-dialog guard; CU-08 Lab I03 ConfirmDialog;
 
 ## Checkpoint 4 evidence log
 
-Implementation complete in this run, including operator-review corrections
-for allowlist occurrence counts, I03 post-resume dialog requirement, and
-`BROAD_VALIDATION_RUNS` vocabulary. Operator acceptance is **pending**,
-including headed Lab I03 interaction review. Do not treat CU-07/CU-08/CU-12
-as operator `PASS`.
+Operator accepted Checkpoint 4 on 2026-08-21 (`MANUAL`), including headed
+Lab I03 application `ConfirmDialog` inspection. CU-07, CU-08, CU-12,
+S316A-IT-001, S316A-IT-002, and S316A-IT-003 are `PASS`.
+
+Pre-fix Checkpoint 3 notes (`FAST_COVERAGE_GAP`: `validate:fast` missed
+classified cheap deterministic tests outside `lib/**`;
+`VALIDATE_FAST_REEXECUTION_COST`: normal L4 plus standalone `validate:deploy`
+could re-execute `validate:fast`) describe the problem that Checkpoint 4
+closed. They are historical rationale, not the current contract.
 
 ```
 CURRENT_CHECKPOINT = 4
-CHECKPOINT_4_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
-OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_4_STATUS = PASS
+CHECKPOINT_4 = PASS
+CHECKPOINT_4_OPERATOR_ACCEPTANCE = PASS
+OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 CHANGE_UNITS = CU-07, CU-08, CU-12
+CU-07 = PASS
+CU-08 = PASS
+CU-12 = PASS
+S316A-IT-001 = PASS
+S316A-IT-002 = PASS
+S316A-IT-003 = PASS
 PLANNED_EVALS = EVAL-WF-NATIVE-DIALOG-GUARD, EVAL-LAB-I03-NATIVE-VS-APP-DIALOG,
                 EVAL-PP-RETRANSCRIBE-CONFIRM, FAST_COVERAGE_GAP,
                 VALIDATE_FAST_REEXECUTION_COST
 RECONCILED_EVALS = EVAL-WF-NATIVE-DIALOG-GUARD COVERED;
-                   EVAL-LAB-I03-NATIVE-VS-APP-DIALOG PARTIAL pending headed I03;
+                   EVAL-LAB-I03-NATIVE-VS-APP-DIALOG COVERED
+                   (invariant = Lab I03 uses application ConfirmDialog;
+                   operator headed I03 PASS 2026-08-21);
                    EVAL-PP-RETRANSCRIBE-CONFIRM PARTIAL
+                   (Save→Retranscribe real-surface evidence remains broader
+                   than I03 Lab alignment)
 PLANNED_VALIDATION_LEVEL = L3
 ACTUAL_VALIDATION_LEVEL = L3
 NATIVE_DIALOG_GUARD = npm run check:native-dialogs
 NATIVE_DIALOG_ALLOWLIST = file + api + expectedCount + reason; current
                           expectedCount = 1 for every exception
+NATIVE_DIALOG_FAIL_CLOSED = unexpected APIs, count mismatch, stale entries
 FAST_UNIT_GLOBS = lib/**/*.test.ts, app/**/*.test.ts, components/**/*.test.ts,
                   scripts/__tests__/*.test.mjs
+EXCLUDED_FROM_FAST = Playwright execution; live/provider; real-DB-beyond-skip
 L4_SEQUENCE = validate:fast -> validate:build -> test:e2e:smoke ->
               test:e2e:smoke:browser
+NORMAL_L4_REEXECUTES_VALIDATE_FAST = NO
 STANDALONE_DEPLOY_VALIDATION = validate:deploy remains validate:fast + validate:build
 BROAD_VALIDATION_RUNS = L3_VALIDATE_FAST, L4_VALIDATE_BUILD, L4_SMOKE,
                         L4_BROWSER_SMOKE, STANDALONE_VALIDATE_DEPLOY
 L4_REQUIRED_NOW = NO
 PRODUCT_SUITE_REQUIRED_NOW = NO
 MANUAL_REQUIRED = headed Lab I03 ConfirmDialog inspection
+MANUAL_I03_ACCEPTANCE = PASS 2026-08-21
 COMMANDS_RUN = check:native-dialogs; native-dialog focused tests;
                lab-i03 source-contract; validate-gate-scripts focused;
                eval:registry:check; git diff --check;
@@ -421,6 +449,94 @@ COMMANDS_RESULT = PASS
 ACTUAL_NPM_RUN_VALIDATE_FAST = PASS
 UNIT = 1663 passed, 8 skipped, 0 failed
 E2E_LIST = 831 tests in 67 files
-I03_LIST = headed Lab I03 not run; operator owns manual acceptance
-UNRESOLVED_FINDINGS = operator acceptance of CU-07/CU-08/CU-12; headed I03
+I03_HEADED = operator PASS 2026-08-21; no additional manual evidence invented
+UNRESOLVED_FINDINGS = none for CU-07/CU-08/CU-12; Checkpoint 5 finalization remains
+```
+
+## Checkpoint 5 evidence log
+
+Finalization complete 2026-08-21. Compact CIA used as planned. Operator
+packaging/commit authorization remains pending. No new final handoff file.
+
+Retrospective workflow verdicts (underlying product evals unchanged except
+EVAL-LAB-I03-NATIVE-VS-APP-DIALOG PARTIAL → COVERED after headed I03):
+
+| RET | Lesson | Workflow mechanism | Eval ID | Underlying | Target layer | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| RET-001 | Mounted RUNNING→COMPLETED without reload | MOUNTED_TRANSITION ≠ STATE | EVAL-PP-ENH-MOUNTED-RUNNING-COMPLETED | PARTIAL | MOUNTED_UI | PASS |
+| RET-002 | Historical NULL first mutation | HISTORICAL_READ ≠ FIRST_MUTATION | EVAL-AI-HIST-NULL-FIRST-MATERIAL-EDIT | COVERED | HISTORICAL_ACCEPTANCE | PASS |
+| RET-003 | NEW CODE + OLD DB | 4-cell MIGRATION_COMPATIBILITY | EVAL-MIG-FINGERPRINT-COMPAT | PARTIAL | MANUAL_CHECKPOINT | PASS |
+| RET-004 | Save→Retranscribe real confirmation | INTERACTION + TRANSITION | EVAL-PP-RETRANSCRIBE-CONFIRM | PARTIAL | LAB_TRANSITION | PASS |
+| RET-005 | Lab native vs ConfirmDialog | INTERACTION + native-dialog guard | EVAL-LAB-I03-NATIVE-VS-APP-DIALOG | COVERED | UNIT + LAB_TRANSITION | PASS |
+| RET-006 | Optional enhancement race vs UX latency | MANDATORY/OPTIONAL/BACKGROUND + budget | EVAL-PP-ENH-RACE-AND-LATENCY | PARTIAL | INTEGRATION | PASS |
+
+```
+CURRENT_CHECKPOINT = 5
+CHECKPOINT_5_STATUS = PASS
+OPERATOR_ACCEPTANCE = PENDING_PACKAGING
+CHANGE_UNITS = FINAL-RETROSPECTIVE, FINAL-REQUIREMENTS, FINAL-L4,
+               FINAL-METRICS, FINAL-PACKAGE
+RET_001 = PASS
+RET_002 = PASS
+RET_003 = PASS
+RET_004 = PASS
+RET_005 = PASS
+RET_006 = PASS
+REQUIREMENTS_COMPLETE = YES
+PLANNED_EVALS = S316A-RET-001..006, Eval Registry audit, L4 graph
+RECONCILED_EVALS = same; I03 COVERED; mounted/migration/retranscribe/race remain PARTIAL
+PLANNED_VALIDATION_LEVEL = L4
+ACTUAL_VALIDATION_LEVEL = L4
+NORMAL_L4_REEXECUTES_VALIDATE_FAST = NO
+STANDALONE_VALIDATE_DEPLOY_REMAINS_SAFE = YES
+STANDALONE_VALIDATE_DEPLOY_RUN = NO
+OBSERVER_LAYOUT = NOT_APPLICABLE
+FUTURE_PILOT = AI Analysis Schema Reliability & Recovery; READY to exercise
+               Stage 3.16A workflow; IN_THIS_STAGE = NO
+
+L4:
+  validate:fast PASS; unit 1663 passed / 8 skipped / 0 failed; e2e list 831/67;
+    duration ~84.3s
+  validate:build PASS; compiled 13.4s; duration ~46.4s
+  test:e2e:db:check PASS; negotiations_e2e @ localhost:5433; no writes; ~6.1s
+  test:e2e:smoke PASS 27/27; duration ~26.8s (host Chromium)
+  test:e2e:smoke:browser PASS 14/14; duration ~45.8s (host Chromium)
+
+FLAKE_RECORD:
+  1. First smoke FAIL: ephemeral sandbox PLAYWRIGHT_BROWSERS_PATH lacked Chromium
+  2. Second smoke 26 pass / 1 fail: /opengraph-image unsupported image format
+  3. Focused proof PASS 6.6s; subsequent full smoke 27/27
+  Classification: environment + first-compile ImageResponse transient;
+                  not a Stage 3.16A product regression
+
+METRICS:
+  CURSOR_IMPLEMENTATION_ITERATIONS = 1 (finalization/docs/registry only)
+  BROAD_VALIDATION_RUNS:
+    L3_VALIDATE_FAST = 1
+    L4_VALIDATE_BUILD = 1
+    L4_SMOKE = 3 (1 env fail, 1 flake fail, 1 PASS)
+    L4_BROWSER_SMOKE = 1
+    STANDALONE_VALIDATE_DEPLOY = 0
+  DEFECTS_BY_DISCOVERY_LAYER:
+    UNIT = 0
+    PRODUCTION = 0
+    environment Playwright cache = 1 (not product)
+    public OG ImageResponse flake = 1 (unrelated; not Stage 3.16A)
+  ESCAPED_DEFECTS_AFTER_ACCEPTANCE = 0
+  MODEL_EFFORT_BY_CU_OR_BATCH = Grok 4.6 parent; Luna validation-runner L4
+  HUMAN_INTERVENTIONS = operator CP1-4 + headed I03; packaging STOP
+
+GIT_STATE:
+  BRANCH = feat/engineering-workflow-optimization
+  HEAD = 7e26d12024dc22edffa93a839b48de4578eb0046
+  TREE = dirty (manifest + eval-registry only)
+  DIFF_CHECK = PASS
+
+AUTHORIZATION:
+  COMMIT = NOT_AUTHORIZED
+  PUSH = NOT_AUTHORIZED
+  DEPLOY = NOT_AUTHORIZED
+
+UNRESOLVED_FINDINGS = operator packaging/commit; honest PARTIAL product evals;
+                      public OG first-compile flake (non-blocking for 3.16A)
 ```
