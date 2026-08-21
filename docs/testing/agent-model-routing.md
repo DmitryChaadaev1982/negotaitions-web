@@ -85,24 +85,41 @@ Do not automatically run Grok and Sol in parallel for every audit. Parallel
 benchmark runs are allowed only when explicitly requested as a model-quality
 experiment.
 
-## Quality workflow (unchanged)
+## Engineering-quality flow (routing implications)
 
-Normal product flow:
+The process contract is `docs/testing/engineering-workflow.md`. Do not copy it
+here.
 
-1. approved requirements
-2. atomic requirement manifest
-3. requirement-derived acceptance evidence
-4. Grok implementation/remediation
-5. `verify-requirements` (did we implement all approved requirements?)
-6. `validate-wave` (does the implementation work correctly and avoid regressions?)
-7. optional targeted escalation review only when justified
-8. package
+Accepted sequence:
 
-Do not collapse `verify-requirements` and `validate-wave`. Grok is the default
-reasoning/judgment model. Luna `validation-runner` is the deterministic
-execution layer.
+```
+Requirement
+→ CIA
+→ Change Units
+→ risk / kernel / strategy
+→ Eval Selection
+→ Validation Plan
+→ Implementation
+→ Validation Execution
+→ checkpoint / finalization
+```
 
-Using Grok by default does **not** lower evidence or validation requirements.
+Routing implications only:
+
+- Produce CIA, Change Units, Eval Selection, and the Validation Plan **before**
+  implementing meaningful work. Trivial typo/comment work does not require that
+  bureaucracy.
+- Risk sets a **minimum** reasoning/review floor. It does **not** encode
+  “LOW risk always means Low model effort.”
+- Complexity, ambiguity, coupling, context volume, or regression breadth may
+  **raise** required reasoning effort even when product risk is low.
+- Default parent (currently Grok 4.6) owns implementation, remediation, and
+  judgment. Luna `validation-runner` via `validate-wave` owns deterministic
+  Validation Execution and log isolation.
+- Do not collapse `verify-requirements` (completeness) and `validate-wave`
+  (correctness/regression).
+- Using the default parent does **not** lower evidence or validation
+  requirements.
 
 ## Return-to-OpenAI condition
 

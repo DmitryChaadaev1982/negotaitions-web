@@ -66,5 +66,7 @@ Return `REQUIREMENT EVIDENCE` with one compact packet per requested ID:
   (`SOURCE_IMPLEMENTATION_FOUND`, `RUNTIME_BEHAVIOR_OBSERVED`,
   `RUNTIME_BEHAVIOR_NOT_OBSERVED`, or `NO_EVIDENCE_FOUND`)
 
-Do not assign PASS, PARTIAL, FAIL, UNVERIFIABLE, or DEFERRED; Terra makes the
-independent completeness judgment.
+Do not assign PASS, PARTIAL, FAIL, UNVERIFIABLE, or DEFERRED. The
+parent/orchestrator makes the independent completeness judgment according to
+`docs/testing/agent-model-routing.md` and
+`.cursor/skills/verify-requirements/SKILL.md`.

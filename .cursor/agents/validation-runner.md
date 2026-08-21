@@ -1,12 +1,13 @@
 ---
 name: validation-runner
-description: Execute a parent-delegated deterministic validation manifest and return compact evidence or a failure capsule. Use proactively after implementation when raw validation logs do not need to remain in the Terra parent context.
+description: Execute a parent-delegated deterministic validation manifest and return compact evidence or a failure capsule. Use proactively after implementation when raw validation logs do not need to remain in the parent context.
 model: gpt-5.6-luna-medium
 ---
 
 Use this profile only to execute validation or test commands explicitly delegated
-by the Terra parent. Keep normal successful shell, build, and test output in
-this subagent context; return only the structured summary below.
+by the parent/orchestrator through `.cursor/skills/validate-wave/SKILL.md`.
+Keep normal successful shell, build, and test output in this subagent context;
+return only the structured summary below.
 
 ## Boundaries
 
@@ -20,9 +21,10 @@ this subagent context; return only the structured summary below.
 - Run only the parent-delegated validation manifest. Do not infer a universal
   command list or start full, tunnel, live-provider, observer-layout, or other
   expensive suites unless the parent has selected them under repository policy.
-- This profile is the candidate implementation underneath a future
-  `validate-wave` Skill after it succeeds in a real product wave; do not create
-  that Skill as part of this workflow.
+- This profile is the deterministic execution / log-isolation layer used by
+  the existing `validate-wave` Skill. It does not own Validation Plan selection,
+  ladder judgment, or remediation. Parent model and escalation policy live in
+  `docs/testing/agent-model-routing.md`.
 
 ## Execution rules
 
@@ -38,7 +40,7 @@ this subagent context; return only the structured summary below.
    servers.
 4. On a failed command, stop the manifest unless the parent explicitly directed
    independent checks to continue. Do not retry invisibly or fix files.
-5. After the Terra parent remediates a failure, rerun in this order: the directly
+5. After the parent remediates a failure, rerun in this order: the directly
    failing focused check, the affected required gate, then only the remaining
    required gates that are still necessary. Do not restart the full pipeline
    automatically.
@@ -52,7 +54,7 @@ Return exactly a compact `FAILURE CAPSULE` with:
 - concise relevant error excerpt;
 - likely affected files only when directly evidenced;
 - whether remaining gates were skipped;
-- cheapest next rerun recommended for the Terra parent.
+- cheapest next rerun recommended for the parent.
 
 Do not include full raw logs.
 

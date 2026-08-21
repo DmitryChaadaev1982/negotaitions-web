@@ -122,16 +122,16 @@ VALIDATION_PLAN: L1 for docs/skill kernel; L4 not justified until a later
 | --- | --- | --- | --- | --- | --- |
 | CU-01 | Authoritative engineering workflow contract | HIGH | 1 | `AUTHORIZED` | `PASS` |
 | CU-02 | Stage 3.16A requirement / change-plan manifest skeleton | MEDIUM | 1 | `AUTHORIZED` | `PASS` |
-| CU-03 | Eval Registry | MEDIUM | 2 | `AUTHORIZED` | `APPROVED` |
+| CU-03 | Eval Registry | MEDIUM | 2 | `AUTHORIZED` | `PASS` |
 | CU-04 | Validation ladder wiring | HIGH | 1 | `AUTHORIZED` | `PASS` |
-| CU-05 | Stale agent / model-routing cleanup | LOW | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-06 | Checkpoint template standardization | LOW | 3 | `NOT_AUTHORIZED` | `APPROVED` |
+| CU-05 | Stale agent / model-routing cleanup | LOW | 3 | `AUTHORIZED` | `APPROVED` |
+| CU-06 | Checkpoint template standardization | LOW | 3 | `AUTHORIZED` | `APPROVED` |
 | CU-07 | Native-dialog guard | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
 | CU-08 | Lab I03 ConfirmDialog alignment | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-09 | Documentation navigation / code-map | LOW | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-10 | Minimal metrics fields | LOW | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| CU-11 | Eval Registry structural validator | LOW | 2 | `AUTHORIZED` | `APPROVED` |
-| CU-12 | `validate:fast` coverage integrity | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
+| CU-09 | Documentation navigation / code-map | LOW | 3 | `AUTHORIZED` | `APPROVED` |
+| CU-10 | Minimal metrics fields | LOW | 3 | `AUTHORIZED` | `APPROVED` |
+| CU-11 | Eval Registry structural validator | LOW | 2 | `AUTHORIZED` | `PASS` |
+| CU-12 | Fast/final validation integrity and cost | MEDIUM | 4 | `NOT_AUTHORIZED` | `APPROVED` |
 
 ```
 HIGH_RISK_KERNEL = CU-01 + CU-04
@@ -177,17 +177,20 @@ CHECKPOINT_1_STOP = YES — accepted; later CUs follow authorized packets
 
 CHECKPOINT_2 = EVAL_REGISTRY
 CHECKPOINT_2_SCOPE = CU-03 + CU-11
-CHECKPOINT_2_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
+CHECKPOINT_2_STATUS = PASS
+CHECKPOINT_2_OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 CHECKPOINT_2_REGISTRY = docs/testing/eval-registry.json
 CHECKPOINT_2_FORMAT = JSON
 CHECKPOINT_2_VALIDATOR = npm run eval:registry:check
 
 CHECKPOINT_3 = WORKFLOW_HYGIENE
 CHECKPOINT_3_SCOPE = CU-05 + CU-06 + CU-09 + CU-10
-CHECKPOINT_3_STATUS = NOT_STARTED
+CHECKPOINT_3_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
+CHECKPOINT_3_OPERATOR_ACCEPTANCE = PENDING
 
 CHECKPOINT_4 = INTERACTION_AND_FAST_GATE_INTEGRITY
 CHECKPOINT_4_SCOPE = CU-07 + CU-08 + CU-12
+CHECKPOINT_4_CU12_SCOPE = FAST_COVERAGE_GAP + VALIDATE_FAST_REEXECUTION_COST
 CHECKPOINT_4_STATUS = NOT_STARTED
 
 CHECKPOINT_5 = RETROSPECTIVE_VALIDATION_AND_FINALIZATION
@@ -226,10 +229,9 @@ Do not investigate or implement the pilot here.
 
 ## Requirements
 
-Every row is independently verifiable. Checkpoint 1 rows below are operator
-`PASS` after the accepted kernel plus required small corrections. Checkpoint 2
-rows may be implemented in this combined run but are not operator-accepted
-until a later review.
+Every row is independently verifiable. Checkpoint 1 and Checkpoint 2 rows
+below are operator `PASS`. Checkpoint 3 rows may be implemented in this run
+but are not operator-accepted until review.
 
 ### Workflow contract (CU-01)
 
@@ -272,15 +274,15 @@ until a later review.
 
 | ID | Requirement | Acceptance evidence | Checkpoint | Authorization | Status |
 | --- | --- | --- | --- | --- | --- |
-| S316A-ER-001 | Eval Registry exists at `docs/testing/eval-registry.json` and can name evals by class from S316A-WF-007. | `DOC` | 2 | `AUTHORIZED` | `APPROVED` |
-| S316A-ER-002 | Eval Registry has a structural validator (`npm run eval:registry:check`) with negative cases for duplicate ID, missing field, and invalid enum/type. | `CODE` + `TEST` | 2 | `AUTHORIZED` | `APPROVED` |
-| S316A-HY-001 | Stale agent / model-routing text is cleaned up without weakening safety policy. | `DOC` + `SKILL` | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-HY-002 | Checkpoint template is standardized. | `DOC` | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-HY-003 | Architecture README / code-map navigation includes the engineering workflow. | `DOC` | 3 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-HY-004 | Minimal metrics fields exist for later process measurement. | `DOC` | 3 | `NOT_AUTHORIZED` | `APPROVED` |
+| S316A-ER-001 | Eval Registry exists at `docs/testing/eval-registry.json` and can name evals by class from S316A-WF-007. | `DOC` | 2 | `AUTHORIZED` | `PASS` |
+| S316A-ER-002 | Eval Registry has a structural validator (`npm run eval:registry:check`) with negative cases for duplicate ID, missing field, and invalid enum/type. | `CODE` + `TEST` | 2 | `AUTHORIZED` | `PASS` |
+| S316A-HY-001 | Stale agent / model-routing text is cleaned up without weakening safety policy. | `DOC` + `SKILL` | 3 | `AUTHORIZED` | `APPROVED` |
+| S316A-HY-002 | Checkpoint template is standardized. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
+| S316A-HY-003 | Architecture README / code-map navigation includes the engineering workflow. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
+| S316A-HY-004 | Minimal metrics fields exist for later process measurement. | `DOC` | 3 | `AUTHORIZED` | `APPROVED` |
 | S316A-IT-001 | Native-browser-dialog guard exists for interaction evals. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
 | S316A-IT-002 | Lab I03 is aligned with application `ConfirmDialog` rather than native dialog drift. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
-| S316A-IT-003 | `validate:fast` unit coverage includes deterministic tests that current globs miss, or the gap is explicitly closed by policy. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
+| S316A-IT-003 | Fast/final validation integrity and cost: `FAST_COVERAGE_GAP` (`validate:fast` unit glob currently misses deterministic tests outside `lib/**`, including known `app/**` / `components/**` candidates) and `VALIDATE_FAST_REEXECUTION_COST` (`validate:deploy` re-invokes `validate:fast` while the L4 sequence also calls `validate:fast` immediately beforehand). Close the gap by coverage or explicit policy, and examine redundant cost together in Checkpoint 4. Do not change package scripts or gate order in Checkpoint 3. | `CODE` + `TEST` | 4 | `NOT_AUTHORIZED` | `APPROVED` |
 
 The six retrospective rows above are Checkpoint 5 acceptance scenarios, not
 Checkpoint 1 implementation work.
@@ -315,13 +317,13 @@ UNRESOLVED_FINDINGS = CU-05 stale routing/agent text; CU-07/CU-08 Lab I03
 
 ## Checkpoint 2 evidence log
 
-Implementation complete in the combined run. Operator acceptance is **pending**.
-Do not treat CU-03/CU-11 as `PASS`.
+Operator accepted Checkpoint 2 on 2026-08-21 (`MANUAL`). CU-03, CU-11,
+S316A-ER-001, and S316A-ER-002 are `PASS`.
 
 ```
 CURRENT_CHECKPOINT = 2
-CHECKPOINT_2_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
-OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_2_STATUS = PASS
+OPERATOR_ACCEPTANCE = MANUAL 2026-08-21
 REGISTRY_PATH = docs/testing/eval-registry.json
 REGISTRY_FORMAT = JSON
 PARSER = node JSON.parse
@@ -347,4 +349,31 @@ RETROSPECTIVE_MAP = S316A-RET-001→EVAL-PP-ENH-MOUNTED-RUNNING-COMPLETED PARTIA
                     S316A-RET-004→EVAL-PP-RETRANSCRIBE-CONFIRM PARTIAL;
                     S316A-RET-005→EVAL-LAB-I03-NATIVE-VS-APP-DIALOG PARTIAL;
                     S316A-RET-006→EVAL-PP-ENH-RACE-AND-LATENCY PARTIAL
+```
+
+## Checkpoint 3 evidence log
+
+Implementation complete in this run. Operator acceptance is **pending**.
+Do not treat CU-05/CU-06/CU-09/CU-10 as operator `PASS`.
+
+```
+CURRENT_CHECKPOINT = 3
+CHECKPOINT_3_STATUS = IMPLEMENTATION_PENDING_OPERATOR_REVIEW
+OPERATOR_ACCEPTANCE = PENDING
+CHANGE_UNITS = CU-05, CU-06, CU-09, CU-10
+PLANNED_EVALS = DOC, SKILL
+RECONCILED_EVALS = DOC, SKILL
+PLANNED_VALIDATION_LEVEL = L1
+ACTUAL_VALIDATION_LEVEL = L1
+CHECKPOINT_TEMPLATE = docs/testing/engineering-workflow.md#checkpoint-evidence-template
+METRICS_LOCATION = same template
+NAVIGATION = docs/architecture/README.md, docs/architecture/code-map.md
+STALE_CODE_MAP_REMOVED = app/api/sessions/[sessionId]/control/route.test.ts
+REQUIRED_VALIDATION = git diff --check; referenced-path existence; npm run eval:registry:check
+L4_REQUIRED_NOW = NO
+PRODUCT_SUITE_REQUIRED_NOW = NO
+CU12_FUTURE_SCOPE = FAST_COVERAGE_GAP + VALIDATE_FAST_REEXECUTION_COST
+PACKAGE_SCRIPT_CHANGE = NO
+UNRESOLVED_FINDINGS = CU-07 native-dialog guard; CU-08 Lab I03 ConfirmDialog;
+                      CU-12 FAST_COVERAGE_GAP and VALIDATE_FAST_REEXECUTION_COST
 ```

@@ -25,7 +25,9 @@ L3 accuracy: `validate:fast` is the current cheap project checkpoint gate
 (lint, Prisma validate/generate, unit tests, Playwright `--list`). It is
 **not** universally exhaustive. The unit glob is currently
 `lib/**/*.test.ts`; deterministic tests under `app/**` or `components/**` may
-be omitted from that gate. Closing that gap is future CU-12. Always run the
+be omitted from that gate. Closing that gap, and examining `validate:deploy`
+re-running `validate:fast` during L4, is future CU-12
+(`FAST_COVERAGE_GAP` + `VALIDATE_FAST_REEXECUTION_COST`). Always run the
 focused/relevant evals for the changed area in addition to whatever L3 covers.
 
 ### Safety rule
@@ -69,7 +71,9 @@ The stage/change plan should record:
 - commands/evidence actually run
 - unresolved findings
 
-Do not add automation for this log in Stage 3.16A Checkpoint 1–2.
+Use the checkpoint evidence template in
+[`engineering-workflow.md`](./engineering-workflow.md) at STOP/review
+boundaries. Do not add telemetry, dashboards, or a checkpoint platform.
 
 ## Recommended Validation Commands
 

@@ -393,8 +393,9 @@ Authoritative ladder semantics and command mapping live in
 | **L4 Final / deploy-level** | Final code/config/test/runtime package boundary where repository policy requires broad gates, or a material high-risk / deploy-readiness boundary | existing `validate:deploy` and required smoke/browser/deploy gates |
 
 `validate:fast` is the current L3 checkpoint gate. It is **not** universally
-exhaustive; see the checklist coverage note. Fast-gate glob completeness is
-future CU-12.
+exhaustive; see the checklist coverage note. Fast-gate glob completeness and
+`validate:fast` re-execution cost inside L4 (`validate:deploy`) are future
+CU-12 (`FAST_COVERAGE_GAP` + `VALIDATE_FAST_REEXECUTION_COST`).
 
 L4 is **not** every commit. Docs-only and audit-only changes use applicable
 documentation/focused evidence. Presentation/UI work may reach operator visual
@@ -404,16 +405,14 @@ applicable L4 gates at their final package/deploy boundary.
 The ladder optimizes **when** broad validation runs. It does not waive L4 or
 scoped high-risk gates.
 
-Record in the stage/change plan, without new automation:
-
-- required eval classes (later: eval IDs)
-- validation level required for the current checkpoint
-- commands / evidence actually run
-- unresolved findings
+Record in the stage/change plan, without new automation. At STOP/review
+boundaries, use the [Checkpoint evidence template](#checkpoint-evidence-template).
 
 ## Checkpoints and STOP
 
 A checkpoint is a meaningful accumulated boundary, not every file save.
+It is not a second planning system. CIA, Change Units, Eval Selection, and
+the Validation Plan remain the planning contract above.
 
 Default STOP conditions:
 
@@ -427,6 +426,83 @@ Do not commit, push, or deploy without explicit operator authorization.
 Requirement completeness (`verify-requirements`,
 `docs/testing/requirement-completeness.md`) remains a separate gate from
 correctness/regression validation (`validate-wave`). Do not collapse them.
+
+### Checkpoint evidence template
+
+Paste or reference this compact packet in Cursor reports for **meaningful**
+stage/checkpoint work. A trivial docs typo does not need every field.
+Do not build a `stage:checkpoint` platform, automatic finalizer, or second
+stage-plan format. Existing `agent:preflight` / git commands remain evidence
+sources; do not duplicate their implementation.
+
+Metrics are **manual**. They exist to compare later stages/pilots (is the
+workflow cheaper and earlier?), not for telemetry or dashboards.
+
+```
+CHECKPOINT:
+CHANGE_UNITS:
+
+PLANNED_EVALS:
+RECONCILED_EVALS:
+
+PLANNED_VALIDATION_LEVEL:
+ACTUAL_VALIDATION_LEVEL:
+
+VALIDATION_EVIDENCE:
+
+OPERATOR_ACCEPTANCE:
+  REQUIRED: REQUIRED | NOT_REQUIRED
+  STATUS: PENDING | PASS | N/A
+
+UNRESOLVED_FINDINGS:
+
+DEFECT_DISCOVERY:
+  (omit if none)
+  LAYER: UNIT | INTEGRATION | LAB_STATE | LAB_TRANSITION | MOUNTED_UI |
+         MANUAL_CHECKPOINT | HISTORICAL_ACCEPTANCE | NEW_SESSION_ACCEPTANCE |
+         PRODUCTION
+  NOTE:
+
+METRICS:
+  CURSOR_IMPLEMENTATION_ITERATIONS:
+  BROAD_VALIDATION_RUNS:
+    L3_VALIDATE_FAST:
+    L4_VALIDATE_DEPLOY:
+    L4_OTHER:
+  DEFECTS_BY_DISCOVERY_LAYER:
+  ESCAPED_DEFECTS_AFTER_ACCEPTANCE:
+  MODEL_EFFORT_BY_ACCEPTED_CU:
+  HUMAN_INTERVENTIONS:
+
+GIT_STATE:
+  BRANCH:
+  HEAD:
+  TREE: dirty | clean
+  DIFF_CHECK: PASS | FAIL
+
+AUTHORIZATION:
+  COMMIT: AUTHORIZED | NOT_AUTHORIZED
+  PUSH: AUTHORIZED | NOT_AUTHORIZED
+  DEPLOY: AUTHORIZED | NOT_AUTHORIZED
+```
+
+`CURSOR_IMPLEMENTATION_ITERATIONS` counts meaningful implementation/remediation
+loops for the checkpoint, not every chat turn.
+
+`BROAD_VALIDATION_RUNS` makes repeated L3/L4 executions visible. Count
+`validate:fast` (L3) and `validate:deploy` (L4) separately when either ran;
+record other L4 gates under `L4_OTHER` when useful.
+
+`DEFECTS_BY_DISCOVERY_LAYER` uses only the vocabulary above unless repository
+evidence strongly requires another value.
+
+`ESCAPED_DEFECTS_AFTER_ACCEPTANCE` is a simple integer.
+
+`MODEL_EFFORT_BY_ACCEPTED_CU` records the actual routing/effort class used
+for accepted Change Units or batches. Do not invent token-cost accounting.
+
+`HUMAN_INTERVENTIONS` is optional: meaningful operator returns or rework
+decisions, not every message.
 
 ## Deploy safety
 

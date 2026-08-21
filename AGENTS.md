@@ -60,12 +60,15 @@ does not require product L4 suites. When L4 applies, run and report in order:
 `npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`. Low current
 Change Unit risk does not authorize skipping those final gates later.
 
-Capture approved product requirements as an atomic manifest before or during
-implementation, then derive/select acceptance evidence before implementation.
-Run `verify-requirements` as the completeness gate before `validate-wave`,
-expensive targeted high-risk review, and packaging; it must not rely solely on
-the implementing model's completion report. Run `validate-wave` separately as
-the correctness/regression gate.
+For **meaningful** work, capture approved product requirements in the existing
+`docs/requirements/` manifest style, then produce the planning material needed
+to drive Change Impact Analysis, Change Units, Eval Selection, and the
+Validation Plan **before** implementation begins. Trivial typo or isolated
+comment work does not require that bureaucracy. Run `verify-requirements` as
+the completeness gate before `validate-wave`, expensive targeted high-risk
+review, and packaging; it must not rely solely on the implementing model's
+completion report. Run `validate-wave` separately as the correctness/regression
+gate.
 
 Use [`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md)
 for ladder selection and L4 gate commands/ordering, and
@@ -82,32 +85,29 @@ never infer production commands from historical stage notes.
 
 ## Model routing (temporary)
 
-Authoritative policy:
+Current model identities, effort modes, escalation, and return-to-OpenAI policy
+are owned by
 [`docs/testing/agent-model-routing.md`](docs/testing/agent-model-routing.md).
+Do not maintain a second matrix here.
 
-- **Default parent:** Grok 4.6 (`grok-4.6`) for implementation, remediation,
-  exploration, test selection, requirements judgment, architecture, and
-  audits.
-- **Validation execution:** GPT-5.6 Luna Medium via
-  `.cursor/agents/validation-runner.md` only. Do not move implementation or
-  remediation decisions into that profile.
-- **Terra / Sol:** not defaults. Escalate only when the routing policy's
-  evidence-based criteria are met. The user controls any return to the prior
-  OpenAI-default workflow.
+Durable role split only:
+
+- The parent/orchestrator owns implementation, remediation, requirements
+  judgment, architecture, and the engineering report.
+- `.cursor/agents/validation-runner.md` is deterministic validation execution
+  and log isolation only. Do not move engineering judgment into that profile.
+- Escalation models are not defaults; use them only when the routing document's
+  evidence-based criteria are met.
 
 Use `.cursor/agents/codebase-explorer.md` for codebase exploration and
 `.cursor/agents/test-explorer.md` for test discovery when delegation reduces
 discovery cost. Use `.cursor/agents/requirements-evidence-collector.md` for
-factual requirement evidence. Use `.cursor/agents/validation-runner.md` for
-parent-delegated deterministic validation/test execution; keep raw validation
-logs in that subagent context whenever practical. The parent remains
-responsible for implementation, failure-remediation decisions, and the final
-engineering report. Use `.cursor/skills/stage-start/SKILL.md` as the canonical
-reusable workflow for a new stage/worktree and
-`.cursor/skills/validate-wave/SKILL.md` for post-implementation validation
-orchestration, and `.cursor/skills/verify-requirements/SKILL.md` for
-independent completeness verification. Skills reuse these subagent profiles
-and do not override scoped safety rules or authoritative documents.
+factual requirement evidence. Use `.cursor/agents/validation-runner.md` via
+`.cursor/skills/validate-wave/SKILL.md` for parent-delegated deterministic
+validation. Use `.cursor/skills/stage-start/SKILL.md` for a new stage/worktree
+and `.cursor/skills/verify-requirements/SKILL.md` for independent completeness
+verification. Skills reuse these subagent profiles and do not override scoped
+safety rules or authoritative documents.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

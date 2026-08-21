@@ -18,7 +18,13 @@
 
 ## Mandatory validation gates (code/config changes)
 
-Default mandatory gates remain local-deterministic and must be reported for implementation work:
+Current L1–L4 selection — including when these four gates apply versus focused
+L1/L2/L3 work — is owned by
+[`docs/testing/validation-checklist.md`](./validation-checklist.md).
+The list below is the L4 command set recorded for this POC plan. It is not an
+instruction to run product L4 after every small or docs-only change.
+
+Default L4 gates remain local-deterministic and must be reported when L4 applies:
 
 - `npm run validate:fast`
 - `npm run validate:deploy`
