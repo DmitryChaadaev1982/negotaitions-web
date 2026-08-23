@@ -5,6 +5,7 @@ import {
   YANDEX_DEEPSEEK_ANALYSIS_TOTAL_INPUT_TOKEN_BUDGET,
   estimateAiAnalysisTokensFromChars,
 } from "@/lib/ai/analysis-input-budget";
+import { buildBoundedSchemaIssueDiagnostics } from "@/lib/ai/analysis-failure-diagnostics";
 import { getAiAnalysisProvider, isYandexAiConfigured } from "@/lib/env";
 
 export function getAiAnalysisModel(): string {
@@ -707,7 +708,43 @@ const YANDEX_ANALYSIS_SCHEMA_DESCRIPTION = `Respond with a JSON object matching 
   participantPersonalFeedback: Array<{ sessionParticipantId: string; participantName: string; achievements: string[]; couldHaveDoneBetter: string[]; keyMoments: string[]; nextSteps: string[]; }>; // use only a supplied negotiating participant ID; role-specific, actionable
 }`;
 
+const OPENAI_ANALYSIS_SCHEMA_DESCRIPTION = `Respond with a JSON object matching this TypeScript type exactly:
+{
+  executiveSummary: string;
+  overallScore: number; // 0-100 integer
+  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
+  evidenceQuality: { transcriptQuality: "LOW"|"MEDIUM"|"HIGH"; speakerAttributionQuality: "LOW"|"MEDIUM"|"HIGH"; notesQuality: "LOW"|"MEDIUM"|"HIGH"; comment: string; };
+  scores: { preparation: number; structure: number; questionQuality: number; activeListening: number; argumentation: number; objectionHandling: number; emotionalControl: number; valueCreation: number; closing: number; }; // all 0-100 integers
+  roleObjectivesAnalysis: Array<{ participantName: string; roleName: string; objectiveProgress: string; evidence: string; score: number; }>;
+  strengths: Array<{ title: string; evidence: string; whyItMatters: string; recommendation: string; }>;
+  improvementAreas: Array<{ title: string; evidence: string; risk: string; recommendation: string; practiceExercise: string; }>;
+  detectedTactics: Array<{ name: string; usedBy: string; evidence: string; effectiveness: string; counterMove: string; }>;
+  questionsAnalysis: { goodQuestions: Array<{ question: string; usedBy: string; whyGood: string; }>; missedQuestions: Array<{ suggestedQuestion: string; whyItMattered: string; }>; diagnosticQualityComment: string; };
+  listeningAndReframing: { goodExamples: string[]; missedOpportunities: string[]; comment: string; };
+  valueCreationAnalysis: { createdOptions: string[]; missedOptions: string[]; tradeOffsDiscussed: string[]; comment: string; };
+  nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>;
+  facilitatorDebriefQuestions: string[];
+  oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; };
+  participantPersonalFeedback: Array<{
+    sessionParticipantId: string; // exact supplied SessionParticipant ID of the negotiating participant
+    participantName: string; // matching display label, for presentation only
+    achievements: string[]; // 2-4 specific things this participant did well, with evidence
+    couldHaveDoneBetter: string[]; // 2-4 specific areas where this participant underperformed, with evidence and concrete improvement tips
+    keyMoments: string[]; // 2-3 key moments that were decisive for this participant (good or missed)
+    nextSteps: string[]; // 2-3 personalized, actionable next steps for this participant's development
+  }>; // one entry per negotiating participant (exclude facilitators and observers)
+}`;
+
 const YANDEX_POLL_MAX_TRANSIENT_GET_ERRORS = 20;
+
+export function getAnalysisPromptContracts() {
+  return {
+    systemPrompt: SYSTEM_PROMPT,
+    yandexCoachingRequirements: YANDEX_COACHING_REQUIREMENTS,
+    yandexSchemaDescription: YANDEX_ANALYSIS_SCHEMA_DESCRIPTION,
+    openAiSchemaDescription: OPENAI_ANALYSIS_SCHEMA_DESCRIPTION,
+  };
+}
 
 export function getYandexAnalysisStaticProfile(language = "en") {
   const languageInstruction =
@@ -1020,32 +1057,7 @@ async function runOpenAiNegotiationAnalysis(
       ? "Respond in Russian language."
       : "Respond in English language.";
 
-  const schemaDescription = `Respond with a JSON object matching this TypeScript type exactly:
-{
-  executiveSummary: string;
-  overallScore: number; // 0-100 integer
-  confidenceLevel: "LOW" | "MEDIUM" | "HIGH";
-  evidenceQuality: { transcriptQuality: "LOW"|"MEDIUM"|"HIGH"; speakerAttributionQuality: "LOW"|"MEDIUM"|"HIGH"; notesQuality: "LOW"|"MEDIUM"|"HIGH"; comment: string; };
-  scores: { preparation: number; structure: number; questionQuality: number; activeListening: number; argumentation: number; objectionHandling: number; emotionalControl: number; valueCreation: number; closing: number; }; // all 0-100 integers
-  roleObjectivesAnalysis: Array<{ participantName: string; roleName: string; objectiveProgress: string; evidence: string; score: number; }>;
-  strengths: Array<{ title: string; evidence: string; whyItMatters: string; recommendation: string; }>;
-  improvementAreas: Array<{ title: string; evidence: string; risk: string; recommendation: string; practiceExercise: string; }>;
-  detectedTactics: Array<{ name: string; usedBy: string; evidence: string; effectiveness: string; counterMove: string; }>;
-  questionsAnalysis: { goodQuestions: Array<{ question: string; usedBy: string; whyGood: string; }>; missedQuestions: Array<{ suggestedQuestion: string; whyItMattered: string; }>; diagnosticQualityComment: string; };
-  listeningAndReframing: { goodExamples: string[]; missedOpportunities: string[]; comment: string; };
-  valueCreationAnalysis: { createdOptions: string[]; missedOptions: string[]; tradeOffsDiscussed: string[]; comment: string; };
-  nextTrainingFocus: Array<{ focusArea: string; why: string; exercise: string; }>;
-  facilitatorDebriefQuestions: string[];
-  oneMinuteFeedback: { summary: string; whatWorked: string; whatToImprove: string; nextStep: string; };
-  participantPersonalFeedback: Array<{
-    sessionParticipantId: string; // exact supplied SessionParticipant ID of the negotiating participant
-    participantName: string; // matching display label, for presentation only
-    achievements: string[]; // 2-4 specific things this participant did well, with evidence
-    couldHaveDoneBetter: string[]; // 2-4 specific areas where this participant underperformed, with evidence and concrete improvement tips
-    keyMoments: string[]; // 2-3 key moments that were decisive for this participant (good or missed)
-    nextSteps: string[]; // 2-3 personalized, actionable next steps for this participant's development
-  }>; // one entry per negotiating participant (exclude facilitators and observers)
-}`;
+  const schemaDescription = OPENAI_ANALYSIS_SCHEMA_DESCRIPTION;
   const instructions = `${SYSTEM_PROMPT}\n\n${langInstruction}\n\n${schemaDescription}`;
   const instructionChars = instructions.length;
   const inputChars = prompt.length + instructionChars;
@@ -1202,6 +1214,7 @@ async function runOpenAiNegotiationAnalysis(
 
   const validated = NegotiationAnalysisOutputSchema.safeParse(parsed);
   if (!validated.success) {
+    const bounded = buildBoundedSchemaIssueDiagnostics(validated.error);
     const issues = validated.error.issues
       .slice(0, 3)
       .map((i) => `${i.path.join(".")}: ${i.message}`)
@@ -1213,7 +1226,7 @@ async function runOpenAiNegotiationAnalysis(
       model: finalModel,
       message: `OpenAI analysis response failed schema validation: ${issues}`,
       retryable: false,
-      diagnostics: { issues },
+      diagnostics: { issues, ...bounded },
     });
     error.metrics = {
       provider: "openai",
@@ -1375,7 +1388,7 @@ function looksPossiblyTruncatedJson(input: string): boolean {
   );
 }
 
-function tryParseJsonWithRecovery(input: string): unknown | null {
+export function tryParseJsonWithRecovery(input: string): unknown | null {
   const attempts = [input, stripTrailingCommas(input)];
   const firstBalanced = extractFirstBalancedJsonObject(input);
   if (firstBalanced) {
@@ -1449,7 +1462,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
-function extractYandexOutputText(payload: Record<string, unknown>, depth = 0): {
+export function extractYandexOutputText(payload: Record<string, unknown>, depth = 0): {
   text: string;
   outputFieldDetected: YandexOutputFieldDetected;
   rawOutputCharCount: number;
@@ -2444,9 +2457,6 @@ async function runYandexNegotiationAnalysis(
   function validateOutput(parsed: unknown): NegotiationAnalysisOutput {
     const validated = NegotiationAnalysisOutputSchema.safeParse(parsed);
     if (!validated.success) {
-      const issuePaths = validated.error.issues
-        .slice(0, 5)
-        .map((issue) => issue.path.join("."));
       throw new AiAnalysisProviderError({
         code: "MODEL_SCHEMA_VALIDATION_ERROR",
         provider: "yandex",
@@ -2454,10 +2464,7 @@ async function runYandexNegotiationAnalysis(
         message: "Yandex AI response failed schema validation.",
         retryable: false,
         allowsRegeneration: false,
-        diagnostics: {
-          issueCount: validated.error.issues.length,
-          issuePaths,
-        },
+        diagnostics: buildBoundedSchemaIssueDiagnostics(validated.error),
       });
     }
     return validated.data;

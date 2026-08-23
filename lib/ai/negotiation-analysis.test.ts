@@ -356,6 +356,60 @@ test("invalid accepted primary output does not create compact fallback generatio
   assert.equal(posts, 1);
 });
 
+test("markdown-fenced valid JSON recovers and is not MODEL_INVALID_OUTPUT", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const result = await runWithFetch(
+    (async () =>
+      jsonResponse(
+        fixtures.completed(`\`\`\`json\n${JSON.stringify(output)}\n\`\`\``),
+      )) as typeof fetch,
+  );
+  assert.deepEqual(result.output, output);
+});
+
+test("surrounding prose with a balanced JSON object recovers", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const result = await runWithFetch(
+    (async () =>
+      jsonResponse(
+        fixtures.completed(
+          `Here is the completed analysis.\n${JSON.stringify(output)}\nEnd of report.`,
+        ),
+      )) as typeof fetch,
+  );
+  assert.deepEqual(result.output, output);
+});
+
+test("trailing-comma JSON recovers through bounded helpers", async () => {
+  configureYandexEnv();
+  const output = validAnalysisOutput();
+  const serialized = JSON.stringify(output).replace(/}$/, ",}");
+  const result = await runWithFetch(
+    (async () => jsonResponse(fixtures.completed(serialized))) as typeof fetch,
+  );
+  assert.deepEqual(result.output, output);
+});
+
+test("unparseable output with no balanced JSON object is MODEL_INVALID_OUTPUT", async () => {
+  configureYandexEnv();
+  await assert.rejects(
+    () =>
+      runWithFetch(
+        (async () =>
+          jsonResponse(
+            fixtures.completed("The model refused to emit a JSON object."),
+          )) as typeof fetch,
+      ),
+    (error) => {
+      assert.ok(error instanceof AiAnalysisProviderError);
+      assert.equal(error.code, "MODEL_INVALID_OUTPUT");
+      return true;
+    },
+  );
+});
+
 test("acceptance-unknown POST transport failure does not retry generation", async () => {
   configureYandexEnv();
   let posts = 0;

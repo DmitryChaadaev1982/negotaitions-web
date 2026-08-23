@@ -428,6 +428,105 @@
         "tests/e2e/helpers/post-transcription-lab-catalog.ts"
       ],
       "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-SCHEMA-WRITE-STRICT",
+      "invariant": "The canonical write schema accepts a structurally complete report including empty arrays and strips extra keys, and rejects wrong element types and missing required fields. The incident path listeningAndReframing.missedOpportunities.0 is one demonstrated case of a wrong-element-type rejection, not a separate registry item.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "NegotiationAnalysisOutputSchema.safeParse accepts canonical and sparse-empty-array output and fails object/null/number missedOpportunities[0] at listeningAndReframing.missedOpportunities.0.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-001", "S317A-P-002", "S317A-P-011"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/negotiation-analysis-schema-contract.test.ts",
+        "lib/ai/negotiation-analysis.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-PARSE-MALFORMED-SHAPES",
+      "invariant": "Recoverable wrapper noise (markdown JSON fence, surrounding prose that contains a balanced JSON object, trailing commas) is normalized by the existing bounded helpers and then schema-validated; it is not MODEL_INVALID_OUTPUT solely because of that wrapper noise. Irrecoverable malformed JSON (truncated, no parseable balanced object, or otherwise unparseable after those helpers) classifies as MODEL_INVALID_OUTPUT and is never persisted as valid analysis. Recovery stays inside the existing fence-strip, first-balanced-object, and trailing-comma helpers; no additional repair is authorized.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Fenced, surrounding-prose, and trailing-comma valid JSON parse and proceed to schema validation. Truncated or otherwise unparseable JSON after current bounded helpers is MODEL_INVALID_OUTPUT, not MODEL_SCHEMA_VALIDATION_ERROR, and is not persisted.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-002"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/negotiation-analysis.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-INVALID-THEN-VALID-TWIN",
+      "invariant": "Same material input: provider response A is schema-invalid at a structural boundary; independent generation B is valid; only B can become COMPLETED/current. Encodes a proposed bounded extra generation that is not production-enabled.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "After A fails schema validation, B completes and is the only current analysisJson. Production max attempts remain 1.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-002", "S317A-P-010"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/proposed-bounded-schema-recovery.test.ts",
+        "docs/requirements/stage-3-17a-ai-analysis-schema-reliability.md"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-AI-INVALID-THEN-INVALID-BOUNDED",
+      "invariant": "Same material input: generation A invalid, proposed extra generation B invalid, terminal FAILED, no third generation. Proposed policy only; not production-enabled.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Exactly two generations, durable FAILED, no current analysisJson.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-008", "S317A-P-010"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/proposed-bounded-schema-recovery.test.ts",
+        "docs/requirements/stage-3-17a-ai-analysis-schema-reliability.md"
+      ],
+      "coverageStatus": "PARTIAL"
+    },
+    {
+      "id": "EVAL-AI-FAIL-DIAGNOSTICS",
+      "invariant": "Schema failures journal bounded diagnostics (error class, issue count, issue paths, issue codes, expected/received kinds, lengths, lifecycle fields) on ExternalServiceEvent through a fail-closed positive allowlist. Unknown keys, free-form issues/prose, candidate, responseBody, transcript, notes, hiddenInfo, and raw model text are dropped.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "buildBoundedAiAnalysisLogPayload and schema-issue helpers persist only positively allowlisted structured fields; unknown or prose-bearing keys do not persist.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-009"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/analysis-failure-diagnostics.ts",
+        "lib/ai/analysis-failure-diagnostics.test.ts"
+      ],
+      "coverageStatus": "COVERED"
     }
   ]
 }

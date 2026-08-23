@@ -27,9 +27,16 @@ Produce structured post-session coaching output from transcript/materials and ex
 6. Yandex creates one durable background response and retrieves that same
    response by ID until it reaches a terminal provider state.
 7. The complete provider output is parsed and validated against the canonical
-   schema. Personal feedback identifies its recipient by supplied
-   `SessionParticipant` ID, which is validated against the current negotiating
-   roster before `analysisJson` is persisted and status changed to `COMPLETED`.
+   schema. Existing bounded helpers may strip a full markdown JSON fence,
+   extract a first balanced JSON object from surrounding prose, and remove
+   trailing commas. That wrapper noise is then schema-validated and is not
+   classified as `MODEL_INVALID_OUTPUT` solely because of the wrapper.
+   Truncated JSON, output with no parseable balanced object, or otherwise
+   unparseable text after those helpers is `MODEL_INVALID_OUTPUT` and is
+   never persisted as valid analysis. Personal feedback identifies its
+   recipient by supplied `SessionParticipant` ID, which is validated against
+   the current negotiating roster before `analysisJson` is persisted and
+   status changed to `COMPLETED`.
 
 ## Large-session input contract
 
@@ -126,6 +133,7 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Key Components
 
 - Analysis model/schema and provider execution: `lib/ai/negotiation-analysis.ts`.
+- Bounded failure diagnostics: `lib/ai/analysis-failure-diagnostics.ts`.
 - Durable ownership and recovery: `lib/ai/analysis-operation.ts`.
 - Analysis context builder: `lib/ai/session-analysis-context.ts`.
 - Visibility filtering: `lib/analysis-visibility.ts`.
@@ -136,6 +144,29 @@ Produce structured post-session coaching output from transcript/materials and ex
   - `app/api/sessions/[sessionId]/analyze/route.ts`
   - `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`
   - `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`
+
+## Failure Diagnostics Contract
+
+`ExternalServiceEvent` is the durable failure-evidence source for AI analysis.
+A failed `AiAnalysis` row stores only a generic user-facing `errorMessage`.
+The journal sanitizer is fail-closed: only the positive allowlist in
+`APPROVED_AI_ANALYSIS_DIAGNOSTIC_KEYS` may persist, and only as bounded
+primitives or primitive arrays. Unknown keys, nested objects, unbounded
+values, free-form `issues` strings, `candidate`, `responseBody`, and any
+raw model or provider prose are dropped. The journal `rawError` may retain:
+
+- application `errorClass`;
+- `issueCount`, bounded `issuePaths`, `issueCodes`, and expected/received
+  type kinds (not values);
+- `outputCondition`, `responseLength`, provider lifecycle status, and
+  incomplete reason when present;
+- durations and token estimates already collected on the run as a
+  separately hand-constructed metrics object.
+
+It must not persist transcript, participant notes, hiddenInfo, personal
+feedback, raw model output, or extracted model prose. Schema validation
+failures map to `MODEL_SCHEMA_VALIDATION_ERROR`. Automatic retry is not
+enabled (`AI_ANALYSIS_MAX_ATTEMPTS` remains 1).
 
 ## Visibility Model
 
@@ -435,6 +466,7 @@ payload.
 ## Source Notes
 
 - `lib/ai/negotiation-analysis.ts`
+- `lib/ai/analysis-failure-diagnostics.ts`
 - `lib/analysis-visibility.ts`
 - `lib/privacy/serializers.ts`
 - `lib/ai-publication.ts`

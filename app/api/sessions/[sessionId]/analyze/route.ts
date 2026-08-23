@@ -16,6 +16,7 @@ import {
   fingerprintSessionAnalysisContext,
   type SessionAnalysisContext,
 } from "@/lib/ai/session-analysis-context";
+import { buildBoundedAiAnalysisLogPayload } from "@/lib/ai/analysis-failure-diagnostics";
 import {
   AiAnalysisProviderError,
   bindParticipantPersonalFeedback,
@@ -25,7 +26,6 @@ import {
   isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
   type AiAnalysisErrorCode,
-  type AiAnalysisRunMetrics,
 } from "@/lib/ai/negotiation-analysis";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import { ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE } from "@/lib/transcription/processing-metadata";
@@ -87,83 +87,6 @@ function mapAiAnalysisErrorCodeToExternalServiceCode(
     default:
       return ExternalServiceErrorCode.UNKNOWN;
   }
-}
-
-function buildAiAnalysisLogPayload(params: {
-  errorClass: AiAnalysisErrorCode;
-  provider: string;
-  model: string | null;
-  httpStatus: number | null;
-  retryable: boolean;
-  metrics?: AiAnalysisRunMetrics;
-  diagnostics: Record<string, unknown>;
-}) {
-  return {
-    errorClass: params.errorClass,
-    provider: params.provider,
-    model: params.model,
-    httpStatus: params.httpStatus,
-    retryable: params.retryable,
-    diagnostics: params.diagnostics,
-    metrics: params.metrics
-      ? {
-          totalDurationMs: params.metrics.totalDurationMs,
-          preProviderDurationMs: params.metrics.preProviderDurationMs,
-          generationPostDurationMs:
-            params.metrics.generationPostDurationMs,
-          pollingDurationMs: params.metrics.pollingDurationMs,
-          parsingValidationDurationMs:
-            params.metrics.parsingValidationDurationMs,
-          optionalDepthDurationMs: params.metrics.optionalDepthDurationMs,
-          promptChars: params.metrics.promptChars,
-          estimatedPromptTokens: params.metrics.estimatedPromptTokens,
-          instructionChars: params.metrics.instructionChars,
-          inputChars: params.metrics.inputChars,
-          estimatedInputTokens: params.metrics.estimatedInputTokens,
-          outputSchemaInstructionChars:
-            params.metrics.outputSchemaInstructionChars,
-          primaryMaxOutputTokensConfigured:
-            params.metrics.primaryMaxOutputTokensConfigured,
-          operationAttemptCount: params.metrics.operationAttemptCount,
-          outerRetryCount: params.metrics.outerRetryCount,
-          maxOperationAttempts: params.metrics.maxOperationAttempts,
-          generationCallCount: params.metrics.generationCallCount,
-          compactFallbackCount: params.metrics.compactFallbackCount,
-          optionalDepthCallCount: params.metrics.optionalDepthCallCount,
-          pollingRequestCount: params.metrics.pollingRequestCount,
-          retrievalRetryCount: params.metrics.retrievalRetryCount,
-          operationTimeoutMs: params.metrics.operationTimeoutMs,
-          httpTimeoutMs: params.metrics.httpTimeoutMs,
-          responsePollTimeoutMs: params.metrics.responsePollTimeoutMs,
-          optionalDepthOutcome: params.metrics.optionalDepthOutcome,
-          optionalDepthFailureClass:
-            params.metrics.optionalDepthFailureClass,
-          responseLength: params.metrics.responseLength,
-          outputChars: params.metrics.outputChars,
-          calls: params.metrics.calls.map((call) => ({
-            operationAttemptNumber: call.operationAttemptNumber,
-            generationCallNumber: call.generationCallNumber,
-            purpose: call.purpose,
-            model: call.model,
-            durationMs: call.durationMs,
-            generationPostDurationMs: call.generationPostDurationMs,
-            pollingDurationMs: call.pollingDurationMs,
-            promptChars: call.promptChars,
-            instructionChars: call.instructionChars,
-            inputChars: call.inputChars,
-            estimatedInputTokens: call.estimatedInputTokens,
-            maxOutputTokens: call.maxOutputTokens,
-            responseLength: call.responseLength,
-            httpStatus: call.httpStatus,
-            providerStatus: call.providerStatus,
-            responseIdPresent: call.responseIdPresent,
-            pollingRequestCount: call.pollingRequestCount,
-            retrievalRetryCount: call.retrievalRetryCount,
-            errorClass: call.errorClass,
-          })),
-        }
-      : null,
-  };
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -670,7 +593,7 @@ async function processRealAnalysis(
         errorCode: mapAiAnalysisErrorCodeToExternalServiceCode(classified.code),
         title: `AI analysis failed: ${classified.code}`,
         message: classified.userMessage,
-        rawError: buildAiAnalysisLogPayload({
+        rawError: buildBoundedAiAnalysisLogPayload({
           errorClass: classified.code,
           provider,
           model: classified.model,
