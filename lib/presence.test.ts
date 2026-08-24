@@ -110,8 +110,9 @@ test("session detail presence wiring avoids hydration-sensitive Date.now", () =>
   assert.doesNotMatch(participantsSource, /suppressHydrationWarning/);
   assert.match(pageSource, /presenceSnapshotAt/);
   assert.match(detailSource, /presenceSnapshotAt/);
-  assert.match(participantsSource, /buildInitialParticipantPresenceSnapshot/);
+  assert.match(participantsSource, /buildInitialSessionCurrentPresenceSnapshot/);
   assert.doesNotMatch(participantsSource, /isParticipantOnline/);
+  assert.doesNotMatch(participantsSource, /resolveConnectionStatus/);
 });
 
 test("participant mapping keeps userId in session detail payload", () => {

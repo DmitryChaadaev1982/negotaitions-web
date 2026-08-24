@@ -92,6 +92,7 @@ type SessionDetailViewProps = {
       sessionRoleId?: string | null;
       joinedAt: string | null;
       lastSeenAt: string | null;
+      isCurrentlyInRoom: boolean;
       notesCount: number;
       notes: ParticipantNoteEntry[];
     }>;

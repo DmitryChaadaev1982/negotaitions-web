@@ -473,7 +473,7 @@ restore became mandatory; no exact RC3 artifact is currently recoverable.
 - Verify service health via admin diagnostics and endpoint checks.
 - Verify one room -> recording -> webhook completion cycle.
 - Verify materials status progression for a completed session.
-- For Stage 3.10 maintenance timer rollout: verify dry-run command first (`npm run maintenance:stage310 -- --task all --dry-run`) before enabling timer.
+- For Stage 3.10 maintenance timer rollout: verify dry-run command first (`npm run maintenance:stage310 -- --task all --dry-run`) before enabling timer. That command is the raw `tsx` operational CLI (same ExecStart as the systemd unit), not a Next bundled server.
 
 ## Stage 3.10 Release Order (Exact)
 
@@ -519,3 +519,31 @@ Do not treat this as automatic deploy from app code. Existing facilitator relay 
 - `docs/deployment/yandex-poc-server-parameters.md`
 - `docs/operations/stage-3-10-maintenance-runbook.md`
 - `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
+
+## Future Stage 3.18A production env requirement
+
+Do not change live env files in this Cursor pass. At Stage 3.18A
+deployment, write the same three canonical variables into **both**
+independent runtime env files:
+
+| RUNTIME | ENV_SOURCE | REQUIRED |
+| --- | --- | --- |
+| Next / `negotaitions-poc` | `/var/www/negotaitions/app/.env.production` | YES |
+| `negotiations-stage310-maintenance.service` | `/etc/negotaitions/env.production` | YES |
+
+Values:
+
+- `SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000`
+- `SESSION_DEBRIEF_MAX_DURATION_MS=7200000`
+- `SESSION_ABANDONED_CLOSE_MS=10800000`
+
+Request-driven application reconciliation and the 15-second maintenance
+sweeper must resolve the same numbers. The two files can drift; do not
+redesign env architecture here. The bounded operational update is to
+edit both files, then restart `negotaitions-poc` and start/enable the
+Stage 3.10 timer only in the later authorized deploy step.
+
+Canonical wins over `DEBRIEF_AUTO_CLOSE_GRACE_MS`. If either file still has
+only the legacy `DEBRIEF_AUTO_CLOSE_GRACE_MS=30000` alias and the canonical
+empty-close variable is absent, that consumer would intentionally retain 30
+seconds.

@@ -1,9 +1,15 @@
 import "server-only";
 
-import { Prisma, ParticipantType } from "@/app/generated/prisma/client";
+import {
+  NegotiationState,
+  ParticipantType,
+  Prisma,
+  RoomLifecycle,
+} from "@/app/generated/prisma/client";
 import { PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS } from "@/lib/presence";
 import { prisma } from "@/lib/prisma";
 import { reconcileSessionAfterOccupancyChange } from "@/lib/session-empty-room-reconciliation";
+import { runAfterSessionRowLockedForClaimHook } from "@/lib/session-lifecycle-concurrency-hooks";
 import { deriveEffectiveRoomLifecycle } from "@/lib/session-room-lifecycle";
 import { materializeActivePublicationGrantForRoomEntrantSafe } from "@/lib/ai-publication-entry-grant";
 import { sqlUtcWallClockNow } from "@/lib/sql-utc-wall-clock";
@@ -203,35 +209,50 @@ export async function touchSessionRoomConnectionLease(params: {
   return { touched: touched.count > 0 };
 }
 
-export async function claimSessionRoomConnectionLease(params: {
-  sessionId: string;
-  userId: string;
-  connectionId: string;
-  role?: ParticipantType;
-}): Promise<ClaimResult> {
+type ClaimDb = Pick<typeof prisma, "$transaction">;
+
+export async function claimSessionRoomConnectionLease(
+  params: {
+    sessionId: string;
+    userId: string;
+    connectionId: string;
+    role?: ParticipantType;
+    now?: Date;
+  },
+  db: ClaimDb = prisma,
+): Promise<ClaimResult> {
   let claimed: ClaimResult | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const now = new Date();
+      const now = params.now ?? new Date();
       const expiresAt = withExpiry(now);
 
-      claimed = await prisma.$transaction(async (tx) => {
-        const session = await tx.session.findUnique({
-          where: { id: params.sessionId },
-          select: {
-            id: true,
-            deletedAt: true,
-            roomLifecycle: true,
-            closeReason: true,
-            closedByEventAt: true,
-            negotiationState: true,
-            event: {
-              select: {
-                status: true,
-              },
-            },
-          },
-        });
+      claimed = await db.$transaction(async (tx) => {
+        const [session] = await tx.$queryRaw<
+          Array<{
+            id: string;
+            deletedAt: Date | null;
+            roomLifecycle: RoomLifecycle | null;
+            closeReason: string | null;
+            closedByEventAt: Date | null;
+            negotiationState: NegotiationState | null;
+            eventStatus: string | null;
+          }>
+        >(Prisma.sql`
+          SELECT
+            s.id,
+            s."deletedAt",
+            s."roomLifecycle",
+            s."closeReason",
+            s."closedByEventAt",
+            s."negotiationState",
+            e.status AS "eventStatus"
+          FROM "Session" s
+          LEFT JOIN "TrainingEvent" e ON e.id = s."eventId"
+          WHERE s.id = ${params.sessionId}
+          FOR UPDATE OF s
+        `);
+        await runAfterSessionRowLockedForClaimHook();
         if (!session) {
           return {
             activeConnectionId: params.connectionId,
@@ -246,7 +267,7 @@ export async function claimSessionRoomConnectionLease(params: {
           closedByEventAt: session.closedByEventAt,
           closeReason: session.closeReason,
           negotiationState: session.negotiationState,
-          eventStatus: session.event?.status ?? null,
+          eventStatus: session.eventStatus,
         });
         if (effectiveLifecycle === "CLOSED") {
           return {

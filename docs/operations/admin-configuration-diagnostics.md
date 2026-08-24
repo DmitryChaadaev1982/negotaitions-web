@@ -56,6 +56,10 @@ module/key/form and rejects every other direct read.
 | `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS` | `lib/auth/password-reset-config.ts` | missing/error | no | always | bounded environment integer |
 | `PASSWORD_RESET_MAX_REQUESTS_PER_HOUR` | `lib/auth/password-reset-config.ts` | missing/error | no | always | bounded environment integer |
 | `PASSWORD_RESET_RESPONSE_FLOOR_MS` | `lib/auth/response-timing-floor.ts` | missing/error | no | always | bounded environment integer |
+| `SESSION_DEBRIEF_EMPTY_CLOSE_MS` | `lib/config/session-lifecycle-settings.ts` | optional/unconfigured | no | never | bounded empty-Debrief business timeout; default 60000. Stage 3.18A production deploy must set this explicitly so a leftover `DEBRIEF_AUTO_CLOSE_GRACE_MS=30000` cannot keep 30s compatibility. |
+| `SESSION_DEBRIEF_MAX_DURATION_MS` | `lib/config/session-lifecycle-settings.ts` | optional/unconfigured | no | never | bounded Debrief hard-maximum business timeout; default 7200000 |
+| `SESSION_ABANDONED_CLOSE_MS` | `lib/config/session-lifecycle-settings.ts` | optional/unconfigured | no | never | bounded abandoned-Session business timeout; default 10800000 |
+| `DEBRIEF_AUTO_CLOSE_GRACE_MS` | `lib/config/session-lifecycle-settings.ts` | optional/unconfigured | no | never | legacy alias used only when SESSION_DEBRIEF_EMPTY_CLOSE_MS is unset |
 | `EMAIL_DELIVERY_ENABLED` | `lib/email/config.ts` | missing/error | no | always | disabled-by-design when explicitly false |
 | `EMAIL_PROVIDER` | `lib/email/config.ts` | missing/error | no | always | environment enum |
 | `EMAIL_CANONICAL_BASE_URL` | `lib/email/config.ts` | missing/error | no | always | validated environment origin |

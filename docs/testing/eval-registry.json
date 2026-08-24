@@ -549,6 +549,271 @@
         "lib/ai/analysis-schema-recovery.test.ts"
       ],
       "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-DEBRIEF-EMPTY",
+      "invariant": "A DEBRIEF_OPEN Session empty of current-generation room occupancy remains open at 59s and closes at/after 60s through finalizeSessionCanonicalClose with DEBRIEF_EMPTY_TIMEOUT.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "evaluateSessionLifecyclePolicy reports not_due at 59s and due/DEBRIEF_EMPTY_TIMEOUT at 60s; the same policy is consumed by leave, poll, Event-state, and the 15s sweeper. The fenced finalizer writes DEBRIEF_EMPTY_TIMEOUT.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S1", "S01", "S02"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-policy.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts",
+        "lib/session-room-occupancy.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-OPS-STAGE310-CLI-RUNTIME",
+      "invariant": "The Stage 3.10 maintenance CLI is a raw tsx/Node operational runtime: env bootstrap happens before Prisma/config that require DATABASE_URL, and --task all does not import Next-only server-only modules.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "npm run maintenance:stage310 -- --task all loads under raw tsx. Local/non-production loads project .env* from cwd first. Production uses systemd EnvironmentFile and does not load local Next env. --task all --dry-run executes every current task with zero writes.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S1", "S318A-NS-011"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/stage-3-10-maintenance-cli.test.ts",
+        "scripts/ops/stage-3-10-maintenance.ts",
+        "lib/operational-env.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-DEBRIEF-MAX",
+      "invariant": "Occupied Debrief survives the empty grace but closes at/after SESSION_DEBRIEF_MAX_DURATION_MS from negotiationEndedAt. Earliest eligible reason wins; tied dueAts prefer DEBRIEF_EMPTY_TIMEOUT.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "S06 remains open; S06b due/DEBRIEF_MAX_DURATION; S07 earliest reason wins.",
+      "expectedUiResult": "Occupied hard-close uses the existing CLOSED / ROOM_CLOSED control-state redirect, same as manual complete.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S3", "S06", "S06b", "S07"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-policy.test.ts",
+        "lib/session-room-access.test.ts",
+        "lib/session-room-occupancy.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-ABANDONED",
+      "invariant": "Non-Debrief empty Sessions close after SESSION_ABANDONED_CLOSE_MS. Event-created reference is max(rawReferenceAt, Event.scheduledAt) for both never-entered and early-occupied children. Pre-finish abandoned Sessions reuse completeSessionCanonical so negotiation FINISHED, negotiationEndedAt, room CLOSED, and the first recording-stop intent are coherent; Debrief automatic close still does not start a second stop.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "S08 not closed at 60s; S09/S10 due at 3h; S11/S11b wait for scheduledAt+3h; S12/S12b use the approved floor. PREPARATION/READY_TO_START abandon without an unnecessary stop; RUNNING/PAUSED abandon finishes once and claims at most one stop.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S4", "S318A-D-001", "S08", "S09", "S10", "S11", "S11b", "S12", "S12b"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-policy.test.ts",
+        "lib/session-lifecycle-finalizer.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts",
+        "lib/session-room-occupancy.ts",
+        "lib/session-completion.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-REJOIN-GENERATION",
+      "invariant": "Current-generation occupancy and departure timestamps invalidate an obsolete empty deadline. A later leave starts a new dueAt. Live expiresAt is not empty-since.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "S03/S05 occupied wins; S04 new 60s deadline; superseded generations and live expiresAt are ignored. A stale due evaluation cannot close after an authoritative rejoin commits.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S2", "S03", "S04", "S05", "S16", "S17"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-policy.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts",
+        "lib/session-room-occupancy.ts",
+        "lib/session-room-connection-lease.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-FINALIZER-CONCURRENCY",
+      "invariant": "Claim/rejoin and canonical Session close serialize on the Session row. First fenced UPDATE wins; a newly admitted user is never left inside a CLOSED Session. The shared atomic finalizer race is not by itself the full manual-orchestration race.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "R1/R2 claim vs finalize remain linearized. Abandoned close uses the same lock: claim-first leaves RUNNING/OPEN with no stop; close-first is CLOSED and refuses the later claim. Real manual completeSessionCanonical vs abandoned yields one terminal lifecycle and at most one stop.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S5", "S18", "S19"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-finalizer.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts",
+        "lib/session-room-occupancy.ts",
+        "lib/session-room-connection-lease.ts",
+        "lib/session-completion.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-HISTORICAL-NOOP",
+      "invariant": "The first new-code evaluation of CLOSED, deleted, FINISHED+NULL, Event-closed, or DEBRIEF_OPEN-under-terminal-parent Sessions is an automatic no-op.",
+      "risk": "HIGH",
+      "evalType": "HISTORICAL_FIRST_MUTATION",
+      "fixtureType": "SYNTHETIC_HISTORICAL",
+      "expectedDomainResult": "Policy decision already_terminal or ineligible; no automatic reason is emitted. A stale due evaluation cannot close after the parent Event becomes COMPLETED/CANCELLED/deleted.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": "TERMINAL_SESSION_SHAPES",
+      "requirements": ["S20", "S21", "S318A-NS-005"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-lifecycle-policy.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-EVENT-DASH-LANE",
+      "invariant": "Dashboard Event Active/Archive is a derived presentation lane: explicit COMPLETED/CANCELLED win; otherwise current lobby presence or an operable child Session wins over scheduledAt; otherwise scheduledAt >= now or unscheduled is ACTIVE and past idle is ARCHIVE. Exactly one lane. Historical terminal children do not make an Event ACTIVE.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "classifyEventDashboardLane and partitionDashboardEventsByLane implement E01-E04, E08, E11-E15 with injected now. No Event row is mutated.",
+      "expectedUiResult": "An Event card appears in Active or Archive, never both.",
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S318A-E3", "E01", "E02", "E03", "E04", "E08", "E09", "E11", "E12", "E13", "E14", "E15"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/dashboard-activity-selection.ts",
+        "lib/dashboard-activity-selection.test.ts",
+        "app/(app)/dashboard/page.tsx",
+        "tests/e2e/event-completion.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-EVENT-DASH-LANE-REVERSIBLE",
+      "invariant": "For a non-terminal Event only, Archive↔Active lane changes follow current lobby occupancy or operable child Session without a persisted Event status transition.",
+      "risk": "MEDIUM",
+      "evalType": "TRANSITION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "E05/E07: past idle ARCHIVE → lobby occupancy or a later host-created operable child Session → ACTIVE → activity disappears and scheduledAt still past → ARCHIVE. Event.status is not completed/cancelled merely because the Event is historical.",
+      "expectedUiResult": "Reload of Dashboard shows the Event in exactly one updated lane.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-E3", "E05", "E07", "E13"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/dashboard-activity-selection.test.ts",
+        "tests/e2e/event-dashboard-lane.spec.ts",
+        "tests/e2e/event-archive-reuse.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-EVENT-DASH-LANE-JOINABLE",
+      "invariant": "Archive listing does not deny Lobby entry or reuse of a past idle non-terminal Event. Join and later Session create/start stay on existing Event lifecycle/authorization rules. scheduledAt < now and dashboardLane ARCHIVE are not access predicates.",
+      "risk": "MEDIUM",
+      "evalType": "INTERACTION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "canAccessEvent, isEventOpenAndJoinable, Event host POST, and createSessionFromEvent ignore scheduledAt and dashboard lane. joinTrainingEvent still only rejects deleted/COMPLETED/CANCELLED. An authorized host can create the next Session for a past ARCHIVE Event.",
+      "expectedUiResult": "A derived-past Archive Event card still exposes Open lobby; the authorized Lobby page loads; host POST creates a real child Session.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-E2", "S318A-NS-003", "E06", "E07", "E10"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/access-control.test.ts",
+        "lib/access-control.ts",
+        "lib/create-event-session.ts",
+        "app/actions/events.ts",
+        "app/api/events/[id]/host/route.ts",
+        "tests/e2e/event-dashboard-lane.spec.ts",
+        "tests/e2e/event-archive-reuse.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-SESSION-PRESENCE-DISPLAY",
+      "invariant": "Session user-facing Online is unique current SessionRoomConnection occupancy on an operable Session. SessionParticipant.lastSeenAt alone never implies Online. Explicit Leave makes the next read Offline immediately.",
+      "risk": "MEDIUM",
+      "evalType": "INTERACTION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "P01-P10: live lease → Online; explicit leave / stale lastSeenAt / superseded / revoked / expired / terminal Session → Offline; duplicate tabs count as 1; all room roles count equally.",
+      "expectedUiResult": "Sessions list Online N and Session detail Online now drop the leaver on the next ordinary poll/stream without waiting 30s.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-S1"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/session-current-presence.ts",
+        "lib/session-current-presence.test.ts",
+        "lib/session-overview-stats.ts",
+        "app/api/sessions/[sessionId]/presence/route.ts",
+        "tests/e2e/stage-3-18a-presence-display.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S318A-EVENT-PRESENCE-LOCATION",
+      "invariant": "Event who-is-where uses Room > Lobby > Offline. Event Online is the unique union of current Lobby users and current operable child-room users. lastSeenAt-only Session heartbeat does not create Event Online.",
+      "risk": "MEDIUM",
+      "evalType": "INTERACTION",
+      "fixtureType": "MIXED",
+      "expectedDomainResult": "E-P01-E-P12: Lobby only / Session only / overlap / neither / stale Lobby / closed child / leave / leave-then-lobby / distributed people / observer.",
+      "expectedUiResult": "Event lobby presence indicator moves Lobby → Session → Offline on ordinary state poll and never double-counts the same person.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S318A-E3"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/event-participant-presence.ts",
+        "lib/event-participant-presence.test.ts",
+        "lib/event-presence-buckets.ts",
+        "lib/event-state.ts",
+        "tests/e2e/stage-3-18a-presence-display.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
     }
   ]
 }

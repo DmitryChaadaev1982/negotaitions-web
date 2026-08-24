@@ -570,14 +570,14 @@ test.describe("Vox room presence lease policy", () => {
 
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '45 seconds',
-           "updatedAt" = NOW() - INTERVAL '45 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '75 seconds',
+           "updatedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "connectionId" = $1`,
       [connectionId],
     );
     await query(
       `UPDATE "Session"
-       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       SET "negotiationEndedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "id" = $1`,
       [localFixture.sessionId],
     );
@@ -1179,8 +1179,8 @@ test.describe("Vox room presence lease policy", () => {
 
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '29 seconds',
-           "updatedAt" = NOW() - INTERVAL '29 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '59 seconds',
+           "updatedAt" = NOW() - INTERVAL '59 seconds'
        WHERE "connectionId" = $1`,
       [connectionId],
     );
@@ -1201,14 +1201,14 @@ test.describe("Vox room presence lease policy", () => {
 
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '31 seconds',
-           "updatedAt" = NOW() - INTERVAL '31 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '61 seconds',
+           "updatedAt" = NOW() - INTERVAL '61 seconds'
        WHERE "connectionId" = $1`,
       [connectionId],
     );
     await query(
       `UPDATE "Session"
-       SET "negotiationEndedAt" = NOW() - INTERVAL '31 seconds'
+       SET "negotiationEndedAt" = NOW() - INTERVAL '61 seconds'
        WHERE "id" = $1`,
       [localFixture.sessionId],
     );
@@ -1298,8 +1298,8 @@ test.describe("Vox room presence lease policy", () => {
 
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '45 seconds',
-           "updatedAt" = NOW() - INTERVAL '45 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '75 seconds',
+           "updatedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "connectionId" = $1`,
       [oldConnectionId],
     );
@@ -1327,14 +1327,14 @@ test.describe("Vox room presence lease policy", () => {
     });
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '45 seconds',
-           "updatedAt" = NOW() - INTERVAL '45 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '75 seconds',
+           "updatedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "connectionId" = $1`,
       [newConnectionId],
     );
     await query(
       `UPDATE "Session"
-       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       SET "negotiationEndedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "id" = $1`,
       [localFixture.sessionId],
     );
@@ -1408,14 +1408,14 @@ test.describe("Vox room presence lease policy", () => {
     });
     await query(
       `UPDATE "SessionRoomConnection"
-       SET "disconnectedAt" = NOW() - INTERVAL '45 seconds',
-           "updatedAt" = NOW() - INTERVAL '45 seconds'
+       SET "disconnectedAt" = NOW() - INTERVAL '75 seconds',
+           "updatedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "connectionId" = $1`,
       [connectionId],
     );
     await query(
       `UPDATE "Session"
-       SET "negotiationEndedAt" = NOW() - INTERVAL '45 seconds'
+       SET "negotiationEndedAt" = NOW() - INTERVAL '75 seconds'
        WHERE "id" = $1`,
       [localFixture.sessionId],
     );
@@ -1606,7 +1606,7 @@ test.describe("Vox room presence lease policy", () => {
       );
       await query(
         `UPDATE "SessionRoomConnection"
-         SET "disconnectedAt" = NOW() - INTERVAL '45 seconds'
+         SET "disconnectedAt" = NOW() - INTERVAL '75 seconds'
          WHERE "connectionId" = $1`,
         [observerOnlyConnectionId],
       );
@@ -1630,7 +1630,7 @@ test.describe("Vox room presence lease policy", () => {
       expect((await leaveRejoin.json()).roomClosed).toBe(false);
       await query(
         `UPDATE "SessionRoomConnection"
-         SET "disconnectedAt" = NOW() - INTERVAL '31 seconds'
+         SET "disconnectedAt" = NOW() - INTERVAL '61 seconds'
          WHERE "connectionId" = $1`,
         [rejoinConnectionId],
       );
@@ -1711,7 +1711,7 @@ test.describe("Vox room presence lease policy", () => {
 
       await query(
         `UPDATE "Session"
-         SET "negotiationEndedAt" = NOW() - INTERVAL '31 seconds'
+         SET "negotiationEndedAt" = NOW() - INTERVAL '61 seconds'
          WHERE "id" = $1`,
         [localFixture.sessionId],
       );

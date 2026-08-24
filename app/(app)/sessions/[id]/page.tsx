@@ -13,6 +13,11 @@ import {
   toParticipantNoteEntries,
 } from "@/lib/participant-notes-access";
 import { requireActiveUser } from "@/lib/auth";
+import {
+  collectCurrentSessionRoomUserIds,
+  isSessionOperableForCurrentRoomPresence,
+  liveSessionRoomConnectionWhere,
+} from "@/lib/session-current-presence";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +37,7 @@ export default async function SessionDetailPage({
     notFound();
   }
 
+  const presenceNow = new Date(presenceSnapshotAt);
   const session = await prisma.session.findFirst({
     where: {
       id,
@@ -66,6 +72,17 @@ export default async function SessionDetailPage({
       facilitator: {
         select: { id: true, name: true, email: true },
       },
+      roomConnections: {
+        where: liveSessionRoomConnectionWhere(presenceNow),
+        select: {
+          userId: true,
+          sessionId: true,
+          disconnectedAt: true,
+          revokedAt: true,
+          supersededAt: true,
+          expiresAt: true,
+        },
+      },
     },
   });
 
@@ -84,6 +101,13 @@ export default async function SessionDetailPage({
   const existingParticipantUserIds = session.participants
     .filter((p) => p.userId != null)
     .map((p) => p.userId!);
+  const currentRoomUserIds = isSessionOperableForCurrentRoomPresence(session)
+    ? collectCurrentSessionRoomUserIds(
+        session.roomConnections,
+        presenceNow,
+        session,
+      )
+    : new Set<string>();
 
   return (
     <SessionDetailView
@@ -132,6 +156,9 @@ export default async function SessionDetailPage({
           sessionRoleId: participant.sessionRoleId,
           joinedAt: participant.joinedAt?.toISOString() ?? null,
           lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
+          isCurrentlyInRoom: Boolean(
+            participant.userId && currentRoomUserIds.has(participant.userId),
+          ),
           notesCount: getParticipantNotesCount(participant.notes),
           notes: toParticipantNoteEntries(participant),
         })),

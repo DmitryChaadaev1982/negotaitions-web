@@ -7,12 +7,10 @@ import { formatDateFromIso } from "@/lib/format-date";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { ParticipantNoteEntry } from "@/lib/participant-notes-types";
 import {
-  buildInitialParticipantPresenceSnapshot,
-  parsePresenceSnapshotAt,
-  resolveConnectionStatus,
   type ParticipantConnectionStatus,
   type ParticipantPresenceSnapshot,
 } from "@/lib/presence";
+import { buildInitialSessionCurrentPresenceSnapshot } from "@/lib/session-current-presence";
 
 type ParticipantRow = {
   id: string;
@@ -21,6 +19,7 @@ type ParticipantRow = {
   caseRoleName: string | null;
   joinedAt: string | null;
   lastSeenAt: string | null;
+  isCurrentlyInRoom: boolean;
   notesCount: number;
   notes: ParticipantNoteEntry[];
 };
@@ -74,7 +73,6 @@ type ParticipantsPresenceTableProps = {
   sessionId: string;
   participants: ParticipantRow[];
   initialPresence: Map<string, ParticipantPresenceSnapshot>;
-  presenceSnapshotAt: string;
   readOnly?: boolean;
   onViewNotes: (participant: ParticipantRow) => void;
 };
@@ -98,14 +96,12 @@ function ParticipantsPresenceTable({
   sessionId,
   participants,
   initialPresence,
-  presenceSnapshotAt,
   readOnly = false,
   onViewNotes,
 }: ParticipantsPresenceTableProps) {
   const { t, locale } = useI18n();
   const [presenceById, setPresenceById] =
     useState<Map<string, ParticipantPresenceSnapshot>>(initialPresence);
-  const initialSnapshotEpoch = parsePresenceSnapshotAt(presenceSnapshotAt);
 
   useEffect(() => {
     const source = new EventSource(
@@ -203,15 +199,7 @@ function ParticipantsPresenceTable({
                 <td className="px-6 py-4">
                   <ConnectionStatus
                     connectionStatus={
-                      presence?.connectionStatus ??
-                      resolveConnectionStatus(
-                        presence?.lastSeenAt
-                          ? new Date(presence.lastSeenAt)
-                          : participant.lastSeenAt
-                            ? new Date(participant.lastSeenAt)
-                            : null,
-                        initialSnapshotEpoch,
-                      )
+                      presence?.connectionStatus ?? "OFFLINE"
                     }
                   />
                 </td>
@@ -271,7 +259,10 @@ export function ParticipantsTable({
     for (const participant of participants) {
       map.set(
         participant.id,
-        buildInitialParticipantPresenceSnapshot(participant, presenceSnapshotAt),
+        buildInitialSessionCurrentPresenceSnapshot(
+          participant,
+          presenceSnapshotAt,
+        ),
       );
     }
 
@@ -295,7 +286,6 @@ export function ParticipantsTable({
       sessionId={sessionId}
       participants={participants}
       initialPresence={initialPresence}
-      presenceSnapshotAt={presenceSnapshotAt}
       readOnly={readOnly}
       onViewNotes={onViewNotes}
     />

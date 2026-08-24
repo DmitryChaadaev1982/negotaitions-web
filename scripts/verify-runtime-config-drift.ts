@@ -43,6 +43,7 @@ export const RUNTIME_CONFIG_SCOPE_PATHS = Object.freeze([
   "lib/prisma.ts",
   "lib/config/provider-runtime.ts",
   "lib/config/server-action-origins.ts",
+  "lib/config/session-lifecycle-settings.ts",
   "lib/services/admin-env-display.ts",
   "next.config.ts",
 ]);

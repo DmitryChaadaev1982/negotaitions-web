@@ -1,9 +1,7 @@
 import { getDemoFacilitator } from "@/lib/demo-user";
 import { prisma } from "@/lib/prisma";
-import {
-  PRESENCE_STREAM_INTERVAL_MS,
-  toParticipantPresenceSnapshot,
-} from "@/lib/presence";
+import { PRESENCE_STREAM_INTERVAL_MS } from "@/lib/presence";
+import { loadSessionCurrentPresenceSnapshots } from "@/lib/session-current-presence-read";
 
 export const dynamic = "force-dynamic";
 
@@ -38,18 +36,11 @@ export async function GET(request: Request, context: RouteContext) {
           return;
         }
 
-        const participants = await prisma.sessionParticipant.findMany({
-          where: { sessionId },
-          select: {
-            id: true,
-            joinedAt: true,
-            lastSeenAt: true,
-          },
-          orderBy: { createdAt: "asc" },
-        });
+        const participants =
+          (await loadSessionCurrentPresenceSnapshots(sessionId)) ?? [];
 
         const payload = {
-          participants: participants.map(toParticipantPresenceSnapshot),
+          participants,
         };
 
         controller.enqueue(

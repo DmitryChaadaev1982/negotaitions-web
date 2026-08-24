@@ -3,9 +3,12 @@ import { isAdmin } from "@/lib/auth/admin";
 import { aggregateAiPublicationStatus } from "@/lib/ai-publication-aggregate";
 import { normalizeUserEmail } from "@/lib/invite-email";
 import { secondsToDisplayMinutes } from "@/lib/negotiation-duration";
-import { PRESENCE_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { listMappingStageFromTranscript } from "@/lib/post-processing/projection";
 import { prisma } from "@/lib/prisma";
+import {
+  countUniqueCurrentSessionRoomUsers,
+  liveSessionRoomConnectionWhere,
+} from "@/lib/session-current-presence";
 import { resolveSessionDisplayStatus } from "@/lib/session-display-status";
 import {
   isSessionActiveForPresence,
@@ -28,16 +31,12 @@ export {
   isSessionActiveForPresence,
 } from "@/lib/session-overview-shared";
 
-function isOnline(lastSeenAt: Date | null, onlineThreshold: Date) {
-  return lastSeenAt != null && lastSeenAt >= onlineThreshold;
-}
-
 export async function getSessionsForList(): Promise<SessionListItem[]> {
   return getSessionsForUser(null);
 }
 
 export async function getSessionsForUser(user: AuthUser | null): Promise<SessionListItem[]> {
-  const onlineThreshold = new Date(Date.now() - PRESENCE_ONLINE_THRESHOLD_MS);
+  const presenceNow = new Date();
   const visibilityFilter =
     user && !isAdmin(user)
       ? sessionVisibilityWhere(user.id, normalizeUserEmail(user.email))
@@ -86,8 +85,19 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
           userId: true,
           type: true,
           joinedAt: true,
-          lastSeenAt: true,
+          // lastSeenAt is recent activity, not current Online.
           // joinToken intentionally omitted — must not appear in list data.
+        },
+      },
+      roomConnections: {
+        where: liveSessionRoomConnectionWhere(presenceNow),
+        select: {
+          userId: true,
+          sessionId: true,
+          disconnectedAt: true,
+          revokedAt: true,
+          supersededAt: true,
+          expiresAt: true,
         },
       },
       _count: {
@@ -237,9 +247,11 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       closedByEventAt: session.closedByEventAt?.toISOString() ?? null,
       participantCount: session._count.participants,
       onlineParticipantCount: presenceActive
-        ? session.participants.filter((participant) =>
-            isOnline(participant.lastSeenAt, onlineThreshold),
-          ).length
+        ? countUniqueCurrentSessionRoomUsers(
+            session.roomConnections,
+            presenceNow,
+            session,
+          )
         : 0,
       durationMinutes: secondsToDisplayMinutes(session.durationSeconds),
       createdAt: session.createdAt.toISOString(),

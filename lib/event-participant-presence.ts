@@ -1,3 +1,8 @@
+import {
+  isCurrentSessionRoomPresenceConnection,
+  type CurrentPresenceSession,
+} from "@/lib/session-current-presence";
+
 export type EventParticipantPresenceState =
   | "IN_LOBBY"
   | "IN_SESSION"
@@ -25,6 +30,7 @@ export type EventParticipantSessionPresenceEvidence = {
   supersededAt: Date | null;
   expiresAt: Date;
   updatedAt: Date;
+  session?: CurrentPresenceSession | null;
 };
 
 export type EventParticipantLobbyPresenceEvidence = {
@@ -36,12 +42,7 @@ function isActiveSessionConnection(
   connection: EventParticipantSessionPresenceEvidence,
   now: Date,
 ) {
-  return (
-    connection.disconnectedAt == null &&
-    connection.revokedAt == null &&
-    connection.supersededAt == null &&
-    connection.expiresAt > now
-  );
+  return isCurrentSessionRoomPresenceConnection(connection, now);
 }
 
 function activeSessionSortValue(
@@ -138,34 +139,6 @@ export function resolveEventParticipantPresence(params: {
     params.lobbyOnlineWindowMs,
   );
 
-  if (hasActiveLobbyPresence && activeSession) {
-    const lobbyMs = lobbyLastSeenAt?.getTime() ?? 0;
-    if (activeSession.updatedAt.getTime() > lobbyMs) {
-      return {
-        state: "IN_SESSION",
-        location: {
-          kind: "session",
-          sessionId: activeSession.sessionId,
-          sessionTitle: activeSession.sessionTitle,
-        },
-        terminalSeenAt: null,
-      };
-    }
-    return {
-      state: "IN_LOBBY",
-      location: { kind: "lobby" },
-      terminalSeenAt: null,
-    };
-  }
-
-  if (hasActiveLobbyPresence) {
-    return {
-      state: "IN_LOBBY",
-      location: { kind: "lobby" },
-      terminalSeenAt: null,
-    };
-  }
-
   if (activeSession) {
     return {
       state: "IN_SESSION",
@@ -174,6 +147,14 @@ export function resolveEventParticipantPresence(params: {
         sessionId: activeSession.sessionId,
         sessionTitle: activeSession.sessionTitle,
       },
+      terminalSeenAt: null,
+    };
+  }
+
+  if (hasActiveLobbyPresence) {
+    return {
+      state: "IN_LOBBY",
+      location: { kind: "lobby" },
       terminalSeenAt: null,
     };
   }

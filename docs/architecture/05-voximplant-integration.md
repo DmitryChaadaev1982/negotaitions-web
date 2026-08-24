@@ -235,6 +235,16 @@ switching application versions.
 - Server-side control channel is stored in server-only `SessionVoximplantControlChannel` (`sessionId` + `providerSessionId` unique) with private URL fingerprint logging only.
 - Stop transport/result evidence stays additive on `SessionRecordingStopOperation` (`transportAcceptedAt`, `commandAcceptedAt`, `providerTerminalAt`, provider failure fields) without new operation state strings.
 - Feature modes are controlled by `VOXIMPLANT_SERVER_STOP_MODE`: `disabled`, `prefer_server_with_relay_fallback`, `prefer_server_no_relay_fallback`.
+- Server-stop settings parsing is runtime-neutral in
+  `lib/voximplant/server-stop-settings.ts`. Next application consumers
+  import `lib/voximplant/server-stop-config.ts`, which keeps
+  `import "server-only"`. The Stage 3.10 operational CLI imports the
+  settings module directly. The same split applies to Voximplant account
+  config (`config-settings.ts` / `config.ts`), webhook URL persistence
+  (`recording-webhook-url-store.ts` / `recording-webhook-url.ts`), and
+  callback nonce store (`server-stop-replay-store.ts` /
+  `server-stop-replay.ts`). Pure parsers do not make secrets client-safe;
+  client/server-component code must keep using the server-only wrappers.
 - Provider terminal callback evidence is required for normal server path promotion to `DELIVERED`; transport 2xx alone is non-terminal.
 - Browser relay remains bounded fallback only for `prefer_server_with_relay_fallback` mode; disabled mode preserves existing behavior.
 
@@ -308,6 +318,10 @@ record it fails to resolve arrive in one message.
 - `lib/voximplant/use-voximplant-room.ts`
 - `lib/voximplant/event-media-control-store.ts`
 - `lib/voximplant/recording-dispatch.ts`
+- `lib/voximplant/server-stop-settings.ts`
+- `lib/voximplant/server-stop-config.ts`
+- `lib/voximplant/config-settings.ts`
+- `lib/voximplant/recording-webhook-url-store.ts`
 - `lib/voximplant/reinvite-scheme-sanitizer.ts`
 - `lib/voximplant/websdk-log-filter.ts`
 - `docs/voximplant/*.md`

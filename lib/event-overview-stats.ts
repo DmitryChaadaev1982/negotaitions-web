@@ -101,6 +101,8 @@ export async function getEventsForUser(
           closedByEventAt: true,
           negotiationState: true,
           status: true,
+          roomLifecycle: true,
+          deletedAt: true,
           updatedAt: true,
           createdAt: true,
           recording: {
@@ -143,6 +145,13 @@ export async function getEventsForUser(
         session.roomConnections.map((connection) => ({
           ...connection,
           sessionTitle: session.title,
+          session: {
+            status: session.status,
+            negotiationState: session.negotiationState,
+            roomLifecycle: session.roomLifecycle,
+            closedByEventAt: session.closedByEventAt,
+            deletedAt: session.deletedAt,
+          },
         })),
       ),
     });

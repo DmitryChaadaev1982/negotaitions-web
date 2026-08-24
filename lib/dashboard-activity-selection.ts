@@ -23,7 +23,10 @@ export type DashboardEventCandidate = {
   scheduledAt: string | null;
   createdAt?: string;
   deletedAt?: Date | string | null;
+  participantsInLobby?: number;
 };
+
+export type EventDashboardLane = "ACTIVE" | "ARCHIVE";
 
 const SESSION_RELEVANCE: Record<string, number> = {
   RUNNING: 0,
@@ -52,14 +55,10 @@ function timestamp(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function isEligibleDashboardSession(
+export function isActiveOperableDashboardChildSession(
   session: DashboardSessionCandidate,
 ): boolean {
-  if (
-    session.deletedAt != null ||
-    session.eventStatus === "COMPLETED" ||
-    session.eventStatus === "CANCELLED"
-  ) {
+  if (session.deletedAt != null) {
     return false;
   }
 
@@ -68,6 +67,117 @@ export function isEligibleDashboardSession(
     negotiationState: session.negotiationState,
     roomLifecycle: session.roomLifecycle,
   });
+}
+
+export function isEligibleDashboardSession(
+  session: DashboardSessionCandidate,
+): boolean {
+  if (
+    session.eventStatus === "COMPLETED" ||
+    session.eventStatus === "CANCELLED"
+  ) {
+    return false;
+  }
+
+  return isActiveOperableDashboardChildSession(session);
+}
+
+export function isExplicitTerminalDashboardEvent(
+  status: TrainingEventStatus,
+): boolean {
+  return status === "COMPLETED" || status === "CANCELLED";
+}
+
+export function isPastDashboardScheduledAt(
+  scheduledAt: string | null | undefined,
+  now: Date,
+): boolean {
+  if (!scheduledAt) {
+    return false;
+  }
+  const scheduledAtMs = timestamp(scheduledAt);
+  if (scheduledAtMs === 0) {
+    return false;
+  }
+  return scheduledAtMs < now.getTime();
+}
+
+export function classifyEventDashboardLane(input: {
+  eventStatus: TrainingEventStatus;
+  scheduledAt: string | null;
+  activeLobbyCount: number;
+  hasActiveChildSession: boolean;
+  now: Date;
+  deletedAt?: Date | string | null;
+}): EventDashboardLane {
+  if (input.deletedAt != null) {
+    return "ARCHIVE";
+  }
+
+  if (isExplicitTerminalDashboardEvent(input.eventStatus)) {
+    return "ARCHIVE";
+  }
+
+  if (input.activeLobbyCount > 0 || input.hasActiveChildSession) {
+    return "ACTIVE";
+  }
+
+  if (!isPastDashboardScheduledAt(input.scheduledAt, input.now)) {
+    return "ACTIVE";
+  }
+
+  return "ARCHIVE";
+}
+
+export function eventHasActiveOperableDashboardChild(
+  sessions: readonly DashboardSessionCandidate[],
+  eventId: string,
+): boolean {
+  return sessions.some(
+    (session) =>
+      session.eventId === eventId &&
+      isActiveOperableDashboardChildSession(session),
+  );
+}
+
+export function partitionDashboardEventsByLane<
+  E extends DashboardEventCandidate,
+  S extends DashboardSessionCandidate,
+>(params: {
+  events: readonly E[];
+  sessions: readonly S[];
+  now: Date;
+}): {
+  activeEvents: E[];
+  archivedEvents: E[];
+} {
+  const activeEvents: E[] = [];
+  const archivedEvents: E[] = [];
+
+  for (const event of params.events) {
+    const lane = classifyEventDashboardLane({
+      eventStatus: event.status,
+      scheduledAt: event.scheduledAt,
+      activeLobbyCount: event.participantsInLobby ?? 0,
+      hasActiveChildSession: eventHasActiveOperableDashboardChild(
+        params.sessions,
+        event.id,
+      ),
+      now: params.now,
+      deletedAt: event.deletedAt,
+    });
+
+    if (lane === "ACTIVE") {
+      activeEvents.push(event);
+    } else {
+      archivedEvents.push(event);
+    }
+  }
+
+  return {
+    activeEvents: sortDashboardEvents(activeEvents, params.now),
+    archivedEvents: sortArchivedDashboardEvents(archivedEvents),
+  };
 }
 
 export function sortDashboardSessions<
@@ -275,6 +385,6 @@ export function selectDashboardActivity<
     return { kind: "session", item: session };
   }
 
-  const event = sortDashboardEvents(params.events, params.now)[0];
+  const event = partitionDashboardEventsByLane(params).activeEvents[0];
   return event ? { kind: "event", item: event } : null;
 }

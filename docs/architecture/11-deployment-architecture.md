@@ -5,6 +5,21 @@
 - Provider: Yandex Cloud VM-based deployment.
 - App service: `negotaitions-poc` (systemd service).
 - Runtime command model: `npm run start` / `next start` after build.
+- Stage 3.10 maintenance is a separate oneshot systemd unit
+  (`negotiations-stage310-maintenance.service`) on a 15s timer. It runs
+  `npm run maintenance:stage310 -- --task all` via raw `tsx`, not the
+  Next bundler. Production injects `/etc/negotaitions/env.production`
+  and `NODE_ENV=production`; the CLI must not load local Next `.env*`
+  in that mode. Local/non-production runs load project `.env*` from cwd
+  before Prisma or required config is constructed.
+- Stage 3.18A automatic-close values must be identical in both independent
+  production env files. The application service reads
+  `/var/www/negotaitions/app/.env.production`. The maintenance unit reads
+  `/etc/negotaitions/env.production`. Set
+  `SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000`,
+  `SESSION_DEBRIEF_MAX_DURATION_MS=7200000`, and
+  `SESSION_ABANDONED_CLOSE_MS=10800000` in both. Do not treat repository
+  validation as timer enablement.
 
 ## Canonical Server Paths
 
@@ -139,6 +154,16 @@ preflight predicates and rollback steps are in
   production, or future domains. Server/email links remain bound to explicitly
   configured canonical origins because no browser authority exists there.
 
+## Operational CLI runtime
+
+The Stage 3.10 maintenance CLI is an intentional non-Next runtime. The
+entrypoint (`scripts/ops/stage-3-10-maintenance.ts`) calls
+`bootstrapOperationalEnv()` before dynamically importing
+`lib/stage-3-10-maintenance.ts`. Next-only `import "server-only"`
+boundaries stay on application wrappers. Enabling the production timer
+uses the same command; do not add a `node -e` wrapper or Next module
+resolution shim.
+
 ## Source Notes
 
 - `docs/deployment/yandex-poc-server-parameters.md`
@@ -146,3 +171,6 @@ preflight predicates and rollback steps are in
 - `docs/voximplant/yandex-deployment-runbook.md` (historical; env-backup steps superseded)
 - `docs/operations/deployment-runbook.md` (authoritative env backup retention
   and current-env rollback)
+- `scripts/ops/stage-3-10-maintenance.ts`
+- `deploy/systemd/negotiations-stage310-maintenance.service`
+- `deploy/systemd/negotiations-stage310-maintenance.timer`

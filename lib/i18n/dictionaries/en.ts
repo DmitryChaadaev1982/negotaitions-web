@@ -957,7 +957,7 @@ export const en = {
     standaloneSessions: "Standalone sessions",
     managedEvents: "Managed Events",
     archiveCompleted: "Archive / Completed",
-    archiveSummary: "{count} completed sessions",
+    archiveSummary: "{count} archived items",
     showArchive: "Show completed",
     hideArchive: "Hide completed",
     noCurrentActivity: "No active rooms available to join.",

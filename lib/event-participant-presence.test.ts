@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  connectionStatusForEventPresenceState,
   resolveEventParticipantPresence,
   type EventParticipantSessionPresenceEvidence,
 } from "@/lib/event-participant-presence";
+import { derivePresenceBuckets } from "@/lib/event-presence-buckets";
+import type { CurrentPresenceSession } from "@/lib/session-current-presence";
 
 const NOW = new Date("2026-08-03T10:00:00.000Z");
 const LOBBY_ONLINE_MS = 12_000;
@@ -153,19 +156,22 @@ test("simultaneous stale lobby and newer Session evidence resolves deterministic
   );
 });
 
-test("simultaneous stale Session and newer lobby evidence resolves to IN_LOBBY", () => {
-  assert.equal(
-    resolve({
-      joinedAt: ago(60_000),
-      lastSeenAt: ago(1_000),
-      sessionConnections: [
-        sessionConnection({
-          updatedAt: ago(10_000),
-        }),
-      ],
-    }).state,
-    "IN_LOBBY",
-  );
+test("E-P03 live room plus still-fresh Lobby signal resolves to IN_SESSION only", () => {
+  const presence = resolve({
+    joinedAt: ago(60_000),
+    lastSeenAt: ago(1_000),
+    sessionConnections: [
+      sessionConnection({
+        updatedAt: ago(10_000),
+      }),
+    ],
+  });
+  assert.equal(presence.state, "IN_SESSION");
+  assert.deepEqual(presence.location, {
+    kind: "session",
+    sessionId: "session-1",
+    sessionTitle: "Room 1",
+  });
 });
 
 test("superseded revoked and disconnected terminal records are recent away evidence", () => {
@@ -318,4 +324,186 @@ test("server timestamp injection controls boundary decisions", () => {
     }).state,
     "TEMPORARILY_AWAY",
   );
+});
+
+function closedChildSession(): CurrentPresenceSession {
+  return {
+    status: "COMPLETED",
+    negotiationState: "FINISHED",
+    roomLifecycle: "CLOSED",
+    closedByEventAt: null,
+    deletedAt: null,
+  };
+}
+
+function operableChildSession(): CurrentPresenceSession {
+  return {
+    status: "READY",
+    negotiationState: "RUNNING",
+    roomLifecycle: "OPEN",
+    closedByEventAt: null,
+    deletedAt: null,
+  };
+}
+
+test("E-P01 current Lobby only is IN_LOBBY and Online", () => {
+  const presence = resolve({ joinedAt: ago(10_000), lastSeenAt: ago(1_000) });
+  assert.equal(presence.state, "IN_LOBBY");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "ONLINE");
+});
+
+test("E-P02 current Session room only is IN_SESSION and Online", () => {
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({ session: operableChildSession() }),
+    ],
+  });
+  assert.equal(presence.state, "IN_SESSION");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "ONLINE");
+});
+
+test("E-P04 neither Lobby nor room is not Online", () => {
+  const presence = resolve({});
+  assert.equal(presence.state, "INVITED_NOT_CONNECTED");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "OFFLINE");
+});
+
+test("E-P05 stale Lobby presence is Offline unless a current room connection exists", () => {
+  const staleLobby = resolve({
+    joinedAt: ago(60_000),
+    lastSeenAt: ago(30_000),
+  });
+  assert.notEqual(staleLobby.state, "IN_LOBBY");
+  assert.notEqual(connectionStatusForEventPresenceState(staleLobby.state), "ONLINE");
+
+  const roomWins = resolve({
+    joinedAt: ago(60_000),
+    lastSeenAt: ago(30_000),
+    sessionConnections: [
+      sessionConnection({ session: operableChildSession() }),
+    ],
+  });
+  assert.equal(roomWins.state, "IN_SESSION");
+});
+
+test("E-P06 historical or closed child room connection is not IN_SESSION", () => {
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({ session: closedChildSession() }),
+    ],
+  });
+  assert.notEqual(presence.state, "IN_SESSION");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "OFFLINE");
+});
+
+test("E-P07 Lobby then Session changes location without a double display", () => {
+  const inLobby = resolve({
+    joinedAt: ago(20_000),
+    lastSeenAt: ago(1_000),
+  });
+  assert.equal(inLobby.state, "IN_LOBBY");
+
+  const moved = resolve({
+    joinedAt: ago(20_000),
+    lastSeenAt: ago(1_000),
+    sessionConnections: [
+      sessionConnection({
+        session: operableChildSession(),
+        updatedAt: ago(200),
+      }),
+    ],
+  });
+  assert.equal(moved.state, "IN_SESSION");
+  assert.equal(moved.location.kind, "session");
+});
+
+test("E-P08 explicit Session Leave with no Lobby presence is not Online", () => {
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({
+        disconnectedAt: NOW,
+        session: operableChildSession(),
+      }),
+    ],
+  });
+  assert.notEqual(presence.state, "IN_SESSION");
+  assert.notEqual(presence.state, "IN_LOBBY");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "RECENTLY_DISCONNECTED");
+  assert.equal(presence.location.kind, "none");
+});
+
+test("E-P09 explicit Session Leave followed by real Lobby entry is IN_LOBBY", () => {
+  const presence = resolve({
+    joinedAt: ago(60_000),
+    lastSeenAt: ago(1_000),
+    sessionConnections: [
+      sessionConnection({
+        disconnectedAt: ago(2_000),
+        session: operableChildSession(),
+      }),
+    ],
+  });
+  assert.equal(presence.state, "IN_LOBBY");
+  assert.equal(connectionStatusForEventPresenceState(presence.state), "ONLINE");
+});
+
+test("E-P10 distributed people produce correct locations and Online count 2", () => {
+  const buckets = derivePresenceBuckets({
+    now: NOW,
+    participants: [
+      { userId: "user-a", lastSeenAt: ago(1_000) },
+      { userId: "user-b", lastSeenAt: null },
+      { userId: "user-c", lastSeenAt: ago(60_000) },
+    ],
+    sessionConnections: [
+      {
+        ...sessionConnection({ session: operableChildSession() }),
+        userId: "user-b",
+      },
+    ],
+  });
+
+  assert.equal(buckets.lobbyCount, 1);
+  assert.equal(buckets.inSessionCount, 1);
+  assert.equal(buckets.onlineCount, 2);
+});
+
+test("E-P11 observer in a child Session is IN_SESSION", () => {
+  const presence = resolve({
+    sessionConnections: [
+      sessionConnection({ session: operableChildSession() }),
+    ],
+  });
+  assert.equal(presence.state, "IN_SESSION");
+});
+
+test("E-P12 lastSeenAt-only session heartbeat does not create Event Online", () => {
+  const presence = resolve({
+    lastSeenAt: null,
+    sessionConnections: [],
+  });
+  assert.notEqual(connectionStatusForEventPresenceState(presence.state), "ONLINE");
+
+  const buckets = derivePresenceBuckets({
+    now: NOW,
+    participants: [{ userId: "user-a", lastSeenAt: null }],
+    sessionConnections: [],
+  });
+  assert.equal(buckets.onlineCount, 0);
+});
+
+test("E-P03 unique Online count stays 1 when Lobby and room overlap", () => {
+  const buckets = derivePresenceBuckets({
+    now: NOW,
+    participants: [{ userId: "user-a", lastSeenAt: ago(1_000) }],
+    sessionConnections: [
+      sessionConnection({
+        userId: "user-a",
+        session: operableChildSession(),
+      }),
+    ],
+  });
+  assert.equal(buckets.inSessionCount, 1);
+  assert.equal(buckets.lobbyCount, 0);
+  assert.equal(buckets.onlineCount, 1);
 });

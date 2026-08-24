@@ -68,6 +68,30 @@ describe("decideSessionRoomAccess", () => {
     assert.equal(decision.redirectTo, "/join/join-token-1");
   });
 
+  it("observes Debrief hard-close through the same CLOSED redirect as manual complete", () => {
+    const hardClose = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.CLOSED,
+        closeReason: "DEBRIEF_MAX_DURATION",
+      },
+    });
+    const manualClose = decideSessionRoomAccess({
+      ...baseInput,
+      session: {
+        ...baseInput.session,
+        negotiationState: NegotiationState.FINISHED,
+        roomLifecycle: RoomLifecycle.CLOSED,
+        closeReason: "FACILITATOR_SESSION_COMPLETE",
+      },
+    });
+    assert.equal(hardClose.output, manualClose.output);
+    assert.equal(hardClose.redirectTo, manualClose.redirectTo);
+    assert.equal(hardClose.output, "REDIRECT_MATERIALS");
+  });
+
   it("returns EVENT_CLOSED for completed event-linked session", () => {
     const decision = decideSessionRoomAccess({
       ...baseInput,

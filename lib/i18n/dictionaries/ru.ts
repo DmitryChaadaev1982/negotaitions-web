@@ -962,7 +962,7 @@ export const ru: Dictionary = {
     standaloneSessions: "Отдельные сессии",
     managedEvents: "Управляемые встречи",
     archiveCompleted: "Архив / Завершённые",
-    archiveSummary: "{count} завершённых сессий",
+    archiveSummary: "{count} элементов в архиве",
     showArchive: "Показать завершённые",
     hideArchive: "Скрыть завершённые",
     noCurrentActivity: "Нет активных комнат для подключения.",

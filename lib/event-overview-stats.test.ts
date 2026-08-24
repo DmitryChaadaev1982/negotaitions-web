@@ -39,6 +39,7 @@ test("lobby + session overlap classifies user as in-session only", () => {
 
   assert.equal(presence.inSessionCount, 1);
   assert.equal(presence.lobbyCount, 0);
+  assert.equal(presence.onlineCount, 1);
 });
 
 test("event list polling replaces old counts with latest API response", () => {

@@ -19,43 +19,125 @@
 5. Assigned users move from lobby to room.
 6. Session completion can return users to lobby or materials.
 
-## Room Lifecycle Semantics (Stage 3.10)
+## Room Lifecycle Semantics (Stage 3.18A kernel)
 
 - `OPEN`: negotiation-room admission is allowed by the canonical
-  `roomAccessDecision`. Zero occupancy never completes or closes an `OPEN`
-  Session automatically.
+  `roomAccessDecision`. The 60-second empty-Debrief timeout never closes
+  `OPEN` / `PREPARATION` / `RUNNING` / `PAUSED`. A non-terminal empty Session
+  may later close through the hours-scale abandoned policy below.
 - `DEBRIEF_OPEN`: negotiation is finished, recording stop has already been
   requested by canonical completion, and existing participants may use the
-  debrief/materials flow. This is the only lifecycle state eligible for
-  empty-room auto-close, after `DEBRIEF_AUTO_CLOSE_GRACE_MS` (authoritative
-  default: 30,000 ms). Normal/manual negotiation finish always opens Debrief
-  first, including when the room is already empty.
+  debrief/materials flow. Effective automatic close is the earliest of:
+  empty-Debrief (`SESSION_DEBRIEF_EMPTY_CLOSE_MS`, default 60,000) and the
+  Debrief hard maximum (`SESSION_DEBRIEF_MAX_DURATION_MS`, default 7,200,000
+  from `Session.negotiationEndedAt`). Occupied Debrief survives the empty
+  grace but not the 2h hard maximum. Normal/manual negotiation finish always
+  opens Debrief first, including when the room is already empty.
 - Event owners may also use the Event lobby `Complete Session` action while a
   Session is `DEBRIEF_OPEN`. That route still calls the canonical complete API,
   but passes a debrief-close flag so `completeSessionCanonical(..., hardClose)`
   transitions the room to `CLOSED` without waiting for every debrief occupant to
   leave.
 - `CLOSED`: room admission is denied and the backend supplies the canonical
-  Event-lobby or materials redirect.
-- Empty-Debrief timing starts at
-  `max(negotiationEndedAt, last active-human room departure)`. This prevents a
-  pre-Debrief disconnect from consuming the Debrief grace. A rejoin makes the
-  pending close a no-op; a later departure starts the current empty period.
-  Explicit disconnect, supersede, and revoke use their terminal timestamp;
-  passive network loss uses the lease `expiresAt` boundary.
+  Event-lobby or materials redirect. Occupied Debrief hard-close uses this
+  same CLOSED propagation; there is no client-only timeout UI.
+- Empty-Debrief `emptySinceAt` is
+  `max(negotiationEndedAt, lastCurrentGenerationDepartureAt)`. Only the
+  current valid `SessionRoomConnection` lease generation per user counts.
+  Superseded/obsolete generations are ignored. Live `expiresAt` is ignored.
+  A rejoin invalidates the previous empty deadline; a later leave starts a
+  new one. Explicit disconnect, revoke, and marked expiry use their terminal
+  timestamp; passive network loss uses the lease `expiresAt` boundary only
+  after that lease is no longer valid.
+- Abandoned non-Debrief Sessions use `SESSION_ABANDONED_CLOSE_MS` (default
+  10,800,000). Never-entered standalone reference is `Session.createdAt`.
+  Previously occupied reference is the last current-generation departure.
+  Event-created Sessions floor that reference by parent
+  `TrainingEvent.scheduledAt` even when early occupancy occurred
+  (`S318A-D-001`). Session has no `scheduledAt` field.
+- Historical/terminal/deleted Sessions and Event-closed Sessions are
+  automatic no-ops. A completed, cancelled, or deleted parent Event is an
+  automatic-close fence for every child, including `DEBRIEF_OPEN`: the
+  child is ineligible and emits no automatic reason. The same fence is
+  re-checked in the automatic `UPDATE` so a stale due evaluation cannot
+  close after the parent became terminal. This does not invent Event
+  auto-close and does not change explicit `EVENT_COMPLETION`. Past Event
+  join remains unchanged.
 - Debrief occupancy is role-agnostic and reads authoritative active
   `SessionRoomConnection` leases for active human users. `FACILITATOR`,
   `PARTICIPANT`, and `OBSERVER` all count; `SessionParticipant.type` is not
   joined to lease role, so an in-place role transition cannot erase occupancy.
   Expired, disconnected, superseded, revoked, deleted-Session, inactive-user,
   and closed-room leases remain excluded.
-- Explicit facilitator completion, Event hard-close, and empty-Debrief grace
-  expiry use one idempotent final Session-close operation. It atomically writes
-  `status=COMPLETED`, `endedAt`, `roomLifecycle=CLOSED`, `closeReason`, and
-  `updatedAt`; Event authority alone writes `closedByEvent*`. Session
-  completion never completes the owning `TrainingEvent`.
-- Empty-Debrief finalization does not create a second provider recording stop.
-  Recording stop intent is already owned by canonical negotiation completion.
+- Explicit facilitator completion, Event hard-close, empty-Debrief, Debrief
+  hard-maximum, and abandoned-Session close use one idempotent final
+  Session-close operation (`finalizeSessionCanonicalClose`). It atomically
+  writes `status=COMPLETED`, `endedAt`, `roomLifecycle=CLOSED`, `closeReason`,
+  and `updatedAt`; Event authority alone writes `closedByEvent*`. Session
+  completion never completes the owning `TrainingEvent`. Automatic reasons are
+  `DEBRIEF_EMPTY_TIMEOUT`, `DEBRIEF_MAX_DURATION`, and
+  `SESSION_ABANDONED_TIMEOUT`. Claim/rejoin (`claimSessionRoomConnectionLease`)
+  and the automatic finalizer serialize on the Session row
+  (`SELECT ... FOR UPDATE` / `UPDATE`). `NOT EXISTS` emptiness is evaluated
+  only while that lock is held, so a concurrent connection INSERT cannot
+  admit a user into a Session that is simultaneously closing. First
+  successful fenced update wins; later closers are no-ops.
+- Automatic Debrief empty/max close writes only through
+  `finalizeSessionCanonicalClose` and does not create a second recording stop.
+  Abandoned automatic close (`SESSION_ABANDONED_TIMEOUT`) is state-aware: if
+  negotiation is still pre-finish (`PREPARATION`, `READY_TO_START`, `RUNNING`,
+  `PAUSED`, and the other non-FINISHED states), it reuses
+  `completeSessionCanonical` with automatic authority and `hardClose` so the
+  first canonical finish / recording-stop intent happens exactly once, then
+  the shared final Session writer closes the room. If canonical finish already
+  happened, automatic close must not repeat the stop. Lifecycle reconciliation
+  never calls a recording provider directly. Abandoned RUNNING/PAUSED rows
+  therefore use the same terminal recording/post-processing contract as
+  forced canonical completion: one stop intent when a stoppable recording
+  exists, `negotiationEndedAt` populated, and existing transcription/AI
+  currentness eligibility. No transcript/material deletion, AI publication,
+  or historical rewrite.
+- One deterministic server policy (`evaluateSessionLifecyclePolicy`) answers
+  eligibility, reason, `referenceAt`, `dueAt`, and why-not-due. Primary
+  evaluation is the Stage 3.10 systemd maintenance timer (15s cadence).
+  That timer invokes the same raw `tsx` CLI as
+  `npm run maintenance:stage310 -- --task all`. The operational entrypoint
+  is a non-Next runtime: it bootstraps documented env first, then
+  dynamically loads maintenance. Application `import "server-only"`
+  wrappers stay on Next server consumers; the CLI imports the
+  runtime-neutral parsers/stores.
+  The primary sweeper selects a bounded conservative superset of
+  policy-due Sessions: empty/abandoned pages skip currently occupied
+  rows, terminal/deleted parent-Event children, Event-closed rows, and
+  rows whose shared current-generation departure/reference is still
+  inside the timeout so a sticky not-due prefix cannot starve later due
+  work. Policy plus the fenced writer remain authoritative. Leave, control-state polling, and
+  Event-state sweeps are fallbacks that consume the same policy.
+  Scheduler cadence is not a business timeout. Lifecycle correctness does
+  not depend on systemd `Persistent=true`; `dueAt` is reconstructed from
+  current DB state on every sweep, including the first sweep after process
+  or server return. `OnBootSec=15s` only makes that first evaluation
+  prompt after the timer is activated.
+- Periodic 15s evaluation is quiet for ordinary `occupied` / `not_due`
+  no-ops. Actionable per-session lines remain `closed` (INFO), `lost_race`
+  (WARN), and sweep failures (ERROR), plus one bounded sweep summary
+  (`scanned` / `evaluated` / `due` / `closed` / `lostRace` / `failures`).
+  Direct transition callers such as explicit leave may still emit bounded
+  transition diagnostics. Logs never include tokens, notes, transcripts,
+  role instructions, or provider payloads.
+- Stage 3.18A production deploy must set the three canonical business
+  timeouts explicitly in **both** independent runtime env files:
+  application `/var/www/negotaitions/app/.env.production` (request-driven
+  Next/`negotaitions-poc` reconciliation) and maintenance
+  `/etc/negotaitions/env.production` (`negotiations-stage310-maintenance.service`).
+  Required values:
+  `SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000`,
+  `SESSION_DEBRIEF_MAX_DURATION_MS=7200000`,
+  `SESSION_ABANDONED_CLOSE_MS=10800000`. Canonical wins over the legacy
+  alias. If either file still has only `DEBRIEF_AUTO_CLOSE_GRACE_MS=30000`
+  and the canonical empty-close variable is absent, that consumer would
+  intentionally retain 30 seconds. Do not treat local/example comments as
+  a live env change. Do not redesign the two-file env layout in this stage.
 - Session overview presentation distinguishes negotiation completion from final
   Session completion. `negotiationState=FINISHED` with
   `roomLifecycle=DEBRIEF_OPEN` displays `Debrief` / `Дебриф`, including while
@@ -99,9 +181,15 @@
   Participant first-entry is unchanged. Room-entry permission remains distinct
   from AI publication grants.
 
-Long-horizon cleanup for an empty `OPEN` Session or empty Event is separate
-backlog work. Any future policy must be measured in hours or bounded by Event
-lifetime; it must not reuse the short debrief grace.
+Event access, join, later Session create/start, and manual completion remain
+independent of Dashboard lanes: there is no Event auto-close, expiry,
+past-join block, or past-grace. A past non-terminal Event may create another
+Session through the existing Event host POST (`createSessionFromEvent`). That
+write may set `SESSION_CREATED` as the ordinary create-session mutation; it
+does not complete, cancel, or expire the Event because `scheduledAt` is past
+or the Dashboard lane is ARCHIVE. Archive is a dashboard presentation lane
+and does not by itself prohibit joining or reusing a non-terminal Event.
+UPCOMING / CURRENT / PAST are not persisted Event statuses.
 
 ## Dashboard Current And Upcoming Selection
 
@@ -125,29 +213,52 @@ lifetime; it must not reuse the short debrief grace.
   first-created Session.
 - Dashboard activity lanes render Event-first hierarchy:
   `Event -> Session[]`, grouped only by canonical `Session.eventId`.
-- A relevant active nested Session promotes its parent Event into the Active lane
-  even when the Event `scheduledAt` is future. An Event is assigned to exactly
-  one lifecycle lane, so this promotion excludes it from Future.
+- Event Active / Archive is one pure derived classifier
+  (`classifyEventDashboardLane`) with injected `now`. Precedence:
+  1. explicit terminal Event (`COMPLETED` / `CANCELLED`) → ARCHIVE;
+  2. non-terminal Event with current lobby presence or an operable child
+     Session → ACTIVE;
+  3. non-terminal Event whose `scheduledAt` is null or `>= now` → ACTIVE;
+  4. otherwise past idle non-terminal → ARCHIVE.
+  Every Dashboard Event is ACTIVE XOR ARCHIVE. Classification never writes
+  Event status, `completedAt`, or `closedAt`.
+- Current child-Session activity reuses the Dashboard operable-child read
+  predicate (`isActiveOperableDashboardChildSession`): not deleted and not
+  canonically completed. `OPEN` and `DEBRIEF_OPEN` count; `CLOSED`,
+  `FINISHED + NULL`, deleted, and other terminal history do not. Having any
+  child, or only a completed child, is not current activity.
+- Current Event Lobby presence is the existing `participantsInLobby` count
+  from lobby heartbeat/lease buckets (`derivePresenceBuckets` /
+  `LOBBY_ONLINE_THRESHOLD_MS`). Stale lobby rows and
+  `SessionRoomConnection` occupancy are not Lobby presence.
+- A relevant operable nested Session or live Lobby occupant promotes its
+  parent Event into the Active lane even when `scheduledAt` is past or
+  future. Inside Active, idle upcoming Events may still render in the
+  Future subsection; that is grouping, not a second lane.
 - Dashboard grouping is lifecycle-driven only; management/ownership never
   creates a separate user-facing lane. Owner identity is presentation metadata:
   self-owned cards use an explicit localized self label/accent, while access
   remains governed by the existing Event and Session authorization decisions.
 - Parent Event cards route their primary action to the Event lobby. Nested
   Session cards own room-entry actions, preserving the Event-to-lobby and
-  Session-to-room hierarchy.
+  Session-to-room hierarchy. Archive listing does not remove that lobby
+  action for a derived-past non-terminal Event.
 - Standalone Sessions (no `eventId`) render in a separate standalone group and
   are never heuristically attached to Events.
 - Child Sessions remain authorization-scoped: grouping is applied only after
   existing Event/Session visibility filters and does not broaden access.
 - Completed/materials-only history remains in the archive and is never a
-  current-card fallback. If neither a current Session nor an eligible Event
-  exists, the current card renders the no-active-rooms empty state.
+  current-card fallback. If neither a current Session nor an Active-lane
+  Event exists, the current card renders the no-active-rooms empty state.
 - Archive rendering uses the same Event->Session hierarchy shape plus a
-  standalone Session group, while preserving canonical completion
-  classification inputs.
+  standalone Session group. Archive may include past idle non-terminal
+  Events as well as explicit `COMPLETED` / `CANCELLED` Events.
+  Archive is a dashboard presentation lane and does not by itself prohibit
+  joining a non-terminal Event.
 - Whether a displayed Event or Session can actually be entered remains governed
   independently by the existing Event-access and Session-room-access logic;
-  Dashboard selection does not grant or redefine access.
+  Dashboard selection does not grant or redefine access. There is no
+  `scheduledAt < now` or `dashboardLane == ARCHIVE` deny rule.
 
 ## Object Pictogram Presentation Semantics
 
@@ -193,11 +304,12 @@ from reordering the account rejoin/materials target selected by
 which includes `Session.updatedAt` in `lib/event-overview-stats.ts`.
 
 The approximately 120-second passive-disconnect lease expiry is independent
-from the 30-second empty-Debrief grace: it determines when a network-lost room
-lease stops counting as active. Recording server-stop terminal timeout is a
-third independent mechanism (default 90 seconds), and stale recording
-`STARTING` reconciliation has its own 90-second admission threshold. None of
-these timers changes the Debrief grace.
+from the 60-second empty-Debrief business timeout: it determines when a
+network-lost room lease stops counting as active. Recording server-stop
+terminal timeout is a third independent mechanism (default 90 seconds), and
+stale recording `STARTING` reconciliation has its own 90-second admission
+threshold. Presence heartbeat, control-state poll, and the 15-second
+reconciliation cadence are not business timeouts.
 
 ## Leave And Presence Semantics
 
@@ -206,6 +318,10 @@ these timers changes the Debrief grace.
   the failure instead of silently treating the leave as complete.
 - Refresh, tab close, browser crash, and network loss are passive disconnects.
   They remain lease-based and do not use the explicit-leave endpoint.
+  Stage 3.18A records this as `ACCEPTED_BY_DESIGN`: the Session room lease
+  stays the 120-second reconnect/network-loss window; Event Lobby freshness
+  stays 12 seconds; no `pagehide` / `sendBeacon` fast path is required; no
+  new status is added; CU-L must not be opened.
 - Rejoin/same-user takeover supersedes the older lease; logical presence and
   Event `In Sessions` counts deduplicate the user.
 
@@ -295,26 +411,48 @@ these timers changes the Debrief grace.
   participant-row writes in that same order. This matches AI completion-time
   roster validation without expanding either transaction boundary.
 
+## Session Current Presence
+
+- User-facing Session Online means the person has at least one current valid
+  `SessionRoomConnection` lease on an operable Session. This is the same live
+  lease concept used for lifecycle occupancy: not disconnected, not
+  superseded, not revoked, `expiresAt` still in the future, user `ACTIVE`,
+  and the Session is not deleted or `CLOSED` / canonically completed.
+- Count unique logical users, not connection rows. Duplicate tabs stay
+  Online 1. `FACILITATOR`, `PARTICIPANT`, and `OBSERVER` count equally.
+- `SessionParticipant.lastSeenAt` is a recent heartbeat/activity signal. It
+  is not authoritative room occupancy and must not label a person Online.
+- Explicit Leave writes the lease disconnected and the next list/stream read
+  must show Offline immediately, even when `lastSeenAt` is still inside the
+  30-second heartbeat window. Browser close without Leave may remain Online
+  until the lease is no longer live.
+- Shared read helpers live in `lib/session-current-presence.ts`. They do not
+  import the automatic-close policy or change lease write paths.
+
 ## Event Presence DTO
 
-- Event participant presence is derived event-wide from lobby heartbeat evidence
-  plus canonical `SessionRoomConnection` rows, including terminal
-  `disconnectedAt`, `supersededAt`, `revokedAt`, and expired `expiresAt`
-  timestamps.
+- Event participant presence is derived event-wide from two separate
+  authorities: current Event Lobby heartbeat evidence
+  (`EventParticipant.lastSeenAt` + lobby threshold) and current valid
+  `SessionRoomConnection` leases on operable child Sessions.
 - Canonical statuses:
   - `IN_LOBBY`
   - `IN_SESSION`
   - `TEMPORARILY_AWAY`
   - `OFFLINE`
   - `INVITED_NOT_CONNECTED`
-- Resolver precedence is active lobby, active Session, recent terminal
-  Event/Session evidence, offline history, then invited-never-connected. If
-  lobby and Session evidence overlap briefly, the newest active surface wins so
-  the UI never displays two active locations.
-- `TEMPORARILY_AWAY` uses the existing
-  `PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS` grace window and is emitted on
-  the next Event-state refresh after active presence is lost; it does not wait
-  for the grace window to expire.
+- Location precedence is `IN_SESSION` > `IN_LOBBY` > Offline. A still-fresh
+  Lobby heartbeat after the person has entered a Session must not keep them
+  displayed in Lobby. The UI never claims the same person is in Lobby and in
+  Session at once. If multiple operable child leases exist for one user, the
+  existing newest-active-session selection is preserved.
+- Event Online is the unique union of current Lobby users and current room
+  users. Overlap counts once and renders as Session.
+- Historical / closed / deleted child Sessions do not create current
+  `IN_SESSION`. `SessionParticipant.lastSeenAt` is not an Event location
+  authority.
+- `TEMPORARILY_AWAY` remains the existing short-window Offline presentation
+  after a recent terminal. It is not Online.
 - UI traffic-light presentation maps directly to this DTO and must not be used
   as a lease/access authority.
 
@@ -354,4 +492,16 @@ these timers changes the Debrief grace.
 - `app/api/sessions/[sessionId]/control-state/route.ts`
 - `app/api/events/[id]/host/route.ts`
 - `app/api/events/[id]/state/route.ts`
+- `lib/session-lifecycle-policy.ts`
+- `lib/session-lifecycle-candidate-selection.ts`
+- `lib/session-lifecycle-sql.ts`
+- `lib/session-completion.ts`
+- `lib/session-completion-core.ts`
+- `lib/session-lifecycle-observability.ts`
+- `lib/config/session-lifecycle-settings.ts`
+- `lib/session-room-occupancy.ts`
+- `lib/session-room-connection-lease.ts`
+- `lib/session-empty-room-reconciliation.ts`
+- `lib/stage-3-10-maintenance.ts`
+- `scripts/ops/stage-3-10-maintenance.ts`
 - `docs/architecture/session-flow-gap-analysis.md`

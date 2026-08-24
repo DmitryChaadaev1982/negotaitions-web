@@ -24,6 +24,24 @@ Use:
 
 Output is JSON with counters only (no secrets, no participant names/emails).
 
+The command is a raw `tsx` / Node operational CLI, not a Next bundled
+server. Local/non-production runs load project `.env*` from the current
+working directory before Prisma or required config is constructed.
+Production systemd injects `/etc/negotaitions/env.production` and
+`NODE_ENV=production`; that mode must not depend on local Next env
+loading. Do not wrap the command in `node -e` or inject `DATABASE_URL`
+manually for the normal operator path.
+
+Local integrated acceptance of the empty-Debrief closer also requires
+the operator's actual project `.env` to set the canonical timeout:
+
+```
+SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000
+```
+
+Do not copy this into live production env from a documentation pass.
+Canonical wins over the legacy `DEBRIEF_AUTO_CLOSE_GRACE_MS` alias.
+
 ## Systemd Templates
 
 Templates are provided in:
@@ -73,10 +91,29 @@ The app can be rolled back without dropping Stage 3.10 additive schema objects.
 - `--dry-run` mode performs inspection only, without writes.
 - Timer can be disabled independently from application service.
 - Concurrent worker runs are tolerated by DB-level claim/update guards; stop-operation and connection-expiry claims are idempotent.
-- Empty-room reconciliation uses two gates:
+- Session lifecycle reconciliation uses one policy and one finalizer:
   - lease validity (explicit leave or expired lease reconciliation; lease TTL is 120000 ms);
-  - `DEBRIEF_AUTO_CLOSE_GRACE_MS` (default 30000 ms) after the last definitive disconnect signal.
-- Reconnect during the grace window keeps the session active; completion/closure happens only with zero valid connections.
+  - `SESSION_DEBRIEF_EMPTY_CLOSE_MS` (default 60000 ms; legacy alias `DEBRIEF_AUTO_CLOSE_GRACE_MS` only when the canonical variable is unset);
+  - `SESSION_DEBRIEF_MAX_DURATION_MS` (default 7200000 ms) from `negotiationEndedAt`;
+  - `SESSION_ABANDONED_CLOSE_MS` (default 10800000 ms) for non-Debrief empty Sessions, floored by parent `Event.scheduledAt` when present.
+- The systemd timer cadence is 15 seconds. That cadence is not a business timeout.
+- Lifecycle correctness does not depend on `Persistent=true`. That flag only
+  affects whether systemd records a missed timer firing. Authoritative `dueAt`
+  is reconstructed from current DB state on every sweep, including the first
+  sweep after process or server return. `OnBootSec=15s` makes that first
+  evaluation prompt after the timer is activated.
+- Stage 3.18A production deploy must set these three variables explicitly in
+  **both** `/var/www/negotaitions/app/.env.production` (application
+  request-driven reconciliation) and `/etc/negotaitions/env.production`
+  (this maintenance unit). Canonical wins over the legacy alias; do not
+  edit live env from this documentation pass:
+  - `SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000`
+  - `SESSION_DEBRIEF_MAX_DURATION_MS=7200000`
+  - `SESSION_ABANDONED_CLOSE_MS=10800000`
+  If either file still has only `DEBRIEF_AUTO_CLOSE_GRACE_MS=30000` and the
+  canonical empty-close variable is absent, that consumer would intentionally
+  retain 30 seconds. Repository validation must not enable this timer.
+- Reconnect during the empty-Debrief window keeps the session active; empty close happens only with zero current-generation connections. Occupied Debrief still closes at the 2h hard maximum.
 - For local test validation, ensure non-production DB is migrated before Stage 3.10 suites:
   - `npx prisma migrate status`
   - `npx prisma migrate deploy` (non-production only)

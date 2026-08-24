@@ -4,8 +4,10 @@ import {
   RoomLifecycle,
   TrainingEventStatus,
 } from "@/app/generated/prisma/client";
+import { getSessionLifecycleDurations } from "@/lib/config/session-lifecycle-settings";
 import { stopRecording } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
+import { selectSessionLifecycleReconcileCandidateIds } from "@/lib/session-lifecycle-candidate-selection";
 import {
   TERMINAL_STOP_RETRY_ERROR_CLASSES,
   resolveStartingNotReadyFailure,
@@ -25,8 +27,8 @@ import {
 } from "@/lib/stage-3-10-maintenance-utils";
 import { buildVoximplantConferenceName } from "@/lib/voximplant/conference-name";
 import { sendVoximplantServerStopCommand } from "@/lib/voximplant/server-stop-client";
-import { getVoximplantServerStopConfig } from "@/lib/voximplant/server-stop-config";
-import { cleanupExpiredVoximplantCallbackNonces } from "@/lib/voximplant/server-stop-replay";
+import { getVoximplantServerStopConfig } from "@/lib/voximplant/server-stop-settings";
+import { cleanupExpiredVoximplantCallbackNonces } from "@/lib/voximplant/server-stop-replay-store";
 
 type JsonLogLevel = "info" | "warn" | "error";
 
@@ -62,6 +64,9 @@ export type ExpirySweepResult = {
   roomsClosed: number;
   skipped: number;
   failures: number;
+  evaluated: number;
+  due: number;
+  lostRace: number;
 };
 
 export async function runSessionConnectionExpirySweep(params?: {
@@ -87,28 +92,23 @@ export async function runSessionConnectionExpirySweep(params?: {
     },
   });
 
-  const sessionIds = new Set(candidates.map((item) => item.sessionId));
-  const debriefCandidates = await prisma.session.findMany({
-    where: {
-      roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
-      deletedAt: null,
-      negotiationState: NegotiationState.FINISHED,
-    },
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-    take: limit,
-    select: { id: true },
+  const sessionIds = await selectSessionLifecycleReconcileCandidateIds({
+    now,
+    limit,
+    durations: getSessionLifecycleDurations(),
+    extraSessionIds: candidates.map((item) => item.sessionId),
   });
-  for (const session of debriefCandidates) {
-    sessionIds.add(session.id);
-  }
   if (dryRun) {
     return {
       scanned: candidates.length,
       expired: 0,
-      sessionsChecked: sessionIds.size,
+      sessionsChecked: sessionIds.length,
       roomsClosed: 0,
       skipped: candidates.length,
       failures: 0,
+      evaluated: 0,
+      due: 0,
+      lostRace: 0,
     };
   }
 
@@ -132,43 +132,60 @@ export async function runSessionConnectionExpirySweep(params?: {
   }
 
   let roomsClosed = 0;
+  let evaluated = 0;
+  let due = 0;
+  let lostRace = 0;
   for (const sessionId of sessionIds) {
     try {
       const reconciliation = await reconcileSessionAfterOccupancyChange({
         sessionId,
+        now,
+        invocation: "periodic",
       });
+      evaluated += 1;
+      if (
+        reconciliation.decision === "due" ||
+        reconciliation.decision === "closed" ||
+        reconciliation.decision === "lost_race"
+      ) {
+        due += 1;
+      }
+      if (reconciliation.decision === "lost_race") {
+        lostRace += 1;
+      }
       if (reconciliation.roomClosed) {
         roomsClosed += 1;
         logMaintenance("info", "room_closed_after_expiry", {
           sessionId,
           reason: reconciliation.roomClosureReason,
-        });
-      } else {
-        logMaintenance("info", "room_closure_skipped_after_expiry", {
-          sessionId,
-          reason: reconciliation.roomClosureReason,
-          activeConnectionCount: reconciliation.roomClosureActiveConnectionCount,
+          completionReason: reconciliation.completionReason,
         });
       }
-      logMaintenance("info", "debrief_reconciliation_after_expiry", {
-        sessionId,
-        completionReason: reconciliation.completionReason,
-        activeConnectionCount: reconciliation.activeConnectionCount,
-        graceRemainingMs: reconciliation.graceRemainingMs,
-      });
     } catch {
       failures += 1;
       logMaintenance("error", "reconciliation_failed_after_expiry", { sessionId });
     }
   }
 
+  logMaintenance("info", "session_lifecycle_sweep_summary", {
+    scanned: candidates.length,
+    evaluated,
+    due,
+    closed: roomsClosed,
+    lostRace,
+    failures,
+  });
+
   return {
     scanned: candidates.length,
     expired,
-    sessionsChecked: sessionIds.size,
+    sessionsChecked: sessionIds.length,
     roomsClosed,
     skipped: Math.max(0, candidates.length - expired),
     failures,
+    evaluated,
+    due,
+    lostRace,
   };
 }
 

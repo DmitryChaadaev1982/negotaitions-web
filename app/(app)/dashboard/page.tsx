@@ -3,9 +3,8 @@ import {
   groupDashboardArchiveHierarchy,
   groupDashboardEventSessionHierarchy,
   isFutureDashboardEvent,
+  partitionDashboardEventsByLane,
   selectDashboardActivity,
-  sortArchivedDashboardEvents,
-  sortDashboardEvents,
   sortDashboardSessions,
 } from "@/lib/dashboard-activity-selection";
 import { getEventsForUser } from "@/lib/event-overview-stats";
@@ -40,44 +39,32 @@ export default async function DashboardPage() {
     getSessionsForUser(user),
   ]);
   const selectionClock = new Date();
-  const activeEvents = sortDashboardEvents(allEvents, selectionClock);
+  const { activeEvents, archivedEvents } = partitionDashboardEventsByLane({
+    events: allEvents,
+    sessions: allSessions,
+    now: selectionClock,
+  });
   const activeSessions = sortDashboardSessions(allSessions);
   const activeHierarchy = groupDashboardEventSessionHierarchy({
     events: activeEvents,
     sessions: activeSessions,
   });
-  const hasRelevantActiveNestedSession = (
+  const eventGroupHasCurrentActivity = (
     group: (typeof activeHierarchy.eventGroups)[number],
   ) =>
-    group.sessions.some((session) =>
-      ["RUNNING", "PAUSED", "PREPARATION_RUNNING", "PREPARATION_PAUSED", "READY_TO_START", "PREPARATION"].includes(
-        session.negotiationState,
-      ),
-    );
+    group.sessions.length > 0 || (group.event.participantsInLobby ?? 0) > 0;
   const activeCurrentEventGroups = activeHierarchy.eventGroups.filter(
     (group) =>
-      hasRelevantActiveNestedSession(group) ||
+      eventGroupHasCurrentActivity(group) ||
       !isFutureDashboardEvent(group.event, selectionClock),
   );
-  const activeFutureEventGroups = activeHierarchy.eventGroups.filter((group) =>
-    !hasRelevantActiveNestedSession(group) &&
-    isFutureDashboardEvent(group.event, selectionClock),
+  const activeFutureEventGroups = activeHierarchy.eventGroups.filter(
+    (group) =>
+      !eventGroupHasCurrentActivity(group) &&
+      isFutureDashboardEvent(group.event, selectionClock),
   );
   const completedSessions = allSessions.filter(
     (session) => isCompletedSessionDisplayStatus(session.status),
-  );
-  const completedSessionEventIds = new Set(
-    completedSessions
-      .map((session) => session.eventId)
-      .filter((eventId): eventId is string => Boolean(eventId)),
-  );
-  const archivedEvents = sortArchivedDashboardEvents(
-    allEvents.filter(
-      (event) =>
-        event.status === "COMPLETED" ||
-        event.status === "CANCELLED" ||
-        completedSessionEventIds.has(event.id),
-    ),
   );
   const archiveHierarchy = groupDashboardArchiveHierarchy({
     events: archivedEvents,

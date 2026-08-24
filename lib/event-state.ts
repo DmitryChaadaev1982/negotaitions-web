@@ -18,6 +18,7 @@ import {
   connectionStatusForEventPresenceState,
   resolveEventParticipantPresence,
   type EventParticipantPresenceState,
+  type EventParticipantSessionPresenceEvidence,
 } from "@/lib/event-participant-presence";
 import {
   isSessionActiveForAssignment,
@@ -259,16 +260,9 @@ function getAssignmentDurationDefaults(
 
 function deriveEventParticipantPresence(params: {
   participant: EventParticipant;
-  sessionConnections: Array<{
-    sessionId: string;
-    sessionTitle: string;
-    disconnectedAt: Date | null;
-    supersededAt: Date | null;
-    revokedAt: Date | null;
-    expiresAt: Date;
-    updatedAt: Date;
-  }>;
+  sessionConnections: EventParticipantSessionPresenceEvidence[];
   now: Date;
+  eventId: string;
 }): DerivedEventParticipantPresence {
   const resolved = resolveEventParticipantPresence({
     lobbyPresence: {
@@ -279,6 +273,7 @@ function deriveEventParticipantPresence(params: {
     now: params.now,
     lobbyOnlineWindowMs: LOBBY_ONLINE_THRESHOLD_MS,
     recentDisconnectWindowMs: PRESENCE_RECENTLY_DISCONNECTED_THRESHOLD_MS,
+    eventId: params.eventId,
   });
   const connectionStatus = connectionStatusForEventPresenceState(resolved.state);
   return {
@@ -430,6 +425,11 @@ export async function buildEventState(
               id: true,
               title: true,
               roomLabel: true,
+              status: true,
+              negotiationState: true,
+              roomLifecycle: true,
+              closedByEventAt: true,
+              deletedAt: true,
             },
           },
         },
@@ -519,15 +519,7 @@ export async function buildEventState(
     : null;
   const sessionConnectionsByUserId = new Map<
     string,
-    Array<{
-      sessionId: string;
-      sessionTitle: string;
-      disconnectedAt: Date | null;
-      supersededAt: Date | null;
-      revokedAt: Date | null;
-      expiresAt: Date;
-      updatedAt: Date;
-    }>
+    EventParticipantSessionPresenceEvidence[]
   >();
   for (const connection of eventRoomConnections) {
     const userConnections = sessionConnectionsByUserId.get(connection.userId) ?? [];
@@ -539,6 +531,13 @@ export async function buildEventState(
       revokedAt: connection.revokedAt,
       expiresAt: connection.expiresAt,
       updatedAt: connection.updatedAt,
+      session: {
+        status: connection.session.status,
+        negotiationState: connection.session.negotiationState,
+        roomLifecycle: connection.session.roomLifecycle,
+        closedByEventAt: connection.session.closedByEventAt,
+        deletedAt: connection.session.deletedAt,
+      },
     });
     sessionConnectionsByUserId.set(connection.userId, userConnections);
   }
@@ -561,6 +560,7 @@ export async function buildEventState(
           ? (sessionConnectionsByUserId.get(participant.userId) ?? [])
           : [],
         now: presenceResolvedAt,
+        eventId: input.event.id,
       }),
     }),
   );

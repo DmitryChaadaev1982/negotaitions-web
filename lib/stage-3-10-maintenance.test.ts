@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   NegotiationState,
@@ -112,6 +113,14 @@ test("relay delivering timeout candidate detects stale browser relay claim", () 
     cutoff,
   );
   assert.equal(stale, true);
+});
+
+test("primary sweeper uses the no-starvation candidate selector and one periodic summary", () => {
+  const source = readFileSync("lib/stage-3-10-maintenance.ts", "utf8");
+  assert.match(source, /selectSessionLifecycleReconcileCandidateIds/);
+  assert.match(source, /session_lifecycle_sweep_summary/);
+  assert.match(source, /invocation: "periodic"/);
+  assert.equal(source.includes("room_closure_skipped_after_expiry"), false);
 });
 
 test("relay delivering timeout candidate ignores active or accepted deliveries", () => {

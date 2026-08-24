@@ -9,7 +9,7 @@ export type RoomLifecycleCompatibilityInput = {
   deletedAt?: Date | null;
   closedByEventAt?: Date | null;
   closeReason?: string | null;
-  negotiationState?: NegotiationState | string;
+  negotiationState?: NegotiationState | string | null;
   eventStatus?: TrainingEventStatus | string | null;
 };
 

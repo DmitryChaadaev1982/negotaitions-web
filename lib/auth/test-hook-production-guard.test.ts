@@ -16,6 +16,7 @@ import {
   clearUserSessionCookieWriterForTests,
   setUserSessionCookieWriterForTests,
 } from "@/lib/auth/session";
+import { setSessionLifecycleConcurrencyHooksForTests } from "@/lib/session-lifecycle-concurrency-hooks";
 
 // `process.env.NODE_ENV` is declared read-only, so mutate through the index
 // signature to simulate a production runtime.
@@ -66,6 +67,18 @@ test("credential dispatch fence hooks refuse installation in production", async 
   });
 });
 
+test("session lifecycle concurrency hooks refuse installation in production", async () => {
+  await withProductionNodeEnv(() => {
+    assert.throws(
+      () =>
+        setSessionLifecycleConcurrencyHooksForTests({
+          afterAutomaticPolicyDue: () => undefined,
+        }),
+      /unavailable in production/,
+    );
+  });
+});
+
 test("session cookie test hook keeps its production refusal", async () => {
   await withProductionNodeEnv(() => {
     assert.throws(
@@ -104,6 +117,7 @@ test("no production runtime path installs an account-security test hook", async 
     "setCredentialMutationHooksForTests",
     "setCredentialDispatchFenceHooksForTests",
     "setUserSessionCookieWriterForTests",
+    "setSessionLifecycleConcurrencyHooksForTests",
   ];
   const repoRoot = process.cwd();
 

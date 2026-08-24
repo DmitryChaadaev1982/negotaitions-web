@@ -751,6 +751,58 @@ export const SERVER_RUNTIME_SETTINGS = {
     required: "provider_event_ingestion",
     diagnostics: diagnostic(PROVIDER_EVENT_GROUP, "Consecutive failure limit."),
   }),
+  SESSION_DEBRIEF_EMPTY_CLOSE_MS: deploymentSetting({
+    key: "SESSION_DEBRIEF_EMPTY_CLOSE_MS",
+    featureArea: "Session lifecycle",
+    ownerModules: ["lib/config/session-lifecycle-settings.ts"],
+    parser: integerParser(5_000, 600_000),
+    secret: false,
+    applicability: "always",
+    required: "never",
+    diagnostics: diagnostic(
+      "Session lifecycle",
+      "Business timeout for empty Debrief auto-close. Default 60000. Wins over DEBRIEF_AUTO_CLOSE_GRACE_MS when set.",
+    ),
+  }),
+  SESSION_DEBRIEF_MAX_DURATION_MS: deploymentSetting({
+    key: "SESSION_DEBRIEF_MAX_DURATION_MS",
+    featureArea: "Session lifecycle",
+    ownerModules: ["lib/config/session-lifecycle-settings.ts"],
+    parser: integerParser(60_000, 86_400_000),
+    secret: false,
+    applicability: "always",
+    required: "never",
+    diagnostics: diagnostic(
+      "Session lifecycle",
+      "Hard maximum Debrief duration from negotiationEndedAt. Default 7200000. Occupancy does not extend it.",
+    ),
+  }),
+  SESSION_ABANDONED_CLOSE_MS: deploymentSetting({
+    key: "SESSION_ABANDONED_CLOSE_MS",
+    featureArea: "Session lifecycle",
+    ownerModules: ["lib/config/session-lifecycle-settings.ts"],
+    parser: integerParser(60_000, 604_800_000),
+    secret: false,
+    applicability: "always",
+    required: "never",
+    diagnostics: diagnostic(
+      "Session lifecycle",
+      "Abandoned non-Debrief Session close timeout. Default 10800000. Not the empty-Debrief grace.",
+    ),
+  }),
+  DEBRIEF_AUTO_CLOSE_GRACE_MS: deploymentSetting({
+    key: "DEBRIEF_AUTO_CLOSE_GRACE_MS",
+    featureArea: "Session lifecycle",
+    ownerModules: ["lib/config/session-lifecycle-settings.ts"],
+    parser: integerParser(5_000, 600_000),
+    secret: false,
+    applicability: "always",
+    required: "never",
+    diagnostics: diagnostic(
+      "Session lifecycle",
+      "Legacy alias for SESSION_DEBRIEF_EMPTY_CLOSE_MS. Used only when the canonical variable is absent.",
+    ),
+  }),
 } as const satisfies Record<string, ServerRuntimeSetting>;
 
 export type ServerRuntimeSettingKey = keyof typeof SERVER_RUNTIME_SETTINGS;

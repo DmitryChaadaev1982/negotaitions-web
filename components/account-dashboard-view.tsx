@@ -112,6 +112,12 @@ export function AccountDashboardView({
       (count, group) => count + group.sessions.length,
       0,
     );
+  const hasArchiveItems =
+    archiveEventGroups.length > 0 || archiveStandaloneSessions.length > 0;
+  const archiveItemCount = Math.max(
+    archivedSessionCount,
+    archiveEventGroups.length + archiveStandaloneSessions.length,
+  );
 
   const formatDate = (iso: string | null, timeZone: string) => {
     if (!iso) return "—";
@@ -199,7 +205,12 @@ export function AccountDashboardView({
         )}
       </section>
 
-      <section className="space-y-3" data-testid="dashboard-active-section">
+      <section
+        className="space-y-3"
+        data-testid="dashboard-upcoming-active-section"
+        data-dashboard-lane="active"
+      >
+        <div className="space-y-3" data-testid="dashboard-active-section">
         <h2 className="text-lg font-semibold text-slate-100">
           {locale === "ru" ? "Активные" : "Active"}
         </h2>
@@ -238,16 +249,17 @@ export function AccountDashboardView({
             ) : null}
           </div>
         )}
+        </div>
       </section>
 
       <section className="space-y-3" data-testid="dashboard-archive-section">
         <h2 className="text-lg font-semibold text-slate-100">{t("dashboard.archiveCompleted")}</h2>
-        {archivedSessionCount === 0 ? (
+        {!hasArchiveItems ? (
           <EmptyState message={t("dashboard.noCompletedActivity")} />
         ) : (
           <details className="rounded-2xl border border-slate-700/40 bg-slate-900/25" data-testid="dashboard-archive-disclosure">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-100">
-              {t("dashboard.archiveSummary", { count: archivedSessionCount })}
+              {t("dashboard.archiveSummary", { count: archiveItemCount })}
             </summary>
             <div className="space-y-4 border-t border-slate-700/30 p-3">
               {archiveEventGroups.length > 0 ? (
@@ -301,6 +313,12 @@ function DashboardEventHierarchyCards({
           className={archived ? "bg-slate-950/30" : undefined}
           data-testid="dashboard-event-card"
           data-event-id={event.id}
+          data-dashboard-lane={archived ? "archive" : "active"}
+          data-event-terminal={
+            event.status === "COMPLETED" || event.status === "CANCELLED"
+              ? "true"
+              : "false"
+          }
         >
           <GlassCardHeader>
             <div className="flex items-center gap-3">

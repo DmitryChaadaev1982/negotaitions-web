@@ -3,10 +3,15 @@ import test from "node:test";
 
 import { RoomLifecycle } from "@/app/generated/prisma/client";
 import {
+  classifyEventDashboardLane,
+  eventHasActiveOperableDashboardChild,
   groupDashboardArchiveHierarchy,
   groupDashboardEventSessionHierarchy,
+  isActiveOperableDashboardChildSession,
   isEligibleDashboardSession,
   isFutureDashboardEvent,
+  isPastDashboardScheduledAt,
+  partitionDashboardEventsByLane,
   selectDashboardActivity,
   selectDashboardSessionForEvent,
   sortArchivedDashboardEvents,
@@ -427,6 +432,311 @@ test("archived hierarchy groups Event Sessions and standalone Sessions", () => {
   assert.deepEqual(
     grouped.standaloneSessions.map((candidate) => candidate.id),
     ["archived-standalone"],
+  );
+});
+
+function lane(input: {
+  status?: DashboardEventCandidate["status"];
+  scheduledAt?: string | null;
+  activeLobbyCount?: number;
+  hasActiveChildSession?: boolean;
+  deletedAt?: string | null;
+}) {
+  return classifyEventDashboardLane({
+    eventStatus: input.status ?? "LOBBY_OPEN",
+    scheduledAt: input.scheduledAt === undefined ? "2026-08-12T12:00:00.000Z" : input.scheduledAt,
+    activeLobbyCount: input.activeLobbyCount ?? 0,
+    hasActiveChildSession: input.hasActiveChildSession ?? false,
+    now,
+    deletedAt: input.deletedAt,
+  });
+}
+
+test("E01 future idle non-terminal Event is ACTIVE", () => {
+  assert.equal(
+    lane({
+      scheduledAt: "2026-08-14T06:00:00.000Z",
+    }),
+    "ACTIVE",
+  );
+});
+
+test("E02 past idle non-terminal Event is ARCHIVE", () => {
+  assert.equal(lane({}), "ARCHIVE");
+});
+
+test("E03 past Event with current lobby occupant is ACTIVE", () => {
+  assert.equal(lane({ activeLobbyCount: 1 }), "ACTIVE");
+});
+
+test("E04 past Event with operable child Session is ACTIVE", () => {
+  assert.equal(lane({ hasActiveChildSession: true }), "ACTIVE");
+});
+
+test("E05 active condition disappearing returns a past Event to ARCHIVE", () => {
+  assert.equal(lane({ activeLobbyCount: 1 }), "ACTIVE");
+  assert.equal(lane({ activeLobbyCount: 0, hasActiveChildSession: false }), "ARCHIVE");
+});
+
+test("E07 later lobby occupancy reversibly promotes a past Event to ACTIVE", () => {
+  assert.equal(lane({}), "ARCHIVE");
+  assert.equal(lane({ activeLobbyCount: 2 }), "ACTIVE");
+});
+
+test("E07 later operable child Session reversibly promotes a past Event to ACTIVE", () => {
+  assert.equal(lane({ eventStatus: "SESSION_CREATED" }), "ARCHIVE");
+  assert.equal(
+    lane({ eventStatus: "SESSION_CREATED", hasActiveChildSession: true }),
+    "ACTIVE",
+  );
+  assert.equal(
+    lane({ eventStatus: "SESSION_CREATED", hasActiveChildSession: false }),
+    "ARCHIVE",
+  );
+});
+
+test("E08 historical terminal child is not current Event activity", () => {
+  const completedChild = session({
+    id: "completed-child",
+    eventId: "event-past",
+    eventStatus: "LOBBY_OPEN",
+    negotiationState: "FINISHED",
+    roomLifecycle: RoomLifecycle.CLOSED,
+  });
+  const closedChild = session({
+    id: "closed-child",
+    eventId: "event-past",
+    eventStatus: "SESSION_CREATED",
+    sessionStatus: "COMPLETED",
+    negotiationState: "FINISHED",
+    roomLifecycle: RoomLifecycle.CLOSED,
+  });
+  const deletedChild = session({
+    id: "deleted-child",
+    eventId: "event-past",
+    deletedAt: "2026-08-13T11:00:00.000Z",
+    negotiationState: "RUNNING",
+  });
+  const legacyNullChild = session({
+    id: "legacy-null-child",
+    eventId: "event-past",
+    negotiationState: "FINISHED",
+    roomLifecycle: null,
+  });
+
+  for (const child of [completedChild, closedChild, deletedChild, legacyNullChild]) {
+    assert.equal(isActiveOperableDashboardChildSession(child), false, child.id);
+  }
+  assert.equal(
+    eventHasActiveOperableDashboardChild(
+      [completedChild, closedChild, deletedChild, legacyNullChild],
+      "event-past",
+    ),
+    false,
+  );
+  assert.equal(lane({ hasActiveChildSession: false }), "ARCHIVE");
+});
+
+test("E09 explicit terminal Event completion stays ARCHIVE", () => {
+  assert.equal(lane({ status: "COMPLETED", activeLobbyCount: 3 }), "ARCHIVE");
+  assert.equal(
+    lane({ status: "COMPLETED", hasActiveChildSession: true }),
+    "ARCHIVE",
+  );
+});
+
+test("E11 partition assigns each Event to exactly one lane", () => {
+  const pastIdle = event({
+    id: "past-idle",
+    scheduledAt: "2026-08-12T12:00:00.000Z",
+    participantsInLobby: 0,
+  });
+  const futureIdle = event({
+    id: "future-idle",
+    scheduledAt: "2026-08-14T12:00:00.000Z",
+    participantsInLobby: 0,
+  });
+  const pastWithLobby = event({
+    id: "past-lobby",
+    scheduledAt: "2026-08-12T12:00:00.000Z",
+    participantsInLobby: 1,
+  });
+  const completed = event({
+    id: "completed",
+    status: "COMPLETED",
+    scheduledAt: "2026-08-12T12:00:00.000Z",
+    participantsInLobby: 2,
+  });
+  const pastWithCompletedChild = event({
+    id: "past-completed-child",
+    scheduledAt: "2026-08-12T12:00:00.000Z",
+    participantsInLobby: 0,
+  });
+  const partitioned = partitionDashboardEventsByLane({
+    events: [pastIdle, futureIdle, pastWithLobby, completed, pastWithCompletedChild],
+    sessions: [
+      session({
+        id: "historical-child",
+        eventId: "past-completed-child",
+        negotiationState: "FINISHED",
+        roomLifecycle: RoomLifecycle.CLOSED,
+      }),
+    ],
+    now,
+  });
+  const activeIds = partitioned.activeEvents.map((candidate) => candidate.id);
+  const archiveIds = partitioned.archivedEvents.map((candidate) => candidate.id);
+
+  assert.deepEqual(new Set(activeIds), new Set(["future-idle", "past-lobby"]));
+  assert.deepEqual(
+    new Set(archiveIds),
+    new Set(["past-idle", "completed", "past-completed-child"]),
+  );
+  assert.equal(
+    activeIds.filter((id) => archiveIds.includes(id)).length,
+    0,
+  );
+});
+
+test("E12 past Event with DEBRIEF_OPEN child is ACTIVE", () => {
+  const debrief = session({
+    id: "debrief-child",
+    eventId: "event-past",
+    negotiationState: "FINISHED",
+    roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+  });
+  assert.equal(isActiveOperableDashboardChildSession(debrief), true);
+  assert.equal(
+    classifyEventDashboardLane({
+      eventStatus: "SESSION_CREATED",
+      scheduledAt: "2026-08-12T12:00:00.000Z",
+      activeLobbyCount: 0,
+      hasActiveChildSession: eventHasActiveOperableDashboardChild(
+        [debrief],
+        "event-past",
+      ),
+      now,
+    }),
+    "ACTIVE",
+  );
+});
+
+test("E13 canonical child close returns a past idle Event to ARCHIVE", () => {
+  const debrief = session({
+    id: "debrief-child",
+    eventId: "event-past",
+    negotiationState: "FINISHED",
+    roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+  });
+  const closed = session({
+    ...debrief,
+    roomLifecycle: RoomLifecycle.CLOSED,
+    sessionStatus: "COMPLETED",
+  });
+  assert.equal(
+    classifyEventDashboardLane({
+      eventStatus: "SESSION_CREATED",
+      scheduledAt: "2026-08-12T12:00:00.000Z",
+      activeLobbyCount: 0,
+      hasActiveChildSession: eventHasActiveOperableDashboardChild(
+        [debrief],
+        "event-past",
+      ),
+      now,
+    }),
+    "ACTIVE",
+  );
+  assert.equal(
+    classifyEventDashboardLane({
+      eventStatus: "SESSION_CREATED",
+      scheduledAt: "2026-08-12T12:00:00.000Z",
+      activeLobbyCount: 0,
+      hasActiveChildSession: eventHasActiveOperableDashboardChild(
+        [closed],
+        "event-past",
+      ),
+      now,
+    }),
+    "ARCHIVE",
+  );
+});
+
+test("E14 COMPLETED and CANCELLED Events stay ARCHIVE despite apparent activity", () => {
+  assert.equal(
+    lane({ status: "COMPLETED", activeLobbyCount: 4, hasActiveChildSession: true }),
+    "ARCHIVE",
+  );
+  assert.equal(
+    lane({ status: "CANCELLED", activeLobbyCount: 1, hasActiveChildSession: true }),
+    "ARCHIVE",
+  );
+});
+
+test("E15 future Event with only a historical child stays ACTIVE because it is upcoming", () => {
+  const historical = session({
+    id: "historical",
+    eventId: "future-event",
+    negotiationState: "FINISHED",
+    roomLifecycle: RoomLifecycle.CLOSED,
+  });
+  assert.equal(isActiveOperableDashboardChildSession(historical), false);
+  assert.equal(
+    classifyEventDashboardLane({
+      eventStatus: "LOBBY_OPEN",
+      scheduledAt: "2026-08-14T06:00:00.000Z",
+      activeLobbyCount: 0,
+      hasActiveChildSession: eventHasActiveOperableDashboardChild(
+        [historical],
+        "future-event",
+      ),
+      now,
+    }),
+    "ACTIVE",
+  );
+});
+
+test("unscheduled idle non-terminal Event is ACTIVE because it is not past", () => {
+  assert.equal(isPastDashboardScheduledAt(null, now), false);
+  assert.equal(lane({ scheduledAt: null }), "ACTIVE");
+});
+
+test("scheduledAt equal to now is not past and stays ACTIVE", () => {
+  assert.equal(isPastDashboardScheduledAt(now.toISOString(), now), false);
+  assert.equal(lane({ scheduledAt: now.toISOString() }), "ACTIVE");
+});
+
+test("selectDashboardActivity does not promote a past idle Event onto the current card", () => {
+  assert.equal(
+    selectDashboardActivity({
+      sessions: [],
+      events: [
+        event({
+          id: "past-idle",
+          scheduledAt: "2026-08-12T12:00:00.000Z",
+          participantsInLobby: 0,
+        }),
+      ],
+      now,
+    }),
+    null,
+  );
+});
+
+test("OPEN and DEBRIEF_OPEN children are operable current activity", () => {
+  assert.equal(
+    isActiveOperableDashboardChildSession(
+      session({ negotiationState: "RUNNING", roomLifecycle: RoomLifecycle.OPEN }),
+    ),
+    true,
+  );
+  assert.equal(
+    isActiveOperableDashboardChildSession(
+      session({
+        negotiationState: "FINISHED",
+        roomLifecycle: RoomLifecycle.DEBRIEF_OPEN,
+      }),
+    ),
+    true,
   );
 });
 

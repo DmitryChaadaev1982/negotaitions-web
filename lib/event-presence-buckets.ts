@@ -1,5 +1,9 @@
 import { LOBBY_ONLINE_THRESHOLD_MS } from "@/lib/presence";
 import { getCanonicalActiveSessionPresenceByUser } from "@/lib/session-active-presence";
+import {
+  isCurrentSessionRoomPresenceConnection,
+  type CurrentPresenceSession,
+} from "@/lib/session-current-presence";
 
 export function derivePresenceBuckets(params: {
   participants: Array<{ userId: string | null; lastSeenAt: Date | null }>;
@@ -12,6 +16,7 @@ export function derivePresenceBuckets(params: {
     supersededAt: Date | null;
     expiresAt: Date;
     updatedAt: Date;
+    session?: CurrentPresenceSession | null;
   }>;
   now?: Date;
 }) {
@@ -29,8 +34,11 @@ export function derivePresenceBuckets(params: {
     }
   }
 
+  const currentRoomConnections = params.sessionConnections.filter((connection) =>
+    isCurrentSessionRoomPresenceConnection(connection, now),
+  );
   const canonicalSessionUsers = getCanonicalActiveSessionPresenceByUser(
-    params.sessionConnections,
+    currentRoomConnections,
     now,
   );
   const onlineSessionUsers = new Set<string>();
@@ -40,7 +48,7 @@ export function derivePresenceBuckets(params: {
     }
   }
 
-  // Transitional overlap is classified as "In Sessions".
+  // Room presence wins over a still-fresh Lobby heartbeat.
   for (const userId of onlineSessionUsers) {
     onlineLobbyUsers.delete(userId);
   }
@@ -48,6 +56,7 @@ export function derivePresenceBuckets(params: {
   return {
     lobbyCount: onlineLobbyUsers.size,
     inSessionCount: onlineSessionUsers.size,
+    onlineCount: onlineLobbyUsers.size + onlineSessionUsers.size,
     totalParticipantsCount: params.participants.length,
   };
 }

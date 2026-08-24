@@ -1,11 +1,14 @@
-type SessionPresenceConnection = {
-  userId: string;
-  sessionId: string;
-  sessionTitle: string;
+export type SessionPresenceLeaseFields = {
   disconnectedAt: Date | null;
   revokedAt: Date | null;
   supersededAt: Date | null;
   expiresAt: Date;
+};
+
+type SessionPresenceConnection = SessionPresenceLeaseFields & {
+  userId: string;
+  sessionId: string;
+  sessionTitle: string;
   updatedAt: Date;
 };
 
@@ -22,7 +25,7 @@ function isNewerConnection(
 }
 
 export function isActiveSessionPresenceConnection(
-  connection: Omit<SessionPresenceConnection, "sessionTitle">,
+  connection: SessionPresenceLeaseFields,
   now: Date = new Date(),
 ): boolean {
   return (

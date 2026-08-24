@@ -5,6 +5,13 @@ export {
   type AiAnalysisProvider,
   type TranscriptionProvider,
 } from "@/lib/config/provider-runtime";
+export {
+  getSessionAbandonedCloseMs,
+  getSessionDebriefEmptyCloseMs,
+  getSessionDebriefMaxDurationMs,
+  getSessionLifecycleDurations,
+} from "@/lib/config/session-lifecycle-settings";
+import { getSessionDebriefEmptyCloseMs } from "@/lib/config/session-lifecycle-settings";
 
 /**
  * Safe boolean env-var parser.
@@ -256,12 +263,9 @@ export function getTranscriptEnhancementMaxRetries(): number {
   return Math.min(3, Math.round(raw));
 }
 
+/** @deprecated Use getSessionDebriefEmptyCloseMs. Compatibility alias. */
 export function getDebriefAutoCloseGraceMs(): number {
-  const raw = Number(process.env.DEBRIEF_AUTO_CLOSE_GRACE_MS ?? "30000");
-  if (!Number.isFinite(raw) || raw <= 0) {
-    return 30000;
-  }
-  return Math.max(5000, Math.round(raw));
+  return getSessionDebriefEmptyCloseMs();
 }
 
 /**

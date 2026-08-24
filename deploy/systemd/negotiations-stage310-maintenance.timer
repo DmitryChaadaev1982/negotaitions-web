@@ -1,10 +1,10 @@
 [Unit]
-Description=Run Negotiations Stage 3.10 maintenance every minute
+Description=Run Negotiations Session lifecycle reconciliation every 15 seconds
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=1min
-RandomizedDelaySec=10s
+OnBootSec=15s
+OnUnitActiveSec=15s
+RandomizedDelaySec=2s
 Persistent=true
 Unit=negotiations-stage310-maintenance.service
 

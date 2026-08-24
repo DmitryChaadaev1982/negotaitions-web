@@ -665,7 +665,20 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                       <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300">
                         {locale === "ru" ? "Участн." : "Participants"} {session.participantCount}
                       </span>
-                      <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300">
+                      <span
+                        className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[11px] text-slate-300"
+                        data-testid={`session-online-count-${session.id}`}
+                        data-online-count={
+                          isSessionActiveForPresence({
+                            status: session.sessionStatus,
+                            negotiationState: session.negotiationState,
+                            roomLifecycle: session.roomLifecycle,
+                            closedByEventAt: session.closedByEventAt,
+                          })
+                            ? String(session.onlineParticipantCount)
+                            : "na"
+                        }
+                      >
                         {locale === "ru" ? "Онлайн" : "Online"}{" "}
                         {isSessionActiveForPresence({
                           status: session.sessionStatus,

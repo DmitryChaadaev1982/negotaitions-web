@@ -1,13 +1,11 @@
 "use client";
 
-import {
-  resolveConnectionStatus,
-  type ParticipantConnectionStatus,
-} from "@/lib/presence";
+import { type ParticipantConnectionStatus } from "@/lib/presence";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type ConnectionStatusBadgeProps = {
   lastSeenAt: string | null | undefined;
+  connectionStatus?: ParticipantConnectionStatus;
   showLastSeen?: boolean;
 };
 
@@ -37,11 +35,12 @@ function statusLabelKey(
 
 export function ConnectionStatusBadge({
   lastSeenAt,
+  connectionStatus,
   showLastSeen = false,
 }: ConnectionStatusBadgeProps) {
   const { t, locale } = useI18n();
   const parsedLastSeen = lastSeenAt ? new Date(lastSeenAt) : null;
-  const status = resolveConnectionStatus(parsedLastSeen);
+  const status = connectionStatus ?? "OFFLINE";
 
   const formattedLastSeen =
     parsedLastSeen && !Number.isNaN(parsedLastSeen.getTime())

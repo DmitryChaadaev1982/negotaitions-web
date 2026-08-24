@@ -59,8 +59,8 @@ import {
   type RecordingControlMessage,
   type RecordingStatus,
 } from "@/lib/voximplant/scenario-messages";
-import { getVoximplantConfig } from "@/lib/voximplant/config";
-import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url";
+import { getVoximplantConfig } from "@/lib/voximplant/config-settings";
+import { getVoximplantRecordingWebhookBaseUrl } from "@/lib/voximplant/recording-webhook-url-store";
 import {
   buildSignedRecordingDispatchPayload,
 } from "@/lib/voximplant/recording-dispatch-contract";

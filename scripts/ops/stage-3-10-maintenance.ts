@@ -1,13 +1,6 @@
 import { parseArgs } from "node:util";
 
 import { bootstrapOperationalEnv } from "@/lib/operational-env";
-import {
-  runVoximplantCallbackNonceCleanup,
-  runRecordingStopDeliverySweep,
-  runRoomLifecycleBackfill,
-  runSessionConnectionExpirySweep,
-  verifyRoomLifecycleBackfill,
-} from "@/lib/stage-3-10-maintenance";
 
 bootstrapOperationalEnv();
 
@@ -69,6 +62,14 @@ async function main() {
   ) {
     throw new Error(`Unsupported --task value: ${task}`);
   }
+
+  const {
+    runVoximplantCallbackNonceCleanup,
+    runRecordingStopDeliverySweep,
+    runRoomLifecycleBackfill,
+    runSessionConnectionExpirySweep,
+    verifyRoomLifecycleBackfill,
+  } = await import("@/lib/stage-3-10-maintenance");
 
   const output: Record<string, unknown> = {
     task,

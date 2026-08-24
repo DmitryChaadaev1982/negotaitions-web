@@ -231,6 +231,20 @@ test("provider-event rollback disables persistent timer before consumer", () => 
   assert.ok(ingestionFlag > consumerDisable, "ingestion flag is disabled after units");
 });
 
+test("Stage 3.10 maintenance timer uses a 15-second lifecycle cadence", () => {
+  const timer = readFileSync(
+    path.join(
+      process.cwd(),
+      "deploy/systemd/negotiations-stage310-maintenance.timer",
+    ),
+    "utf8",
+  );
+  assert.match(timer, /^OnUnitActiveSec=15s$/m);
+  assert.match(timer, /^OnBootSec=15s$/m);
+  assert.match(timer, /^Persistent=true$/m);
+  assert.match(timer, /^WantedBy=timers\.target$/m);
+});
+
 test("Stage 3.10 maintenance runbook normalizes before systemd start", () => {
   const runbook = readFileSync(
     path.join(process.cwd(), "docs/operations/stage-3-10-maintenance-runbook.md"),
