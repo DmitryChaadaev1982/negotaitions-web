@@ -1,3 +1,9 @@
+/**
+ * Research-only Yandex schema characterization helpers.
+ * Imported by `scripts/research/characterize-yandex-analysis-schema.ts`
+ * and unit tests only. Production analyze/runtime paths must not import this
+ * module.
+ */
 import {
   buildBoundedSchemaIssueDiagnostics,
 } from "@/lib/ai/analysis-failure-diagnostics";

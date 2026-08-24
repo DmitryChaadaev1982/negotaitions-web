@@ -39,6 +39,7 @@ const APPROVED_DIAGNOSTIC_SAMPLE: Record<
   retrievalRetryCount: 1,
   maxPollRequestsReached: false,
   generationCallCount: 1,
+  providerGenerationAttempt: 1,
   checkpoint: "after_known_response_get",
   cancellationSource: "request",
   inputChars: 2400,
@@ -196,6 +197,22 @@ test("G: transcript, notes, hiddenInfo, and raw model output remain dropped", ()
   });
   assert.equal(isForbiddenDiagnosticKey("transcript"), true);
   assert.equal(isForbiddenDiagnosticKey("issuePaths"), false);
+});
+
+test("providerGenerationAttempt survives the positive allowlist as a bounded number", () => {
+  const sanitized = sanitizeAiAnalysisDiagnostics({
+    issueCount: 1,
+    providerGenerationAttempt: 1,
+    generationCallCount: 1,
+    attemptNarrative: "first model prose",
+  });
+  assert.deepEqual(sanitized, {
+    issueCount: 1,
+    providerGenerationAttempt: 1,
+    generationCallCount: 1,
+  });
+  assert.equal(isApprovedAiAnalysisDiagnosticKey("providerGenerationAttempt"), true);
+  assert.equal("attemptNarrative" in sanitized, false);
 });
 
 test("known allowlisted key with unbounded or nested value is dropped", () => {

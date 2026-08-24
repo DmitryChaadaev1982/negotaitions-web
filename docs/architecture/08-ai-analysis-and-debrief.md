@@ -37,6 +37,23 @@ Produce structured post-session coaching output from transcript/materials and ex
    recipient by supplied `SessionParticipant` ID, which is validated against
    the current negotiating roster before `analysisJson` is persisted and
    status changed to `COMPLETED`.
+8. If the selected provider is Yandex and generation 1 terminates with
+   `MODEL_SCHEMA_VALIDATION_ERROR`, the same owned analysis operation may
+   start exactly one NEW same-prompt Yandex generation. The row stays
+   `ANALYZING`. There is no intermediate `FAILED`, no second HTTP
+   `POST /analyze`, and no extra `analysisVersion`. The original prompt,
+   `runToken`, fingerprint, and operation deadline are reused; attempt 2
+   receives only remaining budget. Ownership/currentness is rechecked before
+   the second provider POST. The currentness linearization point is a
+   successful `assertReadyForSecondGeneration` check: stale F1 before that
+   point yields zero generation-2 POSTs. After that point, a later material
+   mutation may make the already-authorized provider work stale, exactly as
+   during ordinary generation-1 provider work. Completion does not rewrite
+   `inputFingerprint` to the later envelope; stored F1 vs current F2 is
+   non-current, unshareable, and presented as rerun-required / `NOT_STARTED`.
+   Any other first-attempt class, including OpenAI schema validation, stays
+   single-generation. Generation 2 is terminal: success completes once; any
+   failure fails once; there is no third generation.
 
 ## Large-session input contract
 
@@ -79,8 +96,8 @@ Produce structured post-session coaching output from transcript/materials and ex
   generations would require additional recoverable stage state, add cost, and
   risk evidence loss. The quality stop condition therefore prefers an explicit
   supported boundary over a lossy report presented as complete.
-7. A completed analysis can be explicitly published as a role-scoped snapshot
-   to historically eligible Participant/Observer room entrants.
+- A completed analysis can be explicitly published as a role-scoped snapshot
+  to historically eligible Participant/Observer room entrants.
 
 ## Provider Selection And Fail-Closed Contract
 
@@ -134,6 +151,7 @@ Produce structured post-session coaching output from transcript/materials and ex
 
 - Analysis model/schema and provider execution: `lib/ai/negotiation-analysis.ts`.
 - Bounded failure diagnostics: `lib/ai/analysis-failure-diagnostics.ts`.
+- Bounded Yandex schema recovery: `lib/ai/analysis-schema-recovery.ts`.
 - Durable ownership and recovery: `lib/ai/analysis-operation.ts`.
 - Analysis context builder: `lib/ai/session-analysis-context.ts`.
 - Visibility filtering: `lib/analysis-visibility.ts`.
@@ -156,8 +174,9 @@ values, free-form `issues` strings, `candidate`, `responseBody`, and any
 raw model or provider prose are dropped. The journal `rawError` may retain:
 
 - application `errorClass`;
-- `issueCount`, bounded `issuePaths`, `issueCodes`, and expected/received
-  type kinds (not values);
+- `issueCount`, bounded `issuePaths`, `issueCodes`, expected/received
+  type kinds (not values), and `providerGenerationAttempt` when recovery
+  records which provider generation failed;
 - `outputCondition`, `responseLength`, provider lifecycle status, and
   incomplete reason when present;
 - durations and token estimates already collected on the run as a
@@ -165,8 +184,39 @@ raw model or provider prose are dropped. The journal `rawError` may retain:
 
 It must not persist transcript, participant notes, hiddenInfo, personal
 feedback, raw model output, or extracted model prose. Schema validation
-failures map to `MODEL_SCHEMA_VALIDATION_ERROR`. Automatic retry is not
-enabled (`AI_ANALYSIS_MAX_ATTEMPTS` remains 1).
+failures map to `MODEL_SCHEMA_VALIDATION_ERROR`. The adapter-level
+`AI_ANALYSIS_MAX_ATTEMPTS` remains 1 and `retryable=false` remains correct
+for an exhausted first generation. A separate owned-operation primitive may
+start one NEW Yandex generation after the first `MODEL_SCHEMA_VALIDATION_ERROR`.
+That first-attempt diagnostic is journaled as a non-terminal WARNING
+(`AI analysis schema recovery: MODEL_SCHEMA_VALIDATION_ERROR`). Consumers:
+`logExternalServiceEvent` persists the row and writes a server log;
+`GET /api/admin/health` may show it in the admin/operator journal
+(unfiltered last-50 events); `hasRecentCriticalServiceErrors` and
+`GET /api/admin/service-warnings` count only `ERROR`/`CRITICAL`, so the
+dashboard `ServiceWarningBanner` does not fire. Session materials/status
+and post-processing read `AiAnalysis.status` / `errorMessage`, not
+`ExternalServiceEvent`. The facilitator UI therefore does not present a
+recovered first-attempt WARNING as a transient or final session failure.
+A terminal owned-operation failure still journals `ERROR` and writes
+`AiAnalysis.errorMessage`. The row stays `ANALYZING` until the owned
+operation completes or fails once.
+
+## Owned-Operation Performance Model
+
+`getAiAnalysisPerformanceModel()` reports:
+
+- `maxGenerationPosts = 1` — ordinary single provider invocation (adapter
+  retries clamped to 1; compact/depth extras stay 0).
+- `maxOwnedOperationGenerationPosts = 2` — generation 1 plus at most one
+  same-prompt Yandex schema-recovery POST.
+- `maxPollingRequestsPerGeneration` — `ceil(pollTimeout / pollInterval)`.
+- `maxPollingRequests` — owned-operation polling total
+  (`maxOwnedOperationGenerationPosts * maxPollingRequestsPerGeneration`).
+
+The polling total is a conservative structural bound. Both generations still
+share the original operation deadline; remaining budget can cut generation 2
+short. Do not treat `maxPollingRequests` as a single-generation figure.
 
 ## Visibility Model
 
@@ -342,7 +392,14 @@ payload.
   own notes stay writable and are not this projection. Viewing, read-only
   transition, and reveal do not change `inputFingerprint`. N01/N02 may still
   use controlled DB mutation.
-- Currentness: `evaluateAiAnalysisCurrentness`. A new transcript generation
+- Currentness: `evaluateAiAnalysisCurrentness`. Schema-recovery currentness
+  linearizes at a successful `assertReadyForSecondGeneration` check. There is
+  no transactional fence that locks the currentness read together with the
+  later provider POST. Facilitator transcript/mapping/attribution writes and
+  manual enhancement retry stay blocked while AI is `QUEUED`/`ANALYZING` with
+  a live lease; retranscription and other ordinary provider-work windows can
+  still stale an already-authorized generation. Completion never rewrites
+  `inputFingerprint` to a later envelope. A new transcript generation
   (`transcriptId` + `retranscribeCount`) is a downstream invalidation boundary
   even when a stored fingerprint would still match the queued/archived text.
   Same-generation fingerprinted rows compare stored hash to the current
@@ -467,6 +524,7 @@ payload.
 
 - `lib/ai/negotiation-analysis.ts`
 - `lib/ai/analysis-failure-diagnostics.ts`
+- `lib/ai/analysis-schema-recovery.ts`
 - `lib/analysis-visibility.ts`
 - `lib/privacy/serializers.ts`
 - `lib/ai-publication.ts`

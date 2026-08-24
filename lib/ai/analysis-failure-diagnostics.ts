@@ -53,6 +53,7 @@ export const APPROVED_AI_ANALYSIS_DIAGNOSTIC_KEYS = [
   "retrievalRetryCount",
   "maxPollRequestsReached",
   "generationCallCount",
+  "providerGenerationAttempt",
   "checkpoint",
   "cancellationSource",
   "inputChars",

@@ -470,11 +470,11 @@
     },
     {
       "id": "EVAL-AI-INVALID-THEN-VALID-TWIN",
-      "invariant": "Same material input: provider response A is schema-invalid at a structural boundary; independent generation B is valid; only B can become COMPLETED/current. Encodes a proposed bounded extra generation that is not production-enabled.",
+      "invariant": "Same owned analysis operation and same already-built prompt: Yandex generation 1 is schema-invalid at a structural boundary; generation 2 is valid; only generation 2 becomes COMPLETED/current. AiAnalysis stays ANALYZING between attempts.",
       "risk": "HIGH",
       "evalType": "TRANSITION",
       "fixtureType": "UNIT",
-      "expectedDomainResult": "After A fails schema validation, B completes and is the only current analysisJson. Production max attempts remain 1.",
+      "expectedDomainResult": "Exactly two Yandex generation POSTs, one complete, zero fail, one analysisVersion, only the valid second output persisted.",
       "expectedUiResult": null,
       "automation": "AUTOMATED",
       "transitionKind": "TRANSITION",
@@ -483,18 +483,19 @@
       "providerCalls": false,
       "productionSafe": true,
       "evidence": [
-        "lib/ai/proposed-bounded-schema-recovery.test.ts",
-        "docs/requirements/stage-3-17a-ai-analysis-schema-reliability.md"
+        "lib/ai/analysis-schema-recovery.test.ts",
+        "lib/ai/analysis-schema-recovery.ts",
+        "app/api/sessions/[sessionId]/analyze/route.ts"
       ],
-      "coverageStatus": "PARTIAL"
+      "coverageStatus": "COVERED"
     },
     {
       "id": "EVAL-AI-INVALID-THEN-INVALID-BOUNDED",
-      "invariant": "Same material input: generation A invalid, proposed extra generation B invalid, terminal FAILED, no third generation. Proposed policy only; not production-enabled.",
+      "invariant": "Same owned analysis operation and same already-built prompt: Yandex generation 1 schema-invalid, generation 2 schema-invalid, terminal FAILED, no third generation.",
       "risk": "HIGH",
       "evalType": "TRANSITION",
       "fixtureType": "UNIT",
-      "expectedDomainResult": "Exactly two generations, durable FAILED, no current analysisJson.",
+      "expectedDomainResult": "Exactly two generation POSTs, fail exactly once, durable FAILED, no current analysisJson.",
       "expectedUiResult": null,
       "automation": "AUTOMATED",
       "transitionKind": "TRANSITION",
@@ -503,10 +504,30 @@
       "providerCalls": false,
       "productionSafe": true,
       "evidence": [
-        "lib/ai/proposed-bounded-schema-recovery.test.ts",
-        "docs/requirements/stage-3-17a-ai-analysis-schema-reliability.md"
+        "lib/ai/analysis-schema-recovery.test.ts",
+        "lib/ai/analysis-schema-recovery.ts"
       ],
-      "coverageStatus": "PARTIAL"
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-AI-RETRY-NO-OVERWRITE-NEWER",
+      "invariant": "After generation 1 schema-invalid, a newer owner/current analysis cannot be completed, failed, or given a provider response id by the stale owned operation, and the stale operation must not start generation 2.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Lost-ownership precheck yields zero second-generation POSTs; stale complete/fail/persist are rejected; newer token remains authoritative.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S317A-P-004"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/ai/analysis-schema-recovery.test.ts",
+        "lib/ai/analysis-operation.test.ts"
+      ],
+      "coverageStatus": "COVERED"
     },
     {
       "id": "EVAL-AI-FAIL-DIAGNOSTICS",
@@ -524,7 +545,8 @@
       "productionSafe": true,
       "evidence": [
         "lib/ai/analysis-failure-diagnostics.ts",
-        "lib/ai/analysis-failure-diagnostics.test.ts"
+        "lib/ai/analysis-failure-diagnostics.test.ts",
+        "lib/ai/analysis-schema-recovery.test.ts"
       ],
       "coverageStatus": "COVERED"
     }

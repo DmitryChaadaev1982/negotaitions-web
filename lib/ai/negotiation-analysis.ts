@@ -6,6 +6,10 @@ import {
   estimateAiAnalysisTokensFromChars,
 } from "@/lib/ai/analysis-input-budget";
 import { buildBoundedSchemaIssueDiagnostics } from "@/lib/ai/analysis-failure-diagnostics";
+import {
+  AI_ANALYSIS_MAX_EXTRA_SCHEMA_RECOVERY_GENERATIONS,
+  AI_ANALYSIS_TOTAL_GENERATIONS_MAX,
+} from "@/lib/ai/analysis-schema-recovery-policy";
 import { getAiAnalysisProvider, isYandexAiConfigured } from "@/lib/env";
 
 export function getAiAnalysisModel(): string {
@@ -331,6 +335,21 @@ export function getAiAnalysisMaxPollRequests(): number {
   return parseBoundedIntegerEnv("AI_ANALYSIS_MAX_POLL_REQUESTS", 100, 1, 10_000);
 }
 
+/**
+ * Conservative structural cost/latency model for one owned analysis operation.
+ *
+ * `maxGenerationPosts` is the ordinary single-invocation POST budget
+ * (adapter retries remain clamped to 1; compact/depth extras stay 0).
+ * `maxOwnedOperationGenerationPosts` is the bounded Yandex schema-recovery
+ * ceiling (generation 1 + at most one same-prompt recovery POST).
+ *
+ * `maxPollingRequestsPerGeneration` is one provider-generation GET budget
+ * from poll timeout / interval. `maxPollingRequests` is the owned-operation
+ * total (`maxOwnedOperationGenerationPosts * maxPollingRequestsPerGeneration`).
+ * That total is a conservative structural bound: both generations still share
+ * the single original operation deadline, so remaining budget can cut the
+ * second generation short.
+ */
 export function getAiAnalysisPerformanceModel() {
   const maxOperationAttempts = getAiAnalysisMaxAttempts();
   const maxPrimaryGenerationPosts = maxOperationAttempts;
@@ -343,6 +362,9 @@ export function getAiAnalysisPerformanceModel() {
   const maxPollingRequestsPerGeneration = Math.ceil(
     getAiAnalysisResponsePollTimeoutMs() / getAiAnalysisResponsePollIntervalMs(),
   );
+  const maxOwnedOperationGenerationPosts = AI_ANALYSIS_TOTAL_GENERATIONS_MAX;
+  const maxPollingRequests =
+    maxOwnedOperationGenerationPosts * maxPollingRequestsPerGeneration;
   return {
     beforeReviewTheoreticalWorstCaseMs: 24 * 60_000,
     maxOperationAttempts,
@@ -350,7 +372,11 @@ export function getAiAnalysisPerformanceModel() {
     maxCompactFallbackCalls,
     maxOptionalDepthCalls,
     maxGenerationPosts,
-    maxPollingRequests: maxGenerationPosts * maxPollingRequestsPerGeneration,
+    maxSchemaRecoveryExtraGenerations:
+      AI_ANALYSIS_MAX_EXTRA_SCHEMA_RECOVERY_GENERATIONS,
+    maxOwnedOperationGenerationPosts,
+    maxPollingRequestsPerGeneration,
+    maxPollingRequests,
     perResponsePollTimeoutMs: getAiAnalysisResponsePollTimeoutMs(),
     operationTimeoutMs: getAiAnalysisOperationTimeoutMs(),
     theoreticalDefaultWorstCaseMs: getAiAnalysisOperationTimeoutMs(),

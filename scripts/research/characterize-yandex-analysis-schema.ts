@@ -73,21 +73,21 @@ async function runOneGeneration(
   const prompt = buildAnalysisPrompt(
     SYNTHETIC_SCHEMA_CHARACTERIZATION_FIXTURES[fixture].context,
   );
-  let capturedText: string | null = null;
+  const capture: { text: string | null } = { text: null };
   const started = Date.now();
   try {
     const result = await runNegotiationAnalysis(prompt, "ru-RU", {
       persistProviderResponseId: async () => true,
       fetch: createCapturingFetch((text) => {
-        capturedText = text;
+        capture.text = text;
       }),
     });
-    const parsedSource = capturedText
-      ? tryParseJsonWithRecovery(capturedText)
+    const parsedSource = capture.text
+      ? tryParseJsonWithRecovery(capture.text)
       : result.output;
     const missed = summarizeMissedOpportunitiesShape(parsedSource ?? result.output);
     return {
-      rawText: capturedText,
+      rawText: capture.text,
       record: {
         fixture,
         runNumber,
@@ -114,20 +114,20 @@ async function runOneGeneration(
     };
   } catch (error) {
     const classified = classifyProviderCharacterizationError(error);
-    const parsed = capturedText ? tryParseJsonWithRecovery(capturedText) : null;
+    const parsed = capture.text ? tryParseJsonWithRecovery(capture.text) : null;
     const local = parsed ? classifyParsedAnalysis(parsed) : null;
     const missed = parsed
       ? summarizeMissedOpportunitiesShape(parsed)
       : { exists: false, itemKinds: [], shape: null };
     return {
-      rawText: capturedText,
+      rawText: capture.text,
       record: {
         fixture,
         runNumber,
         model: "deepseek-v4-flash",
         providerLifecycleResult: classified.providerLifecycleResult,
         durationMs: Date.now() - started,
-        responseLength: classified.responseLength ?? capturedText?.length ?? null,
+        responseLength: classified.responseLength ?? capture.text?.length ?? null,
         parseStatus: local
           ? "valid"
           : classified.parseStatus,

@@ -16,13 +16,19 @@ import {
   fingerprintSessionAnalysisContext,
   type SessionAnalysisContext,
 } from "@/lib/ai/session-analysis-context";
+import { evaluateAiAnalysisCurrentness } from "@/lib/ai/analysis-currentness";
 import { buildBoundedAiAnalysisLogPayload } from "@/lib/ai/analysis-failure-diagnostics";
+import {
+  executeOwnedAnalysisWithBoundedYandexSchemaRecovery,
+  YANDEX_SCHEMA_RECOVERY_EVENT_TITLE,
+} from "@/lib/ai/analysis-schema-recovery";
 import {
   AiAnalysisProviderError,
   bindParticipantPersonalFeedback,
   canRecoverProviderResponseAfterFailure,
   classifyAiAnalysisError,
   createMockAnalysisOutput,
+  getAiAnalysisOperationTimeoutMs,
   isAiAnalysisConfiguredForSelectedProvider,
   runNegotiationAnalysis,
   type AiAnalysisErrorCode,
@@ -32,6 +38,7 @@ import { ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE } from "@/lib/transcription/process
 import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 import {
   claimAiAnalysisRun,
+  clearAiAnalysisProviderResponseId,
   completeAiAnalysisRunWithCurrentParticipants,
   failAiAnalysisRun,
   persistAiAnalysisProviderResponseId,
@@ -39,10 +46,7 @@ import {
   startAiAnalysisRun,
   type AiAnalysisRunOwner,
 } from "@/lib/ai/analysis-operation";
-import {
-  executeOwnedAnalysis,
-  type OwnedAnalysisFailure,
-} from "@/lib/ai/analysis-orchestration";
+import { type OwnedAnalysisFailure } from "@/lib/ai/analysis-orchestration";
 import { getOptionalCurrentUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth/admin";
 import { prisma } from "@/lib/prisma";
@@ -333,6 +337,9 @@ export async function POST(request: Request, context: RouteContext) {
           analysisLanguage,
           operationStartedAtMonotonic,
           analysisContext,
+          inputFingerprint,
+          transcript.id,
+          transcript.retranscribeCount ?? 0,
         );
       }
     } catch (error) {
@@ -438,6 +445,9 @@ async function processRealAnalysis(
   language: string,
   operationStartedAtMonotonic: number,
   analysisContext: SessionAnalysisContext,
+  inputFingerprint: string,
+  claimedTranscriptId: string,
+  claimedTranscriptRetranscribeCount: number,
 ) {
   const provider = getAiAnalysisProvider();
   let owner = initialOwner;
@@ -451,8 +461,9 @@ async function processRealAnalysis(
     return true;
   };
 
-  const result = await executeOwnedAnalysis({
-    run: async () => {
+  const result = await executeOwnedAnalysisWithBoundedYandexSchemaRecovery({
+    provider,
+    preparePrompt: async () => {
       if (!(await renewLease("before_context_load"))) {
         throw new AiAnalysisProviderError({
           code: "OWNERSHIP_LOST",
@@ -461,11 +472,17 @@ async function processRealAnalysis(
           allowsRegeneration: false,
         });
       }
-      const prompt = buildAnalysisPrompt(analysisContext);
-      return runNegotiationAnalysis(prompt, language, {
+      return buildAnalysisPrompt(analysisContext);
+    },
+    existingProviderResponseId: owner.providerResponseId,
+    remainingOperationBudgetMs: () =>
+      getAiAnalysisOperationTimeoutMs() -
+      (performance.now() - operationStartedAtMonotonic),
+    generate: ({ prompt, existingProviderResponseId }) =>
+      runNegotiationAnalysis(prompt, language, {
         renewLease,
         operationStartedAtMonotonic,
-        existingProviderResponseId: owner.providerResponseId,
+        existingProviderResponseId,
         persistProviderResponseId: async (providerResponseId) => {
           const persisted = await persistAiAnalysisProviderResponseId({
             owner,
@@ -477,6 +494,66 @@ async function processRealAnalysis(
           owner = persisted;
           return true;
         },
+      }),
+    assertReadyForSecondGeneration: async () => {
+      if (!(await renewLease("before_schema_recovery_generation"))) {
+        return { state: "ownership_lost" };
+      }
+      const [currentContext, currentTranscript] = await Promise.all([
+        buildSessionAnalysisContext(sessionId),
+        prisma.transcript.findUnique({
+          where: { sessionId },
+          select: { id: true, retranscribeCount: true },
+        }),
+      ]);
+      if (!currentContext || !currentTranscript) {
+        return { state: "stale_material" };
+      }
+      const currentness = evaluateAiAnalysisCurrentness({
+        analysis: {
+          inputFingerprint,
+          transcriptId: claimedTranscriptId,
+          transcriptRetranscribeCount: claimedTranscriptRetranscribeCount,
+        },
+        currentFingerprint: fingerprintSessionAnalysisContext(currentContext),
+        transcriptId: currentTranscript.id,
+        transcriptRetranscribeCount: currentTranscript.retranscribeCount ?? 0,
+      });
+      if (!currentness.current) {
+        return { state: "stale_material" };
+      }
+      return { state: "ready" };
+    },
+    clearExhaustedProviderResponseId: async () => {
+      const cleared = await clearAiAnalysisProviderResponseId({ owner });
+      if (!cleared) {
+        return false;
+      }
+      owner = cleared;
+      return true;
+    },
+    observeFirstAttemptRecoveryDiagnostic: async (error) => {
+      const classified = classifyAiAnalysisError(error);
+      await logExternalServiceEvent({
+        service: ExternalService.APP,
+        severity: ExternalServiceEventSeverity.WARNING,
+        errorCode: mapAiAnalysisErrorCodeToExternalServiceCode(classified.code),
+        title: YANDEX_SCHEMA_RECOVERY_EVENT_TITLE,
+        message: classified.userMessage,
+        rawError: buildBoundedAiAnalysisLogPayload({
+          errorClass: classified.code,
+          provider,
+          model: classified.model,
+          httpStatus: classified.httpStatus,
+          retryable: classified.retryable,
+          metrics: classified.metrics,
+          diagnostics: {
+            ...classified.diagnostics,
+            providerGenerationAttempt: 1,
+            generationCallCount: classified.metrics?.generationCallCount ?? 1,
+          },
+        }),
+        sessionId,
       });
     },
     complete: async ({ output, rawOutput, model, metrics }) => {

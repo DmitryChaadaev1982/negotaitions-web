@@ -128,6 +128,10 @@ export type AiAnalysisOperationStore = {
     providerResponseId: string;
     now: Date;
   }): Promise<boolean>;
+  clearProviderResponseId(params: {
+    owner: AiAnalysisRunOwner;
+    now: Date;
+  }): Promise<boolean>;
   complete(params: {
     owner: AiAnalysisRunOwner;
     completedAt: Date;
@@ -276,6 +280,23 @@ export function createPrismaAiAnalysisOperationStore(
         },
       });
       return persisted.count === 1;
+    },
+    async clearProviderResponseId(params) {
+      const cleared = await client.aiAnalysis.updateMany({
+        where: {
+          id: params.owner.analysisId,
+          status: AiAnalysisStatus.ANALYZING,
+          runToken: params.owner.runToken,
+          leaseExpiresAt: {
+            equals: params.owner.leaseExpiresAt,
+            gt: params.now,
+          },
+        },
+        data: {
+          providerResponseId: null,
+        },
+      });
+      return cleared.count === 1;
     },
     async complete(params) {
       const completed = await client.aiAnalysis.updateMany({
@@ -519,6 +540,25 @@ export async function persistAiAnalysisProviderResponseId(params: {
   return persisted
     ? { ...params.owner, providerResponseId: params.providerResponseId }
     : null;
+}
+
+/**
+ * Clears an exhausted provider generation id while the owned operation remains
+ * ANALYZING. Used before a bounded same-prompt NEW generation so a later
+ * reclaim cannot GET-poll the unusable first response.
+ */
+export async function clearAiAnalysisProviderResponseId(params: {
+  owner: AiAnalysisRunOwner;
+  now?: Date;
+  store?: AiAnalysisOperationStore;
+}): Promise<AiAnalysisRunOwner | null> {
+  const now = params.now ?? new Date();
+  const cleared = await (params.store ?? createPrismaAiAnalysisOperationStore())
+    .clearProviderResponseId({
+      owner: params.owner,
+      now,
+    });
+  return cleared ? { ...params.owner, providerResponseId: null } : null;
 }
 
 export async function completeAiAnalysisRun(params: {

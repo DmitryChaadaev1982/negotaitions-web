@@ -9,6 +9,7 @@ import {
   createPrismaAiAnalysisOperationStore,
   failAiAnalysisRun,
   persistAiAnalysisProviderResponseId,
+  clearAiAnalysisProviderResponseId,
   renewAiAnalysisLease,
   startAiAnalysisRun,
   type AiAnalysisOperationStore,
@@ -128,6 +129,22 @@ function createMemoryStore(initial: Row | null = null) {
         return false;
       }
       row = { ...row, providerResponseId: params.providerResponseId };
+      return true;
+    },
+    async clearProviderResponseId(params) {
+      trace.push(`clear-response:${params.owner.runToken}`);
+      if (
+        !row ||
+        row.id !== params.owner.analysisId ||
+        row.status !== AiAnalysisStatus.ANALYZING ||
+        row.runToken !== params.owner.runToken ||
+        !row.leaseExpiresAt ||
+        row.leaseExpiresAt.getTime() !== params.owner.leaseExpiresAt.getTime() ||
+        row.leaseExpiresAt.getTime() <= params.now.getTime()
+      ) {
+        return false;
+      }
+      row = { ...row, providerResponseId: null };
       return true;
     },
     async complete(params) {
@@ -498,6 +515,49 @@ test("old token success, failure, and renewal are fenced after takeover", async 
   );
   assert.equal(memory.row?.runToken, "new-token");
   assert.equal(memory.row?.status, AiAnalysisStatus.QUEUED);
+});
+
+test("exhausted provider response ID can be cleared while remaining ANALYZING", async () => {
+  const memory = createMemoryStore();
+  const now = new Date("2026-08-07T12:00:00.000Z");
+  const claimed = await claimAiAnalysisRun({
+    ...claimInput,
+    now,
+    runToken: "token-a",
+    store: memory.store,
+  });
+  assert.equal(claimed.state, "claimed");
+  if (claimed.state !== "claimed") return;
+  const started = await startAiAnalysisRun({
+    owner: claimed.owner,
+    now: new Date(now.getTime() + 500),
+    store: memory.store,
+  });
+  assert.ok(started);
+  const persisted = await persistAiAnalysisProviderResponseId({
+    owner: started,
+    providerResponseId: "resp_exhausted",
+    now: new Date(now.getTime() + 1_000),
+    store: memory.store,
+  });
+  assert.ok(persisted);
+  const cleared = await clearAiAnalysisProviderResponseId({
+    owner: persisted,
+    now: new Date(now.getTime() + 1_500),
+    store: memory.store,
+  });
+  assert.ok(cleared);
+  assert.equal(cleared.providerResponseId, null);
+  assert.equal(memory.row?.providerResponseId, null);
+  assert.equal(memory.row?.status, AiAnalysisStatus.ANALYZING);
+
+  const staleClear = await clearAiAnalysisProviderResponseId({
+    owner: { ...persisted, runToken: "stale-token" },
+    now: new Date(now.getTime() + 2_000),
+    store: memory.store,
+  });
+  assert.equal(staleClear, null);
+  assert.equal(memory.row?.status, AiAnalysisStatus.ANALYZING);
 });
 
 test("provider response ID persistence is fenced by current run token and lease", async () => {

@@ -207,11 +207,15 @@ async function main() {
         performanceModel.theoreticalDefaultWorstCaseMs,
       maxOperationAttempts: performanceModel.maxOperationAttempts,
       maxGenerationPosts: performanceModel.maxGenerationPosts,
+      maxOwnedOperationGenerationPosts:
+        performanceModel.maxOwnedOperationGenerationPosts,
       maxPrimaryGenerationPosts:
         performanceModel.maxPrimaryGenerationPosts,
       maxCompactFallbackCalls:
         performanceModel.maxCompactFallbackCalls,
       maxOptionalDepthCalls: performanceModel.maxOptionalDepthCalls,
+      maxPollingRequestsPerGeneration:
+        performanceModel.maxPollingRequestsPerGeneration,
       maxPollingRequests: performanceModel.maxPollingRequests,
       perResponsePollTimeoutMs:
         performanceModel.perResponsePollTimeoutMs,

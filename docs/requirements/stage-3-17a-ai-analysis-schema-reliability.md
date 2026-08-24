@@ -1,9 +1,9 @@
-# Stage 3.17A Authoritative Requirement Manifest
+﻿# Stage 3.17A Authoritative Requirement Manifest
 
 ## Authority and use
 
 This is the authoritative, implementation-independent requirement/change-plan
-manifest for Stage 3.17A — AI Analysis Schema Reliability & Recovery.
+manifest for Stage 3.17A вЂ” AI Analysis Schema Reliability & Recovery.
 
 This file is the first product-stage pilot of the Stage 3.16A engineering
 workflow (`docs/testing/engineering-workflow.md`). Approved decisions in this
@@ -18,13 +18,13 @@ for operator decision.
 
 Status values used in this stage:
 
-- `APPROVED` — accepted stage scope
-- `PROPOSED` — not yet accepted
-- `OUT_OF_SCOPE` — forbidden or explicitly excluded
-- `DECISION_REQUIRED` — operator judgment required before implementation
-- `PASS` — finished review with evidence (operator-accepted or locally evidenced
+- `APPROVED` вЂ” accepted stage scope
+- `PROPOSED` вЂ” not yet accepted
+- `OUT_OF_SCOPE` вЂ” forbidden or explicitly excluded
+- `DECISION_REQUIRED` вЂ” operator judgment required before implementation
+- `PASS` вЂ” finished review with evidence (operator-accepted or locally evidenced
   forensic/planning fact)
-- `DEFERRED` — later checkpoint; still expected unless superseded
+- `DEFERRED` вЂ” later checkpoint; still expected unless superseded
 
 Checkpoint authorization is separate from status. A later Change Unit may be
 `APPROVED` stage scope and still `NOT_AUTHORIZED` for the current Cursor run.
@@ -45,9 +45,27 @@ Evidence types used here:
 STAGE_ID = 3.17A
 STAGE_NAME = AI Analysis Schema Reliability & Recovery
 STAGE_KIND = product / reliability / provider-contract
-PRODUCT_BEHAVIOR_CHANGE = NOT_IN_CHECKPOINT_1
+PRODUCT_BEHAVIOR_CHANGE = BOUNDED_YANDEX_SCHEMA_RECOVERY
 DIAGNOSTICS_CHANGE = BOUNDED_JOURNAL_FIELDS_ONLY
 WORKFLOW_PILOT = Stage 3.16A first real product CIA/CU/eval pilot
+
+PRODUCTION_INCIDENT_CLASS = MODEL_SCHEMA_VALIDATION_ERROR
+PRODUCTION_INCIDENT_PATH = listeningAndReframing.missedOpportunities.0
+SCHEMA_CHANGE = NO
+PROMPT_CHANGE = NO
+MODEL_CHANGE = NO
+JSON_REPAIR_CHANGE = NO
+RECOVERY_PROVIDER = YANDEX_ONLY
+RECOVERY_CLASS = MODEL_SCHEMA_VALIDATION_ERROR_ONLY
+MAX_EXTRA_GENERATIONS = 1
+TOTAL_GENERATIONS_MAX = 2
+SAME_OWNED_OPERATION = YES
+SAME_PROMPT = YES
+SECOND_HTTP_POST = NO
+INTERMEDIATE_FAILED = NO
+DEADLINE_RESET = NO
+DIAGNOSTICS_MODE = BOUNDED_POSITIVE_ALLOWLIST
+RAW_MODEL_FAILURE_OUTPUT_PERSISTED = NO
 ```
 
 ## Objective
@@ -95,7 +113,7 @@ solve provider variability by persisting malformed analysis.
 | F-09 | Best-effort `ExternalServiceEvent` may retain `rawError.errorClass`, `diagnostics`, and metrics. Yandex failures are stored as `ExternalService.APP`. Model/schema codes map to `ExternalServiceErrorCode.UNKNOWN`. `requestId` is not written. | `CODE` `observeFailure` in analyze route |
 | F-10 | One mutable `AiAnalysis` row per session. A later success overwrites the failed row and clears `errorMessage`. First-run row state is therefore gone after run 2. | `CODE` Prisma `sessionId @unique`; `completeAiAnalysisRunWithCurrentParticipants` |
 | F-11 | Write schema `NegotiationAnalysisOutputSchema` requires the full structural object. Arrays may be empty. Extra keys are stripped, not rejected (schema is not `.strict()`). Depth/count heuristics in `getAnalysisDepthIssues` never block persist (`maxOptionalDepthCalls = 0`). | `CODE` |
-| F-12 | Prompt tells the model to emit complete structured analysis and quality-count targets, and to use empty arrays when uncertain. It does not say “never omit required keys.” | `CODE` `SYSTEM_PROMPT`, `YANDEX_COACHING_REQUIREMENTS`, `buildAnalysisPrompt` |
+| F-12 | Prompt tells the model to emit complete structured analysis and quality-count targets, and to use empty arrays when uncertain. It does not say вЂњnever omit required keys.вЂќ | `CODE` `SYSTEM_PROMPT`, `YANDEX_COACHING_REQUIREMENTS`, `buildAnalysisPrompt` |
 | F-13 | `FAILED` cannot be published. `canShare` and the share route require `COMPLETED` plus currentness. | `CODE` materials/status + share route |
 | F-14 | Production first-run raw provider body is not reconstructable from the current `AiAnalysis` row. | `CODE` F-08 + F-10 |
 | F-15 | Successful current run: `COMPLETED`, `analysisVersion=1`, provider Yandex / `deepseek-v4-flash`, `language=ru-RU`, `overallScore=35`, `inputFingerprint=7dbc638f4dd728f29f031c857bef2e5b279dd1ff85e005e0515096902e05a10d`, successful `responseLength=11115`. | `PROD_RO` |
@@ -166,22 +184,22 @@ Resolved for Checkpoint 2 direction only (not implemented):
 | S317A-NS-008 | No UI retry redesign in Checkpoint 0. | `OUT_OF_SCOPE` |
 | S317A-NS-009 | No historical data rewrite. | `OUT_OF_SCOPE` |
 | S317A-NS-010 | No production replay, live-provider experiment, SSH/DB/journal access, commit, push, or deploy in Checkpoint 0. | `OUT_OF_SCOPE` |
-| S317A-NS-011 | Do not persist malformed provider output as current valid analysis. | `APPROVED` invariant |
+| S317A-NS-011 | Do not persist malformed provider output as current valid analysis. | `PASS` invariant |
 
 ## Pipeline (current)
 
 ```
 INPUT (transcript, mapping, PARTICIPANT notes, fingerprint)
-  → PROMPT (SYSTEM_PROMPT + language + Yandex coaching/schema or OpenAI schema text)
-  → PROVIDER (Yandex background POST/GET or OpenAI chat)
-  → RAW RESPONSE (completed envelope / message content only)
-  → EXTRACTION (Yandex: fence strip, first balanced object, trailing commas;
+  в†’ PROMPT (SYSTEM_PROMPT + language + Yandex coaching/schema or OpenAI schema text)
+  в†’ PROVIDER (Yandex background POST/GET or OpenAI chat)
+  в†’ RAW RESPONSE (completed envelope / message content only)
+  в†’ EXTRACTION (Yandex: fence strip, first balanced object, trailing commas;
                 OpenAI: raw JSON.parse only)
-  → JSON PARSE
-  → SCHEMA (NegotiationAnalysisOutputSchema.safeParse)
-  → SEMANTIC CONTRACT (bindParticipantPersonalFeedback; depth issues advisory)
-  → PERSISTENCE (COMPLETED + analysisJson / rawModelOutput, or FAILED + errorMessage)
-  → UI (failed copy + canRetry; share only if COMPLETED + current)
+  в†’ JSON PARSE
+  в†’ SCHEMA (NegotiationAnalysisOutputSchema.safeParse)
+  в†’ SEMANTIC CONTRACT (bindParticipantPersonalFeedback; depth issues advisory)
+  в†’ PERSISTENCE (COMPLETED + analysisJson / rawModelOutput, or FAILED + errorMessage)
+  в†’ UI (failed copy + canRetry; share only if COMPLETED + current)
 ```
 
 Exact files/functions:
@@ -193,7 +211,7 @@ Exact files/functions:
 | UI start/retry | `components/session-materials-dashboard.tsx` | `handleRunAiAnalysis` |
 | Admission | `lib/ai/analysis-readiness.ts` | `evaluateAiAnalysisReadiness` |
 | Input | `lib/ai/session-analysis-context.ts` | `buildSessionAnalysisContext` |
-| Fingerprint | `lib/ai/material-input-envelope.ts` | `buildMaterialInputEnvelope` / `fingerprintSessionAnalysisContext` |
+| Fingerprint | `lib/ai/material-input-envelope.ts` / `lib/ai/session-analysis-context.ts` | `buildMaterialInputEnvelope` / `fingerprintSessionAnalysisContext` |
 | Currentness | `lib/ai/analysis-currentness.ts` | `evaluateAiAnalysisCurrentness` |
 | Claim | `lib/ai/analysis-operation.ts` | `claimAiAnalysisRun` |
 | Prompt | `lib/ai/session-analysis-prompt.ts` | `buildAnalysisPrompt` / `packAnalysisPrompt` |
@@ -204,6 +222,7 @@ Exact files/functions:
 | Bind | same | `bindParticipantPersonalFeedback` |
 | Fail/complete | `lib/ai/analysis-operation.ts` | `failAiAnalysisRun`, `completeAiAnalysisRunWithCurrentParticipants` |
 | Orchestration | `lib/ai/analysis-orchestration.ts` | `executeOwnedAnalysis` |
+| Schema recovery | `lib/ai/analysis-schema-recovery.ts` | `executeOwnedAnalysisWithBoundedYandexSchemaRecovery` |
 | Journal | `lib/services/external-service-events.ts` | `logExternalServiceEvent` |
 | Publish gate | `app/api/sessions/[sessionId]/ai-analysis/share/route.ts` | share requires `COMPLETED` |
 
@@ -212,15 +231,15 @@ Exact files/functions:
 | Failure class | Exact code boundary | Current handling | Retryability hypothesis | Evidence quality |
 | --- | --- | --- | --- | --- |
 | PROVIDER_FAILURE (5xx/429/HTTP) | Yandex `fetch` / lifecycle | `PROVIDER_HTTP_ERROR` / `PROVIDER_RATE_LIMIT`; generation exhausted | YES for 429/5xx at transport; explicit operator retry creates new generation | `CODE`/`TEST` |
-| PROVIDER_LIFECYCLE (`failed`/`cancelled`/`incomplete`) | `classifyYandexResponseLifecycle` | `PROVIDER_LIFECYCLE_ERROR`; ID cleared | CONDITIONAL — new generation may succeed; same ID must not be replayed | `CODE`/`TEST` (`incomplete` + `max_output_tokens`) |
-| TRANSPORT / timeout | poll/operation deadline, HTTP timeout | `NETWORK_TIMEOUT` / `NETWORK_ERROR`; ID **kept** | YES — retrieve same generation if still running; do not POST a duplicate | `CODE`/`TEST` |
-| TRUNCATION (JSON) | `looksPossiblyTruncatedJson` after completed text | `MODEL_INVALID_OUTPUT`; ID cleared | CONDITIONAL — new generation may finish; raising tokens/prompt is a later decision | `CODE`/`TEST` truncated `'{"executiveSummary":'` |
-| JSON_EXTRACTION | Yandex fence/balanced-object/comma recovery; OpenAI none | Remaining failure → `MODEL_INVALID_OUTPUT` | CONDITIONAL same-prompt; more extraction is not justified without evidence | `CODE` |
+| PROVIDER_LIFECYCLE (`failed`/`cancelled`/`incomplete`) | `classifyYandexResponseLifecycle` | `PROVIDER_LIFECYCLE_ERROR`; ID cleared | CONDITIONAL вЂ” new generation may succeed; same ID must not be replayed | `CODE`/`TEST` (`incomplete` + `max_output_tokens`) |
+| TRANSPORT / timeout | poll/operation deadline, HTTP timeout | `NETWORK_TIMEOUT` / `NETWORK_ERROR`; ID **kept** | YES вЂ” retrieve same generation if still running; do not POST a duplicate | `CODE`/`TEST` |
+| TRUNCATION (JSON) | `looksPossiblyTruncatedJson` after completed text | `MODEL_INVALID_OUTPUT`; ID cleared | CONDITIONAL вЂ” new generation may finish; raising tokens/prompt is a later decision | `CODE`/`TEST` truncated `'{"executiveSummary":'` |
+| JSON_EXTRACTION | Yandex fence/balanced-object/comma recovery; OpenAI none | Remaining failure в†’ `MODEL_INVALID_OUTPUT` | CONDITIONAL same-prompt; more extraction is not justified without evidence | `CODE` |
 | JSON_PARSE | `tryParseJsonWithRecovery` / OpenAI `JSON.parse` | `MODEL_INVALID_OUTPUT` | CONDITIONAL (nondeterminism) | `CODE`/`TEST` |
 | SCHEMA_VALIDATION | `NegotiationAnalysisOutputSchema.safeParse` | `MODEL_SCHEMA_VALIDATION_ERROR`; Yandex logs `issueCount`+`issuePaths` (5 paths); OpenAI logs 3 `path: message` | CONDITIONAL same-prompt; repair prompt later; **do not loosen schema** | `CODE`/`TEST` undersized object |
-| SEMANTIC_VALIDATION | `bindParticipantPersonalFeedback` | Drops unknown IDs; does **not** fail the write | NO as a retry class — not a write failure | `CODE` |
+| SEMANTIC_VALIDATION | `bindParticipantPersonalFeedback` | Drops unknown IDs; does **not** fail the write | NO as a retry class вЂ” not a write failure | `CODE` |
 | PROMPT_CONTRACT | prompt quality targets vs empty-array permission | Advisory `getAnalysisDepthIssues` only | N/A until production class is known | `CODE` |
-| MODEL_NONDETERMINISM | new generation on exhausted MODEL_* | Application already treats exhausted generation as non-recoverable | CONDITIONAL — explains the incident shape; not a license for unbounded retry | `CODE` + incident F-03/F-04 |
+| MODEL_NONDETERMINISM | new generation on exhausted MODEL_* | Application already treats exhausted generation as non-recoverable | CONDITIONAL вЂ” explains the incident shape; not a license for unbounded retry | `CODE` + incident F-03/F-04 |
 | PERSISTENCE / CURRENTNESS | one-row overwrite; fingerprint; `analysisVersion++` on claim | Success overwrites; fail leaves prior `analysisJson` | N/A for first-run class; **HIGH** for any later recovery | `CODE` |
 | APPLICATION_READER | `parseCanonicalAnalysisOutput` / published viewer parser | Historical read is looser than write | Unlikely for this incident (write failed before persist) | `CODE` |
 | CONTENT_DEPENDENT_OUTPUT | short/sparse transcript | Schema allows empty arrays; prompt still asks for complete analysis | CONDITIONAL contributor, not a separate retry class | `CODE`; production richness unknown |
@@ -242,17 +261,17 @@ SECOND_SUCCESSFUL_RUN_COMPARABLE_TO_FIRST = PARTIAL
 
 | Artifact | Failed run retained? | After successful rerun? |
 | --- | --- | --- |
-| Provider request/run ID | PARTIAL — kept only if recoverable; cleared for MODEL_* | Success always nulls `providerResponseId` |
-| Provider model | PARTIAL — not written on fail; may appear in journal `rawError.model` | YES on `AiAnalysis.model` |
+| Provider request/run ID | PARTIAL вЂ” kept only if recoverable; cleared for MODEL_* | Success always nulls `providerResponseId` |
+| Provider model | PARTIAL вЂ” not written on fail; may appear in journal `rawError.model` | YES on `AiAnalysis.model` |
 | Raw provider response | NO on fail | YES in `rawModelOutput.providerEnvelope` (success only) |
 | Extracted JSON candidate | NO | NO (success stores parsed envelope, not a fail candidate) |
-| Parse error | PARTIAL — generic `errorMessage`; journal `errorClass` + `outputCondition` | Cleared on success |
-| Schema/Zod issues | PARTIAL — journal only; Yandex paths without messages | Cleared |
-| Finish / truncation metadata | PARTIAL — journal `providerStatus` / `incompleteReason` / `outputCondition` | Success diagnostics in `rawModelOutput.diagnostics` |
-| Duration | PARTIAL — `startedAt`/`completedAt` overwritten; journal metrics | YES for success |
-| Input fingerprint | YES — set before `after()`; fail does not clear | YES (same row) |
+| Parse error | PARTIAL вЂ” generic `errorMessage`; journal `errorClass` + `outputCondition` | Cleared on success |
+| Schema/Zod issues | PARTIAL вЂ” journal only; Yandex paths without messages | Cleared |
+| Finish / truncation metadata | PARTIAL вЂ” journal `providerStatus` / `incompleteReason` / `outputCondition` | Success diagnostics in `rawModelOutput.diagnostics` |
+| Duration | PARTIAL вЂ” `startedAt`/`completedAt` overwritten; journal metrics | YES for success |
+| Input fingerprint | YES вЂ” set before `after()`; fail does not clear | YES (same row) |
 | Retry relation / attempt # | NO durable parent/attempt | `analysisVersion` increments on claim only |
-| Error category | PARTIAL — not a Prisma column; journal title `AI analysis failed: ${code}` | Cleared from row |
+| Error category | PARTIAL вЂ” not a Prisma column; journal title `AI analysis failed: ${code}` | Cleared from row |
 
 Lost after run 2 unless journal/events exist: first-run `errorMessage`, first-run
 timestamps, first-run raw body, first-run Zod detail, first-run provider ID
@@ -263,10 +282,10 @@ timestamps, first-run raw body, first-run Zod detail, first-run provider ID
 | Question | Result |
 | --- | --- |
 | Does schema require multiple participants? | No |
-| Does schema require non-empty tactics/strengths/quotes? | No — arrays may be `[]` |
-| Does schema require PPF for every participant? | No — empty array is valid; bind drops unknown IDs |
-| Does schema require summary/detail minimums? | No — `getAnalysisDepthIssues` is advisory and unused as a gate |
-| Does prompt assume richness? | Yes — 2–4 strengths, 3–5 improvements, 4–7-sentence summary, 4–6 debrief questions, “complete structured analysis” even when short |
+| Does schema require non-empty tactics/strengths/quotes? | No вЂ” arrays may be `[]` |
+| Does schema require PPF for every participant? | No вЂ” empty array is valid; bind drops unknown IDs |
+| Does schema require summary/detail minimums? | No вЂ” `getAnalysisDepthIssues` is advisory and unused as a gate |
+| Does prompt assume richness? | Yes вЂ” 2вЂ“4 strengths, 3вЂ“5 improvements, 4вЂ“7-sentence summary, 4вЂ“6 debrief questions, вЂњcomplete structured analysisвЂќ even when short |
 | Does prompt say empty arrays are allowed? | Yes, when uncertain |
 | Does prompt say never omit required keys? | No |
 
@@ -286,7 +305,7 @@ same two-part semantics. That is prompt ambiguity, not a typed contradiction.
 Do not infer the exact wrong production value; the failed raw body was not
 persisted.
 
-## Retry matrix (design only — not implemented)
+## Retry matrix (design only вЂ” not implemented)
 
 | Class | Retryable? | Same prompt vs repair | Cost / latency | Safety note |
 | --- | --- | --- | --- | --- |
@@ -349,7 +368,7 @@ IMPACT: server/domain diagnostics helper, tests/evals, architecture/
         registry/manifest docs
 UNITS: CU-B sanitizer correction; CU-C parser-eval wording/evidence
 KERNEL: CU-B (journal persist)
-STRATEGY: A — same CP1 contract-correction batch
+STRATEGY: A вЂ” same CP1 contract-correction batch
 VALIDATION_PLAN: L1 focused diagnostics + parser tests;
                  eval:registry:check; git diff --check;
                  L3 validate:fast after production-code change; no L4
@@ -371,7 +390,7 @@ INVARIANTS:
   - recovery cannot overwrite newer successful analysis
   - input fingerprint/currentness remains correct
   - participant personal-feedback privacy remains intact
-  - historical analysis compatibility remains intact (read ≠ write)
+  - historical analysis compatibility remains intact (read в‰  write)
   - provider cost is bounded; no infinite retry
   - same input may legitimately produce different provider outputs
   - failures become diagnosable without persisting sensitive raw data
@@ -383,15 +402,15 @@ IMPACT MAP (future implementation; Checkpoint 0 = docs only):
   - AI currentness / material inputs: reclaim + fingerprint
   - provider integration: optional selective second generation
   - historical data: read compatibility if diagnostics/schema change
-  - tests/evals: synthetic invalid→valid and invalid→invalid twins
+  - tests/evals: synthetic invalidв†’valid and invalidв†’invalid twins
   - DB/Prisma: only if durable diagnostic columns are later approved
   - publication/roles: must stay fail-closed on FAILED
 UNITS: CU-A .. CU-H
 KERNEL: CU-D + CU-F (+ CU-B if durable diagnostics persist provider-adjacent data)
-EVAL: STATE parse/schema; TRANSITION invalid→valid and invalid→invalid;
+EVAL: STATE parse/schema; TRANSITION invalidв†’valid and invalidв†’invalid;
       HISTORICAL_READ if persistence shape changes; PROVIDER_INTEGRATION mock
       twins, not live; INTERACTION for operator retry later
-STRATEGY: B — diagnostics/eval foundation before recovery
+STRATEGY: B вЂ” diagnostics/eval foundation before recovery
 VALIDATION_PLAN: Checkpoint 0 = L1 docs/forensic. Later CUs L1 each;
                  L2 on kernel; L3 at implementation checkpoint; L4 at final
                  code/config package. No live-provider default.
@@ -408,13 +427,13 @@ stay separate from that budget.
 | ID | Change Unit | Risk | Coupling | Historical | Provider | Privacy/access | Validation separability | Checkpoint | Auth now | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CU-A | Failure-boundary / parser-schema forensic | LOW product / HIGH reasoning | Documents all later CUs | None | None | None | Separable (docs) | 0 | `AUTHORIZED` | `PASS` |
-| CU-B | Failure classification + bounded diagnostic evidence | LOW-SENSITIVITY journal helper; no migration | Parser + journal | None | None | HIGH if raw body stored — not stored | Separable from retry | 1 | `AUTHORIZED` | `IMPLEMENTED` (ExternalServiceEvent sufficient; fail-closed positive allowlist sanitizer + type kinds) |
-| CU-C | Synthetic malformed fixtures + invalid↔valid evals | MEDIUM | Shares taxonomy with CU-B | Synthetic only | Mock only | Must not copy production transcript | Separable once taxonomy frozen | 1 | `AUTHORIZED` | `IMPLEMENTED` (proposed recovery marked not production-enabled) |
-| CU-D | Recovery policy / selective retry or repair | HIGH | Currentness, cost, provider | First mutation on FAILED rows | Extra generation | Must not publish fail | **Not** separable until CU-B/C + prod class | 2 | `NOT_AUTHORIZED` | `APPROVED` direction `DIRECTION_2`; impl `NOT_STARTED` |
-| CU-E | UI/operator recovery semantics | MEDIUM | CU-B codes + CU-D policy | Copy/read | None | Facilitator-only error detail | After CU-B/D | 3 | `NOT_AUTHORIZED` | `PROPOSED` |
-| CU-F | Persistence / currentness / concurrency safety | HIGH | CU-D | HISTORICAL_FIRST_MUTATION | Duplicate-generation risk | Publication fail-closed | With CU-D kernel | 2 | `NOT_AUTHORIZED` | `APPROVED` invariant / `PROPOSED` impl |
-| CU-G | Historical compatibility | HIGH if write/read contract changes | Readers, publications | READ + first mutation | None | Viewer projections | After any persist/schema change | 2 or 4 | `NOT_AUTHORIZED` | `APPROVED` invariant |
-| CU-H | Provider cost / latency bounds | MEDIUM | CU-D | None | Cost | None | With CU-D | 2–3 | `NOT_AUTHORIZED` | `PROPOSED` |
+| CU-B | Failure classification + bounded diagnostic evidence | LOW-SENSITIVITY journal helper; no migration | Parser + journal | None | None | HIGH if raw body stored вЂ” not stored | Separable from retry | 1 | `AUTHORIZED` | `IMPLEMENTED` (ExternalServiceEvent sufficient; fail-closed positive allowlist sanitizer + type kinds) |
+| CU-C | Synthetic malformed fixtures + invalidв†”valid evals | MEDIUM | Shares taxonomy with CU-B | Synthetic only | Mock only | Must not copy production transcript | Separable once taxonomy frozen | 1 | `AUTHORIZED` | `IMPLEMENTED` (proposed recovery marked not production-enabled) |
+| CU-D | Recovery policy / selective retry or repair | HIGH | Currentness, cost, provider | First mutation on FAILED rows | Extra generation | Must not publish fail | **Not** separable until CU-B/C + prod class | 2 | `AUTHORIZED` | `PASS` вЂ” Yandex `MODEL_SCHEMA_VALIDATION_ERROR` only; max 1 extra same-prompt generation |
+| CU-E | UI/operator recovery semantics | MEDIUM | CU-B codes + CU-D policy | Copy/read | None | Facilitator-only error detail | After CU-B/D | 3 | `AUTHORIZED` (audit) | `PASS` (`NO_IMPLEMENTATION_REQUIRED`) вЂ” existing ANALYZING / COMPLETED / FAILED / retry surfaces already match the owned-operation contract |
+| CU-F | Persistence / currentness / concurrency safety | HIGH | CU-D | HISTORICAL_FIRST_MUTATION | Duplicate-generation risk | Publication fail-closed | With CU-D kernel | 2 | `AUTHORIZED` | `PASS` вЂ” ownership/currentness recheck before generation 2; stale owner cannot complete/fail/persist |
+| CU-G | Historical compatibility | HIGH if write/read contract changes | Readers, publications | READ + first mutation | None | Viewer projections | After any persist/schema change | 4 | `AUTHORIZED` (audit) | `PASS` вЂ” no persist/read-contract change; existing historical readers/currentness remain |
+| CU-H | Provider cost / latency bounds | MEDIUM | CU-D | None | Cost | None | With CU-D | 2 | `AUTHORIZED` | `PASS` вЂ” original operation deadline reused; remaining budget only; max 2 generation POSTs; `maxPollingRequests` is the owned-operation polling total |
 
 ```
 HIGH_RISK_KERNEL = CU-D + CU-F
@@ -428,14 +447,14 @@ forensic. CU-C is synthetic. CU-E/H are cheaper after the kernel.
 
 ```
 CU-A (Checkpoint 0 PASS)
-  → CU-B + CU-C  (Checkpoint 1 — classify + synthetic twins + characterization)
-    → operator review
-      → CU-D + CU-F + CU-H  (only if Checkpoint 2 is authorized)
-        → CU-E
-      → CU-G if persist/read shape changes
+  в†’ CU-B + CU-C  (Checkpoint 1 вЂ” classify + synthetic twins + characterization)
+    в†’ operator review
+      в†’ CU-D + CU-F + CU-H  (only if Checkpoint 2 is authorized)
+        в†’ CU-E
+      в†’ CU-G if persist/read shape changes
 ```
 
-No change to WHY KEEP TOGETHER / WHY SPLIT. CU-D remains unauthorized.
+No change to WHY KEEP TOGETHER / WHY SPLIT. CU-D/F/H are authorized for Checkpoint 2.
 
 **WHY KEEP TOGETHER**
 
@@ -492,18 +511,18 @@ path belongs inside `EVAL-AI-SCHEMA-WRITE-STRICT`, not as a test-level ID.
 
 | Eval ID | Class | Coverage |
 | --- | --- | --- |
-| `EVAL-AI-SCHEMA-WRITE-STRICT` | STATE | `COVERED` — includes incident `.0` wrong-element-type case |
-| `EVAL-AI-PARSE-MALFORMED-SHAPES` | STATE | `COVERED` — recoverable wrapper noise vs irrecoverable malformed JSON |
-| `EVAL-AI-INVALID-THEN-VALID-TWIN` | TRANSITION | `PARTIAL` — synthetic harness only; production path does not yet implement the transition |
-| `EVAL-AI-INVALID-THEN-INVALID-BOUNDED` | TRANSITION | `PARTIAL` — synthetic harness only; production path does not yet implement the transition |
-| `EVAL-AI-FAIL-DIAGNOSTICS` | STATE | `COVERED` — fail-closed positive allowlist wired into analyze `observeFailure` |
+| `EVAL-AI-SCHEMA-WRITE-STRICT` | STATE | `COVERED` вЂ” includes incident `.0` wrong-element-type case |
+| `EVAL-AI-PARSE-MALFORMED-SHAPES` | STATE | `COVERED` вЂ” recoverable wrapper noise vs irrecoverable malformed JSON |
+| `EVAL-AI-INVALID-THEN-VALID-TWIN` | TRANSITION | `COVERED` вЂ” production owned-operation recovery path |
+| `EVAL-AI-INVALID-THEN-INVALID-BOUNDED` | TRANSITION | `COVERED` вЂ” production owned-operation recovery path |
+| `EVAL-AI-FAIL-DIAGNOSTICS` | STATE | `COVERED` вЂ” fail-closed positive allowlist wired into analyze `observeFailure` and non-terminal recovery events |
+| `EVAL-AI-RETRY-NO-OVERWRITE-NEWER` | TRANSITION | `COVERED` вЂ” lost-ownership precheck plus existing runToken fence |
 
 ### STILL PROPOSED (later CUs)
 
 | Proposed ID | Class | Invariant |
 | --- | --- | --- |
-| `EVAL-AI-FAIL-NO-PUBLISH` | STATE / TRANSITION | FAILED never yields `canShare` or a grant |
-| `EVAL-AI-RETRY-NO-OVERWRITE-NEWER` | TRANSITION | A late retry/recovery cannot overwrite a newer successful analysis |
+| `EVAL-AI-FAIL-NO-PUBLISH` | STATE / TRANSITION | Not registered. Equivalent gate already exists: `canShare` requires `COMPLETED` + current. Twins assert ANALYZING/FAILED cannot share. |
 
 The synthetic **invalid-first / valid-second twin is required**. It is the
 application-level proof of the incident shape and must not depend on live
@@ -511,15 +530,9 @@ provider randomness. The twin runner is test-only and does not enable
 production retry.
 
 `EVAL-AI-INVALID-THEN-VALID-TWIN` and `EVAL-AI-INVALID-THEN-INVALID-BOUNDED`
-remain `PARTIAL` because:
-
-- a deterministic policy/harness exists;
-- the intended bounded transition is demonstrated synthetically;
-- production orchestration wiring does not yet implement the transition;
-- promotion to `COVERED` requires Checkpoint 2 production-path deterministic
-  evidence.
-
-Do not delete these evals. Do not redefine them merely to preserve `COVERED`.
+are `COVERED` by the production owned-operation recovery composition in
+`lib/ai/analysis-schema-recovery.ts`, wired from `POST /analyze`. The
+proposed-only harness was deleted so one contract remains.
 
 ## Checkpoint structure
 
@@ -533,26 +546,28 @@ CHECKPOINT_0 = PASS
 CHECKPOINT_1 = DIAGNOSTICS_AND_EVAL_FOUNDATION
 CHECKPOINT_1_SCOPE = CU-B + CU-C + synthetic characterization
 CHECKPOINT_1_IMPLEMENTATION = COMPLETE
-CHECKPOINT_1_OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_1_OPERATOR_ACCEPTANCE = PASS
 CHECKPOINT_1_AUTHORIZATION = AUTHORIZED
 CHECKPOINT_1_DEPENDS_ON = operator acceptance of Checkpoint 0
                           + production forensic packet (received)
 
 CHECKPOINT_2 = SELECTIVE_RECOVERY_KERNEL
 CHECKPOINT_2_SCOPE = CU-D + CU-F + CU-H (approved class only)
-CHECKPOINT_2_STATUS = NOT_STARTED
-CHECKPOINT_2_AUTHORIZATION = NOT_AUTHORIZED
+CHECKPOINT_2_STATUS = PASS
+CHECKPOINT_2_AUTHORIZATION = AUTHORIZED
+CHECKPOINT_2_OPERATOR_ACCEPTANCE = PASS
 CHECKPOINT_2_RECOVERY_DIRECTION = DIRECTION_2_BOUNDED_SAME_PROMPT_RETRY
 CHECKPOINT_2_DEPENDS_ON = Checkpoint 1 operator acceptance
                           + explicit Checkpoint 2 implementation authorization
 
 CHECKPOINT_3 = OPERATOR_SURFACE
 CHECKPOINT_3_SCOPE = CU-E
-CHECKPOINT_3_STATUS = NOT_STARTED
+CHECKPOINT_3_STATUS = PASS (NO_IMPLEMENTATION_REQUIRED)
+CU_E_IMPLEMENTATION_REQUIRED = NO
 
 CHECKPOINT_4 = HISTORICAL_AND_PACKAGE
-CHECKPOINT_4_SCOPE = CU-G as needed + L4 if product code shipped
-CHECKPOINT_4_STATUS = NOT_STARTED
+CHECKPOINT_4_SCOPE = CU-G audit + L4 final code/test/runtime package
+CHECKPOINT_4_STATUS = PASS
 ```
 
 Minimize Cursor/operator iterations: accept Checkpoint 0, authorize the
@@ -573,22 +588,22 @@ implementation packet. Do not authorize CU-D in the same packet as CU-B.
 | S317A-F-006 | Production forensic packet is specified and not executed. | this DOC | `AUTHORIZED` | `PASS` |
 | S317A-F-007 | Exact first-run production error class is identified. | `PROD_RO` journal: `MODEL_SCHEMA_VALIDATION_ERROR` at `listeningAndReframing.missedOpportunities.0` | `AUTHORIZED` | `PASS` |
 
-### Product invariants (later CUs; not implemented now)
+### Product invariants
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| S317A-P-001 | Canonical persisted `analysisJson` remains write-schema valid. | `APPROVED` |
-| S317A-P-002 | Malformed provider output never becomes current valid analysis. | `APPROVED` |
-| S317A-P-003 | FAILED never grants publication or recipient access. | `APPROVED` (already true; must be preserved) |
-| S317A-P-004 | Recovery cannot overwrite a newer successful analysis. | `APPROVED` |
-| S317A-P-005 | Input fingerprint/currentness remains the prompted-material contract. | `APPROVED` |
-| S317A-P-006 | Personal-feedback privacy projections remain server-side. | `APPROVED` |
-| S317A-P-007 | Historical persisted-read compatibility remains distinct from write validation. | `APPROVED` |
-| S317A-P-008 | Provider cost is bounded; no infinite retry. | `APPROVED` |
-| S317A-P-009 | Failures are diagnosable without persisting transcript/notes/hiddenInfo or raw model text by default. | `APPROVED` |
-| S317A-P-010 | Automatic retry, if later approved, is eligible-class only and default-max one extra generation. | `APPROVED` direction: `MODEL_SCHEMA_VALIDATION_ERROR` only; max 1 extra generation; same prompt. Impl remains Checkpoint 2 / `NOT_AUTHORIZED`. |
-| S317A-P-011 | Write-schema relaxation requires proven SCHEMA_GAP. | `APPROVED` — SCHEMA_CHANGE remains `NOT_AUTHORIZED` |
-| S317A-P-012 | Prompt change requires proven PROMPT_GAP contribution to the actual class. | `APPROVED` gate — PROMPT_HARDENING remains `NOT_AUTHORIZED`; no proven necessary prompt correction |
+| S317A-P-001 | Canonical persisted `analysisJson` remains write-schema valid. | `PASS` |
+| S317A-P-002 | Malformed provider output never becomes current valid analysis. | `PASS` |
+| S317A-P-003 | FAILED never grants publication or recipient access. | `PASS` |
+| S317A-P-004 | Recovery cannot overwrite a newer successful analysis. | `PASS` |
+| S317A-P-005 | Input fingerprint/currentness remains the prompted-material contract. | `PASS` |
+| S317A-P-006 | Personal-feedback privacy projections remain server-side. | `PASS` |
+| S317A-P-007 | Historical persisted-read compatibility remains distinct from write validation. | `PASS` вЂ” CU-G: no write/read-contract change; existing historical reader remains |
+| S317A-P-008 | Provider cost is bounded; no infinite retry. | `PASS` |
+| S317A-P-009 | Failures are diagnosable without persisting transcript/notes/hiddenInfo or raw model text by default. | `PASS` |
+| S317A-P-010 | Automatic retry is eligible-class only and default-max one extra generation. | `PASS` вЂ” Yandex `MODEL_SCHEMA_VALIDATION_ERROR` only; max 1 extra same-prompt generation inside one owned operation. |
+| S317A-P-011 | Write-schema relaxation requires proven SCHEMA_GAP. | `PASS` вЂ” SCHEMA_CHANGE = NO |
+| S317A-P-012 | Prompt change requires proven PROMPT_GAP contribution to the actual class. | `PASS` вЂ” PROMPT_CHANGE = NO |
 
 ## Production evidence still required
 
@@ -646,7 +661,7 @@ Optional second-pass (facilitator-only redacted): from `rawModelOutput` print
 **only** `diagnostics` keys (durations, token estimates, `responseLength`).
 Redact envelope text.
 
-2. Transcript richness metadata only — **not** transcript text:
+2. Transcript richness metadata only вЂ” **not** transcript text:
 
 ```sql
 SELECT
@@ -663,7 +678,7 @@ FROM "Transcript" AS t
 WHERE t."sessionId" = 'cmt1l5d3p000irsm1ekwg3oh3';
 ```
 
-3. Roster counts only — no notes:
+3. Roster counts only вЂ” no notes:
 
 ```sql
 SELECT "type", count(*) AS n
@@ -713,7 +728,7 @@ WHERE a."sessionId" = 'cmt1l5d3p000irsm1ekwg3oh3';
 
 **B. Host journal time window / patterns**
 
-Use the `ExternalServiceEvent.createdAt` min/max ± 15 minutes, or the
+Use the `ExternalServiceEvent.createdAt` min/max В± 15 minutes, or the
 operator-known incident day.
 
 Patterns (no secrets):
@@ -729,7 +744,7 @@ a later packet explicitly authorizes provider-side read-only retrieval.
 **C. Is raw provider output expected to exist?**
 
 - Failed run: **not** on `AiAnalysis`. Possibly absent everywhere.
-- Successful run: `rawModelOutput.providerEnvelope` **yes** — do not print it
+- Successful run: `rawModelOutput.providerEnvelope` **yes** вЂ” do not print it
   in the first pass.
 - Yandex may still hold the exhausted first generation if its ID was logged.
   That ID is **not** expected on the current row after a MODEL_* fail.
@@ -747,7 +762,7 @@ durations, token estimates, analysisVersion.
 | Attempt | Source | Compare |
 | --- | --- | --- |
 | 1 | `ExternalServiceEvent` row(s) with `MODEL_*` title | `errorClass`, paths/condition, responseLength, fingerprint log |
-| 2 | current `AiAnalysis` | `status=COMPLETED`, `hasAnalysisJson`, `analysisVersion` (expect ≥ 1), `inputFingerprint`, success diagnostics |
+| 2 | current `AiAnalysis` | `status=COMPLETED`, `hasAnalysisJson`, `analysisVersion` (expect в‰Ґ 1), `inputFingerprint`, success diagnostics |
 | Same input | fingerprint console + stored hash | both runs should share the fingerprint if materials were unchanged |
 
 If zero matching `ExternalServiceEvent` rows exist, first-run class remains
@@ -802,7 +817,7 @@ ACTUAL_FIRST_FAILURE_CLASS = MODEL_SCHEMA_VALIDATION_ERROR
 CURRENT_CHECKPOINT = 1
 CHECKPOINT_1 = DIAGNOSTICS_AND_EVAL_FOUNDATION
 CHECKPOINT_1_IMPLEMENTATION = COMPLETE
-CHECKPOINT_1_OPERATOR_ACCEPTANCE = PENDING
+CHECKPOINT_1_OPERATOR_ACCEPTANCE = PASS
 CHANGE_UNITS = CU-B + CU-C
 PLANNED_EVALS = EVAL-AI-SCHEMA-WRITE-STRICT, EVAL-AI-PARSE-MALFORMED-SHAPES,
                 EVAL-AI-INVALID-THEN-VALID-TWIN,
@@ -826,14 +841,12 @@ CU_B = ExternalServiceEvent sufficient; fail-closed positive allowlist
 CU_C = proposed twins implemented in tests only; production retry unchanged;
        PARSE-MALFORMED-SHAPES invariant corrected to production helpers
 CURRENT_FENCE_REUSABLE = PARTIAL
-UNRESOLVED_FINDINGS = exact production element value;
-                      Checkpoint 1 operator acceptance;
-                      Checkpoint 2 implementation authorization
+UNRESOLVED_FINDINGS = exact production element value
 L3_VALIDATE_FAST = PASS
 L3_UNIT_TESTS = 1691 passed / 8 skipped / 0 failed
 L3_PLAYWRIGHT_LIST = 831 listed
-OPERATOR_ACCEPTANCE = PENDING
-CHECKPOINT_2 = NOT_STARTED / NOT_AUTHORIZED
+OPERATOR_ACCEPTANCE = PASS
+CHECKPOINT_2 = AUTHORIZED / IMPLEMENTED / OPERATOR ACCEPTANCE PENDING
 ```
 
 ## Checkpoint 1 characterization
@@ -869,7 +882,7 @@ relaxation or prompt hardening. The operator later approved DIRECTION_2 from
 the production incident plus same-fingerprint manual recovery, not from this
 characterization matrix.
 
-## Approved recovery direction (Checkpoint 2 only — not implemented)
+## Approved recovery direction (Checkpoint 2 implemented)
 
 Operator superseded `DIRECTION_5_MORE_EVIDENCE` after Checkpoint 1 review.
 
@@ -884,14 +897,15 @@ SCHEMA_CHANGE = NOT_AUTHORIZED
 MODEL_CHANGE = NOT_AUTHORIZED
 JSON_REPAIR_CHANGE = NOT_AUTHORIZED
 IMPLEMENTATION_IN_CHECKPOINT_1 = NO
-CHECKPOINT_2_AUTHORIZATION = NOT_AUTHORIZED
+CHECKPOINT_2_AUTHORIZATION = AUTHORIZED
+CHECKPOINT_2_IMPLEMENTATION = COMPLETE
 ```
 
 Evidence used for the direction, not for implementation:
 
 A. Production generation 1: `MODEL_SCHEMA_VALIDATION_ERROR` at
    `listeningAndReframing.missedOpportunities.0`.
-B. Same material fingerprint manual rerun: new generation → `COMPLETED`.
+B. Same material fingerprint manual rerun: new generation в†’ `COMPLETED`.
 C. Canonical Zod and typed provider schema both require
    `missedOpportunities: string[]`.
 D. Static audit found semantic ambiguity but no typed contradiction.
@@ -909,7 +923,7 @@ Interpretation:
 - Future retry means start exactly one NEW generation under the same owned
   analysis operation.
 
-### Checkpoint 2 intended architecture (planning only)
+### Checkpoint 2 implemented architecture
 
 ```
 SAME_OWNED_OPERATION = YES
@@ -922,16 +936,16 @@ operation:
 
 ```
 generation 1
-  → MODEL_SCHEMA_VALIDATION_ERROR
-  → bounded diagnostic event
-  → generation 2 using SAME prompt/input
-  → success OR terminal failure
+  в†’ MODEL_SCHEMA_VALIDATION_ERROR
+  в†’ bounded diagnostic event
+  в†’ generation 2 using SAME prompt/input
+  в†’ success OR terminal failure
 ```
 
 Do not design retry as:
 
 ```
-HTTP POST #1 → FAILED → synthetic HTTP POST #2
+HTTP POST #1 в†’ FAILED в†’ synthetic HTTP POST #2
 ```
 
 Preferred future implementation should avoid:
@@ -970,16 +984,32 @@ Resolved by operator during Checkpoint 1 review:
 3. Prompt hardening is `NOT_AUTHORIZED`. No proven necessary prompt
    correction.
 
-Still pending:
+Resolved during Checkpoint 2 operator acceptance:
 
-1. Accept Checkpoint 1 implementation?
-2. Authorize Checkpoint 2 implementation of the approved direction?
+4. Checkpoint 2 implementation accepted.
+   `CHECKPOINT_2_OPERATOR_ACCEPTANCE = PASS`.
+   `CU-D = PASS`, `CU-F = PASS`, `CU-H = PASS`.
+
+Resolved during Checkpoint 3 / 4 finalization:
+
+5. No operator-surface implementation is required. Existing UI already
+   represents ANALYZING through recovery, ordinary COMPLETED after success,
+   and ordinary FAILED/retry after exhaustion. Recovered WARNING events stay
+   operator/forensic-only.
+   `CU_E_IMPLEMENTATION_REQUIRED = NO`.
+   `CU-E = PASS (NO_IMPLEMENTATION_REQUIRED)`.
+   `CHECKPOINT_3 = PASS (NO_IMPLEMENTATION_REQUIRED)`.
+
+6. Historical compatibility audit found no persist/read-contract change and
+   no historical rewrite/backfill. Existing FAILED rows are not auto-retried.
+   Recovery occurs only inside a newly owned live analysis operation.
+   `CU-G = PASS`.
 
 ## Authorization
 
 ```
-AUTOMATIC_RETRY = NOT_AUTHORIZED
-RECOVERY_IMPLEMENTATION = NOT_AUTHORIZED
+AUTOMATIC_RETRY = AUTHORIZED for Yandex MODEL_SCHEMA_VALIDATION_ERROR only
+RECOVERY_IMPLEMENTATION = AUTHORIZED for Checkpoint 2
 PROMPT_CHANGE = NOT_AUTHORIZED
 SCHEMA_CHANGE = NOT_AUTHORIZED
 MODEL_CHANGE = NOT_AUTHORIZED
@@ -989,13 +1019,241 @@ PUSH = NOT_AUTHORIZED
 DEPLOY = NOT_AUTHORIZED
 ```
 
+## Compact CIA (Checkpoint 2)
+
+```
+CHANGE: add owned-operation bounded same-prompt Yandex NEW generation
+        after first MODEL_SCHEMA_VALIDATION_ERROR; remain ANALYZING;
+        reuse original prompt/runToken/deadline; terminalize once.
+INVARIANTS: write schema stays strict; no prompt/model/JSON repair;
+            max 2 generation POSTs; no intermediate FAILED;
+            no second HTTP POST; no overwrite of newer owner;
+            no raw/sensitive persist; no env/DB/migration.
+IMPACT: server/domain recovery primitive, analyze orchestration,
+        operation store (clear exhausted provider id), diagnostics
+        allowlist, tests/evals, architecture/manifest
+UNITS: CU-D, CU-F, CU-H
+KERNEL: CU-D + CU-F + CU-H
+STRATEGY: A вЂ” kernel must ship together
+VALIDATION_PLAN: L1 focused recovery/eligibility/fence/deadline/
+                 diagnostics; L2 AI cluster; L3 validate:fast; no L4
+```
+
+## Checkpoint 2 evidence log
+
+```
+CURRENT_CHECKPOINT = 2
+CHECKPOINT_0 = PASS
+CHECKPOINT_1 = PASS
+CHECKPOINT_1_OPERATOR_ACCEPTANCE = PASS
+CU-B = PASS
+CU-C = PASS
+CHECKPOINT_2_IMPLEMENTATION = COMPLETE
+CHECKPOINT_2_OPERATOR_ACCEPTANCE = PASS
+CHANGE_UNITS = CU-D + CU-F + CU-H
+PLANNED_EVALS = EVAL-AI-SCHEMA-WRITE-STRICT, EVAL-AI-PARSE-MALFORMED-SHAPES,
+                EVAL-AI-INVALID-THEN-VALID-TWIN,
+                EVAL-AI-INVALID-THEN-INVALID-BOUNDED,
+                EVAL-AI-FAIL-DIAGNOSTICS,
+                EVAL-AI-RETRY-NO-OVERWRITE-NEWER
+RECONCILED_EVALS = SCHEMA-WRITE-STRICT COVERED;
+                   PARSE-MALFORMED-SHAPES COVERED;
+                   INVALID-THEN-VALID-TWIN COVERED;
+                   INVALID-THEN-INVALID-BOUNDED COVERED;
+                   FAIL-DIAGNOSTICS COVERED;
+                   RETRY-NO-OVERWRITE-NEWER COVERED
+PLANNED_VALIDATION_LEVEL = L1 + L2 + L3
+ACTUAL_VALIDATION_LEVEL = L1 + L2 + L3
+L3_VALIDATE_FAST = PASS
+L3_UNIT_TESTS = 1705 passed / 8 skipped / 0 failed
+L3_PLAYWRIGHT_LIST = 831 listed
+L4_REQUIRED_NOW = NO
+CU_D = Yandex MODEL_SCHEMA_VALIDATION_ERROR only; same prompt;
+       max 2 generation POSTs; no intermediate FAILED
+CU_F = renewLease + evaluateAiAnalysisCurrentness before generation 2;
+       stale owner cannot complete/fail/persist
+CU_H = original operationStartedAtMonotonic reused; remaining budget only;
+       maxPollingRequests = owned-operation polling total
+CU_E_NOT_REQUIRED_FOR_CP2 = YES
+DB_SCHEMA_CHANGED = NO
+MIGRATION_CHANGED = NO
+ENV_CHANGED = NO
+LIVE_PROVIDER_CALLS = 0
+```
+
+## Checkpoint 2 source-review corrections
+
+```
+CHANGE: truthful owned-operation polling totals in
+        getAiAnalysisPerformanceModel; document schema-recovery
+        currentness linearization; document recovery WARNING
+        consumer boundary.
+INVARIANTS: recovery kernel unchanged (Yandex schema only, max 2,
+            same prompt/owner/deadline); no eligibility/prompt/schema
+            /model change; no DB/migration; no material-lock redesign.
+IMPACT: server/domain performance model, tests, architecture/manifest
+UNITS: CU-H correction; CU-F linearization proof; recovery-event audit
+KERNEL: none new
+STRATEGY: A вЂ” keep the CP2 source-review packet together
+VALIDATION_PLAN: L1 focused performance/currentness tests;
+                 eval:registry:check; git diff --check;
+                 validate:fast. No L4. No live provider.
+```
+
+```
+SCHEMA_RECOVERY_CURRENTNESS_LINEARIZATION_POINT =
+  successful assertReadyForSecondGeneration currentness check
+
+MATERIAL_STALE_BEFORE_LINEARIZATION:
+  generation 2 POST count = 0
+  evidence: lib/ai/analysis-schema-recovery.test.ts
+            "stale material before attempt 2 makes zero second-generation POSTs"
+
+MATERIAL_CHANGE_AFTER_LINEARIZATION:
+  already-authorized provider work may become stale, exactly as during
+  ordinary generation-1 provider work. There is no transactional fence
+  that locks the currentness read together with the later provider POST.
+  Facilitator transcript/mapping/attribution writes and manual enhancement
+  retry stay blocked while AI is QUEUED/ANALYZING with a live lease.
+  Retranscription can still invalidate an in-flight generation.
+
+  After completion:
+  - completeAiAnalysisRunWithCurrentParticipants does not write
+    inputFingerprint; stored F1 is not rewritten to F2
+  - evaluateAiAnalysisCurrentness(F1 vs F2) = fingerprint_mismatch
+  - materials/status presents NOT_STARTED / rerun-required
+  - canShare requires COMPLETED + analysisCurrent
+  - POST /ai-analysis/share rejects analysis_outdated
+  - leftover publication on a non-current generation is not shareable
+    as current; recipients fail closed
+
+STALE_RESULT_SHAREABLE = NO
+
+Existing evidence reused (not duplicated as new evals):
+  EVAL-AI-MATERIAL-CHANGE-REVOKE
+    lib/ai/material-input-invalidation.test.ts
+    tests/e2e/helpers/post-transcription-lab-catalog.ts
+    tests/e2e/post-transcription-lab.spec.ts
+  EVAL-AI-RECIPIENT-STALE-FAIL-CLOSED
+    lib/ai-publication.test.ts
+    share route currentness gate
+  lib/ai/analysis-currentness.test.ts
+  lib/ai/retranscription-downstream-invalidation.test.ts
+  materials/status presentedAiStatus / canShare contract
+
+Smallest added recovery composition:
+  lib/ai/analysis-schema-recovery.test.ts
+  "post-linearization material change leaves completed F1
+   non-current and unshareable"
+```
+
+```
+RECOVERY_WARNING_USER_VISIBLE = NO
+
+Consumer chain:
+  analyze observeFirstAttemptRecoveryDiagnostic
+    в†’ logExternalServiceEvent(WARNING)
+    в†’ Prisma ExternalServiceEvent + server console.error
+  GET /api/admin/health findRecentEvents (admin journal, last 50)
+  hasRecentCriticalServiceErrors = ERROR|CRITICAL only
+  GET /api/admin/service-warnings в†’ dashboard ServiceWarningBanner
+    does not fire on WARNING
+  materials/status and post-processing read AiAnalysis.status /
+    errorMessage, not ExternalServiceEvent
+  session UI shows errorMessage only when processingStage=failed
+
+A recovered first-attempt WARNING remains operator/forensic evidence.
+A terminal owned-operation failure still journals ERROR.
+```
+
+## Checkpoint 3 evidence log
+
+```
+CURRENT_CHECKPOINT = 3
+CHECKPOINT_3 = OPERATOR_SURFACE
+CHECKPOINT_3_STATUS = PASS (NO_IMPLEMENTATION_REQUIRED)
+CU_E_IMPLEMENTATION_REQUIRED = NO
+CU-E = PASS (NO_IMPLEMENTATION_REQUIRED)
+UI_SOURCE_CHANGED_IN_CHECKPOINT_2 = NO
+UI_SOURCE_CHANGED_IN_CHECKPOINT_3 = NO
+ACCEPTED_OPERATOR_SURFACE =
+  user initiates AI analysis once;
+  eligible generation-1 schema recovery stays ANALYZING;
+  no intermediate FAILED;
+  no second HTTP /analyze action;
+  recovered WARNING ExternalServiceEvent is operator/forensic-only;
+  successful recovery appears as ordinary COMPLETED;
+  exhausted second attempt appears as ordinary FAILED/retry UI
+```
+
+## Checkpoint 4 evidence log
+
+```
+CURRENT_CHECKPOINT = 4
+CHECKPOINT_4 = HISTORICAL_AND_PACKAGE
+CHECKPOINT_4_STATUS = PASS
+CU-G = PASS
+HISTORICAL_REWRITE = NO
+HISTORICAL_BACKFILL = NO
+SCHEMA_CHANGE = NO
+MIGRATION_CHANGED = NO
+ENV_CHANGED = NO
+UI_CHANGED = NO
+L4_REQUIRED_NOW = YES
+L4_REASON = final code/test/runtime package boundary
+LIVE_PROVIDER_CALLS = 0
+L4_VALIDATE_FAST = PASS 1706 passed / 8 skipped / 0 failed; 92.5s; e2e list 831/67
+L4_VALIDATE_BUILD = PASS 41.9s (first attempt FAIL 56.7s STAGE_TEST_DEFECT)
+L4_E2E_DB_CHECK = PASS 6.0s
+L4_SMOKE = PASS 27/27 26.8s
+  first FAIL 30.2s ENVIRONMENT_FAILURE missing Chromium
+  second FAIL 26 pass / 1 fail KNOWN_UNRELATED_FLAKE /opengraph-image
+  focused SEO proof PASS 12.8s; subsequent smoke PASS
+L4_BROWSER_SMOKE = PASS 14/14 48.2s
+```
+
+## Requirement completeness (Checkpoint 4)
+
+```
+APPROVED_TOTAL = 20
+PASS = 20
+MISSING = 0
+CONTRADICTED = 0
+DECISION_REQUIRED = 0
+OUT_OF_SCOPE = 10
+```
+
+Independent evidence: `.cursor/agents/requirements-evidence-collector.md` plus
+executed `validate:fast` unit tests for CODE+TEST IDs. No unresolved APPROVED
+requirement remains.
+
 ## Final stop
 
 ```
 CHECKPOINT_0 = PASS
-CHECKPOINT_1_IMPLEMENTATION = COMPLETE
-CHECKPOINT_1_OPERATOR_ACCEPTANCE = PENDING
-CHECKPOINT_2_STATUS = NOT_STARTED
-CHECKPOINT_2_AUTHORIZATION = NOT_AUTHORIZED
-STOP = YES — operator review of Checkpoint 1 corrections
+CHECKPOINT_1 = PASS
+CHECKPOINT_1_OPERATOR_ACCEPTANCE = PASS
+CHECKPOINT_2 = PASS
+CHECKPOINT_2_OPERATOR_ACCEPTANCE = PASS
+CHECKPOINT_3 = PASS (NO_IMPLEMENTATION_REQUIRED)
+CU-E = PASS (NO_IMPLEMENTATION_REQUIRED)
+CHECKPOINT_4 = PASS
+CU-G = PASS
+STAGE_3_17A_IMPLEMENTATION = COMPLETE
+STAGE_3_17A_OPERATOR_FINAL_ACCEPTANCE = PASS
+STOP = YES вЂ” operator final acceptance and packaging authorization
 ```
+
+
+## Local real-provider acceptance — 2026-08-24
+
+Session: `cmt1by854000kmoua8uulfcmi`
+
+- LOCAL-01 AI start once: PASS
+- LOCAL-02 no intermediate FAILED: PASS
+- LOCAL-03 final COMPLETED: PASS
+- LOCAL-04 report renders: PASS
+- LOCAL-05 refresh preserves report: PASS
+
+`STAGE_3_17A_LOCAL_REAL_PROVIDER_ACCEPTANCE = PASS`
+`STAGE_3_17A_OPERATOR_FINAL_ACCEPTANCE = PASS`

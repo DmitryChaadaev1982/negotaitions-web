@@ -837,9 +837,16 @@ test("performance model removes compact/depth multiplication", () => {
   assert.equal(model.beforeReviewTheoreticalWorstCaseMs, 1_440_000);
   assert.equal(model.maxOperationAttempts, 1);
   assert.equal(model.maxGenerationPosts, 1);
+  assert.equal(model.maxSchemaRecoveryExtraGenerations, 1);
+  assert.equal(model.maxOwnedOperationGenerationPosts, 2);
   assert.equal(model.maxCompactFallbackCalls, 0);
   assert.equal(model.maxOptionalDepthCalls, 0);
-  assert.equal(model.maxPollingRequests, 40);
+  assert.equal(model.maxPollingRequestsPerGeneration, 40);
+  assert.equal(model.maxPollingRequests, 80);
+  assert.equal(
+    model.maxPollingRequests,
+    model.maxOwnedOperationGenerationPosts * model.maxPollingRequestsPerGeneration,
+  );
   assert.equal(model.theoreticalDefaultWorstCaseMs, 120_000);
 });
 
