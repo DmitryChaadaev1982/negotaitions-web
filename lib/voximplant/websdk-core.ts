@@ -171,7 +171,10 @@ export function dispatchVoxSdkLog(props: VoxSdkLogProps): void {
   const sink = store.sink;
   const surface = sink?.surface ?? "detached";
   const context = sink ? sink.getContext() : detachedContext();
-  const classification = classifyVoxProviderFailure({ fullMessage }, context);
+  const classification = classifyVoxProviderFailure(
+    { fullMessage, extraData: props.extraData },
+    context,
+  );
   emitVoxProviderDiagnostic(surface, classification, context);
   sink?.onClassified?.(classification);
 }

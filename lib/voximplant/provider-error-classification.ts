@@ -122,6 +122,20 @@ const MEDIA_RECOVERY_ACTIONS = new Set([
   "UpdateAction",
 ]);
 
+/**
+ * Local getUserMedia / StreamManager failures. They do not mean the conference
+ * is dead and must never start a provider rejoin.
+ */
+const LOCAL_MEDIA_DEVICE_ERROR_TYPES = new Set([
+  "NotReadableError",
+  "NotAllowedError",
+  "NotFoundError",
+  "OverconstrainedError",
+  "AbortError",
+]);
+
+const REINVITE_TIMEOUT_ERROR_TYPES = new Set(["ReInviteFailedDueTimeout"]);
+
 const TRANSIENT_TRANSPORT_CODES = new Set([408, 500, 502, 503, 504]);
 const TERMINAL_TRANSPORT_CODES = new Set([401, 403]);
 
@@ -202,23 +216,37 @@ export function parseVoxProviderSignal(
   extra?: { scope?: string | null },
 ): VoxProviderSignal {
   const message = toMessage(input);
+  const extraScope =
+    extra?.scope ??
+    (input &&
+    typeof input === "object" &&
+    "extraData" in input &&
+    (input as { extraData?: { scope?: unknown } }).extraData &&
+    typeof (input as { extraData?: { scope?: unknown } }).extraData?.scope ===
+      "string"
+      ? (input as { extraData: { scope: string } }).extraData.scope
+      : null);
 
   const scopeMatch = /\[WEBSDK\]\s*\[([^\]]+)\]/i.exec(message);
-  const scope = extra?.scope ?? scopeMatch?.[1] ?? null;
+  const scope = extraScope ?? scopeMatch?.[1] ?? null;
   const fromWebSdk = /\[WEBSDK\]/i.test(message) || scopeMatch != null;
 
   // `TransportTimeoutError`, `ConnectionNetworkError`, ... — the SDK always
   // prints the constructor name before the human-readable detail.
-  const errorTypeMatch = /\b([A-Z][A-Za-z0-9]*(?:Error|Exception))\b/.exec(message);
+  const errorTypeMatch =
+    /\b([A-Z][A-Za-z0-9]*(?:Error|Exception))\b/.exec(message) ??
+    /\b(ReInviteFailedDueTimeout)\b/.exec(message);
   const errorType =
     errorTypeMatch?.[1] ??
-    (input instanceof Error && /(?:Error|Exception)$/.test(input.name) ? input.name : null);
+    (input instanceof Error &&
+    /(?:Error|Exception|ReInviteFailedDueTimeout)$/.test(input.name)
+      ? input.name
+      : null);
 
   const codeMatch = /\b(?:code|status)\s*[:=]?\s*(\d{3})\b/i.exec(message);
   const transportCode = codeMatch ? Number.parseInt(codeMatch[1]!, 10) : null;
 
-  const actionMatch = /actionName\s*[:=]\s*"?([A-Za-z0-9_]+)"?/.exec(message);
-  const actionName = actionMatch?.[1] ?? null;
+  const actionName = extractActionName(message);
 
   return {
     message,
@@ -229,6 +257,48 @@ export function parseVoxProviderSignal(
     transportClosure: parseTransportClosure(message),
     fromWebSdk,
   };
+}
+
+/**
+ * Production WebSDK embeds `actionName` inside JSON (sometimes escaped).
+ * The older `actionName: "IceRestartAction"` prose form is still accepted.
+ */
+function extractActionName(message: string): string | null {
+  const jsonAction =
+    /(?:\\?")actionName(?:\\?")\s*:\s*(?:\\?")([A-Za-z0-9_]+)(?:\\?")/.exec(message);
+  if (jsonAction?.[1]) return jsonAction[1];
+  const proseAction = /actionName\s*[:=]\s*"?([A-Za-z0-9_]+)"?/.exec(message);
+  return proseAction?.[1] ?? null;
+}
+
+function isReInviteTimeoutMessage(signal: VoxProviderSignal): boolean {
+  if (signal.errorType && REINVITE_TIMEOUT_ERROR_TYPES.has(signal.errorType)) {
+    return true;
+  }
+  const lower = signal.message.toLowerCase();
+  const isTimeout =
+    lower.includes("action run failed to timeout") ||
+    lower.includes("reinvitefaileddutimeout");
+  if (!isTimeout) return false;
+  const scope = signal.scope?.toLowerCase() ?? "";
+  return (
+    scope.includes("reinvite") ||
+    lower.includes("reinvitequeue") ||
+    lower.includes("icerestartaction") ||
+    Boolean(signal.actionName && MEDIA_RECOVERY_ACTIONS.has(signal.actionName))
+  );
+}
+
+function isLocalMediaDeviceSignal(signal: VoxProviderSignal): boolean {
+  if (signal.errorType && LOCAL_MEDIA_DEVICE_ERROR_TYPES.has(signal.errorType)) {
+    return true;
+  }
+  const lower = signal.message.toLowerCase();
+  return (
+    lower.includes("notreadableerror") ||
+    (lower.includes("device in use") &&
+      (lower.includes("streammanager") || lower.includes("[websdk]")))
+  );
 }
 
 function isTeardownContext(context: VoxClassificationContext): boolean {
@@ -316,16 +386,36 @@ export function classifyVoxProviderFailure(
     return build("TERMINAL_PROVIDER_FAILURE", "transport_retry_budget_exhausted");
   }
 
-  // Media renegotiation failures. During an intentional teardown the peer
-  // connection is being discarded anyway, so a failed ICE restart is expected.
-  if (signal.actionName && MEDIA_RECOVERY_ACTIONS.has(signal.actionName)) {
+  if (isLocalMediaDeviceSignal(signal)) {
     if (teardown) {
       return build(
         "EXPECTED_DURING_INTENTIONAL_TEARDOWN",
-        `media_recovery_abandoned_during_teardown:${signal.actionName}`,
+        `local_media_device_abandoned_during_teardown:${signal.errorType ?? "device"}`,
       );
     }
-    return build("RECOVERABLE_TRANSIENT", `media_recovery_failed:${signal.actionName}`, {
+    return build(
+      "RECOVERABLE_TRANSIENT",
+      `local_media_device_failure:${signal.errorType ?? "device"}`,
+    );
+  }
+
+  // Media renegotiation failures. During an intentional teardown the peer
+  // connection is being discarded anyway, so a failed ICE restart is expected.
+  // A timeout here is signalling/media degradation, not proof the call hung up.
+  const mediaAction =
+    signal.actionName && MEDIA_RECOVERY_ACTIONS.has(signal.actionName)
+      ? signal.actionName
+      : isReInviteTimeoutMessage(signal)
+        ? (signal.actionName ?? "ReInviteTimeout")
+        : null;
+  if (mediaAction) {
+    if (teardown) {
+      return build(
+        "EXPECTED_DURING_INTENTIONAL_TEARDOWN",
+        `media_recovery_abandoned_during_teardown:${mediaAction}`,
+      );
+    }
+    return build("RECOVERABLE_TRANSIENT", `media_recovery_failed:${mediaAction}`, {
       retryable: hasRetryBudget(context),
     });
   }

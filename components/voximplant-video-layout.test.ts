@@ -29,7 +29,7 @@ test("remote connected signal is gated by logical room presence", () => {
   assert.match(source, /isLogicallyPresent === false/);
   assert.match(
     source,
-    /connectedSignal:\s*isLocal\s*\?\s*joined\s*:\s*Boolean\(matchedRemote\)\s*&&\s*!isLogicallyAbsent/,
+    /connectedSignal:\s*isLocal\s*\?\s*joined\s*:\s*Boolean\(joined && matchedRemote\)\s*&&\s*!isLogicallyAbsent/,
   );
 });
 

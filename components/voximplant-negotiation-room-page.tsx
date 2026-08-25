@@ -43,6 +43,7 @@ import type { ControlState } from "@/lib/negotiation-control";
 import type { RoomSidebarData } from "@/lib/room-sidebar-types";
 import { resolveScenarioMessageTextForRelay } from "@/lib/voximplant/recording-control-relay";
 import { shouldSkipStartRelayForStatus } from "@/lib/voximplant/recording-start-guard";
+import { isSessionOperableForProviderRejoin } from "@/lib/voximplant/provider-disconnect-recovery";
 import { useVoximplantRoom } from "@/lib/voximplant/use-voximplant-room";
 import type { RecordingControlMessage } from "@/lib/voximplant/scenario-messages";
 import { isRemoteStreamTelemetryEnabled } from "@/lib/telemetry/voximplant-remote-speaking-tracker";
@@ -225,6 +226,16 @@ export default function VoximplantNegotiationRoomPage(
     setStaleConnection(true);
   }, []);
 
+  const [sessionCloseState, setSessionCloseState] = useState<ShellSessionCloseState>({
+    isClosed: false,
+    closeMessageKey: null,
+    closedBeforeNegotiation: false,
+  });
+  const isSessionOperable = useCallback(
+    () => isSessionOperableForProviderRejoin(sessionCloseState),
+    [sessionCloseState],
+  );
+
   // ── Media hook (Voximplant) ────────────────────────────────────────────────
   const {
     isLoading: mediaLoading,
@@ -259,6 +270,7 @@ export default function VoximplantNegotiationRoomPage(
     providerFaultSimulation: props.providerFaultSimulation,
     disableInitialCamera: props.disableInitialCamera,
     disableInitialMic: props.disableInitialMic,
+    isSessionOperable,
   });
 
   // ── Business state (sidebar + control state) ───────────────────────────────
@@ -272,11 +284,6 @@ export default function VoximplantNegotiationRoomPage(
   const recordingStateRef = useRef<RoomRecordingState>(null);
   const [recordingStopRelayHint, setRecordingStopRelayHint] =
     useState<RecordingStopRelayHint>(null);
-  const [sessionCloseState, setSessionCloseState] = useState<ShellSessionCloseState>({
-    isClosed: false,
-    closeMessageKey: null,
-    closedBeforeNegotiation: false,
-  });
   const lastPublishedMediaStatusRef = useRef<string | null>(null);
 
   // Initial load of sidebar + control state

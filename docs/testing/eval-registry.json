@@ -256,6 +256,137 @@
       "coverageStatus": "COVERED"
     },
     {
+      "id": "EVAL-S319B-STALE-REMOTE-CLEAR",
+      "invariant": "An actual current-generation Vox conference disconnect sets joined=false and clears remoteParticipants so stale remotes cannot satisfy live tile eligibility.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Provider-state remotes are empty after current-generation disconnect; old endpoint objects cannot mutate a later generation.",
+      "expectedUiResult": "Disconnected current client does not present stale remote A/B tiles as live.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-2", "S319B-CU-4"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/session-room-recovery.runtime.ts",
+        "lib/voximplant/session-room-recovery.runtime.test.ts",
+        "lib/voximplant/session-room-recovery.mounted.test.ts",
+        "lib/voximplant/use-voximplant-room.ts",
+        "components/voximplant-video-layout.tsx",
+        "components/voximplant-video-layout.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S319B-BOUNDED-REJOIN",
+      "invariant": "Unexpected provider disconnect while the Session remains operable starts exactly one bounded access/join rejoin; Leave, unmount, stale lease, and non-operable Session never auto-rejoin; failed rejoin does not loop.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Client-only idle→recovering→recovered|failed; one attempt per mounted instance; remotes stay cleared on failure.",
+      "expectedUiResult": "Existing provider warning/error UI remains after failed recovery; manual page recovery still works.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-2"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/provider-disconnect-recovery.ts",
+        "lib/voximplant/session-room-recovery.runtime.test.ts",
+        "lib/voximplant/session-room-recovery.e2e-mock.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S319B-GENERATION-FENCE",
+      "invariant": "Late disconnect or endpoint callbacks from generation N cannot clear or mutate a recovered generation N+1.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "shouldIgnoreProviderCallback drops stale-generation mutations; recovered remotes remain.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-2"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/provider-disconnect-recovery.ts",
+        "lib/voximplant/session-room-recovery.runtime.test.ts",
+        "lib/voximplant/session-room-recovery.mounted.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S319B-ICE-REINVITE-CLASS",
+      "invariant": "Production-shaped ReInviteQueue IceRestartAction timeout is recoverable media/signalling degradation, not TERMINAL_PROVIDER_FAILURE/unclassified, and does not force full rejoin while the call remains connected.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "actionName parses from JSON-in-message; class=RECOVERABLE_TRANSIENT reason=media_recovery_failed:IceRestartAction; connected call resyncs only.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-1"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/provider-error-classification.ts",
+        "lib/voximplant/provider-error-classification.stage-3-19b.test.ts",
+        "lib/voximplant/session-room-recovery.mounted.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S319B-DEVICE-CLASS",
+      "invariant": "StreamManager NotReadableError Device in use is local-media non-terminal and must not clear remotes, mark the conference dead, or start provider rejoin.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "class=RECOVERABLE_TRANSIENT reason=local_media_device_failure:NotReadableError; cameraUnavailable may be set; remotes unchanged.",
+      "expectedUiResult": "Existing camera unavailable / device-busy copy remains.",
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-1"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/provider-error-classification.ts",
+        "lib/voximplant/provider-error-classification.stage-3-19b.test.ts",
+        "lib/voximplant/session-room-recovery.mounted.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S319B-SNAPSHOT-RECONCILE",
+      "invariant": "A transient empty local SDK endpoint snapshot while the current conference is still connected does not wipe remotes; EndpointRemoved, actual disconnect, and a non-empty authoritative snapshot remain safe removal evidence.",
+      "risk": "MEDIUM",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "reconcileRemoteParticipantsFromSnapshot keeps remotes on empty connected snapshot and prunes only with proven removal evidence.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S319B-CU-3", "S319B-CU-5"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/endpoint-reconciliation.ts",
+        "lib/voximplant/endpoint-reconciliation.test.ts",
+        "lib/voximplant/session-room-recovery.runtime.test.ts",
+        "components/event-lobby-voximplant-room.tsx",
+        "components/event-lobby-voximplant-room.recovery.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
       "id": "EVAL-PP-ENH-RACE-AND-LATENCY",
       "invariant": "Optional transcript enhancement has race/correctness controls distinct from a bounded UX latency budget; late enhancement cannot overwrite later transcript/mapping/AI input.",
       "risk": "HIGH",

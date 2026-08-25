@@ -219,6 +219,68 @@ switching application versions.
 - Confirmed media state still propagates through the existing
   `/api/events/[id]/media-status` publish path.
 
+## Provider Disconnect Recovery (Stage 3.19B)
+
+Application-side contract for an actual Vox conference/call disconnect. The
+application tolerates provider `408 Request Timeout`; it does not try to
+prevent Vox from emitting it. Recorded production incident:
+`cmt8lfu7w0000w9m1xq6hlfpj`.
+
+- **Stale remotes.** When the current provider generation receives an actual
+  conference disconnect, `joined` and conference-connected become false and
+  `remoteParticipants` plus remote stream / endpoint-subscription / VAD maps
+  are cleared at the provider-state layer
+  (`lib/voximplant/use-voximplant-room.ts`). A disconnected current client
+  cannot keep old remotes as live tiles. Layout
+  (`components/voximplant-video-layout.tsx`) additionally requires `joined`
+  for remote `connectedSignal` (defense-in-depth only).
+- **Expected vs unexpected.** Auto-rejoin is not used for explicit Leave,
+  page/unmount teardown, recovery teardown of the previous generation, stale
+  lease, auth/access denial, or a Session that is no longer operable. Event
+  or organizer close does not rejoin. Debrief after a normal FINISH
+  (`closeMessageKey === "join.sessionFinishedMessage"`) still occupies the
+  room and remains operable. Vox disconnect alone is not a Session Leave.
+- **One bounded rejoin.** An unexpected current-generation disconnect while
+  the user is still on the Session room surface attempts exactly one provider
+  rejoin through the existing access/join path, with a new local generation.
+  Status is client-only: `idle → recovering → recovered | failed`. After a
+  failed attempt the client stays disconnected, remotes stay cleared, and the
+  existing provider error/warning UI plus manual page recovery apply. There
+  is no retry loop, heartbeat retry, or second automatic attempt on that
+  mount.
+- **Generation fencing.** Each join/rejoin owns a monotonically increasing
+  local generation token (not persisted). Asynchronous callbacks that mutate
+  joined, remotes, streams, or media maps ignore stale generations. A
+  disconnect from generation N cannot clear a recovered generation N+1.
+- **ReInvite / IceRestart timeout.** Production-shaped WebSDK JSON
+  `"actionName":"IceRestartAction"` plus `Action run failed to timeout` is a
+  recoverable media/signalling degradation, not `TERMINAL_PROVIDER_FAILURE`
+  and not proof the call hung up. While the current call remains connected,
+  the hook performs one generation-fenced endpoint resync. It does not
+  full-rejoin. An actual later `Disconnected` owns the bounded rejoin path.
+  Gateway websocket close remains the only trigger for
+  `createSessionTransportRecovery`.
+- **Local camera device failure.** StreamManager `NotReadableError: Device
+  in use` is `local_media_device_failure` (non-terminal). It does not clear
+  remotes, mark the conference dead, or start provider rejoin. Existing
+  camera-unavailable / audio-only join behavior is unchanged. The application
+  does not steal another application's camera.
+- **Endpoint snapshot.** The existing 1s local SDK map loop uses
+  `lib/voximplant/endpoint-reconciliation.ts`. A transient empty snapshot
+  while the current call is still connected does not erase known remotes.
+  `EndpointRemoved`, actual disconnect, and a non-empty authoritative
+  snapshot that omits a previously known id remain safe removal evidence.
+- **Event lobby.** Lobby shares classification, conservative snapshot
+  reconcile, and remotes-cleared-on-disconnect. It does **not** copy Session
+  bounded rejoin; lobby already recovers through `createProviderConnectRunner`.
+- **Unchanged.** SessionRoomConnection lease TTL, Session heartbeat cadence,
+  Vox Scenario, Prisma/migrations, recording, and Session lifecycle policy.
+
+Helpers: `lib/voximplant/provider-disconnect-recovery.ts`,
+`lib/voximplant/endpoint-reconciliation.ts`,
+`lib/voximplant/provider-recovery-log.ts` (sanitized transition logs only;
+no tokens, access URLs, secrets, raw SDP, or credentials).
+
 ## Operational Constraints
 
 - Recording start remains browser-relayed. Terminal recording stop is
@@ -316,6 +378,10 @@ record it fails to resolve arrive in one message.
 - `lib/client/connection-id.ts`
 - `lib/client/stale-connection.ts`
 - `lib/voximplant/use-voximplant-room.ts`
+- `lib/voximplant/provider-disconnect-recovery.ts`
+- `lib/voximplant/endpoint-reconciliation.ts`
+- `lib/voximplant/provider-recovery-log.ts`
+- `lib/voximplant/session-room-recovery.runtime.ts`
 - `lib/voximplant/event-media-control-store.ts`
 - `lib/voximplant/recording-dispatch.ts`
 - `lib/voximplant/server-stop-settings.ts`

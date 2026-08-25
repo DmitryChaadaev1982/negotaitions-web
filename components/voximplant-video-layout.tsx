@@ -229,7 +229,9 @@ export default function VoximplantVideoLayout({
         // Logical room presence (SessionRoomConnection) is authoritative for who
         // is currently in the room; provider endpoint media remains authoritative
         // for actual A/V streams of those present users.
-        connectedSignal: isLocal ? joined : Boolean(matchedRemote) && !isLogicallyAbsent,
+        connectedSignal: isLocal
+          ? joined
+          : Boolean(joined && matchedRemote) && !isLogicallyAbsent,
         allowConnectedWithoutMediaTile: true,
         lastSeenAt: entry.lastSeenAt ?? null,
         videoStream: participant.stream,

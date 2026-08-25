@@ -35,6 +35,20 @@ import type {
   VoxLifecyclePhase,
 } from "@/lib/voximplant/provider-error-classification";
 import {
+  classifyProviderDisconnect,
+  createBoundedProviderRejoin,
+  isLocalMediaDeviceClassification,
+  isMediaRecoveryClassification,
+  isSessionOperableForProviderRejoin,
+  type ProviderDisconnectIntent,
+  type ProviderRecoveryStatus,
+} from "@/lib/voximplant/provider-disconnect-recovery";
+import {
+  reconcileRemoteParticipantsFromSnapshot,
+  remotesAfterProviderDisconnect,
+} from "@/lib/voximplant/endpoint-reconciliation";
+import { logProviderRecovery } from "@/lib/voximplant/provider-recovery-log";
+import {
   GATEWAY_WEBSOCKET_CLOSE_SDK_LOG,
   type VoxProviderFaultMode,
 } from "@/lib/voximplant/provider-fault-simulation";
@@ -273,6 +287,11 @@ type UseVoximplantRoomOptions = {
    * All roles attempt microphone by default when this is false/absent.
    */
   disableInitialMic?: boolean;
+  /**
+   * Latest Session close/operability projection. Evaluated at disconnect time
+   * so a later FINISH/event-close cannot be missed by a stale closure.
+   */
+  isSessionOperable?: () => boolean;
 };
 
 type UseVoximplantRoomResult = {
@@ -326,6 +345,8 @@ type UseVoximplantRoomResult = {
    * Session shell, its state and its lifecycle are unaffected by it.
    */
   transportRecovery: SessionTransportRecoveryState;
+  /** Client-only bounded provider rejoin: idle | recovering | recovered | failed. */
+  providerRecovery: ProviderRecoveryStatus;
   /** True when conference.sendMessage() is available on the current SDK object. */
   sendMessageAvailable: boolean;
 };
@@ -605,6 +626,7 @@ export function useVoximplantRoom({
   providerFaultSimulation = "off",
   disableInitialCamera = false,
   disableInitialMic = false,
+  isSessionOperable,
 }: UseVoximplantRoomOptions): UseVoximplantRoomResult {
   const runtimeRef = useRef<RuntimeState | null>(null);
   const mountedRef = useRef(true);
@@ -621,6 +643,18 @@ export function useVoximplantRoom({
   /** Stable ref for display name so toggle callbacks avoid stale closures. */
   const localDisplayNameRef = useRef("");
   const audioProcessingEnabledRef = useRef(true);
+  const disconnectIntentRef = useRef<ProviderDisconnectIntent>("none");
+  const rejoinInProgressRef = useRef(false);
+  const boundedRejoinRef = useRef(createBoundedProviderRejoin());
+  const isSessionOperableRef = useRef(isSessionOperable);
+  useEffect(() => {
+    isSessionOperableRef.current = isSessionOperable;
+  }, [isSessionOperable]);
+  const resyncEndpointsRef = useRef<(generation: number) => void>(() => {});
+  const [joinEpoch, setJoinEpoch] = useState(0);
+  const [providerRecovery, setProviderRecovery] =
+    useState<ProviderRecoveryStatus>("idle");
+  const isUnmountingRef = useRef(false);
 
   const invalidateGeneration = useCallback((reason: VoxLifecycleAbortReason) => {
     generationRef.current += 1;
@@ -677,9 +711,22 @@ export function useVoximplantRoom({
         intentionalHandoff: isIntentionalProviderHandoffActive(),
       }),
       onClassified: (classification: VoxClassification) => {
+        if (isLocalMediaDeviceClassification(classification.reason)) {
+          return;
+        }
+        if (isMediaRecoveryClassification(classification.reason)) {
+          const runtime = runtimeRef.current;
+          if (
+            lifecyclePhaseRef.current === "connected" &&
+            runtime?.conferenceConnected &&
+            runtime.generation === generationRef.current
+          ) {
+            resyncEndpointsRef.current(runtime.generation);
+          }
+          return;
+        }
         // Only a gateway socket that dropped under a live connection starts a
-        // recovery sequence. Teardown noise, terminal authorization failures
-        // and genuinely unknown faults keep their existing handling.
+        // transport-quiet recovery. IceRestart / ReInvite timeout must not.
         if (classification.reason !== "gateway_websocket_closed") return;
         recovery.noteTransportLoss(classification);
       },
@@ -747,6 +794,7 @@ export function useVoximplantRoom({
 
   const handleStaleConnection = useCallback(() => {
     if (staleLifecycleRef.current) return;
+    disconnectIntentRef.current = "stale_connection";
     invalidateGeneration("stale_connection");
     if (!staleNotifiedRef.current) {
       staleNotifiedRef.current = true;
@@ -1052,6 +1100,40 @@ export function useVoximplantRoom({
     detachRemoteAudioStreams(endpointId);
   }, [detachRemoteAudioStreams]);
 
+  const clearLiveRemoteState = useCallback((generation: number) => {
+    if (generationRef.current !== generation || staleLifecycleRef.current) return;
+    const runtime = runtimeRef.current;
+    if (runtime && runtime.generation === generation) {
+      for (const endpointId of Array.from(runtime.endpointSubscriptions.keys())) {
+        unsubscribeEndpoint(runtime, endpointId);
+      }
+      clearRemoteAudioElements(runtime.remoteAudioElements);
+      runtime.remoteAudioElements.clear();
+    }
+    setRemoteParticipants(remotesAfterProviderDisconnect());
+    setRemoteAudioElementCount(0);
+    setRemotePlaybackBlocked(false);
+  }, [unsubscribeEndpoint]);
+
+  const requestBoundedRejoin = useCallback(
+    (failedGeneration: number, disconnectKind: string) => {
+      if (rejoinInProgressRef.current) return;
+      rejoinInProgressRef.current = true;
+      disconnectIntentRef.current = "recovery_teardown";
+      boundedRejoinRef.current.begin();
+      setProviderRecovery("recovering");
+      logProviderRecovery({
+        surface: "session-room",
+        sessionId,
+        generation: failedGeneration,
+        event: "recovery_started",
+        reason: disconnectKind,
+      });
+      setJoinEpoch((current) => current + 1);
+    },
+    [sessionId],
+  );
+
   /** Refresh the remote video stream for an endpoint. */
   const applyRemoteVideoStream = useCallback(
     (endpoint: VoxEndpoint, generation: number) => {
@@ -1255,6 +1337,7 @@ export function useVoximplantRoom({
 
   const leave = useCallback(async () => {
     if (isLeaving) return;
+    disconnectIntentRef.current = "explicit_leave";
     setIsLeaving(true);
     await cleanup("invalidated_generation");
     if (!mountedRef.current) return;
@@ -1824,8 +1907,20 @@ export function useVoximplantRoom({
           runtimeState.conferenceConnected = true;
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
           lifecyclePhaseRef.current = "connected";
+          disconnectIntentRef.current = "none";
           setJoined(true);
           setStatus("Подключено к переговорной комнате.");
+          if (boundedRejoinRef.current.getStatus() === "recovering") {
+            boundedRejoinRef.current.succeed();
+            rejoinInProgressRef.current = false;
+            setProviderRecovery("recovered");
+            logProviderRecovery({
+              surface: "session-room",
+              sessionId,
+              generation: joinGeneration,
+              event: "recovery_succeeded",
+            });
+          }
         };
         const onFailed = (event: VoxConferenceEvent) => {
           runtimeState.conferenceConnected = false;
@@ -1839,6 +1934,38 @@ export function useVoximplantRoom({
           const reason = event.payload?.reason ?? "Отключено.";
           setJoined(false);
           setStatus(`Отключено: ${reason}`);
+          clearLiveRemoteState(joinGeneration);
+          logProviderRecovery({
+            surface: "session-room",
+            sessionId,
+            generation: joinGeneration,
+            event: "provider_disconnect",
+            reason,
+          });
+
+          const sessionOperable =
+            isSessionOperableRef.current?.() ??
+            isSessionOperableForProviderRejoin({ isClosed: false });
+          const kind = classifyProviderDisconnect({
+            intent: disconnectIntentRef.current,
+            eventGeneration: joinGeneration,
+            currentGeneration: generationRef.current,
+            mounted: mountedRef.current,
+            stale: staleLifecycleRef.current,
+            sessionOperable,
+          });
+          const decision = boundedRejoinRef.current.decide(kind);
+          if (!decision.shouldRejoin) {
+            if (
+              kind === "unexpected" &&
+              (decision.reason === "already_consumed" ||
+                decision.reason === "already_in_flight")
+            ) {
+              setProviderRecovery(boundedRejoinRef.current.getStatus());
+            }
+            return;
+          }
+          requestBoundedRejoin(joinGeneration, decision.reason);
         };
         const onEndpointAdded = (event: VoxConferenceEvent) => {
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
@@ -1921,16 +2048,40 @@ export function useVoximplantRoom({
         for (const endpoint of conference.endpoints.value.values()) {
           subscribeEndpoint(endpoint, joinGeneration);
         }
+        const resyncEndpoints = (generation: number) => {
+          if (generationRef.current !== generation || staleLifecycleRef.current) return;
+          const runtime = runtimeRef.current;
+          if (!runtime || runtime.generation !== generation) return;
+          const liveConference = runtime.conference;
+          if (!liveConference) return;
+          for (const endpoint of liveConference.endpoints.value.values()) {
+            subscribeEndpoint(endpoint, generation);
+            applyRemoteVideoStream(endpoint, generation);
+          }
+          const endpointIds = new Set(Array.from(liveConference.endpoints.value.keys()));
+          setRemoteParticipants((current) =>
+            reconcileRemoteParticipantsFromSnapshot({
+              current,
+              snapshotIds: endpointIds,
+              conferenceConnected: runtime.conferenceConnected,
+            }).next,
+          );
+        };
+        resyncEndpointsRef.current = (generation) => {
+          if (!runtimeState.conferenceConnected) return;
+          logProviderRecovery({
+            surface: "session-room",
+            sessionId,
+            generation,
+            event: "endpoint_resync",
+            classification: "RECOVERABLE_TRANSIENT",
+            reason: "media_recovery_failed",
+          });
+          resyncEndpoints(generation);
+        };
         runtimeState.endpointSyncIntervalId = window.setInterval(() => {
           if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          for (const endpoint of conference.endpoints.value.values()) {
-            subscribeEndpoint(endpoint, joinGeneration);
-            applyRemoteVideoStream(endpoint, joinGeneration);
-          }
-          const endpointIds = new Set(Array.from(conference.endpoints.value.keys()));
-          setRemoteParticipants((current) =>
-            current.filter((participant) => endpointIds.has(participant.id)),
-          );
+          resyncEndpoints(joinGeneration);
         }, 1000);
       } catch (joinError) {
         if (isVoxLifecycleAbortError(joinError)) {
@@ -1944,6 +2095,18 @@ export function useVoximplantRoom({
         const message = toErrorMessage(joinError);
         setError(message);
         setStatus("Не удалось подключиться к Voximplant.");
+        if (boundedRejoinRef.current.getStatus() === "recovering") {
+          boundedRejoinRef.current.fail();
+          rejoinInProgressRef.current = false;
+          setProviderRecovery("failed");
+          logProviderRecovery({
+            surface: "session-room",
+            sessionId,
+            generation: joinGeneration,
+            event: "recovery_failed",
+            reason: message,
+          });
+        }
         await cleanup("invalidated_generation");
       } finally {
         if (mountedRef.current) {
@@ -1956,8 +2119,14 @@ export function useVoximplantRoom({
     void join();
 
     return () => {
-      invalidateGeneration("component_unmounted");
       isJoiningRef.current = false;
+      if (rejoinInProgressRef.current && !isUnmountingRef.current) {
+        disconnectIntentRef.current = "recovery_teardown";
+        void cleanup("invalidated_generation", { preserveStatus: true });
+        return;
+      }
+      disconnectIntentRef.current = "unmount";
+      invalidateGeneration("component_unmounted");
       void cleanup("component_unmounted", { preserveStatus: true });
     };
   }, [
@@ -1965,18 +2134,28 @@ export function useVoximplantRoom({
     applyRemoteVideoStream,
     beginJoinGeneration,
     cleanup,
+    clearLiveRemoteState,
     disableInitialCamera,
     disableInitialMic,
     broadcastTakeoverClaimed,
     connectionId,
     handleStaleConnection,
     invalidateGeneration,
+    joinEpoch,
     removeRemoteById,
+    requestBoundedRejoin,
     sessionId,
     startMicLevelMeter,
     subscribeEndpoint,
     unsubscribeEndpoint,
   ]);
+
+  useEffect(() => {
+    isUnmountingRef.current = false;
+    return () => {
+      isUnmountingRef.current = true;
+    };
+  }, []);
 
   // ── Return value ──────────────────────────────────────────────────────────
 
@@ -2013,6 +2192,7 @@ export function useVoximplantRoom({
       unlockAudioPlayback,
       sendConferenceMessage,
       sendMessageAvailable,
+      providerRecovery,
       transportRecovery,
     }),
     [
@@ -2042,6 +2222,7 @@ export function useVoximplantRoom({
       role,
       sendConferenceMessage,
       sendMessageAvailable,
+      providerRecovery,
       status,
       toggleCamera,
       toggleMic,
