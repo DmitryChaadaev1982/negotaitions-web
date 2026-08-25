@@ -31,13 +31,13 @@ function exception(file, api, reason, expectedCount = 1) {
   return { file, api, reason, expectedCount };
 }
 
-test("current repository allowlist passes", () => {
+test("current repository allowlist passes with zero production exceptions", () => {
   const result = checkNativeDialogs({ repositoryRoot: process.cwd() });
   assert.equal(result.ok, true, result.errors.join("\n"));
   assert.equal(result.unexpected.length, 0);
   assert.equal(result.stale.length, 0);
   assert.equal(result.countMismatches.length, 0);
-  assert.ok(result.occurrences.length >= 5);
+  assert.equal(result.occurrences.length, 0);
 });
 
 test("new non-allowlisted alert fails", () => {

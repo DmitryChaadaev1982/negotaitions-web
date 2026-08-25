@@ -7,6 +7,13 @@ import { Card, CardContent, CardHeader } from "@/components/card";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GradientButton, SecondaryButton } from "@/components/ui/buttons";
 import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  createEmptyManualSpeakerTurn,
+  createManualTurnId,
+  insertManualSpeakerTurnAfter,
+  toSubmittedManualSpeakerTurns,
+  type ManualSpeakerTurnEdit,
+} from "@/lib/transcription/manual-speaker-turn-edits";
 import type { RoomAuthToken } from "@/lib/room-auth";
 import { roomAuthBody, roomAuthQuery } from "@/lib/room-auth";
 import {
@@ -243,24 +250,7 @@ function resolveSegmentSpeakerDisplay(
   };
 }
 
-type ManualSpeakerTurn = {
-  id: string;
-  participantId: string;
-  text: string;
-  startSeconds: number | null;
-  endSeconds: number | null;
-  speakerLabel: string | null;
-  displaySpeakerLabel: string | null;
-  /** User-assigned speaker slot (e.g. "1", "2") used for cluster-level propagation when speakerLabel is absent. */
-  speakerSlot: string | null;
-};
-
-function createManualTurnId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
+type ManualSpeakerTurn = ManualSpeakerTurnEdit;
 
 function buildInitialManualTurnsFromTranscript(
   transcriptText: string,
@@ -271,18 +261,7 @@ function buildInitialManualTurnsFromTranscript(
     .filter(Boolean);
 
   if (chunks.length === 0) {
-    return [
-      {
-        id: createManualTurnId(),
-        participantId: "",
-        text: "",
-        startSeconds: null,
-        endSeconds: null,
-        speakerLabel: null,
-        displaySpeakerLabel: null,
-        speakerSlot: null,
-      },
-    ];
+    return [createEmptyManualSpeakerTurn()];
   }
 
   return chunks.map((chunk) => ({
@@ -1046,14 +1025,7 @@ export function RecordingTranscriptionSection({
   }, [transcript, transcriptText]);
 
   const saveManualSpeakerAttribution = useCallback(async () => {
-    const normalizedTurns = manualSpeakerTurns
-      .map((turn) => ({
-        participantId: turn.participantId.trim(),
-        text: turn.text.trim(),
-        startSeconds: turn.startSeconds,
-        endSeconds: turn.endSeconds,
-      }))
-      .filter((turn) => turn.text.length > 0);
+    const normalizedTurns = toSubmittedManualSpeakerTurns(manualSpeakerTurns);
 
     if (
       normalizedTurns.length === 0 ||
@@ -1609,22 +1581,37 @@ export function RecordingTranscriptionSection({
                               )}
                             </span>
                           </div>
-                          {manualSpeakerTurns.length > 1 ? (
+                          <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              className="text-xs text-rose-300 hover:text-rose-200"
+                              className="text-xs text-slate-400 hover:text-slate-200"
+                              data-testid="insert-manual-speaker-turn-after"
                               onClick={() => {
                                 setManualSpeakerTurns((current) =>
-                                  current.filter((item) => item.id !== turn.id),
+                                  insertManualSpeakerTurnAfter(current, index),
                                 );
                               }}
                             >
-                              {t("recording.removeManualSpeakerTurn")}
+                              {t("recording.insertManualSpeakerTurnAfter")}
                             </button>
-                          ) : null}
+                            {manualSpeakerTurns.length > 1 ? (
+                              <button
+                                type="button"
+                                className="text-xs text-rose-300 hover:text-rose-200"
+                                onClick={() => {
+                                  setManualSpeakerTurns((current) =>
+                                    current.filter((item) => item.id !== turn.id),
+                                  );
+                                }}
+                              >
+                                {t("recording.removeManualSpeakerTurn")}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
 
                         <select
+                          data-testid="manual-speaker-turn-participant"
                           value={turn.participantId}
                           onChange={(event) => {
                             const value = event.target.value;
@@ -1744,27 +1731,6 @@ export function RecordingTranscriptionSection({
                     ))}
 
                     <div className="flex flex-wrap gap-2">
-                      <SecondaryButton
-                        type="button"
-                        disabled={busyAction != null}
-                        onClick={() => {
-                          setManualSpeakerTurns((current) => [
-                            ...current,
-                            {
-                              id: createManualTurnId(),
-                              participantId: "",
-                              text: "",
-                              startSeconds: null,
-                              endSeconds: null,
-                              speakerLabel: null,
-                              displaySpeakerLabel: null,
-                              speakerSlot: null,
-                            },
-                          ]);
-                        }}
-                      >
-                        {t("recording.addManualSpeakerTurn")}
-                      </SecondaryButton>
                       <GradientButton
                         type="button"
                         disabled={busyAction != null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -8,6 +8,7 @@ import {
   ListActionGroup,
   ListActionLink,
 } from "@/components/list-action-button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -245,6 +246,20 @@ function EventRowActions({ event, copyId, onCopyLink }: {
   onCopyLink: (event: EventRow) => void;
 }) {
   const { t } = useI18n();
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [isCompleting, startCompleteTransition] = useTransition();
+
+  const handleCompleteConfirm = () => {
+    if (isCompleting) {
+      return;
+    }
+    const formData = new FormData();
+    formData.set("eventId", event.id);
+    startCompleteTransition(async () => {
+      await completeTrainingEventFromList(formData);
+      setCompleteOpen(false);
+    });
+  };
 
   return (
     <ListActionGroup>
@@ -302,30 +317,34 @@ function EventRowActions({ event, copyId, onCopyLink }: {
         </ListActionButton>
       ) : null}
       {canCompleteEvent(event) ? (
-        <form
-          data-testid="event-complete-list-action"
-          action={completeTrainingEventFromList}
-          onSubmit={(submitEvent) => {
-            if (
-              !window.confirm(
-                `${t("events.completeEventTitle")}\n\n${t("events.completeEventWarning")}`,
-              )
-            ) {
-              submitEvent.preventDefault();
-            }
-          }}
-        >
-          <input type="hidden" name="eventId" value={event.id} />
+        <div data-testid="event-complete-list-action">
           <ListActionButton
-            type="submit"
+            type="button"
             variant="dangerOutline"
             title={t("events.completeEvent")}
             aria-label={t("events.completeEvent")}
             data-testid="complete-event-button"
+            disabled={isCompleting}
+            onClick={() => setCompleteOpen(true)}
           >
             {t("events.actionComplete")}
           </ListActionButton>
-        </form>
+          <ConfirmDialog
+            open={completeOpen}
+            title={t("events.completeEventTitle")}
+            description={t("events.completeEventWarning")}
+            cancelLabel={t("common.cancel")}
+            confirmLabel={t("events.completeEventConfirm")}
+            confirming={isCompleting}
+            testId="event-complete-list-confirm-dialog"
+            onCancel={() => {
+              if (!isCompleting) {
+                setCompleteOpen(false);
+              }
+            }}
+            onConfirm={handleCompleteConfirm}
+          />
+        </div>
       ) : null}
       {canCompleteEvent(event) ? (
         <form action={cancelTrainingEvent}>

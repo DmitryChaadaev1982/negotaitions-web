@@ -16,7 +16,11 @@ import { useI18n } from "@/lib/i18n/useI18n";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RecordingConsentModal } from "@/components/recording-consent-modal";
 import { DangerButton } from "@/components/ui/buttons";
-import { useCallback, useRef, useState } from "react";
+import {
+  areStandalonePreparationRolesReady,
+  type StandalonePreparationRoleInput,
+} from "@/lib/standalone-preparation-role-readiness";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 /** Modal that gates the start-negotiation action behind recording consent. */
 function NegotiationStartConsentModal({
@@ -48,6 +52,11 @@ type FacilitatorRoomControlsProps = {
    * automatic recording stop.
    */
   onNegotiationFinished?: () => void;
+  /**
+   * Roster/role snapshot from the existing sidebar poll path.
+   * Used only for the Standalone START_PREPARATION readiness control.
+   */
+  preparationRoles?: StandalonePreparationRoleInput | null;
 };
 
 type DurationControlsProps = {
@@ -214,8 +223,16 @@ export function FacilitatorRoomControls({
   onRecordingStateChange,
   onNegotiationStarted,
   onNegotiationFinished,
+  preparationRoles = null,
 }: FacilitatorRoomControlsProps) {
   const { t } = useI18n();
+  const standalonePreparationRolesReady = useMemo(
+    () =>
+      preparationRoles
+        ? areStandalonePreparationRolesReady(preparationRoles)
+        : true,
+    [preparationRoles],
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
   const [showRecordingConsent, setShowRecordingConsent] = useState(false);
@@ -423,16 +440,26 @@ export function FacilitatorRoomControls({
             setIsSubmitting={setIsSubmitting}
             actionButtonClass={actionButtonClass}
           />
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              data-testid="start-preparation-button"
-              disabled={isSubmitting}
-              onClick={() => void runAction("START_PREPARATION")}
-              className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
-            >
-              {t("room.startPreparation")}
-            </button>
+          <div className="flex flex-col gap-1">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="start-preparation-button"
+                disabled={isSubmitting || !standalonePreparationRolesReady}
+                onClick={() => void runAction("START_PREPARATION")}
+                className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-500`}
+              >
+                {t("room.startPreparation")}
+              </button>
+            </div>
+            {!standalonePreparationRolesReady ? (
+              <p
+                className="text-xs text-slate-400"
+                data-testid="start-preparation-roles-hint"
+              >
+                {t("room.assignRolesBeforePreparation")}
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}

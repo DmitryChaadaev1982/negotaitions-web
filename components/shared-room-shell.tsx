@@ -879,6 +879,14 @@ export function SharedRoomShell({
                     onRecordingStateChange={onRecordingStateChange}
                     onNegotiationStarted={onNegotiationStarted}
                     onNegotiationFinished={onNegotiationFinished}
+                    preparationRoles={{
+                      eventId: sidebar.event?.id ?? null,
+                      roles: sidebar.sessionRolesForFacilitator,
+                      participants: sidebar.roster.map((entry) => ({
+                        type: entry.participantType,
+                        sessionRoleId: entry.sessionRoleId ?? null,
+                      })),
+                    }}
                   />
                   {/* Provider-specific recording controls (Voximplant only) */}
                   {recordingControls}

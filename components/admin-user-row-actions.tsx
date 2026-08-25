@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { useState, useTransition } from "react";
 
 import {
   approveUserAction,
@@ -10,6 +10,14 @@ import {
   makeAdminAction,
   removeAdminAction,
 } from "@/app/actions/admin-users";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useI18n } from "@/lib/i18n/useI18n";
+import {
+  buildAdminActionFormData,
+  shouldConfirmAdminAction,
+  wantsAdminActionComment,
+  type ManagedAdminAction,
+} from "@/lib/admin-user-action-dialog";
 
 type Labels = {
   approve: string;
@@ -36,23 +44,7 @@ type CompactAdminUserRowActionsProps = {
   labels: Labels;
 };
 
-type ManagedAction =
-  | "approve"
-  | "reject"
-  | "block"
-  | "unblock"
-  | "makeAdmin"
-  | "removeAdmin";
-
-function shouldConfirm(action: ManagedAction): boolean {
-  return action === "reject" || action === "block" || action === "makeAdmin" || action === "removeAdmin";
-}
-
-function wantsComment(action: ManagedAction): boolean {
-  return action === "approve" || action === "reject" || action === "block" || action === "unblock";
-}
-
-function getServerAction(action: ManagedAction) {
+function getAdminActionServerAction(action: ManagedAdminAction) {
   switch (action) {
     case "approve": return approveUserAction;
     case "reject": return rejectUserAction;
@@ -63,62 +55,148 @@ function getServerAction(action: ManagedAction) {
   }
 }
 
-function handleSubmitFactory(action: ManagedAction, labels: Labels) {
-  return (event: FormEvent<HTMLFormElement>) => {
-    const form = event.currentTarget;
-
-    if (shouldConfirm(action)) {
-      const ok = window.confirm(`${labels.confirmAction}\n\n${labels.confirmUndoWarning}`);
-      if (!ok) {
-        event.preventDefault();
-        return;
-      }
-    }
-
-    if (wantsComment(action)) {
-      const value = window.prompt(labels.approvalComment, "") ?? "";
-      const commentInput = form.elements.namedItem("comment");
-      if (commentInput instanceof HTMLInputElement) {
-        commentInput.value = value.trim();
-      }
-    }
-  };
+function actionLabel(action: ManagedAdminAction, labels: Labels): string {
+  switch (action) {
+    case "approve": return labels.approve;
+    case "reject": return labels.reject;
+    case "block": return labels.block;
+    case "unblock": return labels.unblock;
+    case "makeAdmin": return labels.makeAdmin;
+    case "removeAdmin": return labels.removeAdmin;
+  }
 }
 
 function ActionButton({
   action,
-  userId,
   label,
   variant = "default",
-  labels,
+  disabled,
+  onRequest,
   testId,
 }: {
-  action: ManagedAction;
-  userId: string;
+  action: ManagedAdminAction;
   label: string;
   variant?: "default" | "danger" | "success";
-  labels: Labels;
+  disabled?: boolean;
+  onRequest: (action: ManagedAdminAction) => void;
   testId?: string;
 }) {
   return (
-    <form action={getServerAction(action)} onSubmit={handleSubmitFactory(action, labels)}>
-      <input type="hidden" name="userId" value={userId} />
-      {wantsComment(action) && <input type="hidden" name="comment" value="" />}
-      <button
-        type="submit"
-        data-testid={testId}
-        className={
-          variant === "danger"
-            ? "rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-300 transition-colors hover:border-rose-400/50 hover:bg-rose-500/20 hover:text-rose-200"
-            : variant === "success"
-              ? "rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-300 transition-colors hover:border-emerald-400/50 hover:bg-emerald-500/20 hover:text-emerald-200"
-              : "rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-700/70 hover:text-slate-100"
-        }
-      >
-        {label}
-      </button>
-    </form>
+    <button
+      type="button"
+      disabled={disabled}
+      data-testid={testId}
+      onClick={() => onRequest(action)}
+      className={
+        variant === "danger"
+          ? "rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-300 transition-colors hover:border-rose-400/50 hover:bg-rose-500/20 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+          : variant === "success"
+            ? "rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-300 transition-colors hover:border-emerald-400/50 hover:bg-emerald-500/20 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+            : "rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-700/70 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+      }
+    >
+      {label}
+    </button>
   );
+}
+
+function AdminUserActionDialog({
+  userId,
+  action,
+  labels,
+  comment,
+  confirming,
+  onCommentChange,
+  onCancel,
+  onConfirm,
+}: {
+  userId: string;
+  action: ManagedAdminAction | null;
+  labels: Labels;
+  comment: string;
+  confirming: boolean;
+  onCommentChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  const showComment = action ? wantsAdminActionComment(action) : false;
+  const destructive = action ? shouldConfirmAdminAction(action) : false;
+
+  return (
+    <ConfirmDialog
+      open={action !== null}
+      title={action ? actionLabel(action, labels) : labels.confirmAction}
+      description={destructive ? labels.confirmUndoWarning : labels.confirmAction}
+      cancelLabel={t("common.cancel")}
+      confirmLabel={action ? actionLabel(action, labels) : labels.confirmAction}
+      confirming={confirming}
+      confirmTone={destructive ? "danger" : "primary"}
+      testId="admin-user-action-dialog"
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    >
+      {showComment ? (
+        <label className="mt-4 block">
+          <span className="text-xs font-medium text-slate-300">{labels.approvalComment}</span>
+          <textarea
+            data-testid="admin-user-action-comment"
+            value={comment}
+            disabled={confirming}
+            onChange={(event) => onCommentChange(event.target.value)}
+            rows={3}
+            className="mt-2 w-full rounded-lg border border-slate-600/40 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+            name={`admin-comment-${userId}`}
+          />
+        </label>
+      ) : null}
+    </ConfirmDialog>
+  );
+}
+
+function useAdminUserActionDialog(userId: string) {
+  const [pendingAction, setPendingAction] = useState<ManagedAdminAction | null>(null);
+  const [comment, setComment] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  const requestAction = (action: ManagedAdminAction) => {
+    if (isPending) {
+      return;
+    }
+    setComment("");
+    setPendingAction(action);
+  };
+
+  const cancelAction = () => {
+    if (isPending) {
+      return;
+    }
+    setPendingAction(null);
+    setComment("");
+  };
+
+  const confirmAction = () => {
+    if (!pendingAction || isPending) {
+      return;
+    }
+    const action = pendingAction;
+    const formData = buildAdminActionFormData(userId, comment);
+    startTransition(async () => {
+      await getAdminActionServerAction(action)(formData);
+      setPendingAction(null);
+      setComment("");
+    });
+  };
+
+  return {
+    pendingAction,
+    comment,
+    isPending,
+    requestAction,
+    cancelAction,
+    confirmAction,
+    setComment,
+  };
 }
 
 /**
@@ -145,27 +223,27 @@ export function CompactAdminUserRowActions({
   labels,
 }: CompactAdminUserRowActionsProps) {
   const adminToggleDisabled = isSelf || isBootstrapAdmin || wouldLeaveNoAdmin;
+  const dialog = useAdminUserActionDialog(userId);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {/* Status action group — context-aware */}
       {userStatus === "PENDING_APPROVAL" && (
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/40 bg-slate-800/30 p-1">
           <ActionButton
             action="approve"
-            userId={userId}
             label={labels.approve}
             variant="success"
-            labels={labels}
+            disabled={dialog.isPending}
+            onRequest={dialog.requestAction}
             testId="action-approve"
           />
           {canReject && (
             <ActionButton
               action="reject"
-              userId={userId}
               label={labels.reject}
               variant="danger"
-              labels={labels}
+              disabled={dialog.isPending}
+              onRequest={dialog.requestAction}
               testId="action-reject"
             />
           )}
@@ -175,10 +253,10 @@ export function CompactAdminUserRowActions({
       {userStatus === "ACTIVE" && canBlock && (
         <ActionButton
           action="block"
-          userId={userId}
           label={labels.block}
           variant="danger"
-          labels={labels}
+          disabled={dialog.isPending}
+          onRequest={dialog.requestAction}
           testId="action-block"
         />
       )}
@@ -186,10 +264,10 @@ export function CompactAdminUserRowActions({
       {userStatus === "REJECTED" && (
         <ActionButton
           action="approve"
-          userId={userId}
           label={labels.approve}
           variant="success"
-          labels={labels}
+          disabled={dialog.isPending}
+          onRequest={dialog.requestAction}
           testId="action-approve-rejected"
         />
       )}
@@ -197,22 +275,21 @@ export function CompactAdminUserRowActions({
       {userStatus === "BLOCKED" && (
         <ActionButton
           action="unblock"
-          userId={userId}
           label={labels.unblock}
-          labels={labels}
+          disabled={dialog.isPending}
+          onRequest={dialog.requestAction}
           testId="action-unblock"
         />
       )}
 
-      {/* Admin role toggle */}
-      <form
-        action={isCurrentAdmin ? removeAdminAction : makeAdminAction}
-        onSubmit={handleSubmitFactory(isCurrentAdmin ? "removeAdmin" : "makeAdmin", labels)}
-        className="flex items-center"
-      >
-        <input type="hidden" name="userId" value={userId} />
-        <label
-          className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+      <div className="flex items-center">
+        <button
+          type="button"
+          disabled={adminToggleDisabled || dialog.isPending}
+          onClick={() =>
+            dialog.requestAction(isCurrentAdmin ? "removeAdmin" : "makeAdmin")
+          }
+          className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
             adminToggleDisabled
               ? "cursor-not-allowed border-slate-700/30 opacity-40"
               : isCurrentAdmin
@@ -228,6 +305,7 @@ export function CompactAdminUserRowActions({
                   : "Last admin — cannot remove"
               : undefined
           }
+          aria-label={isCurrentAdmin ? labels.removeAdmin : labels.makeAdmin}
         >
           <input
             type="checkbox"
@@ -236,6 +314,7 @@ export function CompactAdminUserRowActions({
             disabled={adminToggleDisabled}
             data-testid={`admin-toggle-${userId}`}
             className="sr-only"
+            tabIndex={-1}
           />
           <span
             aria-hidden="true"
@@ -252,21 +331,24 @@ export function CompactAdminUserRowActions({
             )}
           </span>
           <span>{labels.administrator}</span>
-          {!adminToggleDisabled && (
-            <button
-              type="submit"
-              aria-label={isCurrentAdmin ? labels.removeAdmin : labels.makeAdmin}
-              className="sr-only"
-            />
-          )}
-        </label>
-      </form>
+        </button>
+      </div>
+
+      <AdminUserActionDialog
+        userId={userId}
+        action={dialog.pendingAction}
+        labels={labels}
+        comment={dialog.comment}
+        confirming={dialog.isPending}
+        onCommentChange={dialog.setComment}
+        onCancel={dialog.cancelAction}
+        onConfirm={dialog.confirmAction}
+      />
     </div>
   );
 }
 
 // ─── Legacy export kept for backwards compatibility ───────────────────────────
-// (Old AdminUserRowActions props shape; redirect to CompactAdminUserRowActions)
 
 type AdminUserRowActionsProps = {
   userId: string;
@@ -281,27 +363,38 @@ type AdminUserRowActionsProps = {
 
 export function AdminUserRowActions(props: AdminUserRowActionsProps) {
   const { userId, labels } = props;
+  const dialog = useAdminUserActionDialog(userId);
 
   return (
     <div className="flex flex-wrap gap-1.5">
       {props.canApprove && (
-        <ActionButton action="approve" userId={userId} label={labels.approve} variant="success" labels={labels} />
+        <ActionButton action="approve" label={labels.approve} variant="success" disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
       {props.canReject && (
-        <ActionButton action="reject" userId={userId} label={labels.reject} variant="danger" labels={labels} />
+        <ActionButton action="reject" label={labels.reject} variant="danger" disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
       {props.canBlock && (
-        <ActionButton action="block" userId={userId} label={labels.block} variant="danger" labels={labels} />
+        <ActionButton action="block" label={labels.block} variant="danger" disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
       {props.canUnblock && (
-        <ActionButton action="unblock" userId={userId} label={labels.unblock} labels={labels} />
+        <ActionButton action="unblock" label={labels.unblock} disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
       {props.canMakeAdmin && (
-        <ActionButton action="makeAdmin" userId={userId} label={labels.makeAdmin} labels={labels} />
+        <ActionButton action="makeAdmin" label={labels.makeAdmin} disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
       {props.canRemoveAdmin && (
-        <ActionButton action="removeAdmin" userId={userId} label={labels.removeAdmin} variant="danger" labels={labels} />
+        <ActionButton action="removeAdmin" label={labels.removeAdmin} variant="danger" disabled={dialog.isPending} onRequest={dialog.requestAction} />
       )}
+      <AdminUserActionDialog
+        userId={userId}
+        action={dialog.pendingAction}
+        labels={labels}
+        comment={dialog.comment}
+        confirming={dialog.isPending}
+        onCommentChange={dialog.setComment}
+        onCancel={dialog.cancelAction}
+        onConfirm={dialog.confirmAction}
+      />
     </div>
   );
 }

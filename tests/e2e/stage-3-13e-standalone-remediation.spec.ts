@@ -36,11 +36,14 @@ async function createSessionFixture(options?: {
   const negotiationCase = await createE2eCase();
   const facilitatorUser = await createActiveUser();
   const candidateUser = await createActiveUser();
+  const playerUser = await createActiveUser();
   const sessionId = e2eId(options?.eventLinked ? "event-session" : "standalone-session");
   const facilitatorParticipantId = e2eId("facilitator-participant");
   const candidateParticipantId = e2eId("candidate-participant");
   const facilitatorJoinToken = e2eId("facilitator-token");
   const candidateJoinToken = e2eId("candidate-token");
+  const playerParticipantId = e2eId("player-participant");
+  const playerJoinToken = e2eId("player-token");
   let eventId: string | null = null;
 
   if (options?.eventLinked) {
@@ -101,10 +104,11 @@ async function createSessionFixture(options?: {
   );
   await query(
     `INSERT INTO "SessionParticipant"
-       ("id", "sessionId", "userId", "displayName", "type", "joinToken", "createdAt", "updatedAt")
+       ("id", "sessionId", "userId", "displayName", "type", "joinToken", "sessionRoleId", "createdAt", "updatedAt")
      VALUES
-       ($1, $2, $3, 'Initial facilitator', 'FACILITATOR', $4, NOW(), NOW()),
-       ($5, $2, $6, 'Next facilitator', 'OBSERVER', $7, NOW(), NOW())`,
+       ($1, $2, $3, 'Initial facilitator', 'FACILITATOR', $4, NULL, NOW(), NOW()),
+       ($5, $2, $6, 'Next facilitator', 'OBSERVER', $7, NULL, NOW(), NOW()),
+       ($8, $2, $9, 'Assigned player', 'PARTICIPANT', $10, $11, NOW(), NOW())`,
     [
       facilitatorParticipantId,
       sessionId,
@@ -113,6 +117,10 @@ async function createSessionFixture(options?: {
       candidateParticipantId,
       candidateUser.id,
       candidateJoinToken,
+      playerParticipantId,
+      playerUser.id,
+      playerJoinToken,
+      sessionRoleId,
     ],
   );
 

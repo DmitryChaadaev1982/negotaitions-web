@@ -7,6 +7,16 @@
 3. Participants enter a room-ready, pre-Preparation state (`PREPARATION`).
 4. Facilitator explicitly starts Preparation, then drives the canonical
    preparation and negotiation transitions.
+   Standalone Sessions (`Session.eventId == null`) additionally require role
+   readiness before `START_PREPARATION`: every assignable SessionRole slot is
+   occupied, and every negotiation `PARTICIPANT` has a valid assignable
+   `sessionRoleId`. `FACILITATOR` and `OBSERVER` are excluded and do not need
+   case roles. Roles filtered out by `isAssignableCaseRole` are not required
+   slots. Zero assignable roles satisfies the requirement. Event-created
+   Sessions keep their existing readiness contract. The same
+   `areStandalonePreparationRolesReady` predicate is used by the session
+   control API guard and the room Start Preparation control. This does not
+   add a persisted status or change the negotiation lifecycle state machine.
 5. Recording lifecycle is tied to negotiation control flow.
 6. Materials API exposes recording/transcript/analysis progression.
 

@@ -1,34 +1,3 @@
 {
-  "exceptions": [
-    {
-      "file": "components/admin-user-row-actions.tsx",
-      "api": "confirm",
-      "expectedCount": 1,
-      "reason": "Admin account-status actions still use native confirm. Replacing them with application ConfirmDialog is a product UX redesign and is out of Stage 3.16A scope."
-    },
-    {
-      "file": "components/admin-user-row-actions.tsx",
-      "api": "prompt",
-      "expectedCount": 1,
-      "reason": "Admin approval comment collection still uses native prompt. Replacing it with application UI is a product UX redesign and is out of Stage 3.16A scope."
-    },
-    {
-      "file": "components/copy-join-link-button.tsx",
-      "api": "prompt",
-      "expectedCount": 1,
-      "reason": "Join-link copy fallback uses native prompt to surface the URL. Clipboard-only redesign is out of Stage 3.16A scope."
-    },
-    {
-      "file": "components/events-list-view.tsx",
-      "api": "confirm",
-      "expectedCount": 1,
-      "reason": "Event complete-from-list still uses native confirm. Event-completion ConfirmDialog redesign is out of Stage 3.16A scope."
-    },
-    {
-      "file": "components/session-detail-view.tsx",
-      "api": "prompt",
-      "expectedCount": 1,
-      "reason": "Session invite-link copy fallback uses native prompt to surface the URL. Clipboard-only redesign is out of Stage 3.16A scope."
-    }
-  ]
+  "exceptions": []
 }

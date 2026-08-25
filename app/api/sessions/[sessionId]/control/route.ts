@@ -39,6 +39,7 @@ import {
   pickSessionControlSnapshot,
   SESSION_CONTROL_SNAPSHOT_SELECT,
 } from "@/lib/session-control-snapshot";
+import { evaluateStandaloneStartPreparationGuard } from "@/lib/standalone-preparation-role-readiness";
 
 const controlActionSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
@@ -329,6 +330,31 @@ async function runInteractiveMutation(params: {
             };
           }
 
+          if (action === "START_PREPARATION" && session.eventId == null) {
+            const [roles, participants] = await Promise.all([
+              tx.sessionRole.findMany({
+                where: { sessionId },
+                select: { id: true, name: true },
+              }),
+              tx.sessionParticipant.findMany({
+                where: { sessionId },
+                select: { type: true, sessionRoleId: true },
+              }),
+            ]);
+            const roleGuard = evaluateStandaloneStartPreparationGuard({
+              eventId: session.eventId,
+              roles,
+              participants,
+            });
+            if (!roleGuard.ok) {
+              return {
+                kind: "roles_not_ready" as const,
+                status: roleGuard.status,
+                body: roleGuard.body,
+              };
+            }
+          }
+
           const updateData = {
             ...getControlUpdateData(session, action, now),
             ...(action === "FINISH" && session.roomLifecycle == null
@@ -469,6 +495,9 @@ export async function POST(request: Request, context: RouteContext) {
     }
     if (mutation.kind === "stale_connection") {
       return NextResponse.json(mutation.body, { status: 409 });
+    }
+    if (mutation.kind === "roles_not_ready") {
+      return NextResponse.json(mutation.body, { status: mutation.status });
     }
     if (mutation.kind === "noop") {
       const recording = await loadRecordingState(sessionId);

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId } from "react";
+import { useEffect, useId, type ReactNode } from "react";
 
-import { DangerButton, SecondaryButton } from "@/components/ui/buttons";
+import { DangerButton, GradientButton, SecondaryButton } from "@/components/ui/buttons";
 import { cn } from "@/lib/cn";
 
 type ConfirmDialogProps = {
@@ -16,6 +16,9 @@ type ConfirmDialogProps = {
   confirming?: boolean;
   className?: string;
   testId?: string;
+  children?: ReactNode;
+  hideCancel?: boolean;
+  confirmTone?: "danger" | "primary" | "neutral";
 };
 
 export function ConfirmDialog({
@@ -29,6 +32,9 @@ export function ConfirmDialog({
   confirming = false,
   className,
   testId,
+  children,
+  hideCancel = false,
+  confirmTone = "danger",
 }: ConfirmDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
@@ -59,6 +65,21 @@ export function ConfirmDialog({
     return null;
   }
 
+  const confirmButton =
+    confirmTone === "primary" ? (
+      <GradientButton type="button" disabled={confirming} onClick={onConfirm}>
+        {confirmLabel}
+      </GradientButton>
+    ) : confirmTone === "neutral" ? (
+      <SecondaryButton type="button" disabled={confirming} onClick={onConfirm}>
+        {confirmLabel}
+      </SecondaryButton>
+    ) : (
+      <DangerButton type="button" disabled={confirming} onClick={onConfirm}>
+        {confirmLabel}
+      </DangerButton>
+    );
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
@@ -87,17 +108,14 @@ export function ConfirmDialog({
         <p id={descriptionId} className="mt-3 text-sm leading-6 text-slate-400">
           {description}
         </p>
+        {children}
         <div className="mt-6 flex flex-wrap justify-end gap-3">
-          <SecondaryButton type="button" onClick={onCancel}>
-            {cancelLabel}
-          </SecondaryButton>
-          <DangerButton
-            type="button"
-            disabled={confirming}
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </DangerButton>
+          {hideCancel ? null : (
+            <SecondaryButton type="button" onClick={onCancel} disabled={confirming}>
+              {cancelLabel}
+            </SecondaryButton>
+          )}
+          {confirmButton}
         </div>
       </div>
     </div>

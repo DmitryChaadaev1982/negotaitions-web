@@ -13,6 +13,7 @@ import { isSessionActiveForRoom } from "@/lib/session-overview-shared";
 
 import { AddParticipantForm } from "@/components/add-participant-form";
 import { CaseLanguageBadge } from "@/components/case-language-badge";
+import { CopyLinkFallbackDialog } from "@/components/copy-link-fallback-dialog";
 import { StatusBadge } from "@/components/badge";
 import { VisibilityBadge } from "@/components/visibility-badge";
 import { Card, CardContent, CardHeader } from "@/components/card";
@@ -124,6 +125,7 @@ export function SessionDetailView({
   const [notesModalParticipant, setNotesModalParticipant] =
     useState<ParticipantNotesModalParticipant | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [copyFallbackUrl, setCopyFallbackUrl] = useState<string | null>(null);
 
   const initialNotesSnapshots = useMemo(
     () =>
@@ -202,7 +204,7 @@ export function SessionDetailView({
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     } catch {
-      window.prompt(t("sessions.copySessionLinkPrompt"), inviteUrl);
+      setCopyFallbackUrl(inviteUrl);
     }
   };
 
@@ -375,12 +377,20 @@ export function SessionDetailView({
               </span>
               <button
                 type="button"
-                onClick={handleCopySessionLink}
+                onClick={() => void handleCopySessionLink()}
                 className="shrink-0 text-xs font-medium text-cyan-400 hover:text-cyan-300"
                 data-testid="copy-session-link-button"
               >
                 {linkCopied ? t("events.linkCopied") : t("sessions.copySessionLink")}
               </button>
+              <CopyLinkFallbackDialog
+                open={copyFallbackUrl !== null}
+                title={t("sessions.copySessionLinkPrompt")}
+                description={t("common.copyLinkFallbackBody")}
+                url={copyFallbackUrl ?? ""}
+                closeLabel={t("common.close")}
+                onClose={() => setCopyFallbackUrl(null)}
+              />
             </div>
           </div>
         </GlassCardContent>
