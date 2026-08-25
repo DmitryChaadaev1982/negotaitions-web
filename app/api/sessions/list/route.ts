@@ -10,5 +10,8 @@ export async function GET() {
   if (authError) return authError;
 
   const sessions = await getSessionsForUser(user);
-  return NextResponse.json({ sessions });
+  return NextResponse.json(
+    { sessions },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

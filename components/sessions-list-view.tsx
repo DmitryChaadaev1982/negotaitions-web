@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import type {
@@ -47,8 +47,7 @@ import {
   isSessionActiveForPresence,
 } from "@/lib/session-overview-shared";
 import { useI18n } from "@/lib/i18n/useI18n";
-
-const SESSIONS_OVERVIEW_POLL_INTERVAL_MS = 3_000;
+import { useVisibleListPoll } from "@/lib/use-visible-list-poll";
 
 type SessionRow = {
   id: string;
@@ -289,57 +288,16 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
     });
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    let currentController: AbortController | null = null;
-
-    const refreshSessions = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      currentController?.abort();
-      const controller = new AbortController();
-      currentController = controller;
-      try {
-        const response = await fetch("/api/sessions/list", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok || cancelled) return;
-        const data = (await response.json()) as { sessions: SessionRow[] };
-        setSessions(data.sessions);
-      } catch {
-        // Ignore transient polling errors.
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void refreshSessions();
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshSessions();
-      }
-    }, SESSIONS_OVERVIEW_POLL_INTERVAL_MS);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void refreshSessions();
-      }
-    };
-    const handleFocus = () => {
-      void refreshSessions();
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleFocus);
-
-    return () => {
-      cancelled = true;
-      currentController?.abort();
-      window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, []);
+  useVisibleListPoll(async (signal) => {
+    const response = await fetch("/api/sessions/list", {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok || signal.aborted) return;
+    const data = (await response.json()) as { sessions: SessionRow[] };
+    if (signal.aborted || !Array.isArray(data.sessions)) return;
+    setSessions(data.sessions);
+  });
 
   const formatDate = (iso: string) =>
     new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {

@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallback, useState } from "react";
+
 import { Badge } from "@/components/badge";
 import { ObjectPictogram } from "@/components/object-pictogram";
 import { PageHeader } from "@/components/page-header";
@@ -8,72 +10,24 @@ import { SessionStatusBadge } from "@/components/session-status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GlassCard, GlassCardContent, GlassCardHeader } from "@/components/ui/glass-card";
 import { VisibilityBadge } from "@/components/visibility-badge";
+import {
+  applyDashboardListPoll,
+  createDashboardPollState,
+  readDashboardListSides,
+  type DashboardAction,
+  type DashboardEventGroupItem,
+  type DashboardSessionItem,
+} from "@/lib/account-dashboard-view-model";
+import type { TrainingEventListItem } from "@/lib/event-overview-shared";
 import { useI18n } from "@/lib/i18n/useI18n";
-import type { SessionDisplayStatus } from "@/lib/session-display-status";
+import type { SessionListItem } from "@/lib/session-overview-shared";
+import { useVisibleListPoll } from "@/lib/use-visible-list-poll";
 import type { SemanticActionKind } from "@/lib/ui/semantic-action-model";
 
-type DashboardAction = {
-  href: string;
-  labelKey:
-    | "dashboard.openLobby"
-    | "dashboard.continueSession"
-    | "dashboard.openRoom"
-    | "dashboard.openMaterials";
-};
-
-type DashboardEventItem = {
-  id: string;
-  title: string;
-  visibility: "PUBLIC" | "PRIVATE";
-  status: string;
-  scheduledAt: string | null;
-  timeZone: string;
-  estimatedDurationSeconds: number | null;
-  roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
-  totalSessions: number;
-  activeSessions: number;
-  finishedSessions: number;
-  ownerLabel: string | null;
-  isOwnedByCurrentUser: boolean;
-  primaryAction: DashboardAction | null;
-};
-
-type DashboardSessionItem = {
-  id: string;
-  title: string;
-  visibility: "PUBLIC" | "PRIVATE";
-  eventTitle: string | null;
-  status: SessionDisplayStatus;
-  roleKey: "dashboard.roleHost" | "dashboard.roleFacilitator" | "dashboard.roleParticipant" | "dashboard.roleObserver";
-  recordingStage: string | null;
-  transcriptStage: string | null;
-  speakerMappingStage: string | null;
-  aiStage: string | null;
-  openRoomHref: string;
-  openMaterialsHref: string;
-  eventLobbyHref: string | null;
-  ownerLabel: string | null;
-  isOwnedByCurrentUser: boolean;
-};
-
-type DashboardEventGroupItem = {
-  event: DashboardEventItem;
-  sessions: DashboardSessionItem[];
-};
-
-type ContinueItem = {
-  title: string;
-  subtitle: string;
-  action: DashboardAction;
-};
-
 type AccountDashboardViewProps = {
-  continueItem: ContinueItem | null;
-  currentEventGroups: DashboardEventGroupItem[];
-  futureEventGroups: DashboardEventGroupItem[];
-  standaloneActiveSessions: DashboardSessionItem[];
-  archiveEventGroups: DashboardEventGroupItem[];
-  archiveStandaloneSessions: DashboardSessionItem[];
+  initialSessions: SessionListItem[];
+  initialEvents: TrainingEventListItem[];
+  currentUserId: string;
   isAdmin: boolean;
 };
 
@@ -92,15 +46,40 @@ function semanticKindForDashboardAction(action: DashboardAction): SemanticAction
 }
 
 export function AccountDashboardView({
-  continueItem,
-  currentEventGroups,
-  futureEventGroups,
-  standaloneActiveSessions,
-  archiveEventGroups,
-  archiveStandaloneSessions,
+  initialSessions,
+  initialEvents,
+  currentUserId,
   isAdmin,
 }: AccountDashboardViewProps) {
   const { t, locale } = useI18n();
+  const [state, setState] = useState(() =>
+    createDashboardPollState({
+      sessions: initialSessions,
+      events: initialEvents,
+      currentUserId,
+    }),
+  );
+  const refreshDashboard = useCallback(
+    async (signal: AbortSignal) => {
+      const incoming = await readDashboardListSides(signal);
+      if (signal.aborted) {
+        return;
+      }
+      setState((current) =>
+        applyDashboardListPoll(current, incoming, currentUserId),
+      );
+    },
+    [currentUserId],
+  );
+  useVisibleListPoll(refreshDashboard);
+  const {
+    continueItem,
+    currentEventGroups,
+    futureEventGroups,
+    standaloneActiveSessions,
+    archiveEventGroups,
+    archiveStandaloneSessions,
+  } = state.model;
   const dateTimeLocale = locale === "ru" ? "ru-RU" : "en-US";
   const hasUpcomingOrActive =
     currentEventGroups.length > 0 ||

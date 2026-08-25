@@ -10,5 +10,8 @@ export async function GET() {
   if (authError) return authError;
 
   const events = await getEventsForUser(user);
-  return NextResponse.json({ events });
+  return NextResponse.json(
+    { events },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

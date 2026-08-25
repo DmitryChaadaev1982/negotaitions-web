@@ -61,8 +61,29 @@
   candidates. Historical completed materials are not a current-room fallback.
 - Dashboard selection does not decide or grant Event lobby or Session room
   access; existing entry authorization remains independent.
-- `app/(app)/dashboard/page.tsx` loads account-visible data and maps the
-  selected room or nearest eligible Event into the presentation DTO.
+- `lib/account-dashboard-view-model.ts` maps account-visible Session/Event
+  list items into the Dashboard presentation DTO. The server page and the
+  mounted client both use this builder.
+- `app/(app)/dashboard/page.tsx` loads account-visible data through
+  `getSessionsForUser` / `getEventsForUser` for the first paint.
+- A mounted Dashboard then uses the same visible-list poll as `/sessions` and
+  `/events` (`LIST_OVERVIEW_POLL_INTERVAL_MS` = 2_000, pause while hidden,
+  refresh on focus/visible, `cache: "no-store"`). Poll responses come from
+  `/api/sessions/list` and `/api/events/list`, not from a Dashboard-specific
+  realtime channel. Session and Event last-good snapshots are independent:
+  one failed list response does not block applying the other.
+
+## List overview freshness
+
+- `/sessions` polls `/api/sessions/list`.
+- `/events` polls `/api/events/list`.
+- `/dashboard` polls both list routes in one shared 2-second interval and
+  rebuilds the view model from latest-good Sessions plus latest-good Events.
+- Shared client primitive: `lib/list-overview-polling.ts` and
+  `lib/use-visible-list-poll.ts`. Create/update/delete/status changes appear
+  on the next successful poll of that side; create actions may also
+  `revalidatePath` the server page, but an already-mounted Dashboard does not
+  depend on `router.refresh()`.
 
 ## Legacy Terminal Operations
 
@@ -86,6 +107,11 @@
 - `lib/env.ts`
 - `lib/config.ts`
 - `app/(public)/page.tsx`
+- `app/(app)/dashboard/page.tsx`
+- `components/account-dashboard-view.tsx`
+- `lib/account-dashboard-view-model.ts`
+- `lib/list-overview-polling.ts`
+- `lib/use-visible-list-poll.ts`
 - `components/public-header.tsx`
 - `components/voximplant-negotiation-room-page.tsx`
 - `lib/voximplant/use-voximplant-room.ts`

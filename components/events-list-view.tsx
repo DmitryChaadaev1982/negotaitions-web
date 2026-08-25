@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -40,7 +40,7 @@ import {
   isEventActiveForPresence,
 } from "@/lib/event-overview-shared";
 import { replaceEventListWithPollResponse } from "@/lib/events-list-polling";
-const EVENTS_OVERVIEW_POLL_INTERVAL_MS = 3_000;
+import { useVisibleListPoll } from "@/lib/use-visible-list-poll";
 
 type EventRow = {
   id: string;
@@ -393,57 +393,16 @@ export function EventsListView({ events: initialEvents }: EventsListViewProps) {
     });
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    let currentController: AbortController | null = null;
-
-    const refreshEvents = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      currentController?.abort();
-      const controller = new AbortController();
-      currentController = controller;
-      try {
-        const response = await fetch("/api/events/list", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok || cancelled) return;
-        const data = (await response.json()) as { events: EventRow[] };
-        setEvents((current) => replaceEventListWithPollResponse(current, data.events));
-      } catch {
-        // Ignore transient polling errors.
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void refreshEvents();
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshEvents();
-      }
-    }, EVENTS_OVERVIEW_POLL_INTERVAL_MS);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void refreshEvents();
-      }
-    };
-    const handleFocus = () => {
-      void refreshEvents();
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleFocus);
-
-    return () => {
-      cancelled = true;
-      currentController?.abort();
-      window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, []);
+  useVisibleListPoll(async (signal) => {
+    const response = await fetch("/api/events/list", {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok || signal.aborted) return;
+    const data = (await response.json()) as { events: EventRow[] };
+    if (signal.aborted || !Array.isArray(data.events)) return;
+    setEvents((current) => replaceEventListWithPollResponse(current, data.events));
+  });
 
   const formatDate = (iso: string | null) => {
     if (!iso) return "—";

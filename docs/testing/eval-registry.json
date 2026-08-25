@@ -1012,6 +1012,32 @@
         "tests/e2e/stage-3-18a-presence-display.spec.ts"
       ],
       "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-S320A-DASH-MOUNTED-LIST-REFRESH",
+      "invariant": "An already-mounted Dashboard converges to newly created Sessions and Events from the canonical /api/sessions/list and /api/events/list poll without remount or manual refresh, using the same 2000 ms visible-list cadence as /sessions and /events. Session and Event last-good snapshots update independently.",
+      "risk": "LOW",
+      "evalType": "MOUNTED_TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "applyDashboardListPoll updates only the successful list side, rebuilds from latest-good Sessions plus latest-good Events, and keeps the previous state when both sides fail.",
+      "expectedUiResult": "A mounted /dashboard shows the new Session or Event after one 2-second visible-list poll cycle (or immediately on focus/visible) without duplicates or a cleared list, even if the other list request fails.",
+      "automation": "AUTOMATED",
+      "transitionKind": "MOUNTED_TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S320A-D01", "S320A-D02"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/account-dashboard-view-model.ts",
+        "lib/account-dashboard-view-model.test.ts",
+        "lib/list-overview-polling.ts",
+        "lib/list-overview-polling.test.ts",
+        "lib/use-visible-list-poll.ts",
+        "components/account-dashboard-view.tsx",
+        "components/sessions-list-view.tsx",
+        "components/events-list-view.tsx"
+      ],
+      "coverageStatus": "COVERED"
     }
   ]
 }
