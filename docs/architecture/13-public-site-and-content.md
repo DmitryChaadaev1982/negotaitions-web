@@ -25,7 +25,11 @@ separate chrome.
   `public/images/public-site/` (`public-how-it-works-{ru|en}-no-heading.png`).
   Those bitmaps omit the section title so the HTML heading is not duplicated.
   The active public locale selects the How-it-works bitmap; the other locale’s
-  flow image is not shown.
+  flow image is not shown. Public and Dashboard pictograms use `next/image`
+  against local `/images/**` sources. There is no custom image loader and no
+  product requirement for AVIF output. Next `16.3.3` keeps the optimizer on
+  and disables AVIF as the security-release behavior; do not re-enable AVIF
+  or pin a different sharp/libheif to restore it.
 - Wave 2A public communication routes: `/about`, `/support`, `/faq`.
   Public header links About and FAQ to those routes. Footer Information links
   About, Support, and FAQ. Support email remains

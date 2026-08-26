@@ -2,10 +2,15 @@
 
 ## Runtime Stack
 
-- Next.js app router application.
-- Server actions for core CRUD and orchestration.
+- Next.js App Router `16.3.3` with React / React DOM `19.2.8`.
+- Server Actions for core CRUD and orchestration. The RSC / Server Function
+  implementation is vendored inside Next (`react-server-dom-*-builtin`); it is
+  not a separately installed npm package.
+- Next Image Optimization remains enabled for local public assets. Next
+  `16.3.3` disables AVIF output while the vendor libheif issue is addressed
+  (`GHSA-2xp9-vwfh-vxw4`). The product does not require AVIF.
 - Route handlers under `app/api/**` for room/event/materials/diagnostics workflows.
-- Prisma client for persistence.
+- Prisma client for persistence (`7.10.0`).
 
 ## Architectural Layers
 

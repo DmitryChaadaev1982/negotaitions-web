@@ -68,6 +68,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
     `app/robots.ts`, `app/sitemap.ts`, `app/(legal)/layout.tsx`, `components/public-header.tsx`,
     `components/public-home-page.tsx`, `components/public-about-page.tsx`,
     `components/public-support-page.tsx`, `components/public-faq-page.tsx`,
+    `next.config.ts`,
     `components/public-visual-frame.tsx`, `components/site-footer.tsx`,
     `components/app-header.tsx`, `components/app-header-nav.tsx`, `components/ui/brand-logo.tsx`, `components/public-site-analytics.tsx`,
     `lib/public-site/visuals.ts`, `lib/public-site/faq-items.ts`, `lib/public-site/author-portrait.ts`,
