@@ -103,6 +103,11 @@ Durable operational rule. Operator procedures live in
 ## Build/Deploy Model
 
 - Build and dependency install happen on deployment host workflow.
+- Canonical production sequence after a reviewed checkout:
+  `npm ci` → repository-installed Prisma migrate deploy (Yandex POC uses
+  the guarded production overlay) → `npm run prisma:generate` →
+  `npm run build` → runtime-permission apply/check → service restart.
+  Do not run `npx prisma generate` or a raw `prisma generate`.
 - Runtime permission normalization uses an explicit reviewed allowlist that
   includes transitive operational-script dependencies such as recording-attempt
   fencing, exact-attempt recording reconciliation/policy, and the pure

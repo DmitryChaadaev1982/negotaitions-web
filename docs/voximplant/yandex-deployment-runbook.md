@@ -19,8 +19,8 @@
 git status --short
 npm run lint
 npm run build
-npx prisma validate
-npx prisma generate
+npm run prisma:validate
+npm run prisma:generate
 ```
 
 Playwright baseline (DB required):
@@ -41,7 +41,8 @@ $env:PLAYWRIGHT_PORT="3000"
 
 ```bash
 npm ci
-npx prisma generate
+npx --no-install prisma migrate deploy
+npm run prisma:generate
 npm run build
 npm run ops:runtime-permissions:apply
 npm run ops:runtime-permissions:check
@@ -55,8 +56,8 @@ Current Stage 3: no new migration required.
 Standard production procedure:
 
 ```bash
-npx prisma migrate deploy
-npx prisma generate
+npx --no-install prisma migrate deploy
+npm run prisma:generate
 npm run ops:runtime-permissions:apply
 npm run ops:runtime-permissions:check
 ```

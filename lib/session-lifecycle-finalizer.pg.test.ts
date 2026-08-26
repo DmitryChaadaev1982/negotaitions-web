@@ -12,6 +12,14 @@ import {
   isE2eDatabaseConfigured,
   resolveE2eDatabaseUrl,
 } from "../tests/e2e/helpers/e2e-database";
+import {
+  applyPgSetupSessionGuards,
+  awaitSignalOrFailure,
+  createCoordinationBarrier,
+  createPgTestClient,
+  createPgTestPool,
+  endPgTestResources,
+} from "@/lib/test-helpers/pg-coordination";
 
 const SKIP_REASON =
   "canonical E2E PostgreSQL not configured (E2E_DATABASE_URL)";
@@ -27,25 +35,21 @@ const DURATIONS = {
   abandonedCloseMs: 10_800_000,
 };
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
+function barrier() {
+  return createCoordinationBarrier();
 }
 
-function barrier() {
-  const arrived = deferred();
-  const release = deferred();
-  return {
-    arrived: arrived.promise,
-    wait: async () => {
-      arrived.resolve();
-      await release.promise;
-    },
-    release: () => release.resolve(),
-  };
+async function connectSetup(setup: pg.Client) {
+  await setup.connect();
+  await applyPgSetupSessionGuards(setup);
+}
+
+async function closeLifecycleResources(
+  setup: pg.Client,
+  prisma: PrismaClient,
+  pool: pg.Pool,
+) {
+  await endPgTestResources([setup, prisma, pool]);
 }
 
 async function loadLifecycleModules() {
@@ -278,16 +282,20 @@ async function readSessionRow(client: pg.Client, sessionId: string) {
 }
 
 async function cleanupFixture(client: pg.Client, fixture: Fixture) {
-  await client.query(`DELETE FROM "Session" WHERE "id" = $1`, [fixture.sessionId]);
-  if (fixture.eventId) {
-    await client.query(`DELETE FROM "TrainingEvent" WHERE "id" = $1`, [
-      fixture.eventId,
+  try {
+    await client.query(`DELETE FROM "Session" WHERE "id" = $1`, [fixture.sessionId]);
+    if (fixture.eventId) {
+      await client.query(`DELETE FROM "TrainingEvent" WHERE "id" = $1`, [
+        fixture.eventId,
+      ]);
+    }
+    await client.query(`DELETE FROM "NegotiationCase" WHERE "id" = $1`, [
+      fixture.caseId,
     ]);
+    await client.query(`DELETE FROM "User" WHERE "id" = $1`, [fixture.userId]);
+  } catch (error) {
+    console.warn("[s318a-finalizer-db] fixture cleanup failed", error);
   }
-  await client.query(`DELETE FROM "NegotiationCase" WHERE "id" = $1`, [
-    fixture.caseId,
-  ]);
-  await client.query(`DELETE FROM "User" WHERE "id" = $1`, [fixture.userId]);
 }
 
 function newFixture(): Fixture {
@@ -312,12 +320,12 @@ test(
     console.log(
       `[s318a-finalizer-db] host=${getSanitizedE2eDatabaseDescriptor(databaseUrl).normalizedHost} port=${getSanitizedE2eDatabaseDescriptor(databaseUrl).port} database=${getSanitizedE2eDatabaseDescriptor(databaseUrl).database}`,
     );
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     const modules = await loadLifecycleModules();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createDebriefSession(setup, fixture, {
@@ -349,9 +357,7 @@ test(
     } finally {
       modules.hooks.clearSessionLifecycleConcurrencyHooksForTests();
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -366,13 +372,13 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     const modules = await loadLifecycleModules();
     const claimHold = barrier();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createDebriefSession(setup, fixture, {
@@ -392,7 +398,7 @@ test(
         },
         prisma,
       );
-      await claimHold.arrived;
+      await awaitSignalOrFailure(claimHold.arrived, claimPromise);
       const finalizePromise = modules.occupancy.finalizeSessionCanonicalClose(
         {
           sessionId: fixture.sessionId,
@@ -414,9 +420,7 @@ test(
     } finally {
       modules.hooks.clearSessionLifecycleConcurrencyHooksForTests();
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -431,13 +435,13 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     const modules = await loadLifecycleModules();
     const finalizeHold = barrier();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createDebriefSession(setup, fixture, {
@@ -456,7 +460,7 @@ test(
         },
         prisma,
       );
-      await finalizeHold.arrived;
+      await awaitSignalOrFailure(finalizeHold.arrived, finalizePromise);
       const claimPromise = modules.lease.claimSessionRoomConnectionLease(
         {
           sessionId: fixture.sessionId,
@@ -490,9 +494,7 @@ test(
     } finally {
       modules.hooks.clearSessionLifecycleConcurrencyHooksForTests();
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -504,12 +506,12 @@ test("R3 two automatic reconcilers produce one terminal transition", { concurren
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createDebriefSession(setup, fixture, {
@@ -544,9 +546,7 @@ test("R3 two automatic reconcilers produce one terminal transition", { concurren
     assert.equal(session.rows[0]?.closeReason, "DEBRIEF_EMPTY_TIMEOUT");
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -560,12 +560,12 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     const modules = await loadLifecycleModules();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createDebriefSession(setup, fixture, {
@@ -607,9 +607,7 @@ test(
       assert.equal(Number(stops.rows[0]?.count ?? 1), 0);
     } finally {
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -624,9 +622,9 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const occupied = newFixture();
     const dueFirst = newFixture();
     dueFirst.userId = occupied.userId;
@@ -636,7 +634,7 @@ test(
     dueSecond.caseId = occupied.caseId;
     const modules = await loadLifecycleModules();
     const ids = [occupied.sessionId, dueFirst.sessionId, dueSecond.sessionId];
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, occupied);
       await createDebriefSession(setup, occupied, {
@@ -689,9 +687,7 @@ test(
     } finally {
       await setup.query(`DELETE FROM "Session" WHERE id = ANY($1::text[])`, [ids]);
       await cleanupFixture(setup, occupied);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -706,13 +702,13 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     fixture.eventId = randomUUID();
     const modules = await loadLifecycleModules();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createDebriefSession(setup, fixture, {
@@ -738,9 +734,7 @@ test(
       assert.equal(finalized.session?.roomLifecycle, "DEBRIEF_OPEN");
     } finally {
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -764,12 +758,12 @@ test("A1 PREPARATION abandoned close is terminal without a recording stop", { co
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -788,9 +782,7 @@ test("A1 PREPARATION abandoned close is terminal without a recording stop", { co
     assert.equal(await countStopOperations(setup, fixture.sessionId), 0);
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -801,12 +793,12 @@ test("A2 READY_TO_START abandoned close is terminal without a recording stop", {
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -825,9 +817,7 @@ test("A2 READY_TO_START abandoned close is terminal without a recording stop", {
     assert.equal(await countStopOperations(setup, fixture.sessionId), 0);
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -838,12 +828,12 @@ test("A3 RUNNING abandoned close finishes negotiation and claims one stop", { co
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -868,9 +858,7 @@ test("A3 RUNNING abandoned close finishes negotiation and claims one stop", { co
     assert.ok(["STOPPED", "COMPLETED", "PROCESSING", "RECORDING"].includes(recording.rows[0]?.status ?? ""));
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -881,12 +869,12 @@ test("A4 PAUSED abandoned close finishes negotiation and claims one stop", { con
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -907,9 +895,7 @@ test("A4 PAUSED abandoned close finishes negotiation and claims one stop", { con
     assert.equal(await countStopOperations(setup, fixture.sessionId), 1);
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -923,12 +909,12 @@ test(
     }
     const databaseUrl = resolveE2eDatabaseUrl();
     process.env.DATABASE_URL = databaseUrl;
-    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    const pool = createPgTestPool(databaseUrl);
     const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    const setup = new pg.Client({ connectionString: databaseUrl });
+    const setup = createPgTestClient(databaseUrl);
     const fixture = newFixture();
     const modules = await loadLifecycleModules();
-    await setup.connect();
+    await connectSetup(setup);
     try {
       await createUserAndCase(setup, fixture);
       await createOpenSession(setup, fixture, {
@@ -969,9 +955,7 @@ test(
       assert.equal(await countStopOperations(setup, fixture.sessionId), 1);
     } finally {
       await cleanupFixture(setup, fixture);
-      await setup.end();
-      await prisma.$disconnect();
-      await pool.end();
+      await closeLifecycleResources(setup, prisma, pool);
     }
   },
 );
@@ -983,12 +967,12 @@ test("A6 repeated abandoned reconciliation after terminal does not create a seco
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -1007,9 +991,7 @@ test("A6 repeated abandoned reconciliation after terminal does not create a seco
     assert.equal(await countStopOperations(setup, fixture.sessionId), 1);
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1020,12 +1002,12 @@ test("A7 Debrief empty/max close does not start a second recording stop", { conc
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createDebriefSession(setup, fixture, {
@@ -1058,9 +1040,7 @@ test("A7 Debrief empty/max close does not start a second recording stop", { conc
     assert.equal(row?.negotiationState, "FINISHED");
   } finally {
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1071,13 +1051,13 @@ test("abandoned claim-first overlap admits the user and does not finish negotiat
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
   const claimHold = barrier();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -1099,7 +1079,7 @@ test("abandoned claim-first overlap admits the user and does not finish negotiat
       },
       prisma,
     );
-    await claimHold.arrived;
+    await awaitSignalOrFailure(claimHold.arrived, claimPromise);
     const closePromise = modules.occupancy.reconcileSessionAutomaticClose(
       fixture.sessionId,
       prisma,
@@ -1118,9 +1098,7 @@ test("abandoned claim-first overlap admits the user and does not finish negotiat
   } finally {
     modules.hooks.clearSessionLifecycleConcurrencyHooksForTests();
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1131,13 +1109,13 @@ test("abandoned close-first overlap closes and refuses the later claim", { concu
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const fixture = newFixture();
   const modules = await loadLifecycleModules();
   const finalizeHold = barrier();
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, fixture);
     await createOpenSession(setup, fixture, {
@@ -1154,7 +1132,7 @@ test("abandoned close-first overlap closes and refuses the later claim", { concu
       prisma,
       { now: NOW, durations: DURATIONS, invocation: "periodic" },
     );
-    await finalizeHold.arrived;
+    await awaitSignalOrFailure(finalizeHold.arrived, closePromise);
     const claimPromise = modules.lease.claimSessionRoomConnectionLease(
       {
         sessionId: fixture.sessionId,
@@ -1177,9 +1155,7 @@ test("abandoned close-first overlap closes and refuses the later claim", { concu
   } finally {
     modules.hooks.clearSessionLifecycleConcurrencyHooksForTests();
     await cleanupFixture(setup, fixture);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1190,9 +1166,9 @@ test("C3 terminal-parent Debrief child does not occupy the empty candidate page"
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const terminal = newFixture();
   terminal.eventId = randomUUID();
   const operable = newFixture();
@@ -1200,7 +1176,7 @@ test("C3 terminal-parent Debrief child does not occupy the empty candidate page"
   operable.caseId = terminal.caseId;
   const modules = await loadLifecycleModules();
   const ids = [terminal.sessionId, operable.sessionId];
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, terminal);
     await createDebriefSession(setup, terminal, {
@@ -1224,9 +1200,7 @@ test("C3 terminal-parent Debrief child does not occupy the empty candidate page"
   } finally {
     await setup.query(`DELETE FROM "Session" WHERE id = ANY($1::text[])`, [ids]);
     await cleanupFixture(setup, terminal);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1237,16 +1211,16 @@ test("C4 recent current-generation Debrief departure cannot starve a true empty-
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const recent = newFixture();
   const due = newFixture();
   due.userId = recent.userId;
   due.caseId = recent.caseId;
   const modules = await loadLifecycleModules();
   const ids = [recent.sessionId, due.sessionId];
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, recent);
     await createDebriefSession(setup, recent, {
@@ -1269,9 +1243,7 @@ test("C4 recent current-generation Debrief departure cannot starve a true empty-
   } finally {
     await setup.query(`DELETE FROM "Session" WHERE id = ANY($1::text[])`, [ids]);
     await cleanupFixture(setup, recent);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });
 
@@ -1282,16 +1254,16 @@ test("C5 recent current-generation abandoned departure cannot starve a true aban
   }
   const databaseUrl = resolveE2eDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+  const pool = createPgTestPool(databaseUrl);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const setup = new pg.Client({ connectionString: databaseUrl });
+  const setup = createPgTestClient(databaseUrl);
   const recent = newFixture();
   const due = newFixture();
   due.userId = recent.userId;
   due.caseId = recent.caseId;
   const modules = await loadLifecycleModules();
   const ids = [recent.sessionId, due.sessionId];
-  await setup.connect();
+  await connectSetup(setup);
   try {
     await createUserAndCase(setup, recent);
     await createOpenSession(setup, recent, {
@@ -1316,8 +1288,6 @@ test("C5 recent current-generation abandoned departure cannot starve a true aban
   } finally {
     await setup.query(`DELETE FROM "Session" WHERE id = ANY($1::text[])`, [ids]);
     await cleanupFixture(setup, recent);
-    await setup.end();
-    await prisma.$disconnect();
-    await pool.end();
+    await closeLifecycleResources(setup, prisma, pool);
   }
 });

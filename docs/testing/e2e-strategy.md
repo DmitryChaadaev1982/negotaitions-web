@@ -192,9 +192,9 @@ Rules:
   - exposed port: `5433`
   - database: `negotiations_e2e`
 - Stage 3.10 browser/API suites require local DB schema aligned with additive migration:
-  - run `npx prisma migrate status`
-  - run `npx prisma migrate deploy` (non-production only)
-  - rerun `npx prisma generate` and `npx prisma validate`
+  - run `npx --no-install prisma migrate status`
+  - run `npx --no-install prisma migrate deploy` (non-production only)
+  - rerun `npm run prisma:generate` and `npm run prisma:validate`
 - Cleanup ownership rule:
   - `cleanupE2eData()` must remove only current run namespace data plus rows owned by current run users.
   - New tests must avoid broad wildcard cleanup (`LIKE '%E2E%'`) against shared data.

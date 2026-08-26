@@ -10,17 +10,17 @@ import {
   resolveE2eDatabaseUrl,
 } from "../../tests/e2e/helpers/e2e-database";
 import { lockSessionParticipantsById } from "@/lib/session-participant-locking";
+import {
+  applyPgLockingSessionSafety,
+  applyPgSetupSessionGuards,
+  awaitSignalOrFailure,
+  createCoordinationSignal,
+  createPgTestClient,
+  endPgTestResources,
+} from "@/lib/test-helpers/pg-coordination";
 
 const SKIP_REASON =
   "canonical E2E PostgreSQL not configured (E2E_DATABASE_URL)";
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
 
 async function createFixture(
   client: pg.Client,
@@ -116,17 +116,23 @@ test(
       firstParticipantId: ids[0]!,
       secondParticipantId: ids[1]!,
     };
-    const setup = new pg.Client({ connectionString: databaseUrl });
-    const mutation = new pg.Client({ connectionString: databaseUrl });
-    const finalization = new pg.Client({ connectionString: databaseUrl });
-    await Promise.all([setup.connect(), mutation.connect(), finalization.connect()]);
-
-    const mutationLocked = deferred();
-    const finalizationAboutToLock = deferred();
-    const allowMutationToCommit = deferred();
+    const setup = createPgTestClient(databaseUrl);
+    const mutation = createPgTestClient(databaseUrl);
+    const finalization = createPgTestClient(databaseUrl);
+    const mutationLocked = createCoordinationSignal({ label: "mutationLocked" });
+    const finalizationAboutToLock = createCoordinationSignal({
+      label: "finalizationAboutToLock",
+    });
+    const allowMutationToCommit = createCoordinationSignal({
+      label: "allowMutationToCommit",
+    });
     let finalizationLockQuery = "";
 
     try {
+      await Promise.all([setup.connect(), mutation.connect(), finalization.connect()]);
+      await applyPgSetupSessionGuards(setup);
+      await applyPgLockingSessionSafety(mutation);
+      await applyPgLockingSessionSafety(finalization);
       await createFixture(setup, fixture);
 
       const mutationPromise = (async () => {
@@ -181,7 +187,7 @@ test(
         }
       })();
 
-      await mutationLocked.promise;
+      await awaitSignalOrFailure(mutationLocked.promise, mutationPromise);
 
       const previousDatabaseUrl = process.env.DATABASE_URL;
       process.env.DATABASE_URL = databaseUrl;
@@ -317,7 +323,10 @@ test(
         }),
       });
 
-      await finalizationAboutToLock.promise;
+      await awaitSignalOrFailure(
+        finalizationAboutToLock.promise,
+        completionPromise,
+      );
       allowMutationToCommit.resolve();
       await mutationPromise;
       assert.equal(await completionPromise, true);
@@ -339,8 +348,46 @@ test(
         [{ sessionParticipantId: fixture.secondParticipantId }],
       );
     } finally {
-      await cleanupFixture(setup, fixture);
-      await Promise.all([setup.end(), mutation.end(), finalization.end()]);
+      try {
+        await cleanupFixture(setup, fixture);
+      } catch (error) {
+        console.warn("[analysis-operation-lock-db] fixture cleanup failed", error);
+      }
+      await endPgTestResources([setup, mutation, finalization]);
+    }
+  },
+);
+
+test(
+  "mutation rejection before mutationLocked unblocks the waiter without hanging",
+  async (t) => {
+    if (!isE2eDatabaseConfigured()) {
+      t.skip(SKIP_REASON);
+      return;
+    }
+
+    const databaseUrl = resolveE2eDatabaseUrl();
+    const setup = createPgTestClient(databaseUrl);
+    const mutation = createPgTestClient(databaseUrl);
+    const mutationLocked = createCoordinationSignal({
+      timeoutMs: 2_000,
+      label: "mutationLocked",
+    });
+
+    try {
+      await Promise.all([setup.connect(), mutation.connect()]);
+      await applyPgSetupSessionGuards(setup);
+      const mutationPromise = (async () => {
+        throw Object.assign(new Error("Prisma.sql is not a function"), {
+          name: "TypeError",
+        });
+      })();
+      await assert.rejects(
+        () => awaitSignalOrFailure(mutationLocked.promise, mutationPromise),
+        /Prisma\.sql is not a function/,
+      );
+    } finally {
+      await endPgTestResources([setup, mutation]);
     }
   },
 );

@@ -25,9 +25,22 @@ L3 accuracy: `validate:fast` is the current cheap project checkpoint gate
 (native-dialog guard, lint, Prisma validate/generate, unit tests, Playwright
 `--list`). It is **not** universally exhaustive. The unit glob covers
 deterministic `lib/**`, `app/**`, `components/**`, and `scripts/__tests__/**`
-tests. Playwright specs, live/provider suites, and tests that require a real
-database to do more than skip remain outside this gate. Always run the
-focused/relevant evals for the changed area in addition to whatever L3 covers.
+tests. Canonical `test:unit` sets `--test-timeout=180000` (180 seconds per
+test). That is not the validation-runner `test:unit` step watchdog, which
+remains 10 minutes for the whole unit process. Playwright specs, live/provider
+suites, and tests that require a real database to do more than skip remain
+outside this gate. Always run the focused/relevant evals for the changed area
+in addition to whatever L3 covers.
+
+PostgreSQL coordination tests (`lib/ai/analysis-operation.pg.test.ts`,
+`lib/session-lifecycle-finalizer.pg.test.ts`) must not wait forever for a
+barrier that can no longer occur. A waiter is released by the expected lock
+signal, by the upstream mutation/finalization rejection, or by a bounded
+coordination timeout. Opened `pg.Client` / `pg.Pool` instances are closed in
+an outer `try/finally` via `Promise.allSettled`. Test-only connection timeout
+is 5 seconds; setup/cleanup may set `statement_timeout≈10s`; intentional
+`FOR UPDATE` blockers must not use a tiny `lock_timeout`. See
+`EVAL-WF-PG-LOCK-TEST-NO-HANG`.
 
 ### Safety rule
 
@@ -170,6 +183,49 @@ Sequential requirement (when L4 runs):
   proof after a known-green `validate:fast`.
 - `validate:deploy` remains complete standalone deploy validation:
   `validate:fast` and then `validate:build`.
+
+Public `validate:fast`, `validate:build`, and `validate:deploy` route through
+`scripts/validation-runner.mjs`. That kernel acquires a worktree-scoped
+`.agent/validation.lock`, runs the same step graph internally, and bounds
+each child process. On Windows, runner `--import` specifiers for absolute
+loader paths must be `file://` URLs; a bare `C:\...` or `./scripts/...`
+specifier can fail in test-worker children with `ERR_MODULE_NOT_FOUND`. `validate:deploy` does **not** shell out to the public
+`validate:fast` command; it reuses the internal FAST steps and then BUILD
+under one lock. Canonical `prisma:generate` uses
+`scripts/prisma-generate-guarded.mjs` and a separate worktree
+`.agent/prisma-generate.lock`. The installed Prisma CLI is 7.10.0 and
+canonical generate passes `--no-hints` so Prisma 8 RC upgrade banners are
+not emitted. `eval:registry:check` remains a separate command.
+
+Owned-tree force cleanup snapshots PID, start time, name, and command line.
+A reparented PID is force-killed only after that identity still matches; a
+reused PID is left alive and recorded as `PID_REUSED_OR_IDENTITY_CHANGED`.
+Windows process inspection classifies presence as `GONE`,
+`ALIVE_SAME_IDENTITY`, `PID_REUSED`, or `INSPECTION_UNCERTAIN`. An incomplete
+WMI snapshot (`startMs` missing, fallback name absent/`unknown`) is uncertain,
+not reuse. The owned root may still be force-killed; a reparented descendant
+is not killed unless identity is proven. After a timed-out inspect, liveness
+is rechecked so a PID that exited during the query is `GONE` rather than a
+false `CHILD_CLEANUP_FAILED`.
+If Cursor remains on “Waiting for subagent” after a delegated validation
+command: inspect `.agent/validation.lock` and the validation-owned process
+tree. If both are absent, treat the command as finished and recover the
+task/terminal result. Do not kill generic `node.exe`.
+Operator cancellation is SIGINT (Ctrl+C) and SIGTERM where the OS delivers
+those signals to the Node process. The first signal marks
+`CANCELLATION_IN_PROGRESS`, stops new steps, dumps and terminates only the
+owned child tree, then releases `.agent/validation.lock` /
+`.agent/prisma-generate.lock` only if the payload `runId` still belongs to
+this run. Exit is non-zero `VALIDATION_CANCELLED`. Automated Windows tests
+cannot reliably inject console Ctrl+C (`child.kill(SIGINT|SIGTERM)` typically
+TerminateProcess-es without JS handlers); T22 proves the internal abort
+path plus lock/tree cleanup. POSIX additionally sends SIGTERM to a synthetic
+runner child. Real Windows operator acceptance uses
+`node scripts/validation-runner/fixtures/operator-ctrl-c-runner.mjs` in a
+console: it attaches the public cancellation handler, acquires this
+worktree `.agent/validation.lock`, and holds only
+`fixtures/hold-open.mjs`. Do not cancel `validate:fast`, `validate:deploy`,
+or `npm run dev` for that check.
 - `test:e2e:smoke` runs critical browser/API smoke checks only (`@smoke`, Chromium).
 - `test:e2e:smoke:browser` runs critical browser-first smoke checks only (`@browser-smoke`) under deterministic local config.
 - `test:e2e:observer:smoke` is the routine observer regression suite and is also

@@ -225,8 +225,8 @@ repository-owned runtime artifacts that systemd workers need to read:
 
 1. checkout / fast-forward the repository;
 2. install dependencies as required by the deployment plan;
-3. run Prisma generation (`npm run prisma:generate` or the deployment's
-   equivalent);
+3. run Prisma generation with the canonical guarded path
+   (`npm run prisma:generate`; do not run `npx prisma generate`);
 4. run `npm run ops:runtime-permissions:apply`;
 5. run `npm run ops:runtime-permissions:check`;
 6. restart/start application or worker systemd units only after both commands
@@ -290,11 +290,20 @@ controlled production actions outside local implementation and validation.
 
 Run from repository before deployment:
 
-- `npm run lint`
-- `npm run build`
-- `npx prisma validate`
-- `npm run test:unit`
+- `npm run validate:deploy` (standalone FAST then BUILD through the
+  worktree-scoped validation runner)
+- or the equivalent focused commands when a full deploy gate is not required:
+  - `npm run lint`
+  - `npm run prisma:validate`
+  - `npm run prisma:generate`
+  - `npm run build`
+  - `npm run test:unit`
 - `npm run test:stage310` (provider-free Stage 3.10 foundation regression)
+
+Do not use `npx prisma generate` or a raw `prisma generate`. Canonical
+generation is `npm run prisma:generate` (pinned project-installed Prisma
+7.10.0, worktree generate lock, `--no-hints`, generated-client integrity
+probe).
 
 Public-site SEO and optional Yandex Metrica operator inputs are documented
 in `docs/operations/public-site-seo-and-analytics.md`. Yandex Webmaster
@@ -303,10 +312,20 @@ and does not require an application setting.
 
 ## Prisma Migration Paths
 
-Use standard Prisma commands for clean databases, development databases, CI databases, and new environments:
+Use the repository-installed Prisma CLI after `npm ci` for clean databases,
+development databases, CI databases, and new environments. Do not download a
+different Prisma version via `npx`:
 
-- `npx prisma migrate deploy`
-- `npx prisma migrate status`
+- `npx --no-install prisma migrate deploy`
+- `npx --no-install prisma migrate status`
+
+This is not a new migration runner. It is the same Prisma migrate deploy
+semantics using the project-installed CLI.
+
+Canonical production sequence remains:
+
+`npm ci` → migrate deploy (installed Prisma / production overlay below) →
+`npm run prisma:generate` → `npm run build` → service restart.
 
 The existing Yandex POC production database has two legitimate historical migration rows that predate the current squashed baseline and are archived outside `prisma/migrations`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay documented in `docs/operations/prisma-production-history-repair-20260804.md`:
 
@@ -480,9 +499,11 @@ restore became mandatory; no exact RC3 artifact is currently recoverable.
 1. Confirm backups and rollback owner.
 2. Stage code at `/var/www/negotaitions/app` and install dependencies if the
    deployment plan requires it.
-3. Apply migration (`npx prisma migrate deploy`).
-4. Verify migration status (`npx prisma migrate status`) and run Prisma
-   generation if the deployment did not already do so.
+3. Apply migration with the repository-installed Prisma CLI
+   (`npx --no-install prisma migrate deploy`, or the production overlay
+   below when this is the Yandex POC database).
+4. Verify migration status (`npx --no-install prisma migrate status`) and
+   run `npm run prisma:generate` if the deployment did not already do so.
 5. Run `npm run ops:runtime-permissions:apply`.
 6. Run `npm run ops:runtime-permissions:check`.
 7. Restart `negotaitions-poc` only after runtime permission check succeeds.

@@ -115,9 +115,9 @@ The app can be rolled back without dropping Stage 3.10 additive schema objects.
   retain 30 seconds. Repository validation must not enable this timer.
 - Reconnect during the empty-Debrief window keeps the session active; empty close happens only with zero current-generation connections. Occupied Debrief still closes at the 2h hard maximum.
 - For local test validation, ensure non-production DB is migrated before Stage 3.10 suites:
-  - `npx prisma migrate status`
-  - `npx prisma migrate deploy` (non-production only)
-  - `npx prisma generate && npx prisma validate`
+  - `npx --no-install prisma migrate status`
+  - `npx --no-install prisma migrate deploy` (non-production only)
+  - `npm run prisma:generate && npm run prisma:validate`
 
 ## Server-stop Sweep Policy
 

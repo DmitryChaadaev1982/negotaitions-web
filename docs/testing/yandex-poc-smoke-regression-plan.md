@@ -71,9 +71,9 @@ Fixture and DB safety policy:
 - Use `E2E_RUN_ID` (or auto-generated run ID) namespace helpers to isolate fixture rows between runs.
 - Cleanup must only remove rows owned by the current run namespace; avoid broad wildcard cleanup for new tests.
 - Stage 3.10 additive schema prerequisite for local suites:
-  - `npx prisma migrate status`
-  - `npx prisma migrate deploy` (non-production only)
-  - `npx prisma generate && npx prisma validate`
+  - `npx --no-install prisma migrate status`
+  - `npx --no-install prisma migrate deploy` (non-production only)
+  - `npm run prisma:generate && npm run prisma:validate`
 - Stage 3.10 focused provider-free regression command:
   - `npm run test:stage310`
 - Stage 3.10 browser subset command:

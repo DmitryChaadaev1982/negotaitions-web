@@ -1038,6 +1038,196 @@
         "components/events-list-view.tsx"
       ],
       "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-VALIDATION-LOCK-SAME-WORKTREE",
+      "invariant": "A second validation run in the same worktree fails fast with VALIDATION_ALREADY_RUNNING when the lock owner PID is alive and command/worktree match.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Exactly one atomic worktree validation.lock owner; the second run prints existing owner information and does not start steps.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-002", "S321A-K-004"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/lock.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-VALIDATION-LOCK-SIBLING-WORKTREE",
+      "invariant": "Sibling git worktrees use distinct <worktree>/.agent/validation.lock paths and remain independently validatable.",
+      "risk": "HIGH",
+      "evalType": "STATE",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Lock paths are worktree-scoped. No machine-global, Git common-directory, or main-worktree lock is used.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "STATIC",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-002", "S321A-NS-006"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/paths.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-NESTED-DEPLOY-FAST",
+      "invariant": "validate:deploy acquires the validation lock once and runs internal FAST then BUILD without shelling out to the independently locking public validate:fast command.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Inner FAST/BUILD steps see VALIDATION_ALREADY_RUNNING if they try to reacquire; deploy completes without deadlock.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-005", "S321A-K-006"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/orchestrator.mjs",
+        "scripts/validation-runner/steps.mjs",
+        "scripts/__tests__/validation-runner.test.mjs",
+        "scripts/__tests__/validate-gate-scripts.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-PRISMA-GENERATE-GUARD",
+      "invariant": "Canonical prisma:generate and validation generate share a worktree prisma-generate.lock and generated-client integrity check using the installed Prisma CLI.",
+      "risk": "MEDIUM",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Concurrent same-worktree generate fails fast. Missing client.ts or a non-callable Prisma.sql/join returns PRISMA_CLIENT_INTEGRITY_FAILED.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-003", "S321A-K-009"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/prisma-generate-guarded.mjs",
+        "scripts/validation-runner/prisma-generate.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-STEP-TIMEOUT-KILLS-TREE",
+      "invariant": "A hung validation-owned child is terminated by the step/run watchdog. Cleanup operates only on the owned root PID/tree and never kills by image name.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Timeout returns VALIDATION_TIMEOUT, dumps owned process info, removes the owned tree, and leaves an unrelated synthetic process alive.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-007", "S321A-K-008", "S321A-NS-007"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/bounded-process.mjs",
+        "scripts/validation-runner/process-tree.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-PID-IDENTITY-FORCE-KILL",
+      "invariant": "Force cleanup of a previously snapshotted PID whose parent/root relationship is gone must rematch process identity (PID + start time, plus name/command line when present) and must not kill a reused PID.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "An injected inspector that reports the same PID with a different start time records PID_REUSED_OR_IDENTITY_CHANGED, does not invoke force kill, and returns CHILD_CLEANUP_FAILED. Unrelated processes remain untouched.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-011", "S321A-NS-007"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/process-tree.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-CLEANUP-INSPECT-RACE",
+      "invariant": "Windows owned-tree cleanup must not classify an incomplete or timed-out process inspection as PID reuse. A PID that exits during inspect is GONE. An incomplete snapshot of the still-alive owned root may be force-killed. Proven start-time reuse still refuses kill.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Presence is GONE, ALIVE_SAME_IDENTITY, PID_REUSED, or INSPECTION_UNCERTAIN. T07 still returns VALIDATION_TIMEOUT. Incomplete owned-root snapshot and inspectFailed-then-gone do not return a false CHILD_CLEANUP_FAILED. T21 still refuses a reused PID.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-007", "S321A-K-011", "S321A-NS-007"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/process-tree.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-OPERATOR-CANCEL-CLEANUP",
+      "invariant": "Operator SIGINT/SIGTERM cancels a public validation run once, cleans only the owned child tree, and releases worktree locks only when the lock payload still belongs to this runId.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Cancellation exits VALIDATION_CANCELLED, the owned child is gone, validation.lock is removed, an unrelated synthetic child survives, and a changed lock runId is not deleted.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-K-012"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "scripts/validation-runner/cancellation.mjs",
+        "scripts/validation-runner/orchestrator.mjs",
+        "scripts/validation-runner/lock.mjs",
+        "scripts/validation-runner.mjs",
+        "scripts/__tests__/validation-runner.test.mjs"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-WF-PG-LOCK-TEST-NO-HANG",
+      "invariant": "PG coordination tests cannot wait forever for a lock/barrier signal that can no longer occur. A mutation or finalization rejection, or a bounded barrier timeout, must unblock the waiter; opened pg clients must still receive a cleanup attempt.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Waiter rejects with the original upstream error or a deterministic timeout. Intended FOR UPDATE serialization remains asserted on the healthy path. Clients are ended with allSettled semantics.",
+      "expectedUiResult": null,
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S321A-CP2-001", "S321A-CP2-003", "S321A-CP2-004"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/test-helpers/pg-coordination.ts",
+        "lib/test-helpers/pg-coordination.test.ts",
+        "lib/ai/analysis-operation.pg.test.ts",
+        "lib/session-lifecycle-finalizer.pg.test.ts",
+        "package.json"
+      ],
+      "coverageStatus": "COVERED"
     }
   ]
 }
