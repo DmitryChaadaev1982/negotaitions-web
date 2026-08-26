@@ -4,7 +4,9 @@ import test from "node:test";
 import type { TrainingEvent } from "@/app/generated/prisma/client";
 import {
   canAccessEvent,
+  canManageSession,
   type CurrentUserEventAccess,
+  type CurrentUserSessionAccess,
 } from "@/lib/access-control";
 import { createSessionFromEvent } from "@/lib/create-event-session";
 import { classifyEventDashboardLane } from "@/lib/dashboard-activity-selection";
@@ -79,4 +81,63 @@ test("E07 Event Session create path ignores scheduledAt and dashboard lane", () 
   assert.equal(createSessionFromEvent.toString().includes("scheduledAt"), false);
   assert.equal(createSessionFromEvent.toString().includes("dashboardLane"), false);
   assert.equal(createSessionFromEvent.toString().includes("ARCHIVE"), false);
+});
+
+function sessionAccess(
+  overrides: Partial<CurrentUserSessionAccess> = {},
+): CurrentUserSessionAccess {
+  return {
+    session: {
+      id: "session-1",
+      eventId: null,
+      facilitatorId: "facilitator-1",
+      deletedAt: null,
+      event: null,
+    },
+    user: {
+      id: "facilitator-1",
+      email: "real-facilitator@example.com",
+      name: "Real Facilitator",
+      globalRole: "USER",
+      status: "ACTIVE",
+      preferredLocale: "en",
+      sessionSoundEnabled: true,
+    },
+    isAdmin: false,
+    isEventHostOwner: false,
+    isEventFacilitatorOwner: false,
+    isSessionFacilitatorOwner: false,
+    tokenParticipant: null,
+    userParticipant: null,
+    hasEmailInvite: false,
+    ...overrides,
+  };
+}
+
+test("canManageSession is true for facilitator owner, Event host, Event facilitator, and admin", () => {
+  assert.equal(
+    canManageSession(sessionAccess({ isSessionFacilitatorOwner: true })),
+    true,
+  );
+  assert.equal(
+    canManageSession(sessionAccess({ isEventHostOwner: true })),
+    true,
+  );
+  assert.equal(
+    canManageSession(sessionAccess({ isEventFacilitatorOwner: true })),
+    true,
+  );
+  assert.equal(canManageSession(sessionAccess({ isAdmin: true })), true);
+});
+
+test("canManageSession is false for an unrelated authenticated user", () => {
+  assert.equal(canManageSession(sessionAccess()), false);
+  assert.equal(
+    canManageSession(
+      sessionAccess({
+        hasEmailInvite: true,
+      }),
+    ),
+    false,
+  );
 });

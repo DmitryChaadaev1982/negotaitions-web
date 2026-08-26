@@ -29,20 +29,42 @@ This Cursor installation does **not** support `grok-4.6-low`, `grok-4.6-medium`,
 or custom-agent frontmatter effort / fast / standard fields. Do not invent those
 identifiers or fields.
 
-## Validation execution: GPT-5.6 Luna Medium
+## Validation execution: primary agent, not a subagent
 
-Keep Luna specifically for deterministic validation execution through
-`.cursor/agents/validation-runner.md` (`model: gpt-5.6-luna-medium`).
+Canonical validation commands stay on the **primary / orchestrating** agent:
 
-Use Luna for:
+```
+CANONICAL VALIDATION COMMAND
+→ PRIMARY AGENT DIRECT EXECUTION
+```
 
-- executing tests
-- lint, build, and validation commands
-- deterministic validation gates
-- retaining long raw logs outside the parent context
-- returning compact `FAILURE CAPSULE` or `VALIDATION EVIDENCE`
+Not:
 
-Do not move implementation or remediation decisions into `validation-runner`.
+```
+PRIMARY
+→ VALIDATION RUNNER SUBAGENT
+→ canonical command
+```
+
+`npm run validate:fast`, `npm run validate:build`, `npm run validate:deploy`,
+and any future validation command expected to run longer than a short
+focused-test interval **must not** be delegated to a Cursor subagent. Cursor
+has repeatedly remained on “Waiting for subagent” after
+`scripts/validation-runner.mjs` already finished, released locks, and exited.
+The kernel is healthy; the failing layer is the subagent return path.
+
+If the primary agent cannot reliably execute or observe that long command,
+stop and hand the operator the PowerShell recipe in
+`docs/testing/validation-checklist.md`. Prefer operator PowerShell for
+standalone `validate:deploy` when independent release-gate evidence is
+desired.
+
+Subagents remain allowed for source review, forensic analysis, high-risk
+independent review, architecture review, small focused tests, and bounded
+searches. `.cursor/agents/validation-runner.md` may still summarize a short
+focused-test manifest. Do not move implementation or remediation decisions
+into that profile. Do not use it to isolate `validate:fast` / `validate:build`
+/ `validate:deploy` logs.
 
 ## Terra and Sol are not defaults
 
@@ -113,9 +135,10 @@ Routing implications only:
   “LOW risk always means Low model effort.”
 - Complexity, ambiguity, coupling, context volume, or regression breadth may
   **raise** required reasoning effort even when product risk is low.
-- Default parent (currently Grok 4.6) owns implementation, remediation, and
-  judgment. Luna `validation-runner` via `validate-wave` owns deterministic
-  Validation Execution and log isolation.
+- Default parent (currently Grok 4.6) owns implementation, remediation,
+  judgment, and **direct** canonical Validation Execution
+  (`validate:fast` / `validate:build` / `validate:deploy`).
+  `validate-wave` is a primary-context skill, not a subagent hop.
 - Do not collapse `verify-requirements` (completeness) and `validate-wave`
   (correctness/regression).
 - Using the default parent does **not** lower evidence or validation
@@ -127,7 +150,8 @@ When the included Grok usage pool is exhausted, or the user explicitly switches
 policy, default routing returns to the previously approved OpenAI workflow:
 
 - GPT-5.6 Terra → implementation/remediation parent
-- GPT-5.6 Luna Medium → deterministic validation/subagent execution
+- GPT-5.6 Luna Medium → short focused-test subagent work only; not
+  canonical `validate:fast` / `validate:build` / `validate:deploy`
 - GPT-5.6 Sol High → targeted high-risk review only when justified
 
 The user controls the transition.

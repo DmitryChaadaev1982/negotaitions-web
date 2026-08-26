@@ -3,6 +3,10 @@
 ## Standalone Session Flow
 
 1. Facilitator creates a session from case context.
+   Successful Standalone create lands on the management page
+   (`/sessions/{id}`). It does not redirect directly to `/room/{id}`.
+   The facilitator later enters the video room through the explicit
+   management-page room action (`/room/{id}`).
 2. Session participants and roles are assigned.
 3. Participants enter a room-ready, pre-Preparation state (`PREPARATION`).
 4. Facilitator explicitly starts Preparation, then drives the canonical
@@ -25,9 +29,16 @@
 1. Event is created and opened in lobby mode.
 2. Participants join event lobby.
 3. Host creates assignment draft and selects case.
-4. Session is created from event assignment.
-5. Assigned users move from lobby to room.
+4. Session is created from event assignment and remains in the Event/lobby
+   flow. Event Session create does not redirect through Standalone
+   `/sessions/{id}` management.
+5. Assigned users later enter the room through the Event room URL
+   (`/room/{id}` from lobby/Event state). That room-entry path is unchanged.
 6. Session completion can return users to lobby or materials.
+
+An authorized manager may still open an Event-created Session at
+`/sessions/{id}`. That is the same `canManageSession` management surface;
+it does not become the normal Event create/lobby/room navigation.
 
 ## Room Lifecycle Semantics (Stage 3.18A kernel)
 
@@ -423,6 +434,16 @@ reconciliation cadence are not business timeouts.
 
 ## Session Current Presence
 
+- The Session management presence stream
+  (`GET /api/sessions/{sessionId}/presence/stream`) is an
+  account-authenticated management surface. It uses `apiRequireActiveUser`
+  plus `getCurrentUserSessionAccess` / `canManageSession` — the same
+  management contract as `/sessions/{id}`. It is not scoped to
+  `demo@example.com` and is not joinToken-only. Unauthorized callers fail
+  closed: unauthenticated `401`, authenticated but unrelated `404`
+  (information hiding). A fresh Standalone Session with no
+  `SessionRoomConnection` rows is a valid authorized stream: `200`
+  `text/event-stream` with Offline snapshots.
 - User-facing Session Online means the person has at least one current valid
   `SessionRoomConnection` lease on an operable Session. This is the same live
   lease concept used for lifecycle occupancy: not disconnected, not

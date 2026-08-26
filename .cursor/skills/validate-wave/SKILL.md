@@ -1,6 +1,6 @@
 ---
 name: validate-wave
-description: Orchestrates deterministic NegotAItions validation execution through the Luna validation-runner. Use after implementation to execute the planned checks, keep raw green logs out of the parent context, and handle failures safely.
+description: Reconciles and executes a NegotAItions Validation Plan in the primary agent context. Use after implementation. Canonical validate:fast / validate:build / validate:deploy stay on the primary agent or operator PowerShell — never a Cursor subagent.
 ---
 
 # Validate a NegotAItions Wave
@@ -9,10 +9,10 @@ Use this Skill **after implementation** to **execute** the Validation Plan.
 It does not replace `AGENTS.md`, scoped rules, or repository testing policy.
 Eval selection and the Validation Plan belong **before** implementation; see
 [`docs/testing/engineering-workflow.md`](../../../docs/testing/engineering-workflow.md).
-Ladder command mapping lives in
+Ladder command mapping and canonical execution policy live in
 [`docs/testing/validation-checklist.md`](../../../docs/testing/validation-checklist.md).
 
-Parent model, validation-runner model, and escalation policy:
+Parent model and escalation policy:
 [`docs/testing/agent-model-routing.md`](../../../docs/testing/agent-model-routing.md).
 
 ## Reconcile the plan with the actual diff
@@ -63,26 +63,39 @@ production checks unless the changed scope and authoritative policy require
 them. Use `test-explorer` when the cheapest sufficient regression set for
 the planned evals is unclear.
 
-## Delegate execution
+## Primary execution (mandatory)
 
-The parent delegates the explicit deterministic manifest to
-`validation-runner`. The parent does not run long successful validation
-merely to collect logs. The delegation supplies worktree/branch, changed
-scope, selected ladder level, planned vs reconciled evals, commands in
-required order, applicable preflights, and requested evidence.
-`validation-runner` retains raw successful logs and returns either
-`VALIDATION EVIDENCE` or a `FAILURE CAPSULE`; it must not modify product
-source.
+The **primary / orchestrating agent** runs the selected commands in its own
+terminal/tool context. Do **not** delegate these to a Cursor subagent:
 
-On success, use evidence containing focused and required results
-(counts/status and practical durations), DB/E2E isolation, migration status
-when relevant, `git diff --check`, skipped suites with reasons,
-provider/production classification, warnings/manual checks,
-`git diff --stat`, and `git status --short`.
+- `npm run validate:fast`
+- `npm run validate:build`
+- `npm run validate:deploy`
+- any future validation command expected to exceed a short focused-test
+  interval
+
+Reason: Cursor’s subagent-return path has repeatedly remained stuck after
+`scripts/validation-runner.mjs` already finished and released locks. The
+kernel is healthy; keep the result attached to the primary context.
+
+`.cursor/agents/validation-runner.md` is allowed only for short focused
+tests. It must refuse the canonical long gates above.
+
+If the primary agent cannot reliably execute or observe a long canonical
+command: **STOP** and give the operator the PowerShell recipe in
+`docs/testing/validation-checklist.md`. Prefer operator PowerShell for
+standalone `validate:deploy` when independent release-gate evidence is
+desired.
+
+On success, record focused and required results (counts/status and practical
+durations), DB/E2E isolation, migration status when relevant,
+`git diff --check`, skipped suites with reasons, provider/production
+classification, warnings/manual checks, `git diff --stat`, and
+`git status --short`.
 
 ## Failure loop
 
-The parent decides remediation. After a fix, delegate only: the directly
+The parent decides remediation. After a fix, rerun only: the directly
 failing focused test, the affected required gate, then remaining
 still-required gates. Do not restart already-green gates without a dependency
 reason. If evidence shows an unrelated failure, classify it narrowly, record

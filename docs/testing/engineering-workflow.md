@@ -330,9 +330,14 @@ model, and escalation policy live in
 `docs/testing/agent-model-routing.md`. Do not duplicate that configuration
 here.
 
-Deterministic validation execution is delegated through
-`.cursor/skills/validate-wave/SKILL.md` and
-`.cursor/agents/validation-runner.md`.
+Canonical `validate:fast`, `validate:build`, and `validate:deploy` are
+executed by the primary/orchestrating agent (or operator PowerShell fallback).
+Do not delegate those commands to a Cursor subagent. Authoritative execution,
+evidence, and legacy recovery rules live in
+`docs/testing/validation-checklist.md`.
+`.cursor/skills/validate-wave/SKILL.md` reconciles the Validation Plan and
+runs it in the primary context. `.cursor/agents/validation-runner.md` remains
+allowed only for short focused tests, not canonical long gates.
 
 ## Multi-agent policy
 
@@ -344,7 +349,9 @@ Prefer:
 4. optional independent reviewer
 
 Do not encourage agent-team explosion. Skills and subagents are for cheaper
-discovery or log isolation, not parallel product implementation.
+discovery, review, and short focused tests, not parallel product
+implementation and not canonical `validate:fast` / `validate:build` /
+`validate:deploy`.
 
 ## Human acceptance
 
@@ -373,7 +380,12 @@ validation of code that existing repository policy still gates.
 and which L1–L4 level are required at the current boundary.
 
 **Validation Execution** (after implementation): run that plan against the
-actual implementation/diff.
+actual implementation/diff. The primary agent runs canonical validation
+commands directly. If it cannot reliably execute or observe a long
+`validate:fast` / `validate:build` / `validate:deploy` run, stop and give the
+operator the exact PowerShell recipe from
+`docs/testing/validation-checklist.md`. Do not create a Validation Runner
+subagent to hold the command.
 
 The actual diff **may raise** the required level or add evals. It must **not**
 silently lower an approved/planned validation requirement because the

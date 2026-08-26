@@ -164,6 +164,9 @@ Rules:
   2. `npm run validate:build`
   3. `npm run test:e2e:smoke`
   4. `npm run test:e2e:smoke:browser`
+- Execute `validate:fast` / `validate:build` / `validate:deploy` from the
+  primary agent or operator PowerShell. Do not delegate those commands to a
+  Cursor subagent. See `docs/testing/validation-checklist.md`.
 - `npm run validate:deploy` remains the complete standalone deploy validation
   (`validate:fast` then `validate:build`). Do not treat it as build-only.
 - Do not overlap browser smoke with other local Playwright runs because local config binds port `3100`.

@@ -1014,6 +1014,29 @@
       "coverageStatus": "COVERED"
     },
     {
+      "id": "EVAL-S323A-PRESENCE-STREAM-MANAGEMENT-ACL",
+      "invariant": "GET /api/sessions/{sessionId}/presence/stream is account-authenticated and gated by canManageSession. It is not demo@example.com scoped and does not admit unrelated authenticated users. Authorized managers receive 200 text/event-stream with a current lease-derived snapshot; unauthenticated callers receive 401; unrelated callers receive 404.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Authorized manager/Event host/admin/facilitator: 200 SSE first snapshot. Unauthenticated: 401. Unrelated or non-manager participant: 404. Fresh Standalone with no SessionRoomConnection: 200 Offline.",
+      "expectedUiResult": "The management participants table EventSource stays open for a real logged-in manager and does not 404 on a non-demo Session.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["S323A-A01", "S323A-A02", "S323A-A03", "S323A-A04", "S323A-A05"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "app/api/sessions/[sessionId]/presence/stream/route.ts",
+        "app/api/sessions/[sessionId]/presence/stream/route.test.ts",
+        "lib/access-control.ts",
+        "lib/access-control.test.ts",
+        "app/(app)/sessions/[id]/page.tsx"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
       "id": "EVAL-S320A-DASH-MOUNTED-LIST-REFRESH",
       "invariant": "An already-mounted Dashboard converges to newly created Sessions and Events from the canonical /api/sessions/list and /api/events/list poll without remount or manual refresh, using the same 2000 ms visible-list cadence as /sessions and /events. Session and Event last-good snapshots update independently.",
       "risk": "LOW",

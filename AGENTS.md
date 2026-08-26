@@ -61,6 +61,10 @@ does not require product L4 suites. When L4 applies, run and report in order:
 `npm run validate:deploy` remains the complete standalone deploy validation
 (`validate:fast` then `validate:build`). Low current
 Change Unit risk does not authorize skipping those final gates later.
+Canonical `validate:fast`, `validate:build`, and `validate:deploy` are
+executed by the primary/orchestrating agent or, as fallback, by the operator
+in PowerShell. Do not delegate those commands to a Cursor subagent. See
+[`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md).
 
 For **meaningful** work, capture approved product requirements in the existing
 `docs/requirements/` manifest style, then produce the planning material needed
@@ -95,18 +99,20 @@ Do not maintain a second matrix here.
 Durable role split only:
 
 - The parent/orchestrator owns implementation, remediation, requirements
-  judgment, architecture, and the engineering report.
-- `.cursor/agents/validation-runner.md` is deterministic validation execution
-  and log isolation only. Do not move engineering judgment into that profile.
+  judgment, architecture, the engineering report, and **direct execution** of
+  canonical `validate:fast` / `validate:build` / `validate:deploy`.
+- `.cursor/agents/validation-runner.md` is a focused-test evidence profile
+  only. It must not run those canonical long gates. Do not move engineering
+  judgment into that profile.
 - Escalation models are not defaults; use them only when the routing document's
   evidence-based criteria are met.
 
 Use `.cursor/agents/codebase-explorer.md` for codebase exploration and
 `.cursor/agents/test-explorer.md` for test discovery when delegation reduces
 discovery cost. Use `.cursor/agents/requirements-evidence-collector.md` for
-factual requirement evidence. Use `.cursor/agents/validation-runner.md` via
-`.cursor/skills/validate-wave/SKILL.md` for parent-delegated deterministic
-validation. Use `.cursor/skills/stage-start/SKILL.md` for a new stage/worktree
+factual requirement evidence. Use `.cursor/skills/validate-wave/SKILL.md` to
+reconcile and execute the Validation Plan in the **primary** context. Use
+`.cursor/skills/stage-start/SKILL.md` for a new stage/worktree
 and `.cursor/skills/verify-requirements/SKILL.md` for independent completeness
 verification. Skills reuse these subagent profiles and do not override scoped
 safety rules or authoritative documents.

@@ -1,12 +1,15 @@
 ---
 name: validation-runner
-description: Execute a parent-delegated deterministic validation manifest and return compact evidence or a failure capsule. Use proactively after implementation when raw validation logs do not need to remain in the parent context.
+description: Execute a short focused-test manifest and return compact evidence or a failure capsule. Do not run validate:fast, validate:build, or validate:deploy — those stay on the primary agent or operator PowerShell.
 model: gpt-5.6-luna-medium
 ---
 
-Use this profile only to execute validation or test commands explicitly delegated
-by the parent/orchestrator through `.cursor/skills/validate-wave/SKILL.md`.
-Keep normal successful shell, build, and test output in this subagent context;
+Use this profile only for **short focused tests** the parent explicitly
+delegates. Canonical `npm run validate:fast`, `npm run validate:build`,
+`npm run validate:deploy`, and any other long validation gate must be refused
+and returned to the parent. Those commands stay on the primary agent or
+operator PowerShell (`docs/testing/validation-checklist.md`).
+Keep normal successful focused-test output in this subagent context;
 return only the structured summary below.
 
 ## Boundaries
@@ -18,12 +21,14 @@ return only the structured summary below.
   manifest requires them.
 - Do not access production, deploy, change providers or infrastructure, expose
   secrets, commit, push, reset, or discard work.
-- Run only the parent-delegated validation manifest. Do not infer a universal
+- Run only a short focused-test manifest. Do not infer a universal
   command list or start full, tunnel, live-provider, observer-layout, or other
   expensive suites unless the parent has selected them under repository policy.
-- This profile is the deterministic execution / log-isolation layer used by
-  the existing `validate-wave` Skill. It does not own Validation Plan selection,
-  ladder judgment, or remediation. Parent model and escalation policy live in
+- Refuse `validate:fast`, `validate:build`, and `validate:deploy` even if the
+  parent asks. Return a `FAILURE CAPSULE` stating
+  `CANONICAL_VALIDATION_MUST_RUN_ON_PRIMARY` and stop.
+- This profile does not own Validation Plan selection, ladder judgment, or
+  remediation. Parent model and escalation policy live in
   `docs/testing/agent-model-routing.md`.
 
 ## Execution rules

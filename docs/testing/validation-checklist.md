@@ -87,6 +87,105 @@ Use the checkpoint evidence template in
 [`engineering-workflow.md`](./engineering-workflow.md) at STOP/review
 boundaries. Do not add telemetry, dashboards, or a checkpoint platform.
 
+## Canonical validation execution (agents)
+
+Cursor’s subagent-return path has repeatedly stayed on “Waiting for subagent”
+after `scripts/validation-runner.mjs` already finished, released
+`.agent/validation.lock` and `.agent/prisma-generate.lock`, and left no
+owned process tree (observed across Stages 3.21A, 3.22A, and 3.23A). That is
+an orchestration-layer defect. The validation-runner **kernel is unchanged**.
+
+### Who runs which command
+
+| Command | Who executes it |
+| --- | --- |
+| Focused / short unit, API, or helper test | Primary agent directly, or a small allowed subagent task |
+| `npm run validate:fast` | **Primary** agent in its own terminal/tool context |
+| `npm run validate:build` | **Primary** agent in its own terminal/tool context |
+| `npm run validate:deploy` | **Primary** agent, or **operator PowerShell** when independent release-gate evidence is desired |
+| Any future validation expected to exceed a short focused-test interval | Primary agent or operator PowerShell — never a subagent |
+
+Do **not** create a Validation Runner subagent merely to run a canonical
+command. The command remains synchronous from
+`scripts/validation-runner.mjs`’s point of view. That kernel still owns lock,
+timeout, heartbeat, child cleanup, Prisma guard, and exit code.
+
+Subagents remain allowed for source review, forensic analysis, high-risk
+independent review, architecture review, small focused tests, and bounded
+searches. They are not forbidden generally. The prohibition is specifically
+long-running canonical validation execution.
+
+### Operator fallback
+
+If the primary Cursor agent cannot reliably execute or observe a long
+canonical validation command:
+
+1. **STOP.** Do not delegate it to a subagent.
+2. Give the operator the exact PowerShell recipe below.
+3. The primary agent consumes the operator-supplied log and exit code.
+
+This is the approved fallback. Prefer operator PowerShell for final
+`validate:deploy` when independent release-gate evidence is desired. Do not
+require operator execution for every `validate:fast` / `validate:build` when
+the primary agent can run them directly.
+
+### Durable evidence (operator-run)
+
+`Start-Transcript` alone is **not** sufficient. Stage 3.22A showed it can
+miss native npm/node stdout. Capture the native process streams.
+
+From the worktree root, in a real PowerShell console (adjust the script name):
+
+```powershell
+Set-Location '<worktree>'
+New-Item -ItemType Directory -Force -Path .agent\validation-logs | Out-Null
+$gate = 'validate:deploy'   # or validate:fast / validate:build
+$log = Join-Path (Get-Location) (".agent\validation-logs\{0}-{1}.log" -f ($gate -replace ':','-'), (Get-Date -Format 'yyyyMMdd-HHmmss'))
+cmd.exe /c "npm run $gate > `"$log`" 2>&1"
+$exit = $LASTEXITCODE
+Write-Host "EXIT=$exit"
+Write-Host "LOG=$log"
+Get-Content $log -Tail 60
+```
+
+Optional live tail in a second console: `Get-Content -Wait $log`.
+
+Preserve live console output where practical, the full native stdout/stderr
+on disk, and the exact native exit code. Do not add a second validation
+subsystem for this recipe.
+
+### Result classification
+
+Canonical validation is **PASS** only with reliable evidence.
+
+Preferred:
+
+- `OUTCOME: VALIDATION_OK` in the runner log
+- native exit code `0`
+
+Do **not** infer PASS merely because locks disappeared.
+
+If stdout is unavailable but the canonical runner returned exit `0` **and**
+clean postflight proves `.agent/validation.lock` absent,
+`.agent/prisma-generate.lock` absent, and the validation-owned tree absent,
+classify as recovered only when a durable log or Cursor terminal/task file
+still shows `OUTCOME: VALIDATION_OK` and exit `0`. Otherwise
+`RESULT_NOT_RECOVERABLE` — stop; do not automatically replace-run.
+
+### Legacy “Waiting for subagent” diagnostic
+
+Under this procedure, canonical validation should no longer be delegated.
+If a legacy or in-flight Cursor UI still shows “Waiting for subagent”:
+
+1. Inspect `.agent/validation.lock`.
+2. Inspect the validation-owned process tree
+   (`validation-runner`, `validate:fast`, `validate:build`, `validate:deploy`,
+   `next build`, `prisma generate` for this worktree).
+3. If either shows an active run: wait for the runner/watchdog.
+4. If lock absent **and** owned tree absent: the validation process has
+   finished; recover the terminal/task result.
+5. Never `taskkill /IM node.exe` and never kill generic `node` processes.
+
 ## Recommended Validation Commands
 
 - `git status`
@@ -207,10 +306,6 @@ not reuse. The owned root may still be force-killed; a reparented descendant
 is not killed unless identity is proven. After a timed-out inspect, liveness
 is rechecked so a PID that exited during the query is `GONE` rather than a
 false `CHILD_CLEANUP_FAILED`.
-If Cursor remains on “Waiting for subagent” after a delegated validation
-command: inspect `.agent/validation.lock` and the validation-owned process
-tree. If both are absent, treat the command as finished and recover the
-task/terminal result. Do not kill generic `node.exe`.
 Operator cancellation is SIGINT (Ctrl+C) and SIGTERM where the OS delivers
 those signals to the Node process. The first signal marks
 `CANCELLATION_IN_PROGRESS`, stops new steps, dumps and terminates only the

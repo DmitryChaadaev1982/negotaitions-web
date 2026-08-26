@@ -4,6 +4,17 @@
 
 - Account auth uses custom cookie session (`auth_session`) and `UserSession`.
 - Route/API guards use `requireActiveUser`, `apiRequireActiveUser`, and role checks.
+- Session management pages use `requireActiveUser` plus
+  `getCurrentUserSessionAccess` / `canManageSession`. The Session
+  management presence stream
+  (`GET /api/sessions/{sessionId}/presence/stream`) uses the same
+  account-authenticated management contract (`apiRequireActiveUser` +
+  `canManageSession`). It is not demo-user scoped (`demo@example.com`)
+  and is not a generic “any authenticated user may stream any Session”
+  route. Unauthenticated callers receive `401`; authenticated but
+  unrelated callers receive `404` so Session existence stays hidden.
+  Admin, Event host, Event facilitator, and Session facilitator follow
+  `canManageSession` exactly.
 - Session/event runtime authorization resolves participant access by account or token-based paths where supported.
 - New registration writes `UserConsent` records from
   `getCurrentLegalRelease()` (`TERMS_PRIVACY_ACK_V2`,
