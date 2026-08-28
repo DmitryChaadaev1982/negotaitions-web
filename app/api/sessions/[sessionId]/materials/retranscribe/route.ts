@@ -10,14 +10,7 @@ import {
   getSelectedTranscriptionProvider,
   isTranscriptionConfiguredForSelectedProvider,
 } from "@/lib/services/transcription-provider";
-import { executeClaimedTranscription } from "@/lib/services/transcription-runner";
-import {
-  buildFailedRetranscriptionRestoreData,
-  shouldRestoreArchivedTranscript,
-} from "@/lib/services/retranscription-safety";
-import { transcriptionConflictBody } from "@/lib/services/transcription-ownership";
-import { admitTranscriptionRun } from "@/lib/services/transcription-run-claim";
-import { applyOwnedFailedRetranscriptionRestore } from "@/lib/services/transcription-generation-cas";
+import { executeAuthorizedRetranscribe } from "@/lib/services/retranscribe-session";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { isTranscriptionMockMode } from "@/lib/test-mode";
 
@@ -40,8 +33,8 @@ type RouteContext = {
  * POST /api/sessions/[sessionId]/materials/retranscribe
  *
  * Forces a new transcription attempt even if a completed transcript exists.
- * Archives the current transcript content to retranscribeHistory before starting.
- * If the new attempt fails, the old content is restored from the archive.
+ * Source bytes are downloaded before admission so a missing object cannot
+ * increment counters, revoke publication, or rewrite historical state.
  * Facilitator/host/admin only.
  */
 export async function POST(request: Request, context: RouteContext) {
@@ -111,69 +104,18 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const claim = await admitTranscriptionRun({
+  return executeAuthorizedRetranscribe({
     sessionId,
-    recordingId: recording.id,
+    recording: {
+      id: recording.id,
+      recordingAttemptId: recording.recordingAttemptId,
+      fileKey: recording.fileKey,
+      fileName: recording.fileName,
+      mimeType: recording.mimeType,
+      startedAt: recording.startedAt,
+      endedAt: recording.endedAt,
+    },
     language,
-    mode: "retranscribe",
     reason,
   });
-
-  if (claim.kind === "session_not_found") {
-    return NextResponse.json({ error: "Session not found or deleted." }, { status: 404 });
-  }
-  if (claim.kind === "already_active" || claim.kind === "already_completed") {
-    return NextResponse.json(transcriptionConflictBody(claim), { status: 409 });
-  }
-
-  const { transcript, archiveEntry, generation } = claim;
-  const result = await executeClaimedTranscription({
-    sessionId,
-    recording,
-    transcriptId: transcript.id,
-    language,
-    generation,
-  });
-
-  // If the new transcription failed and we had a previous completed transcript,
-  // restore its text content so the old transcript is not lost.
-  const restoreEntry = archiveEntry;
-  if (
-    restoreEntry &&
-    shouldRestoreArchivedTranscript({
-      runFailed: !result.ok,
-      archiveStatus: restoreEntry.status,
-      archiveText: restoreEntry.text,
-    })
-  ) {
-    try {
-      await prisma.$transaction(async (tx) => {
-        await applyOwnedFailedRetranscriptionRestore({
-          tx,
-          generation,
-          data: buildFailedRetranscriptionRestoreData({
-            archiveEntry: {
-              status: restoreEntry.status,
-              text: restoreEntry.text ?? transcript.text,
-              diarizedText: restoreEntry.diarizedText,
-              language: restoreEntry.language,
-              transcriptionModel: restoreEntry.transcriptionModel,
-              hasSpeakerDiarization: restoreEntry.hasSpeakerDiarization,
-              diarizationStatus: restoreEntry.diarizationStatus,
-              speakerMapping: restoreEntry.speakerMapping,
-              speakerMappingStatus: restoreEntry.speakerMappingStatus,
-              completedAt: restoreEntry.completedAt
-                ? new Date(restoreEntry.completedAt)
-                : null,
-              processingMetadata: restoreEntry.processingMetadata,
-            },
-          }),
-        });
-      });
-    } catch {
-      // Best-effort restore; do not shadow the original error
-    }
-  }
-
-  return result;
 }

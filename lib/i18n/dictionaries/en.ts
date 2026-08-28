@@ -880,6 +880,8 @@ export const en = {
     rerunTranscriptionCancel: "Cancel",
     transcriptionAlreadyRunning: "Transcription is already running.",
     previousTranscriptPreserved: "Previous transcript preserved.",
+    sourceRecordingNotAvailable:
+      "The original recording file is unavailable, so retranscription cannot be started. The saved transcript and AI analysis remain available.",
     analysisFromOlderTranscript: "Analysis was generated from an older transcript.",
     // Two-pass strategy labels
     diarizationPass: "Diarization pass",
@@ -1033,6 +1035,8 @@ export const en = {
     transcriptionFailed: "Transcription failed.",
     rerunTranscriptionConfirmBody:
       "A new transcript version will be created. After retranscription, AI analysis will need to be run again. If the current result is published, that publication will be revoked. Existing data is not deleted.",
+    sourceRecordingNotAvailable:
+      "The original recording file is unavailable, so retranscription cannot be started. The saved transcript and AI analysis remain available.",
     analysisFromOlderTranscript: "Analysis was generated from an older transcript.",
     rerunWithQualityEnhancement: "Re-run with quality enhancement",
     strategyDiarizeOnly: "Diarization only",
@@ -1876,7 +1880,7 @@ export const en = {
     caseDataWarningExamples: "Examples: Company A, Company B, Participant 1, Participant 2",
     // Session materials retention notice
     materialsRetentionNotice:
-      "Session materials are intended for training analysis. Do not store confidential data here. Recordings, transcripts, and AI reports may be deleted by an administrator or upon user request. Retention periods will be finalized before production launch.",
+      "Session materials are intended for training analysis. Do not store confidential data here. Source recording files in application storage are automatically deleted after 90 days. This rule does not delete saved transcripts or AI analyses; they have a separate lifecycle.",
     // Admin private-data warning
     privateRoleDataWarning: "Admin view — contains private role data.",
   },

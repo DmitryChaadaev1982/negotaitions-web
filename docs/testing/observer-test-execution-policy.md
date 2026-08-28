@@ -23,6 +23,9 @@ selected by single-token Playwright tags (`@observer-smoke`,
 `scripts/agent-tooling/common.mjs` spawns `npx.cmd` with `shell: true` on
 Windows, which loses quoting around multi-word `--grep` expressions.
 
+Observer scaling keeps ephemeral local users and the ordinary managed
+Playwright LiveKit pin. It must not create a managed Vox identity pool.
+
 ## 2. Smoke suite scope (`@observer-smoke`)
 
 Seven independent tests, small and moderate observer counts only.

@@ -155,15 +155,7 @@ export async function downloadObjectToBuffer(
   }
 
   try {
-    const client = getS3Client();
-    const response = await client.send(
-      new GetObjectCommand({
-        Bucket: config.bucket,
-        Key: fileKey,
-      }),
-    );
-
-    const buffer = await streamToBuffer(response.Body);
+    const buffer = await getObjectBuffer(fileKey);
     await trackStorageDownloadedBytes(buffer.length, fileKey);
     return buffer;
   } catch (error) {
@@ -172,7 +164,21 @@ export async function downloadObjectToBuffer(
       error,
       { context: "download", ...options },
     );
+    if (isStrictStorageObjectMissingError(error)) {
+      throw error instanceof StorageObjectNotFoundError
+        ? error
+        : new StorageObjectNotFoundError(classified.message);
+    }
     throw new Error(classified.message);
+  }
+}
+
+export class StorageObjectNotFoundError extends Error {
+  readonly code = "NoSuchKey";
+
+  constructor(message = "Yandex Object Storage object not found.") {
+    super(message);
+    this.name = "StorageObjectNotFoundError";
   }
 }
 
@@ -194,21 +200,60 @@ function getHttpStatus(error: unknown): number | undefined {
 }
 
 function isStorageObjectNotFoundError(error: unknown) {
-  const status = getHttpStatus(error);
-  if (status === 404) {
+  if (isStrictStorageObjectMissingError(error)) {
     return true;
-  }
-
-  if (typeof error === "object" && error !== null) {
-    const record = error as Record<string, unknown>;
-    const code = String(record.name ?? record.Code ?? record.code ?? "");
-    if (code === "NotFound" || code === "NoSuchKey" || code === "404") {
-      return true;
-    }
   }
 
   const text = error instanceof Error ? error.message : String(error);
   return /not found|nosuchkey/i.test(text);
+}
+
+/**
+ * Strict missing-object check for GET/retranscription. HTTP 404 / NoSuchKey /
+ * NotFound only. Does not treat ENOTFOUND or generic "not found" text as absence.
+ */
+export function isStrictStorageObjectMissingError(error: unknown): boolean {
+  if (error instanceof StorageObjectNotFoundError) {
+    return true;
+  }
+  const status = getHttpStatus(error);
+  if (status === 404) {
+    return true;
+  }
+  if (typeof error === "object" && error !== null) {
+    const record = error as Record<string, unknown>;
+    if (record.name === "StorageObjectNotFoundError") {
+      return true;
+    }
+    const code = String(record.Code ?? record.code ?? record.name ?? "");
+    if (code === "NotFound" || code === "NoSuchKey" || code === "404") {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function getObjectBuffer(fileKey: string): Promise<Buffer> {
+  const config = getS3Config();
+  if (!config) {
+    throw new Error("S3 storage is not configured.");
+  }
+
+  try {
+    const client = getS3Client();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: config.bucket,
+        Key: fileKey,
+      }),
+    );
+    return streamToBuffer(response.Body);
+  } catch (error) {
+    if (isStrictStorageObjectMissingError(error)) {
+      throw new StorageObjectNotFoundError();
+    }
+    throw error;
+  }
 }
 
 export async function headObject(fileKey: string) {

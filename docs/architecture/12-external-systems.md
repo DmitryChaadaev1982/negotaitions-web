@@ -40,7 +40,15 @@
     sending credentials.
   - No public webhook route is part of this architecture.
 - Object storage:
-  - Recording file persistence and retrieval for processing.
+  - Dedicated recording/audio-artifact bucket:
+    `negotiations-recordings-dev-bucket`.
+  - Existing object-key formats are unchanged; there is no
+    `recordings/raw/` namespace and no historical object migration.
+  - Operator-managed Yandex lifecycle: 90-day expiration for all objects,
+    no prefix filter, replacing any older prefix-specific 14-day rule.
+    The application does not configure lifecycle at runtime.
+  - Recording file persistence and retrieval for processing. Physical
+    object deletion does not delete saved transcript or AI material.
 - Yandex Metrica:
   - Optional public-site traffic statistics after analytics cookie consent.
   - SPA init uses `defer: true` plus explicit pathname `hit`; `destruct` on

@@ -12,7 +12,6 @@ import {
   ExternalService,
   ExternalServiceEventSeverity,
   Prisma,
-  RecordingStatus,
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import { compressAudioForTranscription } from "@/lib/audio/compress";
@@ -52,11 +51,10 @@ import {
 import {
   trackOpenAiTranscriptionBytes,
   trackOpenAiTranscriptionMinutes,
+  trackStorageDownloadedBytes,
 } from "@/lib/services/usage-counters";
 import {
   buildCompressedFileKey,
-  downloadObjectToBuffer,
-  headObject,
   uploadBufferToS3,
 } from "@/lib/storage/s3";
 import { classifyExternalServiceError } from "@/lib/services/error-classifier";
@@ -93,7 +91,10 @@ import {
   writeRawCalibrationInputArtifact,
 } from "@/lib/transcription/pause-filter-calibration";
 import { getMockExternalServiceError, isTranscriptionMockMode } from "@/lib/test-mode";
-import { normalizeRecordingFileKey } from "@/lib/storage/recording-file-key";
+import {
+  resolveTranscriptionRecordingSource,
+  type PreloadedRecordingSource,
+} from "@/lib/services/source-recording-preload";
 import {
   buildActiveAudioTimeline,
   type ActiveTimelineInterval,
@@ -469,36 +470,23 @@ export async function runRealTranscription(
   transcriptId: string,
   language: string,
   generation?: TranscriptionGenerationRef,
+  preloadedRecordingSource?: PreloadedRecordingSource | null,
 ): Promise<NextResponse> {
   const transcriptionProvider = getSelectedTranscriptionProvider();
   const ownedGeneration = await resolveTranscriptionGeneration(transcriptId, generation);
   try {
-    const keyNormalization = normalizeRecordingFileKey(recording.fileKey);
-    if (keyNormalization.containsRawUrl || keyNormalization.containsEncodedUrl) {
-      const missingMessage =
-        "Запись сохранена у провайдера, но файл ещё не загружен в хранилище";
-      await updateRecordingForTranscriptionAttempt(recording, {
-        status: RecordingStatus.FAILED,
-        errorMessage: missingMessage,
-      });
-      throw new Error(missingMessage);
-    }
+    const resolvedSource = await resolveTranscriptionRecordingSource({
+      recordingFileKey: recording.fileKey,
+      preloaded: preloadedRecordingSource,
+    });
+    const effectiveFileKey = resolvedSource.source.fileKey;
+    const originalBuffer = resolvedSource.source.buffer;
+    await trackStorageDownloadedBytes(originalBuffer.length, effectiveFileKey);
 
-    const effectiveFileKey = keyNormalization.normalizedKey;
     if (effectiveFileKey !== recording.fileKey) {
       await updateRecordingForTranscriptionAttempt(recording, {
         fileKey: effectiveFileKey,
       });
-    }
-
-    const objectHead = await headObject(effectiveFileKey);
-    if (!objectHead.exists) {
-      const missingMessage = "Файл записи не найден в хранилище";
-      await updateRecordingForTranscriptionAttempt(recording, {
-        status: RecordingStatus.FAILED,
-        errorMessage: missingMessage,
-      });
-      throw new Error(missingMessage);
     }
 
     await throwIfTranscriptionStoppedManually(transcriptId);
@@ -507,10 +495,6 @@ export async function runRealTranscription(
       TranscriptStatus.DOWNLOADING_RECORDING,
       ownedGeneration,
     );
-    const originalBuffer = await downloadObjectToBuffer(effectiveFileKey, {
-      sessionId,
-      recordingId: recording.id,
-    });
     await throwIfTranscriptionStoppedManually(transcriptId);
 
     await updateRecordingForTranscriptionAttempt(recording, {
@@ -1301,6 +1285,7 @@ export async function executeClaimedTranscription(input: {
   transcriptId: string;
   language: string;
   generation: TranscriptionGenerationRef;
+  preloadedRecordingSource?: PreloadedRecordingSource | null;
 }): Promise<NextResponse> {
   if (isTranscriptionMockMode()) {
     return runMockTranscription(
@@ -1327,6 +1312,7 @@ export async function executeClaimedTranscription(input: {
     input.transcriptId,
     input.language,
     input.generation,
+    input.preloadedRecordingSource,
   );
 }
 

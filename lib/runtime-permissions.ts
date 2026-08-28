@@ -150,6 +150,9 @@ const LIB_RUNTIME_SOURCE_FILES = new Set([
   "lib/voximplant/conference-name.ts",
   "lib/voximplant/config-settings.ts",
   "lib/voximplant/config.ts",
+  "lib/voximplant/management-api-core.ts",
+  "lib/voximplant/orphan-user-cleanup-io.ts",
+  "lib/voximplant/orphan-user-cleanup.ts",
   "lib/voximplant/provider-fault-simulation.ts",
   "lib/voximplant/recording-control-signature.ts",
   "lib/voximplant/recording-dispatch-contract.ts",
@@ -168,6 +171,7 @@ const LIB_RUNTIME_SOURCE_FILES = new Set([
   "lib/voximplant/server-stop-replay.ts",
   "lib/voximplant/server-stop-settings.ts",
   "lib/voximplant/types.ts",
+  "lib/voximplant/username.ts",
 ]);
 const LIB_RUNTIME_SOURCE_DIRECTORIES = new Set([
   "lib",

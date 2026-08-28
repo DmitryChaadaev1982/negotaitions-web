@@ -3,6 +3,7 @@ import "dotenv/config";
 import { defineConfig, devices } from "@playwright/test";
 
 import { buildE2eServerEnvironment } from "./tests/e2e/helpers/e2e-database";
+import { resolveManagedPlaywrightVideoProvider } from "./tests/e2e/helpers/playwright-video-provider";
 
 const port = 3100;
 const localBaseUrl = `http://127.0.0.1:${port}`;
@@ -71,6 +72,7 @@ export default defineConfig({
           PLAYWRIGHT_BASE_URL: localBaseUrl,
           NEXT_PUBLIC_APP_URL: localBaseUrl,
           NEXT_DIST_DIR: ".next-e2e",
+          VIDEO_PROVIDER: resolveManagedPlaywrightVideoProvider(),
           EMAIL_PROVIDER: "fake",
           EMAIL_DELIVERY_ENABLED: "true",
           EMAIL_ADMIN_TEST_ENABLED:

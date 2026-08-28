@@ -181,6 +181,22 @@ export function computeShouldPoll(
   return false;
 }
 
+export function canOfferRetranscribe(input: {
+  canRunTranscription: boolean;
+  hasRunningTranscription: boolean;
+  transcriptCompleted: boolean;
+  recordingLifecycleReady: boolean;
+  hasFileKey: boolean;
+}): boolean {
+  return (
+    input.canRunTranscription &&
+    !input.hasRunningTranscription &&
+    input.transcriptCompleted &&
+    input.recordingLifecycleReady &&
+    input.hasFileKey
+  );
+}
+
 export function resolveMaterialsNextPollMs(
   recordingStatus: RecordingStatus | null,
   shouldPoll: boolean,

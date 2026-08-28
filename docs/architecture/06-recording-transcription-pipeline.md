@@ -102,6 +102,8 @@
 ## Key Implementations
 
 - Transcription orchestrator: `lib/services/transcription-runner.ts`.
+- Retranscription source proof: `lib/services/source-recording-preload.ts`,
+  `lib/services/retranscribe-session.ts`.
 - Active timeline builder: `lib/transcription/active-audio-timeline.ts`.
 - Active audio builder: `lib/transcription/active-audio-builder.ts`.
 - Provider abstraction: `lib/services/transcription-provider.ts`.
@@ -113,8 +115,11 @@
 
 - Canonical current orchestration is `POST /api/sessions/[sessionId]/materials/transcribe`
   (initial) and `POST /api/sessions/[sessionId]/materials/retranscribe` (explicit
-  rerun). Both admit through `admitTranscriptionRun` /
-  `lockSessionTranscriptionClaim`, then `executeClaimedTranscription`.
+  rerun). Retranscribe downloads the original source object before
+  `admitTranscriptionRun`. Initial transcription still admits first, then
+  loads source bytes; a missing object fails the transcript without rewriting
+  `Recording.status`. After a successful claim both routes execute
+  `executeClaimedTranscription`.
 - Normal facilitator UI (Materials page and room Debrief `roomQuick` panel)
   calls only the canonical routes. The child transcript section no longer
   posts to `/transcribe-recording`.
@@ -200,6 +205,32 @@
   analysis artifact is kept. Speaker mapping, manual attribution, transcript
   correction, and enhancement that prepare the new generation do not repeat
   that invalidation warning.
+
+## Retranscription Source Proof
+
+- `Recording.status = COMPLETED` is historical recording-lifecycle truth. The
+  absence of a retained object-storage binary does not rewrite that status to
+  `FAILED`, change `fileKey`, or invent a recording `errorMessage`.
+- Retranscription acquires the original source bytes (`Recording.fileKey`,
+  after existing safe normalization) **before** `admitTranscriptionRun`.
+  Admission, counter increment, history append, transcript `QUEUED`, and
+  publication revoke happen only after those bytes are in memory.
+- The claimed run consumes the preloaded buffer and does not GET the original
+  object again. Later object deletion cannot break a run that already holds
+  bytes.
+- If GET returns `NoSuchKey` / `NotFound` / HTTP 404, the API returns
+  `409` with `code: SOURCE_RECORDING_NOT_AVAILABLE` and performs zero material
+  mutations. Timeout, network, credential, and 5xx failures are not classified
+  as source absence. Unavailability is reported neutrally; the API and UI
+  must not claim that retention expiration is the cause.
+- Absence of the physical object does not invalidate a saved transcript or
+  AI analysis by itself. Physical retention (operator-managed 90-day
+  expiration of all objects in `negotiations-recordings-dev-bucket`) is
+  independent from historical application material. See
+  `10-data-storage-and-retention.md`.
+- `materials/status` may still overlay a read-only HEAD result for display.
+  That overlay does not mutate `Recording` and does not hide retranscribe when
+  a completed transcript exists.
 
 ## Observability
 
@@ -463,6 +494,9 @@
 ## Source Notes
 
 - `lib/services/transcription-runner.ts`
+- `lib/services/retranscribe-session.ts`
+- `lib/services/source-recording-not-available.ts`
+- `lib/services/source-recording-preload.ts`
 - `lib/services/transcription-run-claim.ts`
 - `lib/services/transcription-ownership.ts`
 - `lib/services/transcription-generation-cas.ts`

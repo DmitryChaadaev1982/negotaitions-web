@@ -1,7 +1,5 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getVoximplantConfig } from "@/lib/voximplant/config";
@@ -11,6 +9,9 @@ import {
   VoximplantManagementApiNotImplementedError,
 } from "@/lib/voximplant/management-api";
 import type { VoximplantRoomRole } from "@/lib/voximplant/scenario-messages";
+import { buildVoximplantUsernameForUser } from "@/lib/voximplant/username";
+
+export { buildVoximplantUsernameForUser };
 
 const VOXIMPLANT_PROVIDER = "voximplant";
 const STATUS_ACTIVE = "active";
@@ -77,11 +78,6 @@ function asIdentityResult(row: {
     lastUsedAt: row.lastUsedAt,
     metadata: row.metadata,
   };
-}
-
-export function buildVoximplantUsernameForUser(userId: string): string {
-  const digest = createHash("sha256").update(userId).digest("hex").slice(0, 16);
-  return `ng_u_${digest}`;
 }
 
 export function buildVoximplantSdkUsername(

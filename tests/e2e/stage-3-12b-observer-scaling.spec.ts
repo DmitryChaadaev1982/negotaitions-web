@@ -35,6 +35,9 @@ const COOKIE_CONSENT_STORAGE_KEY = "negotaitions.cookieConsent.v2";
  *   moderate counts only, no full viewport matrix.
  * - `@observer-layout` is the full geometry regression matrix. Mandatory only
  *   when Session room structure, geometry or responsive breakpoints change.
+ *
+ * Observer scaling stays on ephemeral local users and the ordinary managed
+ * Playwright LiveKit pin. It must not build a managed Vox identity pool.
  */
 const OBSERVER_SMOKE_TAG = "@observer-smoke";
 const OBSERVER_LAYOUT_TAG = "@observer-layout";

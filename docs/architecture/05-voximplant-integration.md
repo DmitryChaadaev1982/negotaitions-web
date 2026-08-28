@@ -281,6 +281,50 @@ Helpers: `lib/voximplant/provider-disconnect-recovery.ts`,
 `lib/voximplant/provider-recovery-log.ts` (sanitized transition logs only;
 no tokens, access URLs, secrets, raw SDP, or credentials).
 
+## Historical ng_u_* orphan cleanup (Stage 3.24A CP2-R2)
+
+Operator-gated inventory for application-generated remote users. This is not
+part of room join or provisioning. The authorized one-time live apply
+completed successfully in Stage 3.24A CP2-R2. Do not rerun apply unless a
+new inventory is explicitly authorized. The CLI remains available and
+defaults to dry-run.
+
+- Username algorithm is the production function
+  `buildVoximplantUsernameForUser` in `lib/voximplant/username.ts`, re-exported
+  by `lib/voximplant/identity.ts`.
+- Command: `npm run vox:orphan-cleanup` or
+  `npm run vox:orphan-cleanup -- --dry-run`. Default mode is dry-run. A bare
+  invocation never deletes.
+- Keep-list sources:
+  - production `User.id` values via the documented SSH read-only path
+    (`ssh negotaitions-poc`, see `docs/deployment/yandex-poc-server-parameters.md`);
+  - local manual `User.id` values on `localhost:5432`;
+  - the four fixed managed E2E IDs only;
+  - explicit `/voximplant-test` POC usernames (`participant-a`,
+    `participant-b`, `facilitator`, plus `VOXIMPLANT_*_USER` values).
+    Passwords are never read or printed.
+- E2E `localhost:5433` is not a keep source. Current ephemeral E2E rows may
+  be labeled `SOURCE_HINT=CURRENT_EPHEMERAL_E2E_USER` only.
+- A remote user is `DELETE_CANDIDATE` only when the username matches
+  `^ng_u_[0-9a-f]{16}$` and is absent from every keep source. Distinct
+  `User.id` values that hash to the same `ng_u_*` are `AMBIGUOUS_BLOCKED`.
+- Dry-run uses Management API `GetUsers` only. `AddUser`, `SetUserInfo`,
+  `DelUser`, and database writes are out of scope for the dry-run path.
+- A later apply still requires `--apply`, `--expected-count N`, recomputed
+  inventory and keep-lists, exact candidate set agreement (count,
+  fingerprint, username set), numeric `user_id` only, generated `ng_u_*`
+  only, bounded batches of 10, and stop-on-first-batch-failure. There is no
+  `user_id=all` or prefix mode. The live CLI also requires
+  `VOX_ORPHAN_CLEANUP_ALLOW_APPLY=1`. Do not execute apply as part of
+  ordinary validation.
+- Helpers: `lib/voximplant/orphan-user-cleanup.ts`,
+  `lib/voximplant/orphan-user-cleanup-io.ts`,
+  `lib/voximplant/management-api-core.ts` (CLI-safe GetUsers/DelUser),
+  `scripts/ops/voximplant-orphan-user-cleanup.ts`.
+  Next.js production still imports `lib/voximplant/management-api.ts`
+  (`import "server-only"`). Provisioning (`AddUser` / `SetUserInfo`) is
+  unchanged.
+
 ## Operational Constraints
 
 - Recording start remains browser-relayed. Terminal recording stop is
@@ -390,4 +434,8 @@ record it fails to resolve arrive in one message.
 - `lib/voximplant/recording-webhook-url-store.ts`
 - `lib/voximplant/reinvite-scheme-sanitizer.ts`
 - `lib/voximplant/websdk-log-filter.ts`
+- `lib/voximplant/username.ts`
+- `lib/voximplant/orphan-user-cleanup.ts`
+- `lib/voximplant/orphan-user-cleanup-io.ts`
+- `scripts/ops/voximplant-orphan-user-cleanup.ts`
 - `docs/voximplant/*.md`

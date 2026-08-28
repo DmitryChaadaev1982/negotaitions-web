@@ -251,7 +251,15 @@ const ruPrivacy: LegalDocument = {
         },
         {
           type: "p",
-          text: "Сервис в настоящее время не устанавливает и не применяет фиксированные продуктовые сроки хранения для аккаунтов, сессий, записей, транскриптов и ИИ-анализов. Оператор не обещает автоматическое удаление по истечении заранее заданного календарного срока, если такое удаление не реализовано.",
+          text: "Физические объекты записей и связанные аудиоартефакты в выделенном хранилище приложения (Yandex Object Storage) автоматически удаляются по истечении 90 дней. Запись может быть удалена и раньше в рамках поддерживаемых административных процедур или по запросу пользователя, где это применимо.",
+        },
+        {
+          type: "p",
+          text: "Это правило относится только к физическим объектам в хранилище приложения. Оно само по себе не удаляет и не делает недействительными сохранённые транскрипты, диаризацию, сопоставление говорящих, ИИ-анализы, публикации, заметки, аккаунты и сессии. Для аккаунтов, сессий, транскриптов и ИИ-анализов единый продуктовый срок хранения 90 дней не применяется.",
+        },
+        {
+          type: "p",
+          text: "Срок хранения любой копии записи на стороне Voximplant остаётся отдельным и оператором не подтверждён. Оператор не утверждает, что приложение управляет удалением независимой копии у провайдера.",
         },
       ],
     },
@@ -540,7 +548,15 @@ const enPrivacy: LegalDocument = {
         },
         {
           type: "p",
-          text: "The product does not currently set or enforce fixed retention periods for accounts, sessions, recordings, transcripts, or AI analyses. The operator does not promise automatic deletion after a preset calendar period unless such deletion is implemented.",
+          text: "Physical recording objects and related audio artifacts stored in the application's dedicated Yandex Object Storage bucket are automatically expired after 90 days. A recording may also be deleted earlier through supported administrative procedures or upon a user request, where applicable.",
+        },
+        {
+          type: "p",
+          text: "This rule applies only to physical objects in application storage. It does not itself delete or invalidate saved transcripts, diarization, speaker mapping, AI analyses, publications, notes, accounts, or sessions. The service does not apply a single 90-day product retention period to accounts, sessions, transcripts, or AI analyses.",
+        },
+        {
+          type: "p",
+          text: "Any provider-side Voximplant copy remains subject to a separate retention regime that the operator has not confirmed. The operator does not state that the application controls deletion of any independent provider-side copy.",
         },
       ],
     },

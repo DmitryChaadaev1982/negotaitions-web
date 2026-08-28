@@ -95,6 +95,11 @@ Durable operational rule. Operator procedures live in
   in the application EnvironmentFile as defense in depth.
 - systemd unit starts single app process for POC stability.
 - App process uses PostgreSQL, object storage, Voximplant APIs, and Yandex APIs.
+  Recording/audio objects live in the dedicated bucket
+  `negotiations-recordings-dev-bucket`. Bucket-wide 90-day object expiration
+  is an operator Yandex Object Storage lifecycle configuration, not an
+  application deploy step. Do not introduce `recordings/raw/`, change Vox
+  `recordNamePrefix`, or migrate historical objects as part of deploy.
 - Email provider-event ingestion is a separate disabled-by-default systemd
   service (`negotiations-email-provider-events.service`) with its own Data
   Streams credentials and PostgreSQL advisory single-consumer lock. It has no
@@ -176,6 +181,8 @@ resolution shim.
 - `docs/voximplant/yandex-deployment-runbook.md` (historical; env-backup steps superseded)
 - `docs/operations/deployment-runbook.md` (authoritative env backup retention
   and current-env rollback)
+- `docs/architecture/10-data-storage-and-retention.md` (recording bucket
+  lifecycle is operator Object Storage configuration, not a deploy script)
 - `scripts/ops/stage-3-10-maintenance.ts`
 - `deploy/systemd/negotiations-stage310-maintenance.service`
 - `deploy/systemd/negotiations-stage310-maintenance.timer`

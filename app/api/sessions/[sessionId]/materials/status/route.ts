@@ -37,6 +37,7 @@ import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reaso
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
 import { isExternalServicesMockMode } from "@/lib/test-mode";
 import {
+  canOfferRetranscribe,
   computeShouldPoll,
   hasRunningRawTranscription,
   resolveMaterialsNextPollMs,
@@ -576,13 +577,16 @@ export async function GET(request: Request, context: RouteContext) {
     (transcriptEnhancementStatus === "FAILED" ||
       transcriptEnhancementStatus === "PARTIAL");
 
-  // Re-run is allowed when a completed transcript exists and recording is available
-  const canRerunTranscription =
-    canRunTranscription &&
-    !hasRunningTranscription &&
-    transcriptCompleted &&
-    recordingReadyForTranscription &&
-    Boolean(recording?.fileKey);
+  // Re-run stays available when the physical object is gone. Recording
+  // COMPLETED + fileKey is historical truth; missing storage is a
+  // non-destructive retranscription outcome, not a hidden action.
+  const canRerunTranscription = canOfferRetranscribe({
+    canRunTranscription,
+    hasRunningTranscription,
+    transcriptCompleted,
+    recordingLifecycleReady: recordingReadyByState,
+    hasFileKey: Boolean(recording?.fileKey),
+  });
 
   const sessionRoleRecord = await prisma.sessionRole.findUnique({
     where: { id: participant.sessionRoleId ?? "" },

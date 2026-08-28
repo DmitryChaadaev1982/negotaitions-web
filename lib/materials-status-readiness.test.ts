@@ -7,6 +7,7 @@ import {
   TranscriptStatus,
 } from "@/app/generated/prisma/client";
 import {
+  canOfferRetranscribe,
   computeShouldPoll,
   hasRunningRawTranscription,
   isStaleStartingRecording,
@@ -298,4 +299,17 @@ test("materials polling switches to fast interval during STARTING only", () => {
     MATERIALS_POLL_INTERVAL_DEFAULT_MS,
   );
   assert.equal(resolveMaterialsNextPollMs(RecordingStatus.STARTING, false), null);
+});
+
+test("retranscribe remains offered from lifecycle-ready recording even if storage object is gone", () => {
+  assert.equal(
+    canOfferRetranscribe({
+      canRunTranscription: true,
+      hasRunningTranscription: false,
+      transcriptCompleted: true,
+      recordingLifecycleReady: true,
+      hasFileKey: true,
+    }),
+    true,
+  );
 });

@@ -58,6 +58,7 @@ coverage/
 .agent/validation-baseline.json
 .agent/validation.lock
 .agent/prisma-generate.lock
+.agent/stage-3-24a-vox-orphan-cleanup-dry-run-*
 
 # Archive/output artifacts
 *.zip

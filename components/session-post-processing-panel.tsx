@@ -35,6 +35,7 @@ import {
 } from "@/lib/materials-ai-analysis-view";
 import { useI18n } from "@/lib/i18n/useI18n";
 import type { TranslationKey } from "@/lib/i18n/translate";
+import { resolveRetranscribeFailureMessage } from "@/lib/transcription/retranscribe-client-error";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -487,8 +488,10 @@ export function SessionPostProcessingPanel({
         body: JSON.stringify({ ...roomAuthBody(roomAuth), reason: "manual_rerun" }),
       });
       if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? "Re-transcription failed.");
+        const body = (await res.json()) as { error?: string; code?: string };
+        throw new Error(
+          resolveRetranscribeFailureMessage(body, t, "Re-transcription failed."),
+        );
       }
       forceStatusPolling();
       void fetchStatus();
@@ -497,7 +500,7 @@ export function SessionPostProcessingPanel({
     } finally {
       setRerunBusy(false);
     }
-  }, [fetchStatus, forceStatusPolling, rerunBusy, roomAuth, sessionId]);
+  }, [fetchStatus, forceStatusPolling, rerunBusy, roomAuth, sessionId, t]);
 
   const handleStopTranscription = useCallback(async () => {
     setStopTranscriptionBusy(true);

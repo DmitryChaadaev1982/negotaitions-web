@@ -48,6 +48,7 @@ import {
   materialsRetranscribePath,
   materialsTranscribePath,
 } from "@/lib/transcription/transcription-routes";
+import { resolveRetranscribeFailureMessage } from "@/lib/transcription/retranscribe-client-error";
 
 type RecordingData = {
   id: string;
@@ -789,11 +790,18 @@ export function RecordingTranscriptionSection({
 
       const payload = (await response.json()) as {
         error?: string;
+        code?: string;
         status?: string;
       };
 
       if (!response.ok) {
-        throw new Error(payload.error ?? t("recording.rerunTranscription") + " failed.");
+        throw new Error(
+          resolveRetranscribeFailureMessage(
+            payload,
+            t,
+            `${t("recording.rerunTranscription")} failed.`,
+          ),
+        );
       }
 
       // Reload all data to pick up the new transcript + segments

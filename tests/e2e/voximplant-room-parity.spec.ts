@@ -2,7 +2,14 @@ import { createHash, randomBytes } from "crypto";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
-import { cleanupE2eData, createE2eCase, query } from "./helpers/db";
+import {
+  cleanupE2eData,
+  createE2eCase,
+  createUserSessionCookie,
+  e2eName,
+  ensureManagedVoxE2EUser,
+  query,
+} from "./helpers/db";
 
 function id(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -123,6 +130,7 @@ async function createParityFixture() {
     sessionId,
     facilitatorParticipantId,
     participant1Id,
+    participant1UserId: p1UserId,
     participant2Id,
     observer1Id,
     role1Id,
@@ -132,6 +140,49 @@ async function createParityFixture() {
     participant2Cookie: await createUserSession(p2UserId),
     observerCookie: await createUserSession(o1UserId),
   };
+}
+
+async function createIsolatedManagedParticipantVoxAccess() {
+  const kase = await createE2eCase();
+  const managedParticipant = await ensureManagedVoxE2EUser("PARTICIPANT_01");
+  const facilitatorUserId = await createActiveUser(
+    `vox-parity-managed-fac-${Date.now()}@test.invalid`,
+    "Managed Access Facilitator",
+  );
+  const sessionId = `e2e-vox-parity-managed-p01-${Date.now()}`;
+  await query(
+    `INSERT INTO "Session"
+      ("id", "negotiationCaseId", "facilitatorId", "title", "snapshotCaseTitle",
+       "snapshotBusinessContext", "snapshotPublicInstructions", "snapshotCaseLanguage",
+       "preparationDurationSeconds", "durationSeconds", "updatedAt")
+    VALUES ($1, $2, $3, $4, $5,
+       'E2E isolated managed access context', 'E2E isolated managed access', 'EN', 300, 900, NOW())`,
+    [
+      sessionId,
+      kase.id,
+      facilitatorUserId,
+      e2eName("E2E Vox Parity Managed P01 Access"),
+      kase.title,
+    ],
+  );
+
+  const participantId = id("sp");
+  await query(
+    `INSERT INTO "SessionParticipant"
+      ("id","sessionId","userId","sessionRoleId","type","joinToken","displayName","joinedAt","lastSeenAt","updatedAt")
+     VALUES ($1,$2,$3,NULL,'PARTICIPANT',$4,'Managed P01',NOW(),NOW(),NOW())`,
+    [participantId, sessionId, managedParticipant.id, `managed-p01-${Date.now()}`],
+  );
+
+  const cookie = (await createUserSessionCookie(managedParticipant.id)).replace(
+    /^auth_session=/,
+    "",
+  );
+  return { sessionId, participantId, managedParticipant, cookie };
+}
+
+async function deleteIsolatedManagedParticipantVoxAccess(sessionId: string) {
+  await query(`DELETE FROM "Session" WHERE "id" = $1`, [sessionId]);
 }
 
 function cookieHeader(rawToken: string) {
@@ -310,20 +361,38 @@ test.describe("Vox room parity (API state)", () => {
     expect(sidebarBody.participantType).toBe("PARTICIPANT");
     expect(sidebarBody.caseRole).toBeNull();
 
-    const voxAccess = await request.post(
-      `/api/sessions/${fixture.sessionId}/voximplant/access`,
-      {
-        headers: cookieHeader(fixture.participantCookie),
-        data: {},
-      },
-    );
-    expect(voxAccess.ok()).toBeTruthy();
-    const payload = (await voxAccess.json()) as { user: { role: string } };
-    expect(payload.user.role).toBe("unknown");
-    expect(payload.user.role).not.toBe("facilitator");
+    const isolated = await createIsolatedManagedParticipantVoxAccess();
+    try {
+      const voxAccess = await request.post(
+        `/api/sessions/${isolated.sessionId}/voximplant/access`,
+        {
+          headers: cookieHeader(isolated.cookie),
+          data: {},
+        },
+      );
+      expect(voxAccess.ok()).toBeTruthy();
+      const payload = (await voxAccess.json()) as { user: { role: string } };
+      expect(payload.user.role).toBe("unknown");
+      expect(payload.user.role).not.toBe("facilitator");
+
+      const sharedBinding = await query<{ userId: string | null }>(
+        `SELECT "userId" FROM "SessionParticipant" WHERE "id" = $1`,
+        [fixture.participant1Id],
+      );
+      expect(sharedBinding[0]?.userId).toBe(fixture.participant1UserId);
+      expect(sharedBinding[0]?.userId).not.toBe(isolated.managedParticipant.id);
+    } finally {
+      await deleteIsolatedManagedParticipantVoxAccess(isolated.sessionId);
+    }
   });
 
   test("role reassignment is visible on subsequent sidebar fetch without reload", async ({ request }) => {
+    const sharedBinding = await query<{ userId: string | null }>(
+      `SELECT "userId" FROM "SessionParticipant" WHERE "id" = $1`,
+      [fixture.participant1Id],
+    );
+    expect(sharedBinding[0]?.userId).toBe(fixture.participant1UserId);
+
     const before = await request.get(
       `/api/livekit/sidebar?participantId=${fixture.participant1Id}&connectionId=parity-role-refresh&claimLease=1`,
       { headers: cookieHeader(fixture.participantCookie) },

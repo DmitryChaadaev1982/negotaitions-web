@@ -178,6 +178,37 @@ Rules:
   - `e2eName(base)`
   - `e2eEmail(base)`
   - `e2eId(base)`
+- Managed Vox E2E identity pool (exactly four slots): `FACILITATOR_01`,
+  `PARTICIPANT_01`, `PARTICIPANT_02`, `OBSERVER_01`.
+  - Canonical helper: `ensureManagedVoxE2EUser(slot)` in
+    `tests/e2e/helpers/db.ts` (descriptors in
+    `tests/e2e/helpers/managed-vox-e2e-identities.ts`).
+  - Each slot has a fixed application `User.id` and a reserved email outside
+    ordinary cleanup wildcards (`@e2e-reserved.test`). Recreating a missing
+    row uses the same id, so production `buildVoximplantUsernameForUser`
+    derives the same `ng_u_*` username after a local DB reset.
+  - Use these slots only for tests that actually POST the Vox access routes
+    under an intentional `VIDEO_PROVIDER=voximplant` run. Do not convert
+    observer scaling or provider-independent suites.
+  - Real-Vox access tests that sit in a shared serial fixture must create a
+    dedicated Session/Event, `SessionParticipant`/`EventParticipant`, and
+    auth cookie for the managed slot. They must not rewrite
+    `SessionParticipant.userId` (or equivalent shared membership) on the
+    serial fixture.
+  - DB fixture tests must not insert an ACTIVE `VideoProviderIdentity` with
+    `providerUsername` `ng_u_fixture_*` on a canonical managed slot. That
+    short-circuits production provisioning and hides the real `ng_u_*`.
+  - Concurrency: `MAX_1_LIVE_LOGIN_PER_SLOT`. Playwright `workers` stay `1`.
+    Worker-scoped pools are a future explicit change if workers increase.
+  - Historical remote Vox users are not automatically cleaned by ordinary
+    E2E cleanup. Stage 3.24A stops new leaks. The authorized one-time
+    orphan apply completed in CP2-R2; do not rerun it during validation.
+    Further inventory uses the operator-gated dry-run tool
+    `npm run vox:orphan-cleanup`. A later apply still requires explicit
+    authorization, `--apply`, `--expected-count`, fingerprint agreement,
+    and `VOX_ORPHAN_CLEANUP_ALLOW_APPLY=1`. The E2E database is not a keep
+    source except for the four fixed managed IDs.
+  - Production identity/provisioning source is unchanged.
 - `E2E_RUN_ID` may be set externally; otherwise it is generated once per Playwright process.
 - Database isolation is enforced by `tests/e2e/helpers/e2e-database.ts`:
   - `E2E_DATABASE_URL` is mandatory for Playwright tests and E2E helpers.
@@ -186,6 +217,13 @@ Rules:
   - Production-like host/database names are refused.
   - Remote E2E databases require explicit `E2E_ALLOW_REMOTE_DATABASE=1`.
 - Playwright-managed `webServer` processes override `DATABASE_URL` to the resolved `E2E_DATABASE_URL`.
+- Ordinary managed Playwright validation (`playwright.local.config.ts`,
+  including `test:e2e:smoke`, `test:e2e:smoke:browser`, and `test:stage310`
+  browser legs) pins `VIDEO_PROVIDER=livekit` through
+  `resolveManagedPlaywrightVideoProvider()`. Operator `.env`
+  `VIDEO_PROVIDER=voximplant` is not inherited. Intentional real-Vox runs
+  set `PLAYWRIGHT_VIDEO_PROVIDER=voximplant`. `playwright.config.ts`
+  already pins LiveKit.
 - Manual `npm run dev` outside Playwright continues to use development `DATABASE_URL` on port `5432`.
 - Run read-only E2E database preflight before browser suites:
   - `npm run test:e2e:db:check`
@@ -200,6 +238,9 @@ Rules:
   - rerun `npm run prisma:generate` and `npm run prisma:validate`
 - Cleanup ownership rule:
   - `cleanupE2eData()` must remove only current run namespace data plus rows owned by current run users.
+  - Managed Vox slot Users, reserved emails, and `VideoProviderIdentity`
+    rows are preserved. Per-test Session/Event memberships, rooms,
+    invites, and run-owned domain rows for those users are still removed.
   - New tests must avoid broad wildcard cleanup (`LIKE '%E2E%'`) against shared data.
 - Residual legacy suites may still use older cleanup patterns; migrate incrementally and document remaining debt in phase reports.
 

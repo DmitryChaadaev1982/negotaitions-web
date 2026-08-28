@@ -60,6 +60,8 @@
     "vox:scenario:upload:direct": "node scripts/voximplant-upload-scenario-direct.mjs",
     "vox:scenario:dry-run": "node scripts/voximplant-upload-scenario.mjs --dry-run",
     "vox:scenario:check": "node scripts/voximplant-check-scenario-drift.mjs",
+    "vox:orphan-cleanup": "tsx scripts/ops/voximplant-orphan-user-cleanup.ts",
+    "vox:orphan-cleanup:dry-run": "tsx scripts/ops/voximplant-orphan-user-cleanup.ts --dry-run",
     "inspect:audio": "tsx scripts/inspect-audio-recording.ts",
     "pause-filter:calibrate": "tsx scripts/pause-filter-calibrate-session.ts",
     "prisma:production:status": "tsx scripts/ops/prisma-production-migration-overlay.ts status",

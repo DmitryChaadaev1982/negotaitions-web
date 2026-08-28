@@ -10,6 +10,27 @@ import {
   isE2eDatabaseConfigured,
   resolveE2eDatabaseUrl,
 } from "./e2e-database";
+import {
+  getManagedVoxE2ESlotDescriptor,
+  isManagedVoxE2EEmail,
+  isManagedVoxE2EUserId,
+  listManagedVoxE2EUserIds,
+  MANAGED_VOX_E2E_PASSWORD,
+  type ManagedVoxE2ESlot,
+} from "./managed-vox-e2e-identities";
+
+export {
+  getManagedVoxE2ESlotDescriptor,
+  isManagedVoxE2EEmail,
+  isManagedVoxE2EUserId,
+  listManagedVoxE2EEmails,
+  listManagedVoxE2EUserIds,
+  MANAGED_VOX_E2E_PASSWORD,
+  MANAGED_VOX_E2E_SLOT_DESCRIPTORS,
+  MANAGED_VOX_E2E_SLOTS,
+  type ManagedVoxE2ESlot,
+  type ManagedVoxE2ESlotDescriptor,
+} from "./managed-vox-e2e-identities";
 
 const DATABASE_URL_RAW = resolveE2eDatabaseUrl();
 const pool = new Pool({ connectionString: DATABASE_URL_RAW });
@@ -160,7 +181,8 @@ export type E2eRecording = {
  * SQL predicate (on the "User" table) that matches every email pattern used by
  * the e2e suite to create throwaway accounts. Keep this in sync with the email
  * domains used across the spec files. The demo facilitator is always preserved
- * so seeded cases and demo flows keep working.
+ * so seeded cases and demo flows keep working. Managed Vox slot emails
+ * (`@e2e-reserved.test`) are intentionally outside this predicate.
  */
 export const TEST_USER_EMAIL_PREDICATE = `(
   "email" LIKE '%.negotaitions'
@@ -201,17 +223,27 @@ export async function cleanupE2eData() {
   );
   await query(`DELETE FROM "NegotiationCase" WHERE "title" ILIKE $1`, [runPattern]);
 
+  // Preserve managed Vox slot Users and VideoProviderIdentity rows.
+  // Strip only per-test domain membership/ownership for those slots.
+  await cleanupManagedVoxE2EDomainState();
+
   // Remove run-owned users and rows they own directly.
   const testUsers = await query<{ id: string }>(
     `SELECT "id" FROM "User"
-     WHERE "email" ILIKE $1
-        OR "email" LIKE $2`,
-    [`%${runId}@%`, `%${runId}%@test.invalid`],
+     WHERE ("email" ILIKE $1
+        OR "email" LIKE $2)
+       AND "id" <> ALL($3::text[])`,
+    [`%${runId}@%`, `%${runId}%@test.invalid`, listManagedVoxE2EUserIds()],
   );
   const legacyUsers = await query<{ id: string }>(
-    `SELECT "id" FROM "User" WHERE ${TEST_USER_EMAIL_PREDICATE}`,
+    `SELECT "id" FROM "User"
+     WHERE ${TEST_USER_EMAIL_PREDICATE}
+       AND "id" <> ALL($1::text[])`,
+    [listManagedVoxE2EUserIds()],
   );
-  const ids = [...new Set([...testUsers, ...legacyUsers].map((u) => u.id))];
+  const ids = [...new Set([...testUsers, ...legacyUsers].map((u) => u.id))].filter(
+    (userId) => !isManagedVoxE2EUserId(userId),
+  );
   if (ids.length > 0) {
     // EmailMessage.userId uses SET NULL, so remove run-owned email content
     // explicitly before deleting its users.
@@ -348,7 +380,168 @@ export async function getUserPreferredLocale(email: string) {
 }
 
 export async function deleteUserByEmail(email: string) {
+  if (isManagedVoxE2EEmail(email)) {
+    return;
+  }
   await query(`DELETE FROM "User" WHERE "email" = $1`, [email]);
+}
+
+export type ManagedVoxE2EUser = {
+  id: string;
+  email: string;
+  name: string;
+  slot: ManagedVoxE2ESlot;
+  password: string;
+  preferredLocale: string;
+  status: string;
+  globalRole: string;
+  sessionSoundEnabled: boolean;
+};
+
+export type EnsureManagedVoxE2EUserOptions = {
+  preferredLocale?: "ru" | "en";
+  name?: string;
+};
+
+/**
+ * Resolve or create one managed Vox E2E slot with its EXACT fixed User.id.
+ * Does not call the Vox Management API. Provider provisioning stays on the
+ * production access path.
+ */
+export async function ensureManagedVoxE2EUser(
+  slot: ManagedVoxE2ESlot,
+  options?: EnsureManagedVoxE2EUserOptions,
+): Promise<ManagedVoxE2EUser> {
+  const descriptor = getManagedVoxE2ESlotDescriptor(slot);
+  const name = options?.name ?? descriptor.name;
+  const preferredLocale = options?.preferredLocale ?? "ru";
+
+  const existing = await query<{
+    id: string;
+    email: string;
+  }>(`SELECT "id", "email" FROM "User" WHERE "id" = $1 OR "email" = $2`, [
+    descriptor.userId,
+    descriptor.email,
+  ]);
+
+  const byId = existing.find((row) => row.id === descriptor.userId);
+  const byEmail = existing.find((row) => row.email === descriptor.email);
+
+  if (byEmail && byEmail.id !== descriptor.userId) {
+    throw new Error(
+      `Managed Vox E2E slot ${slot} email ${descriptor.email} is owned by User.id ${byEmail.id}; expected ${descriptor.userId}.`,
+    );
+  }
+
+  if (!byId) {
+    const passwordHash = await hashE2ePassword(MANAGED_VOX_E2E_PASSWORD);
+    await query(
+      `INSERT INTO "User"
+         ("id", "email", "passwordHash", "name", "globalRole", "status",
+          "preferredLocale", "sessionSoundEnabled", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'USER', 'ACTIVE', $5, TRUE, NOW())`,
+      [descriptor.userId, descriptor.email, passwordHash, name, preferredLocale],
+    );
+  } else {
+    await query(
+      `UPDATE "User"
+       SET "email" = $2,
+           "name" = $3,
+           "globalRole" = 'USER',
+           "status" = 'ACTIVE',
+           "preferredLocale" = $4,
+           "sessionSoundEnabled" = TRUE,
+           "updatedAt" = NOW()
+       WHERE "id" = $1`,
+      [descriptor.userId, descriptor.email, name, preferredLocale],
+    );
+  }
+
+  const existingConsents = await query<{ consentType: string }>(
+    `SELECT "consentType" FROM "UserConsent"
+     WHERE "userId" = $1 AND "consentType" = ANY($2::text[])`,
+    [descriptor.userId, [...CURRENT_E2E_CONSENT_TYPES]],
+  );
+  const present = new Set(existingConsents.map((row) => row.consentType));
+  for (const consentType of CURRENT_E2E_CONSENT_TYPES) {
+    if (!present.has(consentType)) {
+      await insertUserConsent(descriptor.userId, consentType, "2");
+    }
+  }
+
+  const rows = await query<{
+    id: string;
+    email: string;
+    name: string | null;
+    preferredLocale: string;
+    status: string;
+    globalRole: string;
+    sessionSoundEnabled: boolean;
+  }>(
+    `SELECT "id", "email", "name", "preferredLocale", "status", "globalRole",
+            "sessionSoundEnabled"
+     FROM "User" WHERE "id" = $1`,
+    [descriptor.userId],
+  );
+  const user = rows[0];
+  if (!user) {
+    throw new Error(`Failed to ensure managed Vox E2E slot ${slot}`);
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name ?? name,
+    slot,
+    password: MANAGED_VOX_E2E_PASSWORD,
+    preferredLocale: user.preferredLocale,
+    status: user.status,
+    globalRole: user.globalRole,
+    sessionSoundEnabled: user.sessionSoundEnabled,
+  };
+}
+
+export async function cleanupManagedVoxE2EDomainState() {
+  const managedIds = listManagedVoxE2EUserIds();
+
+  await query(`DELETE FROM "SessionRoomConnection" WHERE "userId" = ANY($1)`, [
+    managedIds,
+  ]);
+  await query(`DELETE FROM "UserSession" WHERE "userId" = ANY($1)`, [managedIds]);
+  await query(`DELETE FROM "PasswordResetToken" WHERE "userId" = ANY($1)`, [
+    managedIds,
+  ]);
+  await query(
+    `DELETE FROM "SessionInvite"
+     WHERE "userId" = ANY($1) OR "invitedByUserId" = ANY($1)`,
+    [managedIds],
+  );
+  await query(
+    `DELETE FROM "EventInvite"
+     WHERE "userId" = ANY($1) OR "invitedByUserId" = ANY($1)`,
+    [managedIds],
+  );
+  await query(`DELETE FROM "AiAnalysisPublicationGrant" WHERE "userId" = ANY($1)`, [
+    managedIds,
+  ]);
+  await query(`DELETE FROM "SessionParticipant" WHERE "userId" = ANY($1)`, [
+    managedIds,
+  ]);
+  await query(`DELETE FROM "EventParticipant" WHERE "userId" = ANY($1)`, [
+    managedIds,
+  ]);
+  await query(`DELETE FROM "EmailMessage" WHERE "userId" = ANY($1)`, [managedIds]);
+  await query(`DELETE FROM "Session" WHERE "facilitatorId" = ANY($1)`, [managedIds]);
+  await query(
+    `DELETE FROM "TrainingEvent"
+     WHERE "hostUserId" = ANY($1) OR "facilitatorUserId" = ANY($1)`,
+    [managedIds],
+  );
+  await query(
+    `DELETE FROM "NegotiationCase"
+     WHERE "facilitatorId" = ANY($1) OR "createdByUserId" = ANY($1)`,
+    [managedIds],
+  );
 }
 
 export async function ensureDemoFacilitator() {

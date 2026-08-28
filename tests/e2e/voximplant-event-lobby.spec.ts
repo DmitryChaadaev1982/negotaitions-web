@@ -8,6 +8,7 @@ import {
   createActiveUser,
   createE2eCase,
   createE2eEvent,
+  ensureManagedVoxE2EUser,
   getEventParticipants,
   query,
 } from "./helpers/db";
@@ -261,7 +262,7 @@ test("voximplant provider path is present and livekit path is isolated", async (
 }) => {
   const event = await createE2eEvent({ title: "E2E Vox Lobby Provider Path" });
   await query(`UPDATE "TrainingEvent" SET "visibility"='PUBLIC' WHERE "id"=$1`, [event.id]);
-  const user = await createActiveUser();
+  const user = await ensureManagedVoxE2EUser("PARTICIPANT_02");
   const authCookie = await createUserSessionCookie(user.id);
   await query(
     `INSERT INTO "EventInvite" ("id","eventId","userId","invitedByUserId","createdAt")

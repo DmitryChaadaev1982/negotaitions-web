@@ -422,7 +422,10 @@ payload.
   revokes any active publication in the same claim transaction. That is the
   single publication-revoke for the restart. Mapping/attribution/transcript
   saves that follow on the new generation do not revoke again unless a new
-  current analysis exists.
+  current analysis exists. `SOURCE_RECORDING_NOT_AVAILABLE` is a
+  non-destructive retranscription outcome: source bytes are proven before
+  admission, so a missing source object does not increment
+  `retranscribeCount`, revoke publication or grants, or change AI currentness.
 - Facilitator material writes (transcript, mapping, manual attribution) go
   through `applyFacilitatorMaterialInputChange`. The destructive guard fires
   only when a **current** completed analysis exists for the active generation

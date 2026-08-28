@@ -144,6 +144,59 @@ test("cookie policy describes actual browser storage and not guest tokens", () =
   assert.doesNotMatch(enCookies, /Analytics and marketing trackers are not currently enabled/);
 });
 
+test("privacy retention distinguishes application-storage recordings from other records", () => {
+  assert.match(ruLegal, /Физические объекты записей и связанные аудиоартефакты/);
+  assert.match(ruLegal, /Yandex Object Storage/);
+  assert.match(ruLegal, /автоматически удаляются по истечении 90 дней/);
+  assert.match(
+    ruLegal,
+    /Для аккаунтов, сессий, транскриптов и ИИ-анализов единый продуктовый срок хранения 90 дней не применяется/,
+  );
+  assert.match(
+    ruLegal,
+    /Срок хранения любой копии записи на стороне Voximplant остаётся отдельным и оператором не подтверждён/,
+  );
+  assert.match(
+    ruLegal,
+    /Оператор не утверждает, что приложение управляет удалением независимой копии у провайдера/,
+  );
+  assert.doesNotMatch(
+    ruLegal,
+    /не устанавливает и не применяет фиксированные продуктовые сроки хранения для аккаунтов, сессий, записей/,
+  );
+
+  assert.match(
+    enLegal,
+    /Physical recording objects and related audio artifacts stored in the application's dedicated Yandex Object Storage bucket/,
+  );
+  assert.match(enLegal, /automatically expired after 90 days/);
+  assert.match(
+    enLegal,
+    /does not apply a single 90-day product retention period to accounts, sessions, transcripts, or AI analyses/,
+  );
+  assert.match(
+    enLegal,
+    /provider-side Voximplant copy remains subject to a separate retention regime that the operator has not confirmed/,
+  );
+  assert.match(
+    enLegal,
+    /does not state that the application controls deletion of any independent provider-side copy/,
+  );
+  assert.doesNotMatch(
+    enLegal,
+    /does not currently set or enforce fixed retention periods for accounts, sessions, recordings/,
+  );
+
+  const ru = getDictionary("ru").legal.materialsRetentionNotice;
+  const en = getDictionary("en").legal.materialsRetentionNotice;
+  assert.match(ru, /Исходные файлы записей в хранилище приложения автоматически удаляются по истечении 90 дней/);
+  assert.match(ru, /не удаляет сохранённые транскрипты и ИИ-разборы/);
+  assert.doesNotMatch(ru, /production-запуском/);
+  assert.match(en, /Source recording files in application storage are automatically deleted after 90 days/);
+  assert.match(en, /does not delete saved transcripts or AI analyses/);
+  assert.doesNotMatch(en, /production launch/);
+});
+
 test("privacy policy describes request-based deletion and grant-based AI access", () => {
   assert.match(ruLegal, /Самостоятельная кнопка удаления аккаунта в сервисе не предоставляется/);
   assert.match(enLegal, /There is no self-service Delete Account button/);

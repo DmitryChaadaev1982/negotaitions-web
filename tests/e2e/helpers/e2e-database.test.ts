@@ -236,6 +236,22 @@ test("masks credentials in errors and logs", () => {
   assert.equal(maskDatabaseName("negotiations_e2e"), "nego***e2e");
 });
 
+test("buildE2eServerEnvironment overrides inherited VIDEO_PROVIDER with explicit livekit", () => {
+  withEnv(
+    {
+      E2E_DATABASE_URL: VALID_E2E_URL,
+      DATABASE_URL: VALID_DEV_URL,
+      VIDEO_PROVIDER: "voximplant",
+    },
+    () => {
+      const env = buildE2eServerEnvironment({
+        VIDEO_PROVIDER: "livekit",
+      });
+      assert.equal(env.VIDEO_PROVIDER, "livekit");
+    },
+  );
+});
+
 test("buildE2eServerEnvironment sets DATABASE_URL to E2E_DATABASE_URL", () => {
   withEnv(
     {
