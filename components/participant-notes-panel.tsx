@@ -97,6 +97,7 @@ export function ParticipantNotesPanel({
           onChange={(event) => setDraftNotes(event.target.value)}
           className={inputClassName(!!state.errors?.notes)}
           placeholder={placeholder}
+          data-testid="participant-notes-textarea"
         />
         {state.errors?.notes ? (
           <p className={errorClassName}>
@@ -110,13 +111,17 @@ export function ParticipantNotesPanel({
         ) : null}
       </div>
       <div className="flex items-center gap-3">
-        <GradientButton type="submit" disabled={isPending}>
+        <GradientButton type="submit" disabled={isPending} data-testid="participant-notes-save-button">
           {isPending ? t("common.saving") : t("common.saveNotes")}
         </GradientButton>
         {isDirty ? (
-          <span className="text-sm text-amber-300">{t("common.unsavedNotes")}</span>
+          <span className="text-sm text-amber-300" data-testid="participant-notes-unsaved">
+            {t("common.unsavedNotes")}
+          </span>
         ) : showSaved ? (
-          <span className="text-sm text-emerald-300">{t("common.notesSaved")}</span>
+          <span className="text-sm text-emerald-300" data-testid="participant-notes-saved">
+            {t("common.notesSaved")}
+          </span>
         ) : null}
       </div>
     </form>

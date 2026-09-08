@@ -373,7 +373,7 @@ test("Event duplicate transcription admission keeps existing single-run behavior
   );
 });
 
-test("account Materials Notes becomes clean after persisting its edited draft", async ({ page }) => {
+test("account Materials Notes becomes clean after persisting its edited draft @bug01-notes", async ({ page }) => {
   const fixture = await createSessionFixture();
   await query(`UPDATE "SessionParticipant" SET notes = $2 WHERE id = $1`, [
     fixture.facilitator.id,
@@ -394,7 +394,7 @@ test("account Materials Notes becomes clean after persisting its edited draft", 
   await expect(page.getByText("Unsaved notes")).toHaveCount(0);
 });
 
-test("account Materials Notes keeps an in-flight newer draft dirty and preserves its baseline after failure", async ({
+test("account Materials Notes keeps an in-flight newer draft dirty and preserves its baseline after failure @bug01-notes", async ({
   page,
 }) => {
   const fixture = await createSessionFixture();

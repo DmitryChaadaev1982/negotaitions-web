@@ -394,7 +394,11 @@ reconciliation cadence are not business timeouts.
   current draft separate from its saved baseline. A successful Notes action
   advances only that baseline to the returned persisted notes; a newer local
   edit remains visible and dirty, and a failed action cannot report saved
-  state. Negotiation-participant preparation notes become read-only after
+  state. The saved baseline may reflect server/transport newline
+  representation (CRLF). Client dirty-state comparison canonicalizes CRLF and
+  CR to LF for semantic equality only; persistence bytes are unchanged, and a
+  successful save does not overwrite the live draft with the action result.
+  Negotiation-participant preparation notes become read-only after
   `negotiationState === FINISHED`; they remain visible to authorized viewers
   through `resolveDebriefVisibleNotes` (own notes for a negotiation
   participant; all participant preparation notes for facilitator and

@@ -17,6 +17,14 @@ export function reconcileSavedNotes(
     : savedBaseline;
 }
 
+/**
+ * Canonicalize line endings for Notes semantic equality only.
+ * Persistence and live-draft bytes stay unchanged.
+ */
+function canonicalizeNotes(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 export function areNotesDirty(currentDraft: string, savedBaseline: string): boolean {
-  return currentDraft !== savedBaseline;
+  return canonicalizeNotes(currentDraft) !== canonicalizeNotes(savedBaseline);
 }

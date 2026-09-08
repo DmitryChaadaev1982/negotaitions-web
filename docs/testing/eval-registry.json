@@ -1373,6 +1373,29 @@
         "docs/requirements/stage-3-24a-vox-test-identities.md"
       ],
       "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-NOTES-NEWLINE-SEMANTIC-DIRTY",
+      "invariant": "Client Notes dirty-state comparison canonicalizes CRLF and CR to LF. Logically identical multiline drafts stay clean after save. Persistence bytes and the live draft are unchanged. A newer in-flight edit remains dirty.",
+      "risk": "MEDIUM",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "areNotesDirty treats LF vs CRLF/CR as equal and treats genuine text edits as dirty. reconcileSavedNotes still stores the server echo unchanged.",
+      "expectedUiResult": "Observer room notes during negotiation and Participant room notes during preparation become saved after a mid-text Enter save, stay saved on focus without editing, and become unsaved after a real extra character.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": ["BUG01"],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/participant-notes-state.ts",
+        "lib/participant-notes-state.test.ts",
+        "components/participant-notes-panel.tsx",
+        "tests/e2e/stage-3-25a-bug01-notes-newline.spec.ts",
+        "tests/e2e/stage-3-13e-standalone-remediation.spec.ts"
+      ],
+      "coverageStatus": "COVERED"
     }
   ]
 }

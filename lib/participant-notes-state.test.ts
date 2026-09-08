@@ -45,3 +45,30 @@ test("a successful in-flight save preserves a newer draft as dirty", () => {
   assert.equal(updatedBaseline, draftSubmittedForSave);
   assert.equal(areNotesDirty(newerCurrentDraft, updatedBaseline), true);
 });
+
+test("LF draft is not dirty against a CRLF saved baseline", () => {
+  assert.equal(areNotesDirty("line1\nline2", "line1\r\nline2"), false);
+});
+
+test("LF draft is not dirty against a CR-only saved baseline", () => {
+  assert.equal(areNotesDirty("line1\nline2", "line1\rline2"), false);
+});
+
+test("equal single-line notes are not dirty", () => {
+  assert.equal(areNotesDirty("same line", "same line"), false);
+});
+
+test("genuinely different notes remain dirty", () => {
+  assert.equal(areNotesDirty("line1\nline2", "line1\nline2 changed"), true);
+});
+
+test("newline canonicalization does not hide a newer in-flight edit", () => {
+  const savedBaseline = reconcileSavedNotes("", {
+    success: true,
+    notes: "line1\r\nline2",
+  });
+
+  assert.equal(savedBaseline, "line1\r\nline2");
+  assert.equal(areNotesDirty("line1\nline2", savedBaseline), false);
+  assert.equal(areNotesDirty("line1\nline2X", savedBaseline), true);
+});
