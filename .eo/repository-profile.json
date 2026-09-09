@@ -1,0 +1,409 @@
+{
+  "profileId": "github:DmitryChaadaev1982/negotaitions-web",
+  "profileVersion": 1,
+  "contentDigest": "086ff74dcc7c03e1116e31920b64639b979b5f2991252f51ac8230ece5f89e0a",
+  "repositoryIdentity": {
+    "logicalId": "github:DmitryChaadaev1982/negotaitions-web",
+    "provider": "github",
+    "owner": "DmitryChaadaev1982",
+    "repo": "negotaitions-web"
+  },
+  "baseRemote": "origin",
+  "baseBranch": "deploy/yandex-poc",
+  "worktreeNamingPolicy": "SIBLING_SLUG",
+  "bootstrapSteps": [
+    {
+      "type": "INSTALL_DEPENDENCIES",
+      "manager": "npm",
+      "command": "ci"
+    },
+    {
+      "type": "MATERIALIZE_LOCAL_ENVIRONMENT"
+    },
+    {
+      "type": "GENERATE_CLIENT",
+      "generator": "none"
+    }
+  ],
+  "requiredDependencies": [],
+  "environmentProfileIds": [
+    "negotaitions-local"
+  ],
+  "environmentProfiles": [
+    {
+      "profileId": "negotaitions-local",
+      "repositoryProfileId": "github:DmitryChaadaev1982/negotaitions-web",
+      "environmentType": "LOCAL",
+      "profileVersion": 1,
+      "contentDigest": "0569edeb8325f419fc7e0f97c8c18725bdcc4ff532182fa3f385865b05a23f09",
+      "requiredVariables": [
+        {
+          "name": "DATABASE_URL",
+          "classification": "SECRET",
+          "required": true,
+          "generated": false
+        },
+        {
+          "name": "AUTH_SECRET",
+          "classification": "SECRET",
+          "required": true,
+          "generated": false
+        },
+        {
+          "name": "APP_URL",
+          "classification": "NON_SECRET",
+          "required": true,
+          "generated": false
+        },
+        {
+          "name": "APP_NAME",
+          "classification": "NON_SECRET",
+          "required": true,
+          "generated": false
+        },
+        {
+          "name": "EMAIL_CANONICAL_BASE_URL",
+          "classification": "NON_SECRET",
+          "required": true,
+          "generated": false
+        }
+      ],
+      "optionalVariables": [
+        {
+          "name": "E2E_DATABASE_URL",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "VIDEO_PROVIDER",
+          "classification": "NON_SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "TRANSCRIPTION_PROVIDER",
+          "classification": "NON_SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "AI_ANALYSIS_PROVIDER",
+          "classification": "NON_SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "LIVEKIT_URL",
+          "classification": "NON_SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "LIVEKIT_API_KEY",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "LIVEKIT_API_SECRET",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "S3_BUCKET",
+          "classification": "NON_SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "S3_ACCESS_KEY_ID",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "S3_SECRET_ACCESS_KEY",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "YANDEX_API_KEY",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        },
+        {
+          "name": "VOXIMPLANT_RECORDING_CONTROL_SECRET",
+          "classification": "SECRET",
+          "required": false,
+          "generated": false
+        }
+      ],
+      "secretVariables": [
+        "DATABASE_URL",
+        "E2E_DATABASE_URL",
+        "AUTH_SECRET",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "OPENAI_API_KEY",
+        "YANDEX_API_KEY",
+        "VOXIMPLANT_RECORDING_CONTROL_SECRET"
+      ],
+      "nonSecretVariables": [
+        "APP_URL",
+        "APP_NAME",
+        "EMAIL_CANONICAL_BASE_URL",
+        "VIDEO_PROVIDER",
+        "TRANSCRIPTION_PROVIDER",
+        "AI_ANALYSIS_PROVIDER",
+        "LIVEKIT_URL",
+        "S3_BUCKET"
+      ],
+      "generatedVariables": [],
+      "dependencyBindings": [],
+      "sourcePolicy": {
+        "kind": "TYPED_IMPORT",
+        "overlaySourceRefs": true,
+        "wholesaleCopyForbidden": true
+      },
+      "injectionPolicy": {
+        "channels": [
+          "PROCESS_ENV",
+          "MATERIALIZED_FILE"
+        ],
+        "materializedRelativePath": ".env",
+        "adoptUnmarkedLocalEnv": false
+      },
+      "validationPolicy": {
+        "requireGitignoredMaterialization": true
+      },
+      "mutationAuthority": "LOCAL_EO",
+      "persistencePolicy": {
+        "persistSecretValues": false,
+        "persistPlaintextBackup": false
+      },
+      "redactionPolicy": {
+        "knownValueScan": true,
+        "classifiedNameRedaction": true
+      },
+      "runtimeConsumers": [
+        "EO_KERNEL",
+        "OWNED_PROCESS"
+      ],
+      "restartPolicy": {
+        "reProbeOnResume": true
+      },
+      "readinessPolicy": {
+        "authTtlMs": 900000
+      },
+      "productionBackupIdentity": null
+    }
+  ],
+  "secretDescriptors": [
+    {
+      "secretId": "negotaitions-database-url",
+      "name": "DATABASE_URL",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-auth-secret",
+      "name": "AUTH_SECRET",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-livekit-api-secret",
+      "name": "LIVEKIT_API_SECRET",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-s3-secret-access-key",
+      "name": "S3_SECRET_ACCESS_KEY",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-openai-api-key",
+      "name": "OPENAI_API_KEY",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-yandex-api-key",
+      "name": "YANDEX_API_KEY",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    },
+    {
+      "secretId": "negotaitions-vox-recording-control-secret",
+      "name": "VOXIMPLANT_RECORDING_CONTROL_SECRET",
+      "classification": "SECRET",
+      "providerId": "typed-import-source-ref",
+      "scope": "ENVIRONMENT",
+      "rotationPolicy": "IMPORT_ONLY",
+      "generatePolicy": "NONE"
+    }
+  ],
+  "dependencyBindings": [],
+  "dependencyAuthProbes": [],
+  "readinessProbes": [
+    {
+      "type": "PROCESS_IDENTITY",
+      "ownedProcessId": "negotaitions-app"
+    },
+    {
+      "type": "PROCESS_IDENTITY",
+      "ownedProcessId": "negotaitions-reverse-tunnel"
+    },
+    {
+      "type": "TCP",
+      "host": "127.0.0.1",
+      "port": 3000
+    },
+    {
+      "type": "HTTP",
+      "url": "https://local.negotaitions.ru/api/health",
+      "expectStatus": 200
+    }
+  ],
+  "ownedProcessDefinitions": [
+    {
+      "ownedProcessId": "negotaitions-app",
+      "executable": "npm",
+      "argv": [
+        "run",
+        "dev"
+      ],
+      "lifetime": "UNTIL_STOPPED"
+    },
+    {
+      "ownedProcessId": "negotaitions-reverse-tunnel",
+      "executable": "ssh",
+      "argv": [
+        "-N",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=2",
+        "-R",
+        "127.0.0.1:3300:127.0.0.1:3000",
+        "deploy@172.29.172.1"
+      ],
+      "lifetime": "UNTIL_STOPPED"
+    }
+  ],
+  "testInstanceProfiles": [
+    {
+      "profileId": "local-uat",
+      "resources": [
+        {
+          "resourceId": "application",
+          "kind": "APPLICATION",
+          "ownedProcessDefinitionId": "negotaitions-app",
+          "cwdPolicy": "CU_WORKTREE",
+          "lifetime": "UNTIL_STOPPED"
+        },
+        {
+          "resourceId": "tunnel",
+          "kind": "TUNNEL",
+          "ownedProcessDefinitionId": "negotaitions-reverse-tunnel",
+          "cwdPolicy": "CU_WORKTREE",
+          "lifetime": "UNTIL_STOPPED",
+          "requires": [
+            "application"
+          ]
+        }
+      ],
+      "uatUrl": "https://local.negotaitions.ru",
+      "startupTimeoutMs": 60000,
+      "readinessIntervalMs": 500,
+      "readinessProbes": [
+        {
+          "type": "TCP",
+          "host": "127.0.0.1",
+          "port": 3000
+        },
+        {
+          "type": "HTTP",
+          "url": "https://local.negotaitions.ru/api/health",
+          "expectStatus": 200
+        }
+      ],
+      "productionHostname": "negotaitions.ru"
+    }
+  ],
+  "testProfiles": [
+    "local-uat"
+  ],
+  "buildProfiles": [
+    "validate:build"
+  ],
+  "localPorts": [
+    3000
+  ],
+  "validationGates": [
+    "validate:fast",
+    "validate:deploy",
+    "test:e2e:smoke",
+    "test:e2e:smoke:browser"
+  ],
+  "runtimeDependencies": [
+    {
+      "id": "playwrightBrowsersPath",
+      "envKey": "PLAYWRIGHT_BROWSERS_PATH",
+      "classification": "NON_SECRET_LOCAL_PATH",
+      "required": true,
+      "requiredForGateIds": [
+        "test:e2e:smoke",
+        "test:e2e:smoke:browser"
+      ]
+    }
+  ],
+  "deploymentProfileRef": "NEGOTAITIONS_YANDEX_POC",
+  "invariants": [
+    "SECRET_VALUE_NEVER_ENTERS_MODEL_CONTEXT",
+    "NO_PRODUCTION_MUTATION_IN_LOCAL",
+    "TYPED_IMPORT_WHOLESALE_COPY_FORBIDDEN",
+    "CANARY_HTTP_PATH=/api/health"
+  ],
+  "taskClassPolicy": {
+    "planning": "SOURCE_ONLY",
+    "implementation": "SOURCE_ONLY",
+    "validation": "UI_ACCEPTANCE",
+    "audit": "SOURCE_ONLY",
+    "implementationRequiresLocalApp": false
+  }
+}

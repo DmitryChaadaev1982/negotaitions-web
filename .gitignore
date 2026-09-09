@@ -82,6 +82,10 @@ voxengine-ci/
 # Local scenario sync state (non-sensitive, but machine-specific)
 .vox-scenario-build-id
 
+# EO machine/runtime artifacts. The repository profile is versioned Product metadata.
+.eo/*
+!.eo/repository-profile.json
+
 # Version-controlled Cursor task-routing configuration. Keep unrelated local
 # Cursor state excluded while allowing shared agents, rules, and Skills.
 .cursor/*

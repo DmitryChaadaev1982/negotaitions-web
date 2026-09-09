@@ -1,0 +1,29 @@
+---
+description: Native Cursor Agent vs Engineering Orchestrator contract
+alwaysApply: true
+---
+
+Cursor Agent is the interactive engineering UI for this Product repository.
+Native reads, search, edits, and focused tests are normal. Do not treat a
+previous chat transcript as Change Unit authority.
+
+The Engineering Orchestrator (EO) owns the durable Change Unit lifecycle,
+fresh sibling worktree/bootstrap, TYPED_IMPORT environment, test-instance/UAT
+authority, formal validation sequencing, and commit/release/deploy/canary.
+When an EO Change Unit exists, call public `CONTINUE_CHANGE_UNIT` / `eo
+change-unit continue` instead of recreating lifecycle, worktrees, or env by
+hand. Resume from EO durable CU artifacts after Open Folder.
+Chat transcript is not lifecycle authority; chat continuity is not promised.
+
+Do not manually create Product worktrees as an EO substitute. Do not
+wholesale-copy `.env`; use the EO TYPED_IMPORT contract and machine-local
+overlay/source references. Tracked `.eo/repository-profile.json` is Product
+metadata, not a second orchestrator.
+
+UAT precedes formal validation. A standing through-production grant removes
+routine repeated release approvals on the standard path. Hard exceptional
+safety (production access, secrets, destructive Git, non-standard deploy)
+still requires explicit authority.
+
+Explicit prompt override beats EO defaults. Hard execution safety remains
+highest.
