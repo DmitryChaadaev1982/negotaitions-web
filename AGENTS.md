@@ -2,7 +2,30 @@
 
 NegotAItions is a Next.js App Router negotiation-training product with PostgreSQL
 via Prisma, provider-backed room/media services, and post-session materials/AI
-workflows. This file is deliberately a router, not a project history.
+workflows. This file routes Native Agent work. It is not a second engineering
+lifecycle, worktree, validation, or deploy engine.
+
+## Native vs Engineering Orchestrator
+
+Cursor Native Agent is the normal interactive engineering interface.
+
+- Normal reads, search, edits, and focused tests are Native.
+- Tracked `.eo/repository-profile.json` is the Product-specific EO contract.
+- `.eo/deployment-targets/negotaitions-production.json` is the standard
+  production target, including canary `canaryHttpPath`.
+- Machine-local paths and env source references live in the EO overlay, not
+  in Git.
+- EO owns durable Change Unit identity, sibling worktree/bootstrap, TYPED_IMPORT
+  environment, test-instance/UAT, formal validation after UAT, and
+  commit/release/deploy/canary.
+- For an existing Change Unit, use public `CONTINUE_CHANGE_UNIT` /
+  `eo change-unit continue`.
+- `stage-start` is only a thin convenience wrapper to that EO entry point.
+- Chat transcript is not lifecycle authority. After Open Folder, resume from
+  the durable CU and tracked Product EO contract.
+
+Do not use this file to create worktrees, copy `.env`, sequence L1–L4, pick
+models, run formal validation, or progress a release. EO owns those.
 
 ## Start every task
 
@@ -15,26 +38,21 @@ workflows. This file is deliberately a router, not a project history.
    behavior.
 4. Do not load unrelated stage, audit, or implementation history unless the
    current document links to it for a specific question.
-5. Before implementing a meaningful change, follow
-   [`docs/testing/engineering-workflow.md`](docs/testing/engineering-workflow.md)
-   for Change Impact Analysis, change-unit decomposition, high-risk kernel,
-   eval selection, and a Validation Plan. Execute that plan after
-   implementation using the validation ladder. Existing scoped rules remain
-   authoritative for database, privacy, access, and deploy safety.
+5. Keep Product domain, privacy, database, and exceptional production safety
+   rules. Do not invent a parallel CU/bootstrap/UAT/release sequencer.
 
 Read the relevant guide under `node_modules/next/dist/docs/` before changing
 Next.js code; this repository uses a version with breaking changes.
 
 ## Universal guardrails
 
-- **Git/worktrees:** verify the current branch and worktree before changing
-  files. Never validate one worktree against another worktree's server. Do not
+- **Git:** verify the current branch and worktree before changing files.
+  Never validate one worktree against another worktree's server. Do not
   commit, push, reset, or discard work without explicit user authorization.
-- **Environment and production:** never print, commit, or modify secret env
-  values. Use the named-variable and copy policy in
-  [`docs/operations/deployment-runbook.md`](docs/operations/deployment-runbook.md).
-  Production access, deploys, provider changes, and infrastructure actions
-  require explicit authorization and the runbook.
+  Do not create sibling Product worktrees as an EO substitute.
+- **Environment:** never print, commit, or modify secret env values. Do not
+  wholesale-copy `.env`. Use EO TYPED_IMPORT and the machine-local overlay
+  source reference.
 - **Database:** inspect `prisma/schema.prisma` and generated Prisma types before
   SQL or schema work. Do not guess columns. Migrations are deliberate,
   reviewable changes; do not rewrite migration history. See the scoped database
@@ -47,75 +65,50 @@ Next.js code; this repository uses a version with breaking changes.
   `docs/architecture/README.md` and `docs/architecture/code-map.md`. Historical
   documents remain historical; redirect conflicts to current-state truth.
 
-## Testing and release safety
+## Native checks vs EO formal validation
 
-Select validation using the L1–L4 ladder in
-[`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md).
-Intermediate checkpoints may stop at L1–L3. That is timing, not a waiver.
+Native Agent may run focused tests and bounded diagnostic checks during
+implementation. Product owns commands such as `validate:fast`,
+`validate:deploy`, `test:e2e:smoke`, and `test:e2e:smoke:browser`.
 
-L4 is a final **code / configuration / test / runtime** package or
-deploy/high-risk boundary, not every commit. Docs-only and audit-only work
-does not require product L4 suites. When L4 applies, run and report in order:
-`npm run validate:fast`, `npm run validate:build`,
-`npm run test:e2e:smoke`, and `npm run test:e2e:smoke:browser`.
-`npm run validate:deploy` remains the complete standalone deploy validation
-(`validate:fast` then `validate:build`). Low current
-Change Unit risk does not authorize skipping those final gates later.
-Canonical `validate:fast`, `validate:build`, and `validate:deploy` are
-executed by the primary/orchestrating agent or, as fallback, by the operator
-in PowerShell. Do not delegate those commands to a Cursor subagent. See
-[`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md).
-
-For **meaningful** work, capture approved product requirements in the existing
-`docs/requirements/` manifest style, then produce the planning material needed
-to drive Change Impact Analysis, Change Units, Eval Selection, and the
-Validation Plan **before** implementation begins. Trivial typo or isolated
-comment work does not require that bureaucracy. Run `verify-requirements` as
-the completeness gate before `validate-wave`, expensive targeted high-risk
-review, and packaging; it must not rely solely on the implementing model's
-completion report. Run `validate-wave` separately as the correctness/regression
-gate.
+EO owns **when** canonical formal validation and release gates run. UAT
+precedes formal validation. `validate-wave` is a thin wrapper to EO formal
+validation for a durable CU; it is not a nested Agent validation state
+machine.
 
 Use [`docs/testing/validation-checklist.md`](docs/testing/validation-checklist.md)
-for ladder selection and L4 gate commands/ordering, and
-[`docs/testing/e2e-strategy.md`](docs/testing/e2e-strategy.md) for test
-selection, E2E database isolation, and managed/live modes.
-Use [`docs/testing/observer-test-execution-policy.md`](docs/testing/observer-test-execution-policy.md)
+for what Product commands check. Use
+[`docs/testing/e2e-strategy.md`](docs/testing/e2e-strategy.md) for E2E
+selection, database isolation, and managed/live modes. Use
+[`docs/testing/observer-test-execution-policy.md`](docs/testing/observer-test-execution-policy.md)
 for the observer smoke/layout trigger matrix. Do not run overlapping managed
-Playwright servers. Tunnel and live-provider suites are opt-in; the full
-Playwright suite is manual/nightly unless requested.
+Playwright servers. Tunnel and live-provider suites are opt-in.
 
-Deployment work must follow
-[`docs/operations/deployment-runbook.md`](docs/operations/deployment-runbook.md);
-never infer production commands from historical stage notes.
+## Production safety
 
-## Model routing (temporary)
+Standard through-production release uses the exact accepted candidate, committed
+SHA, resolved Product deployment target, valid StandingReleaseGrant, and typed
+PREPARE/PREFLIGHT/DEPLOY/CANARY operations. It does not require repeated
+low-level approvals for internal ssh/git/systemctl on that path.
 
-Current model identities, effort modes, escalation, and return-to-OpenAI policy
-are owned by
-[`docs/testing/agent-model-routing.md`](docs/testing/agent-model-routing.md).
-Do not maintain a second matrix here.
+Exceptional operations still need explicit authority. Raw Native production SSH
+mutation remains prohibited. See
+`.cursor/rules/deployment-production-safety.mdc` and
+[`docs/operations/deployment-runbook.md`](docs/operations/deployment-runbook.md).
 
-Durable role split only:
+## Model routing
 
-- The parent/orchestrator owns implementation, remediation, requirements
-  judgment, architecture, the engineering report, and **direct execution** of
-  canonical `validate:fast` / `validate:build` / `validate:deploy`.
-- `.cursor/agents/validation-runner.md` is a focused-test evidence profile
-  only. It must not run those canonical long gates. Do not move engineering
-  judgment into that profile.
-- Escalation models are not defaults; use them only when the routing document's
-  evidence-based criteria are met.
+Actual provider/model identity comes from EO resolved binding. Product docs are
+not the executable router. `freshContext` is not M4. M3 does not automatically
+escalate to M4. Maximum automatic root-cause escalation is one M2→M3.
+See [`docs/testing/agent-model-routing.md`](docs/testing/agent-model-routing.md).
 
 Use `.cursor/agents/codebase-explorer.md` for codebase exploration and
 `.cursor/agents/test-explorer.md` for test discovery when delegation reduces
 discovery cost. Use `.cursor/agents/requirements-evidence-collector.md` for
-factual requirement evidence. Use `.cursor/skills/validate-wave/SKILL.md` to
-reconcile and execute the Validation Plan in the **primary** context. Use
-`.cursor/skills/stage-start/SKILL.md` for a new stage/worktree
-and `.cursor/skills/verify-requirements/SKILL.md` for independent completeness
-verification. Skills reuse these subagent profiles and do not override scoped
-safety rules or authoritative documents.
+factual requirement evidence. Use `.cursor/skills/verify-requirements/SKILL.md`
+for Product requirement completeness. Skills do not override scoped safety
+rules or EO hard execution safety.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

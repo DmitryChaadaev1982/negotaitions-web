@@ -1,0 +1,22 @@
+{
+  "targetId": "negotaitions-production",
+  "profileVersion": 1,
+  "repositoryIdentity": "github:DmitryChaadaev1982/negotaitions-web",
+  "environmentClass": "production",
+  "hostIdentity": "130.193.62.91",
+  "sshUser": "deploy",
+  "sshPort": 22,
+  "expectedHostKeyFingerprints": [],
+  "applicationPath": "/var/www/negotaitions/app",
+  "systemdUnit": "negotaitions-poc",
+  "envConsumerPath": "/var/www/negotaitions/app/.env.production",
+  "gitRemoteName": "origin",
+  "deployRefName": "deploy/yandex-poc",
+  "serviceManager": "systemd",
+  "adapterId": "negotaitions-yandex",
+  "executionMode": "LIVE",
+  "envBackupRoot": "/var/lib/negotaitions/eo-env-backups",
+  "historicalEnvPath": "/etc/negotaitions/env.production",
+  "targetEnvironmentId": "negotaitions-production",
+  "canaryHttpPath": "/api/health"
+}

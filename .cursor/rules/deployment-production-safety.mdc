@@ -8,7 +8,33 @@ Read `docs/operations/deployment-runbook.md` and
 `docs/architecture/11-deployment-architecture.md` before changing deployment,
 runtime configuration, or operational scripts.
 
-Never expose, copy into source control, or modify secret values. Production
-access, deploys, provider changes, infrastructure changes, and production
-migration commands require explicit user authorization and the runbook's
-preflight/rollback steps.
+Never expose, copy into source control, or modify secret values.
+
+## Standard through-production path
+
+EO may run the standard release when all of the following hold:
+
+- exact accepted candidate
+- committed SHA bound to that digest
+- standard path `NEGOTAITIONS_YANDEX_POC`
+- resolved Product target `.eo/deployment-targets/negotaitions-production.json`
+- valid StandingReleaseGrant
+- typed PREPARE / PREFLIGHT / DEPLOY / CANARY
+
+On that path, do not demand repeated low-level approvals for internal
+ssh/git/systemctl. Native Agent does not drive production by raw SSH.
+
+## Exceptional operations
+
+Still require explicit authority:
+
+- destructive DB/data mutation
+- force push / history rewrite
+- arbitrary production shell
+- unknown production script
+- firewall/VPN/infrastructure mutation
+- secret mutation outside the declared contract
+- rollback with data-loss risk
+- deploy of an unaccepted SHA
+
+Raw Native production SSH mutation remains prohibited.

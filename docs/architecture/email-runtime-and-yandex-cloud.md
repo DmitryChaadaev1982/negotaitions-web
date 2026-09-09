@@ -74,12 +74,8 @@ bounded and idempotent.
 
 Environment files are deployment inputs and are never committed.
 
-- Authoritative local environment:
-  `C:\Projects\Negotiations AI\negotiations-web-server-stop-main\.env`.
-- Active remediation worktree environment:
-  `C:\Projects\Negotiations AI\negotiations-web-stage-3-13c-email-runtime-config\.env`.
-  It is synchronized from the authoritative local file and must match it by
-  SHA-256.
+- Authoritative local environment: the machine-local EO overlay TYPED_IMPORT
+  source reference. Do not commit that path or copy `.env` wholesale.
 - Production web application: deployment-managed `.env.production`.
 - Production email worker, provider-event consumer, reconciliation, retention,
   and canary units: `/etc/negotaitions/env.production`.

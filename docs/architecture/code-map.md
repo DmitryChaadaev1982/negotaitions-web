@@ -2,6 +2,16 @@
 
 Use this map before changing code. If you touch mapped files, update the linked architecture chapter in the same change.
 
+## Product ↔ EO contract pointers
+
+These are architectural locations, not a second workflow:
+
+- `.eo/repository-profile.json` — tracked Product ↔ EO executable metadata
+- `.eo/deployment-targets/negotaitions-production.json` — standard production target / canary path
+- `.cursor/rules/engineering-orchestrator.mdc` — short always-on Native contract
+- `.cursor/skills/stage-start/SKILL.md` and `.cursor/skills/validate-wave/SKILL.md` — thin compatibility wrappers
+- EO (outside this Product runtime) owns lifecycle, UAT, formal validation, and release orchestration
+
 ## Mapping
 
 - Product and domain orchestration
