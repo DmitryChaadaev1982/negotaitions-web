@@ -83,16 +83,19 @@ test("Playwright inventory listing does not start a managed webServer", () => {
   assert.match(localConfig, /enableWebServer && !isInventoryOnly/);
 });
 
-test("BROAD_VALIDATION_RUNS records the current normal command graph", () => {
+test("canonical Product gates remain documented without a Product L1–L4 sequencer", () => {
   const workflow = readFileSync("docs/testing/engineering-workflow.md", "utf8");
-  assert.match(workflow, /L3_VALIDATE_FAST:/);
-  assert.match(workflow, /L4_VALIDATE_BUILD:/);
-  assert.match(workflow, /L4_SMOKE:/);
-  assert.match(workflow, /L4_BROWSER_SMOKE:/);
-  assert.match(workflow, /STANDALONE_VALIDATE_DEPLOY:/);
+  const checklist = readFileSync("docs/testing/validation-checklist.md", "utf8");
+  assert.match(workflow, /`validate:fast`/);
+  assert.match(workflow, /`validate:deploy`/);
+  assert.match(workflow, /`test:e2e:smoke`/);
+  assert.match(workflow, /`test:e2e:smoke:browser`/);
+  assert.match(workflow, /`prisma:generate`/);
+  assert.doesNotMatch(workflow, /L3_VALIDATE_FAST:/);
   assert.doesNotMatch(workflow, /L4_VALIDATE_DEPLOY:/);
+  assert.match(checklist, /Canonical Product gates declared in `\.eo\/repository-profile\.json`/);
   assert.match(
-    workflow,
-    /Do not treat `validate:deploy` as the\r?\nnormal L4 build step/,
+    checklist,
+    /`validate:deploy` is complete standalone deploy validation/,
   );
 });

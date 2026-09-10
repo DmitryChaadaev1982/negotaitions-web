@@ -90,10 +90,10 @@ and are not a substitute for that checkpoint.
 | Product | Command implementations: `validate:fast`, `validate:deploy`, `test:e2e:smoke`, `test:e2e:smoke:browser`, `prisma:generate`, and other package scripts. |
 | EO | Whether and when canonical/release gates run after UAT. |
 
-`validate:fast` includes Prisma generate. Bootstrap `GENERATE_CLIENT` with
-`generator: "none"` means EO worktree prepare does not run a second generator;
-`npm ci` installs packages, and Product `prisma:generate` / `validate:fast`
-materializes `app/generated/prisma`.
+`validate:fast` includes Prisma generate. Bootstrap `GENERATE_CLIENT` is a
+declared COMMAND (`npm run prisma:generate`) so a fresh worktree materializes
+`app/generated/prisma` during EO bootstrap rather than copying gitignored
+artifacts. The same command also runs inside `validate:fast`.
 
 See [`validation-checklist.md`](./validation-checklist.md) for command
 coverage and limitations.
