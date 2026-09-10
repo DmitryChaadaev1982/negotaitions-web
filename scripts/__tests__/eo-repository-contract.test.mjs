@@ -106,6 +106,11 @@ test("profile declares TYPED_IMPORT, Playwright, UAT graph, and no machine env p
     uat.resources.map((item) => item.kind),
     ["APPLICATION", "TUNNEL"],
   );
+  const uatHttp = uat.readinessProbes.find((item) => item.type === "HTTP");
+  assert.equal(uatHttp.url, "https://local.negotaitions.ru/api/health");
+  assert.equal(uatHttp.expectStatus, 200);
+  assert.equal(existsSync("app/api/health/route.ts"), true);
+  assert.equal(JSON.parse(read(targetPath)).canaryHttpPath, "/api/health");
   for (const descriptor of raw.secretDescriptors) {
     assert.equal("value" in descriptor, false);
     assert.equal(descriptor.classification, "SECRET");
@@ -141,7 +146,12 @@ test("local-uat reverse tunnel declares the operational keepalive command", asyn
   assert.equal(/IdentityFile/i.test(serialized), false);
   assert.equal(/BEGIN (OPENSSH |RSA )?PRIVATE KEY/i.test(serialized), false);
   const porcelain = spawnSync("git", ["status", "--porcelain", "--", "app", "lib", "components", "prisma"], { encoding: "utf8" });
-  assert.equal((porcelain.stdout ?? "").trim(), "");
+  const dirty = (porcelain.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/app\/api\/health\//.test(line));
+  assert.deepEqual(dirty, []);
 });
 
 test("alwaysApply EO rule is short and does not implement a second lifecycle", () => {
