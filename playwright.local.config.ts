@@ -2,8 +2,11 @@ import "dotenv/config";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { applyTestRuntimeDefaults } from "./scripts/test-unit-env-bootstrap.mjs";
 import { buildE2eServerEnvironment } from "./tests/e2e/helpers/e2e-database";
 import { resolveManagedPlaywrightVideoProvider } from "./tests/e2e/helpers/playwright-video-provider";
+
+applyTestRuntimeDefaults({ overwrite: true });
 
 const port = 3100;
 const localBaseUrl = `http://127.0.0.1:${port}`;
