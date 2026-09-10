@@ -1,7 +1,6 @@
 {
   "profileId": "github:DmitryChaadaev1982/negotaitions-web",
   "profileVersion": 1,
-  "contentDigest": "086ff74dcc7c03e1116e31920b64639b979b5f2991252f51ac8230ece5f89e0a",
   "repositoryIdentity": {
     "logicalId": "github:DmitryChaadaev1982/negotaitions-web",
     "provider": "github",
@@ -318,6 +317,8 @@
         "ServerAliveInterval=30",
         "-o",
         "ServerAliveCountMax=2",
+        "-o",
+        "TCPKeepAlive=yes",
         "-R",
         "127.0.0.1:3300:127.0.0.1:3000",
         "deploy@172.29.172.1"
@@ -405,5 +406,6 @@
     "validation": "UI_ACCEPTANCE",
     "audit": "SOURCE_ONLY",
     "implementationRequiresLocalApp": false
-  }
+  },
+  "contentDigest": "090deac41aeb990779c55b997380a84d9e596ddd35a6323b529e5340c4bbfdfe"
 }

@@ -112,6 +112,38 @@ test("profile declares TYPED_IMPORT, Playwright, UAT graph, and no machine env p
   }
 });
 
+test("local-uat reverse tunnel declares the operational keepalive command", async () => {
+  const eo = await loadEo();
+  const loaded = eo.loadRepositoryProfile({ repositoryPath: process.cwd() });
+  assert.equal(loaded.source, "worktree");
+  const selected = loaded.profile.testInstanceProfiles.find((item) => item.profileId === "local-uat") ?? loaded.profile.testInstanceProfiles[0];
+  assert.ok(selected);
+  assert.equal(selected.profileId, "local-uat");
+  assert.deepEqual(
+    selected.resources.map((item) => item.kind),
+    ["APPLICATION", "TUNNEL"],
+  );
+  const tunnelResource = selected.resources.find((item) => item.kind === "TUNNEL");
+  const tunnel = loaded.profile.ownedProcessDefinitions.find(
+    (item) => item.ownedProcessId === tunnelResource.ownedProcessDefinitionId,
+  );
+  assert.ok(tunnel);
+  assert.equal(tunnel.ownedProcessId, "negotaitions-reverse-tunnel");
+  assert.equal(tunnel.executable, "ssh");
+  assert.equal(tunnel.argv.includes("-N"), true);
+  assert.equal(tunnel.argv.includes("ExitOnForwardFailure=yes"), true);
+  assert.equal(tunnel.argv.includes("ServerAliveInterval=30"), true);
+  assert.equal(tunnel.argv.includes("ServerAliveCountMax=2"), true);
+  assert.equal(tunnel.argv.includes("TCPKeepAlive=yes"), true);
+  assert.equal(tunnel.argv.includes("127.0.0.1:3300:127.0.0.1:3000"), true);
+  assert.equal(tunnel.argv.includes("deploy@172.29.172.1"), true);
+  const serialized = read(profilePath);
+  assert.equal(/IdentityFile/i.test(serialized), false);
+  assert.equal(/BEGIN (OPENSSH |RSA )?PRIVATE KEY/i.test(serialized), false);
+  const porcelain = spawnSync("git", ["status", "--porcelain", "--", "app", "lib", "components", "prisma"], { encoding: "utf8" });
+  assert.equal((porcelain.stdout ?? "").trim(), "");
+});
+
 test("alwaysApply EO rule is short and does not implement a second lifecycle", () => {
   const rule = read(rulePath).replaceAll("\r\n", "\n");
   assert.match(rule, /alwaysApply:\s*true/);
