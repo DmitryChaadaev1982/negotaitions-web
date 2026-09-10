@@ -106,9 +106,17 @@ test("profile declares TYPED_IMPORT, Playwright, UAT graph, and no machine env p
     uat.resources.map((item) => item.kind),
     ["APPLICATION", "TUNNEL"],
   );
-  const uatHttp = uat.readinessProbes.find((item) => item.type === "HTTP");
-  assert.equal(uatHttp.url, "https://local.negotaitions.ru/api/health");
-  assert.equal(uatHttp.expectStatus, 200);
+  const uatHttp = uat.readinessProbes.filter((item) => item.type === "HTTP");
+  assert.equal(uatHttp.length, 2);
+  assert.ok(uatHttp.some((item) => item.url === "https://local.negotaitions.ru/api/health" && item.expectStatus === 200));
+  assert.ok(uatHttp.some((item) => item.url === "https://local.negotaitions.ru/" && item.expectStatus === 200));
+  const generate = raw.bootstrapSteps.find((item) => item.type === "GENERATE_CLIENT");
+  assert.equal(generate.generator.kind, "COMMAND");
+  assert.equal(generate.generator.executable, "npm");
+  assert.deepEqual(generate.generator.argv, ["run", "prisma:generate"]);
+  assert.match(read(".gitignore"), /\/app\/generated\/prisma/);
+  const tsconfig = JSON.parse(read("tsconfig.json"));
+  assert.equal(tsconfig.include.includes(".next/dev/dev/types/**/*.ts"), true);
   assert.equal(existsSync("app/api/health/route.ts"), true);
   assert.equal(JSON.parse(read(targetPath)).canaryHttpPath, "/api/health");
   for (const descriptor of raw.secretDescriptors) {

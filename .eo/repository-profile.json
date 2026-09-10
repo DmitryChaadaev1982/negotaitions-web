@@ -21,7 +21,14 @@
     },
     {
       "type": "GENERATE_CLIENT",
-      "generator": "none"
+      "generator": {
+        "kind": "COMMAND",
+        "executable": "npm",
+        "argv": [
+          "run",
+          "prisma:generate"
+        ]
+      }
     }
   ],
   "requiredDependencies": [],
@@ -349,7 +356,7 @@
         }
       ],
       "uatUrl": "https://local.negotaitions.ru",
-      "startupTimeoutMs": 60000,
+      "startupTimeoutMs": 180000,
       "readinessIntervalMs": 500,
       "readinessProbes": [
         {
@@ -360,6 +367,11 @@
         {
           "type": "HTTP",
           "url": "https://local.negotaitions.ru/api/health",
+          "expectStatus": 200
+        },
+        {
+          "type": "HTTP",
+          "url": "https://local.negotaitions.ru/",
           "expectStatus": 200
         }
       ],
@@ -407,5 +419,5 @@
     "audit": "SOURCE_ONLY",
     "implementationRequiresLocalApp": false
   },
-  "contentDigest": "090deac41aeb990779c55b997380a84d9e596ddd35a6323b529e5340c4bbfdfe"
+  "contentDigest": "8fbbbe71cbee5bce07916f358be8fd0b256b4b930a573c15e18d044f74e885d3"
 }

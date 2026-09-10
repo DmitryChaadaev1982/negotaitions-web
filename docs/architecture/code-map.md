@@ -6,7 +6,7 @@ Use this map before changing code. If you touch mapped files, update the linked 
 
 These are architectural locations, not a second workflow:
 
-- `.eo/repository-profile.json` — tracked Product ↔ EO executable metadata
+- `.eo/repository-profile.json` — tracked Product ↔ EO executable metadata, including `npm run prisma:generate` and local-UAT probes for `/api/health` plus `/`
 - `.eo/deployment-targets/negotaitions-production.json` — standard production target / canary path `/api/health`
 - `app/api/health/route.ts` — unauthenticated machine-readable liveness/readiness (`GET /api/health`)
 - `.cursor/rules/engineering-orchestrator.mdc` — short always-on Native contract
