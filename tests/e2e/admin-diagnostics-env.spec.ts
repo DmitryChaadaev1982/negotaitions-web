@@ -75,9 +75,17 @@ test.describe("admin diagnostics env display", () => {
       EMAIL_PROVIDER: "disabled",
       EMAIL_DELIVERY_ENABLED: "false",
       EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+      EMAIL_SENSITIVE_PAYLOAD_KEY: undefined,
+      YANDEX_POSTBOX_ENDPOINT: undefined,
+      YANDEX_POSTBOX_REGION: undefined,
+      YANDEX_POSTBOX_ACCESS_KEY_ID: undefined,
+      YANDEX_POSTBOX_SECRET_ACCESS_KEY: undefined,
+      YANDEX_POSTBOX_ALLOWED_SENDERS: undefined,
+      YANDEX_POSTBOX_CONFIGURATION_SET: undefined,
+      YANDEX_DATA_STREAMS_ENDPOINT: undefined,
+      YANDEX_DATA_STREAMS_STREAM_NAME: undefined,
       YANDEX_DATA_STREAMS_ACCESS_KEY_ID: "access-key-value",
       YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY: "secret-key-value",
-      YANDEX_POSTBOX_CONFIGURATION_SET: undefined,
     })) {
       previous.set(key, process.env[key]);
       if (value === undefined) delete process.env[key];
