@@ -80,6 +80,15 @@ export default defineConfig({
           EMAIL_LOCAL_PREVIEW_ENABLED:
             process.env.PLAYWRIGHT_EMAIL_LOCAL_PREVIEW_ENABLED ?? "true",
           EMAIL_CANONICAL_BASE_URL: "https://local.negotaitions.ru",
+          ADMIN_EMAILS: "admin@example.com",
+          EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
+          EMAIL_OPERATOR_NAME: "Playwright Operator",
+          EMAIL_FROM_NO_REPLY: "no-reply@example.com",
+          EMAIL_FROM_NOTIFICATIONS: "notifications@example.com",
+          EMAIL_FROM_INVITATIONS: "invitations@example.com",
+          EMAIL_REPLY_TO_SUPPORT: "support@example.com",
+          EMAIL_REPLY_TO_SECURITY: "security@example.com",
+          EMAIL_REPLY_TO_BUSINESS: "business@example.com",
           TRUSTED_PROXY_ENABLED:
             process.env.PLAYWRIGHT_TRUSTED_PROXY_ENABLED ?? "false",
           EXTERNAL_SERVICES_MODE: "mock",

@@ -72,6 +72,8 @@ test.describe("admin diagnostics env display", () => {
     const previous = new Map<string, string | undefined>();
     for (const [key, value] of Object.entries({
       TRUSTED_PROXY_ENABLED: "true",
+      EMAIL_PROVIDER: "disabled",
+      EMAIL_DELIVERY_ENABLED: "false",
       EMAIL_PROVIDER_EVENT_INGESTION_ENABLED: "false",
       YANDEX_DATA_STREAMS_ACCESS_KEY_ID: "access-key-value",
       YANDEX_DATA_STREAMS_SECRET_ACCESS_KEY: "secret-key-value",
