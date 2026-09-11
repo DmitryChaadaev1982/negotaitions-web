@@ -1082,8 +1082,8 @@ test("provider relay wrapper rejects start command beyond future skew and persis
       conferenceName: `negotiation-${sessionId}`,
       nonce: "nonce-clock-skew-reject",
       webhookBaseUrl: "https://local.negotaitions.ru",
-      issuedAt: nowSeconds + 31,
-      expiresAt: nowSeconds + 151,
+      issuedAt: nowSeconds + 120,
+      expiresAt: nowSeconds + 240,
     },
   );
 

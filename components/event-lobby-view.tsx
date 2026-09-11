@@ -163,6 +163,7 @@ export function EventLobbyView({
   const lobbyConnectionId = useClientConnectionId(`event-lobby-${eventId}`);
   const activateStaleConnection = useCallback(() => {
     setStaleConnection(true);
+    setLocalMediaController(null);
   }, []);
 
   const applyEventState = useCallback(
@@ -236,35 +237,40 @@ export function EventLobbyView({
       return "retryableError" as const;
     }
 
-    const response = await fetch(`/api/events/${eventId}/voximplant-access`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
-        ...(participantAccessToken
-          ? { participantToken: participantAccessToken }
-          : {}),
-        connectionId: lobbyConnectionId,
-        claimLease: true,
-      }),
-    });
-    if (response.ok) {
-      setVoxReady(true);
-      return "ok" as const;
-    }
-    if (response.status === 410) {
-      setError("eventUnavailable");
-      return "eventUnavailable" as const;
-    }
-    if (response.status === 409) {
-      const payload = (await response.json().catch(() => ({}))) as { code?: string };
-      if (payload.code === "STALE_CONNECTION") {
-        activateStaleConnection();
-        return "staleConnection" as const;
+    try {
+      const response = await fetch(`/api/events/${eventId}/voximplant-access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(hostAccessToken ? { hostToken: hostAccessToken } : {}),
+          ...(participantAccessToken
+            ? { participantToken: participantAccessToken }
+            : {}),
+          connectionId: lobbyConnectionId,
+          claimLease: true,
+        }),
+      });
+      if (response.ok) {
+        setVoxReady(true);
+        return "ok" as const;
       }
+      if (response.status === 410) {
+        setError("eventUnavailable");
+        return "eventUnavailable" as const;
+      }
+      if (response.status === 409) {
+        const payload = (await response.json().catch(() => ({}))) as { code?: string };
+        if (payload.code === "STALE_CONNECTION") {
+          activateStaleConnection();
+          return "staleConnection" as const;
+        }
+      }
+      setVoxReady(false);
+      return "retryableError" as const;
+    } catch {
+      setVoxReady(false);
+      return "retryableError" as const;
     }
-    setVoxReady(false);
-    return "retryableError" as const;
   }, [activateStaleConnection, eventId, hostAccessToken, lobbyConnectionId, participantAccessToken]);
 
   const fetchState = useCallback(async (claimLease = false) => {
@@ -797,7 +803,7 @@ export function EventLobbyView({
   const isEventCompleted = state?.event.status === "COMPLETED";
 
   useEffect(() => {
-    if (!state || !localMediaController) return;
+    if (!state || !localMediaController || staleConnection) return;
     const currentParticipant = state.currentParticipant
       ? state.participants.find(
           (participant) => participant.id === state.currentParticipant?.id,
@@ -828,7 +834,7 @@ export function EventLobbyView({
         void acknowledgeMediaCommand(command, "failed", "localMediaOperationFailed");
       });
     }
-  }, [acknowledgeMediaCommand, localMediaController, state]);
+  }, [acknowledgeMediaCommand, localMediaController, staleConnection, state]);
 
   if (error === "eventUnavailable") {
     return (
@@ -992,9 +998,12 @@ export function EventLobbyView({
         ) : null}
       </header>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-y-auto p-4 xl:flex-row xl:overflow-hidden">
+      <div
+        className="mx-auto grid min-h-0 min-w-0 w-full max-w-[1600px] flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(0,1fr)_minmax(15rem,20rem)] lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]"
+        data-testid="event-lobby-layout"
+      >
         <section
-          className="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-600/25"
+          className="glass-panel flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-600/25"
           data-testid="event-lobby-video-area"
         >
           <div className="shrink-0 border-b border-slate-600/25 px-4 py-3">
@@ -1011,7 +1020,10 @@ export function EventLobbyView({
               </p>
             ) : null}
           </div>
-          <div className="relative min-h-0 flex-1 overflow-hidden bg-black/40">
+          <div
+            className="relative flex min-h-[12rem] min-w-0 w-full flex-col overflow-hidden bg-black/40 aspect-video max-h-[min(22rem,46svh)] md:aspect-auto md:max-h-none md:flex-1"
+            data-testid="event-lobby-video-pane"
+          >
             {staleConnection ? (
               <div
                 className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
@@ -1071,7 +1083,7 @@ export function EventLobbyView({
         </section>
 
         <aside
-          className="glass-panel flex min-h-0 w-full flex-col gap-4 overflow-hidden rounded-2xl border border-slate-600/25 p-4 xl:w-[360px] xl:shrink-0 xl:overflow-y-auto 2xl:w-[420px]"
+          className="glass-panel flex min-h-0 min-w-0 w-full flex-col gap-4 overflow-hidden rounded-2xl border border-slate-600/25 p-4 md:overflow-y-auto"
           data-testid="event-lobby-sidebar"
         >
           {state.currentParticipant ? (
@@ -1194,7 +1206,8 @@ export function EventLobbyView({
                   const canUseSelfControls =
                     mediaPermission.allowed &&
                     mediaPermission.controlKind === "self" &&
-                    Boolean(localMediaController);
+                    Boolean(localMediaController) &&
+                    !staleConnection;
                   const canOwnerControlOther =
                     mediaPermission.allowed &&
                     mediaPermission.controlKind === "remote" &&

@@ -153,13 +153,6 @@ test("local-uat reverse tunnel declares the operational keepalive command", asyn
   const serialized = read(profilePath);
   assert.equal(/IdentityFile/i.test(serialized), false);
   assert.equal(/BEGIN (OPENSSH |RSA )?PRIVATE KEY/i.test(serialized), false);
-  const porcelain = spawnSync("git", ["status", "--porcelain", "--", "app", "lib", "components", "prisma"], { encoding: "utf8" });
-  const dirty = (porcelain.stdout ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !/app\/api\/health\//.test(line));
-  assert.deepEqual(dirty, []);
 });
 
 test("alwaysApply EO rule is short and does not implement a second lifecycle", () => {

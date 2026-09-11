@@ -65,3 +65,33 @@ export function remotesAfterEndpointRemoved<T extends ReconcileRemoteIdentity>(
 ): T[] {
   return current.filter((remote) => remote.id !== endpointId);
 }
+
+export function normalizeLobbyProviderUsername(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  return normalized.includes("@") ? (normalized.split("@")[0] ?? null) : normalized;
+}
+
+export function isCurrentLobbySelfEndpoint(input: {
+  localSdkUsername: string | null | undefined;
+  endpointUserName: string | null | undefined;
+}): boolean {
+  const localId = normalizeLobbyProviderUsername(input.localSdkUsername);
+  const endpointId = normalizeLobbyProviderUsername(input.endpointUserName);
+  if (!localId || !endpointId) return false;
+  return localId === endpointId;
+}
+
+export function excludeCurrentLobbySelfRemotes<T extends { endpointUsername?: string | null }>(
+  remotes: readonly T[],
+  localSdkUsername: string | null | undefined,
+): T[] {
+  return remotes.filter(
+    (remote) =>
+      !isCurrentLobbySelfEndpoint({
+        localSdkUsername,
+        endpointUserName: remote.endpointUsername,
+      }),
+  );
+}

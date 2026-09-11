@@ -182,6 +182,17 @@ switching application versions.
 - Vox room stale state triggers best-effort media disconnect (`leave`) so stale clients do not remain active video participants after takeover.
 - Session Vox access now validates/claims lease when `connectionId` is provided and rejects stale tabs before issuing fresh credentials.
 
+## Event Lobby Join Authority (Stage 3.25A BUG03)
+
+- Authoritative Event-lobby conference membership is successful `conference.join()` for this mount's conference instance. SDK `Connected` is not independently sufficient; it may be retained as a signal and used only for idempotent remote reconciliation after join has already succeeded.
+- On the false→true join edge, `joined` and `lobbyConferenceConnectedRef` converge together. Known endpoints and streams are replayed from the SDK conference maps without waiting for a new provider event.
+- Remote audio playback, remote tiles, and `VoximplantMediaControls` share that same join authority so a live connection cannot remain in audible-audio / empty-grid / disabled-controls state.
+- A `409 STALE_CONNECTION` still unmounts this browser's Vox lobby room. Cleanup releases this mount's `HTMLAudio` and local media only. Newest-connection-wins lease semantics, Vox scenario, Prisma, and Session generation fencing are unchanged.
+- Helper: `lib/voximplant/lobby-join-authority.ts` (pure transition rules for the lobby join edge; not a second Session lifecycle).
+- Event Lobby Vox room presentation is a normal-flow flex column inside the video pane (`event-lobby-video-pane`). The room root participates in document flow (`flex-1 min-h-0 min-w-0`, not `absolute`) so a collapsing overflow-hidden ancestor cannot clip an out-of-flow box while `getBoundingClientRect` still reports a size. No percentage-height dependency and no browser-name branch.
+- The Event Lobby shell (`event-lobby-layout`) is CSS grid: one column below `md`; from `md`, `minmax(0, 1fr)` for the video column and a bounded sidebar (`minmax(15rem, 20rem)`, widening slightly at `lg`). Below `md` the video pane uses `aspect-video` with a max height so it stays compact; from `md` the pane flex-fills remaining column height. Outer lobby scrolling is used when stacked; the video pane itself is `overflow-hidden`. No user-agent or viewport JS.
+- After `conference.join()` replay, a provider endpoint whose `userName` matches the current local `sdkUsername` (normalized, domain-stripped) is not materialized as a remote tile. Display name is not identity authority. Newest-browser takeover still treats this browser as the local participant; leftover same-user provider endpoints are browser-local UI suppression only (no provider-wide kick, lease redesign, or Session generation fence).
+
 ## Remote Toggle Propagation Fallback
 
 - Vox SDK endpoint events are still primary (`EndpointAdded/Removed`, `RemoteMediaAdded/Removed`).
@@ -424,6 +435,7 @@ record it fails to resolve arrive in one message.
 - `lib/voximplant/use-voximplant-room.ts`
 - `lib/voximplant/provider-disconnect-recovery.ts`
 - `lib/voximplant/endpoint-reconciliation.ts`
+- `lib/voximplant/lobby-join-authority.ts`
 - `lib/voximplant/provider-recovery-log.ts`
 - `lib/voximplant/session-room-recovery.runtime.ts`
 - `lib/voximplant/event-media-control-store.ts`
