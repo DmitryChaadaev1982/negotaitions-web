@@ -4,7 +4,8 @@ This is a human-readable architecture guide for NegotAItions engineering.
 It is **descriptive**, not an executable second authority.
 
 It does not replace `AGENTS.md`, scoped Cursor rules, current-state architecture,
-requirement manifests under `docs/requirements/`, or the deployment runbook.
+`docs/requirements/PRODUCT-REQUIREMENTS.md`,
+`docs/requirements/QUALITY-AND-ACCEPTANCE.md`, or the deployment runbook.
 Those remain the domain, safety, and product authorities.
 
 The Engineering Orchestrator (EO) is the single executable engineering
@@ -30,8 +31,9 @@ Cursor Native Agent is the normal interactive engineering interface.
 - Run focused/bounded tests and diagnostics during implementation.
 - Follow Product domain, privacy, database, and exceptional production safety
   rules.
-- Capture approved product requirements in the existing
-  `docs/requirements/` manifest style when the change is meaningful.
+- Capture approved product requirements in
+  `docs/requirements/PRODUCT-REQUIREMENTS.md` when the change is meaningful.
+  Do not create a new stage-labelled requirements file as current truth.
 - Use Change Impact Analysis and eval-class thinking as planning aids, not as
   a second orchestrator.
 

@@ -34,5 +34,6 @@
 - `app/api/sessions/[sessionId]/materials/status/route.ts`
 - `lib/services/transcription-runner.ts`
 - `lib/transcription/auto-speaker-mapping.ts`
-- `docs/architecture/session-flow-gap-analysis.md`
-- `docs/testing/yandex-poc-smoke-regression-plan.md`
+- `docs/architecture/04-session-event-flow.md`
+- `docs/history/design-packets/architecture/session-flow-gap-analysis.md`
+- `docs/history/checkpoints/testing/yandex-poc-smoke-regression-plan.md`

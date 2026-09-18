@@ -16,7 +16,7 @@ NO_DEPLOY = YES
 ```
 
 Authoritative requirements:
-[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../requirements/stage-3-15a-post-processing-workflow.md)
+[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../../design-packets/requirements/stage-3-15a-post-processing-workflow.md)
 
 PT-01..PT-35 were **not** renumbered. Status values remain `APPROVED` until
 final Stage acceptance (`PT-35`). Checkpoints A/B/C are recorded in that

@@ -66,6 +66,20 @@ Produce structured post-session coaching output from transcript/materials and ex
    Any other first-attempt class, including OpenAI schema validation, stays
    single-generation. Generation 2 is terminal: success completes once; any
    failure fails once; there is no third generation.
+9. The analyze route declares static `maxDuration = 610` seconds, just above
+   the bounded 600-second provider operation deadline. Yandex background
+   Responses use documented lifecycle values only (`queued` /
+   `in_progress` / `completed` / `failed` / `cancelled` / `incomplete`).
+   Nonterminal responses must include `id`. The adapter does not rely on
+   `Idempotency-Key`. Recovery eligibility is
+   `canRecoverProviderResponseAfterFailure` in
+   `lib/ai/negotiation-analysis.ts`: schema/invalid-output failures clear
+   `providerResponseId`; transport timeout / acceptance-unknown keep it.
+   Recovery WARNING `ExternalServiceEvent` rows are operator/forensic only
+   and must not become a user-facing banner. Legacy rows with null
+   `runToken`/`leaseExpiresAt` remain recoverable after
+   `AI_ANALYSIS_LEGACY_STALE_AFTER_MS` (default 30 minutes from
+   `updatedAt`).
 
 ## Large-session input contract
 
@@ -92,7 +106,8 @@ Produce structured post-session coaching output from transcript/materials and ex
   remains over budget.
 - This lossless compact path remains a single whole-negotiation provider call.
   It is not a set of unrelated chunk summaries and does not add synthesis calls,
-  so cross-session reasoning and Wave 1 response recovery remain unchanged.
+  so cross-session reasoning and existing `providerResponseId` recovery
+  remain unchanged.
 - If the lossless representation still exceeds the supported prompt budget,
   execution fails before creating a provider generation with
   `INPUT_TOO_LARGE` and `contentDropped=false`. No substring, array cap, or
@@ -138,15 +153,15 @@ Produce structured post-session coaching output from transcript/materials and ex
   creation plus independent response retrieval. It does not establish a safe
   resumable `background=true` + `stream=true` contract, so provider streaming
   is not enabled.
-- A live August 10, 2026 Yandex run was observed for approximately 85 seconds.
-  Every nonterminal retrieval contained no usable section output; the complete
-  validated report appeared only with `COMPLETED`. The product stop condition
-  therefore keeps the whole-report model instead of adding progress storage,
-  split prompts, extra model calls, artificial delays, or speculative parsing.
+- Provider nonterminal retrievals do not contain usable section output;
+  the complete validated report appears only with `COMPLETED`. The product
+  stop condition therefore keeps the whole-report model instead of adding
+  progress storage, split prompts, extra model calls, artificial delays, or
+  speculative parsing.
 - A browser refresh, navigation, disconnect, or closed page only interrupts UI
   polling. It does not abort accepted server work. If the app process stops,
-  lease expiry and `providerResponseId` recovery preserve Wave 1 takeover
-  behavior.
+  lease expiry and `providerResponseId` recovery preserve existing
+  takeover behavior.
 
 ## Pause Filtering Guarantees
 
@@ -588,6 +603,13 @@ payload.
   an already-open recipient observe remote Unshare without navigation. Polling
   uses `processing.shouldPoll` / `nextPollMs` from canonical `materials/status`
   (default 3500 ms) and stops on unmount or that terminal-failure condition.
+- Unshare must drop the **mounted** recipient report without requiring
+  navigation. Server revoke alone is not sufficient UX.
+- Transcript access is **not** the AI publication grant model. Do not align
+  Observer/Participant transcript authorization to historical room-entry
+  eligibility as a follow-up to publication grants. Participant transcript
+  remains membership-based; Observer transcript remains the materials
+  projection/grant rules already implemented for transcript bodies.
 - A current completed usable analysis remains publishable for no-grant polling
   even if obsolete recording/transcript processing later reports failure. When
   no such artifact exists, terminal processing failure stops polling.
@@ -597,6 +619,10 @@ payload.
 - `lib/ai/negotiation-analysis.ts`
 - `lib/ai/analysis-failure-diagnostics.ts`
 - `lib/ai/analysis-schema-recovery.ts`
+- `lib/ai/negotiation-analysis.ts` (`canRecoverProviderResponseAfterFailure`,
+  `runNegotiationAnalysis`)
+- `app/api/sessions/[sessionId]/analyze/route.ts` (`maxDuration = 610`)
+- `lib/analysis-visibility.ts`
 - `lib/analysis-visibility.ts`
 - `lib/privacy/serializers.ts`
 - `lib/ai-publication.ts`

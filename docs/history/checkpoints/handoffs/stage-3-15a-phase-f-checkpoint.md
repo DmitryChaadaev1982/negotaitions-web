@@ -19,7 +19,7 @@ NO_DEPLOY = YES
 ```
 
 Authoritative requirements:
-[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../requirements/stage-3-15a-post-processing-workflow.md)
+[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../../design-packets/requirements/stage-3-15a-post-processing-workflow.md)
 
 Normal room/Materials transcription UI did not change visually. Manual evidence
 is the canonical-route network assertion (F06) plus unchanged speaker-mapping

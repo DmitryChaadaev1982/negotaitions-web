@@ -78,6 +78,14 @@
   mounted client both use this builder.
 - `app/(app)/dashboard/page.tsx` loads account-visible data through
   `getSessionsForUser` / `getEventsForUser` for the first paint.
+- Dashboard section labels are `Active` / `Активные` versus archive/history
+  presentation. There is no separate “Managed meetings” section.
+  Owner/facilitator labels come from `Session.facilitatorId`
+  (`lib/session-overview-people.ts`). Header pictograms are chrome, not
+  per-table-row decoration.
+- Production UI must not use native `window.confirm`, `window.prompt`, or
+  `window.alert`. In-app dialogs live in `components/confirm-dialog.tsx` and
+  related components. `npm run check:native-dialogs` enforces the allowlist.
 - A mounted Dashboard then uses the same visible-list poll as `/sessions` and
   `/events` (`LIST_OVERVIEW_POLL_INTERVAL_MS` = 2_000, pause while hidden,
   refresh on focus/visible, `cache: "no-store"`). Poll responses come from

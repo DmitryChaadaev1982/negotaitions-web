@@ -263,7 +263,7 @@ test("Stage 3.10 maintenance runbook normalizes before systemd start", () => {
 
 test("legacy deployment and rollback sequences normalize before runtime restart", () => {
   const releasePlan = readFileSync(
-    path.join(process.cwd(), "docs/releases/stage-3-10-release-plan.md"),
+    path.join(process.cwd(), "docs/history/checkpoints/releases/stage-3-10-release-plan.md"),
     "utf8",
   );
   const releaseApply = releasePlan.indexOf("npm run ops:runtime-permissions:apply");
@@ -274,7 +274,7 @@ test("legacy deployment and rollback sequences normalize before runtime restart"
   assert.ok(releaseRestart > releaseCheck);
 
   const rollbackPlan = readFileSync(
-    path.join(process.cwd(), "docs/releases/stage-3-10-rollback-plan.md"),
+    path.join(process.cwd(), "docs/history/checkpoints/releases/stage-3-10-rollback-plan.md"),
     "utf8",
   );
   const rollbackApply = rollbackPlan.indexOf("npm run ops:runtime-permissions:apply");
@@ -289,7 +289,7 @@ test("legacy deployment and rollback sequences normalize before runtime restart"
 
 test("Voximplant deployment runtime starts only after normalization", () => {
   const runbook = readFileSync(
-    path.join(process.cwd(), "docs/voximplant/yandex-deployment-runbook.md"),
+    path.join(process.cwd(), "docs/history/design-packets/voximplant/yandex-deployment-runbook.md"),
     "utf8",
   );
   const buildSection = runbook.slice(
@@ -308,7 +308,7 @@ test("historical Stage 3.10 rollback blocks fail closed before restart", () => {
   const plan = readFileSync(
     path.join(
       process.cwd(),
-      "docs/audits/stage-3-10-production-debrief-hotfix/production-canary-plan.md",
+      "docs/history/audits/stage-3-10-production-debrief-hotfix/production-canary-plan.md",
     ),
     "utf8",
   );

@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
  *
  * Source of truth:
  *   - `deploy/nginx/trusted-client-ip-snippet.conf`
- *   - `docs/audits/stage-3-13c-proxy-readiness/nginx-header-flow.md`
+ *   - `docs/history/audits/stage-3-13c-proxy-readiness/nginx-header-flow.md`
  *
  * The production vhost sets `Host $host`, so the host Next receives is exactly
  * the host the browser sent, and the target snippet overwrites

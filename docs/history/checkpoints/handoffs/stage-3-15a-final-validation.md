@@ -30,7 +30,7 @@ NO_DEPLOY = YES
 ```
 
 Authoritative requirements:
-[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../requirements/stage-3-15a-post-processing-workflow.md)
+[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../../design-packets/requirements/stage-3-15a-post-processing-workflow.md)
 
 PT-01..PT-35 were **not** renumbered. Do not create PT-36. Lab catalog IDs
 **S06/S07 do not exist**; do not invent them.
@@ -110,7 +110,8 @@ lease.
 
 ## D. Independent high-risk review (Sol) — parent judgment
 
-Sol ([Sol high-risk Stage 3.15A review](a320bf5b-2023-4be8-bc42-e03f19d865e2))
+Sol (historical Sol high-risk Stage 3.15A review,
+`a320bf5b-2023-4be8-bc42-e03f19d865e2`)
 returned `BLOCKING_FINDINGS`. Parent independently confirmed a subset and
 fixed those items. Unconfirmed items were **not** expanded into new product
 scope.

@@ -5,24 +5,25 @@
 - Provider: Yandex Cloud VM-based deployment.
 - App service: `negotaitions-poc` (systemd service).
 - Runtime command model: `npm run start` / `next start` after build.
-- Stage 3.10 maintenance is a separate oneshot systemd unit
+- Session-lifecycle maintenance is a separate oneshot systemd unit
   (`negotiations-stage310-maintenance.service`) on a 15s timer. It runs
   `npm run maintenance:stage310 -- --task all` via raw `tsx`, not the
   Next bundler. Production injects `/etc/negotaitions/env.production`
   and `NODE_ENV=production`; the CLI must not load local Next `.env*`
   in that mode. Local/non-production runs load project `.env*` from cwd
   before Prisma or required config is constructed.
-- The application service and the Stage 3.10 maintenance oneshot are separate
-  processes that both run transcript-enhancement provider work, so global
-  provider concurrency cannot be process-local. Both acquire leases from the
-  same `TranscriptEnhancementProviderSlot` inventory in PostgreSQL (hard caps:
+- The application service and the `negotiations-stage310-maintenance`
+  oneshot are separate processes that both run transcript-enhancement
+  provider work, so global provider concurrency cannot be process-local.
+  Both acquire leases from the same `TranscriptEnhancementProviderSlot`
+  inventory in PostgreSQL (hard caps:
   10 slots globally, 8 per job; configuration may lower either value and can
   never raise it), which is the single cross-process admission authority.
   A killed process does not leak capacity: its slot leases expire after the
   provider timeout plus slack. Set enhancement concurrency and retry env values
   consistently in both independent production env files, because neither
   process is authoritative on its own.
-- Stage 3.18A automatic-close values must be identical in both independent
+- Automatic-close values must be identical in both independent
   production env files. The application service reads
   `/var/www/negotaitions/app/.env.production`. The maintenance unit reads
   `/etc/negotaitions/env.production`. Set
@@ -44,7 +45,7 @@
 
 - `.env.production` is runtime secret material and must not be committed.
 - Secret values must remain outside repository docs and code.
-- Stage 3.13C auth/email/provider-event runtime settings are defined by one
+- Auth/email/provider-event runtime settings are defined by one
   typed registry. Admin diagnostics project from that registry, and an
   AST-based validation gate rejects unregistered or bypassing environment
   access. Registered secrets serialize only presence state with `value: null`.
@@ -210,7 +211,7 @@ preflight predicates and rollback steps are in
   `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`) never makes an eligible
   job with a valid lease quiescent. Predicates are in
   `docs/operations/deployment-runbook.md`.
-- The Stage 3.15A additive `AiAnalysis.inputFingerprint` migration must be
+- The additive `AiAnalysis.inputFingerprint` migration must be
   applied on any database the new client reads, including local. Production
   apply uses the guarded overlay
   (`npm run prisma:production:status` /
@@ -220,7 +221,7 @@ preflight predicates and rollback steps are in
   with no backfill. Apply schema before starting the new application process.
 - Production nginx/systemd edits remain a controlled activation step documented in
   `docs/operations/deployment-runbook.md` and
-  `docs/audits/stage-3-13c-proxy-readiness/`.
+  `docs/history/audits/stage-3-13c-proxy-readiness/`.
 - Application start command binds `127.0.0.1` via `next start -H 127.0.0.1`.
 - Next Server Actions behind nginx require the approved origin allowlist in
   `next.config.ts`; this fixes login/logout forwarded-host validation without
@@ -232,8 +233,8 @@ preflight predicates and rollback steps are in
 
 ## Operational CLI runtime
 
-The Stage 3.10 maintenance CLI is an intentional non-Next runtime. The
-entrypoint (`scripts/ops/stage-3-10-maintenance.ts`) calls
+The maintenance CLI (`scripts/ops/stage-3-10-maintenance.ts`) is an
+intentional non-Next runtime. The entrypoint calls
 `bootstrapOperationalEnv()` before dynamically importing
 `lib/stage-3-10-maintenance.ts`. Next-only `import "server-only"`
 boundaries stay on application wrappers. Enabling the production timer
@@ -242,11 +243,10 @@ resolution shim.
 
 ## Source Notes
 
-- `docs/deployment/yandex-poc-server-parameters.md`
-- `docs/deployment/yandex-poc-runtime-audit.md`
-- `docs/voximplant/yandex-deployment-runbook.md` (historical; env-backup steps superseded)
-- `docs/operations/deployment-runbook.md` (authoritative env backup retention
-  and current-env rollback)
+- `docs/operations/deployment-runbook.md` (authoritative deploy and env
+  backup/rollback)
+- Historical POC notes: `docs/history/checkpoints/deployment/`
+- Historical Vox Yandex runbook: `docs/history/design-packets/voximplant/yandex-deployment-runbook.md`
 - `docs/architecture/10-data-storage-and-retention.md` (recording bucket
   lifecycle is operator Object Storage configuration, not a deploy script)
 - `scripts/ops/stage-3-10-maintenance.ts`

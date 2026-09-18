@@ -101,7 +101,7 @@
       "productionSafe": true,
       "evidence": [
         "lib/ai/legacy-null-material-edit.test.ts",
-        "docs/handoffs/stage-3-15a-local-operator-acceptance.md"
+        "docs/history/checkpoints/handoffs/stage-3-15a-local-operator-acceptance.md"
       ],
       "coverageStatus": "COVERED"
     },
@@ -122,7 +122,7 @@
       "evidence": [
         "lib/prisma-production-migration-overlay.test.ts",
         "docs/architecture/11-deployment-architecture.md",
-        "docs/requirements/stage-3-15a-post-processing-workflow.md"
+        "docs/history/design-packets/requirements/stage-3-15a-post-processing-workflow.md"
       ],
       "coverageStatus": "PARTIAL"
     },
@@ -165,7 +165,7 @@
         "tests/e2e/post-transcription-lab.spec.ts",
         "lib/post-processing/lab-i03-confirm-dialog.test.ts",
         "docs/testing/e2e-strategy.md",
-        "docs/requirements/stage-3-16a-engineering-workflow.md"
+        "docs/history/design-packets/requirements/stage-3-16a-engineering-workflow.md"
       ],
       "coverageStatus": "COVERED"
     },
@@ -566,7 +566,7 @@
       "providerCalls": false,
       "productionSafe": true,
       "evidence": [
-        "docs/handoffs/stage-3-15a-local-operator-acceptance.md",
+        "docs/history/checkpoints/handoffs/stage-3-15a-local-operator-acceptance.md",
         "docs/testing/engineering-workflow.md"
       ],
       "coverageStatus": "MANUAL"
@@ -606,7 +606,7 @@
       "productionSafe": true,
       "evidence": [
         "docs/testing/e2e-strategy.md",
-        "docs/testing/yandex-poc-smoke-regression-plan.md"
+        "docs/history/checkpoints/testing/yandex-poc-smoke-regression-plan.md"
       ],
       "coverageStatus": "COVERED"
     },
@@ -1296,7 +1296,7 @@
         "tests/e2e/helpers/playwright-video-provider.ts",
         "playwright.local.config.ts",
         "docs/testing/e2e-strategy.md",
-        "docs/requirements/stage-3-24a-vox-test-identities.md"
+        "docs/history/design-packets/requirements/stage-3-24a-vox-test-identities.md"
       ],
       "coverageStatus": "COVERED"
     },
@@ -1333,7 +1333,7 @@
         "lib/voximplant/username.test.ts",
         "scripts/ops/voximplant-orphan-user-cleanup.ts",
         "docs/architecture/05-voximplant-integration.md",
-        "docs/requirements/stage-3-24a-vox-test-identities.md"
+        "docs/history/design-packets/requirements/stage-3-24a-vox-test-identities.md"
       ],
       "coverageStatus": "COVERED"
     },
@@ -1374,7 +1374,7 @@
         "lib/transcription/retranscribe-client-error.test.ts",
         "docs/architecture/06-recording-transcription-pipeline.md",
         "docs/architecture/10-data-storage-and-retention.md",
-        "docs/requirements/stage-3-24a-vox-test-identities.md"
+        "docs/history/design-packets/requirements/stage-3-24a-vox-test-identities.md"
       ],
       "coverageStatus": "COVERED"
     },

@@ -69,11 +69,24 @@
   application does not call storage lifecycle APIs and must not add
   prefix-dependent expiration behavior.
 
+## UTC wall-clock SQL
+
+Prisma `DateTime` columns are stored as PostgreSQL `timestamp without time zone`
+with a UTC wall-clock convention. Production PostgreSQL `TimeZone` is
+`Europe/Moscow`. Raw SQL that compares those columns to `NOW()` is wrong:
+valid UTC leases look expired.
+
+Use `sqlUtcWallClockNow()` / `sqlUtcWallClockOrDate()` from
+`lib/sql-utc-wall-clock.ts` on occupancy, lease, and canonical-close paths.
+Do not mechanically replace every `NOW()`. Migrating columns to
+`timestamptz` is a future Change Unit.
+
 ## Retention/Artifact Boundaries
 
 - Durable summaries remain in repository docs.
 - Raw or high-volume generated artifacts should stay outside repo in project artifact storage.
-- Historical report markdowns were moved to `docs/audits/archive/old-root-reports/` to remove root clutter while preserving history.
+- Historical report markdowns live under `docs/history/` and are not
+  current-state architecture.
 - The application does not enforce calendar retention for accounts,
   sessions, transcripts, speaker mapping, AI analyses, or publication
   rows. Those remain until an explicit product or support process
@@ -98,3 +111,4 @@
 - `docs/operations/project-hygiene.md`
 - `docs/operations/personal-data-erasure-runbook.md`
 - `docs/decisions/ADR-2026-07-07-project-artifact-hygiene.md`
+- `lib/sql-utc-wall-clock.ts`

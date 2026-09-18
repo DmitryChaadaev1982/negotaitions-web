@@ -15,10 +15,17 @@ NegotAItions is a negotiation training platform for running case-based sessions 
 
 ## Primary User Roles
 
-- `ADMIN`: account and diagnostics governance.
-- `FACILITATOR`: session control, transcription, AI, sharing decisions.
+- `ADMIN`: account-level `User.globalRole` (or `ADMIN_EMAILS` allowlist).
+  Account and diagnostics governance, plus Session/Event management through
+  `canManageSession`. Not a session participant type.
+- `FACILITATOR`: domain-scoped session/event control. Canonical Session
+  owner is `Session.facilitatorId`. Participant type `FACILITATOR` is
+  membership, not a global account role. Type-based membership is not
+  by itself a proven management requirement; see FIND-01.
 - `PARTICIPANT`: role-based negotiation participation.
 - `OBSERVER`: participation without negotiation role ownership.
+
+Legacy `User.role` enum values are not access-control authority.
 
 ## Product Boundaries
 
@@ -27,10 +34,16 @@ NegotAItions is a negotiation training platform for running case-based sessions 
 - External systems are used for video/recording/transcription/AI/storage.
 - Runtime behavior is controlled by env-based provider selection and feature flags.
 
+## Implementation anchors
+
+- `app/actions/cases.ts`, `app/actions/sessions.ts`, `app/actions/events.ts`
+- `prisma/schema.prisma`
+- Requirements: `docs/requirements/PRODUCT-REQUIREMENTS.md`
+- Navigation: `code-map.md`
+
 ## Source Notes
 
 - `app/actions/cases.ts`
 - `app/actions/sessions.ts`
 - `app/actions/events.ts`
 - `prisma/schema.prisma`
-- `docs/architecture/current-solution-audit.md`

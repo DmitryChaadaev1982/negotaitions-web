@@ -33,7 +33,7 @@
     `invitations@negotaitions.ru`; all application sender roles must resolve to
     that explicit allowlist.
   - Provider-event subscription should emit only Send, Delivery, DeliveryDelay,
-    Bounce, Complaint, and Rendering Failure during Stage 3.13C canary.
+    Bounce, Complaint, and Rendering Failure.
 - Yandex Data Streams:
   - Kinesis-compatible consumer source for Postbox provider events.
   - Requires dedicated consumer static-key credentials; do not reuse Postbox
@@ -96,7 +96,7 @@
 - Control-plane identifiers and the sender/template matrix are recorded in
   `email-runtime-and-yandex-cloud.md` without credentials.
 
-## Provider processing geography (Stage 3.15A amendment, recorded 2026-08-19)
+## Provider processing geography
 
 On 2026-08-19 ООО «Фастком» (Voximplant), ИНН 7702764401, confirmed in writing
 that processing performed by the provider, including media-traffic processing
@@ -107,8 +107,8 @@ to the client's storage and ООО «Фастком» does not retain a copy on 
 servers.
 
 This register entry is a factual summary only. The private correspondence is
-not published. After Manual Checkpoint D, Voximplant-scoped user-facing copy
-lives in `/ai-processing-notice` and the Privacy Policy. It must not be
+not published. Voximplant-scoped user-facing copy lives in
+`/ai-processing-notice` and the Privacy Policy. It must not be
 rewritten as a platform-wide claim that every NegotAItions data path stays
 inside the Russian Federation.
 
@@ -118,5 +118,5 @@ inside the Russian Federation.
 - `lib/ai/negotiation-analysis.ts`
 - `lib/services/transcription-runner.ts`
 - `app/api/sessions/[sessionId]/voximplant/recording-status/route.ts`
-- `docs/deployment/yandex-poc-runtime-audit.md`
-- `docs/voximplant/yandex-deployment-runbook.md`
+- Historical POC notes: `docs/history/checkpoints/deployment/`
+- Historical Vox deploy runbook: `docs/history/design-packets/voximplant/yandex-deployment-runbook.md`

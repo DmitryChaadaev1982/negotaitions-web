@@ -124,9 +124,9 @@ timeout evasion is not used.
   MANUAL_CHECKPOINT_F = ACCEPTED. Phase G cleanup is accepted. Phase H focused
   units plus `validate:fast` / `validate:deploy` completed; headed Lab was not
   re-run in Phase H (coverage remains Checkpoints A–G). Checkpoint H is
-  ACCEPTED (`docs/handoffs/stage-3-15a-final-validation.md`). Pre-deploy local
+  ACCEPTED (`docs/history/checkpoints/handoffs/stage-3-15a-final-validation.md`). Pre-deploy local
   real-session acceptance is a separate operator gate (not Lab fixtures):
-  `docs/handoffs/stage-3-15a-local-operator-acceptance.md`.
+  `docs/history/checkpoints/handoffs/stage-3-15a-local-operator-acceptance.md`.
 - Lab runtime sets `POST_TRANSCRIPTION_LAB=1`. Room pages skip LiveKit/Vox
   signaling so mock `wss://mock-livekit.invalid` does not emit websocket 1006 /
   signal ConnectionError during post-processing scenarios. Materials,
@@ -450,13 +450,13 @@ Intentionally not covered in Phase 2 smoke:
 - `tests/e2e/**`
 - `docs/testing/engineering-workflow.md`
 - `docs/testing/observer-test-execution-policy.md`
-- `docs/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
+- `docs/history/checkpoints/testing/stage-3-10-session-lifecycle-scenario-catalog.md`
 - `docs/testing/stage-3-10-session-lifecycle-traceability.csv`
-- `docs/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
+- `docs/history/checkpoints/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
 - `docs/testing/validation-checklist.md`
-- `docs/testing/yandex-poc-smoke-regression-plan.md`
-- `docs/audits/archive/old-root-reports/TEST_PLAN.md`
-- `docs/audits/archive/old-root-reports/TEST_RESULTS.md`
+- `docs/history/checkpoints/testing/yandex-poc-smoke-regression-plan.md`
+- `docs/history/audits/archive/old-root-reports/TEST_PLAN.md`
+- `docs/history/audits/archive/old-root-reports/TEST_RESULTS.md`
 
 ## Stage 3.10 Checkpoint B guard focus
 

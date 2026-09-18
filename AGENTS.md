@@ -32,7 +32,10 @@ models, run formal validation, or progress a release. EO owns those.
 1. Determine the affected domain(s).
 2. Read only the authoritative documents for those domains in
    [`docs/architecture/README.md`](docs/architecture/README.md), plus the
-   relevant scoped Cursor rule.
+   relevant scoped Cursor rule. Product contract:
+   [`docs/requirements/PRODUCT-REQUIREMENTS.md`](docs/requirements/PRODUCT-REQUIREMENTS.md).
+   Documentation ownership:
+   [`docs/DOCUMENTATION-GOVERNANCE.md`](docs/DOCUMENTATION-GOVERNANCE.md).
 3. Read [`docs/architecture/code-map.md`](docs/architecture/code-map.md), then
    inspect the mapped source and existing tests before proposing or changing
    behavior.
@@ -61,9 +64,11 @@ Next.js code; this repository uses a version with breaking changes.
   authorization, narrow CAS/control ownership, and role-specific privacy
   projections. Domain details live in the linked architecture documents.
 - **Documentation:** when mapped runtime code changes, update its mapped
-  current-state architecture document. New major flows also require updates to
-  `docs/architecture/README.md` and `docs/architecture/code-map.md`. Historical
-  documents remain historical; redirect conflicts to current-state truth.
+  current-state architecture document. If the product contract changed, update
+  `docs/requirements/PRODUCT-REQUIREMENTS.md`. New major flows also require
+  updates to `docs/architecture/README.md` and
+  `docs/architecture/code-map.md`. Historical documents remain historical;
+  redirect conflicts to current-state truth.
 
 ## Native checks vs EO formal validation
 

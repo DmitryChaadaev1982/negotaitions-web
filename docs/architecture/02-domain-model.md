@@ -3,6 +3,10 @@
 ## Main Aggregates
 
 - `User`, `UserSession`: account identity, status, and cookie-session auth.
+  Access-control fields are `User.globalRole` (`USER` \| `ADMIN`) and
+  `User.status`. `ADMIN_EMAILS` is a second admin grant. Legacy
+  `User.role` (`FACILITATOR` \| `PARTICIPANT` \| `OBSERVER`) is seed/compat
+  only and must not be used for authorization.
 - `NegotiationCase`, `CaseRole`: reusable training scenarios and private role briefs.
 - `Session`, `SessionRole`, `SessionParticipant`: concrete negotiation runs.
 - `TrainingEvent`, `EventParticipant`, `EventInvite`: event-level lobby and assignment.
@@ -39,13 +43,15 @@ not persist or expose nonterminal provider output.
 ## Session Lifecycle Model
 
 - `Session.status`: `DRAFT | READY | COMPLETED`.
-- `Session.negotiationState`: `PREPARATION -> READY_TO_START -> RUNNING -> FINISHED` with paused variants.
-- Room/runtime checks and controls are role-gated by participant type and ownership.
+- `Session.negotiationState`: `PREPARATION -> READY_TO_START -> RUNNING -> FINISHED` with paused variants (`PREPARATION_RUNNING`, `PREPARATION_PAUSED`, `PAUSED`).
+- `Session.roomLifecycle`: `OPEN | DEBRIEF_OPEN | CLOSED` (nullable on historical rows). Canonical close semantics are owned by `04-session-event-flow.md`.
+- `Session.facilitatorId` is the canonical Session owner/facilitator identity. Facilitator list/display uses this field, not an inferred participant row.
+- Room/runtime checks and controls are role-gated by participant type and `facilitatorId` ownership. Case `createdByUserId` is not Session management authority.
 
 ## Account Preferences
 
 - `User.preferredLocale`: persisted UI locale.
-- `User.sessionSoundEnabled` (Stage 3.13E): persisted room-sound preference,
+- `User.sessionSoundEnabled`: persisted room-sound preference,
   non-null boolean with database default `true` and migration backfill for
   existing users.
 
@@ -81,7 +87,7 @@ not persist or expose nonterminal provider output.
   errors and are never silently rewritten to current time.
 - Event update preserves existing schedule when `scheduledAt` is omitted and
   rejects explicit clear attempts.
-- Database schema remains `TrainingEvent.scheduledAt DateTime?` in this stage
+- Database schema remains `TrainingEvent.scheduledAt DateTime?`
   for legacy-row compatibility; no migration/backfill is implied by this
   invariant.
 
@@ -90,6 +96,14 @@ not persist or expose nonterminal provider output.
 - `SessionParticipantAudioActivity` stores speaking activity windows.
 - `ExternalServiceEvent` stores classified failure/health signals.
 - `UsageCounter` stores service usage counters.
+
+## Implementation anchors
+
+- `prisma/schema.prisma` (`User`, `Session`, `TrainingEvent`, `Transcript`, `AiAnalysis`, `AiAnalysisPublicationGrant`)
+- `lib/auth/admin.ts` (`isAdmin`, `parseAdminEmails`)
+- `lib/access-control.ts` (`canManageSession`, `canAccessSession`)
+- `lib/session-overview-people.ts` (`resolveSessionOwnerFacilitatorDisplay`)
+- Tests: `lib/session-overview-people.test.ts`, `lib/access-control.test.ts`
 
 ## Source Notes
 

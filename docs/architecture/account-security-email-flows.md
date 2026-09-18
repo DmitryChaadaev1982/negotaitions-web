@@ -2,8 +2,8 @@
 
 ## Scope
 
-Stage 3.13C adds account recovery and security notifications to the durable
-Stage 3.13B outbox. HTTP requests enqueue `EmailMessage` rows and never call an
+Account recovery and security notifications use the durable email outbox.
+HTTP requests enqueue `EmailMessage` rows and never call an
 email provider. Event and negotiation Session state, room leases, participant
 membership, and Voximplant state are outside this flow.
 
@@ -179,7 +179,7 @@ indexed, but it intentionally carries **no database foreign key**:
   journal history. `SetNull` would only reproduce the fail-closed behavior the
   application already implements.
 
-Do not add a foreign key on this column and do not rewrite Stage 3.13C
+Do not add a foreign key on this column and do not rewrite committed
 migration history to introduce one.
 
 ## Browser fragment boundary
@@ -213,7 +213,7 @@ The HMAC uses `AUTH_SECRET`, with a process-random local fallback. Buckets are
 pruned after one hour.
 
 The process-local layer is intentionally single-instance only. It is not a
-distributed rate limiter and Stage 3.13C-P does not add Redis or infrastructure.
+distributed rate limiter and this flow does not add Redis or infrastructure.
 Durable per-account checks continue to work across instances; unknown-address
 and per-IP limits remain process-local residual risk.
 
@@ -234,9 +234,16 @@ Corrected contract:
 
 - nginx still owns and overwrites forwarded headers;
 - application same-origin and trusted-client-IP protections remain enabled;
-- `next.config.ts` declares only approved Server Action origins:
-  `negotaitions.ru`, `local.negotaitions.ru`, `127.0.0.1:3000`, and
-  `localhost:3000`;
+- production Server Action `allowedOrigins` is exactly `negotaitions.ru`
+  (`PRODUCTION_SERVER_ACTION_ORIGINS` in
+  `lib/config/server-action-origins.ts`). Production ignores environment
+  overrides for this list;
+- development and managed-test builds also allow exact local origins:
+  `local.negotaitions.ru`, `localhost:3000`, `localhost:3100`,
+  `127.0.0.1:3000`, `127.0.0.1:3100`. Those entries are not a production
+  allowlist;
+- the original production forwarded-host mismatch remains a documented
+  incident reconstruction, not a second live origin list;
 - login redirects only to safe internal return URLs;
 - logout remains idempotent because `destroyUserSession()` deletes by hashed
   cookie token with `deleteMany`, then clears the cookie even if the durable row
@@ -269,12 +276,12 @@ The recent-message preview is available only when all conditions hold:
 - requester is an authenticated ACTIVE administrator.
 
 Unavailable configurations return 404 before authentication. List results are
-limited to 20 allowlisted Stage 3.13C message types, mask recipients, and omit
+limited to 20 allowlisted account-security message types, mask recipients, and omit
 bodies. A same-origin POST with a listed message id is required to reveal
 rendered content. Responses use `Cache-Control: no-store`.
 
-After Stage 3.13C acceptance the local flags remain `false`. The permanent
-Admin → Email journal replaces day-to-day operational inspection.
+Local preview flags remain `false` in ordinary production-shaped configs.
+The permanent Admin → Email journal replaces day-to-day operational inspection.
 
 ## Permanent Admin → Email journal
 

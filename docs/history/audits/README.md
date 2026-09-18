@@ -1,8 +1,9 @@
 # Audits And Historical Reports
 
-`docs/audits` is the canonical audit/history folder for this repository.
+**Historical / non-authoritative.** Former path: `docs/audits/`.
 
-This folder contains durable audit summaries and historical report material relevant to architecture and operations traceability.
+Current architecture lives in `docs/architecture/`. This folder is
+provenance and investigation evidence only.
 
 ## What Belongs Here
 
@@ -16,12 +17,10 @@ This folder contains durable audit summaries and historical report material rele
 
 ## Archive Notes
 
-- Historical root-level markdown reports were moved to:
-  - `docs/audits/archive/old-root-reports/`
-- Historical records from former `docs/audit` locations should be archived under `docs/audits/archive/`.
+- Historical root-level markdown reports live in `archive/old-root-reports/`.
 - Archived reports are historical records and are not guaranteed to describe current runtime behavior.
 
 ## Usage Guidance
 
 - Use `docs/architecture/*` as canonical current-state truth.
-- Use archived audit reports as supporting context/source notes.
+- Use these audit reports as supporting context only.

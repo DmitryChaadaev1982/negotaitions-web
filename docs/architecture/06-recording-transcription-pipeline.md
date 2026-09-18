@@ -13,7 +13,7 @@
 7. Transcript and segments are finalized for speaker mapping and AI analysis.
    Enhancement may later publish an atomic all-success lexical generation.
 
-## Recording Attempt Identity and CAS Discipline (Stage 3.13E)
+## Recording Attempt Identity and CAS Discipline
 
 - `Recording.recordingAttemptId` is the stable identity of one provider recording
   attempt and fences all delayed mutations.
@@ -128,7 +128,8 @@
   posts to `/transcribe-recording`.
 - `POST /api/sessions/[sessionId]/transcribe-recording` is a
   **canonical adapter** (`OLD_ROUTE_MODE=CANONICAL_ADAPTER`), not a failover.
-  It is not deleted in this stage and is not invoked after a canonical failure.
+  It is retained as a compatibility adapter and is not invoked after a
+  canonical failure.
 - The old route admits through the same `admitTranscriptionRun` primitive,
   executes `executeClaimedTranscription`, then adapts the response to
   `{ transcript, warnings, recording }`.
@@ -150,11 +151,16 @@
   key is transcription-ready; clients must not invent “waiting for recording”
   when this API is unavailable.
 - Management mutations and facilitator-level materials projection are
-  authorized by `canManageSession` (ADMIN, Session facilitator, Event host,
-  Event facilitator). A caller who can open `/sessions/{id}` but is not the
-  facilitator `SessionParticipant` still receives recording, transcript, and
-  enhancement state. Absence of any `SessionParticipant` row is not Forbidden
-  for an authorized manager. Non-managers keep the existing role projection.
+  authorized by the implemented `canManageSession` helper (ADMIN, Session
+  facilitator owner, Event host, Event facilitator, and currently also a
+  FACILITATOR `SessionParticipant` path). A caller who can open
+  `/sessions/{id}` but is not the facilitator `SessionParticipant` still
+  receives recording, transcript, and enhancement state. Absence of any
+  `SessionParticipant` row is not Forbidden for an authorized manager.
+  Non-managers keep the existing role projection. The extra
+  FACILITATOR-participant grant is implementation reality, not a proven
+  product requirement (FIND-01). Which FACILITATOR row is projected for
+  a manager is also unresolved (FIND-02).
 - The Prisma client for `materials/status` reads nullable
   `AiAnalysis.inputFingerprint`. That additive column must exist in the
   database the client is using. A missing column is schema drift and 500s
@@ -268,7 +274,7 @@
   - `pauseProcessing.sourceAudioArtifactPath`
   - `pauseProcessing.ffmpegDiagnostics`
 
-## Transcript Enhancement Modes (Stage 3.9E Phase 1)
+## Transcript Enhancement Modes
 
 - Enhancement runtime mode is controlled by `TRANSCRIPT_ENHANCEMENT_MODE`:
   - `chunked` (default): bounded chunk enhancement with deterministic merge and
@@ -288,8 +294,7 @@
   - balanced split by segment count and character budget,
   - bounded by `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS` and `TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS`,
   - context neighbors are read-only and cannot overwrite target segments.
-- Stage 3.13D Wave 2 makes the character bound effective for every individual
-  utterance:
+- The character bound is effective for every individual utterance:
   - complete utterances remain the preferred target unit;
   - an utterance over the target budget is split deterministically at sentence
     punctuation, then whitespace, and only then a Unicode-safe hard boundary;
@@ -357,8 +362,9 @@
     Workers then stop consuming later queued chunks. Already-in-flight calls
     may finish and are fenced at the finish checkpoint.
   - every real Product path shares this authority: application enhancement,
-    automatic enhancement, Repeat Improve, recovery, and the Stage 3.10
-    maintenance oneshot all execute through `runAdmittedEnhancementJob`.
+    automatic enhancement, Repeat Improve, recovery, and the maintenance
+    oneshot (`scripts/ops/stage-3-10-maintenance.ts`) all execute through
+    `runAdmittedEnhancementJob`.
     `single` mode uses the same D1 executor and slot admission. No runtime
     provider path bypasses it.
   - the in-process `FairGlobalLimiter` is only a process-local waiter and
@@ -570,7 +576,8 @@
   - automatic enhancement is admitted after raw persist and scheduled with
     Next.js `after()` / detached execution. Durability is the D1 row, not
     the in-process Promise;
-  - Stage 3.10 oneshot `task=all` / `task=enhancement-recovery` periodically
+  - Maintenance oneshot `task=all` / `task=enhancement-recovery`
+    (`npm run maintenance:stage310`) periodically
     claims expired leases and resumes unfinished chunks. Recovery does not
     depend on Materials/status traffic;
   - `CONTINUE_WITH_CURRENT_TRANSCRIPT` CAS-sets
@@ -746,7 +753,7 @@
   - transcript/materials UI reads persisted canonical text (`Transcript.text`, `Transcript.diarizedText`, `TranscriptSegment.text`);
   - UI does not currently expose side-by-side original vs enhanced transcript versions.
 
-## Transcript Enhancement Structured Output (Stage 3.9E JSON Schema)
+## Transcript Enhancement Structured Output
 
 - Output mode is now independently controlled by `TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE`:
   - `legacy`: prompt-generated JSON path.
@@ -769,7 +776,7 @@
     compatibility; execution uses the three-layer D1 fields;
   - `FAILED` and terminal `PARTIAL` mean no transcript text mutation.
 
-## Automatic Transcript Enhancement (Stage 3.9F)
+## Automatic Transcript Enhancement
 
 - Auto-run is controlled by `TRANSCRIPT_ENHANCEMENT_AUTO_RUN` (default `false`).
 - Automatic trigger is enabled only when both flags are true:
@@ -796,7 +803,7 @@
 - `processingMetadata.transcriptEnhancement` stores trigger source, idempotency decision,
   timing, chunk telemetry, and skip/failure metadata without transcript text payloads.
 
-## Transcript Readability Presentation (Stage 3.9G)
+## Transcript Readability Presentation
 
 - Transcript segment timestamps originate from SpeechKit alternative-level timing and are
   persisted unchanged.
@@ -823,7 +830,7 @@
     `ConfirmDialog` rather than an inline status-card panel.
     Domain/readiness semantics are unchanged.
 
-## Local Pause-Filter Calibration Harness (Stage 3.4.4)
+## Local Pause-Filter Calibration Harness
 
 - Local-only calibration mode is gated by `PAUSE_FILTER_CALIBRATION_ENABLED=1`.
 - Before pause filtering drops any segment, transcription runner writes:
@@ -838,6 +845,17 @@
   a grid of candidate pause-filter rules and writes local artifacts under
   `.debug/pause-filter-calibration/<sessionId>/`.
 - Calibration output is for review only; production defaults are unchanged.
+
+## Facilitator lexical editing
+
+- Manual turn insertion is per-turn **Insert after**
+  (`lib/transcription/manual-speaker-turn-edits.ts`). There is no global
+  Add-turn control. Insert after last appends.
+- Large-realistic enhancement UAT: Skip is not Resume. Skip/Continue
+  (`continueWithCurrentTranscript`) fences publication. UAT shares the
+  `TranscriptEnhancementProviderSlot` inventory with the application and
+  the maintenance CLI (`scripts/ops/stage-3-10-maintenance.ts`). Procedure:
+  `docs/testing/large-realistic-enhancement-uat.md`.
 
 ## Canonical Post-processing Projection
 
@@ -896,6 +914,7 @@
 - `lib/post-processing/enhancement-effective-state.ts`
 - `lib/post-processing/enhancement-ux-presentation.ts`
 - `lib/services/transcript-enhancement-publication.ts`
+- `lib/services/transcript-enhancement-provider-slots.ts`
 - `lib/transcription/manual-speaker-turn-edits.ts`
 - `app/api/sessions/[sessionId]/manual-speaker-attribution/route.ts`
 - `lib/post-processing/rail-tile-tone.ts`

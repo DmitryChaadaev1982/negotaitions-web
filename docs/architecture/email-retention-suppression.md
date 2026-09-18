@@ -22,7 +22,7 @@ Content retention minimizes rendered subject/body and recipient address only for
 
 Hard bounce suppresses normal transactional, invitation, admin-test, product, and marketing email by default. Complaint suppresses product/marketing and normal operational categories by default. Security exceptions must be explicit and tested.
 
-Unsubscribe is category-aware and primarily applies to future product/marketing communications. Stage 3.13B does not implement unsubscribe UI or marketing consent.
+Unsubscribe is category-aware and primarily applies to future product/marketing communications. There is no unsubscribe UI or marketing-consent surface.
 
 ## Active Suppression
 

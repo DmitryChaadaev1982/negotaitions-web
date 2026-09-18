@@ -30,7 +30,7 @@ separate chrome.
   product requirement for AVIF output. Next `16.3.3` keeps the optimizer on
   and disables AVIF as the security-release behavior; do not re-enable AVIF
   or pin a different sharp/libheif to restore it.
-- Wave 2A public communication routes: `/about`, `/support`, `/faq`.
+- Public communication routes: `/about`, `/support`, `/faq`.
   Public header links About and FAQ to those routes. Footer Information links
   About, Support, and FAQ. Support email remains
   `mailto:support@negotaitions.ru` on the Support (and About/FAQ) copy.
@@ -126,7 +126,7 @@ releases is deferred to a future email-expansion stage.
   Rejoin; `justify-between` keeps leftover space inside that wrapper, not
   across the viewport.
 - Dashboard, cases, events, sessions, admin, and room/lobby/join flows are
-  unchanged in Wave 1.
+  unchanged by this public-site chrome.
 
 ## Locale
 
@@ -145,6 +145,18 @@ Internal identifiers, routes, and package names remain `NegotAItions`. Bitmap
 logo assets are not regenerated solely to match this textual rule. The same
 naming applies to later public/communication pages (About, Support, FAQ, legal
 surfaces, SEO/social metadata, footer).
+
+Do not display both brand names simultaneously in runtime UI. Use RU PNG
+assets for Russian UI and EN PNG assets for English UI. Do not redraw or
+approximate these marks as SVG in the current iteration.
+
+| Locale | Full | Compact | Session |
+| --- | --- | --- | --- |
+| RU | `public/brand/negotaitions-logo-full-ru.png` | `public/brand/negotaitions-logo-compact-ru.png` | `public/brand/negotaitions-logo-session-ru.png` |
+| EN | `public/brand/negotaitions-logo-full-en.png` | `public/brand/negotaitions-logo-compact-en.png` | `public/brand/negotaitions-logo-session-en.png` |
+
+Icon / favicon: `public/brand/negotaitions-icon.png`, `public/favicon.ico`,
+`app/icon.png`, `app/apple-icon.png`.
 
 ## Indexing
 

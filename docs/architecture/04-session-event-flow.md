@@ -8,7 +8,9 @@
    The facilitator later enters the video room through the explicit
    management-page room action (`/room/{id}`).
 2. Session participants and roles are assigned.
-3. Participants enter a room-ready, pre-Preparation state (`PREPARATION`).
+3. Participants enter a room-ready, pre-Preparation state. Product copy may
+   say `ROOM_READY`; the persisted negotiation enum for that state is
+   `PREPARATION`. Do not invent a second status column.
 4. Facilitator explicitly starts Preparation, then drives the canonical
    preparation and negotiation transitions.
    Standalone Sessions (`Session.eventId == null`) additionally require role
@@ -40,7 +42,7 @@ An authorized manager may still open an Event-created Session at
 `/sessions/{id}`. That is the same `canManageSession` management surface;
 it does not become the normal Event create/lobby/room navigation.
 
-## Room Lifecycle Semantics (Stage 3.18A kernel)
+## Room Lifecycle Semantics
 
 - `OPEN`: negotiation-room admission is allowed by the canonical
   `roomAccessDecision`. The 60-second empty-Debrief timeout never closes
@@ -90,6 +92,12 @@ it does not become the normal Event create/lobby/room navigation.
   joined to lease role, so an in-place role transition cannot erase occupancy.
   Expired, disconnected, superseded, revoked, deleted-Session, inactive-user,
   and closed-room leases remain excluded.
+- Occupancy and lease comparisons against Prisma `DateTime` columns
+  (`timestamp without time zone`, UTC wall-clock convention) must use
+  `sqlUtcWallClockNow()` / `sqlUtcWallClockOrDate()` from
+  `lib/sql-utc-wall-clock.ts`. Do not use session `NOW()` when the database
+  `TimeZone` is `Europe/Moscow`; that comparison treats valid UTC leases as
+  expired and can skip Debrief. Tests: `lib/sql-utc-wall-clock.test.ts`.
 - Explicit facilitator completion, Event hard-close, empty-Debrief, Debrief
   hard-maximum, and abandoned-Session close use one idempotent final
   Session-close operation (`finalizeSessionCanonicalClose`). It atomically
@@ -120,8 +128,9 @@ it does not become the normal Event create/lobby/room navigation.
   or historical rewrite.
 - One deterministic server policy (`evaluateSessionLifecyclePolicy`) answers
   eligibility, reason, `referenceAt`, `dueAt`, and why-not-due. Primary
-  evaluation is the Stage 3.10 systemd maintenance timer (15s cadence).
-  That timer invokes the same raw `tsx` CLI as
+  evaluation is the session-lifecycle systemd maintenance timer (15s
+  cadence; unit `negotiations-stage310-maintenance.service`). That timer
+  invokes the same raw `tsx` CLI as
   `npm run maintenance:stage310 -- --task all`. The operational entrypoint
   is a non-Next runtime: it bootstraps documented env first, then
   dynamically loads maintenance. Application `import "server-only"`
@@ -146,9 +155,9 @@ it does not become the normal Event create/lobby/room navigation.
   Direct transition callers such as explicit leave may still emit bounded
   transition diagnostics. Logs never include tokens, notes, transcripts,
   role instructions, or provider payloads.
-- Stage 3.18A production deploy must set the three canonical business
-  timeouts explicitly in **both** independent runtime env files:
-  application `/var/www/negotaitions/app/.env.production` (request-driven
+- Production must set the three canonical business timeouts explicitly in
+  **both** independent runtime env files: application
+  `/var/www/negotaitions/app/.env.production` (request-driven
   Next/`negotaitions-poc` reconciliation) and maintenance
   `/etc/negotaitions/env.production` (`negotiations-stage310-maintenance.service`).
   Required values:
@@ -158,7 +167,7 @@ it does not become the normal Event create/lobby/room navigation.
   alias. If either file still has only `DEBRIEF_AUTO_CLOSE_GRACE_MS=30000`
   and the canonical empty-close variable is absent, that consumer would
   intentionally retain 30 seconds. Do not treat local/example comments as
-  a live env change. Do not redesign the two-file env layout in this stage.
+  a live env change. Do not redesign the two-file env layout.
 - Session overview presentation distinguishes negotiation completion from final
   Session completion. `negotiationState=FINISHED` with
   `roomLifecycle=DEBRIEF_OPEN` displays `Debrief` / `Дебриф`, including while
@@ -175,10 +184,11 @@ it does not become the normal Event create/lobby/room navigation.
   already derives such pre-lifecycle FINISHED history as CLOSED; shared display
   and Dashboard grouping use the same narrow compatibility rule without a
   migration-date heuristic.
-- The Stage 3.10 lifecycle backfill synchronizes `status=COMPLETED` in the same
-  update whenever it derives CLOSED for a FINISHED row. Existing historical
-  rows are normalized only by the separate dry-run-default ops command; normal
-  room completion is not broadened into a data-repair mechanism.
+- The lifecycle-maintenance backfill (`lib/stage-3-10-maintenance.ts`)
+  synchronizes `status=COMPLETED` in the same update whenever it derives
+  CLOSED for a FINISHED row. Existing historical rows are normalized only
+  by the separate dry-run-default ops command; normal room completion is
+  not broadened into a data-repair mechanism.
 - Room-return eligibility uses that same canonical terminal derivation.
   `FINISHED + DEBRIEF_OPEN` remains returnable for standalone and Event-created
   Sessions, including an empty-room grace interval and a reconnect during that
@@ -339,10 +349,9 @@ reconciliation cadence are not business timeouts.
   the failure instead of silently treating the leave as complete.
 - Refresh, tab close, browser crash, and network loss are passive disconnects.
   They remain lease-based and do not use the explicit-leave endpoint.
-  Stage 3.18A records this as `ACCEPTED_BY_DESIGN`: the Session room lease
-  stays the 120-second reconnect/network-loss window; Event Lobby freshness
-  stays 12 seconds; no `pagehide` / `sendBeacon` fast path is required; no
-  new status is added; CU-L must not be opened.
+  The Session room lease stays the 120-second reconnect/network-loss
+  window; Event Lobby freshness stays 12 seconds; no `pagehide` /
+  `sendBeacon` fast path is required; no new status is added.
 - Rejoin/same-user takeover supersedes the older lease; logical presence and
   Event `In Sessions` counts deduplicate the user.
 
@@ -360,7 +369,7 @@ reconciliation cadence are not business timeouts.
   `Просмотреть материалы`) because recording, transcript, enhancement, speaker
   mapping, and publication state may be available independently of AI analysis.
 
-## Stage 3.13E Control Contract
+## Facilitator Control Contract
 
 - Interactive facilitator writes on `control` and `duration` require all of:
   authenticated participant identity, active facilitator lease `connectionId`,
@@ -405,7 +414,7 @@ reconciliation cadence are not business timeouts.
   authorized session observer). Facilitator and observer own notes stay
   editable. The same lock is enforced by the notes persist helper.
 
-## Stage 3.13E Wave 2 Acceptance Remediation Notes
+## Room copy, finish-line, and notification controls
 
 - Interactive browser copy-link actions combine the current
   `window.location.origin` with canonical relative Event/Session invitation
@@ -423,7 +432,23 @@ reconciliation cadence are not business timeouts.
 ## Facilitator Authority Model
 
 - `Session.facilitatorId` is the canonical facilitator owner identity.
+  Dashboard/list facilitator labels use only this field
+  (`resolveSessionOwnerFacilitatorDisplay`).
 - Event owner (`TrainingEvent.hostUserId`) keeps administrative event/session rights but does not auto-promote to session facilitator on room entry.
+- **Management (implementation):** `canManageSession` in
+  `lib/access-control.ts` currently returns true for ADMIN, Event host,
+  Event facilitator, `session.facilitatorId === user.id`, or a
+  `SessionParticipant.type === "FACILITATOR"` account/join-token path.
+  Case `createdByUserId` is excluded.
+- **Management (product requirement):** Binding intended managers are
+  ADMIN, Event host, Event facilitator, and `Session.facilitatorId`.
+  Whether a FACILITATOR `SessionParticipant` who is not that owner is
+  intended to manage is unresolved. See FIND-01 in `docs/FINDINGS.md`.
+- **Negotiation control** is stricter than management: facilitator
+  participant **and** `participant.userId === session.facilitatorId`, plus
+  lease/`controlToken` CAS (`app/api/sessions/[sessionId]/control/route.ts`).
+  That owner-aligned control rule is current implemented behavior and is
+  not weakened by the extra management grant.
 - Facilitator reassignment is explicit and centralized through session role-management actions, not through implicit participant upsert paths.
 - Reassignment updates `Session.facilitatorId`, both participant capabilities,
   and both users' still-active Session-room lease roles transactionally. The
@@ -537,6 +562,12 @@ reconciliation cadence are not business timeouts.
 - `lib/session-room-occupancy.ts`
 - `lib/session-room-connection-lease.ts`
 - `lib/session-empty-room-reconciliation.ts`
+- `lib/sql-utc-wall-clock.ts`
+- `lib/access-control.ts` (`canManageSession`)
+- `lib/session-management-auth.ts`
+- `lib/session-overview-people.ts`
 - `lib/stage-3-10-maintenance.ts`
 - `scripts/ops/stage-3-10-maintenance.ts`
-- `docs/architecture/session-flow-gap-analysis.md`
+
+Historical session-flow gap analysis lives under `docs/history/` and is not
+current-state authority.

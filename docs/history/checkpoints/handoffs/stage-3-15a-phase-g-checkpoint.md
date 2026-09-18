@@ -21,7 +21,7 @@ NO_DEPLOY = YES
 ```
 
 Authoritative requirements:
-[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../requirements/stage-3-15a-post-processing-workflow.md)
+[`docs/requirements/stage-3-15a-post-processing-workflow.md`](../../design-packets/requirements/stage-3-15a-post-processing-workflow.md)
 
 PT-01..PT-35 were **not** renumbered. Status values remain `APPROVED` until
 Phase H closes them as `PASS`, `DECISION_REQUIRED`, or operator-deferred.

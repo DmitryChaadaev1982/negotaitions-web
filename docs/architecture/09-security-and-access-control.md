@@ -3,6 +3,12 @@
 ## Access Foundations
 
 - Account auth uses custom cookie session (`auth_session`) and `UserSession`.
+- Admin is `User.globalRole === "ADMIN"` **or** email in `ADMIN_EMAILS`
+  (`lib/auth/admin.ts` `isAdmin`). Legacy `User.role` is not authorization.
+- Page guard `requireActiveUser` lets admins skip non-ACTIVE status redirects;
+  `apiRequireActiveUser` returns 403 JSON for non-admin non-ACTIVE callers.
+  `requireAdminUser` allows bootstrap-email admins who are not ACTIVE;
+  `requireActiveAdminUser` / `apiRequireActiveAdminUser` require ACTIVE admin.
 - Route/API guards use `requireActiveUser`, `apiRequireActiveUser`, and role checks.
 - Session management pages use `requireActiveUser` plus
   `getCurrentUserSessionAccess` / `canManageSession`. The Session
@@ -28,6 +34,14 @@
   server-side cookie identity plus `canManageSession` is the authority.
   Ordinary Case owner, participant, or observer membership is not
   management authority. Session owner remains `Session.facilitatorId`.
+  **Implementation:** `canManageSession` currently also returns true for a
+  FACILITATOR `SessionParticipant` (account or join token) even when that
+  identity is not `Session.facilitatorId`. Negotiation **control**
+  additionally requires `participant.userId === session.facilitatorId`.
+  That extra management grant is not a proven product requirement.
+  See FIND-01. Manager-view materials projection currently loads the
+  earliest FACILITATOR participant by `createdAt`; that row choice is
+  also not a proven requirement. See FIND-02.
 - Session/event runtime authorization resolves participant access by account or token-based paths where supported.
 - New registration writes `UserConsent` records from
   `getCurrentLegalRelease()` (`TERMS_PRIVACY_ACK_V2`,
@@ -184,6 +198,10 @@ suppression, notification, and local-preview contracts.
 - `lib/legal/legal-update-return-url.ts`
 - `lib/legal/legal-document-return.ts`
 - `lib/legal/legal-update-draft.ts`
+- `lib/access-control.ts` (`canManageSession`, `getCurrentUserSessionAccess`)
+- `lib/session-management-auth.ts`
+- `lib/auth/admin.ts`
+- `lib/auth/session.ts`
 - `components/legal-document-header.tsx`
 - `app/(app)/layout.tsx`
 - `app/room/layout.tsx`
@@ -195,5 +213,6 @@ suppression, notification, and local-preview contracts.
 - `app/api/auth/forgot-password/route.ts`
 - `app/api/admin/email-preview/route.ts`
 - `docs/architecture/account-security-email-flows.md`
-- `docs/audits/archive/old-root-reports/AUTH_ACCESS_AUDIT.md`
-- `docs/audits/archive/old-root-reports/COOKIE_STORAGE_AUDIT.md`
+
+Historical auth/cookie audits live under `docs/history/` and are not
+current-state authority.

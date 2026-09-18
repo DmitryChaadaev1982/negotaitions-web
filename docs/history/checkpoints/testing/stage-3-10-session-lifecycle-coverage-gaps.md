@@ -18,7 +18,7 @@ This file tracks non-automated `P0`/`P1` scenarios from `docs/testing/stage-3-10
 
 Canonical step-by-step procedures for `ST310-VOX-023/024/025` are defined in:
 
-- `docs/releases/stage-3-10-manual-canaries.md`
+- `docs/history/checkpoints/releases/stage-3-10-manual-canaries.md`
 
 ## Manual Multi-Browser / Multi-Device
 
@@ -31,7 +31,7 @@ Canonical step-by-step procedures for `ST310-VOX-023/024/025` are defined in:
 
 Canonical step-by-step procedures for `ST310-PRESENCE-011` and `ST310-VOX-026` are defined in:
 
-- `docs/releases/stage-3-10-manual-canaries.md`
+- `docs/history/checkpoints/releases/stage-3-10-manual-canaries.md`
 
 ## Deferred With Reason
 

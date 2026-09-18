@@ -152,6 +152,6 @@ chmod 600 "$ENV_FILE"
 
 ## Source Notes
 
-- `docs/deployment/yandex-poc-runtime-audit.md`
+- `docs/history/checkpoints/deployment/yandex-poc-runtime-audit.md`
 - `docs/operations/project-hygiene.md`
 - `docs/operations/deployment-runbook.md`

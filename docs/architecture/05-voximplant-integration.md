@@ -37,7 +37,7 @@ URLs, credentials, or server-generated invitation origins.
 - Browser relays payload with `conference.sendMessage(...)`.
 - Vox scenario executes recording operation and posts status webhook back to app.
 
-### Recording Attempt Fencing (Stage 3.13E)
+### Recording Attempt Fencing
 
 - Recording control supports dual protocol versions:
   - legacy `rc2-hmac-sha256-v1` for historical callbacks/messages;
@@ -130,7 +130,7 @@ compatibility failure for old-app-created work. Deployment and rollback
 preflight must therefore require zero active recording/stop operations before
 switching application versions.
 
-## Presence And Media Status Model (Stage 3.1)
+## Presence And Media Status Model
 
 - Session room and event lobby both normalize participant media state via `lib/voximplant/participant-presence-media-model.ts`.
 - Normalized model fields:
@@ -163,7 +163,7 @@ switching application versions.
   hardware; the healthy-media fault mode still calls `getUserMedia` and then
   the same reconciliation helper.
 
-## Room Tile Metadata Contract (Stage 3.2)
+## Room Tile Metadata Contract
 
 - Session room tile body text avoids duplicating section headings (`Participant A/B`, `Facilitator`) inside each tile.
 - Participant A/B tiles show:
@@ -172,15 +172,15 @@ switching application versions.
 - Facilitator tiles show title-only identity (no duplicated facilitator role text in subtitle).
 - Textual video connection labels are removed from room tile subtitles; mic/camera status remains icon-based with unchanged color semantics.
 
-## Pause Semantics (Stage 3.4)
+## Pause Semantics
 
 - Session `PAUSED` does not disconnect participants from Vox rooms and does not forcibly toggle local microphone state.
 - Vox room tile mic icons continue to use explicit backend media-status sync (`micEnabled`/`cameraEnabled`) during pause, instead of coercing remote mic state to off.
 - Pause remains visible through negotiation/timer state UI, while media toggles continue to reflect user-selected device state.
 - In `PAUSED`, speaking-policy (`micAllowed`) is true for `PARTICIPANT`, `FACILITATOR`, and `OBSERVER`.
-- Recording continuity hotfix: Vox recording remains physically continuous from negotiation `START` until `FINISH`; pause/resume is represented by `SessionPauseInterval` rows only (no per-pause recording stop/start chunking).
+- Recording continuity: Vox recording remains physically continuous from negotiation `START` until `FINISH`; pause/resume is represented by `SessionPauseInterval` rows only (no per-pause recording stop/start chunking).
 
-## Single-Active Connection Lease (Stage 3.3 Hotfix)
+## Single-Active Connection Lease
 
 - Room and lobby client `connectionId` values are generated client-side with runtime entropy (UUID/random), not React `useId`.
 - IDs are unique per mounted page instance (different across tabs/devices/reloads) and are not persisted to storage.
@@ -189,7 +189,7 @@ switching application versions.
 - Vox room stale state triggers best-effort media disconnect (`leave`) so stale clients do not remain active video participants after takeover.
 - Session Vox access now validates/claims lease when `connectionId` is provided and rejects stale tabs before issuing fresh credentials.
 
-## Event Lobby Join Authority (Stage 3.25A BUG03)
+## Event Lobby Join Authority
 
 - Authoritative Event-lobby conference membership is successful `conference.join()` for this mount's conference instance. SDK `Connected` is not independently sufficient; it may be retained as a signal and used only for idempotent remote reconciliation after join has already succeeded.
 - On the false→true join edge, `joined` and `lobbyConferenceConnectedRef` converge together. Known endpoints and streams are replayed from the SDK conference maps without waiting for a new provider event.
@@ -210,7 +210,10 @@ switching application versions.
   - Payload includes `connectionId`, `micEnabled`, `cameraEnabled` plus room identity (`participantId` or token/cookie access).
   - Server validates access and same-login lease before persisting.
 - State distribution reuses existing polling surfaces:
-  - Session room clients consume status through `GET /api/livekit/sidebar` roster fields.
+  - Session room clients consume status through `GET /api/livekit/sidebar`
+    roster fields. That path name is historical: it is the **shared**
+    session-room polling surface for both LiveKit and Voximplant. Vox rooms
+    use it intentionally.
   - Event lobby clients consume status through `GET /api/events/[id]/state` participant fields.
 - Storage uses `AppSetting` JSON records keyed per session/event, avoiding Prisma schema changes while keeping shared durable status across tabs/participants.
 - SDK stream polling fallback still runs for endpoint/media attachment, but icon/border media state for remote participants is rendered from explicit backend status instead of inferred remote `MediaStreamTrack.enabled`.
@@ -237,7 +240,7 @@ switching application versions.
 - Confirmed media state still propagates through the existing
   `/api/events/[id]/media-status` publish path.
 
-## Provider Disconnect Recovery (Stage 3.19B)
+## Provider Disconnect Recovery
 
 Application-side contract for an actual Vox conference/call disconnect. The
 application tolerates provider `408 Request Timeout`; it does not try to
@@ -299,13 +302,13 @@ Helpers: `lib/voximplant/provider-disconnect-recovery.ts`,
 `lib/voximplant/provider-recovery-log.ts` (sanitized transition logs only;
 no tokens, access URLs, secrets, raw SDP, or credentials).
 
-## Historical ng_u_* orphan cleanup (Stage 3.24A CP2-R2)
+## ng_u_* orphan-user cleanup (operator tool)
 
-Operator-gated inventory for application-generated remote users. This is not
-part of room join or provisioning. The authorized one-time live apply
-completed successfully in Stage 3.24A CP2-R2. Do not rerun apply unless a
-new inventory is explicitly authorized. The CLI remains available and
-defaults to dry-run.
+Operator-gated inventory for application-generated remote users. This is
+not part of room join or provisioning. The CLI remains available and
+defaults to dry-run. A completed one-time live apply is historical
+(`docs/history/design-packets/requirements/stage-3-24a-vox-test-identities.md`).
+Do not rerun apply unless a new inventory is explicitly authorized.
 
 - Username algorithm is the production function
   `buildVoximplantUsernameForUser` in `lib/voximplant/username.ts`, re-exported
@@ -315,7 +318,7 @@ defaults to dry-run.
   invocation never deletes.
 - Keep-list sources:
   - production `User.id` values via the documented SSH read-only path
-    (`ssh negotaitions-poc`, see `docs/deployment/yandex-poc-server-parameters.md`);
+    (`ssh negotaitions-poc`, see `docs/history/checkpoints/deployment/yandex-poc-server-parameters.md`);
   - local manual `User.id` values on `localhost:5432`;
   - the four fixed managed E2E IDs only;
   - explicit `/voximplant-test` POC usernames (`participant-a`,
@@ -352,7 +355,7 @@ defaults to dry-run.
 - Scenario webhook base URL is resolved from env/runtime override logic.
 - Keep scenario changes in dedicated Vox docs/scripts; application docs only describe current app-side contract.
 
-## Stage 3.10 Server-side Stop
+## Server-side recording stop
 
 - Browser-side recording start remains unchanged and still uses `recording_control` relay.
 - Canonical completion (`completeSessionCanonical`) now keeps one durable `SessionRecordingStopOperation` and attempts server-side Vox stop first when enabled.
@@ -362,7 +365,8 @@ defaults to dry-run.
 - Server-stop settings parsing is runtime-neutral in
   `lib/voximplant/server-stop-settings.ts`. Next application consumers
   import `lib/voximplant/server-stop-config.ts`, which keeps
-  `import "server-only"`. The Stage 3.10 operational CLI imports the
+  `import "server-only"`. The maintenance CLI
+  (`scripts/ops/stage-3-10-maintenance.ts`) imports the
   settings module directly. The same split applies to Voximplant account
   config (`config-settings.ts` / `config.ts`), webhook URL persistence
   (`recording-webhook-url-store.ts` / `recording-webhook-url.ts`), and
@@ -411,7 +415,7 @@ record it fails to resolve arrive in one message.
   harness executes the shipped SDK source and fails when it changes shape,
   which surfaces that on upgrade.
 
-## Stage 3.13E Wave 3 responsive geometry hardening
+## Room and lobby responsive geometry
 
 - Shared room shell now treats the right sidebar as desktop-only at `xl+`
   (`components/shared-room-shell.tsx`) and uses a compact, accessible sidebar
@@ -457,4 +461,6 @@ record it fails to resolve arrive in one message.
 - `lib/voximplant/orphan-user-cleanup.ts`
 - `lib/voximplant/orphan-user-cleanup-io.ts`
 - `scripts/ops/voximplant-orphan-user-cleanup.ts`
-- `docs/voximplant/*.md`
+- Runtime scenario source: `docs/voximplant/neg-conf.main-room.scenario.js`
+- Scenario sync: `docs/voximplant/scenario-sync.md`
+- Historical Vox stage notes: `docs/history/design-packets/voximplant/`

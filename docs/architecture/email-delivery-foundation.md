@@ -26,7 +26,7 @@ Business code enqueues a durable `EmailMessage`; it does not call a provider. A 
   provider/stream/shard/sequence. It stores payload SHA-256 and bounded error
   disposition only, never raw payload or recipient/body data.
 - `PasswordResetToken`: hash-only, expiring, revocable account-recovery token
-  used by Stage 3.13C.
+  used by account-security email flows.
 
 `User`, `Event`, and `Session` business semantics are not changed.
 
@@ -93,7 +93,7 @@ provider client can be created. The verified production policy currently
 allows the `no-reply`, `notifications`, and `invitations` addresses documented
 in `email-runtime-and-yandex-cloud.md`.
 
-The `fake` provider may be inspected through the Stage 3.13C local preview only
+The `fake` provider may be inspected through the local preview only
 when the exact development guards in `account-security-email-flows.md` hold.
 
 ## Suppression
@@ -102,7 +102,7 @@ Hard bounce suppresses normal transactional, product, marketing, admin-test, and
 
 Suppression is checked at enqueue and again after worker claim immediately before provider send. Active suppression uniqueness is enforced with PostgreSQL partial unique indexes: one active global row per normalized recipient and one active scoped row per normalized recipient/category.
 
-Unsubscribe is only meaningful for product/marketing categories in Stage 3.13B. There is no unsubscribe UI yet.
+Unsubscribe is only meaningful for product/marketing categories. There is no unsubscribe UI yet.
 
 ## Provider Events
 
@@ -119,7 +119,7 @@ acknowledges an event whose suppression invariant failed.
 
 Unmatched events are stored as `UNMATCHED` and reconciled by `npm run email:events:reconcile` until a bounded deadline. Ignored events retain a stable processing result code/message for audit.
 
-Stage 3.13C adds a disabled-by-default Yandex Data Streams consumer; it does not
+A disabled-by-default Yandex Data Streams consumer exists; it does not
 add a public webhook route. Yandex Postbox events are parsed by
 `lib/email/yandex-postbox-provider-event-parser.ts` and then handed to the
 provider-neutral `processEmailProviderEvent()` path.
