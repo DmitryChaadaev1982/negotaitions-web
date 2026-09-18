@@ -10,11 +10,21 @@ import {
 import { autoTranscribeAfterRecording } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { appendRecordingDebugEvent } from "@/lib/debug/recording-debug";
-import { evaluateAiAnalysisCurrentness, shouldPresentAnalysisFromOlderTranscript } from "@/lib/ai/analysis-currentness";
+import {
+  evaluateAiAnalysisCurrentness,
+  isPublishedAnalysisVersionCurrent,
+  projectMaterialsAiViewerCurrentnessFields,
+  shouldPresentAnalysisFromOlderTranscript,
+} from "@/lib/ai/analysis-currentness";
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import { computeCurrentMaterialInputFingerprint } from "@/lib/ai/session-analysis-context";
 import { resolveTranscriptEnhancementStatus } from "@/lib/post-processing/enhancement-effective-state";
+import { isEnhancementCurrentForTranscriptGeneration } from "@/lib/post-processing/enhancement-ux-presentation";
 import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
+import {
+  parseTranscriptEnhancementJob,
+  projectTranscriptEnhancementStatus,
+} from "@/lib/services/transcript-enhancement-job";
 import {
   canContinueWithCurrentTranscript,
   isEnhancementStatusRunning,
@@ -226,6 +236,7 @@ export async function GET(request: Request, context: RouteContext) {
         select: {
           id: true,
           status: true,
+          analysisVersion: true,
           transcriptId: true,
           model: true,
           executiveSummary: true,
@@ -250,6 +261,7 @@ export async function GET(request: Request, context: RouteContext) {
             take: 1,
             select: {
               id: true,
+              aiAnalysisId: true,
               analysisVersion: true,
               publicationEpoch: true,
               sharedAnalysisJson: true,
@@ -342,6 +354,9 @@ export async function GET(request: Request, context: RouteContext) {
       transcriptStatus: transcriptStatus ?? null,
     },
   });
+  const enhancementProjection = projectTranscriptEnhancementStatus(
+    transcript?.processingMetadata,
+  );
   const transcriptEnhancementStatus = resolveTranscriptEnhancementStatus(
     transcript?.processingMetadata,
   );
@@ -355,6 +370,7 @@ export async function GET(request: Request, context: RouteContext) {
       ? {
           ...transcript,
           enhancementStatus: transcriptEnhancementStatus,
+          enhancementPublicationEligible: enhancementProjection.publicationEligible,
           participants: session.participants,
         }
       : null,
@@ -436,7 +452,6 @@ export async function GET(request: Request, context: RouteContext) {
     isFacilitator &&
     aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
-    !hasRunningTranscriptEnhancement &&
     (aiStatus === null ||
       aiStatus === AiAnalysisStatus.FAILED ||
       aiStatus === AiAnalysisStatus.QUEUED ||
@@ -450,13 +465,11 @@ export async function GET(request: Request, context: RouteContext) {
       aiStatus === AiAnalysisStatus.QUEUED ||
       aiStatus === AiAnalysisStatus.ANALYZING) &&
     !hasRunningAiAnalysis &&
-    !hasRunningTranscriptEnhancement &&
     speakerMappingReady;
   const canRerunAiAnalysis =
     isFacilitator &&
     aiAnalysisReadiness.ready &&
     !hasRunningAiAnalysis &&
-    !hasRunningTranscriptEnhancement &&
     aiStatus === AiAnalysisStatus.COMPLETED &&
     analysisCurrent;
   const canShareAiAnalysis =
@@ -466,11 +479,21 @@ export async function GET(request: Request, context: RouteContext) {
 
   const aiVisibility = aiAnalysis?.visibility ?? "FACILITATOR_ONLY";
   const isSharedWithSession = Boolean(activePublication);
+  const viewerCurrentness = projectMaterialsAiViewerCurrentnessFields({
+    isFacilitator,
+    hasValidPublicationGrant,
+    analysisCurrent,
+    publicationAiAnalysisId: activePublication?.aiAnalysisId,
+    currentAnalysisId: aiAnalysis?.id,
+    publicationAnalysisVersion: activePublication?.analysisVersion,
+    currentAnalysisVersion: aiAnalysis?.analysisVersion,
+    transcriptionActive: hasRunningTranscription,
+  });
 
   // Processing status stays canonical on AiAnalysis. Access to a participant or
   // observer projection additionally requires that recipient's durable grant.
   const canViewAiAnalysis =
-    isFacilitator || (hasValidPublicationGrant && analysisCurrent);
+    isFacilitator || Boolean(viewerCurrentness.publishedReportCurrent);
   const canOpenMaterials = isObserver
     ? isEventHostOwner || canViewTranscript || canViewAiAnalysis
     : true;
@@ -532,6 +555,12 @@ export async function GET(request: Request, context: RouteContext) {
     },
     aiStage: aiAnalysisStage,
     conflictingOwnership: hasRunningAiAnalysis || hasRunningTranscription,
+    enhancementPublicationEligible: enhancementProjection.publicationEligible,
+    enhancementCurrentForGeneration: isEnhancementCurrentForTranscriptGeneration({
+      jobRetranscribeCount: parseTranscriptEnhancementJob(transcript?.processingMetadata)
+        .retranscribeCount,
+      currentRetranscribeCount: transcript?.retranscribeCount,
+    }),
   });
 
   const isParticipantOrObserver = !isFacilitator;
@@ -573,9 +602,7 @@ export async function GET(request: Request, context: RouteContext) {
     isFacilitator &&
     transcriptCompleted &&
     transcriptHasText &&
-    !hasRunningTranscriptEnhancement &&
-    (transcriptEnhancementStatus === "FAILED" ||
-      transcriptEnhancementStatus === "PARTIAL");
+    enhancementProjection.improveAvailable;
 
   // Re-run stays available when the physical object is gone. Recording
   // COMPLETED + fileKey is historical truth; missing storage is a
@@ -594,18 +621,20 @@ export async function GET(request: Request, context: RouteContext) {
   });
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
-  const presentCurrentAnalysis = analysisCurrent;
+  const presentCurrentAnalysis = isFacilitator
+    ? analysisCurrent
+    : viewerCurrentness.publishedReportCurrent === true;
   const fullAnalysisJson =
-    presentCurrentAnalysis
+    isFacilitator && presentCurrentAnalysis
       ? ((aiAnalysis?.analysisJson as NegotiationAnalysisOutput | null) ?? null)
       : null;
   const sharedAnalysisJson =
-    presentCurrentAnalysis
+    !isFacilitator && presentCurrentAnalysis
       ? ((activePublication?.sharedAnalysisJson as NegotiationAnalysisOutput | null) ?? null)
       : null;
   const analysisJsonForUser = isFacilitator
     ? getAnalysisForFacilitator(fullAnalysisJson)
-    : hasValidPublicationGrant && presentCurrentAnalysis
+    : presentCurrentAnalysis
       ? viewerGrant?.projection === AiAnalysisPublicationProjection.OBSERVER
         ? getAnalysisForObserver(sharedAnalysisJson)
         : getAnalysisForParticipant(sharedAnalysisJson, {
@@ -618,7 +647,7 @@ export async function GET(request: Request, context: RouteContext) {
     ? presentCurrentAnalysis
       ? (aiAnalysis?.executiveSummary ?? null)
       : null
-    : hasValidPublicationGrant && presentCurrentAnalysis
+    : presentCurrentAnalysis
       ? (activePublication?.sharedExecutiveSummary ?? null)
       : null;
 
@@ -641,7 +670,8 @@ export async function GET(request: Request, context: RouteContext) {
     canRerun: canRerunAiAnalysis,
     canView: canViewAiAnalysis,
     canShare: canShareAiAnalysis,
-    analysisCurrent: isFacilitator ? analysisCurrent : undefined,
+    analysisCurrent: viewerCurrentness.analysisCurrent,
+    publishedReportCurrent: viewerCurrentness.publishedReportCurrent,
     historicalAnalysisExists: Boolean(aiAnalysis),
     speakerMappingRequired: isFacilitator ? speakerMappingRequired : false,
     participantPlaceholder: !isFacilitator && !canViewAiAnalysis,
@@ -662,7 +692,12 @@ export async function GET(request: Request, context: RouteContext) {
       : null,
     notSharedMessage:
       !isFacilitator && !canViewAiAnalysis && aiStatus !== null
-        ? isSharedWithSession && !analysisCurrent
+        ? isSharedWithSession &&
+          (!analysisCurrent ||
+            !isPublishedAnalysisVersionCurrent({
+              publicationAnalysisVersion: activePublication?.analysisVersion,
+              currentAnalysisVersion: aiAnalysis?.analysisVersion,
+            }))
           ? "AI analysis is no longer current."
           : isSharedWithSession
             ? "AI analysis was not published for this recipient."
@@ -821,9 +856,20 @@ export async function GET(request: Request, context: RouteContext) {
               : null,
             inProgress: hasRunningTranscriptEnhancement,
             canRetry: isFacilitator ? canRetryTranscriptEnhancement : false,
-            canContinueWithCurrentTranscript: canContinueWithCurrentTranscript(
-              transcriptEnhancementStatus,
-            ),
+            canContinueWithCurrentTranscript: isFacilitator
+              ? enhancementProjection.continueAvailable
+              : canContinueWithCurrentTranscript(
+                  transcriptEnhancementStatus,
+                  enhancementProjection.publicationEligible,
+                ),
+            executionStatus: enhancementProjection.executionStatus,
+            publicationEligible: enhancementProjection.publicationEligible,
+            terminalQuality: enhancementProjection.terminalQuality,
+            progress: enhancementProjection.progress,
+            mappingAvailable: enhancementProjection.mappingAvailable,
+            lexicalEditAvailable: enhancementProjection.lexicalEditAvailable,
+            improveAvailable: isFacilitator ? enhancementProjection.improveAvailable : false,
+            cancelReason: isFacilitator ? enhancementProjection.cancelReason : null,
           },
         }
       : {

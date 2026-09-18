@@ -4,8 +4,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  buildInitialManualTurnsFromPersistedSegments,
   createEmptyManualSpeakerTurn,
   insertManualSpeakerTurnAfter,
+  toManualSpeakerTurnFromPersistedSegment,
   toSubmittedManualSpeakerTurns,
   type ManualSpeakerTurnEdit,
 } from "@/lib/transcription/manual-speaker-turn-edits";
@@ -14,6 +16,7 @@ function turn(
   overrides: Partial<ManualSpeakerTurnEdit> & Pick<ManualSpeakerTurnEdit, "id">,
 ): ManualSpeakerTurnEdit {
   return {
+    sourceSegmentId: null,
     participantId: "",
     text: "",
     startSeconds: 1,
@@ -116,8 +119,22 @@ test("B05 neighboring text and speaker data stay unchanged", () => {
 
 test("B06 submitted turns preserve visual order for server orderIndex rewrite", () => {
   const existing = [
-    turn({ id: "t1", participantId: "p1", text: "first", startSeconds: 0, endSeconds: 1 }),
-    turn({ id: "t2", participantId: "p2", text: "third", startSeconds: 4, endSeconds: 5 }),
+    turn({
+      id: "t1",
+      sourceSegmentId: "t1",
+      participantId: "p1",
+      text: "first",
+      startSeconds: 0,
+      endSeconds: 1,
+    }),
+    turn({
+      id: "t2",
+      sourceSegmentId: "t2",
+      participantId: "p2",
+      text: "third",
+      startSeconds: 4,
+      endSeconds: 5,
+    }),
   ];
   const withInsert = insertManualSpeakerTurnAfter(existing, 0).map((item, index) =>
     index === 1
@@ -135,6 +152,31 @@ test("B06 submitted turns preserve visual order for server orderIndex rewrite", 
     submitted.map((item) => item.participantId),
     ["p1", "p3", "p2"],
   );
+  assert.deepEqual(
+    submitted.map((item) => item.id),
+    ["t1", undefined, "t2"],
+  );
+});
+
+test("persisted segments submit stable ids and new inserts omit identity", () => {
+  const persisted = toManualSpeakerTurnFromPersistedSegment({
+    id: "seg-existing",
+    mappedParticipantId: "p1",
+    text: "raw A",
+    startSeconds: 0,
+    endSeconds: 1,
+    speakerLabel: "spk_0",
+  });
+  assert.equal(persisted.id, "seg-existing");
+  assert.equal(persisted.sourceSegmentId, "seg-existing");
+  const inserted = createEmptyManualSpeakerTurn();
+  assert.equal(inserted.sourceSegmentId, null);
+  const submitted = toSubmittedManualSpeakerTurns([
+    persisted,
+    { ...inserted, participantId: "p2", text: "manual insert" },
+  ]);
+  assert.equal(submitted[0]?.id, "seg-existing");
+  assert.equal(submitted[1]?.id, undefined);
 });
 
 test("empty manual turn factory matches insert-after semantics", () => {
@@ -146,6 +188,47 @@ test("empty manual turn factory matches insert-after semantics", () => {
   assert.equal(empty.speakerLabel, null);
   assert.equal(empty.displaySpeakerLabel, null);
   assert.equal(empty.speakerSlot, null);
+  assert.equal(empty.sourceSegmentId, null);
+});
+
+test("empty or whitespace existing segments still submit their stable ids", () => {
+  const turns = buildInitialManualTurnsFromPersistedSegments([
+    {
+      id: "seg-keep",
+      mappedParticipantId: "p1",
+      text: "enhanced one",
+      startSeconds: 0,
+      endSeconds: 1,
+      speakerLabel: "spk_0",
+      orderIndex: 0,
+    },
+    {
+      id: "seg-ws",
+      mappedParticipantId: "p2",
+      text: "   \n",
+      startSeconds: 1,
+      endSeconds: 2,
+      speakerLabel: "spk_1",
+      orderIndex: 1,
+    },
+    {
+      id: "seg-raw",
+      mappedParticipantId: "p1",
+      text: "raw three",
+      startSeconds: 2,
+      endSeconds: 3,
+      speakerLabel: "spk_0",
+      orderIndex: 2,
+    },
+  ]);
+  assert.equal(turns.length, 3);
+  assert.equal(turns[1]?.text, "   \n");
+  const submitted = toSubmittedManualSpeakerTurns(turns);
+  assert.deepEqual(
+    submitted.map((item) => item.id),
+    ["seg-keep", "seg-ws", "seg-raw"],
+  );
+  assert.equal(submitted[1]?.text, "   \n");
 });
 
 test("manual speaker editor uses shared insert-after helper for new turns", () => {
@@ -155,5 +238,6 @@ test("manual speaker editor uses shared insert-after helper for new turns", () =
   );
   assert.match(source, /insertManualSpeakerTurnAfter/);
   assert.match(source, /toSubmittedManualSpeakerTurns/);
+  assert.match(source, /buildInitialManualTurnsFromPersistedSegments/);
   assert.match(source, /insert-manual-speaker-turn-after/);
 });

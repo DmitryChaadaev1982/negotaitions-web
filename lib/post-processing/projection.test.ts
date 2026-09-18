@@ -94,7 +94,7 @@ test("enhancement RUNNING keeps AI pending", () => {
   assert.equal(projection.stages.AI_ANALYSIS.semantic, "pending");
 });
 
-test("FAILED enhancement is failed and continue-current-transcript is allowed", () => {
+test("FAILED enhancement is failed and Continue is not offered", () => {
   const projection = projectPostProcessingStages({
     recordingStage: "ready",
     transcriptStage: "ready",
@@ -102,13 +102,15 @@ test("FAILED enhancement is failed and continue-current-transcript is allowed", 
     transcriptPresent: true,
     mappingInput: completeMappingInput,
     aiStage: "not_started",
+    enhancementPublicationEligible: false,
   });
 
   assert.equal(projection.stages.TRANSCRIPT_ENHANCEMENT.semantic, "failed");
-  assert.equal(projection.stages.TRANSCRIPT_ENHANCEMENT.raw.canContinueWithCurrentTranscript, true);
-  assert.equal(canContinueWithCurrentTranscript("FAILED"), true);
-  assert.equal(canContinueWithCurrentTranscript("PARTIAL"), true);
-  assert.equal(canContinueWithCurrentTranscript("SKIPPED"), true);
+  assert.equal(projection.stages.TRANSCRIPT_ENHANCEMENT.raw.canContinueWithCurrentTranscript, false);
+  assert.equal(canContinueWithCurrentTranscript("FAILED"), false);
+  assert.equal(canContinueWithCurrentTranscript("PARTIAL"), false);
+  assert.equal(canContinueWithCurrentTranscript("SKIPPED"), false);
+  assert.equal(canContinueWithCurrentTranscript("IN_PROGRESS", true), true);
   assert.equal(projection.stages.AI_ANALYSIS.semantic, "pending");
 });
 

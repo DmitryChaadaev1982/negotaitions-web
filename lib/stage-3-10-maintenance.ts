@@ -807,3 +807,13 @@ export async function verifyRoomLifecycleBackfill(): Promise<BackfillVerificatio
   };
 }
 
+export async function runTranscriptEnhancementRecoverySweep(params?: {
+  dryRun?: boolean;
+  limit?: number;
+  now?: () => number;
+}) {
+  const { runTranscriptEnhancementRecoverySweep } = await import(
+    "@/lib/services/transcript-enhancement-recovery"
+  );
+  return runTranscriptEnhancementRecoverySweep(params);
+}

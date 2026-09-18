@@ -9,6 +9,7 @@ import {
   filterSegmentsByPauseIntervals,
 } from "@/lib/transcription/pause-interval-filter";
 import { getPauseProcessingModeFromMetadata } from "@/lib/transcription/pause-processing-mode";
+import type { Prisma } from "@/app/generated/prisma/client";
 export { buildAnalysisPrompt } from "@/lib/ai/session-analysis-prompt";
 
 export type SessionAnalysisParticipant = {
@@ -75,63 +76,82 @@ export type SessionAnalysisContext = {
   transcript: SessionAnalysisTranscript | null;
 };
 
-export async function buildSessionAnalysisContext(
-  sessionId: string,
-): Promise<SessionAnalysisContext | null> {
-  const session = await prisma.session.findFirst({
-    where: { id: sessionId, deletedAt: null },
+export const SESSION_ANALYSIS_GRAPH_INCLUDE = {
+  event: {
+    select: { id: true, title: true, status: true },
+  },
+  sessionRoles: {
+    orderBy: { sortOrder: "asc" as const },
+    select: {
+      id: true,
+      name: true,
+      privateInstructions: true,
+      objectives: true,
+      constraints: true,
+      hiddenInfo: true,
+      fallbackPosition: true,
+    },
+  },
+  participants: {
+    select: {
+      id: true,
+      displayName: true,
+      type: true,
+      notes: true,
+      sessionRole: {
+        select: { name: true },
+      },
+    },
+  },
+  recording: {
+    select: {
+      startedAt: true,
+      endedAt: true,
+    },
+  },
+  transcript: {
     include: {
-      event: {
-        select: { id: true, title: true, status: true },
-      },
-      sessionRoles: {
-        orderBy: { sortOrder: "asc" },
-        select: {
-          id: true,
-          name: true,
-          privateInstructions: true,
-          objectives: true,
-          constraints: true,
-          hiddenInfo: true,
-          fallbackPosition: true,
-        },
-      },
-      participants: {
-        select: {
-          id: true,
-          displayName: true,
-          type: true,
-          notes: true,
-          sessionRole: {
-            select: { name: true },
-          },
-        },
-      },
-      recording: {
-        select: {
-          startedAt: true,
-          endedAt: true,
-        },
-      },
-      transcript: {
+      segments: {
+        orderBy: { orderIndex: "asc" as const },
         include: {
-          segments: {
-            orderBy: { orderIndex: "asc" },
-            include: {
-              mappedParticipant: {
-                select: { id: true, displayName: true },
-              },
-            },
+          mappedParticipant: {
+            select: { id: true, displayName: true },
           },
         },
       },
     },
+  },
+} as const;
+
+export type LoadedSessionAnalysisGraph = Prisma.SessionGetPayload<{
+  include: typeof SESSION_ANALYSIS_GRAPH_INCLUDE;
+}>;
+
+type SessionAnalysisGraphClient = {
+  session: {
+    findFirst: (args: {
+      where: { id: string; deletedAt: null };
+      include: typeof SESSION_ANALYSIS_GRAPH_INCLUDE;
+    }) => Promise<LoadedSessionAnalysisGraph | null>;
+  };
+};
+
+export async function loadSessionAnalysisGraph(
+  sessionId: string,
+  client: unknown = prisma,
+): Promise<LoadedSessionAnalysisGraph | null> {
+  const graphClient = client as SessionAnalysisGraphClient;
+  const session = await graphClient.session.findFirst({
+    where: { id: sessionId, deletedAt: null },
+    include: SESSION_ANALYSIS_GRAPH_INCLUDE,
   });
+  return session;
+}
 
-  if (!session) {
-    return null;
-  }
-
+export function assembleSessionAnalysisContext(
+  session: LoadedSessionAnalysisGraph,
+  pauseIntervals: Array<{ startedAt: Date; endedAt: Date | null }>,
+): SessionAnalysisContext {
   const participants: SessionAnalysisParticipant[] = session.participants.map(
     (p) => ({
       id: p.id,
@@ -166,7 +186,7 @@ export async function buildSessionAnalysisContext(
             buildPauseOffsetIntervals({
               recordingStartedAt: session.recording?.startedAt,
               recordingEndedAt: session.recording?.endedAt,
-              pauseIntervals: await listPauseIntervals(sessionId),
+              pauseIntervals,
             }),
             (segment) => ({
               startSeconds: segment.startSeconds,
@@ -190,7 +210,7 @@ export async function buildSessionAnalysisContext(
       segments: filteredSegments.map((seg) => ({
         orderIndex: seg.orderIndex,
         speakerLabel: seg.speakerLabel,
-        mappedParticipantId: seg.mappedParticipant?.id ?? null,
+        mappedParticipantId: seg.mappedParticipantId ?? seg.mappedParticipant?.id ?? null,
         mappedParticipantName: seg.mappedParticipant?.displayName ?? null,
         startSeconds: seg.startSeconds,
         endSeconds: seg.endSeconds,
@@ -228,6 +248,18 @@ export async function buildSessionAnalysisContext(
     participants,
     transcript,
   };
+}
+
+export async function buildSessionAnalysisContext(
+  sessionId: string,
+  client: SessionAnalysisGraphClient = prisma,
+): Promise<SessionAnalysisContext | null> {
+  const session = await loadSessionAnalysisGraph(sessionId, client);
+  if (!session) {
+    return null;
+  }
+  const pauseIntervals = await listPauseIntervals(sessionId, client);
+  return assembleSessionAnalysisContext(session, pauseIntervals);
 }
 
 export function toMaterialAnalysisSnapshot(
@@ -285,8 +317,9 @@ export function fingerprintSessionAnalysisContext(
 
 export async function computeCurrentMaterialInputFingerprint(
   sessionId: string,
+  client: SessionAnalysisGraphClient = prisma,
 ): Promise<string | null> {
-  const context = await buildSessionAnalysisContext(sessionId);
+  const context = await buildSessionAnalysisContext(sessionId, client);
   if (!context) {
     return null;
   }

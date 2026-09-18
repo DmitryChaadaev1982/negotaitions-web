@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { TranscriptStatus } from "@/app/generated/prisma/client";
+
 type InMemorySegment = {
   id: string;
   orderIndex: number;
@@ -14,6 +16,8 @@ type InMemorySegment = {
 
 type InMemoryTranscript = {
   id: string;
+  sessionId: string;
+  status: TranscriptStatus;
   text: string;
   diarizedText: string | null;
   updatedAt: Date;
@@ -29,11 +33,19 @@ type InMemoryTranscript = {
     }>;
   };
   segments: InMemorySegment[];
+  aiAnalysis?: {
+    status: string;
+    runToken: string | null;
+    leaseExpiresAt: Date | null;
+    updatedAt: Date;
+  } | null;
 };
 
 function cloneTranscript(state: InMemoryTranscript) {
   return {
     id: state.id,
+    sessionId: state.sessionId,
+    status: state.status,
     text: state.text,
     diarizedText: state.diarizedText,
     updatedAt: state.updatedAt,
@@ -44,6 +56,17 @@ function cloneTranscript(state: InMemoryTranscript) {
 }
 
 function createInMemoryDb(state: InMemoryTranscript) {
+  // Serialize transactions so concurrent admissions observe committed state,
+  // the way a real Transcript FOR UPDATE boundary would.
+  let transactionQueue: Promise<unknown> = Promise.resolve();
+  const runInTransaction = async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+    const run = transactionQueue.then(() => callback(db));
+    transactionQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
   const db = {
     transcript: {
       findUnique: async (args: { select?: Record<string, unknown> }) => {
@@ -111,12 +134,21 @@ function createInMemoryDb(state: InMemoryTranscript) {
         }
       },
     },
-    $transaction: async <T>(callback: (tx: typeof db) => Promise<T>) => {
-      return callback(db);
+    aiAnalysis: {
+      findUnique: async () => state.aiAnalysis ?? null,
     },
+    $transaction: runInTransaction,
   };
 
   return db;
+}
+
+async function waitUntil(predicate: () => boolean, label: string) {
+  for (let i = 0; i < 4000; i++) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`timed out waiting for ${label}`);
 }
 
 function withEnhancementEnv<T>(fn: () => Promise<T>) {
@@ -209,6 +241,8 @@ test("simultaneous automatic initial enhancement runs execute provider once", as
 
       const state: InMemoryTranscript = {
         id: "tr_concurrent",
+        sessionId: "session-tr_concurrent",
+        status: TranscriptStatus.COMPLETED,
         text: "raw transcript",
         diarizedText: "raw transcript",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -322,6 +356,8 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
 
       const state: InMemoryTranscript = {
         id: "tr_background",
+        sessionId: "session-tr_background",
+        status: TranscriptStatus.COMPLETED,
         text: "raw transcript",
         diarizedText: "raw transcript",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -389,19 +425,24 @@ test("background run exposes raw transcript with RUNNING enhancement state", asy
         transcriptId: state.id,
         triggerSource: "manual",
         runInBackground: true,
-        dependencies: { db: db as never, enhance: enhance as never },
+        dependencies: {
+          db: db as never,
+          enhance: enhance as never,
+          schedule: (work) => {
+            void work();
+          },
+        },
       });
 
       assert.equal(result.outcome, "started");
-      assert.equal(providerStarted, true);
+      await waitUntil(() => providerStarted, "provider started");
       assert.equal(state.text, "raw transcript");
       const enhancementMetadata = (state.processingMetadata.transcriptEnhancement ??
         {}) as Record<string, unknown>;
       assert.equal(enhancementMetadata.status, "RUNNING");
 
       resolveProvider?.();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      assert.equal(state.text, "raw transcript enhanced");
+      await waitUntil(() => state.text === "raw transcript enhanced", "enhanced text");
     } finally {
       if (previousDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;
@@ -424,6 +465,8 @@ test("stale enhancement owner cannot overwrite a newer run", async () => {
       );
       const state: InMemoryTranscript = {
         id: "tr_stale_owner",
+        sessionId: "session-tr_stale_owner",
+        status: TranscriptStatus.COMPLETED,
         text: "current transcript",
         diarizedText: "current transcript",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -486,8 +529,15 @@ test("stale enhancement owner cannot overwrite a newer run", async () => {
         transcriptId: state.id,
         triggerSource: "manual",
         runInBackground: true,
-        dependencies: { db: db as never, enhance: enhance as never },
+        dependencies: {
+          db: db as never,
+          enhance: enhance as never,
+          schedule: (work) => {
+            void work();
+          },
+        },
       });
+      await waitUntil(() => resolveProvider !== null, "stale owner provider started");
       const running = state.processingMetadata
         .transcriptEnhancement as Record<string, unknown>;
       state.processingMetadata = {
@@ -533,6 +583,8 @@ test("same-identity completed enhancement does not regress to SKIPPED", async ()
       );
       const state: InMemoryTranscript = {
         id: "tr_completed",
+        sessionId: "session-tr_completed",
+        status: TranscriptStatus.COMPLETED,
         text: "already completed",
         diarizedText: "[00:00:00-00:00:01] [Speaker 1] already completed",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -644,6 +696,8 @@ test("enhancement completion preserves sibling mappingSuggestion and mapped name
       );
       const state: InMemoryTranscript = {
         id: "tr_names",
+        sessionId: "session-tr_names",
+        status: TranscriptStatus.COMPLETED,
         text: "hello buyer",
         diarizedText: "[00:00:00-00:00:01] [Lab Buyer / Buyer] hello buyer",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -719,16 +773,28 @@ test("enhancement completion preserves sibling mappingSuggestion and mapped name
         transcriptId: state.id,
         triggerSource: "manual",
         runInBackground: true,
-        dependencies: { db: db as never, enhance: enhance as never },
+        dependencies: {
+          db: db as never,
+          enhance: enhance as never,
+          schedule: (work) => {
+            void work();
+          },
+        },
       });
       assert.equal(started.outcome, "started");
+      await waitUntil(() => resolveProvider !== null, "provider gate");
       state.processingMetadata = {
         ...state.processingMetadata,
         mappingSuggestion: { reason: "auto_suggested", keep: true },
       };
       state.updatedAt = new Date(state.updatedAt.getTime() + 5);
       resolveProvider?.();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitUntil(
+        () =>
+          (state.processingMetadata.transcriptEnhancement as { status?: string } | undefined)
+            ?.status === "COMPLETED",
+        "COMPLETED",
+      );
 
       assert.equal(
         (state.processingMetadata.transcriptEnhancement as { status: string }).status,
@@ -740,6 +806,200 @@ test("enhancement completion preserves sibling mappingSuggestion and mapped name
       });
       assert.match(state.diarizedText ?? "", /Lab Buyer \/ Buyer/);
       assert.match(state.diarizedText ?? "", /hello buyer enhanced/);
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("R03 admission binds current generation input under Transcript lock", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const { parseTranscriptEnhancementJob } = await import(
+        "@/lib/services/transcript-enhancement-job"
+      );
+      const state: InMemoryTranscript = {
+        id: "tr_generation",
+        sessionId: "session-tr_generation",
+        status: TranscriptStatus.COMPLETED,
+        text: "stale outer snapshot",
+        diarizedText: "stale outer snapshot",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 5,
+        processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+        segments: [
+          {
+            id: "seg-gen",
+            orderIndex: 0,
+            speakerLabel: "speaker_1",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: null,
+            text: "generation five text",
+            qualityText: "generation five quality",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      const result = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "manual",
+        runInBackground: true,
+        dependencies: {
+          db: db as never,
+          enhance: (async () => {
+            await new Promise(() => {});
+            return {
+              segments: [],
+              globalWarnings: [],
+              meta: { overallStatus: "COMPLETED" },
+            };
+          }) as never,
+          schedule: () => {},
+        },
+      });
+      assert.equal(result.outcome, "started");
+      const job = parseTranscriptEnhancementJob(state.processingMetadata);
+      assert.equal(job.retranscribeCount, 5);
+      assert.ok(job.runId);
+      assert.ok(job.inputIdentity);
+      assert.equal(job.publicationEligible, true);
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("R03 active retranscription rejects enhancement admission", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const state: InMemoryTranscript = {
+        id: "tr_transcribing",
+        sessionId: "session-tr_transcribing",
+        status: TranscriptStatus.TRANSCRIBING,
+        text: "old generation",
+        diarizedText: "old generation",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 1,
+        processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+        segments: [
+          {
+            id: "seg-old",
+            orderIndex: 0,
+            speakerLabel: "speaker_1",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: null,
+            text: "old generation",
+            qualityText: "old generation",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      let scheduled = 0;
+      const result = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "manual",
+        dependencies: {
+          db: db as never,
+          schedule: () => {
+            scheduled += 1;
+          },
+        },
+      });
+      assert.equal(result.outcome, "conflict");
+      if (result.outcome === "conflict") {
+        assert.equal(result.reason, "skipped_transcript_not_completed");
+      }
+      assert.equal(scheduled, 0);
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
+  });
+});
+
+test("R06 live AI lease rejects enhancement admission before provider schedule", async () => {
+  await withEnhancementEnv(async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ??
+      "postgresql://user:password@localhost:5432/negotiations_test";
+    try {
+      const { executeTranscriptEnhancement } = await import(
+        "@/lib/services/transcript-enhancement-orchestration"
+      );
+      const { AiAnalysisStatus } = await import("@/app/generated/prisma/client");
+      const state: InMemoryTranscript = {
+        id: "tr_ai_lock",
+        sessionId: "session-tr_ai_lock",
+        status: TranscriptStatus.COMPLETED,
+        text: "ready",
+        diarizedText: "ready",
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        retranscribeCount: 0,
+        processingMetadata: { transcriptionProvider: "yandex_speechkit" },
+        aiAnalysis: {
+          status: AiAnalysisStatus.ANALYZING,
+          runToken: "live-ai",
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+          updatedAt: new Date(),
+        },
+        segments: [
+          {
+            id: "seg-ai",
+            orderIndex: 0,
+            speakerLabel: "speaker_1",
+            startSeconds: 0,
+            endSeconds: 1,
+            mappedParticipantId: null,
+            text: "ready",
+            qualityText: "ready",
+          },
+        ],
+      };
+      const db = createInMemoryDb(state);
+      let scheduled = 0;
+      const result = await executeTranscriptEnhancement({
+        transcriptId: state.id,
+        triggerSource: "manual",
+        dependencies: {
+          db: db as never,
+          schedule: () => {
+            scheduled += 1;
+          },
+        },
+      });
+      assert.equal(result.outcome, "conflict");
+      if (result.outcome === "conflict") {
+        assert.equal(result.reason, "skipped_ai_in_progress");
+      }
+      assert.equal(scheduled, 0);
     } finally {
       if (previousDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

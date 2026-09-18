@@ -149,3 +149,25 @@ test("groupSegmentsIntoTurns duration follows existing grouped turn boundaries",
     "00:05.2-00:19.4 · 14.2 s",
   );
 });
+
+test("groupSegmentsIntoTurns splits same speaker when provenance differs", () => {
+  const turns = groupSegmentsIntoTurns(
+    [
+      { text: "changed", startSeconds: 1, endSeconds: 2, speaker: "A", provenance: "applied" as const },
+      { text: "unchanged", startSeconds: 2, endSeconds: 3, speaker: "A", provenance: "raw" as const },
+      { text: "also changed", startSeconds: 3, endSeconds: 4, speaker: "A", provenance: "applied" as const },
+    ],
+    (segment) => ({
+      speakerName: segment.speaker,
+      rawSpeakerLabel: segment.speaker,
+      mappingApplied: false,
+      enhancementProvenance: segment.provenance,
+      speakerKey: `${segment.speaker}::${segment.provenance}`,
+    }),
+  );
+
+  assert.equal(turns.length, 3);
+  assert.equal(turns[0]?.enhancementProvenance, "applied");
+  assert.equal(turns[1]?.enhancementProvenance, "raw");
+  assert.equal(turns[2]?.enhancementProvenance, "applied");
+});

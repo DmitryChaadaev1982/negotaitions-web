@@ -846,6 +846,24 @@ model TranscriptSegment {
   @@index([mappedParticipantId])
 }
 
+/// Fixed global provider-admission inventory for transcript enhancement.
+/// Exactly TRANSCRIPT_ENHANCEMENT_PROVIDER_SLOT_COUNT rows exist; a row with a
+/// future `leaseExpiresAt` is one in-flight provider request. This is global
+/// concurrency authority only — it is not job persistence and it is independent
+/// of the D1 job lease. A crashed holder's lease expires and frees capacity.
+model TranscriptEnhancementProviderSlot {
+  slotIndex      Int       @id
+  jobId          String?
+  runId          String?
+  leaseToken     String?
+  acquiredAt     DateTime?
+  leaseExpiresAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@index([leaseExpiresAt])
+  @@index([jobId, leaseExpiresAt])
+}
+
 model AiAnalysis {
   id                          String           @id @default(cuid())
   sessionId                   String           @unique

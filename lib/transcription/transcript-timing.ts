@@ -15,6 +15,7 @@ export type GroupedTranscriptTurn = ResolvedTurnSpeaker & {
   text: string;
   startSeconds: number | null;
   endSeconds: number | null;
+  enhancementProvenance?: "applied" | "raw" | "edited";
 };
 
 const DEFAULT_TIME_FALLBACK = "00:00:00";
@@ -111,7 +112,9 @@ export function formatTranscriptTimeRangeWithDurationUi(params: {
 
 export function groupSegmentsIntoTurns<TSegment extends TranscriptTimingSegment>(
   segments: TSegment[],
-  resolveSpeaker: (segment: TSegment) => ResolvedTurnSpeaker,
+  resolveSpeaker: (
+    segment: TSegment,
+  ) => ResolvedTurnSpeaker & Pick<GroupedTranscriptTurn, "enhancementProvenance">,
 ): GroupedTranscriptTurn[] {
   const turns: GroupedTranscriptTurn[] = [];
 

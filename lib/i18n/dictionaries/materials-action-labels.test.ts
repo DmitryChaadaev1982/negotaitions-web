@@ -21,6 +21,32 @@ test("AI publication and administrative action labels remain specific", () => {
   assert.equal(en.room.aiAnalysisNotShared, "AI analysis has not been shared yet.");
 });
 
+test("UX-03 skip copy distinguishes first skip from skip that keeps prior enhanced publication", () => {
+  assert.equal(ru.sessionMaterials.enhancementStatusSkipped, "ИИ-улучшение пропущено");
+  assert.equal(en.sessionMaterials.enhancementStatusSkipped, "AI enhancement was skipped");
+  assert.equal(
+    ru.sessionMaterials.enhancementStatusSkippedRetainingPrior,
+    "Новая попытка ИИ-улучшения пропущена. Используется ранее улучшенный текст.",
+  );
+  assert.equal(
+    en.sessionMaterials.enhancementStatusSkippedRetainingPrior,
+    "The new AI improvement attempt was skipped. The previously improved text is still in use.",
+  );
+});
+
+test("AI enhancement start vs retry labels follow history, not availability", () => {
+  assert.equal(ru.sessionMaterials.runTranscriptEnhancement, "Запустить ИИ-улучшение");
+  assert.equal(en.sessionMaterials.runTranscriptEnhancement, "Start AI enhancement");
+  assert.equal(ru.sessionMaterials.retryTranscriptEnhancement, "Повторить ИИ-улучшение");
+  assert.equal(en.sessionMaterials.retryTranscriptEnhancement, "Retry AI enhancement");
+  const panel = readFileSync("components/session-post-processing-panel.tsx", "utf8");
+  assert.match(panel, /enhancementStartActionCopyKey/);
+  assert.doesNotMatch(
+    panel,
+    /canRetryTranscriptEnhancement\s*\?\s*t\("sessionMaterials\.retryTranscriptEnhancement"\)/,
+  );
+});
+
 test("participant and facilitator debrief materials action uses its generic dictionary key", () => {
   const source = readFileSync(
     "components/session-post-processing-panel.tsx",

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { Card, CardContent, CardHeader } from "@/components/card";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -11,6 +11,7 @@ import {
   createEmptyManualSpeakerTurn,
   createManualTurnId,
   insertManualSpeakerTurnAfter,
+  buildInitialManualTurnsFromPersistedSegments,
   toSubmittedManualSpeakerTurns,
   type ManualSpeakerTurnEdit,
 } from "@/lib/transcription/manual-speaker-turn-edits";
@@ -24,9 +25,17 @@ import { buildParticipantOptionLabel } from "@/lib/transcription/speaker-labels"
 import { shouldSyncSpeakerMappingDraft } from "@/lib/transcription/speaker-mapping-draft-sync";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import {
+  resolveAutoAppliedMappingSurface,
   resolvePrimaryMappingReasonI18nKey,
   resolveSpeakerMappingStatusDescriptionKey,
 } from "@/lib/transcription/mapping-ui-presentation";
+import {
+  detailedTranscriptHydrationAttemptKey,
+  isActiveTranscriptGenerationStage,
+  isSpeakerMappingPresentedCurrent,
+  resolveDetailedTranscriptGenerationPresentation,
+  shouldHydrateDetailedTranscriptPayload,
+} from "@/lib/post-processing/transcript-generation-currentness";
 import {
   showRecordingStatusDetail,
   showTranscriptLanguageSelector,
@@ -44,6 +53,24 @@ import {
 } from "@/lib/transcription/assisted-speaker-mapping";
 import { getRecordingDisplayState } from "@/lib/recording-display-state";
 import { resolveTranscriptSectionEnhancementRunning } from "@/lib/post-processing/enhancement-effective-state";
+import {
+  authoritativeEnhancedPublicationRunIdFromMetadata,
+  isLexicalEditLockedByEnhancement,
+  resolveEnhancementStatusCopyKind,
+  resolveEnhancementUxState,
+  resolvePublishedTranscriptKind,
+  resolveSkippedEnhancementCopyVariant,
+  skippedEnhancementBodyKey,
+  skippedEnhancementHeadlineKey,
+  isEnhancementExecutionInFlight,
+  isSuccessfulAtomicPublication,
+  resolvePublishedTranscriptRefreshObligation,
+  shouldReloadPublishedTranscript,
+  shouldShowDurableEnhancementProgress,
+  toProgressTemplateParams,
+  transcriptPayloadIndicatesSuccessfulPublication,
+  type EnhancementUxProgress,
+} from "@/lib/post-processing/enhancement-ux-presentation";
 import {
   materialsRetranscribePath,
   materialsTranscribePath,
@@ -75,6 +102,7 @@ type TranscriptSegmentData = {
   text: string;
   orderIndex: number;
   displaySpeakerLabel?: string | null;
+  enhancementProvenance?: "applied" | "raw" | "edited";
 };
 
 type TranscriptData = {
@@ -86,6 +114,7 @@ type TranscriptData = {
   language: string | null;
   transcriptionModel: string | null;
   hasSpeakerDiarization: boolean;
+  retranscribeCount?: number;
   speakerMappingStatus?: string | null;
   mappingFailureReason?: string | null;
   mappingFailureI18nKey?: string | null;
@@ -140,8 +169,12 @@ type RecordingTranscriptionSectionProps = {
   hideRerunControls?: boolean;
   /** Called after transcript/mapping changes so parent can refresh processing status. */
   onProcessingChange?: () => void;
-  /** When true, disables all editing interactions (e.g. during retranscription). */
+  /** When true, disables generation-dependent mapping/lexical currentness. */
   isLocked?: boolean;
+  /** Canonical materials/status transcription processing stage. */
+  canonicalTranscriptionStage?: string | null;
+  /** Authoritative transcript generation from materials/status. */
+  canonicalRetranscribeCount?: number | null;
   /** Hide the pre-AI AUTO_SUGGESTED advisory after successful AI admission. */
   aiAdmissionCompleted?: boolean;
   /**
@@ -154,6 +187,19 @@ type RecordingTranscriptionSectionProps = {
    * When provided, this is the lock authority and must match the five-card rail.
    */
   canonicalEnhancementRunning?: boolean;
+  canonicalPublicationEligible?: boolean;
+  canonicalLexicalEditAvailable?: boolean;
+  canonicalContinueAvailable?: boolean;
+  canonicalTerminalQuality?: string | null;
+  canonicalExecutionStatus?: string | null;
+  canonicalCancelReason?: string | null;
+  canonicalSkipReason?: string | null;
+  canonicalEnhancementProgress?: EnhancementUxProgress | null;
+  canonicalPublishedText?: string | null;
+  onContinueWithCurrentTranscript?: () => void;
+  continueBusy?: boolean;
+  onLexicalUnsavedChange?: (dirty: boolean) => void;
+  onPublishedTranscriptRefreshPending?: (pending: boolean) => void;
 };
 
 function formatBytes(bytes: number | null) {
@@ -206,10 +252,6 @@ type ResolvedSpeakerDisplay = {
   mappingApplied: boolean;
 };
 
-function isSpeakerMappingDisplayable(status: string | null | undefined): boolean {
-  return status === "CONFIRMED" || status === "AUTO_SUGGESTED";
-}
-
 function confidenceLevelLabel(
   level: MappingConfidenceLevel | null,
   t: ReturnType<typeof useI18n>["t"],
@@ -218,6 +260,43 @@ function confidenceLevelLabel(
   if (level === "MEDIUM") return t("recording.confidenceMedium");
   if (level === "LOW") return t("recording.confidenceLow");
   return null;
+}
+
+function TurnEnhancementProvenanceIcon({
+  provenance,
+  appliedLabel,
+  rawLabel,
+  editedLabel,
+}: {
+  provenance: "applied" | "raw" | "edited";
+  appliedLabel: string;
+  rawLabel: string;
+  editedLabel: string;
+}) {
+  const label =
+    provenance === "applied" ? appliedLabel : provenance === "edited" ? editedLabel : rawLabel;
+  const toneClassName =
+    provenance === "applied"
+      ? "text-emerald-400"
+      : provenance === "edited"
+        ? "text-amber-400"
+        : "text-slate-500";
+  return (
+    <span
+      data-testid="diarized-turn-enhancement-provenance"
+      data-provenance={provenance}
+      title={label}
+      aria-label={label}
+      className={`inline-flex shrink-0 ${toneClassName}`}
+    >
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M8 1.2 9.1 5h4.1L10.2 7.5 11.4 11.4 8 9.1 4.6 11.4 5.8 7.5 2.8 5h4.1L8 1.2z"
+        />
+      </svg>
+    </span>
+  );
 }
 
 function resolveSegmentSpeakerDisplay(
@@ -267,6 +346,7 @@ function buildInitialManualTurnsFromTranscript(
 
   return chunks.map((chunk) => ({
     id: createManualTurnId(),
+    sourceSegmentId: null,
     participantId: "",
     text: chunk,
     startSeconds: null,
@@ -280,33 +360,11 @@ function buildInitialManualTurnsFromTranscript(
 function buildInitialManualTurnsFromSegments(
   segments: TranscriptSegmentData[],
 ): ManualSpeakerTurn[] {
-  const normalized = segments
-    .map((segment) => segment.text.trim())
-    .map((text, index) => ({
-      segment: segments[index]!,
-      text,
-    }))
-    .filter((item) => item.text.length > 0);
-
-  if (normalized.length === 0) {
-    return buildInitialManualTurnsFromTranscript("");
-  }
-
-  return normalized.map((item) => ({
-    id: createManualTurnId(),
-    participantId: item.segment.mappedParticipantId ?? "",
-    text: item.text,
-    startSeconds: item.segment.startSeconds,
-    endSeconds: item.segment.endSeconds,
-    speakerLabel: item.segment.speakerLabel,
-    displaySpeakerLabel: item.segment.displaySpeakerLabel ?? item.segment.speakerLabel,
-    speakerSlot: item.segment.speakerLabel ?? null,
-  }));
+  return buildInitialManualTurnsFromPersistedSegments(segments);
 }
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
 const RECORDING_STATUS_STALL_MS = 45_000;
-const ENHANCEMENT_STATUS_POLL_INTERVAL_MS = 3_500;
 
 function debugSpeakerMappingClient(event: string, payload: Record<string, unknown>): void {
   if (process.env.NODE_ENV !== "development") {
@@ -326,9 +384,21 @@ export function RecordingTranscriptionSection({
   hideRerunControls = false,
   onProcessingChange,
   isLocked = false,
+  canonicalTranscriptionStage = null,
+  canonicalRetranscribeCount = null,
   aiAdmissionCompleted = false,
   canonicalEnhancementStatus,
   canonicalEnhancementRunning,
+  canonicalPublicationEligible,
+  canonicalLexicalEditAvailable,
+  canonicalTerminalQuality,
+  canonicalExecutionStatus,
+  canonicalCancelReason,
+  canonicalSkipReason,
+  canonicalEnhancementProgress,
+  canonicalPublishedText,
+  onLexicalUnsavedChange,
+  onPublishedTranscriptRefreshPending,
 }: RecordingTranscriptionSectionProps) {
   const { t, locale } = useI18n();
   const [recording, setRecording] = useState<RecordingData | null>(null);
@@ -341,7 +411,16 @@ export function RecordingTranscriptionSection({
     Record<string, string | null>
   >({});
   const speakerMappingDraftDirtyRef = useRef(false);
-  const enhancementWasRunningRef = useRef(false);
+  const mountId = useId();
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastAppliedPublishedTextRef = useRef<string | null>(null);
+  const publishedRefreshInFlightRef = useRef(false);
+  const detailedHydrationAttemptKeyRef = useRef<string | null>(null);
+  const [publicationHydration, setPublicationHydration] = useState({
+    inFlightSeen: false,
+    cycle: 0,
+    hydratedCycle: -1,
+  });
   const [transcriptText, setTranscriptText] = useState("");
   const [languageHint, setLanguageHint] = useState<"auto" | "ru" | "en">("auto");
   const [loading, setLoading] = useState(true);
@@ -367,6 +446,7 @@ export function RecordingTranscriptionSection({
   const speakerMappingDraftTranscriptIdRef = useRef<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [mappingReviewSkipped, setMappingReviewSkipped] = useState(false);
+  const [appliedMappingEditorOpen, setAppliedMappingEditorOpen] = useState(false);
   const [materialChangeDialog, setMaterialChangeDialog] = useState<{
     willRevokePublication: boolean;
   } | null>(null);
@@ -466,6 +546,18 @@ export function RecordingTranscriptionSection({
       return [];
     }
 
+    const detailedPresentation = resolveDetailedTranscriptGenerationPresentation({
+      transcriptionActive:
+        isLocked ||
+        isActiveTranscriptGenerationStage(canonicalTranscriptionStage) ||
+        isActiveTranscriptGenerationStage(transcript?.status),
+      speakerMappingStatus: transcript?.speakerMappingStatus,
+      payloadRetranscribeCount: transcript?.retranscribeCount,
+      authoritativeRetranscribeCount: canonicalRetranscribeCount,
+      payloadStatus: transcript?.status,
+      authoritativeTranscriptionStage: canonicalTranscriptionStage,
+    });
+
     return groupSegmentsIntoTurns(
       segments,
       (segment) => {
@@ -473,15 +565,19 @@ export function RecordingTranscriptionSection({
           segment,
           transcript?.speakerMapping ?? null,
           participantsById,
-          isSpeakerMappingDisplayable(transcript?.speakerMappingStatus),
+          detailedPresentation.presentMappedParticipantNames,
         );
+        const enhancementProvenance = segment.enhancementProvenance ?? "raw";
         return {
           ...resolvedSpeaker,
-          speakerKey: `${resolvedSpeaker.speakerName}::${resolvedSpeaker.rawSpeakerLabel ?? "unknown"}::${resolvedSpeaker.mappingApplied ? "mapped" : "raw"}`,
+          enhancementProvenance: detailedPresentation.presentSegmentProvenanceDecoration
+            ? enhancementProvenance
+            : undefined,
+          speakerKey: `${resolvedSpeaker.speakerName}::${resolvedSpeaker.rawSpeakerLabel ?? "unknown"}::${resolvedSpeaker.mappingApplied ? "mapped" : "raw"}::${enhancementProvenance}`,
         };
       },
     );
-  }, [participantsById, transcript]);
+  }, [canonicalRetranscribeCount, canonicalTranscriptionStage, isLocked, participantsById, transcript]);
 
   const diarizedPreviewText = transcript?.diarizedText ?? "";
 
@@ -514,6 +610,13 @@ export function RecordingTranscriptionSection({
       setParticipants(payload.participants ?? []);
       setDetectedSpeakers(payload.detectedSpeakers ?? []);
       setTranscriptText(payload.transcript?.text ?? "");
+      lastAppliedPublishedTextRef.current = payload.transcript?.text ?? "";
+      if (transcriptPayloadIndicatesSuccessfulPublication(payload.transcript?.enhancement?.status)) {
+        setPublicationHydration((current) => ({
+          ...current,
+          hydratedCycle: current.cycle,
+        }));
+      }
       setMappingReviewSkipped(false);
       syncSpeakerMappingDraftFromTranscript(payload.transcript ?? null, {
         reason: "loadData",
@@ -679,24 +782,205 @@ export function RecordingTranscriptionSection({
     localEnhancementStatus: transcript?.enhancement?.status ?? null,
     processingMetadata,
   });
+  const enhancementUx = {
+    uiStatus: canonicalEnhancementStatus ?? transcript?.enhancement?.status ?? null,
+    executionStatus: canonicalExecutionStatus ?? null,
+    publicationEligible: canonicalPublicationEligible,
+    terminalQuality: canonicalTerminalQuality,
+    cancelReason: canonicalCancelReason,
+    skipReason: canonicalSkipReason,
+    progress: canonicalEnhancementProgress,
+    transcriptionStage: canonicalTranscriptionStage,
+  };
+  const transcriptGenerationActive =
+    isLocked ||
+    isActiveTranscriptGenerationStage(canonicalTranscriptionStage) ||
+    isActiveTranscriptGenerationStage(transcript?.status);
+  const detailedPresentation = resolveDetailedTranscriptGenerationPresentation({
+    transcriptionActive: transcriptGenerationActive,
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    payloadRetranscribeCount: transcript?.retranscribeCount,
+    authoritativeRetranscribeCount: canonicalRetranscribeCount,
+    payloadStatus: transcript?.status,
+    authoritativeTranscriptionStage: canonicalTranscriptionStage,
+  });
+  const detailedPayloadCurrent = detailedPresentation.detailedPayloadCurrent;
+  const enhancementUxState = resolveEnhancementUxState({
+    ...enhancementUx,
+    retranscriptionLocked: transcriptGenerationActive,
+  });
+  const enhancementRunningLocal =
+    enhancementUxState === "ENHANCEMENT_RUNNING" ||
+    enhancementUxState === "ENHANCEMENT_RETRYING" ||
+    enhancementUxState === "RAW_READY_ENHANCEMENT_STARTING";
+  const lexicalLocked =
+    transcriptGenerationActive ||
+    (canonicalLexicalEditAvailable === false) ||
+    isLexicalEditLockedByEnhancement(enhancementUx);
+  const mappingLocked = transcriptGenerationActive || !detailedPayloadCurrent;
+  const mappingPresentedCurrent = isSpeakerMappingPresentedCurrent({
+    transcriptionActive: transcriptGenerationActive,
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    detailedPayloadCurrent: detailedPayloadCurrent,
+  });
+  const showDurableProgress = shouldShowDurableEnhancementProgress(enhancementUx);
+  const progressParams = toProgressTemplateParams(canonicalEnhancementProgress);
+  const publishedKind = resolvePublishedTranscriptKind(enhancementUx);
+  const skippedEnhancementCopyVariant = resolveSkippedEnhancementCopyVariant({
+    copyKind: resolveEnhancementStatusCopyKind(enhancementUx),
+    authoritativeEnhancedPublicationRunId:
+      authoritativeEnhancedPublicationRunIdFromMetadata(processingMetadata),
+  });
+  const showPublishedKindLabel =
+    hasUsableTranscript(transcript) &&
+    !enhancementRunningLocal &&
+    enhancementUxState !== "ENHANCEMENT_CONTINUED";
+  const legalLexicalDirty =
+    Boolean(canonicalLexicalEditAvailable) &&
+    (transcriptText !== (transcript?.text ?? "") || manualSpeakerModeEnabled);
 
   useEffect(() => {
-    if (readOnly) return;
-    if (!enhancementRunning) return;
+    onLexicalUnsavedChange?.(legalLexicalDirty);
+  }, [legalLexicalDirty, onLexicalUnsavedChange]);
 
-    const intervalId = window.setInterval(() => {
-      void loadData();
-    }, ENHANCEMENT_STATUS_POLL_INTERVAL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [enhancementRunning, loadData, readOnly]);
-
-  useEffect(() => {
-    if (enhancementWasRunningRef.current && !enhancementRunning) {
-      void loadData();
+  const refreshPublishedTranscriptQuiet = useCallback(async (): Promise<boolean> => {
+    if (publishedRefreshInFlightRef.current) {
+      return false;
     }
-    enhancementWasRunningRef.current = enhancementRunning;
-  }, [enhancementRunning, loadData]);
+    publishedRefreshInFlightRef.current = true;
+    const scrollTop = transcriptScrollRef.current?.scrollTop ?? null;
+    try {
+      const response = await fetch(
+        `/api/sessions/${sessionId}/recording?${roomAuthQuery(roomAuth)}`,
+        { cache: "no-store" },
+      );
+      const rawBody = await response.text();
+      if (!rawBody || !response.ok) return false;
+      const payload = JSON.parse(rawBody) as {
+        recording: RecordingData | null;
+        transcript: TranscriptData | null;
+        participants?: ParticipantOption[];
+        detectedSpeakers?: DetectedSpeaker[];
+      };
+      if (payload.recording) setRecording(payload.recording);
+      if (payload.participants) setParticipants(payload.participants);
+      if (payload.detectedSpeakers) setDetectedSpeakers(payload.detectedSpeakers);
+      if (!payload.transcript) return false;
+      setTranscript(payload.transcript);
+      lastAppliedPublishedTextRef.current = payload.transcript.text ?? "";
+      if (!legalLexicalDirty) {
+        setTranscriptText(payload.transcript.text ?? "");
+      }
+      syncSpeakerMappingDraftFromTranscript(payload.transcript, {
+        reason: "quietPublishedRefresh",
+      });
+      if (transcriptPayloadIndicatesSuccessfulPublication(payload.transcript.enhancement?.status)) {
+        setPublicationHydration((current) => ({
+          ...current,
+          hydratedCycle: current.cycle,
+        }));
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      publishedRefreshInFlightRef.current = false;
+      if (scrollTop != null && transcriptScrollRef.current) {
+        transcriptScrollRef.current.scrollTop = scrollTop;
+      }
+    }
+  }, [legalLexicalDirty, roomAuth, sessionId, syncSpeakerMappingDraftFromTranscript]);
+
+  const successfulPublication = isSuccessfulAtomicPublication(enhancementUx);
+  const enhancementInFlight = isEnhancementExecutionInFlight(enhancementUx);
+  if (enhancementInFlight && !publicationHydration.inFlightSeen) {
+    setPublicationHydration((current) => ({
+      ...current,
+      inFlightSeen: true,
+      hydratedCycle: -1,
+    }));
+  } else if (!enhancementInFlight && publicationHydration.inFlightSeen) {
+    setPublicationHydration((current) => ({
+      inFlightSeen: false,
+      cycle: successfulPublication ? current.cycle + 1 : current.cycle,
+      hydratedCycle: current.hydratedCycle,
+    }));
+  }
+
+  const publishedRefreshObligation = resolvePublishedTranscriptRefreshObligation({
+    enhancement: enhancementUx,
+    hydratedSuccessfulPublication:
+      publicationHydration.hydratedCycle === publicationHydration.cycle,
+    lexicalEditAvailable: canonicalLexicalEditAvailable === true,
+    unsavedLegalLexicalEdit: legalLexicalDirty,
+  });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      onPublishedTranscriptRefreshPending?.(publishedRefreshObligation);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [onPublishedTranscriptRefreshPending, publishedRefreshObligation]);
+
+  useEffect(() => {
+    const textReload = shouldReloadPublishedTranscript({
+      previousPublishedText: lastAppliedPublishedTextRef.current,
+      nextPublishedText: canonicalPublishedText,
+      lexicalEditAvailable: canonicalLexicalEditAvailable === true,
+      unsavedLegalLexicalEdit: legalLexicalDirty,
+    });
+    if (!publishedRefreshObligation && !textReload) {
+      return;
+    }
+    const runRefresh = () => {
+      void refreshPublishedTranscriptQuiet();
+    };
+    const immediateId = window.setTimeout(runRefresh, 0);
+    const intervalId = publishedRefreshObligation
+      ? window.setInterval(runRefresh, STATUS_POLL_INTERVAL_MS)
+      : null;
+    return () => {
+      window.clearTimeout(immediateId);
+      if (intervalId != null) window.clearInterval(intervalId);
+    };
+  }, [
+    canonicalLexicalEditAvailable,
+    canonicalPublishedText,
+    legalLexicalDirty,
+    publishedRefreshObligation,
+    refreshPublishedTranscriptQuiet,
+  ]);
+
+  useEffect(() => {
+    if (
+      !shouldHydrateDetailedTranscriptPayload({
+        authoritativeRetranscribeCount: canonicalRetranscribeCount,
+        payloadRetranscribeCount: transcript?.retranscribeCount,
+        payloadLoaded: !loading && transcript != null,
+        payloadStatus: transcript?.status,
+        authoritativeTranscriptionStage: canonicalTranscriptionStage,
+      })
+    ) {
+      return;
+    }
+    const hydrationKey = detailedTranscriptHydrationAttemptKey({
+      authoritativeRetranscribeCount: canonicalRetranscribeCount,
+      authoritativeTranscriptionActive: isActiveTranscriptGenerationStage(
+        canonicalTranscriptionStage,
+      ),
+    });
+    if (detailedHydrationAttemptKeyRef.current === hydrationKey) {
+      return;
+    }
+    detailedHydrationAttemptKeyRef.current = hydrationKey;
+    void loadData();
+  }, [
+    canonicalRetranscribeCount,
+    canonicalTranscriptionStage,
+    loadData,
+    loading,
+    transcript,
+  ]);
 
   const applyTranscriptPayload = useCallback((
     payload: TranscriptData,
@@ -949,6 +1233,8 @@ export function RecordingTranscriptionSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...roomAuthBody(roomAuth),
+            transcriptId: transcript?.id,
+            expectedRetranscribeCount: transcript?.retranscribeCount ?? 0,
             mapping: mappingToSave,
             applyOnly,
             confirm,
@@ -976,6 +1262,8 @@ export function RecordingTranscriptionSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...roomAuthBody(roomAuth),
+            transcriptId: transcript?.id,
+            expectedRetranscribeCount: transcript?.retranscribeCount ?? 0,
             mapping: mappingToSave,
             applyOnly,
             confirm,
@@ -989,6 +1277,16 @@ export function RecordingTranscriptionSection({
         transcriptId: transcript?.id ?? null,
         status: response.status,
       });
+
+      if (
+        response.status === 409 &&
+        payload.errorCode === "generation_mismatch"
+      ) {
+        setError(t("recording.speakerMappingGenerationMismatch"));
+        notifyProcessingChange();
+        void refreshPublishedTranscriptQuiet();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(payload.error ?? "Save failed.");
@@ -1037,7 +1335,9 @@ export function RecordingTranscriptionSection({
 
     if (
       normalizedTurns.length === 0 ||
-      normalizedTurns.some((turn) => turn.participantId.length === 0)
+      normalizedTurns.some(
+        (turn) => turn.text.trim().length > 0 && turn.participantId.length === 0,
+      )
     ) {
       setError(t("recording.manualSpeakerAttributionRequiredFields"));
       return;
@@ -1217,7 +1517,8 @@ export function RecordingTranscriptionSection({
     transcript?.source === "GENERATED" &&
     !transcript.hasSpeakerDiarization &&
     hasUsableTranscript(transcript);
-  const editsLocked = isLocked || enhancementRunning;
+  const lexicalEditorLocked = lexicalLocked;
+  const mappingControlsLocked = mappingLocked;
   const preprocessingSkipped = processingMetadata?.preprocessingSkipped === true;
   const preprocessingReason =
     typeof processingMetadata?.preprocessingTriggerReason === "string"
@@ -1256,13 +1557,15 @@ export function RecordingTranscriptionSection({
     return spokenSegments.every((segment) => Boolean(segment.mappedParticipantId));
   }, [transcript?.segments]);
 
-  const shouldShowSpeakerMappingPanel =
+  const mappingEditorEligible =
     speakersForMapping.length > 0 &&
     !readOnly &&
-    !editsLocked &&
+    !mappingControlsLocked &&
     !manualSpeakerModeEnabled &&
-    transcript?.source !== "MANUAL" &&
-    !hasFullyMappedSegments;
+    transcript?.source !== "MANUAL";
+  const shouldShowSpeakerMappingPanel =
+    mappingEditorEligible &&
+    (!hasFullyMappedSegments || appliedMappingEditorOpen);
 
   const allSpeakersMappedInDraft = useMemo(() => {
     if (speakersForMapping.length === 0) {
@@ -1304,28 +1607,168 @@ export function RecordingTranscriptionSection({
   const reviewMode = resolveSpeakerReviewMode({
     speakerMappingStatus: transcript?.speakerMappingStatus,
     speakersCount: speakersForMapping.length,
-    isEditable: !readOnly && !editsLocked,
+    isEditable: !readOnly && !mappingControlsLocked,
     manualSpeakerModeEnabled,
     transcriptSource: transcript?.source,
     mappingReviewSkipped,
     aiAdmissionCompleted,
+    transcriptionActive: transcriptGenerationActive || !detailedPayloadCurrent,
   });
   const showAssistedReviewCard = reviewMode === "REVIEW_CARD";
   const showAutoAppliedNote = reviewMode === "AUTO_APPLIED_NOTE";
+  const autoAppliedMappingSurface = resolveAutoAppliedMappingSurface({
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    aiAdmissionCompleted,
+    mappingLocked: mappingControlsLocked,
+    readOnly,
+    mappingEditorVisible:
+      (shouldShowSpeakerMappingPanel && !showAssistedReviewCard) ||
+      showAssistedReviewCard,
+  });
+  const showAutoAppliedReviewAction =
+    showAutoAppliedNote &&
+    mappingEditorEligible &&
+    autoAppliedMappingSurface === "notice_with_review_action";
 
   const content = (
-    <>
+    <div
+      data-testid="recording-transcription-section"
+      data-mount-id={mountId}
+      data-enhancement-ux-state={enhancementUxState}
+      data-publication-eligible={canonicalPublicationEligible ? "true" : "false"}
+      data-lexical-locked={lexicalEditorLocked ? "true" : "false"}
+      data-mapping-editable={!readOnly && !mappingControlsLocked ? "true" : "false"}
+      data-mapping-current={mappingPresentedCurrent ? "true" : "false"}
+      data-detailed-payload-current={detailedPayloadCurrent ? "true" : "false"}
+      data-transcript-generation-active={transcriptGenerationActive ? "true" : "false"}
+      className="space-y-6"
+    >
         {loading ? (
-          <p className="text-sm text-slate-400">{t("common.loading")}...</p>
+          <p className="text-sm text-slate-400" data-testid="recording-transcription-initial-loading">
+            {t("common.loading")}...
+          </p>
         ) : (
           <>
-            {enhancementRunning ? (
+            {transcriptGenerationActive ? (
               <div
-                data-testid="transcript-enhancement-running-lock"
-                className="rounded-xl border border-violet-500/30 bg-violet-950/20 px-4 py-3 text-sm text-violet-100"
+                data-testid="transcript-generation-noncurrent"
+                className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 px-4 py-3 text-sm text-cyan-100"
               >
-                {t("sessionMaterials.transcriptReadyEnhancementInProgress")}
+                <p>{t("sessionMaterials.transcriptionInProgress")}</p>
+                {(transcript?.speakerMappingStatus === "CONFIRMED" ||
+                  transcript?.speakerMappingStatus === "AUTO_SUGGESTED") ? (
+                  <p
+                    className="mt-1 text-xs text-cyan-200/80"
+                    data-testid="prior-mapping-noncurrent"
+                  >
+                    {t("sessionMaterials.waitingForTranscript")}
+                  </p>
+                ) : null}
               </div>
+            ) : !detailedPayloadCurrent &&
+              (transcript?.speakerMappingStatus === "CONFIRMED" ||
+                transcript?.speakerMappingStatus === "AUTO_SUGGESTED") ? (
+              <div
+                data-testid="transcript-generation-noncurrent"
+                className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 px-4 py-3 text-sm text-cyan-100"
+              >
+                <p
+                  className="text-xs text-cyan-200/80"
+                  data-testid="prior-mapping-noncurrent"
+                >
+                  {t("sessionMaterials.waitingForTranscript")}
+                </p>
+              </div>
+            ) : null}
+            {enhancementRunningLocal ? (
+              <div
+                data-testid={lexicalEditorLocked ? "transcript-lexical-view-only" : undefined}
+              >
+                <div
+                  data-testid="transcript-enhancement-running-lock"
+                  className="space-y-2 rounded-xl border border-violet-500/30 bg-violet-950/20 px-4 py-3 text-sm text-violet-100"
+                >
+                  <p
+                    data-testid={
+                      showDurableProgress && progressParams ? "enhancement-progress" : undefined
+                    }
+                  >
+                    {showDurableProgress && progressParams
+                      ? t("sessionMaterials.enhancementTranscriptLocalProgress", progressParams)
+                      : t("sessionMaterials.enhancementStatusRunning")}
+                  </p>
+                  <p
+                    className="text-xs text-violet-200/80"
+                    data-testid="enhancement-published-kind"
+                    data-published-kind="raw"
+                  >
+                    {t("sessionMaterials.enhancementPublishedRaw")}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {enhancementUxState === "ENHANCEMENT_RUNNING_INELIGIBLE" ? (
+              <div
+                data-testid="enhancement-running-ineligible"
+                className="rounded-xl border border-slate-600/40 bg-slate-900/40 px-4 py-3 text-sm text-slate-200"
+              >
+                {t("sessionMaterials.enhancementRunningIneligible")}
+              </div>
+            ) : null}
+
+            {enhancementUxState === "ENHANCEMENT_TERMINAL_PARTIAL" ? (
+              <div
+                data-testid="enhancement-terminal-partial"
+                className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-100"
+              >
+                {t("sessionMaterials.enhancementTerminalPartial")}
+              </div>
+            ) : null}
+
+            {enhancementUxState === "ENHANCEMENT_HISTORICAL_TIMEOUT" ? (
+              <div
+                data-testid="enhancement-historical-timeout"
+                className="rounded-xl border border-slate-600/40 bg-slate-900/40 px-4 py-3 text-sm text-slate-200"
+              >
+                {t("sessionMaterials.enhancementHistoricalTimeout")}
+              </div>
+            ) : null}
+
+            {enhancementUxState === "ENHANCEMENT_CONTINUED" ? (
+              <div
+                data-testid="enhancement-continued"
+                data-skipped-copy={skippedEnhancementCopyVariant}
+                className="space-y-1"
+              >
+                <p className="text-sm text-slate-300">
+                  {t(skippedEnhancementHeadlineKey(skippedEnhancementCopyVariant))}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {t(skippedEnhancementBodyKey(skippedEnhancementCopyVariant))}
+                </p>
+              </div>
+            ) : null}
+
+            {canonicalEnhancementProgress &&
+            (canonicalEnhancementProgress.permanentFailedChunks ?? 0) > 0 &&
+            enhancementRunning &&
+            canonicalPublicationEligible === false ? (
+              <p data-testid="enhancement-permanent-failure-running" className="text-sm text-amber-200">
+                {t("sessionMaterials.enhancementPermanentFailureRunning")}
+              </p>
+            ) : null}
+
+            {showPublishedKindLabel ? (
+              <p
+                data-testid="enhancement-published-kind"
+                data-published-kind={publishedKind}
+                className="text-xs text-slate-500"
+              >
+                {publishedKind === "enhanced"
+                  ? t("sessionMaterials.enhancementPublishedEnhanced")
+                  : t("sessionMaterials.enhancementPublishedRaw")}
+              </p>
             ) : null}
 
             {showServiceAlert ? (
@@ -1362,9 +1805,10 @@ export function RecordingTranscriptionSection({
             ) : null}
 
             {renderRecordingStatusDetail && !compact ? (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-4 py-3">
                     <p className="text-xs text-slate-500">{t("recording.recordingStatus")}</p>
                     <p
                       data-testid="recording-status"
@@ -1429,28 +1873,31 @@ export function RecordingTranscriptionSection({
                     </p>
                   </div>
                 </div>
+                </div>
 
-                {recording?.fileKey ? (
-                  <div className="max-w-full overflow-hidden text-xs text-slate-500">
-                    <p>{t("recording.fileKey")}:</p>
-                    <code className="block max-w-full whitespace-pre-wrap break-all rounded bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300">
-                      {recording.fileKey}
-                    </code>
-                  </div>
-                ) : null}
+                <div className="space-y-2">
+                  {recording?.fileKey ? (
+                    <div className="max-w-full space-y-1 overflow-hidden text-xs text-slate-500">
+                      <p>{t("recording.fileKey")}:</p>
+                      <code className="block max-w-full whitespace-pre-wrap break-all rounded bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300">
+                        {recording.fileKey}
+                      </code>
+                    </div>
+                  ) : null}
 
-                {recording?.compressionStatus ? (
+                  {recording?.compressionStatus ? (
+                    <p className="text-sm text-slate-400">
+                      {t("recording.compressionStatus")}: {recording.compressionStatus}
+                    </p>
+                  ) : null}
+
                   <p className="text-sm text-slate-400">
-                    {t("recording.compressionStatus")}: {recording.compressionStatus}
+                    {recording?.compressionStatus === "SKIPPED"
+                      ? t("recording.originalWithoutRecompression")
+                      : t("recording.compressionInfo")}
                   </p>
-                ) : null}
-
-                <p className="text-sm text-slate-400">
-                  {recording?.compressionStatus === "SKIPPED"
-                    ? t("recording.originalWithoutRecompression")
-                    : t("recording.compressionInfo")}
-                </p>
-              </>
+                </div>
+              </div>
             ) : renderRecordingStatusDetail ? (
               <div className="rounded-lg border border-slate-700/40 bg-slate-900/40 px-3 py-2">
                 <p className="text-xs text-slate-500">{t("recording.recordingStatus")}</p>
@@ -1767,9 +2214,22 @@ export function RecordingTranscriptionSection({
                 className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
                 data-testid="auto-applied-mapping-note"
               >
-                <p className="font-semibold">
-                  {t("recording.mappingStatusDescription.appliedNeedsConfirmation")}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold">
+                    {t("recording.mappingStatusDescription.appliedNeedsConfirmation")}
+                  </p>
+                  {showAutoAppliedReviewAction ? (
+                    <SecondaryButton
+                      type="button"
+                      disabled={busyAction != null}
+                      onClick={() => setAppliedMappingEditorOpen(true)}
+                      data-testid="review-speaker-mapping-button"
+                      className="shrink-0 text-xs"
+                    >
+                      {t("recording.reviewOrChangeMapping")}
+                    </SecondaryButton>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 
@@ -1919,7 +2379,10 @@ export function RecordingTranscriptionSection({
             ) : null}
 
             {shouldShowSpeakerMappingPanel && !showAssistedReviewCard ? (
-              <div className="space-y-4 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
+              <div
+                className="space-y-4 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
+                data-testid="speaker-mapping-editor"
+              >
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">
                     {t("recording.speakerMapping")}
@@ -1991,8 +2454,8 @@ export function RecordingTranscriptionSection({
             ) : null}
 
             {diarizedTurns.length > 0 ? (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
                   <label className="text-sm font-medium text-slate-300">
                     {t("recording.diarizedTranscript")}
                   </label>
@@ -2004,7 +2467,7 @@ export function RecordingTranscriptionSection({
                     >
                       {t("recording.copyDiarizedTranscript")}
                     </SecondaryButton>
-                    {!readOnly && !editsLocked && !manualSpeakerModeEnabled ? (
+                    {!readOnly && !lexicalEditorLocked && !manualSpeakerModeEnabled ? (
                       <SecondaryButton
                         data-testid="edit-diarized-transcript-button"
                         disabled={busyAction != null}
@@ -2017,18 +2480,31 @@ export function RecordingTranscriptionSection({
                 </div>
 
                 {!manualSpeakerModeEnabled ? (
-                  <div className="space-y-3">
+                  <div ref={transcriptScrollRef} className="space-y-3">
                     {diarizedTurns.map((turn, index) => (
                       <div
                         key={`${turn.speakerKey}-${index}`}
                         data-testid="diarized-transcript-turn"
                         className="rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/80 to-slate-950/80 px-4 py-3 shadow-inner"
                       >
-                        <p className="text-xs font-semibold uppercase tracking-wide text-cyan-300/90">
-                          {turn.mappingApplied
-                            ? turn.speakerName
-                            : `${turn.speakerName} · ${t("recording.mappingRequiredShort")}`}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <p
+                            className="text-xs font-semibold uppercase tracking-wide text-cyan-300/90"
+                            data-mapping-applied={turn.mappingApplied ? "true" : "false"}
+                          >
+                            {turn.mappingApplied
+                              ? turn.speakerName
+                              : `${turn.speakerName} · ${t("recording.mappingRequiredShort")}`}
+                          </p>
+                          {turn.enhancementProvenance ? (
+                            <TurnEnhancementProvenanceIcon
+                              provenance={turn.enhancementProvenance}
+                              appliedLabel={t("sessionMaterials.enhancementTurnApplied")}
+                              rawLabel={t("sessionMaterials.enhancementTurnRaw")}
+                              editedLabel={t("sessionMaterials.enhancementTurnEdited")}
+                            />
+                          ) : null}
+                        </div>
                         <p className="mt-1 text-[11px] text-slate-500">
                           {formatTranscriptTimeRangeWithDurationUi({
                             startSeconds: turn.startSeconds,
@@ -2076,12 +2552,12 @@ export function RecordingTranscriptionSection({
                   data-testid="transcript-textarea"
                   value={transcriptText}
                   onChange={(event) => setTranscriptText(event.target.value)}
-                  readOnly={readOnly || editsLocked}
+                  readOnly={readOnly || lexicalEditorLocked}
                   rows={10}
                   placeholder={t("recording.noTranscriptYet")}
                   className="w-full rounded-lg border border-slate-600/40 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
                 />
-                {!readOnly && !editsLocked ? (
+                {!readOnly && !lexicalEditorLocked ? (
                   <GradientButton
                     data-testid="save-transcript-button"
                     disabled={busyAction != null}
@@ -2163,21 +2639,11 @@ export function RecordingTranscriptionSection({
         onCancel={() => closeMaterialChangeDialog(false)}
         onConfirm={() => closeMaterialChangeDialog(true)}
       />
-    </>
+    </div>
   );
 
   if (embedded) {
-    return (
-      <div className="relative space-y-6">
-        {content}
-        {isLocked ? (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-slate-900/80 backdrop-blur-sm">
-            <span className="animate-spin text-2xl text-cyan-400">⟳</span>
-            <p className="text-sm text-cyan-300">{t("sessionMaterials.transcriptionInProgress")}</p>
-          </div>
-        ) : null}
-      </div>
-    );
+    return <div className="relative space-y-6">{content}</div>;
   }
 
   return (
@@ -2188,12 +2654,6 @@ export function RecordingTranscriptionSection({
         </h2>
       </CardHeader>
       <CardContent className="space-y-6">{content}</CardContent>
-      {isLocked ? (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-slate-900/80 backdrop-blur-sm">
-          <span className="animate-spin text-2xl text-cyan-400">⟳</span>
-          <p className="text-sm text-cyan-300">{t("sessionMaterials.transcriptionInProgress")}</p>
-        </div>
-      ) : null}
     </Card>
   );
 }

@@ -99,6 +99,20 @@ test("auto-suggested status stays compact and non-blocking", () => {
   assert.equal(mode, "AUTO_APPLIED_NOTE");
 });
 
+test("AUTO_SUGGESTED advisory is hidden while transcript generation is active", () => {
+  const mode = resolveSpeakerReviewMode({
+    speakerMappingStatus: "AUTO_SUGGESTED",
+    speakersCount: 2,
+    isEditable: true,
+    manualSpeakerModeEnabled: false,
+    transcriptSource: "GENERATED",
+    mappingReviewSkipped: false,
+    transcriptionActive: true,
+  });
+
+  assert.equal(mode, "NONE");
+});
+
 test("AUTO_SUGGESTED advisory is hidden after AI admission", () => {
   const mode = resolveSpeakerReviewMode({
     speakerMappingStatus: "AUTO_SUGGESTED",

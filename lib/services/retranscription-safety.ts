@@ -1,4 +1,9 @@
 import { Prisma, TranscriptSource, TranscriptStatus } from "@/app/generated/prisma/client";
+import {
+  fenceEnhancementJobInMetadata,
+  shouldFenceEnhancementOnRetranscribe,
+} from "@/lib/services/transcript-enhancement-job";
+import { clearTranscriptEnhancementPublication } from "@/lib/services/transcript-enhancement-publication";
 
 type ExistingTranscriptSnapshot = {
   status: string | null;
@@ -25,6 +30,17 @@ export function buildRetranscriptionUpsertData(params: {
 }) {
   const { sessionId, recordingId, language, newVersion, history, now, existingTranscript } =
     params;
+  const shouldFence = shouldFenceEnhancementOnRetranscribe(
+    existingTranscript?.processingMetadata,
+  );
+  const fencedJobMetadata = shouldFence
+    ? fenceEnhancementJobInMetadata(
+        existingTranscript?.processingMetadata,
+        "retranscription",
+        now.getTime(),
+      )
+    : existingTranscript?.processingMetadata;
+  const processingMetadata = clearTranscriptEnhancementPublication(fencedJobMetadata);
   return {
     create: {
       sessionId,
@@ -37,8 +53,7 @@ export function buildRetranscriptionUpsertData(params: {
       retranscribeCount: newVersion,
       retranscribeHistory: history,
       startedAt: now,
-      processingMetadata:
-        (existingTranscript?.processingMetadata as Prisma.InputJsonValue | undefined) ?? {},
+      processingMetadata: processingMetadata as Prisma.InputJsonValue,
     },
     update: {
       recordingId,
@@ -49,6 +64,7 @@ export function buildRetranscriptionUpsertData(params: {
       errorMessage: null,
       startedAt: now,
       completedAt: null,
+      processingMetadata: processingMetadata as Prisma.InputJsonValue,
     },
   };
 }

@@ -19,9 +19,11 @@ type PauseIntervalDelegate = {
   }) => Promise<Array<{ id?: string; startedAt: Date; endedAt: Date | null }>>;
 };
 
-function getPauseIntervalDelegate(): PauseIntervalDelegate | null {
+function getPauseIntervalDelegate(
+  client: unknown = prisma,
+): PauseIntervalDelegate | null {
   const delegate = (
-    prisma as unknown as { sessionPauseInterval?: PauseIntervalDelegate }
+    client as { sessionPauseInterval?: PauseIntervalDelegate }
   ).sessionPauseInterval;
 
   return delegate ?? null;
@@ -136,8 +138,8 @@ export async function closeAllOpenPauseIntervals(sessionId: string, endedAt: Dat
   return closedCount;
 }
 
-export async function listPauseIntervals(sessionId: string) {
-  const delegate = getPauseIntervalDelegate();
+export async function listPauseIntervals(sessionId: string, client: unknown = prisma) {
+  const delegate = getPauseIntervalDelegate(client);
   if (!delegate) {
     console.warn(
       "[session-pause-intervals] Prisma delegate missing. Run `npx prisma generate` and restart the dev server.",

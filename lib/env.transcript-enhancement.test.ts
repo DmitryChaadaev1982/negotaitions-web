@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { getProviderSlotPerJobCap } from "@/lib/services/transcript-enhancement-provider-slots";
 import {
   isTranscriptEnhancementAutoRunEnabled,
   isTranscriptEnhancementAutoTriggerEnabled,
@@ -10,6 +11,10 @@ import {
   getTranscriptEnhancementOutputMode,
   getTranscriptEnhancementChunkTimeoutMs,
   getTranscriptEnhancementMaxConcurrency,
+  getTranscriptEnhancementGlobalConcurrency,
+  TRANSCRIPT_ENHANCEMENT_HARD_PER_JOB_CONCURRENCY,
+  TRANSCRIPT_ENHANCEMENT_HARD_GLOBAL_CONCURRENCY,
+  getTranscriptEnhancementFairnessPolicy,
   getTranscriptEnhancementMaxRetries,
   getTranscriptEnhancementMode,
   getTranscriptEnhancementTimeoutMs,
@@ -89,6 +94,72 @@ test("TRANSCRIPT_ENHANCEMENT_OUTPUT_MODE invalid value falls back to json_schema
   }
 });
 
+test("frozen B02-1 operating point defaults are 1800/8/10/reserved_slot", () => {
+  const previous = {
+    chars: process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS,
+    concurrency: process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY,
+    global: process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY,
+    fairness: process.env.TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY,
+  };
+  delete process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY;
+  delete process.env.TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY;
+  try {
+    assert.equal(getTranscriptEnhancementChunkMaxChars(), 1800);
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), 8);
+    assert.equal(getTranscriptEnhancementGlobalConcurrency(), 10);
+    assert.equal(getTranscriptEnhancementFairnessPolicy(), "reserved_slot");
+  } finally {
+    if (previous.chars === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS;
+    else process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS = previous.chars;
+    if (previous.concurrency === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = previous.concurrency;
+    if (previous.global === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY = previous.global;
+    if (previous.fairness === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY = previous.fairness;
+  }
+});
+
+test("CAP-01/02/03 configured per-job above 8 is hard-clamped to 8", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = "9";
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), 8);
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = "10";
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), 8);
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = "100";
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), TRANSCRIPT_ENHANCEMENT_HARD_PER_JOB_CONCURRENCY);
+  } finally {
+    if (previous === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = previous;
+  }
+});
+
+test("CAP-07 configured lower per-job value is honored", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = "4";
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), 4);
+    assert.equal(getProviderSlotPerJobCap(), 4);
+  } finally {
+    if (previous === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = previous;
+  }
+});
+
+test("configured global concurrency cannot exceed the hard cap of 10", () => {
+  const previous = process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY;
+  try {
+    process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY = "100";
+    assert.equal(getTranscriptEnhancementGlobalConcurrency(), TRANSCRIPT_ENHANCEMENT_HARD_GLOBAL_CONCURRENCY);
+  } finally {
+    if (previous === undefined) delete process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY;
+    else process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY = previous;
+  }
+});
+
 test("chunked enhancement env defaults and clamps are safe", () => {
   const previousSegments = process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS;
   const previousChars = process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS;
@@ -101,9 +172,9 @@ test("chunked enhancement env defaults and clamps are safe", () => {
   process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_TIMEOUT_MS = "1";
   process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES = "99";
   try {
-    assert.equal(getTranscriptEnhancementChunkMaxSegments(), 6);
-    assert.equal(getTranscriptEnhancementChunkMaxChars(), 700);
-    assert.equal(getTranscriptEnhancementMaxConcurrency(), 4);
+    assert.equal(getTranscriptEnhancementChunkMaxSegments(), 18);
+    assert.equal(getTranscriptEnhancementChunkMaxChars(), 1800);
+    assert.equal(getTranscriptEnhancementMaxConcurrency(), 8);
     assert.equal(getTranscriptEnhancementChunkTimeoutMs(), 5000);
     assert.equal(getTranscriptEnhancementMaxRetries(), 3);
   } finally {

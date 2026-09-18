@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 
 import { useI18n } from "@/lib/i18n/useI18n";
+import { ensureDefaultLiveKitUserChoices } from "@/lib/livekit-user-choices";
 
 type RestrictedControlBarProps = {
   micAllowed: boolean;
@@ -26,6 +27,7 @@ export function RestrictedControlBar({
 }: RestrictedControlBarProps) {
   const { t } = useI18n();
   const localPermissions = useLocalParticipantPermissions();
+  ensureDefaultLiveKitUserChoices();
   const { saveAudioInputEnabled, saveVideoInputEnabled, saveAudioInputDeviceId, saveVideoInputDeviceId } =
     usePersistentUserChoices({ preventSave: false });
 

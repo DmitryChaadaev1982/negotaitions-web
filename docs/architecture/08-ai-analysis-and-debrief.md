@@ -7,11 +7,23 @@ Produce structured post-session coaching output from transcript/materials and ex
 ## Flow
 
 1. Facilitator starts analysis when the canonical projection says the
-   transcript is usable, enhancement is not `RUNNING` inside the configured
-   `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` window, speaker mapping is
-   structurally complete, and existing AI consent/permissions are present.
-   After enhancement becomes terminal (`COMPLETED` / `PARTIAL` / `FAILED` /
-   `SKIPPED` including timeout), enhancement no longer blocks AI.
+   transcript is usable, enhancement `publicationEligible` is false,
+   speaker mapping is structurally complete, and existing AI consent/permissions
+   are present. AI is blocked only while enhancement can still publish.
+   After Continue, first permanent chunk failure, terminal `PARTIAL`/`FAILED`,
+   or successful enhanced publication, enhancement no longer blocks AI.
+   Start AI does not implicitly Continue. Unpublished chunk checkpoints are
+   never AI input. The existing external-AI consent dialog may add a
+   compact transcript-quality notice when the current published transcript
+   was skipped (`CANCELLED_FOR_PUBLICATION`) or not successfully applied
+   (`FAILED` / terminal `PARTIAL`). Successfully enhanced publication and
+   never-started enhancement do not add that notice. The notice is
+   informational only; it is not a second consent gate and does not wait
+   for leftover enhancement work. If the facilitator has unsaved legal lexical edits after
+   editing is allowed, Start AI warns that the server still consumes the last
+   persisted published transcript (TE-FR-035). Facilitator/observer notes
+   remain editable while enhancement is active; enhancement eligibility is
+   not a generic lock on post-processing inputs.
 2. A fenced `QUEUED` operation is created and the route returns `202` without
    making the browser connection execution authority.
 3. Self-hosted Next.js `after()` starts the owned operation and transitions it
@@ -153,6 +165,7 @@ Produce structured post-session coaching output from transcript/materials and ex
 - Bounded failure diagnostics: `lib/ai/analysis-failure-diagnostics.ts`.
 - Bounded Yandex schema recovery: `lib/ai/analysis-schema-recovery.ts`.
 - Durable ownership and recovery: `lib/ai/analysis-operation.ts`.
+- Transcript-serialized AI admission: `lib/ai/analysis-transcript-admission.ts`.
 - Analysis context builder: `lib/ai/session-analysis-context.ts`.
 - Visibility filtering: `lib/analysis-visibility.ts`.
 - Shared facilitator pending-section UI:
@@ -359,13 +372,19 @@ payload.
   The additive column must exist before `materials/status` can be read; a
   missing column fails every session’s post-processing projection rather than
   falling back to “waiting for recording.”
-- Canonical builder: `buildSessionAnalysisContext` loads one in-memory
-  snapshot. `buildMaterialInputEnvelope` / `fingerprintSessionAnalysisContext`
-  hash that snapshot; `buildAnalysisPrompt` renders the same object. The
-  analyze route computes the fingerprint before `claimAiAnalysisRun`, stores
-  it on the claimed row, and reuses the closed-over context for the prompt.
-  Consistency boundary: one in-memory `SessionAnalysisContext`, not two
-  independent reads.
+- Canonical builder: `loadSessionAnalysisGraph` / `assembleSessionAnalysisContext`
+  produce one in-memory snapshot. `fingerprintSessionAnalysisContext` hashes
+  that snapshot; `buildAnalysisPrompt` renders the same object. Authoritative
+  Start AI admission is `admitAiAnalysisMaterial`: lock Transcript
+  `FOR UPDATE`, reread current transcript/mapping/enhancement eligibility,
+  evaluate readiness, assemble context from that locked snapshot, compute
+  `inputFingerprint` from that same material, lock AiAnalysis, and persist
+  `transcriptId` + `transcriptRetranscribeCount` + `inputFingerprint` at claim
+  time. Route prechecks are UX only. The provider operation is scheduled
+  only from the admitted context after commit. There is no second unlocked
+  fingerprint write. Currentness identity is `Transcript.id` +
+  `retranscribeCount` (+ `inputFingerprint` for lexical/mapping identity),
+  never `updatedAt`.
 - Envelope includes prompted session/case/event title, role
   objectives/constraints/hiddenInfo/fallbackPosition, negotiation-participant
   roster identity and preparation notes, transcript lexical/diarized text,
@@ -399,9 +418,12 @@ payload.
   manual enhancement retry stay blocked while AI is `QUEUED`/`ANALYZING` with
   a live lease; retranscription and other ordinary provider-work windows can
   still stale an already-authorized generation. Completion never rewrites
-  `inputFingerprint` to a later envelope. A new transcript generation
+  `inputFingerprint` to a later envelope.   A new transcript generation
   (`transcriptId` + `retranscribeCount`) is a downstream invalidation boundary
   even when a stored fingerprint would still match the queued/archived text.
+  The materials rail/cards also stop presenting that historical analysis as
+  current as soon as Repeat transcription is running; the `AiAnalysis` row
+  is kept and is not reset for presentation.
   Same-generation fingerprinted rows compare stored hash to the current
   envelope. `NULL` fingerprints keep
   `transcriptId` + `retranscribeCount` for **untouched** historical rows.
@@ -447,26 +469,67 @@ payload.
   panel.
   Manual transcript enhancement retry is also blocked while AI is
   `QUEUED`/`ANALYZING` with a live lease.
+  Route-level prechecks are UX only. Authoritative Start-AI and
+  Start/Repeat Improve both serialize on Transcript `FOR UPDATE`.
+  AI admission rereads enhancement eligibility under that lock, then
+  claims `AiAnalysis` while it is still held (`Transcript` → `AiAnalysis`).
+  Enhancement admission rereads the current AI lease under the same
+  Transcript lock and rejects a live AI run. Provider work for either
+  path is scheduled only after the admission transaction commits. At most
+  one conflicting provider operation is admitted.
 - Diagnostic logs may include fingerprint, schema version, and
   current/non-current reason. They must not dump transcript, hiddenInfo, or
   notes.
 
 ## Canonical Readiness And Presentation
 
-- AI admission uses `evaluateAiAnalysisReadiness` plus enhancement-running
-  ownership. `AUTO_SUGGESTED` is not a substitute for structural completeness.
+- AI admission uses `evaluateAiAnalysisReadiness` plus
+  `publicationEligible`. `AUTO_SUGGESTED` is not a substitute for structural
+  completeness.
 - Materials `canStart` and the analyze route share that contract. Enhancement
-  `FAILED` / `PARTIAL` / `SKIPPED` remain terminal and expose retry plus
-  continue-with-current-transcript; starting AI is the continue path.
+  `FAILED` / `PARTIAL` / `SKIPPED` / Continue remain non-blocking for AI when
+  `publicationEligible` is false. `materials/status` does not additionally
+  hide Start AI merely because leftover diagnostic execution is still
+  `RUNNING`. Continue is
+  `CONTINUE_WITH_CURRENT_TRANSCRIPT` while a job is still eligible; it is
+  not an implicit AI start.
 - The five-card rail, detailed rows, `/sessions`, and dashboard read speaker
   mapping and AI semantic state from `lib/post-processing/projection.ts`. A
   complete `AUTO_SUGGESTED` session is not shown as mapping-required beside
-  completed AI.
+  completed AI. While `isActiveTranscriptGenerationStage` is true (or the
+  initiating tab’s optimistic transcription lock, held until an authoritative
+  post-response `materials/status` apply), rail/cards/detailed
+  mapping and AI presentation use `projectTranscriptGenerationUiCurrentness`
+  so leftover analysis JSON is not shown as current. After retranscription,
+  only `evaluateAiAnalysisCurrentness` matching the new transcript
+  generation/fingerprint may appear current. Repeat Improve is not that
+  boundary. Facilitator `analysisCurrent` remains facilitator-only.
+  Authorized participant/observer viewers receive `publishedReportCurrent`:
+  true only when that recipient already has a valid publication grant, an
+  active publication bound to the current `AiAnalysis` identity, matching
+  `analysisVersion`, and the published artifact is current for the
+  authoritative transcript generation. Missing version identity fails closed.
+  A prior grant for publication v1 does not make a later private analysis
+  v2 current or visible; the facilitator may see private v2 before an
+  explicit republish. Missing facilitator `analysisCurrent` is not treated
+  as recipient currentness, and unpublished/private facilitator analysis is
+  never projected to recipients. Active new transcript generation still
+  presents a prior published report as non-current; after the new
+  generation, the recipient report stays stale until a valid publication for
+  that generation and version exists. Grant creation, revoke, and
+  projection selection are unchanged.
 - Transcript-enhancement running vs terminal is the same effective state for
-  the rail, Recording & Transcription locks, Materials, room Debrief, and
-  write guards (`lib/post-processing/enhancement-effective-state.ts`). A
-  polled `COMPLETED` status must unlock the nested transcript section even if
-  that child still holds a stale `/recording` `RUNNING` snapshot.
+  the rail, Materials, and room Debrief
+  (`lib/post-processing/enhancement-effective-state.ts`). Mapping remains
+  available during RUNNING. AI and lexical fences follow
+  `publicationEligible`. A polled `COMPLETED` or Continue status must unlock
+  AI even if a child still holds a stale `/recording` `RUNNING` snapshot.
+- Debrief/Materials Step 3 status copy uses `resolveAiWorkflowStepCopyKind` from
+  the same `publicationEligible` fence (`isAiBlockedByEnhancementEligibility`).
+  Eligible `QUEUED`/`RUNNING` does not use `processingStage=not_started`
+  “can start AI” copy. Step 3 says analysis is available after enhancement
+  finishes or is skipped. After Skip/Continue or terminal ineligible
+  enhancement, Step 3 may again say analysis can be started.
 
 ## Facilitator UI State Model
 
@@ -482,6 +545,12 @@ payload.
   shown.
 - Transcript-enhancement `COMPLETED` uses explicit success/green semantics;
   running, partial/failed, and skipped states remain visually distinct.
+- Five-card rail tiles keep completed green, waiting/not-started muted, and
+  live execution (`running` / `QUEUED` / other in-progress stages) on a
+  shared cyan accent. Semantic `running` is the current-step treatment, not
+  the waiting style. Structurally complete speaker mapping (`ready` or
+  auto-applied `informational`) uses that completed green chrome; mapping that
+  still needs facilitator action does not.
 
 ## Debrief Right-Panel State Machine
 
@@ -536,4 +605,7 @@ payload.
 - `app/api/sessions/[sessionId]/materials/status/route.ts`
 - `app/api/sessions/[sessionId]/ai-analysis/share/route.ts`
 - `app/api/sessions/[sessionId]/ai-analysis/unshare/route.ts`
+- `lib/post-processing/enhancement-ux-presentation.ts`
+- `lib/post-processing/rail-tile-tone.ts`
+- `components/session-post-processing-panel.tsx`
 - `tests/e2e/debrief-ai-sharing.spec.ts`

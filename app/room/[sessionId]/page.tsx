@@ -8,7 +8,10 @@ import { getVideoProvider } from "@/lib/env";
 import { getServerDictionary } from "@/lib/i18n/server";
 import { translate } from "@/lib/i18n/translate";
 import { prisma } from "@/lib/prisma";
-import { getVoxProviderFaultMode } from "@/lib/test-mode";
+import {
+  getVoxProviderFaultMode,
+  shouldConnectBrowserRealtimeTransport,
+} from "@/lib/test-mode";
 import { ensureAccountRoomParticipant } from "@/lib/room-participant-resolver";
 import {
   decideSessionRoomAccess,
@@ -69,6 +72,7 @@ export default async function RoomPage({
       );
     }
     const participant = participantResult.participant;
+    const connectRealtime = shouldConnectBrowserRealtimeTransport();
 
     const decision = decideSessionRoomAccess({
       user: {
@@ -111,12 +115,14 @@ export default async function RoomPage({
         debugAudio={showDebugAudio}
         debugRecording={showDebugRecording}
         providerFaultSimulation={getVoxProviderFaultMode()}
+        skipRealtimeConnect={!connectRealtime}
       />
     ) : (
       <VideoRoomPage
         authMode="account"
         sessionId={sessionId}
         participantId={participant.id}
+        connectRealtime={connectRealtime}
       />
     );
   }

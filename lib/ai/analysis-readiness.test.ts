@@ -105,7 +105,7 @@ test("idle enhancement remains optional when valid raw transcript is ready", () 
   );
 });
 
-test("enhancement RUNNING blocks analysis readiness", () => {
+test("enhancement RUNNING blocks analysis readiness unless publicationEligible is false", () => {
   for (const enhancementStatus of ["IN_PROGRESS", "RUNNING", "QUEUED"]) {
     const readiness = evaluateAiAnalysisReadiness(
       transcript({ enhancementStatus }),
@@ -113,6 +113,13 @@ test("enhancement RUNNING blocks analysis readiness", () => {
     assert.equal(readiness.ready, false, enhancementStatus);
     assert.equal(readiness.reason, "ENHANCEMENT_RUNNING", enhancementStatus);
   }
+  const afterContinue = evaluateAiAnalysisReadiness(
+    transcript({
+      enhancementStatus: "RUNNING",
+      enhancementPublicationEligible: false,
+    }),
+  );
+  assert.equal(afterContinue.ready, true);
 });
 
 test("enhancement cannot make invalid raw transcript ready", () => {

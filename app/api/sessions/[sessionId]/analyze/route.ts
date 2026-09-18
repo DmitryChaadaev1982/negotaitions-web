@@ -36,8 +36,9 @@ import {
 import { evaluateAiAnalysisReadiness } from "@/lib/ai/analysis-readiness";
 import { ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE } from "@/lib/transcription/processing-metadata";
 import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
+import { parseTranscriptEnhancementJob } from "@/lib/services/transcript-enhancement-job";
+import { admitAiAnalysisMaterial } from "@/lib/ai/analysis-transcript-admission";
 import {
-  claimAiAnalysisRun,
   clearAiAnalysisProviderResponseId,
   completeAiAnalysisRunWithCurrentParticipants,
   failAiAnalysisRun,
@@ -57,7 +58,6 @@ import {
 } from "@/lib/test-mode";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { getAiAnalysisProvider } from "@/lib/env";
-import { shouldConfirmAutoSuggestedMappingAfterAiAdmission } from "@/lib/transcription/confirm-mapping-after-ai-admission";
 
 export const runtime = "nodejs";
 export const maxDuration = 610;
@@ -213,11 +213,13 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 409 },
     );
   }
+  const enhancementJob = parseTranscriptEnhancementJob(transcript.processingMetadata);
 
   const readiness = evaluateAiAnalysisReadiness({
     ...transcript,
     participants: sessionParticipants,
-    enhancementStatus: enhancementLockActive ? "IN_PROGRESS" : null,
+    enhancementStatus: enhancementJob.executionStatus,
+    enhancementPublicationEligible: enhancementJob.publicationEligible,
   });
   if (readiness.reason === "TRANSCRIPT_NOT_COMPLETED") {
     return NextResponse.json(
@@ -260,26 +262,71 @@ export async function POST(request: Request, context: RouteContext) {
   const analysisLanguage =
     language ?? transcript.language ?? session.snapshotCaseLanguage.toLowerCase();
 
-  const analysisContext = await buildSessionAnalysisContext(sessionId);
-  if (!analysisContext) {
-    return NextResponse.json({ error: "Session not found." }, { status: 404 });
-  }
-  const inputFingerprint = fingerprintSessionAnalysisContext(analysisContext);
-  console.info("[AI analysis] material_input_fingerprint", {
-    sessionId,
-    schemaVersion: MATERIAL_INPUT_SCHEMA_VERSION,
-    inputFingerprint,
-  });
-
   const now = new Date();
 
-  const claimedRun = await claimAiAnalysisRun({
+  const claimedRun = await admitAiAnalysisMaterial({
     sessionId,
     transcriptId: transcript.id,
-    transcriptRetranscribeCount: transcript.retranscribeCount ?? 0,
     language: analysisLanguage,
     now,
+    confirmAutoSuggestedMapping: { confirmedBy: participant.id },
   });
+
+  if (claimedRun.state === "transcript_missing" || claimedRun.state === "session_missing") {
+    return NextResponse.json(
+      { error: "Transcript must be completed before running AI analysis." },
+      { status: 400 },
+    );
+  }
+  if (claimedRun.state === "enhancement_in_flight") {
+    return NextResponse.json(
+      {
+        error: ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE,
+        errorCode: "ENHANCEMENT_RUNNING",
+      },
+      { status: 409 },
+    );
+  }
+  if (claimedRun.state === "not_ready") {
+    if (claimedRun.reason === "TRANSCRIPT_NOT_COMPLETED") {
+      return NextResponse.json(
+        { error: "Transcript must be completed before running AI analysis." },
+        { status: 400 },
+      );
+    }
+    if (claimedRun.reason === "TRANSCRIPT_CONTENT_EMPTY") {
+      return NextResponse.json(
+        {
+          error: "Transcript must contain usable text before running AI analysis.",
+          errorCode: "TRANSCRIPT_CONTENT_EMPTY",
+        },
+        { status: 422 },
+      );
+    }
+    if (claimedRun.reason === "ENHANCEMENT_RUNNING") {
+      return NextResponse.json(
+        {
+          error: ENHANCEMENT_RUNNING_AI_LOCK_MESSAGE,
+          errorCode: "ENHANCEMENT_RUNNING",
+        },
+        { status: 409 },
+      );
+    }
+    if (claimedRun.reason === "SPEAKER_MAPPING_REQUIRED") {
+      return NextResponse.json(
+        {
+          error: "Confirm speaker mapping before AI analysis.",
+          errorCode: "SPEAKER_MAPPING_REQUIRED",
+          speakerMappingStatus: transcript.speakerMappingStatus,
+        },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Transcript must be completed before running AI analysis." },
+      { status: 400 },
+    );
+  }
 
   if (claimedRun.state === "active") {
     return NextResponse.json(
@@ -292,27 +339,11 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  if (
-    shouldConfirmAutoSuggestedMappingAfterAiAdmission({
-      speakerMappingStatus: transcript.speakerMappingStatus,
-      hasSpeakerDiarization: transcript.hasSpeakerDiarization,
-      segments: transcript.segments,
-      participants: sessionParticipants,
-    })
-  ) {
-    await prisma.transcript.update({
-      where: { id: transcript.id },
-      data: {
-        speakerMappingStatus: "CONFIRMED",
-        speakerMappingConfirmedAt: now,
-        speakerMappingConfirmedBy: participant.id,
-      },
-    });
-  }
-
-  await prisma.aiAnalysis.update({
-    where: { id: claimedRun.owner.analysisId },
-    data: { inputFingerprint },
+  const { analysisContext, inputFingerprint } = claimedRun;
+  console.info("[AI analysis] material_input_fingerprint", {
+    sessionId,
+    schemaVersion: MATERIAL_INPUT_SCHEMA_VERSION,
+    inputFingerprint,
   });
 
   const mockMode = isAiAnalysisMockMode();
@@ -338,8 +369,8 @@ export async function POST(request: Request, context: RouteContext) {
           operationStartedAtMonotonic,
           analysisContext,
           inputFingerprint,
-          transcript.id,
-          transcript.retranscribeCount ?? 0,
+          claimedRun.transcriptId,
+          claimedRun.transcriptRetranscribeCount,
         );
       }
     } catch (error) {

@@ -6,30 +6,31 @@ import {
   MODE_SWITCH_REVERTS_PERSISTED_TEXT,
   resolveEnhancementOriginalText,
   resolveInitialQualityText,
+  resolvePersistedEnhancementQualityText,
   shouldPersistEnhancedText,
   type PersistableTranscriptSegment,
 } from "@/lib/services/transcript-enhancement-persistence";
 
-function makeSegments(): PersistableTranscriptSegment[] {
+function makeSpeechKitSegments(): PersistableTranscriptSegment[] {
   return [
     {
       id: "seg-1",
       orderIndex: 0,
       text: "Отлично, все берусь, заворачивайте.",
-      qualityText: null,
+      qualityText: "Отлично, все берусь, заворачивайте.",
     },
     {
       id: "seg-2",
       orderIndex: 1,
       text: "артериальной гниле",
-      qualityText: null,
+      qualityText: "артериальной гниле",
     },
   ];
 }
 
 test("original segment text remains recoverable after COMPLETED enhancement", () => {
   assert.equal(shouldPersistEnhancedText("COMPLETED"), true);
-  const segments = makeSegments();
+  const segments = makeSpeechKitSegments();
   const updates = buildSegmentEnhancementUpdates(
     segments,
     new Map<number, string>([
@@ -45,20 +46,9 @@ test("original segment text remains recoverable after COMPLETED enhancement", ()
   assert.equal(updates[1]?.qualityText, "артериальной гниле");
 });
 
-test("original segment text remains recoverable after PARTIAL enhancement", () => {
-  assert.equal(shouldPersistEnhancedText("PARTIAL"), true);
-  const segments = makeSegments();
-  const updates = buildSegmentEnhancementUpdates(
-    segments,
-    new Map<number, string>([
-      [0, "Отлично, всё беру. Заворачивайте."],
-      [1, "артериальной гниле"],
-    ]),
-  );
-
-  assert.equal(updates.length, 2);
-  assert.equal(updates[0]?.qualityText, "Отлично, все берусь, заворачивайте.");
-  assert.equal(updates[1]?.qualityText, "артериальной гниле");
+test("original segment text is not mixed-published after PARTIAL enhancement", () => {
+  assert.equal(shouldPersistEnhancedText("PARTIAL"), false);
+  assert.equal(shouldPersistEnhancedText("COMPLETED"), true);
 });
 
 test("FAILED enhancement does not request canonical text mutation", () => {
@@ -105,6 +95,26 @@ test("enhancement input falls back to text when qualityText is null", () => {
     }),
     "текущий текст сегмента",
   );
+  assert.equal(
+    resolvePersistedEnhancementQualityText({ qualityText: null }),
+    null,
+  );
+});
+
+test("enhancement publication does not persist provider-input fallback as raw authority", () => {
+  const updates = buildSegmentEnhancementUpdates(
+    [
+      {
+        id: "seg-manual",
+        orderIndex: 0,
+        text: "текущий текст сегмента",
+        qualityText: null,
+      },
+    ],
+    new Map<number, string>([[0, "улучшенный текст сегмента"]]),
+  );
+  assert.equal(updates[0]?.text, "улучшенный текст сегмента");
+  assert.equal(updates[0]?.qualityText, null);
 });
 
 test("initial ingestion stores provider text in both text and qualityText", () => {

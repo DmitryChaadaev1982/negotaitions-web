@@ -10,6 +10,11 @@ import {
 import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import { computeCurrentMaterialInputFingerprint } from "@/lib/ai/session-analysis-context";
 import { prisma } from "@/lib/prisma";
+import { fenceEligibleEnhancementOnClient } from "@/lib/services/transcript-enhancement-state";
+import {
+  lockAiAnalysisRowForUpdate,
+  lockTranscriptRowForUpdate,
+} from "@/lib/transcription/transcript-row-lock";
 
 export const MATERIAL_CHANGE_CONFIRMATION_REQUIRED =
   "MATERIAL_CHANGE_CONFIRMATION_REQUIRED" as const;
@@ -138,11 +143,21 @@ export function materialChangeGuardErrorBody(
 export async function applyFacilitatorMaterialInputChange<T>(params: {
   sessionId: string;
   confirmRewindPublication?: boolean;
+  fenceEnhancementPublication?: boolean;
   mutate: (tx: Prisma.TransactionClient) => Promise<T>;
 }): Promise<FacilitatorMaterialChangeResult<T>> {
   try {
     return await prisma.$transaction(
       async (tx) => {
+        const transcriptRef = await tx.transcript.findUnique({
+          where: { sessionId: params.sessionId },
+          select: { id: true, retranscribeCount: true },
+        });
+        if (transcriptRef?.id) {
+          await lockTranscriptRowForUpdate(tx, transcriptRef.id);
+        }
+        await lockAiAnalysisRowForUpdate(tx, params.sessionId);
+
         const analysis = await tx.aiAnalysis.findUnique({
           where: { sessionId: params.sessionId },
           select: {
@@ -162,12 +177,17 @@ export async function applyFacilitatorMaterialInputChange<T>(params: {
           },
         });
 
-        const transcript = await tx.transcript.findUnique({
-          where: { sessionId: params.sessionId },
-          select: { id: true, retranscribeCount: true },
-        });
+        const transcript = transcriptRef
+          ? await tx.transcript.findUnique({
+              where: { id: transcriptRef.id },
+              select: { id: true, retranscribeCount: true },
+            })
+          : await tx.transcript.findUnique({
+              where: { sessionId: params.sessionId },
+              select: { id: true, retranscribeCount: true },
+            });
         const currentFingerprint = analysis
-          ? await computeCurrentMaterialInputFingerprint(params.sessionId)
+          ? await computeCurrentMaterialInputFingerprint(params.sessionId, tx)
           : null;
         const currentness = evaluateAiAnalysisCurrentness({
           analysis,
@@ -220,6 +240,14 @@ export async function applyFacilitatorMaterialInputChange<T>(params: {
             params.sessionId,
           );
           publicationRevoked = revoked.revoked;
+        }
+
+        if (params.fenceEnhancementPublication !== false && transcript?.id) {
+          await fenceEligibleEnhancementOnClient({
+            tx,
+            transcriptId: transcript.id,
+            reason: "lexical_save",
+          });
         }
 
         const result = await params.mutate(tx);

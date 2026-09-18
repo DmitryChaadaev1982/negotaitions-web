@@ -9,6 +9,8 @@ import {
 } from "@/lib/transcription/speaker-labels";
 import { resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { resolveTranscriptEnhancementStatus } from "@/lib/post-processing/enhancement-effective-state";
+import { resolveSegmentEnhancementProvenance } from "@/lib/post-processing/enhancement-ux-presentation";
+import { parseTranscriptEnhancementPublication } from "@/lib/services/transcript-enhancement-publication";
 import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
 import { resolveMappingFailure } from "@/lib/transcription/mapping-failure-reasons";
 
@@ -105,6 +107,10 @@ export async function GET(_request: Request, context: RouteContext) {
           processingMetadata: session.transcript.processingMetadata,
         })
       : null;
+    const publication = parseTranscriptEnhancementPublication(
+      session.transcript?.processingMetadata,
+    );
+    const currentRetranscribeCount = session.transcript?.retranscribeCount ?? 0;
 
     return NextResponse.json({
       recording: session.recording
@@ -152,6 +158,7 @@ export async function GET(_request: Request, context: RouteContext) {
             mappingSuggestionDiagnostics:
               mappingFailure?.mappingSuggestionDiagnostics ?? null,
             processingMetadata: session.transcript.processingMetadata ?? null,
+            retranscribeCount: currentRetranscribeCount,
             enhancement: {
               status: resolveTranscriptEnhancementStatus(
                 session.transcript.processingMetadata,
@@ -182,6 +189,13 @@ export async function GET(_request: Request, context: RouteContext) {
               displaySpeakerLabel: segment.speakerLabel
                 ? getDisplaySpeakerLabel(segment.speakerLabel, labelOrder)
                 : null,
+              enhancementProvenance: resolveSegmentEnhancementProvenance({
+                publication,
+                currentRetranscribeCount,
+                orderIndex: segment.orderIndex,
+                publishedText: segment.text,
+                rawText: segment.qualityText,
+              }),
             })),
           }
         : null,

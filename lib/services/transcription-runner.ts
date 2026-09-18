@@ -1157,6 +1157,7 @@ export async function runRealTranscription(
         await executeTranscriptEnhancement({
           transcriptId: saved.id,
           triggerSource: autoEnhancementTriggerSource,
+          runInBackground: true,
         });
       } catch (enhancementError) {
         console.warn(

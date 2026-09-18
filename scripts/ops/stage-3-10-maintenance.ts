@@ -10,7 +10,8 @@ type TaskName =
   | "recording-stop"
   | "nonce-cleanup"
   | "backfill"
-  | "verify-backfill";
+  | "verify-backfill"
+  | "enhancement-recovery";
 
 type CliValues = {
   task?: TaskName;
@@ -58,6 +59,7 @@ async function main() {
       "nonce-cleanup",
       "backfill",
       "verify-backfill",
+      "enhancement-recovery",
     ].includes(task)
   ) {
     throw new Error(`Unsupported --task value: ${task}`);
@@ -69,6 +71,7 @@ async function main() {
     runRoomLifecycleBackfill,
     runSessionConnectionExpirySweep,
     verifyRoomLifecycleBackfill,
+    runTranscriptEnhancementRecoverySweep,
   } = await import("@/lib/stage-3-10-maintenance");
 
   const output: Record<string, unknown> = {
@@ -95,6 +98,12 @@ async function main() {
   }
   if (task === "all" || task === "verify-backfill") {
     output.backfillVerification = await verifyRoomLifecycleBackfill();
+  }
+  if (task === "all" || task === "enhancement-recovery") {
+    output.enhancementRecovery = await runTranscriptEnhancementRecoverySweep({
+      dryRun,
+      limit,
+    });
   }
 
   output.completedAt = new Date().toISOString();

@@ -1,1 +1,2 @@
 prisma/legacy-production-history/** -text -diff
+prisma/migrations/20260916090000_add_transcript_enhancement_provider_slots/** -text

@@ -43,6 +43,34 @@ export const POST_TRANSCRIPTION_LAB_SCENARIO_IDS = [
   "AM12",
   "AM13",
   "AM14",
+  "LAB-01",
+  "LAB-02",
+  "LAB-03",
+  "LAB-04",
+  "LAB-05",
+  "LAB-06",
+  "LAB-07",
+  "LAB-08",
+  "LAB-09",
+  "LAB-10",
+  "LAB-11",
+  "LAB-12",
+  "LAB-13",
+  "LAB-14",
+  "LAB-15",
+  "LAB-16",
+  "LAB-17",
+  "LAB-18",
+  "LAB-19",
+  "LAB-20",
+  "LAB-21",
+  "LAB-22",
+  "LAB-23",
+  "LAB-24",
+  "LAB-25",
+  "LAB-26",
+  "LAB-27",
+  "LAB-28",
 ] as const;
 
 export type PostTranscriptionLabScenarioId =
@@ -53,7 +81,8 @@ export type LabEnhancementFixture =
   | "RUNNING"
   | "COMPLETED"
   | "FAILED"
-  | "SKIPPED";
+  | "SKIPPED"
+  | "PARTIAL";
 
 export type LabMappingFixture =
   | "REQUIRED"
@@ -69,7 +98,36 @@ export type LabAiFixture =
   | "COMPLETED"
   | "PUBLISHED";
 
-export type LabFixtureClass = "STATE_FIXTURE" | "PIPELINE_FIXTURE";
+export type LabFixtureClass =
+  | "STATE_FIXTURE"
+  | "PIPELINE_FIXTURE"
+  | "HYBRID"
+  | "OPERATOR"
+  | "OPS";
+
+export type LabEvidenceClass =
+  | "AUTOMATED"
+  | "HYBRID"
+  | "OPERATOR"
+  | "OPS"
+  | "LIVE_PROVIDER_OPT_IN";
+
+export type LabD1Fixture = {
+  executionStatus?:
+    | "NOT_STARTED"
+    | "QUEUED"
+    | "RUNNING"
+    | "COMPLETED"
+    | "FAILED"
+    | "CANCELLED_FOR_PUBLICATION";
+  publicationEligible?: boolean;
+  terminalQuality?: "COMPLETED" | "PARTIAL" | "FAILED" | null;
+  completedChunks?: number;
+  totalChunks?: number;
+  skipReason?: string | null;
+  cancelReason?: string | null;
+  historicalTimeout?: boolean;
+};
 
 export type PostTranscriptionLabScenarioDefinition = {
   id: PostTranscriptionLabScenarioId;
@@ -82,6 +140,8 @@ export type PostTranscriptionLabScenarioDefinition = {
   knownDefect: string;
   expectedFutureInvariant: string;
   availableNextActions: string[];
+  d1?: LabD1Fixture;
+  evidenceClass?: LabEvidenceClass;
 };
 
 const SCENARIOS: Record<
@@ -157,8 +217,7 @@ const SCENARIOS: Record<
     ai: "COMPLETED",
     expectedCurrentUi:
       "AI remains the current completed stage. A later manual transcript edit currently does not rewind AI.",
-    knownDefect:
-      "AI freshness uses only transcriptId + retranscribeCount, so lexical edits keep AI looking current.",
+    knownDefect: "None after Phase D fingerprint currentness; material edit rewinds current AI.",
     expectedFutureInvariant:
       "Material transcript edit makes current AI NOT_STARTED and old AI non-current.",
     availableNextActions: [
@@ -173,7 +232,7 @@ const SCENARIOS: Record<
     ai: "COMPLETED",
     expectedCurrentUi:
       "AI remains the current completed stage. A later mapping edit currently does not rewind AI.",
-    knownDefect: "Mapping changes are not part of current AI freshness.",
+    knownDefect: "None after Phase D fingerprint currentness; mapping change rewinds current AI.",
     expectedFutureInvariant:
       "Material mapping change makes current AI NOT_STARTED.",
     availableNextActions: [
@@ -187,11 +246,10 @@ const SCENARIOS: Record<
     mapping: "REQUIRED",
     ai: "none",
     expectedCurrentUi:
-      "Enhancement is in progress. Mapping required. Current AI readiness ignores enhancement and still blocks only on mapping.",
-    knownDefect:
-      "AI readiness ignores enhancement RUNNING. Transcript edits are still allowed during enhancement.",
+      "Enhancement is in progress and publicationEligible. Transcript remains readable. Mapping required and writable. Continue is available. AI is blocked by publication eligibility, not by mapping alone.",
+    knownDefect: "None after durable D1 enhancement + B02-3 UX.",
     expectedFutureInvariant:
-      "Enhancement RUNNING blocks AI and colliding transcript/material saves.",
+      "Enhancement RUNNING with publicationEligible: transcript readable, mapping writable, lexical view-only, AI blocked, Continue available.",
     availableNextActions: ["View transcript", "Confirm enhancement card is running"],
   },
   E02: {
@@ -201,14 +259,14 @@ const SCENARIOS: Record<
     mapping: "AUTO_SUGGESTED_COMPLETE",
     ai: "none",
     expectedCurrentUi:
-      "While enhancement is RUNNING inside the configured timeout window, the running state is visible, transcript remains readable, material edit is blocked, and AI is not offered as runnable. After timeout the lock clears automatically without a facilitator decision.",
-    knownDefect: "None after the short enhancement timeout gate.",
+      "While enhancement is publicationEligible (QUEUED/RUNNING), transcript remains readable, mapping remains writable, Continue is available, and AI is not offered. Lexical save fences eligibility then persists.",
+    knownDefect: "None after durable D1 enhancement and B02-3 UX.",
     expectedFutureInvariant:
-      "Enhancement RUNNING inside TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS: transcript readable, material edit blocked, AI not offered. Terminal or timeout unlocks workflow.",
+      "Enhancement QUEUED/RUNNING with publicationEligible: transcript readable, mapping allowed, AI blocked, Continue available. Terminal or Continue unlocks AI if other readiness passes.",
     availableNextActions: [
       "Confirm enhancement RUNNING on the five-card rail",
       "Confirm transcript remains readable",
-      "Confirm Save/AI controls are unavailable while enhancement is RUNNING",
+      "Confirm lexical Save/AI controls are unavailable while enhancement is publicationEligible",
     ],
   },
   E03: {
@@ -221,7 +279,7 @@ const SCENARIOS: Record<
       "Transcript remains usable. Enhancement FAILED shows retry plus continue-with-current-transcript. Starting AI is the continue path. Mapping stays informational.",
     knownDefect: "None after Phase C continue-current-transcript presentation.",
     expectedFutureInvariant:
-      "FAILED/PARTIAL/SKIPPED remain terminal and allow intentional continue-with-current-transcript without a new acknowledgement column.",
+      "FAILED/PARTIAL remain terminal for publication (no mixed text). Continue is a QUEUED/RUNNING publicationEligible operation; Improve starts a new job.",
     availableNextActions: ["Inspect retry vs continue presentation"],
   },
   E05: {
@@ -231,7 +289,7 @@ const SCENARIOS: Record<
     mapping: "AUTO_SUGGESTED_COMPLETE",
     ai: "none",
     expectedCurrentUi:
-      "Enhancement COMPLETED. Enhanced lexical text and mapped participant names stay coherent. Transcript editing is unlocked. Mapping is informational. AI start follows existing readiness.",
+      "Enhancement COMPLETED. Spoken lexical text stays clean. A compact header icon marks published enhanced provenance. Mapped participant names stay coherent. Transcript editing is unlocked. Mapping is informational. AI start follows existing readiness.",
     knownDefect: "None after Phase C projection. Start AI persists CONFIRMED.",
     expectedFutureInvariant:
       "After successful enhancement, names + enhanced lexical text remain coherent and material edit unlocks.",
@@ -249,8 +307,8 @@ const SCENARIOS: Record<
     mapping: "AUTO_SUGGESTED_COMPLETE",
     ai: "none",
     expectedCurrentUi:
-      "While enhancement is RUNNING inside the configured timeout window, transcript/material save is unavailable. Facilitator/observer notes stay editable. After timeout the save lock clears automatically.",
-    knownDefect: "None after the short enhancement timeout gate.",
+      "While enhancement is publicationEligible, the lexical editor is view-only. Facilitator/observer notes stay editable. Mapping remains usable.",
+    knownDefect: "None after B02-3 view-only lexical chrome. Server lexical save fences eligibility rather than 409-locking.",
     expectedFutureInvariant:
       "Client and server reject colliding transcript/material saves while enhancement is RUNNING inside the timeout window.",
     availableNextActions: [
@@ -265,8 +323,8 @@ const SCENARIOS: Record<
     mapping: "AUTO_SUGGESTED_COMPLETE",
     ai: "none",
     expectedCurrentUi:
-      "Transcript stays readable and view-only while enhancement is RUNNING inside the timeout window.",
-    knownDefect: "None after the short enhancement timeout gate.",
+      "Transcript stays readable and view-only while enhancement is publicationEligible. Durable k/n progress is shown when counters exist. Continue is available.",
+    knownDefect: "None after B02-3 view-only lexical chrome.",
     expectedFutureInvariant:
       "Editor stays view-only until enhancement is terminal or times out; then names + lexical text remain coherent.",
     availableNextActions: ["Open transcript view and leave the editor idle"],
@@ -696,6 +754,478 @@ const SCENARIOS: Record<
     expectedFutureInvariant: "Do not change the algorithm to optimize this historical fixture.",
     availableNextActions: ["Confirm no fabricated AUTO_SUGGESTED from LIVEKIT-only rows"],
   },
+  "LAB-01": {
+    id: "LAB-01",
+    title: "Small transcript completes and publishes atomically",
+    fixtureClass: "STATE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "COMPLETED",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "COMPLETED",
+      publicationEligible: false,
+      terminalQuality: "COMPLETED",
+      completedChunks: 2,
+      totalChunks: 2,
+    },
+    expectedCurrentUi:
+      "execution COMPLETED, quality COMPLETED, enhanced text published, editor unlocked.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Atomic COMPLETED-only publication; no mixed text.",
+    availableNextActions: ["Confirm enhanced text and unlocked editor"],
+  },
+  "LAB-02": {
+    id: "LAB-02",
+    title: "Large multi-wave enhancement completes",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "COMPLETED",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "COMPLETED",
+      publicationEligible: false,
+      terminalQuality: "COMPLETED",
+      completedChunks: 16,
+      totalChunks: 16,
+    },
+    expectedCurrentUi: "Large durable job completed and published.",
+    knownDefect: "None. Live-provider opt-in is B02-4.",
+    expectedFutureInvariant: "Multiple waves complete under frozen 8/10 limiter.",
+    availableNextActions: ["Inspect completed large-job progress counters"],
+  },
+  "LAB-03": {
+    id: "LAB-03",
+    title: "XL/hour-scale bounded processing",
+    fixtureClass: "HYBRID",
+    evidenceClass: "LIVE_PROVIDER_OPT_IN",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 8,
+      totalChunks: 40,
+    },
+    expectedCurrentUi: "Durable k/n progress for a large job without terminal PARTIAL.",
+    knownDefect: "None. Live XL run is opt-in.",
+    expectedFutureInvariant: "Volume does not change publication correctness.",
+    availableNextActions: ["Inspect k/n; do not treat as PARTIAL"],
+  },
+  "LAB-04": {
+    id: "LAB-04",
+    title: "In-progress durable checkpoints k/n while RUNNING",
+    fixtureClass: "STATE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 3,
+      totalChunks: 7,
+    },
+    expectedCurrentUi: "k/n fragments processed. Not labeled PARTIAL.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "RUNNING progress is not terminal quality PARTIAL.",
+    availableNextActions: ["Confirm progress copy and transcript remains visible"],
+  },
+  "LAB-05": {
+    id: "LAB-05",
+    title: "Temporary provider failure resumes unfinished only",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Resume unfinished chunks only.",
+    knownDefect: "Covered by durable pipeline tests.",
+    expectedFutureInvariant: "Completed chunks are not rerun.",
+    availableNextActions: ["Unit/pipeline evidence"],
+  },
+  "LAB-06": {
+    id: "LAB-06",
+    title: "One hung call is bounded; siblings preserved",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Hung chunk bounded; siblings keep checkpoints.",
+    knownDefect: "Covered by chunk timeout tests.",
+    expectedFutureInvariant: "T3/chunk timeout does not discard siblings.",
+    availableNextActions: ["Unit/pipeline evidence"],
+  },
+  "LAB-07": {
+    id: "LAB-07",
+    title: "User opens transcript while RUNNING",
+    fixtureClass: "OPERATOR",
+    evidenceClass: "OPERATOR",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 2,
+      totalChunks: 7,
+    },
+    expectedCurrentUi:
+      "Raw transcript visible, progress visible, Skip visible, automatic mapping notice with inspect/change, notes available, lexical view-only, AI unavailable.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "No full-screen loading merely because enhancement is running.",
+    availableNextActions: ["Operator inspects RUNNING surface"],
+  },
+  "LAB-08": {
+    id: "LAB-08",
+    title: "Lexical edit blocked while publicationEligible",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 1,
+      totalChunks: 5,
+    },
+    expectedCurrentUi: "Lexical editor view-only; save control hidden.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "UX blocks lexical edit while publicationEligible.",
+    availableNextActions: ["Confirm edit-diarized and save controls are unavailable"],
+  },
+  "LAB-09": {
+    id: "LAB-09",
+    title: "Mapping succeeds while RUNNING; later publication uses latest mapping",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "RUNNING",
+    mapping: "REQUIRED",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 2,
+      totalChunks: 7,
+    },
+    expectedCurrentUi: "Mapping controls usable during RUNNING.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Publication rereads latest mapping.",
+    availableNextActions: ["Save mapping during RUNNING"],
+  },
+  "LAB-10": {
+    id: "LAB-10",
+    title: "Completion while page remains mounted",
+    fixtureClass: "OPERATOR",
+    evidenceClass: "OPERATOR",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 2,
+      totalChunks: 4,
+    },
+    expectedCurrentUi:
+      "RUNNING→COMPLETED in place; no remount/flicker; header enhancement icon becomes applied; spoken text stays lexical-only.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Same component instance survives publication.",
+    availableNextActions: ["Watch in-place completion"],
+  },
+  "LAB-11": {
+    id: "LAB-11",
+    title: "Manual lexical save vs late enhancement does not publish",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Lexical save fences eligibility; late result cannot publish.",
+    knownDefect: "Covered by pipeline persist fences.",
+    expectedFutureInvariant: "Last authorized save wins.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-12": {
+    id: "LAB-12",
+    title: "Mapping vs late enhancement preserves mapping",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "REQUIRED",
+    ai: "none",
+    expectedCurrentUi: "Mapping write during RUNNING is preserved; diarized rebuilt from latest.",
+    knownDefect: "Covered by persist reread tests.",
+    expectedFutureInvariant: "Mapping plane is independent of unpublished buffers.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-13": {
+    id: "LAB-13",
+    title: "Retranscription invalidates generation",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "COMPLETED",
+    mapping: "CONFIRMED",
+    ai: "none",
+    expectedCurrentUi: "New generation; old enhancement cannot publish onto it.",
+    knownDefect: "Covered by retranscription safety tests.",
+    expectedFutureInvariant: "Generation fence holds.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-14": {
+    id: "LAB-14",
+    title: "Stale old run after new generation is rejected",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Stale run cannot publish.",
+    knownDefect: "Covered by generation CAS tests.",
+    expectedFutureInvariant: "Identity/generation fence.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-15": {
+    id: "LAB-15",
+    title: "AI while publicationEligible is blocked",
+    fixtureClass: "STATE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 1,
+      totalChunks: 4,
+    },
+    expectedCurrentUi: "AI start hidden/blocked with enhancement pending reason.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Start AI does not implicit-Continue.",
+    availableNextActions: ["Confirm AI button is absent"],
+  },
+  "LAB-16": {
+    id: "LAB-16",
+    title: "AI after authoritative published version / post-Continue raw",
+    fixtureClass: "STATE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "COMPLETED",
+    mapping: "CONFIRMED",
+    ai: "none",
+    d1: {
+      executionStatus: "COMPLETED",
+      publicationEligible: false,
+      terminalQuality: "COMPLETED",
+      completedChunks: 2,
+      totalChunks: 2,
+    },
+    expectedCurrentUi: "Enhancement no longer blocks AI; other readiness gates still apply.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "AI consumes published transcript only.",
+    availableNextActions: ["Confirm AI start is offered"],
+  },
+  "LAB-17": {
+    id: "LAB-17",
+    title: "Browser reload during RUNNING keeps durable progress",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 3,
+      totalChunks: 7,
+    },
+    expectedCurrentUi: "Reload shows the same durable k/n progress.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Progress is durable, not session-memory.",
+    availableNextActions: ["Reload and confirm progress"],
+  },
+  "LAB-18": {
+    id: "LAB-18",
+    title: "Process restart + periodic recovery without user traffic",
+    fixtureClass: "OPS",
+    evidenceClass: "OPS",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Recovery resumes unfinished chunks without materials/status.",
+    knownDefect: "Covered by recovery tick tests; opt-in ops command documented.",
+    expectedFutureInvariant: "Lease expiry + Stage 3.10 enhancement-recovery.",
+    availableNextActions: ["npm run maintenance:stage310 -- --task=enhancement-recovery"],
+  },
+  "LAB-19": {
+    id: "LAB-19",
+    title: "Two sessions; large job cannot monopolize global cap",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Reserved-slot fairness 8/10.",
+    knownDefect: "Covered by limiter tests.",
+    expectedFutureInvariant: "No global monopoly.",
+    availableNextActions: ["Limiter unit evidence"],
+  },
+  "LAB-20": {
+    id: "LAB-20",
+    title: "429 backoff/recovery",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "429 classified retryable; job stays RUNNING.",
+    knownDefect: "Covered by limiter/retry tests.",
+    expectedFutureInvariant: "Backoff does not skip remaining chunks.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-21": {
+    id: "LAB-21",
+    title: "One chunk schema failure; siblings continue; execution stays RUNNING",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Schema fail is retryable then FAILED; execution is not PARTIAL.",
+    knownDefect: "Covered by job/orchestration tests.",
+    expectedFutureInvariant: "PARTIAL is terminal quality only.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-22": {
+    id: "LAB-22",
+    title: "Retry/Resume after terminal quality PARTIAL",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "PARTIAL",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "COMPLETED",
+      publicationEligible: false,
+      terminalQuality: "PARTIAL",
+      completedChunks: 3,
+      totalChunks: 7,
+    },
+    expectedCurrentUi:
+      "Last published transcript remains. Editing/mapping/AI follow readiness. Retry/Improve starts a new job.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "PARTIAL does not mix-publish.",
+    availableNextActions: ["Inspect PARTIAL chrome and Improve"],
+  },
+  "LAB-23": {
+    id: "LAB-23",
+    title: "Explicit Continue during RUNNING",
+    fixtureClass: "HYBRID",
+    evidenceClass: "HYBRID",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 2,
+      totalChunks: 7,
+    },
+    expectedCurrentUi:
+      "Step 2 shows running enhancement + Skip AI enhancement. Skip calls the real Continue API. Text unchanged. Lexical edit unlocks. Skip disappears. Step 2 then says skipped. After those post-Skip assertions, Start AI opens the existing consent dialog with a skipped-enhancement / current-transcript warning; cancel/close without completing AI.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "No navigation/remount from Continue. Fixture is not pre-Continued. AI dialog check is after the no-remount assertion.",
+    availableNextActions: [
+      "Click Skip AI enhancement",
+      "After Skip assertions, open Start AI, inspect skipped-enhancement warning, cancel",
+    ],
+  },
+  "LAB-24": {
+    id: "LAB-24",
+    title: "Late provider success after Continue is rejected",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "Late success cannot replace the current published transcript.",
+    knownDefect: "Covered by Continue persist tests.",
+    expectedFutureInvariant: "INV-TE-16.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-25": {
+    id: "LAB-25",
+    title: "Lexical edit after Continue persists; cancelled job cannot overwrite",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    expectedCurrentUi: "After Continue, lexical save is allowed and late job cannot overwrite.",
+    knownDefect: "Covered by pipeline tests.",
+    expectedFutureInvariant: "TE-FR-012/025.",
+    availableNextActions: ["Pipeline evidence"],
+  },
+  "LAB-26": {
+    id: "LAB-26",
+    title: "AI after Continue when mapping complete",
+    fixtureClass: "STATE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "CONFIRMED",
+    ai: "none",
+    d1: {
+      executionStatus: "CANCELLED_FOR_PUBLICATION",
+      publicationEligible: false,
+      cancelReason: "continue_with_current",
+      completedChunks: 2,
+      totalChunks: 7,
+    },
+    expectedCurrentUi: "Enhancement no longer blocks AI after Continue.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "Other gates still apply.",
+    availableNextActions: ["Confirm AI start is offered"],
+  },
+  "LAB-27": {
+    id: "LAB-27",
+    title: "Mapping remains usable through RUNNING and Continue; no remount",
+    fixtureClass: "OPERATOR",
+    evidenceClass: "OPERATOR",
+    enhancement: "RUNNING",
+    mapping: "AUTO_SUGGESTED_COMPLETE",
+    ai: "none",
+    d1: {
+      executionStatus: "RUNNING",
+      publicationEligible: true,
+      completedChunks: 2,
+      totalChunks: 7,
+    },
+    expectedCurrentUi:
+      "Starts RUNNING with Skip visible and mapping inspect/change. Operator saves a mapping change while RUNNING, then Skip. Saved mapping and mount identity survive post-Skip. Not pre-Continued.",
+    knownDefect: "None.",
+    expectedFutureInvariant: "INV-TE-06. Skip does not reset mapping. Publication still rereads latest mapping.",
+    availableNextActions: [
+      "Inspect RUNNING + Проверить / изменить",
+      "Save mapping while RUNNING",
+      "Skip AI enhancement",
+    ],
+  },
+  "LAB-28": {
+    id: "LAB-28",
+    title: "D1 metadata concurrency: chunk checkpoint + mapping write",
+    fixtureClass: "PIPELINE_FIXTURE",
+    evidenceClass: "AUTOMATED",
+    enhancement: "RUNNING",
+    mapping: "REQUIRED",
+    ai: "none",
+    expectedCurrentUi: "Chunk checkpoint and mapping write merge namespaces.",
+    knownDefect: "Covered by D1 persistence tests.",
+    expectedFutureInvariant: "INV-TE-03.",
+    availableNextActions: ["Integration evidence"],
+  },
 };
 
 export function isPostTranscriptionLabScenarioId(
@@ -720,7 +1250,14 @@ export function getLabScenario(
 }
 
 export function isPipelineLabScenario(id: string): boolean {
-  return getLabScenario(id).fixtureClass === "PIPELINE_FIXTURE";
+  return (
+    !id.toUpperCase().startsWith("LAB-") &&
+    getLabScenario(id).fixtureClass === "PIPELINE_FIXTURE"
+  );
+}
+
+export function isBug02LabScenario(id: string): boolean {
+  return id.toUpperCase().startsWith("LAB-");
 }
 
 export function parseLabScenarioIds(raw: string | undefined): PostTranscriptionLabScenarioId[] {

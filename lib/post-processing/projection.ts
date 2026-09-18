@@ -68,8 +68,15 @@ export function isEnhancementStatusRunning(
   return status === "IN_PROGRESS" || status === "RUNNING" || status === "QUEUED";
 }
 
-export function canContinueWithCurrentTranscript(status: string | null | undefined): boolean {
-  return status === "FAILED" || status === "PARTIAL" || status === "SKIPPED";
+export function canContinueWithCurrentTranscript(
+  status: string | null | undefined,
+  publicationEligible?: boolean,
+): boolean {
+  if (publicationEligible === false) return false;
+  if (publicationEligible === true) {
+    return isEnhancementStatusRunning(status);
+  }
+  return isEnhancementStatusRunning(status);
 }
 
 function semanticFromLegacyProcessingStage(
@@ -138,6 +145,22 @@ export function toSessionListMappingStage(
   return null;
 }
 
+const ACTIVE_TRANSCRIPT_GENERATION_STAGES = new Set([
+  "queued",
+  "downloading",
+  "compressing",
+  "transcribing",
+  // Prisma TranscriptStatus values used by /recording snapshots.
+  "downloading_recording",
+  "compressing_audio",
+]);
+
+export function isActiveTranscriptGenerationStage(
+  stage: string | null | undefined,
+): boolean {
+  return ACTIVE_TRANSCRIPT_GENERATION_STAGES.has((stage ?? "").toLowerCase());
+}
+
 function projectEnhancementSemantic(
   status: string | null | undefined,
 ): PostProcessingSemanticState {
@@ -189,14 +212,28 @@ export function projectPostProcessingStages(input: {
   mappingInput: SpeakerMappingCompletenessInput;
   aiStage: string | null;
   conflictingOwnership?: boolean;
+  enhancementPublicationEligible?: boolean;
+  enhancementCurrentForGeneration?: boolean;
 }): PostProcessingProjection {
   const completeness = evaluateSpeakerMappingStructuralCompleteness(input.mappingInput);
-  const mappingSemantic = projectSpeakerMappingSemantic({
+  const transcriptionSemantic = semanticFromLegacyProcessingStage(input.transcriptStage);
+  const transcriptionActive = isActiveTranscriptGenerationStage(input.transcriptStage);
+  const enhancementCurrentForGeneration = input.enhancementCurrentForGeneration !== false;
+  let mappingSemantic = projectSpeakerMappingSemantic({
     transcriptPresent: input.transcriptPresent,
     speakerMappingStatus: input.mappingInput.speakerMappingStatus,
     completeness,
   });
-  const enhancementRunning = isEnhancementStatusRunning(input.enhancementStatus);
+  if (transcriptionActive) {
+    mappingSemantic = "pending";
+  }
+  let enhancementSemantic = projectEnhancementSemantic(input.enhancementStatus);
+  if (transcriptionActive || !enhancementCurrentForGeneration) {
+    enhancementSemantic = "pending";
+  }
+  const enhancementBlocksAi =
+    isEnhancementStatusRunning(input.enhancementStatus) &&
+    input.enhancementPublicationEligible !== false;
 
   return {
     stages: {
@@ -207,18 +244,20 @@ export function projectPostProcessingStages(input: {
       },
       TRANSCRIPTION: {
         id: "TRANSCRIPTION",
-        semantic: semanticFromLegacyProcessingStage(input.transcriptStage),
+        semantic: transcriptionSemantic,
         raw: { processingStage: input.transcriptStage },
       },
       TRANSCRIPT_ENHANCEMENT: {
         id: "TRANSCRIPT_ENHANCEMENT",
-        semantic: projectEnhancementSemantic(input.enhancementStatus),
+        semantic: enhancementSemantic,
         raw: {
           status: input.enhancementStatus,
           terminal: isTranscriptEnhancementTerminal(input.enhancementStatus),
           canContinueWithCurrentTranscript: canContinueWithCurrentTranscript(
             input.enhancementStatus,
+            input.enhancementPublicationEligible,
           ),
+          currentForGeneration: enhancementCurrentForGeneration,
         },
       },
       SPEAKER_MAPPING: {
@@ -236,8 +275,8 @@ export function projectPostProcessingStages(input: {
         semantic: projectAiSemantic({
           aiStage: input.aiStage,
           mappingReady: completeness.readyForAnalysis,
-          enhancementRunning,
-          conflictingOwnership: Boolean(input.conflictingOwnership),
+          enhancementRunning: enhancementBlocksAi,
+          conflictingOwnership: Boolean(input.conflictingOwnership) || transcriptionActive,
         }),
         raw: { processingStage: input.aiStage },
       },

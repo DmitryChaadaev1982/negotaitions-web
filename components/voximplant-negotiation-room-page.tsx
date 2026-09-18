@@ -78,6 +78,7 @@ type VoximplantNegotiationRoomPageProps =
       debugAudio?: boolean;
       debugRecording?: boolean;
       providerFaultSimulation?: VoxProviderFaultMode;
+      skipRealtimeConnect?: boolean;
     }
   | {
       sessionId: string;
@@ -89,6 +90,7 @@ type VoximplantNegotiationRoomPageProps =
       debugAudio?: boolean;
       debugRecording?: boolean;
       providerFaultSimulation?: VoxProviderFaultMode;
+      skipRealtimeConnect?: boolean;
     };
 
 // ─── VoximplantControlBar ─────────────────────────────────────────────────────
@@ -271,6 +273,7 @@ export default function VoximplantNegotiationRoomPage(
     disableInitialCamera: props.disableInitialCamera,
     disableInitialMic: props.disableInitialMic,
     isSessionOperable,
+    skipRealtimeConnect: props.skipRealtimeConnect === true,
   });
 
   // ── Business state (sidebar + control state) ───────────────────────────────

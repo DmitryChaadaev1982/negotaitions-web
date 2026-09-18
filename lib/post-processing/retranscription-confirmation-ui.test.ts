@@ -36,7 +36,7 @@ test("RERUN source: original button stays on the steps card and POST waits for c
   assert.match(panel, /data-testid="post-processing-rerun-transcription-button"/);
   assert.match(panel, /materialsRetranscribePath\(sessionId\)/);
   assert.match(panel, /reason: "manual_rerun"/);
-  assert.match(panel, /if \(rerunBusy\) \{\s*return;/);
+  assert.match(panel, /if \(rerunBusy \|\| awaitingAuthoritativePostRetranscriptionStatus\) \{\s*return;/);
   assert.match(panel, /getTranscriptionSectionRefreshKey\(/);
 });
 

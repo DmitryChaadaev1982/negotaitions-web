@@ -49,12 +49,126 @@ test("queued retranscription keeps previous transcript text", () => {
 
   assert.equal(upsert.create.text, "previous successful transcript");
   assert.equal(upsert.create.diarizedText, "previous diarized transcript");
-  assert.deepEqual(upsert.create.processingMetadata, previousMetadata);
+  assert.equal(
+    (upsert.create.processingMetadata as { transcriptEnhancementPublication?: unknown })
+      .transcriptEnhancementPublication,
+    null,
+  );
+  assert.equal(
+    (upsert.create.processingMetadata as { transcriptionProvider?: string }).transcriptionProvider,
+    "yandex_speechkit",
+  );
   assert.equal(upsert.update.status, "QUEUED");
-  assert.equal("processingMetadata" in upsert.update, false);
+  assert.equal("processingMetadata" in upsert.update, true);
+  assert.equal(
+    (upsert.update.processingMetadata as { transcriptEnhancementPublication?: unknown })
+      .transcriptEnhancementPublication,
+    null,
+  );
   assert.equal("speakerMapping" in upsert.update, false);
   assert.equal("diarizationStatus" in upsert.update, false);
   assert.equal("language" in upsert.update, false);
+});
+
+test("in-flight enhancement is cancelled for publication on retranscription upsert", () => {
+  const now = new Date("2026-07-13T12:00:00.000Z");
+  const upsert = buildRetranscriptionUpsertData({
+    sessionId: "session-1",
+    recordingId: "rec-1",
+    language: "ru",
+    newVersion: 2,
+    history: [],
+    now,
+    existingTranscript: {
+      status: "COMPLETED",
+      text: "previous successful transcript",
+      diarizedText: null,
+      language: "ru",
+      transcriptionModel: "general:rc",
+      hasSpeakerDiarization: false,
+      diarizationStatus: null,
+      speakerMapping: null,
+      speakerMappingStatus: "NOT_REQUIRED",
+      completedAt: now,
+      processingMetadata: {
+        transcriptionProvider: "yandex_speechkit",
+        transcriptEnhancement: {
+          schemaVersion: "d1-v1",
+          executionStatus: "RUNNING",
+          publicationEligible: true,
+          runId: "old-job",
+          status: "RUNNING",
+          chunks: { "0": { chunkIndex: 0, status: "COMPLETED", targetIndexes: [0] } },
+        },
+      },
+    },
+  });
+  assert.equal("processingMetadata" in upsert.update, true);
+  const ns = (upsert.update.processingMetadata as { transcriptEnhancement?: Record<string, unknown> })
+    .transcriptEnhancement;
+  assert.equal(ns?.publicationEligible, false);
+  assert.equal(ns?.executionStatus, "CANCELLED_FOR_PUBLICATION");
+  assert.equal(ns?.cancelReason, "retranscription");
+  assert.equal(
+    (upsert.update.processingMetadata as { transcriptEnhancementPublication?: unknown })
+      .transcriptEnhancementPublication,
+    null,
+  );
+});
+
+test("PROV-RPT-07 retranscription generation transition clears publication provenance", () => {
+  const now = new Date("2026-07-13T12:00:00.000Z");
+  const upsert = buildRetranscriptionUpsertData({
+    sessionId: "session-1",
+    recordingId: "rec-1",
+    language: "ru",
+    newVersion: 5,
+    history: [],
+    now,
+    existingTranscript: {
+      status: "COMPLETED",
+      text: "enhanced published",
+      diarizedText: null,
+      language: "ru",
+      transcriptionModel: "general:rc",
+      hasSpeakerDiarization: false,
+      diarizationStatus: null,
+      speakerMapping: null,
+      speakerMappingStatus: "NOT_REQUIRED",
+      completedAt: now,
+      processingMetadata: {
+        transcriptionProvider: "yandex_speechkit",
+        transcriptEnhancement: {
+          schemaVersion: "d1-v1",
+          executionStatus: "COMPLETED",
+          publicationEligible: false,
+          terminalQuality: "COMPLETED",
+          runId: "run-a",
+        },
+        transcriptEnhancementPublication: {
+          runId: "run-a",
+          retranscribeCount: 4,
+          inputIdentity: "identity-a",
+          publishedAt: "2026-01-01T00:00:00.000Z",
+          segmentDigestByOrderIndex: { "0": "digest-a" },
+        },
+      },
+    },
+  });
+  assert.equal(upsert.update.retranscribeCount, 5);
+  assert.equal(
+    (upsert.update.processingMetadata as { transcriptEnhancementPublication?: unknown })
+      .transcriptEnhancementPublication,
+    null,
+  );
+  assert.equal(
+    (
+      upsert.update.processingMetadata as {
+        transcriptEnhancement?: { executionStatus?: string };
+      }
+    ).transcriptEnhancement?.executionStatus,
+    "COMPLETED",
+  );
 });
 
 test("failed retranscription requests restoration of archived transcript", () => {

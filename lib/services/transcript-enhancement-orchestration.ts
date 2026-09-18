@@ -1,39 +1,74 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Prisma } from "@/app/generated/prisma/client";
+import { AiAnalysisStatus, Prisma, TranscriptStatus } from "@/app/generated/prisma/client";
+import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import {
+  computeTranscriptEnhancementT3Ms,
+  getTranscriptEnhancementHeartbeatMs,
+  getTranscriptEnhancementLeaseTtlMs,
+  getTranscriptEnhancementMaxConcurrency,
   getTranscriptEnhancementOutputMode,
-  getTranscriptEnhancementTimeoutMs,
   getYandexTranscriptEnhancementModel,
   isTranscriptEnhancementAutoTriggerEnabled,
   isYandexTranscriptEnhancementEnabled,
 } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import {
-  persistEnhancementTimeoutSkip,
-  waitForEnhancementTimeout,
-  buildTimeoutSkipMetadata,
-} from "@/lib/services/transcript-enhancement-timeout";
+  notifyEnhancementProviderCall,
+  resolveEnhancementProviderCallObserver,
+  type EnhancementProviderCallObserver,
+} from "@/lib/services/transcript-enhancement-provider-observation";
+import { getTranscriptEnhancementLimiter } from "@/lib/services/transcript-enhancement-limiter";
 import {
-  buildSegmentEnhancementUpdates,
-  resolveEnhancementOriginalText,
-  shouldPersistEnhancedText,
-} from "@/lib/services/transcript-enhancement-persistence";
+  ProviderSlotUnavailableError,
+  withProviderSlotLease,
+} from "@/lib/services/transcript-enhancement-provider-slots";
 import {
+  getProviderPostAttemptBudget,
+  isRetryableProviderCategory,
+  parseRetryAfterMs,
+  resolveChunkAttemptPlan,
+  resolveChunkStatusAfterAttempt,
+  resolveRetryDelayMs,
+  retryBackoffMs,
+} from "@/lib/services/transcript-enhancement-retry";
+import {
+  chunkKey,
+  computeEnhancementProgress,
+  ENHANCEMENT_D1_SCHEMA_VERSION,
+  isExecutionInFlight,
+  isUnfinishedChunkStatus,
+  mergeEnhancementJobIntoMetadata,
+  parseTranscriptEnhancementJob,
+  type TranscriptEnhancementDurableChunk,
+  type TranscriptEnhancementJob,
+} from "@/lib/services/transcript-enhancement-job";
+import {
+  authorizeEnhancementChunkStart,
+  checkpointEnhancementChunk,
+  heartbeatEnhancementLease,
+  markEnhancementExecutionFailed,
+  patchEnhancementJob,
+  publishEnhancementIfEligible,
+} from "@/lib/services/transcript-enhancement-state";
+import { resolveEnhancementOriginalText } from "@/lib/services/transcript-enhancement-persistence";
+import { preserveTranscriptEnhancementPublication } from "@/lib/services/transcript-enhancement-publication";
+import {
+  buildTranscriptEnhancementChunks,
   enhanceTranscriptWithYandexAi,
+  type EnhancementChunk,
   type TranscriptEnhancementInputSegment,
-  type TranscriptEnhancementMeta,
-  type TranscriptEnhancementOverallStatus,
+  type TranscriptEnhancementResult,
 } from "@/lib/services/yandex-transcript-enhancement";
-import {
-  buildCanonicalDiarizedText,
-  toParticipantDisplayInfo,
-} from "@/lib/transcription/canonical-diarized-text";
 import {
   asProcessingMetadata,
   mergeProcessingMetadata,
+  type ProcessingMetadata,
 } from "@/lib/transcription/processing-metadata";
-import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
+import {
+  lockAiAnalysisRowForUpdate,
+  lockTranscriptRowForUpdate,
+} from "@/lib/transcription/transcript-row-lock";
 
 const ENHANCEMENT_SCHEMA_VERSION = "v1";
 const ENHANCEMENT_PROMPT_VERSION = "stage-3.9f-auto-enhancement-v1";
@@ -43,13 +78,6 @@ export type TranscriptEnhancementTriggerSource =
   | "automatic_retranscription"
   | "manual"
   | "manual_reenhancement";
-
-type TranscriptEnhancementExecutionStatus =
-  | "RUNNING"
-  | "COMPLETED"
-  | "PARTIAL"
-  | "FAILED"
-  | "SKIPPED";
 
 type TranscriptEnhancementIdempotencyDecision =
   | "started_new"
@@ -63,16 +91,10 @@ type TranscriptEnhancementIdempotencyDecision =
   | "skipped_auto_run_disabled"
   | "skipped_empty_transcript"
   | "skipped_empty_raw_text"
-  | "lock_lost";
+  | "lock_lost"
+  | "skipped_transcript_not_completed"
+  | "skipped_ai_in_progress";
 
-type ProcessingMetadata = Record<string, unknown>;
-
-class TranscriptEnhancementOwnershipLostError extends Error {
-  constructor() {
-    super("Transcript enhancement ownership was lost.");
-    this.name = "TranscriptEnhancementOwnershipLostError";
-  }
-}
 type TranscriptSegmentForEnhancement = {
   id: string;
   orderIndex: number;
@@ -86,6 +108,8 @@ type TranscriptSegmentForEnhancement = {
 
 type LoadedTranscriptForEnhancement = {
   id: string;
+  sessionId: string;
+  status: TranscriptStatus;
   text: string;
   diarizedText: string | null;
   updatedAt: Date;
@@ -103,7 +127,7 @@ type LoadedTranscriptForEnhancement = {
   segments: TranscriptSegmentForEnhancement[];
 };
 
-type TranscriptEnhancementDbClient = {
+export type TranscriptEnhancementDbClient = {
   transcript: {
     findUnique: typeof prisma.transcript.findUnique;
     update: typeof prisma.transcript.update;
@@ -112,16 +136,23 @@ type TranscriptEnhancementDbClient = {
   transcriptSegment: {
     update: typeof prisma.transcriptSegment.update;
   };
+  aiAnalysis?: {
+    findUnique: typeof prisma.aiAnalysis.findUnique;
+  };
   $transaction: typeof prisma.$transaction;
   $queryRaw?: typeof prisma.$queryRaw;
 };
 
-type TranscriptEnhancementDependencies = {
+export type TranscriptEnhancementDependencies = {
   db: TranscriptEnhancementDbClient;
-  enhance: typeof enhanceTranscriptWithYandexAi;
-  timeoutMs?: number;
+  enhance?: typeof enhanceTranscriptWithYandexAi;
+  runChunkedEnhancement?: typeof enhanceTranscriptWithYandexAi;
   now?: () => number;
+  schedule?: (work: () => Promise<void>) => void;
+  sleep?: (ms: number) => Promise<void>;
+  timeoutMs?: number;
   waitForTimeout?: (timeoutMs: number, signal: AbortSignal) => Promise<void>;
+  onProviderCall?: EnhancementProviderCallObserver;
 };
 
 export type TranscriptEnhancementRunResult =
@@ -148,63 +179,24 @@ export type TranscriptEnhancementRunResult =
       outcome: "not_found";
       transcriptId: string;
       triggerSource: TranscriptEnhancementTriggerSource;
+    }
+  | {
+      outcome: "conflict";
+      transcriptId: string;
+      inputIdentity: string | null;
+      triggerSource: TranscriptEnhancementTriggerSource;
+      reason: "skipped_ai_in_progress" | "skipped_transcript_not_completed";
     };
-
-function asMetadata(value: unknown): ProcessingMetadata {
-  return asProcessingMetadata(value);
-}
 
 async function lockTranscriptRowIfSupported(
   db: { $queryRaw?: typeof prisma.$queryRaw },
   transcriptId: string,
 ) {
-  if (typeof db.$queryRaw !== "function") {
-    return;
-  }
-  await db.$queryRaw`SELECT "id" FROM "Transcript" WHERE "id" = ${transcriptId} FOR UPDATE`;
-}
-
-async function writeMergedEnhancementMetadata(params: {
-  db: TranscriptEnhancementDbClient;
-  transcriptId: string;
-  build: (current: ProcessingMetadata) => ProcessingMetadata;
-}): Promise<void> {
-  const latest = await params.db.transcript.findUnique({
-    where: { id: params.transcriptId },
-    select: { processingMetadata: true },
-  });
-  if (!latest) return;
-  const current = asMetadata(latest.processingMetadata);
-  await params.db.transcript.update({
-    where: { id: params.transcriptId },
-    data: {
-      processingMetadata: params.build(current) as Prisma.InputJsonValue,
-    },
-  });
-}
-
-function asIsoString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function parseTimestamp(value: unknown): Date | null {
-  const iso = asIsoString(value);
-  if (!iso) return null;
-  const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  await lockTranscriptRowForUpdate(db, transcriptId);
 }
 
 function mapSegmentsToEnhancementInput(
-  segments: Array<{
-    id: string;
-    orderIndex: number;
-    speakerLabel: string | null;
-    startSeconds: number | null;
-    endSeconds: number | null;
-    mappedParticipantId: string | null;
-    text: string;
-    qualityText: string | null;
-  }>,
+  segments: TranscriptSegmentForEnhancement[],
 ): TranscriptEnhancementInputSegment[] {
   return segments.map((segment) => ({
     index: segment.orderIndex,
@@ -247,51 +239,6 @@ export function buildTranscriptEnhancementInputIdentity(params: {
   return createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
-function resolveEnhancementStatus(value: unknown): TranscriptEnhancementExecutionStatus | null {
-  if (value === "RUNNING") return "RUNNING";
-  if (value === "IN_PROGRESS") return "RUNNING";
-  if (value === "COMPLETED") return "COMPLETED";
-  if (value === "PARTIAL") return "PARTIAL";
-  if (value === "FAILED") return "FAILED";
-  if (value === "SKIPPED") return "SKIPPED";
-  return null;
-}
-
-function buildRunningMetadata(params: {
-  metadata: ProcessingMetadata;
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
-  runId: string;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
-}): ProcessingMetadata {
-  const nowIso = new Date().toISOString();
-  const current = asMetadata(params.metadata.transcriptEnhancement);
-  return {
-    ...params.metadata,
-    transcriptEnhancement: {
-      ...current,
-      status: "RUNNING",
-      triggerSource: params.triggerSource,
-      inputIdentity: params.inputIdentity,
-      runId: params.runId,
-      idempotencyDecision: params.idempotencyDecision,
-      queuedAt: nowIso,
-      startedAt: nowIso,
-      finishedAt: null,
-      completedAt: null,
-      durationMs: null,
-      skipReason: null,
-      error: null,
-      errorCategory: null,
-      failureStage: null,
-      model: getYandexTranscriptEnhancementModel(),
-      outputMode: getTranscriptEnhancementOutputMode(),
-      schemaVersion: ENHANCEMENT_SCHEMA_VERSION,
-      promptVersion: ENHANCEMENT_PROMPT_VERSION,
-    },
-  };
-}
-
 function buildSkipMetadata(params: {
   metadata: ProcessingMetadata;
   triggerSource: TranscriptEnhancementTriggerSource;
@@ -299,15 +246,19 @@ function buildSkipMetadata(params: {
   reason: TranscriptEnhancementIdempotencyDecision;
 }): ProcessingMetadata {
   const nowIso = new Date().toISOString();
-  const current = asMetadata(params.metadata.transcriptEnhancement);
-  return {
-    ...params.metadata,
+  const current = asProcessingMetadata(params.metadata.transcriptEnhancement);
+  return mergeProcessingMetadata(params.metadata, {
     transcriptEnhancement: {
       ...current,
+      schemaVersion: ENHANCEMENT_D1_SCHEMA_VERSION,
+      executionStatus: "NOT_STARTED",
+      publicationEligible: false,
+      terminalQuality: null,
       status: "SKIPPED",
       triggerSource: params.triggerSource,
       inputIdentity: params.inputIdentity,
       runId: null,
+      jobId: null,
       idempotencyDecision: params.reason,
       queuedAt: nowIso,
       startedAt: nowIso,
@@ -316,431 +267,599 @@ function buildSkipMetadata(params: {
       durationMs: 0,
       skipReason: params.reason,
       error: null,
-      errorCategory: null,
-      failureStage: null,
       model: getYandexTranscriptEnhancementModel(),
       outputMode: getTranscriptEnhancementOutputMode(),
-      schemaVersion: ENHANCEMENT_SCHEMA_VERSION,
       promptVersion: ENHANCEMENT_PROMPT_VERSION,
     },
-  };
+  });
 }
 
-function inferErrorCategory(error: unknown): string {
+function logEnhancement(event: string, data: Record<string, unknown>) {
+  console.log(
+    JSON.stringify({
+      area: "transcript_enhancement",
+      event,
+      ...data,
+    }),
+  );
+}
+
+function planDurableChunks(
+  enhancementInput: TranscriptEnhancementInputSegment[],
+): TranscriptEnhancementDurableChunk[] {
+  const planned = buildTranscriptEnhancementChunks(enhancementInput);
+  if (planned.length === 0) {
+    return [
+      {
+        chunkIndex: 0,
+        status: "PENDING",
+        targetIndexes: enhancementInput.map((segment) => segment.index),
+        attemptCount: 0,
+        unpublishedByOrderIndex: {},
+        lastErrorClass: null,
+        lastHttpClass: null,
+        lastSchemaResult: null,
+        providerDurationMs: null,
+        usageInputTokens: null,
+        usageOutputTokens: null,
+        usageTotalTokens: null,
+        usageClassification: null,
+        startedAt: null,
+        finishedAt: null,
+      },
+    ];
+  }
+  return planned.map((chunk) => ({
+    chunkIndex: chunk.chunkIndex,
+    status: "PENDING" as const,
+    targetIndexes: [...new Set(chunk.targets.map((target) => target.sourceIndex))],
+    attemptCount: 0,
+    unpublishedByOrderIndex: {},
+    lastErrorClass: null,
+    lastHttpClass: null,
+    lastSchemaResult: null,
+    providerDurationMs: null,
+    usageInputTokens: null,
+    usageOutputTokens: null,
+    usageTotalTokens: null,
+    usageClassification: null,
+    startedAt: null,
+    finishedAt: null,
+  }));
+}
+
+export function classifyEnhancementRetry(error: unknown): {
+  retryable: boolean;
+  errorClass: string;
+} {
+  return classifyRetryable(error);
+}
+
+function classifyRetryable(error: unknown): { retryable: boolean; errorClass: string } {
+  if (error instanceof ProviderSlotUnavailableError) {
+    return { retryable: true, errorClass: "provider_slot_unavailable" };
+  }
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  if (message.includes("timeout")) return "timeout";
-  if (message.includes("http 429")) return "provider_rate_limit";
-  if (message.includes("http 5")) return "provider_http_5xx";
-  if (message.includes("empty")) return "empty_output";
-  if (message.includes("json")) return "invalid_json";
-  return "enhancement_failed";
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return { retryable: true, errorClass: "timeout" };
+  }
+  if (message.includes("http 429") || message.includes("provider_rate_limit")) {
+    return { retryable: true, errorClass: "429" };
+  }
+  if (message.includes("http 5") || message.includes("provider_http_5xx")) {
+    return { retryable: true, errorClass: "5xx" };
+  }
+  if (message.includes("network") || message.includes("fetch failed")) {
+    return { retryable: true, errorClass: "network" };
+  }
+  if (
+    message.includes("schema") ||
+    message.includes("invalid json") ||
+    message.includes("unknown segment") ||
+    message.includes("malformed")
+  ) {
+    return { retryable: true, errorClass: "schema_invalid" };
+  }
+  return { retryable: false, errorClass: "non_retryable" };
 }
 
-function buildCompletedMetadata(params: {
-  metadata: ProcessingMetadata;
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
-  startedAtMs: number;
-  overallStatus: TranscriptEnhancementOverallStatus;
-  meta: TranscriptEnhancementMeta | undefined;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
-}): ProcessingMetadata {
-  const current = asMetadata(params.metadata.transcriptEnhancement);
-  const nowIso = new Date().toISOString();
-  const durationMs = Date.now() - params.startedAtMs;
-  const meta = params.meta;
-  const status: TranscriptEnhancementExecutionStatus =
-    params.overallStatus === "COMPLETED"
-      ? "COMPLETED"
-      : params.overallStatus === "PARTIAL"
-        ? "PARTIAL"
-        : params.overallStatus === "FAILED"
-          ? "FAILED"
-          : "SKIPPED";
-
-  return {
-    ...params.metadata,
-    transcriptEnhancementRecommendation: {
-      ...(asMetadata(params.metadata.transcriptEnhancementRecommendation) ?? {}),
-      suggested: false,
-      reasons: [],
-    },
-    transcriptEnhancement: {
-      ...current,
-      status,
-      triggerSource: params.triggerSource,
-      inputIdentity: params.inputIdentity,
-      idempotencyDecision: params.idempotencyDecision,
-      queuedAt: asIsoString(current.queuedAt) ?? new Date(params.startedAtMs).toISOString(),
-      startedAt: asIsoString(current.startedAt) ?? new Date(params.startedAtMs).toISOString(),
-      finishedAt: nowIso,
-      completedAt: nowIso,
-      durationMs,
-      skipReason: status === "SKIPPED" ? "provider_skipped" : null,
-      error: status === "FAILED" ? "Transcript enhancement failed." : null,
-      errorCategory: status === "FAILED" ? "provider_failed" : null,
-      failureStage:
-        status === "COMPLETED"
-          ? null
-          : status === "PARTIAL"
-            ? "chunk_execution"
-            : status === "SKIPPED"
-              ? null
-              : "provider_execution",
-      lastValidationStage:
-        status === "COMPLETED" || status === "PARTIAL"
-          ? "integrity_validation"
-          : null,
-      model: meta?.model ?? getYandexTranscriptEnhancementModel(),
-      outputMode: meta?.outputMode ?? getTranscriptEnhancementOutputMode(),
-      schemaVersion: meta?.schemaVersion ?? ENHANCEMENT_SCHEMA_VERSION,
-      promptVersion: ENHANCEMENT_PROMPT_VERSION,
-      chunkCount: meta?.chunkCount ?? null,
-      successfulChunkCount: meta?.successfulChunkCount ?? null,
-      failedChunkCount: meta?.failedChunkCount ?? null,
-      retryCount: meta?.retryCount ?? null,
-      fallbackSegmentCount: meta?.fallbackSegmentCount ?? null,
-      schemaValidationPassed:
-        meta == null
-          ? null
-          : (meta.failedChunkCount ?? 0) === 0 && status !== "FAILED",
-      enhancementTimingMs: durationMs,
-      meta: meta ?? null,
-    },
-  };
+async function defaultSleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildFailedMetadata(params: {
-  metadata: ProcessingMetadata;
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
-  startedAtMs: number;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
-  error: unknown;
-}): ProcessingMetadata {
-  const current = asMetadata(params.metadata.transcriptEnhancement);
-  const nowIso = new Date().toISOString();
-  return {
-    ...params.metadata,
-    transcriptEnhancement: {
-      ...current,
-      status: "FAILED",
-      triggerSource: params.triggerSource,
-      inputIdentity: params.inputIdentity,
-      idempotencyDecision: params.idempotencyDecision,
-      queuedAt: asIsoString(current.queuedAt) ?? new Date(params.startedAtMs).toISOString(),
-      startedAt: asIsoString(current.startedAt) ?? new Date(params.startedAtMs).toISOString(),
-      finishedAt: nowIso,
-      completedAt: nowIso,
-      durationMs: Date.now() - params.startedAtMs,
-      skipReason: null,
-      error:
-        params.error instanceof Error
-          ? params.error.message
-          : "Transcript enhancement failed.",
-      errorCategory: inferErrorCategory(params.error),
-      failureStage: "provider_execution",
-      lastValidationStage: null,
-      schemaValidationPassed: false,
-      enhancementTimingMs: Date.now() - params.startedAtMs,
-      model: getYandexTranscriptEnhancementModel(),
-      outputMode: getTranscriptEnhancementOutputMode(),
-      schemaVersion: ENHANCEMENT_SCHEMA_VERSION,
-      promptVersion: ENHANCEMENT_PROMPT_VERSION,
-    },
-  };
-}
-
-function isAuthoritativeRunningEnhancement(params: {
-  latest: { processingMetadata: unknown; retranscribeCount: number | null } | null;
-  runId: string;
-  inputIdentity: string;
-  retranscribeCount: number | null;
-}): boolean {
-  if (!params.latest) return false;
-  const latestEnhancement = asMetadata(
-    asMetadata(params.latest.processingMetadata).transcriptEnhancement,
-  );
-  return (
-    latestEnhancement.runId === params.runId &&
-    latestEnhancement.inputIdentity === params.inputIdentity &&
-    resolveEnhancementStatus(latestEnhancement.status) === "RUNNING" &&
-    params.latest.retranscribeCount === params.retranscribeCount
-  );
-}
-
-async function persistEnhancementFailureIfAuthoritative(params: {
-  db: TranscriptEnhancementDbClient;
-  transcript: LoadedTranscriptForEnhancement;
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
-  runId: string;
-  startedAtMs: number;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
-  error: unknown;
-}): Promise<void> {
-  if (params.error instanceof TranscriptEnhancementOwnershipLostError) {
+async function scheduleDetached(
+  work: () => Promise<void>,
+  schedule?: (work: () => Promise<void>) => void,
+) {
+  if (schedule) {
+    schedule(work);
     return;
   }
-  await params.db.$transaction(async (tx) => {
-    await lockTranscriptRowIfSupported(tx, params.transcript.id);
-    const latest = await tx.transcript.findUnique({
-      where: { id: params.transcript.id },
-      select: {
-        processingMetadata: true,
-        retranscribeCount: true,
-      },
-    });
-    if (
-      !isAuthoritativeRunningEnhancement({
-        latest,
-        runId: params.runId,
-        inputIdentity: params.inputIdentity,
-        retranscribeCount: params.transcript.retranscribeCount,
-      })
-    ) {
+  try {
+    const { after } = await import("next/server");
+    try {
+      after(() => {
+        void work();
+      });
       return;
+    } catch {
+      void work();
     }
-    const failedMetadata = buildFailedMetadata({
-      metadata: asMetadata(latest?.processingMetadata),
-      triggerSource: params.triggerSource,
-      inputIdentity: params.inputIdentity,
-      startedAtMs: params.startedAtMs,
-      idempotencyDecision: params.idempotencyDecision,
-      error: params.error,
-    });
-    await tx.transcript.update({
-      where: { id: params.transcript.id },
-      data: {
-        processingMetadata: failedMetadata as Prisma.InputJsonValue,
-      },
-    });
+  } catch {
+    void work();
+  }
+}
+
+function isSameIdentityCompleted(job: TranscriptEnhancementJob, inputIdentity: string): boolean {
+  if (job.inputIdentity !== inputIdentity) return false;
+  return (
+    (job.executionStatus === "COMPLETED" && job.terminalQuality === "COMPLETED") ||
+    job.status === "COMPLETED"
+  );
+}
+
+function buildAdmittedJob(params: {
+  metadata: ProcessingMetadata;
+  triggerSource: TranscriptEnhancementTriggerSource;
+  inputIdentity: string;
+  runId: string;
+  leaseToken: string;
+  leaseExpiresAt: string;
+  retranscribeCount: number | null;
+  chunks: TranscriptEnhancementDurableChunk[];
+  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
+  nowMs: number;
+}): ProcessingMetadata {
+  const nowIso = new Date(params.nowMs).toISOString();
+  const chunks: Record<string, TranscriptEnhancementDurableChunk> = {};
+  for (const chunk of params.chunks) {
+    chunks[chunkKey(chunk.chunkIndex)] = chunk;
+  }
+  const progress = computeEnhancementProgress(chunks);
+  const t3Ms = computeTranscriptEnhancementT3Ms(progress.totalChunks);
+  const job: TranscriptEnhancementJob = {
+    schemaVersion: ENHANCEMENT_D1_SCHEMA_VERSION,
+    jobId: params.runId,
+    runId: params.runId,
+    leaseToken: params.leaseToken,
+    leaseExpiresAt: params.leaseExpiresAt,
+    executionStatus: "QUEUED",
+    publicationEligible: true,
+    terminalQuality: null,
+    inputIdentity: params.inputIdentity,
+    retranscribeCount: params.retranscribeCount,
+    triggerSource: params.triggerSource,
+    cancelReason: null,
+    cancelledAt: null,
+    publicationOutcome: null,
+    progress,
+    chunks,
+    unpublishedByOrderIndex: {},
+    queuedAt: nowIso,
+    startedAt: nowIso,
+    finishedAt: null,
+    safetyDeadlineAt: new Date(params.nowMs + t3Ms).toISOString(),
+    skipReason: null,
+    status: "RUNNING",
+  };
+  return mergeEnhancementJobIntoMetadata(params.metadata, job, {
+    idempotencyDecision: params.idempotencyDecision,
+    model: getYandexTranscriptEnhancementModel(),
+    outputMode: getTranscriptEnhancementOutputMode(),
+    promptVersion: ENHANCEMENT_PROMPT_VERSION,
   });
 }
 
-async function persistEnhancementSuccessIfAuthoritative(params: {
+async function persistInjectedResult(params: {
   db: TranscriptEnhancementDbClient;
-  transcript: LoadedTranscriptForEnhancement;
+  transcriptId: string;
+  owner: {
+    runId: string;
+    leaseToken: string;
+    inputIdentity: string;
+    retranscribeCount: number | null;
+  };
   enhancementInput: TranscriptEnhancementInputSegment[];
-  enhanced: Awaited<ReturnType<typeof enhanceTranscriptWithYandexAi>>;
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
-  runId: string;
-  startedAtMs: number;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
+  enhanced: TranscriptEnhancementResult;
+  nowMs: number;
 }): Promise<void> {
-  const {
-    db,
-    transcript,
-    enhanced,
-    triggerSource,
-    inputIdentity,
-    runId,
-    startedAtMs,
-    idempotencyDecision,
-  } = params;
-  const overallStatus =
-    enhanced.meta?.overallStatus ??
-    ("COMPLETED" satisfies TranscriptEnhancementOverallStatus);
-  const persistEnhanced = shouldPersistEnhancedText(overallStatus);
+  const overall = params.enhanced.meta?.overallStatus ?? "COMPLETED";
   const byIndex = new Map(
-    enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
+    params.enhanced.segments.map((segment) => [segment.index, segment.cleanedText]),
   );
-  const segmentUpdates = buildSegmentEnhancementUpdates(transcript.segments, byIndex);
-
-  const normalizedSegments = transcript.segments.map((segment) => ({
-    speakerLabel: segment.speakerLabel,
-    displaySpeakerLabel: null,
-    startSeconds: segment.startSeconds,
-    endSeconds: segment.endSeconds,
-    text: byIndex.get(segment.orderIndex)?.trim() || segment.text,
-    orderIndex: segment.orderIndex,
-  }));
-
-  const enhancedTranscriptText = normalizedSegments
-    .map((segment) => segment.text.trim())
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-  const mapping =
-    transcript.speakerMapping &&
-    typeof transcript.speakerMapping === "object" &&
-    !Array.isArray(transcript.speakerMapping)
-      ? (transcript.speakerMapping as SpeakerMapping)
-      : null;
-  const participants = (transcript.session?.participants ?? []).map(
-    toParticipantDisplayInfo,
-  );
-  const enhancedDiarizedText =
-    normalizedSegments.length > 0
-      ? buildCanonicalDiarizedText({
-          segments: normalizedSegments,
-          speakerMapping: mapping,
-          participants,
-        })
-      : transcript.diarizedText;
-
-  await db.$transaction(async (tx) => {
-    await lockTranscriptRowIfSupported(tx, transcript.id);
-    const latest = await tx.transcript.findUnique({
-      where: { id: transcript.id },
-      select: {
-        processingMetadata: true,
-        retranscribeCount: true,
+  const latest = await params.db.transcript.findUnique({
+    where: { id: params.transcriptId },
+    select: { processingMetadata: true },
+  });
+  const existing = Object.values(parseTranscriptEnhancementJob(latest?.processingMetadata).chunks);
+  const planned = existing.length > 0 ? existing : planDurableChunks(params.enhancementInput);
+  const nowIso = new Date(params.nowMs).toISOString();
+  for (const chunk of planned) {
+    const unpublishedByOrderIndex: Record<string, string> = {};
+    let complete = overall === "COMPLETED";
+    for (const index of chunk.targetIndexes) {
+      const text = byIndex.get(index);
+      if (typeof text === "string" && text.trim()) {
+        unpublishedByOrderIndex[String(index)] = text;
+      } else if (overall === "COMPLETED") {
+        complete = false;
+      }
+    }
+    await checkpointEnhancementChunk({
+      db: params.db,
+      transcriptId: params.transcriptId,
+      owner: params.owner,
+      nowMs: params.nowMs,
+      chunk: {
+        ...chunk,
+        status: complete ? "COMPLETED" : "FAILED",
+        attemptCount: 1,
+        unpublishedByOrderIndex,
+        lastErrorClass: complete ? null : "schema_invalid",
+        finishedAt: nowIso,
+        startedAt: nowIso,
       },
     });
-    if (
-      !isAuthoritativeRunningEnhancement({
-        latest,
-        runId,
-        inputIdentity,
-        retranscribeCount: transcript.retranscribeCount,
-      })
-    ) {
-      return;
+  }
+  await publishEnhancementIfEligible({
+    db: params.db,
+    transcriptId: params.transcriptId,
+    owner: params.owner,
+    nowMs: params.nowMs,
+  });
+}
+
+async function runDurableChunkFanout(params: {
+  db: TranscriptEnhancementDbClient;
+  transcriptId: string;
+  owner: {
+    runId: string;
+    leaseToken: string;
+    inputIdentity: string;
+    retranscribeCount: number | null;
+  };
+  enhancementInput: TranscriptEnhancementInputSegment[];
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  enhanceImpl?: typeof enhanceTranscriptWithYandexAi;
+  onProviderCall?: EnhancementProviderCallObserver;
+}): Promise<void> {
+  const limiter = getTranscriptEnhancementLimiter();
+  const attemptBudget = getProviderPostAttemptBudget();
+  const jobId = params.owner.runId;
+  const enhanceImpl = params.enhanceImpl ?? enhanceTranscriptWithYandexAi;
+  const onProviderCall = resolveEnhancementProviderCallObserver(params.onProviderCall);
+
+  const readDurableJob = async () => {
+    const latestMeta = await params.db.transcript.findUnique({
+      where: { id: params.transcriptId },
+      select: { processingMetadata: true },
+    });
+    return parseTranscriptEnhancementJob(latestMeta?.processingMetadata);
+  };
+
+  /**
+   * Global provider admission. The DB slot inventory is authority; the local
+   * limiter is only a process-local waiter in front of it. The slot is held
+   * only around the request, never across backoff.
+   */
+  const withProviderSlot = <T,>(fn: () => Promise<T>): Promise<T> =>
+    limiter.withSlot(jobId, () =>
+      withProviderSlotLease(
+        {
+          db: params.db,
+          jobId,
+          runId: params.owner.runId,
+          now: params.now,
+          sleep: params.sleep,
+        },
+        fn,
+      ),
+    );
+
+  const checkpointFinish = async (
+    result: {
+      chunkIndex: number;
+      enhancedByIndex: Map<number, string>;
+      retryCount: number;
+      status: string;
+      errorCategory: string | null;
+      schemaValidationPassed?: boolean;
+      latencyMs: number | null;
+      startedAt: string | null;
+      finishedAt: string | null;
+      usageInputTokens?: number | null;
+      usageOutputTokens?: number | null;
+      usageTotalTokens?: number | null;
+      usageClassification?: "provider" | "unknown" | null;
+      attemptNumber?: number;
+      retryableFailure?: boolean;
+      retryAfterHeader?: string | null;
+    },
+    chunk: EnhancementChunk,
+    attemptNumber: number,
+  ): Promise<number> => {
+    const unpublishedByOrderIndex: Record<string, string> = {};
+    for (const [index, text] of result.enhancedByIndex) {
+      unpublishedByOrderIndex[String(index)] = text;
+    }
+    const providerCompleted = result.status === "COMPLETED";
+    const retryable =
+      !providerCompleted &&
+      (result.retryableFailure ?? isRetryableProviderCategory(result.errorCategory));
+    const attemptCount = Math.max(1, result.attemptNumber ?? attemptNumber);
+    const status = resolveChunkStatusAfterAttempt({
+      providerCompleted,
+      retryable,
+      attemptNumber: attemptCount,
+      budget: attemptBudget,
+    });
+    const patched = await checkpointEnhancementChunk({
+      db: params.db,
+      transcriptId: params.transcriptId,
+      owner: params.owner,
+      nowMs: params.now(),
+      chunk: {
+        chunkIndex: chunk.chunkIndex,
+        status,
+        targetIndexes: [...new Set(chunk.targets.map((target) => target.sourceIndex))],
+        attemptCount,
+        unpublishedByOrderIndex,
+        lastErrorClass: result.errorCategory,
+        lastHttpClass: result.errorCategory === "provider_rate_limit" ? "429" : null,
+        lastSchemaResult:
+          result.schemaValidationPassed == null
+            ? null
+            : result.schemaValidationPassed
+              ? "valid"
+              : "invalid",
+        providerDurationMs: result.latencyMs,
+        usageInputTokens: result.usageInputTokens ?? null,
+        usageOutputTokens: result.usageOutputTokens ?? null,
+        usageTotalTokens: result.usageTotalTokens ?? null,
+        usageClassification: result.usageClassification ?? null,
+        startedAt: result.startedAt,
+        finishedAt: result.finishedAt,
+      },
+    });
+    await notifyEnhancementProviderCall(onProviderCall, {
+      runId: params.owner.runId,
+      transcriptId: params.transcriptId,
+      chunkIndex: chunk.chunkIndex,
+      attemptNumber: attemptCount,
+      requestStartedAt: result.startedAt,
+      responseReceivedAt: result.finishedAt,
+      httpClass: result.errorCategory === "provider_rate_limit" ? "429" : result.errorCategory,
+      schemaValid: result.schemaValidationPassed ?? null,
+      checkpointAccepted: patched != null,
+      checkpointRejectionReason: patched == null ? "execution_not_in_flight" : null,
+    });
+    if (status !== "RETRYABLE_FAILED") {
+      return 0;
+    }
+    return resolveRetryDelayMs({
+      backoffMs: retryBackoffMs(attemptCount),
+      retryAfterMs: parseRetryAfterMs(result.retryAfterHeader, params.now()),
+    });
+  };
+
+  // Single retry owner: at most `attemptBudget` HTTP POSTs per chunk per runId,
+  // derived from the durable ledger so a restart cannot add a hidden attempt.
+  let pendingRetryDelayMs = 0;
+  for (let pass = 0; pass < attemptBudget; pass += 1) {
+    const durable = await readDurableJob();
+    const plan = resolveChunkAttemptPlan({
+      chunks: Object.values(durable.chunks).map((chunk) => ({
+        chunkIndex: chunk.chunkIndex,
+        status: chunk.status,
+        attemptCount: chunk.attemptCount,
+        lastErrorClass: chunk.lastErrorClass,
+      })),
+      budget: attemptBudget,
+    });
+    if (plan.length === 0) break;
+
+    if (pendingRetryDelayMs > 0) {
+      // Backoff / Retry-After waiting happens with no Transcript lock and no
+      // provider slot held. The job heartbeat keeps running.
+      await params.sleep(pendingRetryDelayMs);
+      pendingRetryDelayMs = 0;
     }
 
-    if (persistEnhanced) {
-      for (const segmentUpdate of segmentUpdates) {
-        await tx.transcriptSegment.update({
-          where: { id: segmentUpdate.id },
-          data: {
-            text: segmentUpdate.text,
-            qualityText: segmentUpdate.qualityText,
+    const attemptByChunkIndex = new Map(
+      plan.map((decision) => [
+        decision.chunkIndex,
+        { attemptNumber: decision.attemptNumber, flavor: decision.flavor },
+      ]),
+    );
+    const skipChunkIndexes = new Set(
+      Object.values(durable.chunks)
+        .filter((chunk) => !attemptByChunkIndex.has(chunk.chunkIndex))
+        .map((chunk) => chunk.chunkIndex),
+    );
+    let nextRetryDelayMs = 0;
+
+    await enhanceImpl(params.enhancementInput, {
+      jobId,
+      skipChunkIndexes,
+      restoredEnhancedByIndex: new Map(
+        Object.entries(durable.unpublishedByOrderIndex).map(([key, text]) => [Number(key), text]),
+      ),
+      attemptByChunkIndex,
+      withProviderSlot,
+      onChunkStart: async (chunk) => {
+        const attemptNumber = attemptByChunkIndex.get(chunk.chunkIndex)?.attemptNumber ?? 1;
+        const requestStartedAt = new Date(params.now()).toISOString();
+        const decision = await authorizeEnhancementChunkStart({
+          db: params.db,
+          transcriptId: params.transcriptId,
+          owner: params.owner,
+          nowMs: params.now(),
+          attemptBudget,
+          extra: { executionStatus: "RUNNING" },
+          chunk: {
+            chunkIndex: chunk.chunkIndex,
+            status: "RUNNING",
+            targetIndexes: [...new Set(chunk.targets.map((target) => target.sourceIndex))],
+            attemptCount: attemptNumber,
+            unpublishedByOrderIndex: {},
+            lastErrorClass: null,
+            lastHttpClass: null,
+            lastSchemaResult: null,
+            providerDurationMs: null,
+            usageInputTokens: null,
+            usageOutputTokens: null,
+            usageTotalTokens: null,
+            usageClassification: null,
+            startedAt: requestStartedAt,
+            finishedAt: null,
           },
         });
-      }
-    }
-
-    const completedMetadata = buildCompletedMetadata({
-      metadata: asMetadata(latest?.processingMetadata),
-      triggerSource,
-      inputIdentity,
-      startedAtMs,
-      overallStatus,
-      meta: enhanced.meta,
-      idempotencyDecision,
-    });
-
-    await tx.transcript.update({
-      where: { id: transcript.id },
-      data: {
-        text:
-          persistEnhanced && enhancedTranscriptText.length > 0
-            ? enhancedTranscriptText
-            : transcript.text,
-        diarizedText:
-          persistEnhanced && enhancedDiarizedText
-            ? enhancedDiarizedText
-            : transcript.diarizedText,
-        processingMetadata: completedMetadata as Prisma.InputJsonValue,
+        if (decision.status !== "ACCEPTED") {
+          return decision;
+        }
+        await notifyEnhancementProviderCall(onProviderCall, {
+          runId: params.owner.runId,
+          transcriptId: params.transcriptId,
+          chunkIndex: chunk.chunkIndex,
+          attemptNumber,
+          requestStartedAt,
+          responseReceivedAt: null,
+          httpClass: null,
+          schemaValid: null,
+          checkpointAccepted: true,
+          checkpointRejectionReason: null,
+        });
+        return decision;
+      },
+      onChunkFinish: async (result, chunk) => {
+        const attemptNumber = attemptByChunkIndex.get(chunk.chunkIndex)?.attemptNumber ?? 1;
+        const delayMs = await checkpointFinish(result, chunk, attemptNumber);
+        nextRetryDelayMs = Math.max(nextRetryDelayMs, delayMs);
       },
     });
+
+    pendingRetryDelayMs = nextRetryDelayMs;
+  }
+
+  const published = await publishEnhancementIfEligible({
+    db: params.db,
+    transcriptId: params.transcriptId,
+    owner: params.owner,
+    nowMs: params.now(),
   });
+  if (published.outcome === "still_running") {
+    // The retry budget is spent and no further POST can arrive for this run.
+    // Terminalize through the Slice A canonical failure path.
+    await markEnhancementExecutionFailed({
+      db: params.db,
+      transcriptId: params.transcriptId,
+      owner: params.owner,
+      errorMessage: "provider retry budget exhausted",
+      nowMs: params.now(),
+    });
+  }
 }
 
-async function runEnhancementExecution(params: {
-  db: TranscriptEnhancementDbClient;
-  enhance: typeof enhanceTranscriptWithYandexAi;
-  transcript: LoadedTranscriptForEnhancement;
-  enhancementInput: TranscriptEnhancementInputSegment[];
-  triggerSource: TranscriptEnhancementTriggerSource;
-  inputIdentity: string;
+export async function runAdmittedEnhancementJob(params: {
+  transcriptId: string;
   runId: string;
-  startedAtMs: number;
-  idempotencyDecision: TranscriptEnhancementIdempotencyDecision;
-  timeoutMs?: number;
-  waitForTimeout?: (timeoutMs: number, signal: AbortSignal) => Promise<void>;
+  leaseToken: string;
+  inputIdentity: string;
+  retranscribeCount: number | null;
+  enhancementInput: TranscriptEnhancementInputSegment[];
+  dependencies?: Partial<TranscriptEnhancementDependencies>;
 }): Promise<void> {
-  const {
+  const db = params.dependencies?.db ?? prisma;
+  const now = params.dependencies?.now ?? Date.now;
+  const sleep = params.dependencies?.sleep ?? defaultSleep;
+  const owner = {
+    runId: params.runId,
+    leaseToken: params.leaseToken,
+    inputIdentity: params.inputIdentity,
+    retranscribeCount: params.retranscribeCount,
+  };
+  const heartbeatMs = getTranscriptEnhancementHeartbeatMs();
+  const leaseTtlMs = getTranscriptEnhancementLeaseTtlMs();
+  let stopped = false;
+  logEnhancement("job_started", {
+    transcriptId: params.transcriptId,
+    runId: params.runId,
+    perJobConcurrency: getTranscriptEnhancementMaxConcurrency(),
+    globalInFlight: getTranscriptEnhancementLimiter().snapshot().globalInFlight,
+  });
+  await patchEnhancementJob({
     db,
-    enhance,
-    transcript,
-    enhancementInput,
-    triggerSource,
-    inputIdentity,
-    runId,
-    startedAtMs,
-    idempotencyDecision,
-  } = params;
-  const timeoutMs = params.timeoutMs ?? getTranscriptEnhancementTimeoutMs();
-  const waitForTimeout = params.waitForTimeout ?? waitForEnhancementTimeout;
-  const timeoutAbort = new AbortController();
-
-  const enhancePromise = enhance(enhancementInput).then(
-    (result) => ({ kind: "result" as const, result }),
-    (error: unknown) => ({ kind: "error" as const, error }),
-  );
-  const timeoutPromise = waitForTimeout(timeoutMs, timeoutAbort.signal).then(
-    () => ({ kind: "timeout" as const }),
-    () => ({ kind: "aborted" as const }),
-  );
-
-  const first = await Promise.race([enhancePromise, timeoutPromise]);
-  if (first.kind === "timeout") {
-    await persistEnhancementTimeoutSkip({
-      db: db as never,
-      transcriptId: transcript.id,
-      runId,
-      inputIdentity,
-      retranscribeCount: transcript.retranscribeCount,
-    });
-    void enhancePromise.then((later) => {
-      if (later.kind === "result") {
-        return persistEnhancementSuccessIfAuthoritative({
-          db,
-          transcript,
-          enhancementInput,
-          enhanced: later.result,
-          triggerSource,
-          inputIdentity,
-          runId,
-          startedAtMs,
-          idempotencyDecision,
-        });
-      }
-      return persistEnhancementFailureIfAuthoritative({
+    transcriptId: params.transcriptId,
+    owner,
+    requireOwner: true,
+    nowMs: now(),
+    build: (job) => {
+      if (!isExecutionInFlight(job.executionStatus)) return null;
+      return {
+        ...job,
+        executionStatus: "RUNNING",
+        startedAt: job.startedAt ?? new Date(now()).toISOString(),
+      };
+    },
+  });
+  const heartbeat =
+    params.dependencies?.enhance ||
+    params.dependencies?.runChunkedEnhancement ||
+    heartbeatMs <= 0
+      ? null
+      : setInterval(() => {
+          if (stopped) return;
+          void heartbeatEnhancementLease({
+            db,
+            transcriptId: params.transcriptId,
+            owner,
+            leaseExpiresAt: new Date(now() + leaseTtlMs).toISOString(),
+            nowMs: now(),
+          });
+        }, heartbeatMs);
+  try {
+    if (params.dependencies?.enhance) {
+      const enhanced = await params.dependencies.enhance(params.enhancementInput);
+      await persistInjectedResult({
         db,
-        transcript,
-        triggerSource,
-        inputIdentity,
-        runId,
-        startedAtMs,
-        idempotencyDecision,
-        error: later.error,
+        transcriptId: params.transcriptId,
+        owner,
+        enhancementInput: params.enhancementInput,
+        enhanced,
+        nowMs: now(),
       });
-    });
-    return;
-  }
+      return;
+    }
 
-  timeoutAbort.abort();
-  const outcome = first.kind === "aborted" ? await enhancePromise : first;
-  if (outcome.kind === "error") {
-    await persistEnhancementFailureIfAuthoritative({
+    await runDurableChunkFanout({
       db,
-      transcript,
-      triggerSource,
-      inputIdentity,
-      runId,
-      startedAtMs,
-      idempotencyDecision,
-      error: outcome.error,
+      transcriptId: params.transcriptId,
+      owner,
+      enhancementInput: params.enhancementInput,
+      now,
+      sleep,
+      enhanceImpl: params.dependencies?.runChunkedEnhancement,
+      onProviderCall: params.dependencies?.onProviderCall,
     });
-    return;
-  }
-  if (outcome.kind === "result") {
-    await persistEnhancementSuccessIfAuthoritative({
+  } catch (error) {
+    logEnhancement("job_failed", {
+      transcriptId: params.transcriptId,
+      runId: params.runId,
+      errorClass: classifyRetryable(error).errorClass,
+    });
+    await markEnhancementExecutionFailed({
       db,
-      transcript,
-      enhancementInput,
-      enhanced: outcome.result,
-      triggerSource,
-      inputIdentity,
-      runId,
-      startedAtMs,
-      idempotencyDecision,
+      transcriptId: params.transcriptId,
+      owner,
+      errorMessage: error instanceof Error ? error.message : "enhancement failed",
+      nowMs: now(),
     });
+  } finally {
+    stopped = true;
+    if (heartbeat) clearInterval(heartbeat);
   }
 }
 
@@ -759,380 +878,316 @@ export async function executeTranscriptEnhancement(params: {
     dependencies,
   } = params;
   const db = dependencies?.db ?? prisma;
-  const enhance = dependencies?.enhance ?? enhanceTranscriptWithYandexAi;
-  const timeoutMs = dependencies?.timeoutMs ?? getTranscriptEnhancementTimeoutMs();
   const nowMs = (dependencies?.now ?? Date.now)();
-  const waitForTimeout = dependencies?.waitForTimeout ?? waitForEnhancementTimeout;
 
-  const transcript = (await db.transcript.findUnique({
-    where: { id: transcriptId },
-    select: {
-      id: true,
-      text: true,
-      diarizedText: true,
-      updatedAt: true,
-      processingMetadata: true,
-      retranscribeCount: true,
-      speakerMapping: true,
-      session: {
-        select: {
-          participants: {
-            select: {
-              id: true,
-              displayName: true,
-              type: true,
-              sessionRole: { select: { name: true } },
+  type AdmissionDecision =
+    | { kind: "not_found" }
+    | {
+        kind: "conflict";
+        reason: "skipped_ai_in_progress" | "skipped_transcript_not_completed";
+      }
+    | {
+        kind: "skipped";
+        reason: TranscriptEnhancementIdempotencyDecision;
+        inputIdentity: string | null;
+      }
+    | { kind: "already_running"; inputIdentity: string | null }
+    | {
+        kind: "admitted";
+        runId: string;
+        leaseToken: string;
+        inputIdentity: string;
+        retranscribeCount: number | null;
+        enhancementInput: TranscriptEnhancementInputSegment[];
+        plannedChunkCount: number;
+      };
+
+  const admission = await db.$transaction(async (tx): Promise<AdmissionDecision> => {
+    await lockTranscriptRowIfSupported(tx, transcriptId);
+    const latest = (await tx.transcript.findUnique({
+      where: { id: transcriptId },
+      select: {
+        id: true,
+        sessionId: true,
+        status: true,
+        text: true,
+        diarizedText: true,
+        updatedAt: true,
+        processingMetadata: true,
+        retranscribeCount: true,
+        speakerMapping: true,
+        session: {
+          select: {
+            participants: {
+              select: {
+                id: true,
+                displayName: true,
+                type: true,
+                sessionRole: { select: { name: true } },
+              },
             },
           },
         },
-      },
-      segments: {
-        orderBy: { orderIndex: "asc" },
-        select: {
-          id: true,
-          orderIndex: true,
-          speakerLabel: true,
-          startSeconds: true,
-          endSeconds: true,
-          mappedParticipantId: true,
-          text: true,
-          qualityText: true,
+        segments: {
+          orderBy: { orderIndex: "asc" },
+          select: {
+            id: true,
+            orderIndex: true,
+            speakerLabel: true,
+            startSeconds: true,
+            endSeconds: true,
+            mappedParticipantId: true,
+            text: true,
+            qualityText: true,
+          },
         },
       },
-    },
-  })) as LoadedTranscriptForEnhancement | null;
+    })) as LoadedTranscriptForEnhancement | null;
 
-  if (!transcript) {
-    return { outcome: "not_found", transcriptId, triggerSource };
-  }
-
-  const metadata = asMetadata(transcript.processingMetadata);
-  const provider =
-    typeof metadata.transcriptionProvider === "string"
-      ? metadata.transcriptionProvider
-      : null;
-  if (provider !== "yandex_speechkit") {
-    await writeMergedEnhancementMetadata({
-      db,
-      transcriptId: transcript.id,
-      build: (current) =>
-        buildSkipMetadata({
-          metadata: current,
-          triggerSource,
-          inputIdentity: null,
-          reason: "skipped_not_yandex",
-        }),
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity: null,
-      triggerSource,
-      reason: "skipped_not_yandex",
-    };
-  }
-
-  if (!isYandexTranscriptEnhancementEnabled()) {
-    await writeMergedEnhancementMetadata({
-      db,
-      transcriptId: transcript.id,
-      build: (current) =>
-        buildSkipMetadata({
-          metadata: current,
-          triggerSource,
-          inputIdentity: null,
-          reason: "skipped_disabled",
-        }),
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity: null,
-      triggerSource,
-      reason: "skipped_disabled",
-    };
-  }
-
-  if (
-    triggerSource.startsWith("automatic_") &&
-    !isTranscriptEnhancementAutoTriggerEnabled()
-  ) {
-    await writeMergedEnhancementMetadata({
-      db,
-      transcriptId: transcript.id,
-      build: (current) =>
-        buildSkipMetadata({
-          metadata: current,
-          triggerSource,
-          inputIdentity: null,
-          reason: "skipped_auto_run_disabled",
-        }),
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity: null,
-      triggerSource,
-      reason: "skipped_auto_run_disabled",
-    };
-  }
-
-  const enhancementInput = mapSegmentsToEnhancementInput(transcript.segments);
-  if (enhancementInput.length === 0) {
-    await writeMergedEnhancementMetadata({
-      db,
-      transcriptId: transcript.id,
-      build: (current) =>
-        buildSkipMetadata({
-          metadata: current,
-          triggerSource,
-          inputIdentity: null,
-          reason: "skipped_empty_transcript",
-        }),
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity: null,
-      triggerSource,
-      reason: "skipped_empty_transcript",
-    };
-  }
-
-  const hasCanonicalText = enhancementInput.some(
-    (segment) => segment.originalText.trim().length > 0,
-  );
-  if (!hasCanonicalText) {
-    await writeMergedEnhancementMetadata({
-      db,
-      transcriptId: transcript.id,
-      build: (current) =>
-        buildSkipMetadata({
-          metadata: current,
-          triggerSource,
-          inputIdentity: null,
-          reason: "skipped_empty_raw_text",
-        }),
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity: null,
-      triggerSource,
-      reason: "skipped_empty_raw_text",
-    };
-  }
-
-  const rawHash = canonicalRawTextHash(enhancementInput);
-  const inputIdentity = buildTranscriptEnhancementInputIdentity({
-    transcriptId: transcript.id,
-    rawSegmentsHash: rawHash,
-    model: getYandexTranscriptEnhancementModel(),
-    outputMode: getTranscriptEnhancementOutputMode(),
-    schemaVersion: ENHANCEMENT_SCHEMA_VERSION,
-    promptVersion: ENHANCEMENT_PROMPT_VERSION,
-  });
-
-  const currentEnhancement = asMetadata(metadata.transcriptEnhancement);
-  const currentStatus = resolveEnhancementStatus(currentEnhancement.status);
-  const currentIdentity = asIsoString(currentEnhancement.inputIdentity) ?? null;
-  const runningStartedAt = parseTimestamp(currentEnhancement.startedAt);
-  const isStaleRunning =
-    currentStatus === "RUNNING" &&
-    (runningStartedAt === null || nowMs - runningStartedAt.getTime() > timeoutMs);
-  const sameIdentity = currentIdentity === inputIdentity;
-  const alreadyTimedOutSkip =
-    currentStatus === "SKIPPED" && currentEnhancement.skipReason === "timeout";
-
-  if (sameIdentity && currentStatus === "COMPLETED" && !forceReenhancement) {
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity,
-      triggerSource,
-      reason: "skip_completed_same_identity",
-    };
-  }
-
-  if (sameIdentity && alreadyTimedOutSkip && !forceReenhancement) {
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity,
-      triggerSource,
-      reason: "timed_out",
-    };
-  }
-
-  if (sameIdentity && currentStatus === "RUNNING" && !isStaleRunning) {
-    return {
-      outcome: "already_running",
-      transcriptId: transcript.id,
-      inputIdentity,
-      triggerSource,
-    };
-  }
-
-  if (currentStatus === "RUNNING" && isStaleRunning && !forceReenhancement) {
-    await persistEnhancementTimeoutSkip({
-      db: db as never,
-      transcriptId: transcript.id,
-      runId: asIsoString(currentEnhancement.runId),
-      inputIdentity: currentIdentity,
-      retranscribeCount: transcript.retranscribeCount,
-      nowMs,
-    });
-    return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity,
-      triggerSource,
-      reason: "timed_out",
-    };
-  }
-
-  const idempotencyDecision: TranscriptEnhancementIdempotencyDecision =
-    sameIdentity && isStaleRunning
-      ? "recovered_stale_running"
-      : forceReenhancement
-        ? "manual_forced_rerun"
-        : "started_new";
-
-  const runId = randomUUID();
-  const lockResult = await db.$transaction(async (tx) => {
-    await lockTranscriptRowIfSupported(tx, transcript.id);
-    const latest = await tx.transcript.findUnique({
-      where: { id: transcript.id },
-      select: { processingMetadata: true, updatedAt: true },
-    });
     if (!latest) {
-      return { count: 0 };
+      return { kind: "not_found" } satisfies AdmissionDecision;
     }
-    const latestEnhancement = asMetadata(
-      asMetadata(latest.processingMetadata).transcriptEnhancement,
-    );
-    const latestStatus = resolveEnhancementStatus(latestEnhancement.status);
-    if (
-      latestStatus === "COMPLETED" &&
-      latestEnhancement.inputIdentity === inputIdentity &&
-      !forceReenhancement
-    ) {
-      return { count: 0, alreadyCompleted: true as const };
+
+    if (latest.status !== TranscriptStatus.COMPLETED) {
+      return {
+        kind: "conflict",
+        reason: "skipped_transcript_not_completed",
+      } satisfies AdmissionDecision;
     }
-    const latestRunningStartedAt = parseTimestamp(latestEnhancement.startedAt);
-    const latestIsStaleRunning =
-      latestStatus === "RUNNING" &&
-      (latestRunningStartedAt === null ||
-        nowMs - latestRunningStartedAt.getTime() > timeoutMs);
-    if (
-      latestStatus === "RUNNING" &&
-      latestEnhancement.inputIdentity === inputIdentity &&
-      !latestIsStaleRunning
-    ) {
-      return { count: 0 };
+
+    await lockAiAnalysisRowForUpdate(tx, latest.sessionId);
+
+    const aiClient = (tx as TranscriptEnhancementDbClient).aiAnalysis;
+    if (aiClient) {
+      const analysis = await aiClient.findUnique({
+        where: { sessionId: latest.sessionId },
+        select: {
+          status: true,
+          runToken: true,
+          leaseExpiresAt: true,
+          updatedAt: true,
+        },
+      });
+      if (
+        analysis &&
+        (analysis.status === AiAnalysisStatus.QUEUED ||
+          analysis.status === AiAnalysisStatus.ANALYZING) &&
+        isAiAnalysisRunLeaseActive(analysis)
+      ) {
+        return {
+          kind: "conflict",
+          reason: "skipped_ai_in_progress",
+        } satisfies AdmissionDecision;
+      }
     }
-    if (latestStatus === "RUNNING" && latestIsStaleRunning && !forceReenhancement) {
+
+    const persistSkip = async (
+      reason: TranscriptEnhancementIdempotencyDecision,
+      inputIdentity: string | null,
+    ): Promise<AdmissionDecision> => {
+      const current = asProcessingMetadata(latest.processingMetadata);
       await tx.transcript.update({
-        where: { id: transcript.id },
+        where: { id: latest.id },
         data: {
-          processingMetadata: buildTimeoutSkipMetadata({
-            metadata: asMetadata(latest.processingMetadata),
-            nowMs,
+          processingMetadata: buildSkipMetadata({
+            metadata: current,
+            triggerSource,
+            inputIdentity,
+            reason,
           }) as Prisma.InputJsonValue,
         },
       });
-      return { count: 0, timedOut: true as const };
+      return { kind: "skipped", reason, inputIdentity };
+    };
+
+    const metadata = asProcessingMetadata(latest.processingMetadata);
+    const provider =
+      typeof metadata.transcriptionProvider === "string"
+        ? metadata.transcriptionProvider
+        : null;
+    if (provider !== "yandex_speechkit") {
+      return persistSkip("skipped_not_yandex", null);
     }
-    const runningMetadata = buildRunningMetadata({
-      metadata: asMetadata(latest.processingMetadata),
+
+    if (!isYandexTranscriptEnhancementEnabled()) {
+      return persistSkip("skipped_disabled", null);
+    }
+
+    if (triggerSource.startsWith("automatic_") && !isTranscriptEnhancementAutoTriggerEnabled()) {
+      return persistSkip("skipped_auto_run_disabled", null);
+    }
+
+    const enhancementInput = mapSegmentsToEnhancementInput(latest.segments);
+    if (enhancementInput.length === 0) {
+      return persistSkip("skipped_empty_transcript", null);
+    }
+
+    const hasCanonicalText = enhancementInput.some(
+      (segment) => segment.originalText.trim().length > 0,
+    );
+    if (!hasCanonicalText) {
+      return persistSkip("skipped_empty_raw_text", null);
+    }
+
+    const rawHash = canonicalRawTextHash(enhancementInput);
+    const inputIdentity = buildTranscriptEnhancementInputIdentity({
+      transcriptId: latest.id,
+      rawSegmentsHash: rawHash,
+      model: getYandexTranscriptEnhancementModel(),
+      outputMode: getTranscriptEnhancementOutputMode(),
+      schemaVersion: ENHANCEMENT_SCHEMA_VERSION,
+      promptVersion: ENHANCEMENT_PROMPT_VERSION,
+    });
+
+    const latestJob = parseTranscriptEnhancementJob(latest.processingMetadata);
+    if (isSameIdentityCompleted(latestJob, inputIdentity) && !forceReenhancement) {
+      return {
+        kind: "skipped",
+        reason: "skip_completed_same_identity",
+        inputIdentity,
+      };
+    }
+
+    if (
+      isExecutionInFlight(latestJob.executionStatus) &&
+      latestJob.publicationEligible &&
+      !forceReenhancement
+    ) {
+      return { kind: "already_running", inputIdentity };
+    }
+
+    const historicalTimeoutSkip =
+      latestJob.skipReason === "timeout" &&
+      latestJob.inputIdentity === inputIdentity &&
+      latestJob.schemaVersion === "legacy";
+    if (
+      historicalTimeoutSkip &&
+      !forceReenhancement &&
+      triggerSource.startsWith("automatic_")
+    ) {
+      return { kind: "skipped", reason: "timed_out", inputIdentity };
+    }
+
+    const idempotencyDecision: TranscriptEnhancementIdempotencyDecision = forceReenhancement
+      ? "manual_forced_rerun"
+      : "started_new";
+    const runId = randomUUID();
+    const leaseToken = randomUUID();
+    const leaseExpiresAt = new Date(nowMs + getTranscriptEnhancementLeaseTtlMs()).toISOString();
+    const plannedChunks = planDurableChunks(enhancementInput);
+    const metadataWithPublication = preserveTranscriptEnhancementPublication({
+      metadata,
+      job: latestJob,
+      retranscribeCount: latest.retranscribeCount ?? 0,
+      segments: latest.segments,
+    });
+    const runningMetadata = buildAdmittedJob({
+      metadata: metadataWithPublication,
       triggerSource,
       inputIdentity,
       runId,
+      leaseToken,
+      leaseExpiresAt,
+      retranscribeCount: latest.retranscribeCount,
+      chunks: plannedChunks,
       idempotencyDecision,
+      nowMs,
     });
-    return tx.transcript.updateMany({
-      where: {
-        id: transcript.id,
-        updatedAt: latest.updatedAt,
-      },
+    await tx.transcript.update({
+      where: { id: latest.id },
       data: {
         processingMetadata: runningMetadata as Prisma.InputJsonValue,
       },
     });
+    return {
+      kind: "admitted",
+      runId,
+      leaseToken,
+      inputIdentity,
+      retranscribeCount: latest.retranscribeCount,
+      enhancementInput,
+      plannedChunkCount: plannedChunks.length,
+    } satisfies AdmissionDecision;
   });
 
-  if ("alreadyCompleted" in lockResult && lockResult.alreadyCompleted) {
+  if (admission.kind === "not_found") {
+    return { outcome: "not_found", transcriptId, triggerSource };
+  }
+  if (admission.kind === "conflict") {
     return {
-      outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity,
+      outcome: "conflict",
+      transcriptId,
+      inputIdentity: null,
       triggerSource,
-      reason: "skip_completed_same_identity",
+      reason: admission.reason,
     };
   }
-
-  if ("timedOut" in lockResult && lockResult.timedOut) {
+  if (admission.kind === "skipped") {
     return {
       outcome: "skipped",
-      transcriptId: transcript.id,
-      inputIdentity,
+      transcriptId,
+      inputIdentity: admission.inputIdentity,
       triggerSource,
-      reason: "timed_out",
+      reason: admission.reason,
     };
   }
-
-  if (lockResult.count === 0) {
+  if (admission.kind === "already_running") {
     return {
       outcome: "already_running",
-      transcriptId: transcript.id,
-      inputIdentity,
+      transcriptId,
+      inputIdentity: admission.inputIdentity,
       triggerSource,
     };
   }
 
-  const startedAtMs = nowMs;
-  if (runInBackground) {
-    void runEnhancementExecution({
-      db,
-      enhance,
-      transcript,
-      enhancementInput,
-      triggerSource,
-      inputIdentity,
-      runId,
-      startedAtMs,
-      idempotencyDecision,
-      timeoutMs,
-      waitForTimeout,
+  logEnhancement("job_admitted", {
+    transcriptId,
+    runId: admission.runId,
+    inputIdentity: admission.inputIdentity,
+    generation: admission.retranscribeCount,
+    sourceSegmentCount: admission.enhancementInput.length,
+    chars: admission.enhancementInput.reduce(
+      (sum, segment) => sum + segment.originalText.length,
+      0,
+    ),
+    chunkCount: admission.plannedChunkCount,
+    perJobConcurrency: getTranscriptEnhancementMaxConcurrency(),
+    executionStatus: "QUEUED",
+    publicationEligible: true,
+  });
+
+  const work = () =>
+    runAdmittedEnhancementJob({
+      transcriptId,
+      runId: admission.runId,
+      leaseToken: admission.leaseToken,
+      inputIdentity: admission.inputIdentity,
+      retranscribeCount: admission.retranscribeCount,
+      enhancementInput: admission.enhancementInput,
+      dependencies,
     }).catch((backgroundError) => {
       console.warn(
-        `[transcript-enhancement] background run failed for transcript ${transcript.id}: ${
-          backgroundError instanceof Error
-            ? backgroundError.message
-            : "unknown error"
+        `[transcript-enhancement] detached run failed for transcript ${transcriptId}: ${
+          backgroundError instanceof Error ? backgroundError.message : "unknown error"
         }`,
       );
     });
+
+  if (runInBackground) {
+    await scheduleDetached(work, dependencies?.schedule);
   } else {
-    await runEnhancementExecution({
-      db,
-      enhance,
-      transcript,
-      enhancementInput,
-      triggerSource,
-      inputIdentity,
-      runId,
-      startedAtMs,
-      idempotencyDecision,
-      timeoutMs,
-      waitForTimeout,
-    });
+    await work();
   }
 
   return {
     outcome: "started",
-    transcriptId: transcript.id,
-    inputIdentity,
+    transcriptId,
+    inputIdentity: admission.inputIdentity,
     triggerSource,
   };
+}
+
+export function enhancementJobHasUnfinishedWork(processingMetadata: unknown): boolean {
+  const job = parseTranscriptEnhancementJob(processingMetadata);
+  return Object.values(job.chunks).some((chunk) => isUnfinishedChunkStatus(chunk.status));
 }

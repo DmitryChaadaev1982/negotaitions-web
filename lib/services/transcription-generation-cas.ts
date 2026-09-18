@@ -5,6 +5,7 @@ import {
   isOwnedTranscriptionGeneration,
   type TranscriptionGenerationRef,
 } from "@/lib/services/transcription-ownership";
+import { lockTranscriptRowForUpdate } from "@/lib/transcription/transcript-row-lock";
 
 type PersistHold = () => Promise<void> | void;
 let persistHoldForTests: PersistHold | null = null;
@@ -37,6 +38,7 @@ export async function applyOwnedTranscriptionUpdate(input: {
   data: Prisma.TranscriptUpdateInput;
 }): Promise<"applied" | "stale"> {
   await awaitTranscriptionPersistHoldForTests();
+  await lockTranscriptRowForUpdate(input.tx, input.generation.transcriptId);
 
   const current = await input.tx.transcript.findUnique({
     where: { id: input.generation.transcriptId },

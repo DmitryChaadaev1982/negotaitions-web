@@ -498,15 +498,6 @@ test("synthetic large-session provider pipeline preserves final coverage through
             (targetRequestCounts.get(target.index) ?? 0) + 1,
           );
         }
-        if (attemptsByAnchor.size === 1 && anchorAttempt === 1) {
-          return new Response(
-            JSON.stringify({
-              status: "completed",
-              output_text: JSON.stringify({ segments: {} }),
-            }),
-            { status: 200 },
-          );
-        }
         return new Response(
           JSON.stringify({
             status: "completed",
@@ -529,19 +520,12 @@ test("synthetic large-session provider pipeline preserves final coverage through
         assert.equal(result.meta?.originalSegmentCount, source.length);
         assert.equal(result.meta?.oversizedSegmentCount, 1);
         assert.equal(result.meta?.splitPieceCount, expectedPieces.filter((piece) => piece.pieceCount > 1).length);
-        assert.equal(providerCalls, (result.meta?.chunkCount ?? 0) + 1);
-        assert.equal(result.meta?.retryCount, 1);
+        // One POST per chunk per invocation. Retries belong to the D1 owner.
+        assert.equal(providerCalls, result.meta?.chunkCount ?? 0);
+        assert.equal(result.meta?.retryCount, 0);
         assert.equal(targetRequestCounts.size, expectedPieces.length);
         assert.equal(
-          [...targetRequestCounts.values()].every(
-            (requestCount) => requestCount === 1 || requestCount === 2,
-          ),
-          true,
-        );
-        assert.equal(
-          [...targetRequestCounts.values()].some(
-            (requestCount) => requestCount === 2,
-          ),
+          [...targetRequestCounts.values()].every((requestCount) => requestCount === 1),
           true,
         );
         assert.deepEqual(
@@ -702,7 +686,7 @@ test("chunked merge preserves canonical order with reordered model response", as
   );
 });
 
-test("chunked mode keeps partial fallback semantics with bounded retries", async () => {
+test("chunked mode keeps partial fallback semantics with one attempt per invocation", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -725,9 +709,7 @@ test("chunked mode keeps partial fallback semantics with bounded retries", async
         const currentAttempt = (attemptsByChunk.get(chunkAnchor) ?? 0) + 1;
         attemptsByChunk.set(chunkAnchor, currentAttempt);
 
-        if (chunkAnchor === 0 && currentAttempt === 1) {
-          throw new Error("Yandex transcript enhancement timed out.");
-        }
+        assert.equal(currentAttempt, 1, "provider must POST once per invocation");
         if (chunkAnchor === 2) {
           return new Response(
             JSON.stringify({
@@ -757,7 +739,7 @@ test("chunked mode keeps partial fallback semantics with bounded retries", async
         assert.equal(result.meta?.overallStatus, "PARTIAL");
         assert.equal(result.meta?.successfulChunkCount, 1);
         assert.equal(result.meta?.failedChunkCount, 1);
-        assert.equal(result.meta?.retryCount >= 2, true);
+        assert.equal(result.meta?.retryCount, 0);
         assert.equal(
           result.segments.some((segment) => segment.cleanedText.includes("частичный")),
           true,
@@ -823,7 +805,7 @@ test("chunked mode marks missing target fallback as PARTIAL", async () => {
   );
 });
 
-test("json_schema mode missing key fails and preserves originals after retries", async () => {
+test("json_schema mode missing key fails and preserves originals on its single attempt", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -853,7 +835,7 @@ test("json_schema mode missing key fails and preserves originals after retries",
         const source = makeSegments(2, "missing");
         const result = await enhanceTranscriptWithYandexAi(source);
         assert.equal(result.meta?.overallStatus, "FAILED");
-        assert.equal(calls, 2);
+        assert.equal(calls, 1);
         assert.deepEqual(
           result.segments.map((segment) => segment.cleanedText),
           source.map((segment) => segment.originalText),
@@ -1080,11 +1062,19 @@ test("json_schema mode treats terminal incomplete as failed without polling", as
         );
       }) as typeof fetch;
       try {
-        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "incomplete"));
+        const source = makeSegments(2, "incomplete");
+        const result = await enhanceTranscriptWithYandexAi(source);
         assert.equal(result.meta?.overallStatus, "FAILED");
         assert.equal(seenUrls.some((url) => url.includes("/responses/resp-incomplete")), false);
+        assert.equal(seenMaxOutputTokens.length, 1);
+
+        // Attempt 2 is scheduled by the D1 retry owner and escalates tokens.
+        const strictRetry = await enhanceTranscriptWithYandexAi(source, {
+          attemptByChunkIndex: new Map([[0, { attemptNumber: 2, flavor: "strict_json" }]]),
+        });
+        assert.equal(strictRetry.meta?.overallStatus, "FAILED");
         assert.equal(seenMaxOutputTokens.length, 2);
-        assert.equal(seenMaxOutputTokens[1] > seenMaxOutputTokens[0], true);
+        assert.equal(seenMaxOutputTokens[1]! > seenMaxOutputTokens[0]!, true);
       } finally {
         global.fetch = originalFetch;
       }
@@ -1127,10 +1117,24 @@ test("primary strict retry succeeds after initial empty output", async () => {
         );
       }) as typeof fetch;
       try {
-        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "strict"));
+        const source = makeSegments(2, "strict");
+        const first = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(first.meta?.overallStatus, "FAILED");
+        assert.equal(first.meta?.perChunk[0]?.attemptCount, 1);
+        assert.equal(first.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage, "initial_response");
+        assert.equal(call, 1);
+
+        // The retry owner drives attempt 2 with the strict flavor.
+        const result = await enhanceTranscriptWithYandexAi(source, {
+          attemptByChunkIndex: new Map([[0, { attemptNumber: 2, flavor: "strict_json" }]]),
+        });
         assert.equal(result.meta?.overallStatus, "COMPLETED");
-        assert.equal(result.meta?.perChunk[0]?.attemptCount, 2);
-        assert.equal(result.meta?.perChunk[0]?.attempts?.[0]?.emptyOutputStage, "initial_response");
+        assert.equal(result.meta?.perChunk[0]?.attempts?.[0]?.attemptNumber, 2);
+        assert.equal(
+          result.meta?.perChunk[0]?.attempts?.[0]?.attemptType,
+          "primary_strict_retry",
+        );
+        assert.equal(call, 2);
       } finally {
         global.fetch = originalFetch;
       }
@@ -1175,7 +1179,12 @@ test("configured fallback model is ignored; strict retry keeps DeepSeek model", 
         );
       }) as typeof fetch;
       try {
-        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "fallback-ok"));
+        const source = makeSegments(2, "fallback-ok");
+        const first = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(first.meta?.overallStatus, "FAILED");
+        const result = await enhanceTranscriptWithYandexAi(source, {
+          attemptByChunkIndex: new Map([[0, { attemptNumber: 2, flavor: "strict_json" }]]),
+        });
         assert.equal(result.meta?.overallStatus, "COMPLETED");
         assert.equal(result.meta?.fallbackTriggered, false);
         assert.equal(result.meta?.perChunk[0]?.modelUsed, "deepseek-v4-flash");
@@ -1312,7 +1321,7 @@ test("telemetry marks validation stage when payload validates JSON but fails sem
   );
 });
 
-test("retry plan stays bounded to two attempts per chunk", async () => {
+test("provider performs exactly one POST per invocation and never retries itself", async () => {
   await withEnv(
     {
       YANDEX_API_KEY: "test-key",
@@ -1334,9 +1343,16 @@ test("retry plan stays bounded to two attempts per chunk", async () => {
         });
       }) as typeof fetch;
       try {
-        const result = await enhanceTranscriptWithYandexAi(makeSegments(2, "bounded"));
-        assert.equal(result.meta?.perChunk[0]?.attemptCount, 2);
-        assert.equal(calls, 2);
+        const source = makeSegments(2, "bounded");
+        const first = await enhanceTranscriptWithYandexAi(source);
+        assert.equal(first.meta?.perChunk[0]?.attemptCount, 1);
+        assert.equal(calls, 1, "no provider-internal retry loop may exist");
+
+        const second = await enhanceTranscriptWithYandexAi(source, {
+          attemptByChunkIndex: new Map([[0, { attemptNumber: 2, flavor: "strict_json" }]]),
+        });
+        assert.equal(second.meta?.perChunk[0]?.attemptCount, 1);
+        assert.equal(calls, 2, "attempt 2 is one more POST, driven by the retry owner");
       } finally {
         global.fetch = originalFetch;
       }

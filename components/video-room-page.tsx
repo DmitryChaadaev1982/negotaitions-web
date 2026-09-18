@@ -73,8 +73,20 @@ type RoomControlPayload = ControlState &
  *   all API calls use cookie-based auth. joinToken is never in HTML/props.
  */
 type VideoRoomPageProps =
-  | { sessionId: string; authMode?: "guest"; joinToken: string; participantId?: never }
-  | { sessionId: string; authMode: "account"; participantId: string; joinToken?: never };
+  | {
+      sessionId: string;
+      authMode?: "guest";
+      joinToken: string;
+      participantId?: never;
+      connectRealtime?: boolean;
+    }
+  | {
+      sessionId: string;
+      authMode: "account";
+      participantId: string;
+      joinToken?: never;
+      connectRealtime?: boolean;
+    };
 
 // ─── LeaveRoomButton ─────────────────────────────────────────────────────────
 // Must stay inside <LiveKitRoom> context (uses useRoomContext).
@@ -136,6 +148,7 @@ function ConnectedRoom({
   onStaleConnection,
   roomConnectionId,
   staleConnection,
+  connectRealtime,
 }: {
   roomAuth: RoomAuthToken;
   materialsUrl: string;
@@ -151,6 +164,7 @@ function ConnectedRoom({
   onStaleConnection: () => void;
   roomConnectionId: string;
   staleConnection: boolean;
+  connectRealtime: boolean;
 }) {
   const router = useRouter();
   const { t } = useI18n();
@@ -232,7 +246,7 @@ function ConnectedRoom({
     <LiveKitRoom
       token={tokenResponse.token}
       serverUrl={tokenResponse.serverUrl}
-      connect
+      connect={connectRealtime}
       audio
       video
       data-lk-theme="default"
@@ -595,6 +609,7 @@ export default function VideoRoomPage(props: VideoRoomPageProps) {
       roomConnectionId={roomConnectionId}
       staleConnection={staleConnection}
       onStaleConnection={handleStaleConnection}
+      connectRealtime={props.connectRealtime !== false}
     />
   );
 }

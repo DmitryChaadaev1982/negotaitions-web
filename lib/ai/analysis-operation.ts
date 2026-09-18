@@ -102,6 +102,7 @@ export type AiAnalysisOperationStore = {
     runToken: string;
     now: Date;
     leaseExpiresAt: Date;
+    inputFingerprint?: string | null;
   }): Promise<AiAnalysisOperationRow | null>;
   tryClaimExisting(params: {
     expected: AiAnalysisOperationRow;
@@ -112,6 +113,7 @@ export type AiAnalysisOperationStore = {
     now: Date;
     leaseExpiresAt: Date;
     providerResponseId: string | null;
+    inputFingerprint?: string | null;
   }): Promise<boolean>;
   start(
     owner: AiAnalysisRunOwner,
@@ -198,6 +200,9 @@ export function createPrismaAiAnalysisOperationStore(
             startedAt: params.now,
             completedAt: null,
             errorMessage: null,
+            ...(params.inputFingerprint
+              ? { inputFingerprint: params.inputFingerprint }
+              : {}),
           },
           select,
         });
@@ -227,6 +232,9 @@ export function createPrismaAiAnalysisOperationStore(
           startedAt: params.now,
           completedAt: null,
           errorMessage: null,
+          ...(params.inputFingerprint
+            ? { inputFingerprint: params.inputFingerprint }
+            : {}),
         },
       });
       return claimed.count === 1;
@@ -395,6 +403,7 @@ export async function claimAiAnalysisRun(params: {
   leaseDurationMs?: number;
   legacyStaleAfterMs?: number;
   runToken?: string;
+  inputFingerprint?: string | null;
   store?: AiAnalysisOperationStore;
 }): Promise<AiAnalysisClaimResult> {
   const store = params.store ?? createPrismaAiAnalysisOperationStore();
@@ -416,6 +425,7 @@ export async function claimAiAnalysisRun(params: {
         runToken,
         now,
         leaseExpiresAt,
+        inputFingerprint: params.inputFingerprint,
       });
       if (created) {
         return {
@@ -465,6 +475,7 @@ export async function claimAiAnalysisRun(params: {
       now,
       leaseExpiresAt,
       providerResponseId,
+      inputFingerprint: params.inputFingerprint,
     });
     if (claimed) {
       return {

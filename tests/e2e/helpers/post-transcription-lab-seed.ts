@@ -8,10 +8,10 @@ import {
   query,
 } from "./db";
 import { buildLabCanonicalAnalysisJson } from "./post-transcription-lab-analysis";
+import { buildLabEnhancementProcessingMetadata } from "./post-transcription-lab-bug02";
 import {
   getLabScenario,
   type LabAiFixture,
-  type LabEnhancementFixture,
   type LabMappingFixture,
   type PostTranscriptionLabScenarioDefinition,
   type PostTranscriptionLabScenarioId,
@@ -49,26 +49,10 @@ export type LabSeededScenario = {
   facilitatorAuthCookie: string;
 };
 
-function enhancementMetadata(status: LabEnhancementFixture): Record<string, unknown> {
-  if (status === "none") {
-    return {
-      mappingSuggestion: { source: "fixture", isApplied: false },
-    };
-  }
-  return {
-    transcriptionProvider: "yandex_speechkit",
-    transcriptEnhancement: {
-      status,
-      source: "post-transcription-lab",
-      startedAt: status === "RUNNING"
-        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        : new Date().toISOString(),
-    },
-    mappingSuggestion: {
-      source: "fixture",
-      isApplied: status !== "RUNNING",
-    },
-  };
+function enhancementMetadata(
+  definition: PostTranscriptionLabScenarioDefinition,
+): Record<string, unknown> {
+  return buildLabEnhancementProcessingMetadata(definition);
 }
 
 function mappingStatus(mapping: LabMappingFixture): string {
@@ -207,9 +191,39 @@ export async function seedPostTranscriptionLabScenario(
     [recordingId, sessionId, `recordings/${sessionId}/lab-audio.mp4`],
   );
 
+  await query(
+    `INSERT INTO "SessionRoomConnection"
+       ("id","sessionId","userId","connectionId","leaseVersion","role",
+        "expiresAt","disconnectedAt","createdAt","updatedAt")
+     SELECT gen_random_uuid()::text, $1, u."userId", gen_random_uuid()::text, 1, u."role"::"ParticipantType",
+            r."endedAt" + INTERVAL '30 minutes',
+            r."endedAt" + INTERVAL '1 minute',
+            r."startedAt" - INTERVAL '1 minute',
+            NOW()
+     FROM "Recording" r
+     CROSS JOIN (
+       VALUES
+         ($2::text, 'FACILITATOR'),
+         ($3::text, 'PARTICIPANT'),
+         ($4::text, 'PARTICIPANT'),
+         ($5::text, 'OBSERVER')
+     ) AS u("userId", "role")
+     WHERE r."id" = $6`,
+    [
+      sessionId,
+      facilitator.userId,
+      buyer.userId,
+      seller.userId,
+      observer.userId,
+      recordingId,
+    ],
+  );
+
   const transcriptId = e2eId("lab-transcript");
   const mapping = definition.mapping;
-  const isTerminalEnhancementVisual = definition.id === "E05";
+  const isTerminalEnhancementVisual =
+    definition.id === "E05" ||
+    (definition.id.startsWith("LAB-") && definition.enhancement === "COMPLETED");
   const sourceTurns = LAB_VISUAL_TWO_PARTY_TRANSCRIPT;
   const turns = isTerminalEnhancementVisual
     ? applyLabCompletedEnhancementToTurns(sourceTurns)
@@ -282,7 +296,7 @@ export async function seedPostTranscriptionLabScenario(
       mapping === "CONFIRMED" ? new Date() : null,
       mapping === "CONFIRMED" ? facilitator.userId : null,
       definition.id === "F05" ? 1 : 0,
-      JSON.stringify(enhancementMetadata(definition.enhancement)),
+      JSON.stringify(enhancementMetadata(definition)),
     ],
   );
 

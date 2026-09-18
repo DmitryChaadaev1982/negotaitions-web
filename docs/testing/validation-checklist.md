@@ -46,9 +46,42 @@ Routine cheap project checkpoint (not universally exhaustive):
 The unit glob covers deterministic `lib/**`, `app/**`, `components/**`, and
 `scripts/__tests__/**`. Canonical `test:unit` sets `--test-timeout=180000`
 (180 seconds per test). The validation-runner `test:unit` watchdog is 10
-minutes for the whole unit process. Playwright specs, live/provider suites,
-and tests that require a real database to do more than skip remain outside
-this gate.
+minutes for the whole unit process. Playwright specs and live/provider suites
+remain outside this gate.
+
+`validate:fast` never mutates a database. PostgreSQL-mutating suites are
+excluded **by file selection**, not by entering a test and returning early:
+the unit globs are `lib/**/!(*.pg).test.ts`, `app/**/!(*.pg).test.ts`,
+`components/**/!(*.pg).test.ts`, `scripts/__tests__/*.test.mjs`, and
+`tests/e2e/helpers/large-realistic-uat-!(*.pg).test.ts`, and `tests/pg-race/**`
+is not selected at all. This holds even when `E2E_DATABASE_URL` is defined.
+`scripts/validation-runner/steps.mjs` owns `UNIT_TEST_GLOBS` and
+`DATABASE_TEST_GLOBS`; `scripts/__tests__/validate-gate-scripts.test.mjs`
+expands both and proves the fast selection contains no `*.pg.test.ts`,
+no `tests/pg-race/**`, and no D1 persistence stress.
+
+Name any database-mutating test `*.pg.test.ts` or place it in
+`tests/pg-race/**`, otherwise it will run inside the fast gate.
+
+### Explicit PostgreSQL gates
+
+These are intentional database commands and are separate from `validate:fast`
+by design. They set `PG_TESTS_REQUIRED=1` through
+`scripts/test-pg-env-bootstrap.mjs`, so a missing isolated E2E database is
+reported as `PG_INFRASTRUCTURE_REQUIRED` failure rather than a silent skip
+(`lib/test-helpers/pg-test-gate.ts`).
+
+- `npm run test:pg:d1` — D1 persistence/stress
+  (`lib/eval/bug02-cp-bench/d1-persistence.pg.test.ts`). The only accepted
+  result is `D1_PASS`; `D1_REJECT` is a test failure.
+- `npm run test:pg:bug02` — BUG02 PostgreSQL authority races
+  (`tests/pg-race/**`): PG-RACE-01..07 Transcript-lock/mapping/publication
+  races and SLOT-01..08 cross-process provider-slot admission, including a real
+  second process, plus GLOBAL-LOWER-01..05 / GLOBAL-LOWER-XPROC for atomically
+  enforced configured global caps. Requires the
+  `TranscriptEnhancementProviderSlot` migration applied to the E2E database.
+- `npm run test:pg` — the remaining `*.pg.test.ts` coordination suites.
+- `npm run test:pg-race` is retained as an alias of `test:pg:bug02`.
 
 PostgreSQL coordination tests (`lib/ai/analysis-operation.pg.test.ts`,
 `lib/session-lifecycle-finalizer.pg.test.ts`) must not wait forever for a
@@ -90,9 +123,17 @@ config. Same Playwright overlay requirement. Localhost port `3100` is shared.
 - `npm run test:e2e:install` (explicit browser setup when needed)
 - `npm run prisma:generate` (guarded generate; also inside `validate:fast`)
 - `npm run test:e2e:db:check` (read-only E2E database preflight)
+- `npm run test:pg:d1` / `npm run test:pg:bug02` / `npm run test:pg` (explicit
+  PostgreSQL gates; see “Explicit PostgreSQL gates” above)
 - `npm run test:e2e:tunnel:check` (reverse tunnel fail-fast; read-only)
 - `npm run test:e2e:tunnel:list` / `test:e2e:tunnel` (opt-in)
 - `npm run test:e2e:live:list` / `test:e2e:live` (opt-in)
+- `npm run uat:enhancement:large-provider` (real Yandex background qualification; isolated E2E DB)
+- `npm run uat:enhancement:large-manual` (free-form Product session; no auto-start)
+- `npm run uat:enhancement:large-manual -- --mode=resume` (controlled unfinished resume; Skip ≠ Resume)
+- `npm run uat:enhancement:large-report -- --latest`
+- `npm run uat:enhancement:large-cleanup` (fixture-marked isolated sessions only)
+- `npm run test:uat:enhancement:large`
 - `npm run test:e2e:full` (manual/nightly; not a default deploy gate)
 - Focused examples:
   - `node --import ./scripts/test-unit-env-bootstrap.mjs --import tsx --test lib/env.ts`

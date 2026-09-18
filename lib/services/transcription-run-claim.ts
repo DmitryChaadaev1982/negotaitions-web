@@ -10,6 +10,7 @@ import {
   type TranscriptionGenerationRef,
 } from "@/lib/services/transcription-ownership";
 import { mergeProcessingMetadata } from "@/lib/transcription/processing-metadata";
+import { lockTranscriptRowForUpdate } from "@/lib/transcription/transcript-row-lock";
 
 /**
  * Serializes transcription admission for one Session.
@@ -155,7 +156,7 @@ export async function admitTranscriptionRun(input: {
       return { kind: "session_not_found" } as const;
     }
 
-    const existingTranscript = await tx.transcript.findUnique({
+    let existingTranscript = await tx.transcript.findUnique({
       where: { sessionId: input.sessionId },
       select: {
         id: true,
@@ -174,6 +175,28 @@ export async function admitTranscriptionRun(input: {
         retranscribeHistory: true,
       },
     });
+    if (existingTranscript) {
+      await lockTranscriptRowForUpdate(tx, existingTranscript.id);
+      existingTranscript = await tx.transcript.findUnique({
+        where: { id: existingTranscript.id },
+        select: {
+          id: true,
+          status: true,
+          text: true,
+          diarizedText: true,
+          language: true,
+          transcriptionModel: true,
+          hasSpeakerDiarization: true,
+          diarizationStatus: true,
+          speakerMapping: true,
+          speakerMappingStatus: true,
+          completedAt: true,
+          processingMetadata: true,
+          retranscribeCount: true,
+          retranscribeHistory: true,
+        },
+      });
+    }
 
     const shared = resolveSharedTranscriptionAdmission({
       mode: input.mode,

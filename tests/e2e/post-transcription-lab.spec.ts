@@ -1,11 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { formatLabBriefing } from "./helpers/post-transcription-lab-briefing";
-import { LAB_ENHANCED_LEXICAL_MARKER } from "./helpers/post-transcription-lab-transcript";
 import {
+  LAB_ENHANCED_LEXICAL_MARKER,
+  LAB_VISUAL_TWO_PARTY_TRANSCRIPT,
+} from "./helpers/post-transcription-lab-transcript";
+import {
+  getLabScenario,
+  isBug02LabScenario,
   isPipelineLabScenario,
   parseLabScenarioIds,
 } from "./helpers/post-transcription-lab-catalog";
+import { publishLabEnhancedTranscript } from "./helpers/post-transcription-lab-bug02";
 import {
   loadLabDomainSnapshot,
   loadLabReadinessSnapshot,
@@ -14,6 +20,8 @@ import {
   formatPipelineCheckpointRow,
   runPipelineLabScenario,
 } from "./helpers/post-transcription-lab-pipeline";
+import { seedCookieConsent } from "./helpers/cookie-consent";
+import { attachPostProcessingLabConsoleGuard } from "./helpers/post-transcription-lab-console";
 import { assertPostTranscriptionLabSafety } from "./helpers/post-transcription-lab-safety";
 import { createUserSessionCookie, query, updateParticipantNotes } from "./helpers/db";
 import { seedPostTranscriptionLabScenario } from "./helpers/post-transcription-lab-seed";
@@ -21,6 +29,7 @@ import { seedPostTranscriptionLabScenario } from "./helpers/post-transcription-l
 test.describe.configure({ mode: "serial" });
 
 const pauseEnabled = process.env.LAB_PAUSE !== "0";
+const bug02Uat = process.env.LAB_BUG02_UAT === "1";
 const headedCheckpointDScenarios = new Set(["I01", "I03", "N03", "N04", "N05"]);
 const headedCheckpointEScenarios = new Set(["S03"]);
 const scenarioIds = parseLabScenarioIds(process.env.LAB_SCENARIOS);
@@ -42,8 +51,145 @@ async function setMaterialsNotesDraft(page: Page, value: string) {
   await expect(notes).toHaveValue(value);
 }
 
+async function expandTranscriptSection(page: Page) {
+  const toggle = page.getByTestId("toggle-transcript-section");
+  if ((await toggle.count()) === 0) return;
+  if ((await toggle.getAttribute("aria-expanded")) === "false") {
+    await toggle.click();
+  }
+  await expect(page.getByTestId("recording-transcription-section")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("recording-transcription-initial-loading")).toHaveCount(0);
+}
+
+async function publishedTranscriptText(page: Page): Promise<string> {
+  const turns = page.getByTestId("diarized-transcript-turn");
+  if ((await turns.count()) > 0) {
+    return (await turns.allInnerTexts()).join("\n");
+  }
+  return page.getByTestId("transcript-textarea").inputValue();
+}
+
+async function expectPublishedTranscriptVisible(page: Page) {
+  const turns = page.getByTestId("diarized-transcript-turn");
+  if ((await turns.count()) > 0) {
+    await expect(turns.first()).toBeVisible();
+    return;
+  }
+  await expect(page.getByTestId("transcript-textarea")).toBeVisible();
+}
+
+async function expectSameTranscriptSectionMount(
+  page: Page,
+  section: ReturnType<Page["getByTestId"]>,
+  mountId: string,
+  scenarioId: string,
+) {
+  const live = page.getByTestId("recording-transcription-section");
+  if ((await live.count()) === 0) {
+    const toggle = page.getByTestId("toggle-transcript-section");
+    const collapsed =
+      (await toggle.count()) > 0 ? await toggle.getAttribute("data-state") : "toggle-missing";
+    throw new Error(
+      `${scenarioId}: recording-transcription-section is not in the DOM after Skip.\n` +
+        `transcript section data-state=${collapsed}\n` +
+        `expected mountId=${mountId}\n` +
+        `Product auto-collapses the transcript after AI analysis completes. ` +
+        `Measure no-remount immediately after CONTINUE_WITH_CURRENT_TRANSCRIPT, before starting AI.`,
+    );
+  }
+  await expect(section).toHaveAttribute("data-mount-id", mountId);
+}
+
+async function inspectSkippedEnhancementAiConsentDialog(page: Page) {
+  await page.getByTestId("post-processing-run-ai-analysis-button").click();
+  const modal = page.getByTestId("ai-analysis-warning-modal");
+  await expect(modal).toBeVisible();
+  const notice = modal.getByTestId("ai-analysis-transcript-quality-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveAttribute("data-notice-kind", "skipped");
+  await modal.getByTestId("ai-analysis-cancel").click();
+  await expect(modal).toHaveCount(0);
+}
+
+async function saveChangedSpeakerMapping(
+  page: Page,
+  sessionId: string,
+  joinToken: string,
+) {
+  const review = page.getByTestId("review-speaker-mapping-button");
+  if ((await review.count()) > 0) {
+    await review.click();
+  }
+  const editor = page.getByTestId("speaker-mapping-editor");
+  const assisted = page.getByTestId("assisted-speaker-mapping-card");
+  const root = (await editor.count()) > 0 ? editor : assisted;
+  await expect(root).toBeVisible();
+  const mappingSelect = root.locator("select").first();
+  await expect(mappingSelect).toBeEnabled();
+  await expect(mappingSelect).not.toHaveValue("");
+
+  const mappingState = await page.request.get(
+    `/api/sessions/${sessionId}/speaker-mapping?joinToken=${joinToken}`,
+  );
+  const mappingBody = (await mappingState.json()) as {
+    participants?: Array<{ sessionParticipantId: string }>;
+    detectedSpeakers?: Array<{
+      speakerLabel: string;
+      mappedParticipantId: string | null;
+    }>;
+  };
+  expect(mappingState.ok(), JSON.stringify(mappingBody)).toBeTruthy();
+  const candidateIds = (mappingBody.participants ?? []).map(
+    (participant) => participant.sessionParticipantId,
+  );
+  expect(candidateIds.length, JSON.stringify(mappingBody)).toBeGreaterThanOrEqual(2);
+
+  const speaker0 = mappingBody.detectedSpeakers?.[0]?.speakerLabel ?? "speaker_0";
+  const speaker1 = mappingBody.detectedSpeakers?.[1]?.speakerLabel ?? "speaker_1";
+  const current0 = mappingBody.detectedSpeakers?.[0]?.mappedParticipantId ?? candidateIds[0]!;
+  const current1 = mappingBody.detectedSpeakers?.[1]?.mappedParticipantId ?? candidateIds[1]!;
+  const next0 = current0 === candidateIds[1] ? candidateIds[0]! : candidateIds[1]!;
+  const next1 = current1 === next0 ? candidateIds[0]! : current0 === next0 ? candidateIds[0]! : current0;
+  const nextMapping = {
+    [speaker0]: next0,
+    [speaker1]: next1 === next0 ? candidateIds.find((id) => id !== next0) ?? candidateIds[1]! : next1,
+  };
+  if (nextMapping[speaker0] === nextMapping[speaker1]) {
+    nextMapping[speaker1] = candidateIds.find((id) => id !== nextMapping[speaker0]) ?? candidateIds[1]!;
+  }
+
+  const selects = root.locator("select");
+  await selects.nth(0).selectOption(nextMapping[speaker0]!);
+  if ((await selects.count()) > 1) {
+    await selects.nth(1).selectOption(nextMapping[speaker1]!);
+  }
+
+  const saveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes(`/api/sessions/${sessionId}/speaker-mapping`),
+  );
+  await root.getByTestId("confirm-speaker-mapping-button").click();
+  let saved = await saveResponse;
+  if (!saved.ok()) {
+    saved = await page.request.post(`/api/sessions/${sessionId}/speaker-mapping`, {
+      data: {
+        joinToken,
+        mapping: nextMapping,
+        confirm: true,
+      },
+    });
+  }
+  expect(saved.ok(), await saved.text()).toBeTruthy();
+  await expect(mappingSelect).toHaveValue(nextMapping[speaker0]!);
+  return { mappingSelect, savedValue: nextMapping[speaker0]! };
+}
+
 async function loginWithCookie(page: Page, cookieHeader: string) {
   const baseURL = test.info().project.use.baseURL ?? "http://127.0.0.1:3100";
+  await seedCookieConsent(page);
   await page.context().addCookies([
     {
       name: "auth_session",
@@ -238,6 +384,9 @@ test.afterAll(() => {
 for (const scenarioId of scenarioIds) {
   test(`@post-transcription-lab headed ${scenarioId}`, async ({ page, request, context }) => {
     test.setTimeout(pauseEnabled ? 0 : 120_000);
+    const consoleGuard = attachPostProcessingLabConsoleGuard(page, context);
+
+    try {
 
     const seeded = isPipelineLabScenario(scenarioId)
       ? await (async () => {
@@ -267,6 +416,16 @@ for (const scenarioId of scenarioIds) {
     const sessionsPage = await context.newPage();
     await loginWithCookie(sessionsPage, seeded.facilitatorAuthCookie);
 
+    const materialsStatus = await request.get(
+      `/api/sessions/${seeded.sessionId}/materials/status?joinToken=${seeded.facilitator.joinToken}`,
+      { headers: { Cookie: seeded.facilitatorAuthCookie } },
+    );
+    if (!materialsStatus.ok()) {
+      const bodyPreview = (await materialsStatus.text()).slice(0, 500);
+      throw new Error(`materials/status ${materialsStatus.status()}: ${bodyPreview}`);
+    }
+    expect(materialsStatus.headers()["content-type"] ?? "").toMatch(/json/i);
+
     await page.goto(`/sessions/${seeded.sessionId}/materials`);
     await expect(page.getByTestId("session-post-processing-panel")).toBeVisible({
       timeout: 20_000,
@@ -278,12 +437,6 @@ for (const scenarioId of scenarioIds) {
       hasText: seeded.sessionTitle,
     });
     await expect(sessionRow).toBeVisible({ timeout: 20_000 });
-
-    const materialsStatus = await request.get(
-      `/api/sessions/${seeded.sessionId}/materials/status?joinToken=${seeded.facilitator.joinToken}`,
-      { headers: { Cookie: seeded.facilitatorAuthCookie } },
-    );
-    expect(materialsStatus.ok()).toBeTruthy();
     const materialsStatusBody = (await materialsStatus.json()) as {
       transcription: {
         processingStage: string;
@@ -296,6 +449,14 @@ for (const scenarioId of scenarioIds) {
           inProgress?: boolean;
           canRetry?: boolean;
           canContinueWithCurrentTranscript?: boolean;
+          publicationEligible?: boolean;
+          lexicalEditAvailable?: boolean;
+          executionStatus?: string;
+          terminalQuality?: string | null;
+          progress?: {
+            completedChunks: number;
+            totalChunks: number;
+          } | null;
         } | null;
       };
       aiAnalysis: {
@@ -510,7 +671,7 @@ for (const scenarioId of scenarioIds) {
     if (scenarioId === "E03") {
       expect(materialsStatusBody.transcription.enhancement?.status).toBe("FAILED");
       expect(materialsStatusBody.transcription.enhancement?.canContinueWithCurrentTranscript).toBe(
-        true,
+        false,
       );
       expect(materialsStatusBody.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic).toBe(
         "failed",
@@ -522,6 +683,7 @@ for (const scenarioId of scenarioIds) {
       await expect(page.getByTestId("enhancement-continue-current-transcript")).toBeVisible();
       await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toBeVisible();
       await expect(page.getByTestId("post-processing-run-transcript-enhancement-button")).toBeVisible();
+      await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
     }
 
     if (scenarioId === "E02") {
@@ -531,6 +693,14 @@ for (const scenarioId of scenarioIds) {
       expect(materialsStatusBody.aiAnalysis.canStart).toBe(false);
       await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toHaveCount(0);
       await expect(page.getByTestId("transcript-enhancement-running-lock")).toBeVisible();
+      const e02Toggle = page.getByTestId("toggle-transcript-section");
+      if ((await e02Toggle.getAttribute("aria-expanded")) === "false") {
+        await e02Toggle.click();
+      }
+      await expect(page.getByTestId("materials-notes-textarea")).toBeVisible();
+      await expect(page.getByTestId("materials-notes-textarea")).toBeEnabled();
+      await expect(page.getByTestId("post-processing-continue-transcript-button")).toBeVisible();
+      await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
     }
 
     if (scenarioId === "E05") {
@@ -549,12 +719,20 @@ for (const scenarioId of scenarioIds) {
       expect(materialsStatusBody.transcription.enhancement?.inProgress).not.toBe(true);
       expect(readiness.enhancementTerminal).toBe(true);
       expect(domain.enhancementStatus).toBe("COMPLETED");
-      expect(lexicalText).toContain(LAB_ENHANCED_LEXICAL_MARKER);
-      expect(diarizedText).toContain(LAB_ENHANCED_LEXICAL_MARKER);
+      expect(lexicalText).not.toContain(LAB_ENHANCED_LEXICAL_MARKER);
+      expect(diarizedText).not.toContain(LAB_ENHANCED_LEXICAL_MARKER);
       expect(diarizedText).toContain("Lab Buyer");
       expect(diarizedText).toContain("Lab Seller");
       await expect(page.getByTestId("transcript-enhancement-running-lock")).toHaveCount(0);
-      await expect(page.getByText(LAB_ENHANCED_LEXICAL_MARKER).first()).toBeVisible();
+      await expect(page.getByText(LAB_ENHANCED_LEXICAL_MARKER)).toHaveCount(0);
+      await expect(page.getByTestId("enhancement-published-kind")).toHaveAttribute(
+        "data-published-kind",
+        "enhanced",
+      );
+      await expect(page.getByTestId("diarized-turn-enhancement-provenance").first()).toHaveAttribute(
+        "data-provenance",
+        "applied",
+      );
       await expect(page.getByText("Lab Buyer").first()).toBeVisible();
       await expect(page.getByText("Lab Seller").first()).toBeVisible();
 
@@ -1141,15 +1319,345 @@ for (const scenarioId of scenarioIds) {
     if (scenarioId === "E06" || scenarioId === "E07") {
       expect(materialsStatusBody.transcription.enhancement?.status).toBe("IN_PROGRESS");
       expect(materialsStatusBody.aiAnalysis.canStart).toBe(false);
-      const saveAttempt = await request.post(`/api/sessions/${seeded.sessionId}/transcript`, {
-        headers: { Cookie: seeded.facilitatorAuthCookie },
-        data: {
-          joinToken: seeded.facilitator.joinToken,
-          text: "This colliding edit must be rejected while enhancement is RUNNING.",
-        },
-      });
-      expect(saveAttempt.status()).toBe(409);
+      const eToggle = page.getByTestId("toggle-transcript-section");
+      if ((await eToggle.getAttribute("aria-expanded")) === "false") {
+        await eToggle.click();
+      }
       await expect(page.getByTestId("save-transcript-button")).toHaveCount(0);
+      await expect(page.getByTestId("edit-diarized-transcript-button")).toHaveCount(0);
+      await expect(page.getByTestId("transcript-lexical-view-only")).toBeVisible();
+      await expect(page.getByTestId("materials-notes-textarea")).toBeEnabled();
+    }
+
+    if (isBug02LabScenario(scenarioId)) {
+      const definition = getLabScenario(scenarioId);
+      await expandTranscriptSection(page);
+      const section = page.getByTestId("recording-transcription-section");
+      await expect(section).toBeVisible();
+      await expect(page.getByTestId("recording-transcription-initial-loading")).toHaveCount(0);
+
+      const eligibleRunning =
+        definition.d1?.publicationEligible === true &&
+        (definition.d1.executionStatus === "RUNNING" ||
+          definition.d1.executionStatus === "QUEUED");
+
+      if (eligibleRunning) {
+        await expectPublishedTranscriptVisible(page);
+        await expect(page.getByTestId("enhancement-progress")).toBeVisible();
+        await expect(page.getByTestId("enhancement-progress")).not.toContainText(/PARTIAL/i);
+        await expect(page.getByTestId("transcript-lexical-view-only")).toBeVisible();
+        await expect(page.getByTestId("save-transcript-button")).toHaveCount(0);
+        await expect(page.getByTestId("edit-diarized-transcript-button")).toHaveCount(0);
+        await expect(page.getByTestId("post-processing-continue-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+        await expect(page.getByTestId("post-processing-run-transcript-enhancement-button")).toHaveCount(0);
+        await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toHaveCount(0);
+        await expect(page.getByTestId("enhancement-ai-blocked-reason")).toBeVisible();
+        await expect(page.getByTestId("step-ai-status")).toHaveAttribute(
+          "data-copy-kind",
+          "blocked_by_enhancement",
+        );
+        await expect(page.getByTestId("step-ai-status")).not.toContainText(
+          /Можно запустить ИИ-разбор|AI analysis can be started/i,
+        );
+        await expect(page.getByTestId("step-enhancement-status")).toHaveAttribute(
+          "data-copy-kind",
+          "in_progress",
+        );
+        await expect(page.getByTestId("post-processing-enhancement-status")).toHaveAttribute(
+          "data-tone",
+          "active",
+        );
+        await expect(page.getByTestId("post-processing-ai-status")).toHaveAttribute(
+          "data-tone",
+          "waiting",
+        );
+        await expect(page.getByTestId("post-processing-enhancement-progress")).toBeVisible();
+        await expect(page.getByTestId("materials-notes-textarea")).toBeEnabled();
+        await expect(page.getByTestId("enhancement-terminal-partial")).toHaveCount(0);
+        expect(materialsStatusBody.transcription.enhancement?.publicationEligible).toBe(true);
+        expect(materialsStatusBody.aiAnalysis.canStart).toBe(false);
+        await expect(page.getByTestId("diarized-turn-enhancement-provenance").first()).toHaveAttribute(
+          "data-provenance",
+          "raw",
+        );
+        expect(await publishedTranscriptText(page)).not.toContain(LAB_ENHANCED_LEXICAL_MARKER);
+      }
+
+      if (scenarioId === "LAB-01") {
+        await expect(page.getByTestId("enhancement-published-kind")).toHaveAttribute(
+          "data-published-kind",
+          "enhanced",
+        );
+        await expect(page.getByTestId("diarized-turn-enhancement-provenance").first()).toHaveAttribute(
+          "data-provenance",
+          "applied",
+        );
+        expect(await publishedTranscriptText(page)).not.toContain(LAB_ENHANCED_LEXICAL_MARKER);
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+        await expect(page.getByTestId("edit-diarized-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("enhancement-terminal-partial")).toHaveCount(0);
+      }
+
+      if (scenarioId === "LAB-04") {
+        await expect(page.getByTestId("enhancement-progress")).toContainText("3");
+        await expect(page.getByTestId("enhancement-progress")).toContainText("7");
+      }
+
+      if (scenarioId === "LAB-11") {
+        const saveAttempt = await request.post(`/api/sessions/${seeded.sessionId}/transcript`, {
+          headers: { Cookie: seeded.facilitatorAuthCookie },
+          data: {
+            joinToken: seeded.facilitator.joinToken,
+            text: "LAB-11 fenced lexical save",
+          },
+        });
+        expect(saveAttempt.ok()).toBeTruthy();
+        const afterFence = await request.get(
+          `/api/sessions/${seeded.sessionId}/materials/status?joinToken=${seeded.facilitator.joinToken}`,
+          { headers: { Cookie: seeded.facilitatorAuthCookie } },
+        );
+        const afterBody = (await afterFence.json()) as {
+          transcription: {
+            text?: string | null;
+            enhancement?: { publicationEligible?: boolean };
+          };
+        };
+        expect(afterBody.transcription.enhancement?.publicationEligible).toBe(false);
+        expect(afterBody.transcription.text).toContain("LAB-11 fenced lexical save");
+      }
+
+      if (scenarioId === "LAB-15") {
+        await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toHaveCount(0);
+        await expect(page.getByTestId("enhancement-ai-blocked-reason")).toBeVisible();
+        await expect(page.getByTestId("step-ai-status")).toHaveAttribute(
+          "data-copy-kind",
+          "blocked_by_enhancement",
+        );
+      }
+
+      if (scenarioId === "LAB-16" || scenarioId === "LAB-26") {
+        await expect(page.getByTestId("enhancement-ai-blocked-reason")).toHaveCount(0);
+        await expect(page.getByTestId("step-ai-status")).toHaveAttribute("data-copy-kind", "stage");
+        await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toBeVisible();
+        expect(materialsStatusBody.aiAnalysis.canStart).toBe(true);
+      }
+
+      if (scenarioId === "LAB-17") {
+        const progress = await page.getByTestId("enhancement-progress").innerText();
+        await page.reload();
+        await expect(page.getByTestId("session-post-processing-panel")).toBeVisible();
+        await expandTranscriptSection(page);
+        await expect(page.getByTestId("enhancement-progress")).toHaveText(progress);
+      }
+
+      if (scenarioId === "LAB-22") {
+        await expect(page.getByTestId("enhancement-terminal-partial")).toBeVisible();
+        await expect(page.getByTestId("enhancement-progress")).toHaveCount(0);
+        await expect(page.getByTestId("edit-diarized-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("post-processing-run-transcript-enhancement-button")).toBeVisible();
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+      }
+
+      if (scenarioId === "LAB-07") {
+        await expect(section).toHaveAttribute("data-mapping-editable", "true");
+        await expect(page.getByTestId("auto-applied-mapping-note")).toBeVisible();
+        await expect(page.getByTestId("review-speaker-mapping-button")).toBeEnabled();
+        if (!pauseEnabled) {
+          await page.getByTestId("review-speaker-mapping-button").click();
+          await expect(
+            page.getByTestId("speaker-mapping-editor").locator("select").first(),
+          ).toBeEnabled();
+          await expect(page.getByTestId("confirm-speaker-mapping-button")).toBeEnabled();
+          await expect(page.getByTestId("review-speaker-mapping-button")).toHaveCount(0);
+        }
+      }
+
+      if (scenarioId === "LAB-07" || (scenarioId === "LAB-08" && !bug02Uat)) {
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE A / RUNNING SURFACE",
+          scenario: scenarioId,
+          substep: "LAB-07+08",
+          changedSincePrevious: "Facilitator materials opened on a publicationEligible RUNNING job.",
+          verify:
+            "Raw transcript visible. Progress k/n visible and not labeled PARTIAL. Lexical view-only. Automatic mapping notice plus Проверить / изменить opens the real mapping editor. Notes available. Step 2 shows running + Skip AI enhancement. AI blocked. No full-page loading.",
+          resumeWill: "The Lab continues to the next BUG02 scenario.",
+          operatorPrompt: "Inspect the RUNNING surface, including mapping inspect/change. Press Resume when finished.",
+        });
+      }
+
+      if (scenarioId === "LAB-10") {
+        const mountId = await section.getAttribute("data-mount-id");
+        expect(mountId).toBeTruthy();
+        await setMaterialsNotesDraft(page, "LAB-10 notes draft");
+        await publishLabEnhancedTranscript({
+          transcriptId: seeded.transcriptId,
+          buyerId: seeded.buyer.participantId,
+          sellerId: seeded.seller.participantId,
+          buyerName: seeded.buyer.displayName,
+          sellerName: seeded.seller.displayName,
+          buyerRole: "Buyer",
+          sellerRole: "Seller",
+          sourceTurns: LAB_VISUAL_TWO_PARTY_TRANSCRIPT,
+        });
+        await expect
+          .poll(async () =>
+            page.getByTestId("enhancement-published-kind").getAttribute("data-published-kind"),
+            { timeout: 20_000 },
+          )
+          .toBe("enhanced");
+        await expect(page.getByTestId("diarized-turn-enhancement-provenance").first()).toHaveAttribute(
+          "data-provenance",
+          "applied",
+        );
+        expect(await publishedTranscriptText(page)).not.toContain(LAB_ENHANCED_LEXICAL_MARKER);
+        await expect(section).toHaveAttribute("data-mount-id", mountId!);
+        await expect(page.getByTestId("materials-notes-textarea")).toHaveValue("LAB-10 notes draft");
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE B / IN-PLACE COMPLETION",
+          scenario: "LAB-10",
+          substep: "RUNNING→COMPLETED",
+          changedSincePrevious: "The already-open page received an atomic enhanced publication.",
+          verify:
+            "Enhanced text appeared in place. No full-page flicker or remount. Mapping/notes state remained. Continue gone.",
+          resumeWill: "The Lab continues to Continue/mapping scenarios.",
+          operatorPrompt: "Confirm in-place completion. Press Resume when finished.",
+        });
+      }
+
+      if (scenarioId === "LAB-23") {
+        const mountId = await section.getAttribute("data-mount-id");
+        const published = await publishedTranscriptText(page);
+        expect(materialsStatusBody.transcription.enhancement?.executionStatus).toBe("RUNNING");
+        expect(materialsStatusBody.transcription.enhancement?.publicationEligible).toBe(true);
+        await expect(page.getByTestId("post-processing-continue-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("post-processing-run-transcript-enhancement-button")).toHaveCount(0);
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE C1 / BEFORE SKIP",
+          scenario: "LAB-23",
+          substep: "RUNNING eligible",
+          changedSincePrevious: "LAB-23 opened with a publicationEligible RUNNING enhancement job.",
+          verify:
+            "Step 2 says enhancement is running with k/n progress. Skip AI enhancement is in the Step 2 card. Transcript is visible. AI is blocked. Retry is absent.",
+          resumeWill:
+            "If Skip is still visible, the Lab clicks Skip via the real Continue API, then asserts no-remount before any AI dialog check.",
+          operatorPrompt:
+            "Confirm the RUNNING Step 2 card. You may click Skip now. Do not start AI analysis yet — the consent-dialog check is the next pause.",
+        });
+        const skipButton = page.getByTestId("post-processing-continue-transcript-button");
+        if ((await skipButton.count()) > 0) {
+          const continueRequest = page.waitForRequest(
+            (req) =>
+              req.method() === "POST" &&
+              req.url().includes(`/api/sessions/${seeded.sessionId}/materials/continue-transcript`),
+          );
+          await skipButton.click();
+          await continueRequest;
+        }
+        await expect(page.getByTestId("post-processing-continue-transcript-button")).toHaveCount(0, {
+          timeout: 15_000,
+        });
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+        await expectSameTranscriptSectionMount(page, section, mountId!, "LAB-23");
+        expect(await publishedTranscriptText(page)).toBe(published);
+        await expect(page.getByTestId("edit-diarized-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("enhancement-ai-blocked-reason")).toHaveCount(0);
+        await expect(page.getByTestId("step-ai-status")).toHaveAttribute("data-copy-kind", "stage");
+        await expect(page.getByTestId("enhancement-continued")).toBeVisible();
+        await expect(page.getByTestId("step-enhancement-status")).toHaveAttribute(
+          "data-copy-kind",
+          "skipped",
+        );
+        await expect(section).toHaveAttribute("data-mapping-editable", "true");
+        await expect(page.getByTestId("post-processing-run-ai-analysis-button")).toBeVisible({
+          timeout: 15_000,
+        });
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE C2 / AFTER SKIP — AI DIALOG",
+          scenario: "LAB-23",
+          substep: "Skip / Continue API + AI consent dialog",
+          changedSincePrevious:
+            "Skip invoked CONTINUE_WITH_CURRENT_TRANSCRIPT. No-remount and post-Skip Product state are already asserted.",
+          verify:
+            "Click Запустить ИИ-разбор. The existing consent dialog must include the skipped-enhancement / current-transcript warning. Then cancel/close. Do not confirm AI analysis.",
+          resumeWill: "The Lab closes any leftover dialog and continues to LAB-27.",
+          operatorPrompt:
+            "Open Start AI, inspect the skipped-enhancement warning, then Cancel. Do not confirm. Press Resume when finished.",
+        });
+        const leftoverDialog = page.getByTestId("ai-analysis-warning-modal");
+        if ((await leftoverDialog.count()) > 0) {
+          await leftoverDialog.getByTestId("ai-analysis-cancel").click();
+        }
+        await expect(leftoverDialog).toHaveCount(0);
+        if (!pauseEnabled) {
+          await inspectSkippedEnhancementAiConsentDialog(page);
+        }
+      }
+
+      if (scenarioId === "LAB-27") {
+        await expect(page.getByTestId("enhancement-continued")).toHaveCount(0);
+        await expect(page.getByTestId("step-enhancement-status")).toHaveAttribute(
+          "data-copy-kind",
+          "in_progress",
+        );
+        await expect(page.getByTestId("post-processing-continue-transcript-button")).toBeVisible();
+        await expect(page.getByTestId("enhancement-ai-blocked-reason")).toBeVisible();
+        await expect(page.getByTestId("review-speaker-mapping-button")).toBeVisible();
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE D1 / RUNNING MAPPING",
+          scenario: "LAB-27",
+          substep: "RUNNING before Skip",
+          changedSincePrevious:
+            "Fresh LAB-27 seed: RUNNING 2/7, publicationEligible=true, not skipped. Isolated from LAB-23.",
+          verify:
+            "Step 2 is still running with k/n and Skip visible. Mapping is inspectable. Open Проверить / изменить, change at least one speaker, and save. Do not Skip yet. Do not start AI.",
+          resumeWill:
+            "Lab will Skip after capturing the saved mapping and mount identity, then pause D2.",
+          operatorPrompt:
+            "Save a mapping change while enhancement is still RUNNING, then Resume. Do not click Skip or Start AI.",
+        });
+
+        const { mappingSelect, savedValue } = await saveChangedSpeakerMapping(
+          page,
+          seeded.sessionId,
+          seeded.facilitator.joinToken,
+        );
+        const mountId = await section.getAttribute("data-mount-id");
+        expect(mountId).toBeTruthy();
+        await expect(mappingSelect).toHaveValue(savedValue);
+        await expect(page.getByTestId("enhancement-continued")).toHaveCount(0);
+        const continueRequest = page.waitForRequest(
+          (req) =>
+            req.method() === "POST" &&
+            req.url().includes(`/api/sessions/${seeded.sessionId}/materials/continue-transcript`),
+        );
+        await page.getByTestId("post-processing-continue-transcript-button").click();
+        await continueRequest;
+        await expect(page.getByTestId("post-processing-continue-transcript-button")).toHaveCount(0, {
+          timeout: 15_000,
+        });
+        await expect(page.getByTestId("continue-with-current-transcript-button")).toHaveCount(0);
+        await expect(page.getByTestId("enhancement-continued")).toBeVisible();
+        await expect(page.getByTestId("step-enhancement-status")).toHaveAttribute(
+          "data-copy-kind",
+          "skipped",
+        );
+        await expectSameTranscriptSectionMount(page, section, mountId!, "LAB-27");
+        await expect(mappingSelect).toHaveValue(savedValue);
+        await pauseCheckpoint(page, {
+          label: "BUG02 UAT / PAUSE D2 / MAPPING AFTER SKIP",
+          scenario: "LAB-27",
+          substep: "mapping after Skip",
+          changedSincePrevious:
+            "Operator/Lab saved mapping while RUNNING, then Skip. Immediate no-remount and mapping assertions already ran. AI was not started.",
+          verify:
+            "Step 2 is skipped. Current transcript is unchanged. Saved mapping is still the post-edit value. Transcript section did not remount. Mapping editor remains usable.",
+          resumeWill: "The Lab ends this BUG02 UAT scenario.",
+          operatorPrompt:
+            "Confirm mapping survived Skip without remount or reset, then Resume. Do not start AI.",
+        });
+      }
     }
 
     const usefulPipelinePause = ["AM01", "AM03", "AM05", "AM07", "AM11"].includes(
@@ -1157,6 +1665,8 @@ for (const scenarioId of scenarioIds) {
     );
     if (
       pauseEnabled &&
+      !bug02Uat &&
+      !isBug02LabScenario(scenarioId) &&
       !headedCheckpointDScenarios.has(scenarioId) &&
       !headedCheckpointEScenarios.has(scenarioId) &&
       (!isPipelineLabScenario(scenarioId) || usefulPipelinePause)
@@ -1174,6 +1684,10 @@ for (const scenarioId of scenarioIds) {
         ].join("\n"),
       );
       await page.pause();
+    }
+    } finally {
+      consoleGuard.assertNoUnrelatedRealtimeNoise();
+      consoleGuard.stop();
     }
   });
 }

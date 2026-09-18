@@ -15,6 +15,43 @@ import { buildSessionMaterialsPath } from "@/lib/config";
 import { resolveRecordingTranscriptionPresentation } from "@/lib/transcription/recording-transcription-presentation";
 import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
 import {
+  authoritativeEnhancedPublicationRunIdFromMetadata,
+  enhancementStartActionCopyKey,
+  isAiBlockedByEnhancementEligibility,
+  isEnhancementCurrentForTranscriptGeneration,
+  resolveAiAnalysisTranscriptQualityNotice,
+  resolveAiWorkflowStepCopyKind,
+  resolveEnhancementStatusCopyKind,
+  resolveSkippedEnhancementCopyVariant,
+  skippedEnhancementBodyKey,
+  skippedEnhancementHeadlineKey,
+  skippedEnhancementReadySentenceKey,
+  shouldShowDurableEnhancementProgress,
+  toProgressTemplateParams,
+  type AiAnalysisTranscriptQualityNoticeKind,
+  type EnhancementStatusCopyKind,
+} from "@/lib/post-processing/enhancement-ux-presentation";
+import {
+  acquireMaterialsStatusFetchTurn,
+  applyAuthoritativeStatusAfterRetranscribe,
+  beginMaterialsStatusObservation,
+  createMaterialsStatusRequestAbort,
+  isLocalTranscriptGenerationFenceActive,
+  observeThenRetranscribe,
+  projectTranscriptGenerationUiCurrentness,
+  shouldApplyMaterialsStatusResponse,
+  shouldObserveMaterialsStatus,
+  shouldReleaseMaterialsStatusInFlightOwnership,
+  shouldReleasePostRetranscriptionFence,
+} from "@/lib/post-processing/transcript-generation-currentness";
+import { parseTranscriptEnhancementJob } from "@/lib/services/transcript-enhancement-job";
+import {
+  postProcessingRailTileToneClassName,
+  resolvePostProcessingRailTileTone,
+  resolveSpeakerMappingRailTileTone,
+  type PostProcessingRailTileTone,
+} from "@/lib/post-processing/rail-tile-tone";
+import {
   materialsRetranscribePath,
   materialsTranscribePath,
 } from "@/lib/transcription/transcription-routes";
@@ -48,9 +85,12 @@ type MaterialsStatusResponse = {
     canRetry: boolean;
     canStop?: boolean;
     canRerun?: boolean;
+    retranscribeCount?: number | null;
     speakerMappingRequired?: boolean;
     speakerMappingStatus?: string | null;
     diarizationStatus?: string | null;
+    text?: string | null;
+    processingMetadata?: unknown;
     enhancement?: {
       status: string;
       available: boolean;
@@ -61,6 +101,21 @@ type MaterialsStatusResponse = {
       inProgress?: boolean;
       canRetry?: boolean;
       canContinueWithCurrentTranscript?: boolean;
+      executionStatus?: string;
+      publicationEligible?: boolean;
+      terminalQuality?: string | null;
+      progress?: {
+        totalChunks: number;
+        completedChunks: number;
+        runningChunks?: number;
+        pendingChunks?: number;
+        retryableFailedChunks?: number;
+        permanentFailedChunks?: number;
+      } | null;
+      mappingAvailable?: boolean;
+      lexicalEditAvailable?: boolean;
+      improveAvailable?: boolean;
+      cancelReason?: string | null;
     } | null;
   };
   postProcessing?: {
@@ -84,6 +139,8 @@ type MaterialsStatusResponse = {
     participantPlaceholder: boolean;
     notSharedMessage: string | null;
     analysisFromOlderTranscript?: boolean;
+    analysisCurrent?: boolean;
+    publishedReportCurrent?: boolean;
     analysisJson: unknown;
     errorMessage: string | null;
   };
@@ -149,8 +206,8 @@ const aiStageKeys: Record<string, TranslationKey> = {
 
 const enhancementStageKeys: Record<string, TranslationKey> = {
   NOT_STARTED: "sessionMaterials.transcriptEnhancementNotStarted",
-  QUEUED: "sessionMaterials.transcriptReadyEnhancementInProgress",
-  IN_PROGRESS: "sessionMaterials.transcriptReadyEnhancementInProgress",
+  QUEUED: "sessionMaterials.enhancementRailRunning",
+  IN_PROGRESS: "sessionMaterials.enhancementRailRunning",
   COMPLETED: "sessionMaterials.transcriptEnhancementCompleted",
   PARTIAL: "sessionMaterials.transcriptEnhancementFailedUsingBase",
   FAILED: "sessionMaterials.transcriptEnhancementFailedUsingBase",
@@ -169,49 +226,92 @@ const semanticStageKeys: Record<string, TranslationKey> = {
 
 const speakerMappingStageKeys: Record<string, TranslationKey> = {
   ...semanticStageKeys,
-  ready: "sessionMaterials.speakerMappingReady",
-  informational: "sessionMaterials.speakerMappingInformational",
+  ready: "sessionMaterials.stageReady",
+  informational: "sessionMaterials.stageReady",
   action_required: "sessionMaterials.speakerMappingActionRequired",
-  pending: "sessionMaterials.speakerMappingPending",
+  pending: "sessionMaterials.stagePending",
   not_applicable: "sessionMaterials.speakerMappingNotApplicable",
   required: "sessionMaterials.speakerMappingActionRequired",
-  not_available: "sessionMaterials.speakerMappingPending",
+  not_available: "sessionMaterials.stagePending",
 };
 
 const enhancementSemanticStageKeys: Record<string, TranslationKey> = {
   ...semanticStageKeys,
   ready: "sessionMaterials.transcriptEnhancementCompleted",
-  running: "sessionMaterials.transcriptEnhancementInProgress",
-  failed: "sessionMaterials.transcriptEnhancementFailedUsingBase",
+  running: "sessionMaterials.enhancementRailRunning",
+  failed: "sessionMaterials.enhancementStatusFailed",
   informational: "sessionMaterials.transcriptEnhancementSkipped",
   pending: "sessionMaterials.transcriptEnhancementNotStarted",
+  skipped: "sessionMaterials.enhancementStatusSkipped",
+  historical_timeout: "sessionMaterials.enhancementHistoricalTimeout",
+  running_ineligible: "sessionMaterials.enhancementRunningIneligible",
 };
 
-function stageTone(stage: string): string {
-  const normalized = stage.toLowerCase();
-  if (normalized === "informational") {
-    return "border-sky-500/30 bg-sky-950/20 text-sky-200";
+const enhancementStatusCopyKeys: Record<EnhancementStatusCopyKind, TranslationKey> = {
+  not_started: "sessionMaterials.transcriptEnhancementNotStarted",
+  in_progress: "sessionMaterials.enhancementStatusRunning",
+  completed: "sessionMaterials.enhancementStatusCompleted",
+  failed: "sessionMaterials.enhancementStatusFailed",
+  partial: "sessionMaterials.enhancementStatusPartial",
+  skipped: "sessionMaterials.enhancementStatusSkipped",
+  historical_timeout: "sessionMaterials.enhancementHistoricalTimeout",
+  running_ineligible: "sessionMaterials.enhancementRunningIneligible",
+};
+
+function enhancementStepStatusMessageKey(
+  kind: EnhancementStatusCopyKind,
+  suggested: boolean,
+): TranslationKey {
+  if (kind === "not_started" && suggested) {
+    return "sessionMaterials.transcriptEnhancementRecommended";
   }
-  if (normalized === "action_required" || normalized === "required") {
-    return "border-amber-500/30 bg-amber-950/20 text-amber-200";
-  }
-  if (normalized === "ready" || normalized === "completed") {
-    return "border-emerald-500/30 bg-emerald-950/20 text-emerald-200";
-  }
-  if (
-    ["queued", "analyzing", "downloading", "compressing", "transcribing", "processing", "in_progress", "finalizing"].includes(
-      normalized,
-    )
-  ) {
-    return "border-cyan-500/30 bg-cyan-950/20 text-cyan-200";
-  }
-  if (normalized === "failed") {
-    return "border-rose-500/30 bg-rose-950/20 text-rose-200";
-  }
-  if (normalized === "partial") {
-    return "border-amber-500/30 bg-amber-950/20 text-amber-200";
-  }
-  return "border-slate-700/50 bg-slate-900/40 text-slate-400";
+  return enhancementStatusCopyKeys[kind];
+}
+
+function EnhancementStepStatusCopy({
+  copyKind,
+  statusKey,
+  skippedCopyVariant,
+  showProgress,
+  progressParams,
+}: {
+  copyKind: EnhancementStatusCopyKind;
+  statusKey: TranslationKey;
+  skippedCopyVariant: ReturnType<typeof resolveSkippedEnhancementCopyVariant>;
+  showProgress: boolean;
+  progressParams: { completed: number; total: number } | null;
+}) {
+  const { t } = useI18n();
+  const showStatusSentence =
+    copyKind !== "in_progress" || !showProgress || progressParams == null;
+  return (
+    <div
+      data-testid="step-enhancement-status"
+      data-copy-kind={copyKind}
+      data-skipped-copy={skippedCopyVariant}
+    >
+      {showStatusSentence ? (
+        <p className="text-xs text-slate-500">
+          {copyKind === "in_progress"
+            ? t("sessionMaterials.enhancementRailRunning")
+            : t(statusKey)}
+        </p>
+      ) : null}
+      {copyKind === "skipped" ? (
+        <p className="mt-1 text-xs text-slate-500" data-testid="step-enhancement-status-detail">
+          {t(skippedEnhancementBodyKey(skippedCopyVariant))}
+        </p>
+      ) : null}
+      {showProgress && progressParams ? (
+        <p
+          className={`${showStatusSentence ? "mt-1 " : ""}text-xs text-violet-200`}
+          data-testid="post-processing-enhancement-progress"
+        >
+          {t("sessionMaterials.enhancementProgressFragments", progressParams)}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function StatusPill({
@@ -219,22 +319,34 @@ function StatusPill({
   stage,
   stageKeys,
   testId,
+  resolveTone = resolvePostProcessingRailTileTone,
 }: {
   title: string;
   stage: string;
   stageKeys: Record<string, TranslationKey>;
   testId?: string;
+  resolveTone?: (stage: string) => PostProcessingRailTileTone;
 }) {
   const { t } = useI18n();
   const labelKey = stageKeys[stage];
+  const tone = resolveTone(stage);
   return (
     <div
-      className={`rounded-lg border px-3 py-2 text-sm ${stageTone(stage)}`}
+      className={`rounded-lg border px-3 py-2 text-sm ${postProcessingRailTileToneClassName(tone)}`}
       data-testid={testId}
       data-stage={stage}
+      data-tone={tone}
     >
-      <p className="text-xs font-medium uppercase tracking-wide opacity-70">{title}</p>
-      <p className="mt-0.5 font-medium">{labelKey ? t(labelKey) : stage}</p>
+      <p
+        className={`text-xs font-medium uppercase tracking-wide ${
+          tone === "active" ? "opacity-90" : "opacity-70"
+        }`}
+      >
+        {title}
+      </p>
+      <p className={`mt-0.5 ${tone === "active" ? "font-semibold" : "font-medium"}`}>
+        {labelKey ? t(labelKey) : stage}
+      </p>
     </div>
   );
 }
@@ -291,7 +403,14 @@ export function SessionPostProcessingPanel({
   const [stopTranscriptionBusy, setStopTranscriptionBusy] = useState(false);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [rerunBusy, setRerunBusy] = useState(false);
+  const [
+    awaitingAuthoritativePostRetranscriptionStatus,
+    setAwaitingAuthoritativePostRetranscriptionStatus,
+  ] = useState(false);
   const [enhancementBusy, setEnhancementBusy] = useState(false);
+  const [continueBusy, setContinueBusy] = useState(false);
+  const [lexicalUnsaved, setLexicalUnsaved] = useState(false);
+  const [aiUnsavedWarnOpen, setAiUnsavedWarnOpen] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -302,6 +421,8 @@ export function SessionPostProcessingPanel({
   const [aiWarningOpen, setAiWarningOpen] = useState(false);
   const [shareWarningOpen, setShareWarningOpen] = useState(false);
   const [forcePollingActive, setForcePollingActive] = useState(false);
+  const [publishedTranscriptRefreshPending, setPublishedTranscriptRefreshPending] =
+    useState(false);
 
   const mountedRef = useRef(true);
   const autoTranscribeStartedRef = useRef(false);
@@ -310,31 +431,73 @@ export function SessionPostProcessingPanel({
   const statusPollInFlightRef = useRef(false);
   const statusRequestSeqRef = useRef(0);
   const latestAppliedStatusRequestRef = useRef(0);
+  const postRetranscribeStatusSeqRef = useRef<number | null>(null);
+  const statusRequestAbortRef = useRef<AbortController | null>(null);
 
-  const fetchStatus = useCallback(async () => {
-    if (statusPollInFlightRef.current) {
-      return;
+  const fetchStatus = useCallback(async (options?: { exclusive?: boolean }) => {
+    const acquired = await acquireMaterialsStatusFetchTurn({
+      isInFlight: () => statusPollInFlightRef.current,
+      setInFlight: (value) => {
+        statusPollInFlightRef.current = value;
+      },
+      exclusive: Boolean(options?.exclusive),
+      isCancelled: () => !mountedRef.current,
+      abortInFlight: () => {
+        statusRequestAbortRef.current?.abort();
+      },
+    });
+    if (!acquired) {
+      return { appliedStatusRequestId: null };
     }
-    statusPollInFlightRef.current = true;
+    const request = createMaterialsStatusRequestAbort();
+    statusRequestAbortRef.current = request.controller;
     const requestId = ++statusRequestSeqRef.current;
     try {
       const res = await fetch(
         `/api/sessions/${sessionId}/materials/status?${roomAuthQuery(roomAuth)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: request.controller.signal },
       );
-      if (!res.ok || !mountedRef.current) return;
+      if (!res.ok || !mountedRef.current || request.controller.signal.aborted) {
+        return { appliedStatusRequestId: null };
+      }
       const data = (await res.json()) as MaterialsStatusResponse;
       if (
         mountedRef.current &&
-        requestId >= latestAppliedStatusRequestRef.current
+        shouldApplyMaterialsStatusResponse({
+          requestId,
+          latestAppliedRequestId: latestAppliedStatusRequestRef.current,
+          aborted: request.controller.signal.aborted,
+        })
       ) {
         latestAppliedStatusRequestRef.current = requestId;
         setStatusData(data);
+        const awaitingSeq = postRetranscribeStatusSeqRef.current;
+        if (
+          awaitingSeq != null &&
+          shouldReleasePostRetranscriptionFence({
+            appliedStatusRequestId: requestId,
+            statusRequestSeqAtPostCompletion: awaitingSeq,
+          })
+        ) {
+          postRetranscribeStatusSeqRef.current = null;
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+        return { appliedStatusRequestId: requestId };
       }
+      return { appliedStatusRequestId: null };
     } catch {
-      // ignore
+      return { appliedStatusRequestId: null };
     } finally {
-      statusPollInFlightRef.current = false;
+      request.dispose();
+      if (
+        shouldReleaseMaterialsStatusInFlightOwnership({
+          ownerController: statusRequestAbortRef.current,
+          requestController: request.controller,
+        })
+      ) {
+        statusRequestAbortRef.current = null;
+        statusPollInFlightRef.current = false;
+      }
     }
   }, [roomAuth, sessionId]);
 
@@ -361,13 +524,23 @@ export function SessionPostProcessingPanel({
         window.clearTimeout(forcePollingTimerRef.current);
         forcePollingTimerRef.current = null;
       }
+      statusRequestAbortRef.current?.abort();
       mountedRef.current = false;
     };
   }, [fetchStatus, sessionId]);
 
+  const localTranscriptGenerationBusy = isLocalTranscriptGenerationFenceActive({
+    requestBusy: rerunBusy || transcriptionBusy,
+    awaitingAuthoritativePostRetranscriptionStatus,
+  });
+
   useEffect(() => {
-    const shouldPollStatus =
-      Boolean(statusData?.processing.shouldPoll) || forcePollingActive;
+    const shouldPollStatus = shouldObserveMaterialsStatus({
+      serverShouldPoll: statusData?.processing.shouldPoll,
+      forcePollingActive,
+      localTranscriptGenerationBusy,
+      publishedTranscriptRefreshPending,
+    });
     if (!shouldPollStatus) return;
     const id = setInterval(
       () => void fetchStatus(),
@@ -377,6 +550,8 @@ export function SessionPostProcessingPanel({
   }, [
     fetchStatus,
     forcePollingActive,
+    localTranscriptGenerationBusy,
+    publishedTranscriptRefreshPending,
     statusData?.processing.nextPollMs,
     statusData?.processing.shouldPoll,
   ]);
@@ -405,29 +580,136 @@ export function SessionPostProcessingPanel({
   const enhancementFailedOrPartial =
     enhancement?.status === "FAILED" || enhancement?.status === "PARTIAL";
   const enhancementCompleted = enhancement?.status === "COMPLETED";
-  const canContinueCurrentTranscript = Boolean(
-    enhancement?.canContinueWithCurrentTranscript,
-  );
-  const mappingSemantic = statusData?.postProcessing?.stages.SPEAKER_MAPPING.semantic;
+  const enhancementCurrentForGeneration = isEnhancementCurrentForTranscriptGeneration({
+    jobRetranscribeCount: parseTranscriptEnhancementJob(transcript?.processingMetadata)
+      .retranscribeCount,
+    currentRetranscribeCount: transcript?.retranscribeCount,
+  });
+  const generationCurrentness = projectTranscriptGenerationUiCurrentness({
+    transcriptionStage: transcript?.processingStage,
+    localInitiationBusy: localTranscriptGenerationBusy,
+    enhancementSemantic:
+      (statusData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic as
+        | "pending"
+        | "running"
+        | "ready"
+        | "action_required"
+        | "informational"
+        | "failed"
+        | "not_applicable") ?? "pending",
+    mappingSemantic:
+      (statusData?.postProcessing?.stages.SPEAKER_MAPPING.semantic as
+        | "pending"
+        | "running"
+        | "ready"
+        | "action_required"
+        | "informational"
+        | "failed"
+        | "not_applicable") ?? "pending",
+    aiSemantic:
+      (statusData?.postProcessing?.stages.AI_ANALYSIS.semantic as
+        | "pending"
+        | "running"
+        | "ready"
+        | "action_required"
+        | "informational"
+        | "failed"
+        | "not_applicable") ?? "pending",
+    enhancementCurrentForGeneration,
+    speakerMappingStatus: transcript?.speakerMappingStatus,
+    analysisCurrent: ai?.analysisCurrent,
+    publishedReportCurrent: ai?.publishedReportCurrent,
+  });
+  const canContinueCurrentTranscript =
+    Boolean(enhancement?.canContinueWithCurrentTranscript) &&
+    !generationCurrentness.transcriptionActive;
+  const mappingSemantic = generationCurrentness.mappingSemantic;
   const mappingActionRequired =
-    mappingSemantic === "action_required" || Boolean(transcript?.speakerMappingRequired);
+    !generationCurrentness.transcriptionActive &&
+    (mappingSemantic === "action_required" || Boolean(transcript?.speakerMappingRequired));
   const canStartTranscriptEnhancement =
     isFacilitator &&
     !readOnly &&
     enhancement?.available &&
     transcript?.processingStage === "ready" &&
     !enhancementRunning &&
+    !generationCurrentness.transcriptionActive &&
     (enhancement?.status === "NOT_STARTED" || enhancement?.status === "SKIPPED");
   const canRetryTranscriptEnhancement =
     isFacilitator &&
     !readOnly &&
     Boolean(enhancement?.canRetry) &&
-    !enhancementRunning;
+    !enhancementRunning &&
+    !generationCurrentness.transcriptionActive;
   const canRunTranscriptEnhancement =
     canStartTranscriptEnhancement || canRetryTranscriptEnhancement;
-  const canStartAi = isFacilitator && !readOnly && Boolean(ai?.canStart) && !enhancementRunning;
-  const canRetryAi = isFacilitator && !readOnly && Boolean(ai?.canRetry) && !enhancementRunning;
-  const canRerunAi = isFacilitator && !readOnly && Boolean(ai?.canRerun) && !enhancementRunning;
+  const enhancementBlocksAi = isAiBlockedByEnhancementEligibility({
+    publicationEligible: enhancement?.publicationEligible,
+    uiStatus: enhancement?.status,
+    executionStatus: enhancement?.executionStatus,
+  });
+  const canStartAi =
+    isFacilitator &&
+    !readOnly &&
+    Boolean(ai?.canStart) &&
+    !enhancementBlocksAi &&
+    !generationCurrentness.transcriptionActive;
+  const canRetryAi =
+    isFacilitator &&
+    !readOnly &&
+    Boolean(ai?.canRetry) &&
+    !enhancementBlocksAi &&
+    !generationCurrentness.transcriptionActive;
+  const canRerunAi =
+    isFacilitator &&
+    !readOnly &&
+    Boolean(ai?.canRerun) &&
+    !enhancementBlocksAi &&
+    !generationCurrentness.transcriptionActive;
+  const enhancementProgressParams = toProgressTemplateParams(enhancement?.progress ?? null);
+  const showEnhancementProgress =
+    shouldShowDurableEnhancementProgress({
+      uiStatus: enhancement?.status,
+      executionStatus: enhancement?.executionStatus,
+      publicationEligible: enhancement?.publicationEligible,
+      progress: enhancement?.progress,
+    }) && !generationCurrentness.transcriptionActive;
+  const enhancementUxInput = {
+    uiStatus: enhancement?.status,
+    executionStatus: enhancement?.executionStatus,
+    publicationEligible: enhancement?.publicationEligible,
+    terminalQuality: enhancement?.terminalQuality,
+    cancelReason: enhancement?.cancelReason,
+    skipReason: enhancement?.skipReason,
+    progress: enhancement?.progress,
+    transcriptionStage: transcript?.processingStage,
+    retranscriptionLocked: localTranscriptGenerationBusy,
+    currentForGeneration: enhancementCurrentForGeneration,
+  };
+  const enhancementStartActionKey = enhancementStartActionCopyKey(enhancementUxInput);
+  const enhancementStatusCopyKind = resolveEnhancementStatusCopyKind(enhancementUxInput);
+  const skippedEnhancementCopyVariant = resolveSkippedEnhancementCopyVariant({
+    copyKind: enhancementStatusCopyKind,
+    authoritativeEnhancedPublicationRunId: authoritativeEnhancedPublicationRunIdFromMetadata(
+      statusData?.transcription.processingMetadata,
+    ),
+  });
+  const enhancementStepStatusKey =
+    enhancementStatusCopyKind === "skipped"
+      ? skippedEnhancementHeadlineKey(skippedEnhancementCopyVariant)
+      : enhancementStepStatusMessageKey(
+          enhancementStatusCopyKind,
+          Boolean(enhancement?.suggested),
+        );
+  const aiWorkflowStepCopyKind = resolveAiWorkflowStepCopyKind(enhancementUxInput);
+  const aiTranscriptQualityNotice = resolveAiAnalysisTranscriptQualityNotice(enhancementUxInput);
+  const enhancementRailStage = generationCurrentness.transcriptionActive
+    ? generationCurrentness.enhancementSemantic
+    : enhancementStatusCopyKind === "skipped" ||
+        enhancementStatusCopyKind === "historical_timeout" ||
+        enhancementStatusCopyKind === "running_ineligible"
+      ? enhancementStatusCopyKind
+      : generationCurrentness.enhancementSemantic;
   const canViewAi = ai?.canView ?? false;
   const canShareAi = isFacilitator && !readOnly && ai?.canShare;
   const aiShared = ai?.isSharedWithSession ?? false;
@@ -455,52 +737,108 @@ export function SessionPostProcessingPanel({
 
   const handleStartTranscription = useCallback(async () => {
     setTranscriptionBusy(true);
+    setAwaitingAuthoritativePostRetranscriptionStatus(true);
+    let postSucceeded = false;
     try {
-      const res = await fetch(materialsTranscribePath(sessionId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(roomAuthBody(roomAuth)),
+      await observeThenRetranscribe({
+        observe: () =>
+          beginMaterialsStatusObservation({
+            forceStatusPolling,
+            fetchStatus,
+          }),
+        retranscribe: async () => {
+          const res = await fetch(materialsTranscribePath(sessionId), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(roomAuthBody(roomAuth)),
+          });
+          if (!res.ok) {
+            const body = (await res.json()) as { error?: string };
+            throw new Error(body.error ?? "Transcription failed.");
+          }
+        },
       });
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? "Transcription failed.");
-      }
-      forceStatusPolling();
-      void fetchStatus();
+      postSucceeded = true;
+      postRetranscribeStatusSeqRef.current = statusRequestSeqRef.current;
+      await applyAuthoritativeStatusAfterRetranscribe({
+        statusRequestSeqAtPostCompletion: postRetranscribeStatusSeqRef.current,
+        applyAuthoritativeStatus: () => fetchStatus({ exclusive: true }),
+      });
     } catch {
       autoTranscribeStartedRef.current = false;
+      if (!postSucceeded) {
+        postRetranscribeStatusSeqRef.current = null;
+        if (mountedRef.current) {
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+      }
     } finally {
-      setTranscriptionBusy(false);
+      if (mountedRef.current) {
+        setTranscriptionBusy(false);
+      }
     }
   }, [fetchStatus, forceStatusPolling, roomAuth, sessionId]);
 
   const handleRerunTranscription = useCallback(async () => {
-    if (rerunBusy) {
+    if (rerunBusy || awaitingAuthoritativePostRetranscriptionStatus) {
       return;
     }
     setRerunConfirmOpen(false);
     setRerunBusy(true);
+    setAwaitingAuthoritativePostRetranscriptionStatus(true);
     setRerunError(null);
+    let postSucceeded = false;
     try {
-      const res = await fetch(materialsRetranscribePath(sessionId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...roomAuthBody(roomAuth), reason: "manual_rerun" }),
+      await observeThenRetranscribe({
+        observe: () =>
+          beginMaterialsStatusObservation({
+            forceStatusPolling,
+            fetchStatus,
+          }),
+        retranscribe: async () => {
+          const res = await fetch(materialsRetranscribePath(sessionId), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...roomAuthBody(roomAuth), reason: "manual_rerun" }),
+          });
+          if (!res.ok) {
+            const body = (await res.json()) as { error?: string; code?: string };
+            throw new Error(
+              resolveRetranscribeFailureMessage(body, t, "Re-transcription failed."),
+            );
+          }
+        },
       });
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string; code?: string };
-        throw new Error(
-          resolveRetranscribeFailureMessage(body, t, "Re-transcription failed."),
-        );
-      }
-      forceStatusPolling();
-      void fetchStatus();
+      postSucceeded = true;
+      postRetranscribeStatusSeqRef.current = statusRequestSeqRef.current;
+      await applyAuthoritativeStatusAfterRetranscribe({
+        statusRequestSeqAtPostCompletion: postRetranscribeStatusSeqRef.current,
+        applyAuthoritativeStatus: () => fetchStatus({ exclusive: true }),
+      });
     } catch (err) {
-      setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
+      if (!postSucceeded) {
+        postRetranscribeStatusSeqRef.current = null;
+        if (mountedRef.current) {
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+      }
+      if (mountedRef.current) {
+        setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
+      }
     } finally {
-      setRerunBusy(false);
+      if (mountedRef.current) {
+        setRerunBusy(false);
+      }
     }
-  }, [fetchStatus, forceStatusPolling, rerunBusy, roomAuth, sessionId, t]);
+  }, [
+    awaitingAuthoritativePostRetranscriptionStatus,
+    fetchStatus,
+    forceStatusPolling,
+    rerunBusy,
+    roomAuth,
+    sessionId,
+    t,
+  ]);
 
   const handleStopTranscription = useCallback(async () => {
     setStopTranscriptionBusy(true);
@@ -572,14 +910,15 @@ export function SessionPostProcessingPanel({
     transcriptionBusy,
   ]);
 
-  // Auto-collapse transcript once AI analysis is done (only once per session load).
-  const transcriptionDoneForCollapse = statusData?.transcription?.processingStage === "ready";
+  // Keep the transcript expanded while enhancement is eligible/running so the
+  // published text stays visible. Collapse only after AI is done.
+  const aiDoneForCollapse = statusData?.aiAnalysis?.processingStage === "ready";
   useEffect(() => {
-    if (transcriptionDoneForCollapse && !autoCollapsedRef.current && !isSidebar) {
+    if (aiDoneForCollapse && !autoCollapsedRef.current && !isSidebar) {
       autoCollapsedRef.current = true;
       setTranscriptCollapsed(true);
     }
-  }, [transcriptionDoneForCollapse, isSidebar]);
+  }, [aiDoneForCollapse, isSidebar]);
 
   const handleRunAiAnalysisConfirmed = async () => {
     setAiWarningOpen(false);
@@ -635,8 +974,36 @@ export function SessionPostProcessingPanel({
   };
 
   const handleRunAiAnalysis = () => {
+    if (lexicalUnsaved) {
+      setAiUnsavedWarnOpen(true);
+      return;
+    }
     setAiWarningOpen(true);
   };
+
+  const handleContinueWithCurrentTranscript = useCallback(async () => {
+    if (continueBusy) return;
+    setContinueBusy(true);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/materials/continue-transcript`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(roomAuthBody(roomAuth)),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setAiError(body.error ?? "Continue failed.");
+      }
+      void fetchStatus();
+    } catch {
+      setAiError("Continue failed.");
+    } finally {
+      setContinueBusy(false);
+    }
+  }, [continueBusy, fetchStatus, roomAuth, sessionId]);
 
   const handleShareAnalysisConfirmed = async () => {
     setShareWarningOpen(false);
@@ -678,16 +1045,41 @@ export function SessionPostProcessingPanel({
 
   const transcriptionStage = transcript?.processingStage ?? "waiting_for_recording";
   const aiStage = ai?.processingStage ?? "waiting_for_transcript";
-  const transcriptionActive = ["queued", "downloading", "compressing", "transcribing"].includes(transcriptionStage);
+  const aiStepStatusKey: TranslationKey =
+    aiWorkflowStepCopyKind === "blocked_by_enhancement"
+      ? "sessionMaterials.enhancementAiBlockedWaitOrSkip"
+      : generationCurrentness.transcriptionActive
+        ? "sessionMaterials.waitingForTranscript"
+      : (aiStageKeys[aiStage] ?? "sessionMaterials.waitingForTranscript");
+  const transcriptionActive = generationCurrentness.transcriptionActive;
   const aiActive = ["queued", "analyzing"].includes(aiStage);
-  const transcriptionDone = transcriptionStage === "ready";
-  const enhancementDone = enhancementCompleted || enhancementFailedOrPartial;
-  const aiDone = aiStage === "ready";
+  const transcriptionDone =
+    transcriptionStage === "ready" && !generationCurrentness.transcriptionActive;
+  const enhancementDone =
+    (enhancementCompleted || enhancementFailedOrPartial) &&
+    generationCurrentness.enhancementCurrent;
+  const enhancementStepActive = enhancementRunning && !transcriptionActive;
+  const enhancementStepChrome = transcriptionActive
+    ? "border-slate-700/40 bg-slate-900/30"
+    : enhancementRunning
+      ? "border-violet-500/30 bg-violet-950/10"
+      : enhancementDone
+        ? "border-emerald-500/20 bg-emerald-950/10"
+        : enhancementFailedOrPartial
+          ? "border-amber-500/30 bg-amber-950/10"
+          : "border-slate-700/40 bg-slate-900/30";
+  const aiDone = aiStage === "ready" && generationCurrentness.aiCurrent;
   const aiAdmissionCompleted =
     aiDone ||
     aiActive ||
     aiStage === "failed";
   const aiStatusMessageKey: TranslationKey | null = (() => {
+    if (generationCurrentness.transcriptionActive) {
+      return (
+        transcriptionStageKeys[transcriptionStage] ??
+        "sessionMaterials.transcriptionInProgress"
+      );
+    }
     switch (aiRenderState.stage) {
       case "WAITING_FOR_RECORDING":
         return "sessionMaterials.waitingForRecording";
@@ -699,7 +1091,9 @@ export function SessionPostProcessingPanel({
           "sessionMaterials.transcriptionInProgress"
         );
       case "ANALYSIS_NOT_STARTED":
-        return "sessionMaterials.transcriptReadyForAnalysis";
+        return aiWorkflowStepCopyKind === "blocked_by_enhancement"
+          ? "sessionMaterials.enhancementAiBlockedWaitOrSkip"
+          : "sessionMaterials.transcriptReadyForAnalysis";
       case "ANALYSIS_IN_PROGRESS":
         return "sessionMaterials.aiAnalysisInProgress";
       case "ANALYSIS_FAILED":
@@ -708,7 +1102,7 @@ export function SessionPostProcessingPanel({
       case "ANALYSIS_INVALID":
         return "sessionMaterials.aiAnalysisReady";
       case "ANALYSIS_READY":
-        return null;
+        return generationCurrentness.aiCurrent ? null : "sessionMaterials.waitingForTranscript";
       default:
         return "sessionMaterials.waitingForTranscript";
     }
@@ -717,10 +1111,27 @@ export function SessionPostProcessingPanel({
     sessionId,
     transcriptId: transcript?.id ?? null,
     recordingId: recording?.id ?? null,
-    processingStage: transcript?.processingStage ?? null,
-    diarizationStatus: transcript?.diarizationStatus ?? null,
-    speakerMappingRequired: transcript?.speakerMappingRequired ?? false,
+    retranscribeCount: transcript?.retranscribeCount ?? null,
   });
+  const transcriptionSectionEnhancementProps = {
+    canonicalEnhancementStatus: statusData ? (enhancement?.status ?? null) : undefined,
+    canonicalEnhancementRunning: statusData ? enhancementRunning : undefined,
+    canonicalPublicationEligible: statusData ? enhancement?.publicationEligible : undefined,
+    canonicalLexicalEditAvailable: statusData ? enhancement?.lexicalEditAvailable : undefined,
+    canonicalContinueAvailable: statusData ? enhancement?.canContinueWithCurrentTranscript : undefined,
+    canonicalTerminalQuality: statusData ? (enhancement?.terminalQuality ?? null) : undefined,
+    canonicalExecutionStatus: statusData ? (enhancement?.executionStatus ?? null) : undefined,
+    canonicalCancelReason: statusData ? (enhancement?.cancelReason ?? null) : undefined,
+    canonicalSkipReason: statusData ? (enhancement?.skipReason ?? null) : undefined,
+    canonicalEnhancementProgress: statusData ? (enhancement?.progress ?? null) : undefined,
+    canonicalPublishedText: statusData ? (transcript?.text ?? null) : undefined,
+    onContinueWithCurrentTranscript: canContinueCurrentTranscript
+      ? () => void handleContinueWithCurrentTranscript()
+      : undefined,
+    continueBusy,
+    onLexicalUnsavedChange: setLexicalUnsaved,
+    onPublishedTranscriptRefreshPending: setPublishedTranscriptRefreshPending,
+  };
 
   // ── Steps pipeline (page variant only) ───────────────────────────────────
 
@@ -736,14 +1147,16 @@ export function SessionPostProcessingPanel({
           <StepBadge step={1} done={transcriptionDone} active={transcriptionActive} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-200">{t("sessions.recordingAndTranscription")}</p>
-            <p className="text-xs text-slate-500">
-              {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
-            </p>
+            {transcriptionStage !== "ready" ? (
+              <p className="text-xs text-slate-500">
+                {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
+              </p>
+            ) : null}
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
             {canRerunTranscription ? (
               <SecondaryButton
-                disabled={rerunBusy || transcriptionBusy || rerunConfirmOpen}
+                disabled={rerunBusy || transcriptionBusy || awaitingAuthoritativePostRetranscriptionStatus || rerunConfirmOpen}
                 onClick={() => setRerunConfirmOpen(true)}
                 data-testid="post-processing-rerun-transcription-button"
               >
@@ -779,7 +1192,7 @@ export function SessionPostProcessingPanel({
       </div>
 
       {/* ── Step 2: Transcript enhancement ── */}
-      {transcriptionDone &&
+      {(transcriptionDone || transcriptionActive) &&
       (enhancement?.available ||
         enhancementRunning ||
         enhancementCompleted ||
@@ -787,29 +1200,36 @@ export function SessionPostProcessingPanel({
         canContinueCurrentTranscript) ? (
         <div
           id="step-enhancement"
-          data-testid={enhancementRunning ? "transcript-enhancement-running-lock" : "step-enhancement"}
+          data-testid="step-enhancement"
           className={`rounded-lg border px-4 py-3 transition-colors
-            ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
+            ${enhancementStepChrome}`}
         >
           <div className="flex flex-wrap items-start gap-3">
-            <StepBadge step={2} done={enhancementDone} active={enhancementRunning} />
+            <StepBadge step={2} done={enhancementDone} active={enhancementStepActive} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-slate-200">
                 {t("sessionMaterials.transcriptEnhancement")}
               </p>
-              <p className="text-xs text-slate-500">
-                {enhancementRunning
-                  ? t("sessionMaterials.transcriptReadyEnhancementInProgress")
-                  : enhancementCompleted
-                    ? t("sessionMaterials.transcriptEnhancementCompleted")
-                    : enhancementFailedOrPartial
-                      ? t("sessionMaterials.transcriptEnhancementFailedUsingBase")
-                      : enhancement?.suggested
-                        ? t("sessionMaterials.transcriptEnhancementRecommended")
-                        : t("sessionMaterials.transcriptEnhancementNotStarted")}
-              </p>
+              <EnhancementStepStatusCopy
+                copyKind={enhancementStatusCopyKind}
+                statusKey={enhancementStepStatusKey}
+                skippedCopyVariant={skippedEnhancementCopyVariant}
+                showProgress={showEnhancementProgress}
+                progressParams={enhancementProgressParams}
+              />
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
+              {canContinueCurrentTranscript ? (
+                <SecondaryButton
+                  disabled={continueBusy}
+                  onClick={() => void handleContinueWithCurrentTranscript()}
+                  data-testid="post-processing-continue-transcript-button"
+                >
+                  {continueBusy
+                    ? t("common.loading")
+                    : t("sessionMaterials.skipEnhancement")}
+                </SecondaryButton>
+              ) : null}
               {canRunTranscriptEnhancement ? (
                 <SecondaryButton
                   disabled={enhancementBusy || enhancementRunning}
@@ -818,9 +1238,7 @@ export function SessionPostProcessingPanel({
                 >
                   {enhancementBusy || enhancementRunning
                     ? t("sessionMaterials.transcriptEnhancementInProgress")
-                    : canRetryTranscriptEnhancement
-                      ? t("sessionMaterials.retryTranscriptEnhancement")
-                      : t("sessionMaterials.runTranscriptEnhancement")}
+                    : t(enhancementStartActionKey)}
                 </SecondaryButton>
               ) : null}
             </div>
@@ -836,10 +1254,22 @@ export function SessionPostProcessingPanel({
       >
         <div className="flex flex-wrap items-start gap-3">
           <StepBadge step={3} done={aiDone} active={aiActive} />
-          <div className="min-w-0 flex-1">
+          <div
+            className="min-w-0 flex-1"
+            data-testid="step-ai-status"
+            data-copy-kind={aiWorkflowStepCopyKind}
+          >
             <p className="text-sm font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
-            <p className="text-xs text-slate-500">
-              {t(aiStageKeys[aiStage] ?? "sessionMaterials.waitingForTranscript")}
+            <p
+              className="text-xs text-slate-500"
+              data-testid={
+                aiWorkflowStepCopyKind === "blocked_by_enhancement"
+                  ? "enhancement-ai-blocked-reason"
+                  : undefined
+              }
+              data-copy-kind={aiWorkflowStepCopyKind}
+            >
+              {t(aiStepStatusKey)}
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
@@ -875,7 +1305,7 @@ export function SessionPostProcessingPanel({
         {speakerMappingBlockingAi || mappingActionRequired ? (
           <p className="mt-2 text-xs text-amber-300">{t("room.confirmSpeakerMappingBeforeAi")}</p>
         ) : null}
-        {canContinueCurrentTranscript && (canStartAi || canRetryAi) ? (
+        {enhancementFailedOrPartial && (canStartAi || canRetryAi) ? (
           <p className="mt-2 text-xs text-sky-200" data-testid="enhancement-continue-current-transcript">
             {t("sessionMaterials.enhancementFailedContinueHint")}
           </p>
@@ -942,14 +1372,16 @@ export function SessionPostProcessingPanel({
           <StepBadge step={1} done={transcriptionDone} active={transcriptionActive} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-slate-200">{t("sessions.recordingAndTranscription")}</p>
-            <p className="text-xs text-slate-500">
-              {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
-            </p>
+            {transcriptionStage !== "ready" ? (
+              <p className="text-xs text-slate-500">
+                {t(transcriptionStageKeys[transcriptionStage] ?? "sessionMaterials.waitingForRecording")}
+              </p>
+            ) : null}
           </div>
           <div className="flex w-full flex-col gap-2 pt-2 sm:ml-auto sm:w-56 sm:pt-0">
             {canRerunTranscription ? (
               <SecondaryButton
-                disabled={transcriptionBusy || rerunBusy || stopTranscriptionBusy || rerunConfirmOpen}
+                disabled={transcriptionBusy || rerunBusy || awaitingAuthoritativePostRetranscriptionStatus || stopTranscriptionBusy || rerunConfirmOpen}
                 onClick={() => setRerunConfirmOpen(true)}
                 data-testid="post-processing-rerun-transcription-button"
                 className="w-full text-xs"
@@ -977,36 +1409,43 @@ export function SessionPostProcessingPanel({
       </div>
 
       {/* Step 2: Transcript enhancement */}
-      {transcriptionDone &&
+      {(transcriptionDone || transcriptionActive) &&
       (enhancement?.available ||
         enhancementRunning ||
         enhancementCompleted ||
         enhancementFailedOrPartial ||
         canContinueCurrentTranscript) ? (
         <div
-          data-testid={enhancementRunning ? "transcript-enhancement-running-lock" : "step-enhancement"}
+          data-testid="step-enhancement"
           className={`rounded-lg border px-3 py-2.5 transition-colors
-            ${enhancementRunning ? "border-violet-500/30 bg-violet-950/10" : enhancementCompleted ? "border-emerald-500/20 bg-emerald-950/10" : enhancementFailedOrPartial ? "border-amber-500/30 bg-amber-950/10" : "border-slate-700/40 bg-slate-900/30"}`}
+            ${enhancementStepChrome}`}
         >
           <div className="flex flex-wrap items-start gap-2">
-            <StepBadge step={2} done={enhancementDone} active={enhancementRunning} />
+            <StepBadge step={2} done={enhancementDone} active={enhancementStepActive} />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-slate-200">
                 {t("sessionMaterials.transcriptEnhancement")}
               </p>
-              <p className="text-xs text-slate-500">
-                {enhancementRunning
-                  ? t("sessionMaterials.transcriptReadyEnhancementInProgress")
-                  : enhancementCompleted
-                    ? t("sessionMaterials.transcriptEnhancementCompleted")
-                    : enhancementFailedOrPartial
-                      ? t("sessionMaterials.transcriptEnhancementFailedUsingBase")
-                      : enhancement?.suggested
-                        ? t("sessionMaterials.transcriptEnhancementRecommended")
-                        : t("sessionMaterials.transcriptEnhancementNotStarted")}
-              </p>
+              <EnhancementStepStatusCopy
+                copyKind={enhancementStatusCopyKind}
+                statusKey={enhancementStepStatusKey}
+                skippedCopyVariant={skippedEnhancementCopyVariant}
+                showProgress={showEnhancementProgress}
+                progressParams={enhancementProgressParams}
+              />
             </div>
             <div className="flex w-full flex-col gap-2 pt-2 sm:ml-auto sm:w-56 sm:pt-0">
+              {canContinueCurrentTranscript ? (
+                <SecondaryButton
+                  disabled={continueBusy}
+                  onClick={() => void handleContinueWithCurrentTranscript()}
+                  data-testid="post-processing-continue-transcript-button"
+                >
+                  {continueBusy
+                    ? t("common.loading")
+                    : t("sessionMaterials.skipEnhancement")}
+                </SecondaryButton>
+              ) : null}
               {canRunTranscriptEnhancement ? (
                 <SecondaryButton
                   disabled={enhancementBusy || enhancementRunning}
@@ -1016,9 +1455,7 @@ export function SessionPostProcessingPanel({
                 >
                   {enhancementBusy || enhancementRunning
                     ? t("sessionMaterials.transcriptEnhancementInProgress")
-                    : canRetryTranscriptEnhancement
-                      ? t("sessionMaterials.retryTranscriptEnhancement")
-                      : t("sessionMaterials.runTranscriptEnhancement")}
+                    : t(enhancementStartActionKey)}
                 </SecondaryButton>
               ) : null}
             </div>
@@ -1033,10 +1470,22 @@ export function SessionPostProcessingPanel({
       >
         <div className="flex flex-wrap items-start gap-2">
           <StepBadge step={3} done={aiDone} active={aiActive} />
-          <div className="min-w-0 flex-1">
+          <div
+            className="min-w-0 flex-1"
+            data-testid="step-ai-status"
+            data-copy-kind={aiWorkflowStepCopyKind}
+          >
             <p className="text-xs font-semibold text-slate-200">{t("sessionMaterials.aiAnalysis")}</p>
-            <p className="text-xs text-slate-500">
-              {t(aiStageKeys[aiStage] ?? "sessionMaterials.waitingForTranscript")}
+            <p
+              className="text-xs text-slate-500"
+              data-testid={
+                aiWorkflowStepCopyKind === "blocked_by_enhancement"
+                  ? "enhancement-ai-blocked-reason"
+                  : undefined
+              }
+              data-copy-kind={aiWorkflowStepCopyKind}
+            >
+              {t(aiStepStatusKey)}
             </p>
           </div>
           <div className="flex w-full flex-wrap gap-2 pt-1 sm:w-auto sm:justify-end sm:pt-0">
@@ -1061,7 +1510,7 @@ export function SessionPostProcessingPanel({
         {speakerMappingBlockingAi || mappingActionRequired ? (
           <p className="mt-1 text-xs text-amber-300">{t("room.confirmSpeakerMappingBeforeAi")}</p>
         ) : null}
-        {canContinueCurrentTranscript && (canStartAi || canRetryAi) ? (
+        {enhancementFailedOrPartial && (canStartAi || canRetryAi) ? (
           <p className="mt-1 text-xs text-sky-200" data-testid="enhancement-continue-current-transcript">
             {t("sessionMaterials.enhancementFailedContinueHint")}
           </p>
@@ -1130,40 +1579,32 @@ export function SessionPostProcessingPanel({
       />
       <StatusPill
         title={t("sessionMaterials.transcription")}
-        stage={
-          statusData.postProcessing?.stages.TRANSCRIPTION.semantic ??
-          transcript?.processingStage ??
-          "waiting_for_recording"
-        }
+        stage={generationCurrentness.transcriptionSemantic}
         stageKeys={{ ...transcriptionStageKeys, ...semanticStageKeys }}
         testId="post-processing-transcription-status"
       />
       <StatusPill
         title={t("sessionMaterials.transcriptEnhancement")}
-        stage={
-          statusData.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic ??
-          enhancement?.status ??
-          "NOT_STARTED"
-        }
-        stageKeys={{ ...enhancementStageKeys, ...enhancementSemanticStageKeys }}
+        stage={enhancementRailStage}
+        stageKeys={{
+          ...enhancementStageKeys,
+          ...enhancementSemanticStageKeys,
+          SKIPPED: skippedEnhancementReadySentenceKey(skippedEnhancementCopyVariant),
+          informational: skippedEnhancementReadySentenceKey(skippedEnhancementCopyVariant),
+          skipped: skippedEnhancementHeadlineKey(skippedEnhancementCopyVariant),
+        }}
         testId="post-processing-enhancement-status"
       />
       <StatusPill
         title={t("sessionMaterials.speakerMapping")}
-        stage={
-          statusData.postProcessing?.stages.SPEAKER_MAPPING.semantic ??
-          (transcript?.speakerMappingRequired
-            ? "action_required"
-            : transcript?.processingStage === "ready"
-              ? "ready"
-              : "pending")
-        }
+        stage={generationCurrentness.mappingSemantic}
         stageKeys={speakerMappingStageKeys}
+        resolveTone={resolveSpeakerMappingRailTileTone}
         testId="post-processing-mapping-status"
       />
       <StatusPill
         title={t("sessionMaterials.aiAnalysis")}
-        stage={statusData.postProcessing?.stages.AI_ANALYSIS.semantic ?? ai?.processingStage ?? "waiting_for_transcript"}
+        stage={generationCurrentness.aiSemantic}
         stageKeys={{ ...aiStageKeys, ...semanticStageKeys }}
         testId="post-processing-ai-status"
       />
@@ -1252,7 +1693,7 @@ export function SessionPostProcessingPanel({
           <h2 className="text-base font-semibold text-slate-50">
             {t("sessionMaterials.aiAnalysis")}
           </h2>
-          {canViewAi && analysisJson && isFacilitatorView ? (
+        {canViewAi && analysisJson && generationCurrentness.aiCurrent && isFacilitatorView ? (
             <span className="rounded border border-amber-500/40 bg-amber-900/20 px-2 py-0.5 text-xs text-amber-300">
               {t("sessionMaterials.aiAnalysisFacilitatorBadge")}
             </span>
@@ -1292,7 +1733,7 @@ export function SessionPostProcessingPanel({
           </p>
         ) : null}
 
-        {canViewAi && analysisJson ? (
+        {canViewAi && analysisJson && generationCurrentness.aiCurrent ? (
           <AiAnalysisReport analysis={analysisJson} isFacilitator={isFacilitatorView} />
         ) : null}
 
@@ -1305,10 +1746,27 @@ export function SessionPostProcessingPanel({
 
   const aiWarningModal = aiWarningOpen ? (
     <AiProcessingWarningModal
+      qualityNoticeKind={aiTranscriptQualityNotice}
       onConfirm={() => void handleRunAiAnalysisConfirmed()}
       onCancel={() => setAiWarningOpen(false)}
     />
   ) : null;
+
+  const aiUnsavedWarnDialog = (
+    <ConfirmDialog
+      open={aiUnsavedWarnOpen}
+      title={t("sessionMaterials.aiAnalysis")}
+      description={t("sessionMaterials.enhancementUnsavedLexicalWarn")}
+      cancelLabel={t("common.cancel")}
+      confirmLabel={t("recording.materialChangeConfirm")}
+      testId="enhancement-unsaved-lexical-ai-dialog"
+      onCancel={() => setAiUnsavedWarnOpen(false)}
+      onConfirm={() => {
+        setAiUnsavedWarnOpen(false);
+        setAiWarningOpen(true);
+      }}
+    />
+  );
 
   const shareWarningModal = shareWarningOpen ? (
     <ShareDebriefWarningModal
@@ -1324,10 +1782,10 @@ export function SessionPostProcessingPanel({
       description={t("sessionMaterials.rerunTranscriptionConfirmBody")}
       cancelLabel={t("recording.rerunTranscriptionCancel")}
       confirmLabel={t("recording.rerunTranscriptionConfirm")}
-      confirming={rerunBusy}
+      confirming={rerunBusy || awaitingAuthoritativePostRetranscriptionStatus}
       testId="retranscribe-confirm-dialog"
       onCancel={() => {
-        if (!rerunBusy) {
+        if (!rerunBusy && !awaitingAuthoritativePostRetranscriptionStatus) {
           setRerunConfirmOpen(false);
         }
       }}
@@ -1339,9 +1797,17 @@ export function SessionPostProcessingPanel({
     return (
       <>
         {aiWarningModal}
+        {aiUnsavedWarnDialog}
         {shareWarningModal}
         {rerunConfirmDialog}
-      <div className="space-y-4" data-testid="session-post-processing-panel">
+      <div
+        className="space-y-4"
+        data-testid="session-post-processing-panel"
+        data-transcription-active={generationCurrentness.transcriptionActive ? "true" : "false"}
+        data-enhancement-current={generationCurrentness.enhancementCurrent ? "true" : "false"}
+        data-mapping-current={generationCurrentness.mappingCurrent ? "true" : "false"}
+        data-ai-current={generationCurrentness.aiCurrent ? "true" : "false"}
+      >
         {sidebarStepsBar}
         {showTranscriptionSection ? (
           <div className="rounded-xl border border-slate-700/40 bg-slate-900/30">
@@ -1394,14 +1860,11 @@ export function SessionPostProcessingPanel({
                   compact
                   presentation={recordingTranscriptionPresentation}
                   hideRerunControls
-                  isLocked={rerunBusy}
+                  isLocked={generationCurrentness.transcriptionActive}
+                  canonicalTranscriptionStage={transcriptionStage}
+                  canonicalRetranscribeCount={transcript?.retranscribeCount ?? null}
                   aiAdmissionCompleted={aiAdmissionCompleted}
-                  canonicalEnhancementStatus={
-                    statusData ? (enhancement?.status ?? null) : undefined
-                  }
-                  canonicalEnhancementRunning={
-                    statusData ? enhancementRunning : undefined
-                  }
+                  {...transcriptionSectionEnhancementProps}
                   onProcessingChange={() => void fetchStatus()}
                 />
               </div>
@@ -1420,9 +1883,17 @@ export function SessionPostProcessingPanel({
   return (
     <>
       {aiWarningModal}
+      {aiUnsavedWarnDialog}
       {shareWarningModal}
       {rerunConfirmDialog}
-    <div className="space-y-6" data-testid="session-post-processing-panel">
+    <div
+      className="space-y-6"
+      data-testid="session-post-processing-panel"
+      data-transcription-active={generationCurrentness.transcriptionActive ? "true" : "false"}
+      data-enhancement-current={generationCurrentness.enhancementCurrent ? "true" : "false"}
+      data-mapping-current={generationCurrentness.mappingCurrent ? "true" : "false"}
+      data-ai-current={generationCurrentness.aiCurrent ? "true" : "false"}
+    >
       <Card>
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-50">
@@ -1492,14 +1963,11 @@ export function SessionPostProcessingPanel({
                 embedded
                 presentation={recordingTranscriptionPresentation}
                 hideRerunControls
-                isLocked={rerunBusy}
+                isLocked={generationCurrentness.transcriptionActive}
+                canonicalTranscriptionStage={transcriptionStage}
+                canonicalRetranscribeCount={transcript?.retranscribeCount ?? null}
                 aiAdmissionCompleted={aiAdmissionCompleted}
-                canonicalEnhancementStatus={
-                  statusData ? (enhancement?.status ?? null) : undefined
-                }
-                canonicalEnhancementRunning={
-                  statusData ? enhancementRunning : undefined
-                }
+                {...transcriptionSectionEnhancementProps}
                 onProcessingChange={() => void fetchStatus()}
               />
             </CardContent>
@@ -1528,9 +1996,11 @@ export function SessionPostProcessingPanel({
 function AiProcessingWarningModal({
   onConfirm,
   onCancel,
+  qualityNoticeKind,
 }: {
   onConfirm: () => void;
   onCancel: () => void;
+  qualityNoticeKind: AiAnalysisTranscriptQualityNoticeKind;
 }) {
   const { t } = useI18n();
   const [checked, setChecked] = useState(false);
@@ -1547,6 +2017,29 @@ function AiProcessingWarningModal({
         <h2 className="text-base font-semibold text-slate-50">
           {t("legal.aiAnalysisWarningTitle")}
         </h2>
+        {qualityNoticeKind !== "none" ? (
+          <div
+            data-testid="ai-analysis-transcript-quality-notice"
+            data-notice-kind={qualityNoticeKind}
+            className="rounded-lg border border-violet-500/40 bg-violet-950/30 px-4 py-3"
+          >
+            <p className="text-sm font-semibold text-violet-100">
+              {qualityNoticeKind === "skipped"
+                ? t("sessionMaterials.aiAnalysisEnhancementSkippedTitle")
+                : t("sessionMaterials.aiAnalysisEnhancementNotAppliedTitle")}
+            </p>
+            <p className="mt-1 text-sm text-violet-100/90">
+              {qualityNoticeKind === "skipped"
+                ? t("sessionMaterials.aiAnalysisEnhancementSkippedBody")
+                : t("sessionMaterials.aiAnalysisEnhancementNotAppliedBody")}
+            </p>
+            {qualityNoticeKind === "skipped" ? (
+              <p className="mt-1 text-sm text-violet-100/80">
+                {t("sessionMaterials.aiAnalysisEnhancementSkippedHint")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-4 py-3">
           <label className="flex cursor-pointer items-start gap-3">
             <input

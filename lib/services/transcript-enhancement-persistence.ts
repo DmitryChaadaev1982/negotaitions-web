@@ -7,11 +7,27 @@ export type PersistableTranscriptSegment = {
   qualityText: string | null;
 };
 
+/**
+ * Transient enhancement provider input. Manual segments have no SpeechKit
+ * raw source, so current `text` may be sent to the model. This fallback is
+ * never persisted as `qualityText`.
+ */
 export function resolveEnhancementOriginalText(segment: {
   qualityText: string | null;
   text: string;
 }): string {
   return segment.qualityText ?? segment.text;
+}
+
+/**
+ * Authoritative SpeechKit raw/original lexical evidence. `null` means the
+ * segment has no raw source (new manual insert) and must stay null through
+ * enhancement publication.
+ */
+export function resolvePersistedEnhancementQualityText(segment: {
+  qualityText: string | null;
+}): string | null {
+  return segment.qualityText;
 }
 
 export function resolveInitialQualityText(providerText: string, existingQualityText: string | null): string {
@@ -21,7 +37,7 @@ export function resolveInitialQualityText(providerText: string, existingQualityT
 export function shouldPersistEnhancedText(
   status: TranscriptEnhancementOverallStatus,
 ): boolean {
-  return status === "COMPLETED" || status === "PARTIAL";
+  return status === "COMPLETED";
 }
 
 export function buildSegmentEnhancementUpdates(
@@ -42,9 +58,10 @@ export function buildSegmentEnhancementUpdates(
     updates.push({
       id: segment.id,
       text: nextText,
-      // Preserve the first known provider/original segment text once.
-      // Do not overwrite if a historical pre-enhancement backup already exists.
-      qualityText: segment.qualityText ?? segment.text,
+      // Do not fabricate SpeechKit raw from current/manual text. Provider
+      // input may use `qualityText ?? text`; persisted raw authority may stay
+      // null.
+      qualityText: resolvePersistedEnhancementQualityText(segment),
     });
   }
   return updates;

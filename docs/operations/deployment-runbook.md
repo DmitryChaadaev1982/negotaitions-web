@@ -327,7 +327,7 @@ Canonical production sequence remains:
 `npm ci` → migrate deploy (installed Prisma / production overlay below) →
 `npm run prisma:generate` → `npm run build` → service restart.
 
-The existing Yandex POC production database has two legitimate historical migration rows that predate the current squashed baseline and are archived outside `prisma/migrations`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay documented in `docs/operations/prisma-production-history-repair-20260804.md`:
+The existing Yandex POC production database has legitimate historical DB-only migration rows archived outside `prisma/migrations`. Historical DB-only migrations are accepted only when explicitly archived with verified checksum/evidence; unknown successful rows still fail closed. The June pre-squash pair and `20260810120000_add_ai_analysis_progress` are documented in `docs/operations/prisma-production-history-repair-20260804.md`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay:
 
 - `npm run prisma:production:status`
 - `npm run prisma:production:deploy -- --confirm-legacy-production-history`
@@ -404,7 +404,14 @@ alone.
 Active raw transcription or transcript enhancement:
 
 ```sql
-SELECT t."id", t."sessionId", t."status", t."updatedAt"
+SELECT
+  t."id",
+  t."sessionId",
+  t."status",
+  t."processingMetadata" #>> '{transcriptEnhancement,executionStatus}' AS "executionStatus",
+  t."processingMetadata" #>> '{transcriptEnhancement,runId}' AS "runId",
+  t."processingMetadata" #>> '{transcriptEnhancement,leaseExpiresAt}' AS "leaseExpiresAt",
+  t."updatedAt"
 FROM "Transcript" AS t
 WHERE t."status" IN (
   'QUEUED',
@@ -413,20 +420,38 @@ WHERE t."status" IN (
   'TRANSCRIBING'
 )
 OR (
-  t."processingMetadata" #>> '{transcriptEnhancement,status}'
-    IN ('RUNNING', 'IN_PROGRESS')
+  t."processingMetadata" #>> '{transcriptEnhancement,executionStatus}'
+    IN ('QUEUED', 'RUNNING')
   AND (
-    t."processingMetadata" #>> '{transcriptEnhancement,startedAt}' IS NULL
+    t."processingMetadata" #>> '{transcriptEnhancement,publicationEligible}'
+  )::boolean IS DISTINCT FROM false
+  AND (
+    t."processingMetadata" #>> '{transcriptEnhancement,leaseExpiresAt}' IS NULL
     OR (
-      t."processingMetadata" #>> '{transcriptEnhancement,startedAt}'
-    )::timestamptz > NOW() - INTERVAL '7 seconds'
+      t."processingMetadata" #>> '{transcriptEnhancement,leaseExpiresAt}'
+    )::timestamptz > NOW()
   )
 );
 ```
 
-The seven-second enhancement predicate matches
-`TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`). `COMPLETED`, `FAILED`,
-`PARTIAL`, and `SKIPPED` enhancement outcomes are terminal and do not block.
+Enhancement quiescence is decided by current D1 state, never by elapsed wall
+time. A job blocks deployment while its `executionStatus` is `QUEUED` or
+`RUNNING`, it is still `publicationEligible`, and its recovery lease has not
+expired. `COMPLETED`, `FAILED`, `CANCELLED_FOR_PUBLICATION`, and `NOT_STARTED`
+are terminal or idle and never block; an in-flight run that is no longer
+`publicationEligible` has been superseded by a newer `runId` and also does not
+block. An expired `leaseExpiresAt` means the run was abandoned and belongs to
+recovery, not to a deployment hold.
+
+`TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`) is deprecated historical
+compatibility configuration. It is not operational authority: an eligible job
+holding a valid lease is active work no matter how many seconds have elapsed.
+
+Do not inspect `TranscriptEnhancementProviderSlot` in this pre-migration
+block. On the first deploy of this candidate the table does not exist until
+`20260916090000_add_transcript_enhancement_provider_slots` is applied. That
+inventory query is **POST-MIGRATION ONLY** and appears after overlay deploy
+below.
 
 Active AI analysis execution:
 
@@ -461,16 +486,39 @@ legacy rows are reclaimable, not currently executing work.
 Exact release order:
 
 1. Verify branch/SHA, backups, and the preserved RC4 source/hash.
-2. Run the read-only transient-work queries above; require zero blocking rows.
+2. Run the pre-migration read-only transient-work queries above. Those checks
+   must not query `TranscriptEnhancementProviderSlot`. Require zero blocking
+   rows.
 3. Stop the old application process so no old and new runtime overlap.
 4. Stage the reviewed application release and install dependencies as required.
 5. Run `npm run prisma:production:status`.
 6. Run
    `npm run prisma:production:deploy -- --confirm-legacy-production-history`.
+   The overlay must explicitly admit exactly
+   `20260916090000_add_transcript_enhancement_provider_slots`
+   (`EXPECTED_RELEASE_PENDING_MIGRATIONS`). It must refuse a missing expected
+   pending set, any extra pending migration, undeclared archive/manifest
+   entries, unsuccessful archived rows, and missing or mismatched leftover
+   schema effects. After deploy, a later status check with that migration
+   already applied and nothing pending is the safe no-op state.
 7. Run `npm run prisma:production:status` again and require up-to-date status.
-8. Generate Prisma client and apply/check runtime permission normalization.
-9. Build/start the new application.
-10. Verify health, Session Debrief return/close behavior, and one disposable
+8. **POST-MIGRATION ONLY.** Inspect provider-slot inventory and live leases
+   only after the admitted migration has created the table:
+
+```sql
+SELECT "slotIndex", "jobId", "runId", "acquiredAt", "leaseExpiresAt"
+FROM "TranscriptEnhancementProviderSlot"
+WHERE "leaseExpiresAt" IS NOT NULL
+  AND "leaseExpiresAt" > NOW()
+ORDER BY "slotIndex";
+```
+
+Zero rows means no enhancement request is currently talking to the provider.
+Slot leases expire on their own, so a stale row is not an outage.
+
+9. Generate Prisma client and apply/check runtime permission normalization.
+10. Build/start the new application.
+11. Verify health, Session Debrief return/close behavior, and one disposable
     room/recording/materials canary. Confirm the active Vox marker remains RC4.
 
 The migration is additive. Application rollback leaves it applied and leaves

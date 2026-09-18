@@ -6,6 +6,33 @@ export const HEARTBEAT_MS = DEFAULT_HEARTBEAT_MS;
 
 export const UNIT_TEST_TIMEOUT_MS = 180_000;
 
+/**
+ * `validate:fast` is deterministic fast validation. PostgreSQL-mutating suites
+ * are excluded by file selection — `*.pg.test.ts` and `tests/pg-race/**` are
+ * never entered — so the gate cannot touch the isolated E2E database even when
+ * `E2E_DATABASE_URL` is defined. Run them explicitly with `test:pg:d1` and
+ * `test:pg:bug02`.
+ */
+export const UNIT_TEST_GLOBS = Object.freeze([
+  "lib/**/!(*.pg).test.ts",
+  "app/**/!(*.pg).test.ts",
+  "components/**/!(*.pg).test.ts",
+  "scripts/__tests__/*.test.mjs",
+  "tests/e2e/helpers/large-realistic-uat-!(*.pg).test.ts",
+]);
+
+export const DATABASE_TEST_GLOBS = Object.freeze([
+  "lib/**/*.pg.test.ts",
+  "app/**/*.pg.test.ts",
+  "components/**/*.pg.test.ts",
+  "tests/pg-race/**/*.test.ts",
+]);
+
+export function isDatabaseTestPath(filePath) {
+  const normalized = String(filePath).replace(/\\/gu, "/");
+  return normalized.endsWith(".pg.test.ts") || normalized.startsWith("tests/pg-race/");
+}
+
 export const STEP_TIMEOUTS_MS = Object.freeze({
   "check:native-dialogs": 60_000,
   lint: 180_000,
@@ -108,10 +135,7 @@ export function createCanonicalSteps(options) {
         "tsx",
         `--test-timeout=${UNIT_TEST_TIMEOUT_MS}`,
         "--test",
-        "lib/**/*.test.ts",
-        "app/**/*.test.ts",
-        "components/**/*.test.ts",
-        "scripts/__tests__/*.test.mjs",
+        ...UNIT_TEST_GLOBS,
       ]),
       spawnStep("test:e2e:list", node, [playwrightCli, "test", "--list"]),
     ],

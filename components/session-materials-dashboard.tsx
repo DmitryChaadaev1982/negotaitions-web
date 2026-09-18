@@ -25,6 +25,34 @@ import {
 } from "@/lib/materials-ai-analysis-view";
 import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
 import {
+  authoritativeEnhancedPublicationRunIdFromMetadata,
+  enhancementStartActionCopyKey,
+  isAiBlockedByEnhancementEligibility,
+  isEnhancementCurrentForTranscriptGeneration,
+  resolveAiAnalysisTranscriptQualityNotice,
+  resolveEnhancementStatusCopyKind,
+  resolveEnhancementUxState,
+  resolveSkippedEnhancementCopyVariant,
+  skippedEnhancementReadySentenceKey,
+  shouldShowDurableEnhancementProgress,
+  toProgressTemplateParams,
+  type AiAnalysisTranscriptQualityNoticeKind,
+} from "@/lib/post-processing/enhancement-ux-presentation";
+import {
+  acquireMaterialsStatusFetchTurn,
+  applyAuthoritativeStatusAfterRetranscribe,
+  beginMaterialsStatusObservation,
+  createMaterialsStatusRequestAbort,
+  isLocalTranscriptGenerationFenceActive,
+  observeThenRetranscribe,
+  projectTranscriptGenerationUiCurrentness,
+  shouldApplyMaterialsStatusResponse,
+  shouldObserveMaterialsStatus,
+  shouldReleaseMaterialsStatusInFlightOwnership,
+  shouldReleasePostRetranscriptionFence,
+} from "@/lib/post-processing/transcript-generation-currentness";
+import { parseTranscriptEnhancementJob } from "@/lib/services/transcript-enhancement-job";
+import {
   materialsRetranscribePath,
   materialsTranscribePath,
 } from "@/lib/transcription/transcription-routes";
@@ -61,6 +89,7 @@ type MaterialsStatusTranscription = {
   processingStage: string;
   diarizationStatus?: string | null;
   retranscribeCount?: number | null;
+  processingMetadata?: unknown;
   enhancement?: {
     status: string;
     available: boolean;
@@ -68,6 +97,18 @@ type MaterialsStatusTranscription = {
     reasons: string[];
     error: string | null;
     skipReason?: string | null;
+    canContinueWithCurrentTranscript?: boolean;
+    publicationEligible?: boolean;
+    executionStatus?: string;
+    terminalQuality?: string | null;
+    cancelReason?: string | null;
+    lexicalEditAvailable?: boolean;
+    progress?: {
+      totalChunks: number;
+      completedChunks: number;
+      retryableFailedChunks?: number;
+      permanentFailedChunks?: number;
+    } | null;
   } | null;
 };
 
@@ -78,6 +119,8 @@ type MaterialsStatusAiAnalysis = {
   executiveSummary: string | null;
   overallScore: number | null;
   analysisFromOlderTranscript?: boolean;
+  analysisCurrent?: boolean;
+  publishedReportCurrent?: boolean;
   analysisJson: unknown;
   startedAt: string | null;
   completedAt: string | null;
@@ -1033,6 +1076,10 @@ export function SessionMaterialsDashboard({
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
   const [rerunBusy, setRerunBusy] = useState(false);
+  const [
+    awaitingAuthoritativePostRetranscriptionStatus,
+    setAwaitingAuthoritativePostRetranscriptionStatus,
+  ] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [enhancementBusy, setEnhancementBusy] = useState(false);
@@ -1049,6 +1096,8 @@ export function SessionMaterialsDashboard({
   const statusPollInFlightRef = useRef(false);
   const statusRequestSeqRef = useRef(0);
   const latestAppliedStatusRequestRef = useRef(0);
+  const postRetranscribeStatusSeqRef = useRef<number | null>(null);
+  const statusRequestAbortRef = useRef<AbortController | null>(null);
 
   const canPoll = Boolean(sessionId && joinToken);
 
@@ -1083,17 +1132,19 @@ export function SessionMaterialsDashboard({
       ? mapApiAiAnalysisStage(liveData.aiAnalysis.processingStage)
       : liveSnapshot.aiAnalysis;
 
-  const shouldCurrentlyPoll =
-    (liveData
-      ? liveData.processing.shouldPoll
-      : canPoll) ||
-    transcriptionBusy ||
-    rerunBusy ||
+  const localTranscriptGenerationBusy = isLocalTranscriptGenerationFenceActive({
+    requestBusy: transcriptionBusy || rerunBusy,
+    awaitingAuthoritativePostRetranscriptionStatus,
+  });
+  const shouldCurrentlyPoll = shouldObserveMaterialsStatus({
+    serverShouldPoll: liveData ? liveData.processing.shouldPoll : canPoll,
+    forcePollingActive,
+    localTranscriptGenerationBusy,
+  }) ||
     enhancementBusy ||
     aiAnalysisBusy ||
     sharingBusy ||
-    unsharingBusy ||
-    forcePollingActive;
+    unsharingBusy;
 
   const isPolling = canPoll && shouldCurrentlyPoll;
   const pollIntervalMs = liveData?.processing.nextPollMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -1104,20 +1155,80 @@ export function SessionMaterialsDashboard({
   const canRerunTranscription = liveData?.transcription?.canRerun ?? false;
   const canRunTranscriptEnhancement =
     (liveData?.transcription?.enhancement?.available ?? false) &&
-    (liveTranscriptionStage === "ready" || liveTranscriptionStage === "enhancing");
+    (liveTranscriptionStage === "ready" || liveTranscriptionStage === "enhancing") &&
+    !rerunBusy &&
+    !transcriptionBusy &&
+    !awaitingAuthoritativePostRetranscriptionStatus;
   const enhancementStatus = liveData?.transcription?.enhancement?.status ?? null;
   const enhancementError = liveData?.transcription?.enhancement?.error ?? null;
   const enhancementRunning =
     liveData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic === "running" ||
     (liveData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT == null &&
       isEnhancementStatusRunning(enhancementStatus));
+  const enhancementCurrentForGeneration = isEnhancementCurrentForTranscriptGeneration({
+    jobRetranscribeCount: parseTranscriptEnhancementJob(
+      liveData?.transcription?.processingMetadata,
+    ).retranscribeCount,
+    currentRetranscribeCount: liveData?.transcription?.retranscribeCount,
+  });
+  const generationCurrentness = projectTranscriptGenerationUiCurrentness({
+    transcriptionStage: liveTranscriptionStage,
+    localInitiationBusy: localTranscriptGenerationBusy,
+    enhancementSemantic:
+      (liveData?.postProcessing?.stages.TRANSCRIPT_ENHANCEMENT.semantic as
+        | "pending"
+        | "running"
+        | "ready"
+        | "action_required"
+        | "informational"
+        | "failed"
+        | "not_applicable") ?? "pending",
+    mappingSemantic: "pending",
+    aiSemantic:
+      liveAiAnalysisStage === "ready"
+        ? "ready"
+        : liveAiAnalysisStage === "queued" || liveAiAnalysisStage === "analyzing"
+          ? "running"
+          : liveAiAnalysisStage === "failed"
+            ? "failed"
+            : "pending",
+    enhancementCurrentForGeneration,
+    analysisCurrent: liveData?.aiAnalysis?.analysisCurrent,
+    publishedReportCurrent: liveData?.aiAnalysis?.publishedReportCurrent,
+  });
+  const enhancementUxInput = {
+    uiStatus: enhancementStatus,
+    executionStatus: liveData?.transcription?.enhancement?.executionStatus,
+    publicationEligible: liveData?.transcription?.enhancement?.publicationEligible,
+    terminalQuality: liveData?.transcription?.enhancement?.terminalQuality,
+    cancelReason: liveData?.transcription?.enhancement?.cancelReason,
+    skipReason: liveData?.transcription?.enhancement?.skipReason,
+    progress: liveData?.transcription?.enhancement?.progress,
+    transcriptionStage: liveTranscriptionStage,
+    retranscriptionLocked: localTranscriptGenerationBusy,
+    currentForGeneration: enhancementCurrentForGeneration,
+  };
+  const enhancementUxState = resolveEnhancementUxState(enhancementUxInput);
+  const enhancementStartActionKey = enhancementStartActionCopyKey(enhancementUxInput);
+  const skippedEnhancementCopyVariant = resolveSkippedEnhancementCopyVariant({
+    copyKind: resolveEnhancementStatusCopyKind(enhancementUxInput),
+    authoritativeEnhancedPublicationRunId: authoritativeEnhancedPublicationRunIdFromMetadata(
+      liveData?.transcription?.processingMetadata,
+    ),
+  });
+  const enhancementBlocksAi = isAiBlockedByEnhancementEligibility(enhancementUxInput);
   const diarizationStatus = liveData?.transcription?.diarizationStatus ?? null;
   const analysisFromOlderTranscript = liveData?.aiAnalysis?.analysisFromOlderTranscript ?? false;
 
   const canStartAiAnalysis =
-    (liveData?.aiAnalysis?.canStart ?? false) && !enhancementRunning;
+    (liveData?.aiAnalysis?.canStart ?? false) &&
+    !enhancementBlocksAi &&
+    !generationCurrentness.transcriptionActive;
+  const aiTranscriptQualityNotice = resolveAiAnalysisTranscriptQualityNotice(enhancementUxInput);
   const canRetryAiAnalysis =
-    (liveData?.aiAnalysis?.canRetry ?? false) && !enhancementRunning;
+    (liveData?.aiAnalysis?.canRetry ?? false) &&
+    !enhancementBlocksAi &&
+    !generationCurrentness.transcriptionActive;
   const canViewAiAnalysis = liveData?.aiAnalysis?.canView ?? false;
   const canShareAiAnalysis = liveData?.aiAnalysis?.canShare ?? false;
   const participantPlaceholder = liveData?.aiAnalysis?.participantPlaceholder ?? false;
@@ -1155,6 +1266,9 @@ export function SessionMaterialsDashboard({
     ? t("sessionMaterials.aiAnalysisInvalidResult")
     : null;
   const aiStatusMessageKey: TranslationKey | null = (() => {
+    if (generationCurrentness.transcriptionActive) {
+      return transcriptionStatusKeys[liveTranscriptionStage] ?? "sessionMaterials.transcriptionInProgress";
+    }
     switch (aiRenderState.stage) {
       case "WAITING_FOR_RECORDING":
         return "sessionMaterials.waitingForRecording";
@@ -1185,30 +1299,73 @@ export function SessionMaterialsDashboard({
       ? transcriptionStatusTone[liveTranscriptionStage]
       : aiAnalysisStatusTone[liveAiAnalysisStage];
 
-  const fetchStatus = useCallback(async () => {
-    if (!sessionId || !joinToken) return;
-    if (statusPollInFlightRef.current) return;
-    statusPollInFlightRef.current = true;
+  const fetchStatus = useCallback(async (options?: { exclusive?: boolean }) => {
+    if (!sessionId || !joinToken) {
+      return { appliedStatusRequestId: null };
+    }
+    const acquired = await acquireMaterialsStatusFetchTurn({
+      isInFlight: () => statusPollInFlightRef.current,
+      setInFlight: (value) => {
+        statusPollInFlightRef.current = value;
+      },
+      exclusive: Boolean(options?.exclusive),
+      isCancelled: () => !isMountedRef.current,
+      abortInFlight: () => {
+        statusRequestAbortRef.current?.abort();
+      },
+    });
+    if (!acquired) {
+      return { appliedStatusRequestId: null };
+    }
+    const request = createMaterialsStatusRequestAbort();
+    statusRequestAbortRef.current = request.controller;
     const requestId = ++statusRequestSeqRef.current;
     try {
       const res = await fetch(
         `/api/sessions/${sessionId}/materials/status?joinToken=${encodeURIComponent(joinToken)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: request.controller.signal },
       );
-      if (!isMountedRef.current) return;
-      if (!res.ok) return;
+      if (!isMountedRef.current || !res.ok || request.controller.signal.aborted) {
+        return { appliedStatusRequestId: null };
+      }
       const data = (await res.json()) as MaterialsStatusResponse;
       if (
         isMountedRef.current &&
-        requestId >= latestAppliedStatusRequestRef.current
+        shouldApplyMaterialsStatusResponse({
+          requestId,
+          latestAppliedRequestId: latestAppliedStatusRequestRef.current,
+          aborted: request.controller.signal.aborted,
+        })
       ) {
         latestAppliedStatusRequestRef.current = requestId;
         setLiveData(data);
+        const awaitingSeq = postRetranscribeStatusSeqRef.current;
+        if (
+          awaitingSeq != null &&
+          shouldReleasePostRetranscriptionFence({
+            appliedStatusRequestId: requestId,
+            statusRequestSeqAtPostCompletion: awaitingSeq,
+          })
+        ) {
+          postRetranscribeStatusSeqRef.current = null;
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+        return { appliedStatusRequestId: requestId };
       }
+      return { appliedStatusRequestId: null };
     } catch {
-      // Ignore transient polling errors silently
+      return { appliedStatusRequestId: null };
     } finally {
-      statusPollInFlightRef.current = false;
+      request.dispose();
+      if (
+        shouldReleaseMaterialsStatusInFlightOwnership({
+          ownerController: statusRequestAbortRef.current,
+          requestController: request.controller,
+        })
+      ) {
+        statusRequestAbortRef.current = null;
+        statusPollInFlightRef.current = false;
+      }
     }
   }, [sessionId, joinToken]);
 
@@ -1220,6 +1377,7 @@ export function SessionMaterialsDashboard({
         window.clearTimeout(forcePollingTimerRef.current);
         forcePollingTimerRef.current = null;
       }
+      statusRequestAbortRef.current?.abort();
       isMountedRef.current = false;
     };
   }, [sessionId]);
@@ -1256,22 +1414,43 @@ export function SessionMaterialsDashboard({
   const handleStartTranscription = useCallback(async () => {
     if (!sessionId || !joinToken) return;
     setTranscriptionBusy(true);
+    setAwaitingAuthoritativePostRetranscriptionStatus(true);
     setTranscriptionError(null);
+    let postSucceeded = false;
     try {
-      const res = await fetch(materialsTranscribePath(sessionId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken }),
+      await observeThenRetranscribe({
+        observe: () =>
+          beginMaterialsStatusObservation({
+            forceStatusPolling,
+            fetchStatus,
+          }),
+        retranscribe: async () => {
+          const res = await fetch(materialsTranscribePath(sessionId), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ joinToken }),
+          });
+          if (!isMountedRef.current) return;
+          if (!res.ok) {
+            const body = (await res.json()) as { error?: string };
+            throw new Error(body.error ?? "Transcription failed.");
+          }
+        },
       });
-      if (!isMountedRef.current) return;
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? "Transcription failed.");
-      }
-      forceStatusPolling();
-      await fetchStatus();
+      postSucceeded = true;
+      postRetranscribeStatusSeqRef.current = statusRequestSeqRef.current;
+      await applyAuthoritativeStatusAfterRetranscribe({
+        statusRequestSeqAtPostCompletion: postRetranscribeStatusSeqRef.current,
+        applyAuthoritativeStatus: () => fetchStatus({ exclusive: true }),
+      });
     } catch (err) {
       autoTranscribeStartedRef.current = false;
+      if (!postSucceeded) {
+        postRetranscribeStatusSeqRef.current = null;
+        if (isMountedRef.current) {
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+      }
       if (isMountedRef.current) {
         setTranscriptionError(
           err instanceof Error ? err.message : "Transcription failed.",
@@ -1286,23 +1465,47 @@ export function SessionMaterialsDashboard({
 
   const handleRerunTranscription = useCallback(async () => {
     if (!sessionId || !joinToken) return;
+    if (rerunBusy || awaitingAuthoritativePostRetranscriptionStatus) {
+      return;
+    }
     setRerunConfirmOpen(false);
     setRerunBusy(true);
+    setAwaitingAuthoritativePostRetranscriptionStatus(true);
     setRerunError(null);
+    let postSucceeded = false;
     try {
-      const res = await fetch(materialsRetranscribePath(sessionId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ joinToken, reason: "manual_rerun" }),
+      await observeThenRetranscribe({
+        observe: () =>
+          beginMaterialsStatusObservation({
+            forceStatusPolling,
+            fetchStatus,
+          }),
+        retranscribe: async () => {
+          const res = await fetch(materialsRetranscribePath(sessionId), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ joinToken, reason: "manual_rerun" }),
+          });
+          if (!isMountedRef.current) return;
+          if (!res.ok) {
+            const body = (await res.json()) as { error?: string };
+            throw new Error(body.error ?? "Re-transcription failed.");
+          }
+        },
       });
-      if (!isMountedRef.current) return;
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? "Re-transcription failed.");
-      }
-      forceStatusPolling();
-      await fetchStatus();
+      postSucceeded = true;
+      postRetranscribeStatusSeqRef.current = statusRequestSeqRef.current;
+      await applyAuthoritativeStatusAfterRetranscribe({
+        statusRequestSeqAtPostCompletion: postRetranscribeStatusSeqRef.current,
+        applyAuthoritativeStatus: () => fetchStatus({ exclusive: true }),
+      });
     } catch (err) {
+      if (!postSucceeded) {
+        postRetranscribeStatusSeqRef.current = null;
+        if (isMountedRef.current) {
+          setAwaitingAuthoritativePostRetranscriptionStatus(false);
+        }
+      }
       if (isMountedRef.current) {
         setRerunError(err instanceof Error ? err.message : "Re-transcription failed.");
       }
@@ -1311,7 +1514,14 @@ export function SessionMaterialsDashboard({
         setRerunBusy(false);
       }
     }
-  }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
+  }, [
+    sessionId,
+    joinToken,
+    fetchStatus,
+    forceStatusPolling,
+    rerunBusy,
+    awaitingAuthoritativePostRetranscriptionStatus,
+  ]);
 
   useEffect(() => {
     if (!autoTranscribeEnabled) {
@@ -1480,9 +1690,15 @@ export function SessionMaterialsDashboard({
   }, [sessionId, joinToken, fetchStatus, forceStatusPolling]);
 
   return (
-    <div className="space-y-6">
+    <div
+      className="space-y-6"
+      data-transcription-active={generationCurrentness.transcriptionActive ? "true" : "false"}
+      data-enhancement-current={generationCurrentness.enhancementCurrent ? "true" : "false"}
+      data-ai-current={generationCurrentness.aiCurrent ? "true" : "false"}
+    >
       {aiWarningOpen ? (
         <MaterialsAiProcessingWarningModal
+          qualityNoticeKind={aiTranscriptQualityNotice}
           onConfirm={() => void handleRunAiAnalysis()}
           onCancel={() => setAiWarningOpen(false)}
         />
@@ -1637,7 +1853,7 @@ export function SessionMaterialsDashboard({
             <div className="flex flex-wrap gap-2">
               {canStartTranscription ? (
                 <SecondaryButton
-                  disabled={transcriptionBusy}
+                  disabled={transcriptionBusy || awaitingAuthoritativePostRetranscriptionStatus}
                   onClick={() => void handleStartTranscription()}
                   data-testid="start-transcription-button"
                 >
@@ -1648,7 +1864,7 @@ export function SessionMaterialsDashboard({
               ) : null}
               {canRetryTranscription ? (
                 <SecondaryButton
-                  disabled={transcriptionBusy}
+                  disabled={transcriptionBusy || awaitingAuthoritativePostRetranscriptionStatus}
                   onClick={() => void handleStartTranscription()}
                   data-testid="retry-transcription-button"
                 >
@@ -1659,7 +1875,7 @@ export function SessionMaterialsDashboard({
               ) : null}
               {canRerunTranscription ? (
                 <SecondaryButton
-                  disabled={rerunBusy || transcriptionBusy}
+                  disabled={rerunBusy || transcriptionBusy || awaitingAuthoritativePostRetranscriptionStatus}
                   onClick={() => setRerunConfirmOpen(true)}
                   data-testid="rerun-transcription-button"
                 >
@@ -1671,24 +1887,41 @@ export function SessionMaterialsDashboard({
             </div>
           ) : null}
           {enhancementRunning ? (
-            <p className="text-sm text-violet-300">
-              {t("sessionMaterials.transcriptEnhancementInProgress")}
-            </p>
+            <div className="space-y-1">
+              <p className="text-sm text-violet-300">
+                {t("sessionMaterials.transcriptEnhancementInProgress")}
+              </p>
+              {shouldShowDurableEnhancementProgress({
+                uiStatus: enhancementStatus,
+                executionStatus: liveData?.transcription?.enhancement?.executionStatus,
+                publicationEligible: liveData?.transcription?.enhancement?.publicationEligible,
+                progress: liveData?.transcription?.enhancement?.progress,
+              }) && toProgressTemplateParams(liveData?.transcription?.enhancement?.progress) ? (
+                <p className="text-xs text-violet-200" data-testid="enhancement-progress">
+                  {t(
+                    "sessionMaterials.enhancementProgressFragments",
+                    toProgressTemplateParams(liveData?.transcription?.enhancement?.progress)!,
+                  )}
+                </p>
+              ) : null}
+            </div>
           ) : null}
-          {enhancementStatus === "COMPLETED" || enhancementStatus === "PARTIAL" ? (
+          {enhancementUxState === "ENHANCEMENT_COMPLETED" ||
+          enhancementUxState === "ENHANCEMENT_TERMINAL_PARTIAL" ? (
             <p className="text-sm text-emerald-300">
               {t("sessionMaterials.transcriptEnhancementCompleted")}
             </p>
           ) : null}
-          {enhancementStatus === "FAILED" ? (
+          {enhancementUxState === "ENHANCEMENT_FAILED" ? (
             <p className="text-sm text-amber-300">
               {t("sessionMaterials.transcriptEnhancementFailed")}
               {enhancementError ? ` ${enhancementError}` : ""}
             </p>
           ) : null}
-          {enhancementStatus === "SKIPPED" ? (
+          {enhancementUxState === "ENHANCEMENT_CONTINUED" ||
+          enhancementUxState === "ENHANCEMENT_HISTORICAL_TIMEOUT" ? (
             <p className="text-sm text-slate-300">
-              {t("sessionMaterials.transcriptEnhancementSkipped")}
+              {t(skippedEnhancementReadySentenceKey(skippedEnhancementCopyVariant))}
             </p>
           ) : null}
 
@@ -1708,7 +1941,7 @@ export function SessionMaterialsDashboard({
                 >
                   {enhancementBusy || enhancementRunning
                     ? t("sessionMaterials.transcriptEnhancementInProgress")
-                    : t("sessionMaterials.runTranscriptEnhancement")}
+                    : t(enhancementStartActionKey)}
                 </SecondaryButton>
               </div>
             </div>
@@ -1722,7 +1955,7 @@ export function SessionMaterialsDashboard({
               </p>
               <div className="flex gap-2">
                 <SecondaryButton
-                  disabled={rerunBusy}
+                  disabled={rerunBusy || awaitingAuthoritativePostRetranscriptionStatus}
                   onClick={() => void handleRerunTranscription()}
                   data-testid="confirm-rerun-transcription-button"
                 >
@@ -1768,7 +2001,7 @@ export function SessionMaterialsDashboard({
               {t("sessionMaterials.aiAnalysis")}
             </h2>
             {/* Report mode badge */}
-            {canViewAiAnalysis && analysisJson ? (
+            {canViewAiAnalysis && analysisJson && generationCurrentness.aiCurrent ? (
               isFacilitatorView ? (
                 <span
                   className="rounded border border-amber-500/40 bg-amber-900/20 px-2 py-0.5 text-xs text-amber-300"
@@ -1911,7 +2144,7 @@ export function SessionMaterialsDashboard({
           ) : null}
 
           {/* Facilitator: visibility hint */}
-          {isFacilitatorView && analysisJson ? (
+          {isFacilitatorView && analysisJson && generationCurrentness.aiCurrent ? (
             <p className="text-xs text-slate-500">
               {aiIsShared
                 ? t("sessionMaterials.sharedReportVisible")
@@ -1928,7 +2161,7 @@ export function SessionMaterialsDashboard({
           ) : null}
 
           {/* Report */}
-          {canViewAiAnalysis && analysisJson ? (
+          {canViewAiAnalysis && analysisJson && generationCurrentness.aiCurrent ? (
             <AiAnalysisReport analysis={analysisJson} isFacilitator={isFacilitatorView} />
           ) : null}
         </CardContent>
@@ -1940,9 +2173,11 @@ export function SessionMaterialsDashboard({
 function MaterialsAiProcessingWarningModal({
   onConfirm,
   onCancel,
+  qualityNoticeKind,
 }: {
   onConfirm: () => void;
   onCancel: () => void;
+  qualityNoticeKind: AiAnalysisTranscriptQualityNoticeKind;
 }) {
   const { t } = useI18n();
   const [checked, setChecked] = useState(false);
@@ -1962,6 +2197,29 @@ function MaterialsAiProcessingWarningModal({
         <h2 className="text-base font-semibold text-slate-50">
           {t("legal.aiAnalysisWarningTitle")}
         </h2>
+        {qualityNoticeKind !== "none" ? (
+          <div
+            data-testid="ai-analysis-transcript-quality-notice"
+            data-notice-kind={qualityNoticeKind}
+            className="rounded-lg border border-violet-500/40 bg-violet-950/30 px-4 py-3"
+          >
+            <p className="text-sm font-semibold text-violet-100">
+              {qualityNoticeKind === "skipped"
+                ? t("sessionMaterials.aiAnalysisEnhancementSkippedTitle")
+                : t("sessionMaterials.aiAnalysisEnhancementNotAppliedTitle")}
+            </p>
+            <p className="mt-1 text-sm text-violet-100/90">
+              {qualityNoticeKind === "skipped"
+                ? t("sessionMaterials.aiAnalysisEnhancementSkippedBody")
+                : t("sessionMaterials.aiAnalysisEnhancementNotAppliedBody")}
+            </p>
+            {qualityNoticeKind === "skipped" ? (
+              <p className="mt-1 text-sm text-violet-100/80">
+                {t("sessionMaterials.aiAnalysisEnhancementSkippedHint")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-4 py-3">
           <label className="flex cursor-pointer items-start gap-3">
             <input

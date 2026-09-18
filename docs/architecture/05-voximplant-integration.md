@@ -15,6 +15,13 @@ Voximplant is the video/voice provider when `VIDEO_PROVIDER=voximplant` and is u
   provider mic/camera controls; shared room notification controls are injected
   immediately after camera so session audio cues remain provider-neutral.
 - Room hook: `lib/voximplant/use-voximplant-room.ts`.
+- Post-processing Facilitator Lab (`POST_TRANSCRIPTION_LAB=1`) passes
+  `skipRealtimeConnect` so the room hook does not open a Vox gateway. That
+  seam is test-runtime only. It fails closed in production: `lib/test-mode.ts`
+  ignores `POST_TRANSCRIPTION_LAB` whenever `NODE_ENV=production`, so
+  `shouldConnectBrowserRealtimeTransport()` is `true` in production even if the
+  flag leaks into the runtime environment. Materials, transcript, mapping, and
+  AI APIs stay real in every runtime.
 - Access APIs:
   - `app/api/sessions/[sessionId]/voximplant/access/route.ts`
   - `app/api/events/[id]/voximplant-access/route.ts`

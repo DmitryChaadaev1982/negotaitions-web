@@ -288,6 +288,11 @@ type UseVoximplantRoomOptions = {
    */
   disableInitialMic?: boolean;
   /**
+   * Dedicated Post-processing Lab seam: skip Vox signaling. Production never
+   * sets this; the room page only passes true when POST_TRANSCRIPTION_LAB=1.
+   */
+  skipRealtimeConnect?: boolean;
+  /**
    * Latest Session close/operability projection. Evaluated at disconnect time
    * so a later FINISH/event-close cannot be missed by a stale closure.
    */
@@ -627,6 +632,7 @@ export function useVoximplantRoom({
   disableInitialCamera = false,
   disableInitialMic = false,
   isSessionOperable,
+  skipRealtimeConnect = false,
 }: UseVoximplantRoomOptions): UseVoximplantRoomResult {
   const runtimeRef = useRef<RuntimeState | null>(null);
   const mountedRef = useRef(true);
@@ -818,7 +824,8 @@ export function useVoximplantRoom({
   }, [connectionId, sessionId]);
 
   // ── React state ──────────────────────────────────────────────────────────
-  const [isLoading, setIsLoading] = useState(true);
+  const [joinLoading, setJoinLoading] = useState(true);
+  const isLoading = skipRealtimeConnect ? false : joinLoading;
   const [isLeaving, setIsLeaving] = useState(false);
   const [joined, setJoined] = useState(false);
   const [status, setStatus] = useState("Инициализация переговорной комнаты...");
@@ -1635,13 +1642,18 @@ export function useVoximplantRoom({
       return;
     }
 
+    if (skipRealtimeConnect) {
+      mountedRef.current = true;
+      return;
+    }
+
     mountedRef.current = true;
 
     const join = async () => {
       isJoiningRef.current = true;
       const joinGeneration = beginJoinGeneration();
       if (mountedRef.current) {
-        setIsLoading(true);
+        setJoinLoading(true);
       }
       setError(null);
 
@@ -2110,7 +2122,7 @@ export function useVoximplantRoom({
         await cleanup("invalidated_generation");
       } finally {
         if (mountedRef.current) {
-          setIsLoading(false);
+          setJoinLoading(false);
         }
         isJoiningRef.current = false;
       }
@@ -2145,6 +2157,7 @@ export function useVoximplantRoom({
     removeRemoteById,
     requestBoundedRejoin,
     sessionId,
+    skipRealtimeConnect,
     startMicLevelMeter,
     subscribeEndpoint,
     unsubscribeEndpoint,

@@ -797,8 +797,9 @@ export const en = {
       partiallyMapped:
         "Speaker mapping is partially complete. Assign the remaining speakers.",
       appliedNeedsConfirmation:
-        "Automatic speaker mapping has been applied. Review or edit it if necessary.",
+        "Speaker mapping was applied automatically",
     },
+    reviewOrChangeMapping: "Review / change",
     suggested: "Suggested",
     confidenceHigh: "High",
     confidenceMedium: "Medium",
@@ -807,6 +808,8 @@ export const en = {
     saveMappingAction: "Save mapping",
     skipSpeakerMappingForNow: "Skip for now",
     speakerMappingSaved: "Speaker mapping saved",
+    speakerMappingGenerationMismatch:
+      "Speaker mapping is out of date. The transcript was refreshed — review and save again.",
     speakerMappingCanChangeLater: "You can change speaker mapping later",
     speakerMappingAutoAppliedCompact: "Speaker mapping was applied automatically.",
     secondsShort: "s",
@@ -847,11 +850,13 @@ export const en = {
     transcriptEnhancementSuggested:
       "Additional transcript quality enhancement is recommended.",
     transcriptEnhancementReasons: "Reasons",
-    runTranscriptEnhancement: "Improve transcript",
+    runTranscriptEnhancement: "Start AI enhancement",
     transcriptEnhancementInProgress: "Transcript is ready. AI enhancement is running...",
     transcriptEnhancementCompleted: "AI enhancement completed.",
     transcriptEnhancementFailed: "Transcript is ready, but AI enhancement failed.",
     transcriptEnhancementSkipped: "Transcript is ready. AI enhancement was skipped.",
+    transcriptEnhancementSkippedRetainingPrior:
+      "Transcript is ready. The new AI improvement attempt was skipped. The previously improved text is still in use.",
     transcriptEnhancementMayTakeTime:
       "This is a separate AI step and may take noticeable time.",
     speakerSlotLabel: "Speaker",
@@ -1024,7 +1029,9 @@ export const en = {
       "AI enhancement was not completed. The base transcript is being used.",
     transcriptEnhancementNotStarted: "AI enhancement is not started.",
     transcriptEnhancementSkipped: "Transcript is ready. AI enhancement was skipped.",
-    runTranscriptEnhancement: "Improve transcript",
+    transcriptEnhancementSkippedRetainingPrior:
+      "Transcript is ready. The new AI improvement attempt was skipped. The previously improved text is still in use.",
+    runTranscriptEnhancement: "Start AI enhancement",
     retryTranscriptEnhancement: "Retry AI enhancement",
     transcriptEnhancementRecommended:
       "System recommends running additional transcript quality enhancement.",
@@ -1063,6 +1070,53 @@ export const en = {
     enhancementFailedContinueHint:
       "You can retry enhancement or continue AI analysis with the current transcript.",
     continueWithCurrentTranscript: "Continue with current transcript",
+    skipEnhancement: "Skip AI enhancement",
+    skipEnhancementHint:
+      "You can continue with the current transcript — the in-progress enhancement result will not be applied.",
+    enhancementStatusRunning: "AI enhancement is running",
+    enhancementTranscriptLocalProgress:
+      "AI enhancement is running · {completed} of {total} fragments",
+    enhancementStatusCompleted: "AI enhancement is complete",
+    enhancementStatusFailed: "AI enhancement failed",
+    enhancementStatusPartial: "AI enhancement did not finish completely",
+    enhancementStatusSkipped: "AI enhancement was skipped",
+    enhancementStatusSkippedBody: "The current transcript is used.",
+    enhancementStatusSkippedRetainingPrior:
+      "The new AI improvement attempt was skipped. The previously improved text is still in use.",
+    enhancementStatusSkippedRetainingPriorBody:
+      "The previously improved text is still in use.",
+    enhancementRailRunning: "Running",
+    enhancementProgressFragments: "{completed} of {total} fragments processed",
+    enhancementLexicalViewOnly:
+      "The transcript is view-only while improvement can still replace it.",
+    enhancementAiBlockedWaitOrSkip:
+      "Available after AI enhancement finishes or is skipped.",
+    enhancementPublishedRaw: "The original transcript is in use.",
+    enhancementPublishedEnhanced: "The improved transcript is in use.",
+    enhancementTurnApplied: "Text improved by AI",
+    enhancementTurnRaw: "Original transcript",
+    enhancementTurnEdited: "Manually edited",
+    enhancementTerminalPartial:
+      "Improvement did not finish completely. The current published transcript was not mixed with unfinished fragments.",
+    enhancementHistoricalTimeout:
+      "A previous improvement attempt timed out. The current transcript remains usable.",
+    enhancementContinued: "AI enhancement was skipped. The current transcript is used.",
+    enhancementContinuedRetainingPrior:
+      "The new AI improvement attempt was skipped. The previously improved text is still in use.",
+    enhancementRunningIneligible:
+      "Leftover improvement work can no longer replace this transcript.",
+    enhancementUnsavedLexicalWarn:
+      "Unsaved transcript edits will not be sent to AI. The last saved published transcript will be used.",
+    enhancementPermanentFailureRunning:
+      "One fragment failed permanently. The current published transcript stays authoritative.",
+    aiAnalysisEnhancementSkippedTitle: "AI transcript enhancement was skipped",
+    aiAnalysisEnhancementSkippedBody:
+      "AI analysis will use the current transcript version.",
+    aiAnalysisEnhancementSkippedHint:
+      "The result may be less accurate than after a successful enhancement.",
+    aiAnalysisEnhancementNotAppliedTitle: "AI transcript enhancement was not applied",
+    aiAnalysisEnhancementNotAppliedBody:
+      "AI analysis will use the current transcript version.",
     aiAnalysis: "AI analysis",
     waitingForTranscript: "Waiting for transcript readiness.",
     transcriptReadyForAnalysis: "Transcript is ready. AI analysis can be started.",

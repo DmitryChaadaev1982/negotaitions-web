@@ -114,7 +114,11 @@ export function resolveSpeakerReviewMode(params: {
   transcriptSource: "MANUAL" | "GENERATED" | null | undefined;
   mappingReviewSkipped: boolean;
   aiAdmissionCompleted?: boolean;
+  transcriptionActive?: boolean;
 }): "REVIEW_CARD" | "AUTO_APPLIED_NOTE" | "NONE" {
+  if (params.transcriptionActive) {
+    return "NONE";
+  }
   if (params.speakerMappingStatus === "AUTO_SUGGESTED") {
     return params.aiAdmissionCompleted ? "NONE" : "AUTO_APPLIED_NOTE";
   }

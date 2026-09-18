@@ -14,6 +14,7 @@ import {
   isYandexTranscriptEnhancementEnabled,
   type YandexSpeechKitContainerType,
 } from "@/lib/env";
+import { withProviderSlotLease } from "@/lib/services/transcript-enhancement-provider-slots";
 import {
   enhanceTranscriptWithYandexAi,
   type TranscriptEnhancementInputSegment,
@@ -818,7 +819,13 @@ export async function transcribeAudioBufferWithYandexSpeechKit(
 
     try {
       const enhancementStartedAt = Date.now();
-      const enhanced = await enhanceTranscriptWithYandexAi(enhancementInput);
+      // Inline enhancement is not a D1 job, but it is still provider work and
+      // must not bypass global admission.
+      const inlineJobId = `speechkit-inline-${transcriptionStartedAt}`;
+      const enhanced = await withProviderSlotLease(
+        { jobId: inlineJobId, runId: inlineJobId },
+        () => enhanceTranscriptWithYandexAi(enhancementInput),
+      );
       enhancementMs = Date.now() - enhancementStartedAt;
       const enhancementStatus = enhanced.meta?.overallStatus ?? "COMPLETED";
       const byIndex = new Map(enhanced.segments.map((segment) => [segment.index, segment]));

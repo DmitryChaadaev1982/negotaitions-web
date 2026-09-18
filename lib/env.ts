@@ -219,19 +219,162 @@ export function getTranscriptEnhancementOutputMode(): TranscriptEnhancementOutpu
   return "json_schema";
 }
 
+/** Frozen B02-1 operating point: ceil(1800/100). */
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS = 18;
+/** Frozen B02-1 operating point (Phase A/E). */
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS = 1800;
+/** Frozen B02-1 per-job concurrency (Phase B/E). Config may lower, never raise. */
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY = 8;
+export const TRANSCRIPT_ENHANCEMENT_HARD_PER_JOB_CONCURRENCY = 8;
+/** Frozen B02-1 global provider cap (Phase C/E). Config may lower, never raise. */
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY = 10;
+export const TRANSCRIPT_ENHANCEMENT_HARD_GLOBAL_CONCURRENCY = 10;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY = "reserved_slot" as const;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_RETRIES = 2;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_LEASE_TTL_MS = 45_000;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_HEARTBEAT_MS = 15_000;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_T2_P95_MS = 11_500;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_SAFETY_FACTOR = 4;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MIN_MS = 120_000;
+export const DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MAX_MS = 1_800_000;
+
 export function getTranscriptEnhancementChunkMaxSegments(): number {
-  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS ?? "6");
-  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.round(raw)) : 6;
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.max(1, Math.round(raw))
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_SEGMENTS;
 }
 
 export function getTranscriptEnhancementChunkMaxChars(): number {
-  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS ?? "700");
-  return Number.isFinite(raw) && raw > 0 ? Math.max(80, Math.round(raw)) : 700;
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.max(80, Math.round(raw))
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_CHUNK_MAX_CHARS;
 }
 
 export function getTranscriptEnhancementMaxConcurrency(): number {
-  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY ?? "4");
-  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.round(raw)) : 4;
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY),
+  );
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_CONCURRENCY;
+  }
+  return Math.max(
+    1,
+    Math.min(TRANSCRIPT_ENHANCEMENT_HARD_PER_JOB_CONCURRENCY, Math.round(raw)),
+  );
+}
+
+export function getTranscriptEnhancementGlobalConcurrency(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY),
+  );
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_TRANSCRIPT_ENHANCEMENT_GLOBAL_CONCURRENCY;
+  }
+  return Math.max(
+    1,
+    Math.min(TRANSCRIPT_ENHANCEMENT_HARD_GLOBAL_CONCURRENCY, Math.round(raw)),
+  );
+}
+
+export type TranscriptEnhancementFairnessPolicy = "reserved_slot" | "half_share";
+
+export function getTranscriptEnhancementFairnessPolicy(): TranscriptEnhancementFairnessPolicy {
+  const raw = process.env.TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY?.trim().toLowerCase();
+  if (!raw || raw === "reserved_slot") {
+    return "reserved_slot";
+  }
+  if (raw === "half_share") {
+    return "half_share";
+  }
+  console.warn(
+    `[env] Invalid TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY="${raw}". Falling back to reserved_slot.`,
+  );
+  return DEFAULT_TRANSCRIPT_ENHANCEMENT_FAIRNESS_POLICY;
+}
+
+export function getTranscriptEnhancementLeaseTtlMs(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_LEASE_TTL_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_LEASE_TTL_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.max(5_000, Math.round(raw))
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_LEASE_TTL_MS;
+}
+
+export function getTranscriptEnhancementHeartbeatMs(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_HEARTBEAT_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_HEARTBEAT_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.max(1_000, Math.round(raw))
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_HEARTBEAT_MS;
+}
+
+export function getTranscriptEnhancementT2P95Ms(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_T2_P95_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_T2_P95_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.round(raw)
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_T2_P95_MS;
+}
+
+export function getTranscriptEnhancementT3SafetyFactor(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_T3_SAFETY_FACTOR ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_SAFETY_FACTOR),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_SAFETY_FACTOR;
+}
+
+export function getTranscriptEnhancementT3MinMs(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_T3_MIN_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MIN_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.round(raw)
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MIN_MS;
+}
+
+export function getTranscriptEnhancementT3MaxMs(): number {
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_T3_MAX_MS ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MAX_MS),
+  );
+  return Number.isFinite(raw) && raw > 0
+    ? Math.round(raw)
+    : DEFAULT_TRANSCRIPT_ENHANCEMENT_T3_MAX_MS;
+}
+
+/**
+ * T3 is the job safety/recovery bound: clamp(waves × p95 × factor, min, max).
+ * It is not TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS and must not discard checkpoints.
+ */
+export function computeTranscriptEnhancementT3Ms(chunkCount: number, perJobConcurrency?: number): number {
+  const concurrency = Math.max(1, perJobConcurrency ?? getTranscriptEnhancementMaxConcurrency());
+  const waves = Math.max(1, Math.ceil(Math.max(0, chunkCount) / concurrency));
+  const expectedMs = waves * getTranscriptEnhancementT2P95Ms();
+  const raw = expectedMs * getTranscriptEnhancementT3SafetyFactor();
+  return Math.min(
+    getTranscriptEnhancementT3MaxMs(),
+    Math.max(getTranscriptEnhancementT3MinMs(), Math.round(raw)),
+  );
 }
 
 export function getTranscriptEnhancementChunkTimeoutMs(): number {
@@ -240,8 +383,11 @@ export function getTranscriptEnhancementChunkTimeoutMs(): number {
 }
 
 /**
- * Hard wait window for the authoritative post-transcription enhancement run.
- * This is not the per-chunk provider timeout.
+ * Historical Stage 3.15A whole-run wait window (default 7000 ms).
+ *
+ * Deprecated as enhancement publication authority, T1, T2, T3, Continue
+ * timeout, edit-lock duration, and recovery lease. Readable for compatibility
+ * and historical SKIPPED/timeout rows. New correctness must not depend on it.
  */
 export const DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS = 7000;
 
@@ -256,9 +402,12 @@ export function getTranscriptEnhancementTimeoutMs(): number {
 }
 
 export function getTranscriptEnhancementMaxRetries(): number {
-  const raw = Number(process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES ?? "1");
+  const raw = Number(
+    process.env.TRANSCRIPT_ENHANCEMENT_MAX_RETRIES ??
+      String(DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_RETRIES),
+  );
   if (!Number.isFinite(raw) || raw < 0) {
-    return 1;
+    return DEFAULT_TRANSCRIPT_ENHANCEMENT_MAX_RETRIES;
   }
   return Math.min(3, Math.round(raw));
 }

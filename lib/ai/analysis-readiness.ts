@@ -1,5 +1,4 @@
 import { TranscriptStatus } from "@/app/generated/prisma/client";
-import { isEnhancementStatusRunning } from "@/lib/post-processing/projection";
 import { isSpeakerMappingReadyForAnalysis } from "@/lib/transcription/speaker-mapping-readiness";
 
 export type TranscriptForAiAnalysisReadiness = {
@@ -10,6 +9,7 @@ export type TranscriptForAiAnalysisReadiness = {
   speakerMappingStatus: string | null;
   speakerMapping: unknown;
   enhancementStatus?: string | null;
+  enhancementPublicationEligible?: boolean | null;
   participants?: Array<{ id: string; type: string }>;
   segments: Array<{
     speakerLabel: string | null;
@@ -48,10 +48,9 @@ export function hasUsableTranscriptContent(
 
 /**
  * Canonical server-side readiness contract used by the materials UI and the
- * authoritative analyze endpoint. Enhancement RUNNING blocks only while the
- * authoritative run is still inside the configured timeout window; other
- * enhancement states remain optional once the raw transcript is usable and
- * mapping is structurally complete.
+ * authoritative analyze endpoint. AI is blocked only while enhancement
+ * publicationEligible is true. RUNNING leftover diagnostics after eligibility
+ * is revoked do not block AI.
  */
 export function evaluateAiAnalysisReadiness(
   transcript: TranscriptForAiAnalysisReadiness | null,
@@ -91,7 +90,13 @@ export function evaluateAiAnalysisReadiness(
       speakerMappingReady,
     };
   }
-  if (isEnhancementStatusRunning(transcript.enhancementStatus)) {
+  const publicationEligible =
+    transcript.enhancementPublicationEligible === true ||
+    (transcript.enhancementPublicationEligible == null &&
+      (transcript.enhancementStatus === "IN_PROGRESS" ||
+        transcript.enhancementStatus === "RUNNING" ||
+        transcript.enhancementStatus === "QUEUED"));
+  if (publicationEligible) {
     return {
       ready: false,
       reason: "ENHANCEMENT_RUNNING",

@@ -770,11 +770,13 @@ export const ru: Dictionary = {
     transcriptEnhancementSuggested:
       "Рекомендуется дополнительное улучшение качества транскрипта.",
     transcriptEnhancementReasons: "Причины",
-    runTranscriptEnhancement: "Улучшить транскрипт",
+    runTranscriptEnhancement: "Запустить ИИ-улучшение",
     transcriptEnhancementInProgress: "Транскрипт готов. Выполняется ИИ-улучшение…",
     transcriptEnhancementCompleted: "ИИ-улучшение завершено",
     transcriptEnhancementFailed: "Транскрипт готов, но ИИ-улучшение не выполнено",
     transcriptEnhancementSkipped: "Транскрипт готов. ИИ-улучшение было пропущено.",
+    transcriptEnhancementSkippedRetainingPrior:
+      "Транскрипт готов. Новая попытка ИИ-улучшения пропущена. Используется ранее улучшенный текст.",
     transcriptEnhancementMayTakeTime:
       "Улучшение выполняется отдельным AI-шагом и может занять заметное время.",
     speakerSlotLabel: "Говорящий",
@@ -841,8 +843,9 @@ export const ru: Dictionary = {
       partiallyMapped:
         "Сопоставление заполнено частично. Назначьте оставшихся говорящих.",
       appliedNeedsConfirmation:
-        "Сопоставление применено автоматически. При необходимости проверьте или измените его.",
+        "Сопоставление выполнено автоматически",
     },
+    reviewOrChangeMapping: "Проверить / изменить",
     suggested: "Предложено",
     confidenceHigh: "Высокая",
     confidenceMedium: "Средняя",
@@ -851,6 +854,8 @@ export const ru: Dictionary = {
     saveMappingAction: "Сохранить сопоставление",
     skipSpeakerMappingForNow: "Пропустить пока",
     speakerMappingSaved: "Сопоставление сохранено",
+    speakerMappingGenerationMismatch:
+      "Сопоставление устарело. Транскрипт обновлён — проверьте назначение и сохраните снова.",
     speakerMappingCanChangeLater: "Сопоставление можно изменить позже",
     speakerMappingAutoAppliedCompact: "Сопоставление применено автоматически.",
     secondsShort: "с",
@@ -1029,7 +1034,9 @@ export const ru: Dictionary = {
       "ИИ-улучшение не выполнено. Используется базовый транскрипт.",
     transcriptEnhancementNotStarted: "ИИ-улучшение не запущено.",
     transcriptEnhancementSkipped: "Транскрипт готов. ИИ-улучшение было пропущено.",
-    runTranscriptEnhancement: "Улучшить транскрипт",
+    transcriptEnhancementSkippedRetainingPrior:
+      "Транскрипт готов. Новая попытка ИИ-улучшения пропущена. Используется ранее улучшенный текст.",
+    runTranscriptEnhancement: "Запустить ИИ-улучшение",
     retryTranscriptEnhancement: "Повторить ИИ-улучшение",
     transcriptEnhancementRecommended:
       "Система рекомендует выполнить дополнительное улучшение качества транскрипта.",
@@ -1064,10 +1071,56 @@ export const ru: Dictionary = {
     stageActionRequired: "Требуется действие",
     stageInformational: "Информация",
     stageFailed: "Ошибка",
-    stageNotApplicable: "Не применяется",
+    stageNotApplicable: "Не применилось",
     enhancementFailedContinueHint:
       "Можно повторить улучшение или продолжить ИИ-разбор с текущим транскриптом.",
     continueWithCurrentTranscript: "Продолжить с текущим транскриптом",
+    skipEnhancement: "Пропустить ИИ-улучшение",
+    skipEnhancementHint:
+      "Можно продолжить с текущим транскриптом — результат выполняющегося ИИ-улучшения не будет применён.",
+    enhancementStatusRunning: "ИИ-улучшение выполняется",
+    enhancementTranscriptLocalProgress:
+      "ИИ-улучшение выполняется · {completed} из {total} фрагментов",
+    enhancementStatusCompleted: "ИИ-улучшение выполнено",
+    enhancementStatusFailed: "ИИ-улучшение завершилось с ошибкой",
+    enhancementStatusPartial: "ИИ-улучшение завершилось не полностью",
+    enhancementStatusSkipped: "ИИ-улучшение пропущено",
+    enhancementStatusSkippedBody: "Используется текущий транскрипт.",
+    enhancementStatusSkippedRetainingPrior:
+      "Новая попытка ИИ-улучшения пропущена. Используется ранее улучшенный текст.",
+    enhancementStatusSkippedRetainingPriorBody: "Используется ранее улучшенный текст.",
+    enhancementRailRunning: "Выполняется",
+    enhancementProgressFragments: "{completed} из {total} фрагментов обработано",
+    enhancementLexicalViewOnly:
+      "Текст сейчас только для просмотра, пока улучшение может его заменить.",
+    enhancementAiBlockedWaitOrSkip:
+      "Доступен после завершения или пропуска ИИ-улучшения.",
+    enhancementPublishedRaw: "Сейчас используется исходный транскрипт.",
+    enhancementPublishedEnhanced: "Сейчас используется улучшенный транскрипт.",
+    enhancementTurnApplied: "Текст улучшен ИИ",
+    enhancementTurnRaw: "Исходная расшифровка",
+    enhancementTurnEdited: "Отредактировано вручную",
+    enhancementTerminalPartial:
+      "Улучшение завершилось не полностью. Текущий опубликованный транскрипт не смешан с недоделанными фрагментами.",
+    enhancementHistoricalTimeout:
+      "Предыдущая попытка улучшения была прервана по таймауту. Текущий транскрипт остаётся доступным.",
+    enhancementContinued: "ИИ-улучшение пропущено. Используется текущий транскрипт.",
+    enhancementContinuedRetainingPrior:
+      "Новая попытка ИИ-улучшения пропущена. Используется ранее улучшенный текст.",
+    enhancementRunningIneligible:
+      "Оставшаяся обработка улучшения больше не может заменить этот транскрипт.",
+    enhancementUnsavedLexicalWarn:
+      "Несохранённые правки транскрипта не будут отправлены в ИИ. Будет использован последний сохранённый опубликованный транскрипт.",
+    enhancementPermanentFailureRunning:
+      "Один фрагмент завершился с постоянной ошибкой. Текущий опубликованный транскрипт остаётся авторитетным.",
+    aiAnalysisEnhancementSkippedTitle: "ИИ-улучшение транскрипта было пропущено",
+    aiAnalysisEnhancementSkippedBody:
+      "ИИ-разбор будет выполнен по текущей версии транскрипта.",
+    aiAnalysisEnhancementSkippedHint:
+      "Результат может быть менее точным, чем после успешного ИИ-улучшения.",
+    aiAnalysisEnhancementNotAppliedTitle: "ИИ-улучшение транскрипта не применено",
+    aiAnalysisEnhancementNotAppliedBody:
+      "ИИ-разбор будет выполнен по текущей версии транскрипта.",
     aiAnalysis: "ИИ-разбор",
     waitingForTranscript: "Ожидаем готовности транскрипта.",
     transcriptReadyForAnalysis: "Транскрипт готов. Можно запустить ИИ-разбор.",

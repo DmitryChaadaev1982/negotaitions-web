@@ -12,6 +12,16 @@
   and `NODE_ENV=production`; the CLI must not load local Next `.env*`
   in that mode. Local/non-production runs load project `.env*` from cwd
   before Prisma or required config is constructed.
+- The application service and the Stage 3.10 maintenance oneshot are separate
+  processes that both run transcript-enhancement provider work, so global
+  provider concurrency cannot be process-local. Both acquire leases from the
+  same `TranscriptEnhancementProviderSlot` inventory in PostgreSQL (hard caps:
+  10 slots globally, 8 per job; configuration may lower either value and can
+  never raise it), which is the single cross-process admission authority.
+  A killed process does not leak capacity: its slot leases expire after the
+  provider timeout plus slack. Set enhancement concurrency and retry env values
+  consistently in both independent production env files, because neither
+  process is authoritative on its own.
 - Stage 3.18A automatic-close values must be identical in both independent
   production env files. The application service reads
   `/var/www/negotaitions/app/.env.production`. The maintenance unit reads
@@ -115,7 +125,8 @@ Durable operational rule. Operator procedures live in
   Do not run `npx prisma generate` or a raw `prisma generate`.
 - Runtime permission normalization uses an explicit reviewed allowlist that
   includes transitive operational-script dependencies such as recording-attempt
-  fencing, exact-attempt recording reconciliation/policy, and the pure
+  fencing, exact-attempt recording reconciliation/policy, the generic
+  enhancement provider-call observation seam, and the pure
   legacy-session terminal normalization CLI guard.
 - This document does not introduce new deploy commands; it captures current documented model only.
 
@@ -144,6 +155,55 @@ preflight predicates and rollback steps are in
 ## Constraints
 
 - No Prisma schema/migration changes are part of architecture-doc updates alone.
+- Historical DB-only Prisma migrations are accepted only when explicitly
+  archived under `prisma/legacy-production-history` with verified
+  checksum, successful-row, and trusted schema-effect evidence. Unknown
+  successful `_prisma_migrations` rows still fail closed
+  (`REFUSE_UNKNOWN_LEGACY_DIVERGENCE`). The archive manifest and archive
+  directories must match `LEGACY_PRODUCTION_MIGRATIONS` exactly; an extra
+  file under the archive directory is not authority. Every archived entry
+  that requires schema-effect authority must declare an explicit
+  `schemaEffectId`; missing, empty, or unknown ids are refused and are
+  never defaulted from the migration name. The current archived
+  production evidence is the June pre-squash pair plus
+  `20260810120000_add_ai_analysis_progress`. Admission also requires the
+  leftover `public."AiAnalysis"."progressJson"` JSONB nullable column and
+  the trusted leftover two-pass/diarization columns for the June pair.
+  Each expected schema/table/column fact requires exactly one matching
+  `information_schema` observation: zero matches refuse missing, and
+  identical or conflicting duplicates refuse ambiguous. First-match
+  selection is not authority. Code/manifest own this truth; this
+  document is not a second allowlist.
+- The additive `20260916090000_add_transcript_enhancement_provider_slots`
+  migration must be applied on any database the new client reads, including the
+  local development database, before the application serves transcript
+  enhancement. It creates `TranscriptEnhancementProviderSlot` and seeds the
+  fixed inventory of 10 slot rows; provider admission fails closed without it.
+  Production apply uses the guarded overlay after exact pending-set equality
+  against `EXPECTED_RELEASE_PENDING_MIGRATIONS` (currently only
+  `20260916090000_add_transcript_enhancement_provider_slots`). Pre-deploy
+  pending must be exactly that set and the current release migration must
+  not already have a history row (`PRE_DEPLOY_ALLOW`). After apply,
+  `POST_DEPLOY_SAFE` requires empty pending, a successful-row predicate
+  match (`finished_at` set, `rolled_back_at` null, valid
+  `applied_steps_count`, logs free of failure/P30xx evidence), a DB
+  checksum that exactly matches the current active migration artifact
+  read from `prisma/migrations/<name>/migration.sql`, and
+  no unrelated history divergence. Name presence is not authority. The
+  migration is never applied by a
+  validation or UAT command. First-deploy order: pre-migration checks that
+  do not query the new table; guarded overlay status; apply the admitted
+  migration; verify migration state; **POST-MIGRATION ONLY** inspect
+  provider-slot rows/leases; then continue normal readiness. On first deploy,
+  do not query `TranscriptEnhancementProviderSlot` before the migration creates
+  it.
+- Enhancement quiescence for a deployment hold is decided by current D1 state —
+  `executionStatus`, `publicationEligible`, `runId` currentness, and
+  `leaseExpiresAt` — plus unexpired `TranscriptEnhancementProviderSlot` leases.
+  Elapsed wall time is not authority: the deprecated
+  `TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS` (default `7000`) never makes an eligible
+  job with a valid lease quiescent. Predicates are in
+  `docs/operations/deployment-runbook.md`.
 - The Stage 3.15A additive `AiAnalysis.inputFingerprint` migration must be
   applied on any database the new client reads, including local. Production
   apply uses the guarded overlay

@@ -2,6 +2,7 @@ import {
   isEnhancementStatusRunning,
   isTranscriptEnhancementTerminal,
 } from "@/lib/post-processing/projection";
+import { projectTranscriptEnhancementStatus } from "@/lib/services/transcript-enhancement-job";
 import {
   getTranscriptEnhancementNamespace,
   isTranscriptEnhancementRunning,
@@ -17,12 +18,6 @@ export type TranscriptEnhancementUiStatus =
   | "FAILED"
   | "SKIPPED";
 
-function asMetadata(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 /**
  * Canonical materials/status enhancement vocabulary.
  * Persisted run status uses RUNNING; UI/API running is IN_PROGRESS.
@@ -30,18 +25,7 @@ function asMetadata(value: unknown): Record<string, unknown> {
 export function resolveTranscriptEnhancementStatus(
   processingMetadata: unknown,
 ): TranscriptEnhancementUiStatus {
-  const metadata = asMetadata(processingMetadata);
-  const enhancement = asMetadata(metadata.transcriptEnhancement);
-  const recommendation = asMetadata(metadata.transcriptEnhancementRecommendation);
-  const status = typeof enhancement.status === "string" ? enhancement.status : null;
-  if (isEnhancementStatusRunning(status)) return "IN_PROGRESS";
-  if (status === "FAILED") return "FAILED";
-  if (status === "PARTIAL") return "PARTIAL";
-  if (status === "COMPLETED") return "COMPLETED";
-  if (status === "SKIPPED") return "SKIPPED";
-  if (recommendation.suggested === true) return "SUGGESTED";
-  if (metadata.transcriptionProvider === "yandex_speechkit") return "IDLE";
-  return "NOT_AVAILABLE";
+  return projectTranscriptEnhancementStatus(processingMetadata).uiStatus;
 }
 
 export function isEffectiveTranscriptEnhancementRunning(

@@ -12,6 +12,30 @@ export function isExternalServicesMockMode() {
   return process.env.EXTERNAL_SERVICES_MODE === "mock";
 }
 
+export function isProductionRuntime() {
+  return (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+}
+
+/**
+ * Post-processing Facilitator Lab exercises real materials/transcript APIs
+ * against the isolated E2E database. It does not need LiveKit/Vox signaling.
+ * The flag is non-production only: a production runtime ignores it entirely so
+ * a stray environment variable can never suppress Product behavior.
+ */
+export function isPostTranscriptionLabMode() {
+  if (isProductionRuntime()) return false;
+  return process.env.POST_TRANSCRIPTION_LAB === "1";
+}
+
+/**
+ * Realtime transport fails closed: production always connects LiveKit/Vox, and
+ * only a non-production Lab runtime may suppress browser signaling.
+ */
+export function shouldConnectBrowserRealtimeTransport() {
+  if (isProductionRuntime()) return true;
+  return !isPostTranscriptionLabMode();
+}
+
 export function isRecordingMockMode() {
   return (
     process.env.RECORDING_MODE === "mock" ||

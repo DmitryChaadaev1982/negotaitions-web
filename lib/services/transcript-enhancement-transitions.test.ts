@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { TranscriptStatus } from "@/app/generated/prisma/client";
 import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
 import { getTranscriptEnhancementNamespace } from "@/lib/transcription/processing-metadata";
 import {
-  ENHANCEMENT_TIMEOUT_SKIP_REASON,
   isEnhancementRunTimedOut,
   persistEnhancementTimeoutSkip,
   reconcileTranscriptEnhancementTimeout,
@@ -23,6 +23,8 @@ type InMemorySegment = {
 
 type InMemoryTranscript = {
   id: string;
+  sessionId: string;
+  status: TranscriptStatus;
   text: string;
   diarizedText: string | null;
   updatedAt: Date;
@@ -43,6 +45,8 @@ type InMemoryTranscript = {
 function cloneTranscript(state: InMemoryTranscript) {
   return {
     id: state.id,
+    sessionId: state.sessionId,
+    status: state.status,
     text: state.text,
     diarizedText: state.diarizedText,
     updatedAt: state.updatedAt,
@@ -97,6 +101,9 @@ function createInMemoryDb(state: InMemoryTranscript) {
       },
     },
     $transaction: async <T>(callback: (tx: typeof db) => Promise<T>) => callback(db),
+    aiAnalysis: {
+      findUnique: async () => null,
+    },
   };
   return db;
 }
@@ -109,6 +116,8 @@ function enhancementStatus(state: InMemoryTranscript): string | null {
 function baseTranscript(id: string): InMemoryTranscript {
   return {
     id,
+    sessionId: `session-${id}`,
+    status: TranscriptStatus.COMPLETED,
     text: "original transcript",
     diarizedText: "speaker_1: original transcript",
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -278,17 +287,13 @@ test("ET02_FAST_FAILURE keeps original transcript and unlocks as FAILED", async 
   });
 });
 
-test("ET03_TIMEOUT keeps original transcript and becomes non-authoritative SKIPPED", async () => {
+test("healthy D1 work is not SKIPPED by the historical 7000 ms window", async () => {
   await withEnhancementEnv(async () => {
     const { executeTranscriptEnhancement } = await import(
       "@/lib/services/transcript-enhancement-orchestration"
     );
     const state = baseTranscript("tr_et03");
     const db = createInMemoryDb(state);
-    let resolveTimeout: (() => void) | null = null;
-    const timeoutGate = new Promise<void>((resolve) => {
-      resolveTimeout = resolve;
-    });
     let resolveProvider: (() => void) | null = null;
     const run = executeTranscriptEnhancement({
       transcriptId: state.id,
@@ -302,33 +307,37 @@ test("ET03_TIMEOUT keeps original transcript and becomes non-authoritative SKIPP
           });
           return completedEnhance("late enhanced transcript");
         }) as never,
-        waitForTimeout: () => timeoutGate,
+        schedule: (work) => {
+          void work();
+        },
+        waitForTimeout: () => Promise.resolve(),
+        timeoutMs: 7000,
       },
     });
-    await waitUntil(() => enhancementStatus(state) === "RUNNING", "RUNNING");
-    resolveTimeout?.();
-    await waitUntil(() => enhancementStatus(state) === "SKIPPED", "SKIPPED");
-    await run;
+    await waitUntil(() => {
+      const status = enhancementStatus(state);
+      return status === "RUNNING" || status === "QUEUED";
+    }, "RUNNING");
+    await waitUntil(() => resolveProvider !== null, "provider gate");
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.notEqual(enhancementStatus(state), "SKIPPED");
     assert.equal(state.text, "original transcript");
-    assert.equal(
-      getTranscriptEnhancementNamespace(state.processingMetadata).skipReason,
-      ENHANCEMENT_TIMEOUT_SKIP_REASON,
-    );
     resolveProvider?.();
+    await waitUntil(() => state.text === "late enhanced transcript", "enhanced text");
+    await run;
   });
 });
 
-test("ET04_LATE_SUCCESS_AFTER_TIMEOUT discards the late provider result", async () => {
+test("Continue discards a late provider result without mixed publication", async () => {
   await withEnhancementEnv(async () => {
     const { executeTranscriptEnhancement } = await import(
       "@/lib/services/transcript-enhancement-orchestration"
+    );
+    const { continueWithCurrentTranscript } = await import(
+      "@/lib/services/transcript-enhancement-state"
     );
     const state = baseTranscript("tr_et04");
     const db = createInMemoryDb(state);
-    let resolveTimeout: (() => void) | null = null;
-    const timeoutGate = new Promise<void>((resolve) => {
-      resolveTimeout = resolve;
-    });
     let resolveProvider: (() => void) | null = null;
     let providerSettled = false;
     const run = executeTranscriptEnhancement({
@@ -344,35 +353,38 @@ test("ET04_LATE_SUCCESS_AFTER_TIMEOUT discards the late provider result", async 
           providerSettled = true;
           return completedEnhance("late enhanced transcript");
         }) as never,
-        waitForTimeout: () => timeoutGate,
+        schedule: (work) => {
+          void work();
+        },
       },
     });
-    await waitUntil(() => enhancementStatus(state) === "RUNNING", "RUNNING");
-    resolveTimeout?.();
-    await waitUntil(() => enhancementStatus(state) === "SKIPPED", "SKIPPED");
-    await run;
+    await waitUntil(() => {
+      const status = enhancementStatus(state);
+      return status === "RUNNING" || status === "QUEUED";
+    }, "RUNNING");
+    state.speakerMapping = { speaker_1: "old-mapping" };
+    await continueWithCurrentTranscript({ db: db as never, transcriptId: state.id });
+    state.speakerMapping = { speaker_1: "latest-mapping" };
     resolveProvider?.();
     await waitUntil(() => providerSettled, "late provider");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await run;
     assert.equal(state.text, "original transcript");
-    assert.equal(enhancementStatus(state), "SKIPPED");
+    assert.equal(state.speakerMapping?.speaker_1, "latest-mapping");
+    assert.notEqual(enhancementStatus(state), "COMPLETED");
   });
 });
 
-test("ET05_TIMEOUT_THEN_MANUAL_EDIT preserves the manual edit against a late result", async () => {
+test("LAB27-04 Skip preserves mapping saved while RUNNING", async () => {
   await withEnhancementEnv(async () => {
     const { executeTranscriptEnhancement } = await import(
       "@/lib/services/transcript-enhancement-orchestration"
     );
-    const state = baseTranscript("tr_et05");
+    const { continueWithCurrentTranscript } = await import(
+      "@/lib/services/transcript-enhancement-state"
+    );
+    const state = baseTranscript("tr_lab27_skip_mapping");
     const db = createInMemoryDb(state);
-    let resolveTimeout: (() => void) | null = null;
-    const timeoutGate = new Promise<void>((resolve) => {
-      resolveTimeout = resolve;
-    });
     let resolveProvider: (() => void) | null = null;
-    let providerSettled = false;
     const run = executeTranscriptEnhancement({
       transcriptId: state.id,
       triggerSource: "manual",
@@ -383,40 +395,40 @@ test("ET05_TIMEOUT_THEN_MANUAL_EDIT preserves the manual edit against a late res
           await new Promise<void>((resolve) => {
             resolveProvider = resolve;
           });
-          providerSettled = true;
           return completedEnhance("late enhanced transcript");
         }) as never,
-        waitForTimeout: () => timeoutGate,
+        schedule: (work) => {
+          void work();
+        },
       },
     });
-    await waitUntil(() => enhancementStatus(state) === "RUNNING", "RUNNING");
-    resolveTimeout?.();
-    await waitUntil(() => enhancementStatus(state) === "SKIPPED", "SKIPPED");
-    await run;
-    state.text = "manual facilitator edit";
-    state.segments[0]!.text = "manual facilitator edit";
+    await waitUntil(() => {
+      const status = enhancementStatus(state);
+      return status === "RUNNING" || status === "QUEUED";
+    }, "RUNNING");
+    state.speakerMapping = { speaker_1: "buyer" };
+    const continued = await continueWithCurrentTranscript({
+      db: db as never,
+      transcriptId: state.id,
+    });
+    assert.equal(continued.outcome, "cancelled");
+    assert.equal(state.speakerMapping?.speaker_1, "buyer");
+    assert.equal(state.text, "original transcript");
     resolveProvider?.();
-    await waitUntil(() => providerSettled, "late provider");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(state.text, "manual facilitator edit");
-    assert.equal(state.segments[0]?.text, "manual facilitator edit");
+    await run;
+    assert.equal(state.speakerMapping?.speaker_1, "buyer");
+    assert.equal(state.text, "original transcript");
   });
 });
 
-test("ET06_TIMEOUT_THEN_MAPPING preserves mapping and canonical diarizedText", async () => {
+test("mapping during RUNNING survives later successful publication", async () => {
   await withEnhancementEnv(async () => {
     const { executeTranscriptEnhancement } = await import(
       "@/lib/services/transcript-enhancement-orchestration"
     );
     const state = baseTranscript("tr_et06");
     const db = createInMemoryDb(state);
-    let resolveTimeout: (() => void) | null = null;
-    const timeoutGate = new Promise<void>((resolve) => {
-      resolveTimeout = resolve;
-    });
     let resolveProvider: (() => void) | null = null;
-    let providerSettled = false;
     const run = executeTranscriptEnhancement({
       transcriptId: state.id,
       triggerSource: "manual",
@@ -427,104 +439,30 @@ test("ET06_TIMEOUT_THEN_MAPPING preserves mapping and canonical diarizedText", a
           await new Promise<void>((resolve) => {
             resolveProvider = resolve;
           });
-          providerSettled = true;
-          return completedEnhance("late enhanced transcript");
+          return completedEnhance("enhanced transcript");
         }) as never,
-        waitForTimeout: () => timeoutGate,
+        schedule: (work) => {
+          void work();
+        },
       },
     });
-    await waitUntil(() => enhancementStatus(state) === "RUNNING", "RUNNING");
-    resolveTimeout?.();
-    await waitUntil(() => enhancementStatus(state) === "SKIPPED", "SKIPPED");
-    await run;
+    await waitUntil(() => {
+      const status = enhancementStatus(state);
+      return status === "RUNNING" || status === "QUEUED";
+    }, "RUNNING");
+    await waitUntil(() => resolveProvider !== null, "provider gate");
     state.speakerMapping = { speaker_1: "buyer" };
     state.segments[0]!.mappedParticipantId = "buyer";
-    state.diarizedText = buildCanonicalDiarizedText({
-      segments: [
-        {
-          speakerLabel: "speaker_1",
-          displaySpeakerLabel: null,
-          startSeconds: 0,
-          endSeconds: 1,
-          text: "original transcript",
-          orderIndex: 0,
-        },
-      ],
-      speakerMapping: { speaker_1: "buyer" },
-      participants: [{ id: "buyer", displayName: "Buyer", type: "PARTICIPANT" }],
-    });
-    const mappedDiarized = state.diarizedText;
     resolveProvider?.();
-    await waitUntil(() => providerSettled, "late provider");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(state.speakerMapping?.speaker_1, "buyer");
-    assert.equal(state.diarizedText, mappedDiarized);
-    assert.equal(state.text, "original transcript");
-  });
-});
-
-test("ET07_TIMEOUT_THEN_AI keeps the accepted snapshot against a late result", async () => {
-  await withEnhancementEnv(async () => {
-    const { executeTranscriptEnhancement } = await import(
-      "@/lib/services/transcript-enhancement-orchestration"
-    );
-    const { evaluateAiAnalysisReadiness } = await import("@/lib/ai/analysis-readiness");
-    const { TranscriptStatus } = await import("@/app/generated/prisma/client");
-    const state = baseTranscript("tr_et07");
-    const db = createInMemoryDb(state);
-    let resolveTimeout: (() => void) | null = null;
-    const timeoutGate = new Promise<void>((resolve) => {
-      resolveTimeout = resolve;
-    });
-    let resolveProvider: (() => void) | null = null;
-    let providerSettled = false;
-    const run = executeTranscriptEnhancement({
-      transcriptId: state.id,
-      triggerSource: "manual",
-      runInBackground: true,
-      dependencies: {
-        db: db as never,
-        enhance: (async () => {
-          await new Promise<void>((resolve) => {
-            resolveProvider = resolve;
-          });
-          providerSettled = true;
-          return completedEnhance("late enhanced transcript");
-        }) as never,
-        waitForTimeout: () => timeoutGate,
-      },
-    });
-    await waitUntil(() => enhancementStatus(state) === "RUNNING", "RUNNING");
-    resolveTimeout?.();
-    await waitUntil(() => enhancementStatus(state) === "SKIPPED", "SKIPPED");
+    await waitUntil(() => state.text === "enhanced transcript", "published enhanced text");
     await run;
-    const aiSnapshot = {
-      text: state.text,
-      diarizedText: state.diarizedText,
-    };
-    const readiness = evaluateAiAnalysisReadiness({
-      status: TranscriptStatus.COMPLETED,
-      text: state.text,
-      diarizedText: state.diarizedText,
-      hasSpeakerDiarization: false,
-      speakerMappingStatus: "NOT_REQUIRED",
-      speakerMapping: null,
-      enhancementStatus: enhancementStatus(state),
-      segments: state.segments,
-    });
-    assert.equal(readiness.ready, true);
-    assert.notEqual(readiness.reason, "ENHANCEMENT_RUNNING");
-    resolveProvider?.();
-    await waitUntil(() => providerSettled, "late provider");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(state.text, aiSnapshot.text);
-    assert.equal(state.diarizedText, aiSnapshot.diarizedText);
+    assert.equal(state.speakerMapping?.speaker_1, "buyer");
+    assert.match(state.diarizedText ?? "", /Buyer|enhanced transcript/);
+    assert.equal(state.text, "enhanced transcript");
   });
 });
 
-test("stale RUNNING recovery writes SKIPPED timeout instead of starting a new run", async () => {
+test("historical SKIPPED timeout remains readable and Improve can start a new-format job", async () => {
   await withEnhancementEnv(async () => {
     const { executeTranscriptEnhancement } = await import(
       "@/lib/services/transcript-enhancement-orchestration"
@@ -534,9 +472,9 @@ test("stale RUNNING recovery writes SKIPPED timeout instead of starting a new ru
     state.processingMetadata = {
       transcriptionProvider: "yandex_speechkit",
       transcriptEnhancement: {
-        status: "RUNNING",
+        status: "SKIPPED",
+        skipReason: "timeout",
         runId: "old-run",
-        inputIdentity: "will-not-match-new-identity-until-hash",
         startedAt,
       },
     };
@@ -545,35 +483,43 @@ test("stale RUNNING recovery writes SKIPPED timeout instead of starting a new ru
     const result = await executeTranscriptEnhancement({
       transcriptId: state.id,
       triggerSource: "manual",
+      forceReenhancement: true,
       dependencies: {
         db: db as never,
-        now: () => Date.parse(startedAt) + 8_000,
-        timeoutMs: 7000,
         enhance: (async () => {
           enhanceCalled = true;
-          return completedEnhance("should not run");
+          return completedEnhance("new durable enhance");
         }) as never,
-        waitForTimeout: () => new Promise(() => {}),
       },
     });
-    assert.equal(result.outcome, "skipped");
-    assert.equal(enhanceCalled, false);
-    assert.equal(enhancementStatus(state), "SKIPPED");
-    assert.equal(
-      getTranscriptEnhancementNamespace(state.processingMetadata).skipReason,
-      ENHANCEMENT_TIMEOUT_SKIP_REASON,
-    );
+    assert.equal(result.outcome, "started");
+    assert.equal(enhanceCalled, true);
+    assert.equal(state.text, "new durable enhance");
+    assert.equal(enhancementStatus(state), "COMPLETED");
   });
 });
 
-test("reconcileTranscriptEnhancementTimeout persists SKIPPED for a hung RUNNING run", async () => {
+test("reconcileTranscriptEnhancementTimeout does not persist SKIPPED for D1 work", async () => {
   const startedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
   const state = baseTranscript("tr_reconcile");
   state.processingMetadata = {
+    transcriptionProvider: "yandex_speechkit",
     transcriptEnhancement: {
+      schemaVersion: "d1-v1",
+      executionStatus: "RUNNING",
+      publicationEligible: true,
       status: "RUNNING",
       runId: "hung-run",
       startedAt,
+      chunks: {
+        "0": {
+          chunkIndex: 0,
+          status: "RUNNING",
+          targetIndexes: [0],
+          attemptCount: 1,
+          unpublishedByOrderIndex: {},
+        },
+      },
     },
   };
   const db = createInMemoryDb(state);
@@ -583,9 +529,8 @@ test("reconcileTranscriptEnhancementTimeout persists SKIPPED for a hung RUNNING 
     nowMs: Date.parse(startedAt) + 8_000,
     timeoutMs: 7000,
   });
-  assert.equal(result.timedOut, true);
-  assert.equal(result.running, false);
-  assert.equal(enhancementStatus(state), "SKIPPED");
+  assert.equal(result.timedOut, false);
+  assert.notEqual(enhancementStatus(state), "SKIPPED");
   const lateWrite = await persistEnhancementTimeoutSkip({
     db: db as never,
     transcriptId: state.id,

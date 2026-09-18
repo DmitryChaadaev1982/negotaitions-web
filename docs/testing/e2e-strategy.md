@@ -60,27 +60,55 @@ Curated deterministic browser smoke:
 
 - `npm run test:e2e:smoke:browser`
 
-Post-processing Facilitator Lab (Stage 3.15A, fail-closed, headed, real UI).
-`STATE_FIXTURE` seeds persisted UI states. `PIPELINE_FIXTURE` (AM01–AM14) seeds
-only transcription/telemetry inputs and then runs the real
-`autoTriggerSpeakerMappingAfterTranscription` path.
+Post-processing Facilitator Lab (fail-closed, real Product routes/UI, isolated
+E2E DB). `STATE_FIXTURE` seeds persisted UI states. `PIPELINE_FIXTURE` (AM01–AM14)
+seeds only transcription/telemetry inputs and then runs the real
+`autoTriggerSpeakerMappingAfterTranscription` path. BUG02 `LAB-01`…`LAB-28`
+reuse this Lab; they are not a second fixture system. Future `startedAt +24h`
+timeout evasion is not used.
 
 - `npm run lab:post-transcription -- S10`
 - `npm run lab:post-transcription -- S10 E02`
 - `npm run lab:post-transcription -- S10 --smoke`
 - `npm run lab:post-transcription -- AM01 AM02 AM03 AM04 AM04B AM07A AM07B AM07C AM07D AM07E AM11 --smoke`
 - `npm run lab:post-transcription -- E05`
+- BUG02 automated subset (headless, no operator pause):
+  `npm run lab:post-transcription -- --bug02-automated --smoke --headless`
+- BUG02 operator UAT preset (B02-4 headed; pauses A, B, C1/C2, D):
+  `npm run lab:post-transcription -- --bug02-uat`
+  Pause A = LAB-07 RUNNING surface (covers LAB-08 lexical lock). Pause B =
+  LAB-10 in-place COMPLETED. Pause C1 = LAB-23 RUNNING + Skip in Step 2
+  (do not start AI). Automated no-remount / post-Skip assertions run
+  immediately after Skip. Pause C2 = open real Start AI, inspect the
+  skipped-enhancement consent warning, cancel/close; do not complete AI.
+  Pause D1 = LAB-27 RUNNING (Skip visible, mapping inspect/change; do not
+  Skip until mapping is saved). After Resume, Lab Skip then immediate
+  mapping/mount assertions. Pause D2 = post-Skip mapping continuity.
+  B02-3 smoke of the same preset:
+  `npm run lab:post-transcription -- --bug02-uat --smoke --headless`.
+- Large realistic transcript UAT (real Yandex, isolated E2E DB, not Lab-29,
+  not CP-BENCH): see
+  [large-realistic-enhancement-uat.md](./large-realistic-enhancement-uat.md).
+  Commands: `uat:enhancement:large-provider`,
+  `uat:enhancement:large-manual` (free-form Product UI; no `page.pause()`),
+  `uat:enhancement:large-manual -- --mode=resume` (controlled unfinished
+  resume; Skip is not Resume), `uat:enhancement:large-report -- --latest`,
+  `uat:enhancement:large-cleanup`. Frozen BUG02 settings only
+  (1800 / 8 / 10 / reserved_slot).
 - Headed Manual Checkpoint D pauses inside I01/I03 and after N03/N04/N05:
   `I01-A → I01-B → I03-A → I03-B (warning visible) → I03-C → N03 → N04 → N05`.
   Resume is the Playwright Inspector, not chat. I03-B must not auto-confirm
   before the operator inspects the warning. I03 uses the application
   `ConfirmDialog` (`material-change-confirm-dialog`). After Resume the Lab
   clicks Confirm on that same dialog; it does not wait for or replay a native
-  `window.confirm`. A ready transcript auto-collapses `#transcription-section`.
-  Checkpoint D
-  expands it via `toggle-transcript-section` (`aria-expanded` / `data-state`),
-  not localized Expand/Развернуть copy, then uses
+  `window.confirm`. Checkpoint D expands `#transcription-section` via
+  `toggle-transcript-section` (`aria-expanded` / `data-state`), then uses
   `edit-diarized-transcript-button`.
+- A ready transcript stays expanded while enhancement is eligible/running.
+  The section auto-collapses only after AI is done.
+- LAB-18 recovery without user traffic:
+  `npm run maintenance:stage310 -- --task=enhancement-recovery`
+  (opt-in local ops; default `validate:fast` stays bounded).
   N05 proves lock plus post-meeting visibility: participant own notes remain
   visible and read-only; other participant notes are absent from that
   participant's server projection; facilitator and authorized observer see
@@ -99,6 +127,17 @@ only transcription/telemetry inputs and then runs the real
   ACCEPTED (`docs/handoffs/stage-3-15a-final-validation.md`). Pre-deploy local
   real-session acceptance is a separate operator gate (not Lab fixtures):
   `docs/handoffs/stage-3-15a-local-operator-acceptance.md`.
+- Lab runtime sets `POST_TRANSCRIPTION_LAB=1`. Room pages skip LiveKit/Vox
+  signaling so mock `wss://mock-livekit.invalid` does not emit websocket 1006 /
+  signal ConnectionError during post-processing scenarios. Materials,
+  transcript, mapping, Skip/Continue, and AI routes stay real.
+  The flag is non-production only. `lib/test-mode.ts` ignores it whenever
+  `NODE_ENV=production`, so realtime transport fails closed: production
+  connects LiveKit/Voximplant normally even if the flag is present
+  (`lib/test-mode.test.ts`).
+- `tests/e2e/post-transcription-lab.spec.ts` asserts against those known
+  unrelated localStorage/signaling signatures only. It is not a global
+  “no console.error anywhere” rule.
 
 Stage 3.10 focused deterministic regression (unit + Playwright, includes the
 observer smoke suite; excludes the full observer layout matrix):
@@ -262,7 +301,25 @@ Properties:
 
 - No browser execution
 - No reverse tunnel requirement
-- No intentional DB mutation by Playwright
+- No database mutation at all, including when `E2E_DATABASE_URL` is defined.
+  `*.pg.test.ts` and `tests/pg-race/**` are excluded by file selection, so the
+  fast gate never enters a PostgreSQL suite and never relies on an early return
+  inside one.
+
+Explicit database gates are separate commands and are never part of
+`validate:fast`:
+
+- `npm run test:pg:d1` — D1 persistence/stress; `D1_PASS` is the only accepted
+  result and `D1_REJECT` is a failure.
+- `npm run test:pg:bug02` — BUG02 PostgreSQL authority races
+  (PG-RACE-01..07, SLOT-01..08) under `tests/pg-race/**`.
+- `npm run test:pg` — the remaining `*.pg.test.ts` coordination suites.
+
+They require an isolated E2E database and report
+`PG_INFRASTRUCTURE_REQUIRED` instead of skipping when one is missing.
+`test:pg:bug02` additionally requires the
+`20260916090000_add_transcript_enhancement_provider_slots` migration on that
+database.
 
 `validate:build` includes:
 

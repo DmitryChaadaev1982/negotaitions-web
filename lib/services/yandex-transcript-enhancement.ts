@@ -1,3 +1,10 @@
+import { isRetryableProviderCategory } from "@/lib/services/transcript-enhancement-retry";
+import {
+  ChunkStartRejectedError,
+  isAbortingChunkStartRejection,
+  type EnhancementChunkStartDecision,
+  type EnhancementChunkStartRejectionReason,
+} from "@/lib/services/transcript-enhancement-start-decision";
 import {
   getTranscriptEnhancementChunkMaxChars,
   getTranscriptEnhancementChunkMaxSegments,
@@ -11,7 +18,6 @@ import {
   type TranscriptEnhancementOutputMode,
 } from "@/lib/env";
 
-const SINGLE_REQUEST_TIMEOUT_MS = 120_000;
 const RESPONSE_POLL_INTERVAL_MS = 1_500;
 const RESPONSE_POLL_TIMEOUT_MS = 90_000;
 const CHUNK_CONTEXT_NEIGHBORS = 1;
@@ -209,7 +215,7 @@ type TranscriptEnhancementResponseSchema = {
   };
 };
 
-type EnhancementChunk = {
+export type EnhancementChunk = {
   chunkIndex: number;
   targets: PackedTranscriptEnhancementSegment[];
   contextBefore: PackedTranscriptEnhancementSegment[];
@@ -226,10 +232,16 @@ export type PackedTranscriptEnhancementSegment =
     separatorAfter: string;
   };
 
-type ChunkExecutionResult = {
+export type ChunkExecutionResult = {
   chunkIndex: number;
   enhancedByIndex: Map<number, string>;
   retryCount: number;
+  /** 1-based POST attempt this invocation performed. Exactly one POST. */
+  attemptNumber?: number;
+  /** Normalized retry classification for the D1 retry owner. */
+  retryableFailure?: boolean;
+  httpStatus?: number | null;
+  retryAfterHeader?: string | null;
   modelUsed: string;
   fallbackTriggered: boolean;
   fallbackReason: string | null;
@@ -252,6 +264,10 @@ type ChunkExecutionResult = {
   missingKeyCount?: number;
   extraKeyCount?: number;
   emptyValueCount?: number;
+  usageInputTokens?: number | null;
+  usageOutputTokens?: number | null;
+  usageTotalTokens?: number | null;
+  usageClassification?: "provider" | "unknown" | null;
 };
 
 class ChunkValidationError extends Error {
@@ -260,6 +276,22 @@ class ChunkValidationError extends Error {
   constructor(message: string, category: string) {
     super(message);
     this.category = category;
+  }
+}
+
+/**
+ * Transport-level provider failure carrying the classification inputs the D1
+ * retry owner needs: HTTP status and the raw `Retry-After` header.
+ */
+export class TranscriptEnhancementProviderHttpError extends Error {
+  readonly httpStatus: number;
+  readonly retryAfterHeader: string | null;
+
+  constructor(params: { httpStatus: number; retryAfterHeader: string | null; message: string }) {
+    super(params.message);
+    this.name = "TranscriptEnhancementProviderHttpError";
+    this.httpStatus = params.httpStatus;
+    this.retryAfterHeader = params.retryAfterHeader;
   }
 }
 
@@ -524,30 +556,6 @@ function resolveDynamicMaxOutputTokens(segments: TranscriptEnhancementInputSegme
       : Math.round(400 + inputChars * 0.35);
   const bounded = Math.max(1200, Math.min(maxFromEnv, dynamicLimit));
   return { maxOutputTokens: bounded, estimatedDurationMs, inputChars };
-}
-
-function buildSinglePrompt(segments: TranscriptEnhancementInputSegment[], strictJsonMode = false): string {
-  return [
-    "You are cleaning an automatic Russian speech recognition transcript for a negotiation training app.",
-    "Allowed edits: punctuation, capitalization, grammar, obvious morphology and highly probable ASR corrections.",
-    "Do not add facts, do not invent missing speech, do not merge speakers, do not move words between speakers.",
-    "Do not delete uncertain words. Preserve uncertain wording rather than guessing.",
-    "Do not change timestamps, speaker identity, or segment ordering.",
-    strictJsonMode
-      ? "Output MUST be one JSON object only. No markdown, no code fences, no commentary."
-      : "",
-    "",
-    "Return JSON in this shape:",
-    "{",
-    '  "segments": [',
-    '    { "index": 0, "cleanedText": "...", "changed": true, "changeCategory": "punctuation" }',
-    "  ],",
-    '  "globalWarnings": []',
-    "}",
-    "",
-    "Input segments JSON:",
-    JSON.stringify({ segments }),
-  ].join("\n");
 }
 
 function buildSplitPiecePromptIdentity(
@@ -836,10 +844,64 @@ type RequestEnhancementParams = {
   };
 };
 
+export function extractProviderUsage(envelope: unknown): {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+} {
+  const root = toRecord(envelope);
+  const usage = toRecord(root?.usage) ?? toRecord(toRecord(root?.response)?.usage);
+  if (!usage) {
+    return { inputTokens: null, outputTokens: null, totalTokens: null };
+  }
+  const readNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const inputTokens =
+    readNumber(usage.input_text_tokens) ??
+    readNumber(usage.input_tokens) ??
+    readNumber(usage.prompt_tokens);
+  const outputTokens =
+    readNumber(usage.completion_tokens) ??
+    readNumber(usage.output_tokens) ??
+    readNumber(usage.output_text_tokens);
+  const totalTokens = readNumber(usage.total_tokens);
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+export type ProviderChunkAttempt = {
+  attemptNumber: number;
+  flavor: "same_request" | "strict_json";
+};
+
+export type EnhanceTranscriptOptions = {
+  jobId?: string;
+  skipChunkIndexes?: ReadonlySet<number>;
+  restoredEnhancedByIndex?: Map<number, string>;
+  /**
+   * Attempt descriptor per chunk, supplied by the D1 retry owner. The provider
+   * performs exactly one POST per chunk per invocation and never retries.
+   */
+  attemptByChunkIndex?: ReadonlyMap<number, ProviderChunkAttempt>;
+  onChunkStart?: (
+    chunk: EnhancementChunk,
+  ) => Promise<EnhancementChunkStartDecision | void> | EnhancementChunkStartDecision | void;
+  onChunkFinish?: (
+    result: ChunkExecutionResult,
+    chunk: EnhancementChunk,
+  ) => Promise<void> | void;
+  withProviderSlot?: <T>(fn: () => Promise<T>) => Promise<T>;
+};
+
 async function requestEnhancement(params: RequestEnhancementParams): Promise<{
   envelope: Record<string, unknown>;
   outputText: string;
-  tokensUsed: number;
+  tokensUsed: number | null;
+  usageClassification: "provider" | "unknown";
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  };
   diagnostics: RequestOutputDiagnostics;
 }> {
   const {
@@ -888,9 +950,11 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
     timeoutMs,
   );
   if (!response.ok) {
-    throw new Error(
-      `Yandex transcript enhancement failed with HTTP ${response.status}: ${text.slice(0, 240)}`,
-    );
+    throw new TranscriptEnhancementProviderHttpError({
+      httpStatus: response.status,
+      retryAfterHeader: response.headers?.get?.("retry-after") ?? null,
+      message: `Yandex transcript enhancement failed with HTTP ${response.status}: ${text.slice(0, 240)}`,
+    });
   }
   let envelope: Record<string, unknown>;
   try {
@@ -957,10 +1021,19 @@ async function requestEnhancement(params: RequestEnhancementParams): Promise<{
     emptyOutputStage = outputFieldDetected === "none" ? "initial_response" : "extraction";
   }
 
+  const usage = extractProviderUsage(envelope);
+  const tokensUsed =
+    usage.totalTokens ??
+    (usage.inputTokens != null && usage.outputTokens != null
+      ? usage.inputTokens + usage.outputTokens
+      : null);
+
   return {
     envelope,
     outputText,
-    tokensUsed: maxTokens,
+    tokensUsed,
+    usageClassification: tokensUsed == null ? "unknown" : "provider",
+    usage,
     diagnostics: {
       responseIdPresent: Boolean(responseId),
       initialStatus,
@@ -1356,6 +1429,15 @@ function classifyChunkError(error: unknown): { category: string; retryable: bool
   if (error instanceof ChunkValidationError) {
     return { category: error.category, retryable: false };
   }
+  if (error instanceof TranscriptEnhancementProviderHttpError) {
+    if (error.httpStatus === 429) {
+      return { category: "provider_rate_limit", retryable: true };
+    }
+    if (error.httpStatus >= 500) {
+      return { category: "provider_http_5xx", retryable: true };
+    }
+    return { category: "request_failed", retryable: false };
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (message.includes("timed out") || message.includes("timeout")) {
     return { category: "timeout", retryable: true };
@@ -1384,7 +1466,7 @@ function classifyChunkError(error: unknown): { category: string; retryable: bool
 function resolveSingleEscalatedMaxOutputTokens(params: {
   currentCap: number;
   hardMax: number;
-  tokensUsed?: number;
+  tokensUsed?: number | null;
 }): number | null {
   const nextCap = Math.min(
     params.hardMax,
@@ -1408,186 +1490,20 @@ function resolveRetryHardMaxOutputTokens(currentCap: number, configuredMax: numb
   );
 }
 
-async function runSingleShotEnhancement(params: {
-  segments: TranscriptEnhancementInputSegment[];
-  apiKey: string;
-  folderId: string;
-  modelName: string;
-  baseUrl: string;
-}): Promise<TranscriptEnhancementResult> {
-  const { segments, apiKey, folderId, modelName, baseUrl } = params;
-  const outputMode = getTranscriptEnhancementOutputMode();
-  const maxTokensFromEnv = getYandexTranscriptEnhancementMaxOutputTokens();
-  const { maxOutputTokens, estimatedDurationMs, inputChars } =
-    resolveDynamicMaxOutputTokens(segments);
-  const startedAt = Date.now();
-
-  let currentMaxOutputTokens = maxOutputTokens;
-  let automaticEscalationUsed = false;
-  let { envelope, outputText, tokensUsed } = await requestEnhancement({
-    apiKey,
-    folderId,
-    baseUrl,
-    modelName,
-    maxTokens: maxOutputTokens,
-    timeoutMs: SINGLE_REQUEST_TIMEOUT_MS,
-    input: segments,
-    promptBuilder: (input, strictJsonMode) =>
-      buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
-    outputMode,
-  });
-
-  if (!outputText) {
-    const retryTokens = resolveSingleEscalatedMaxOutputTokens({
-      currentCap: currentMaxOutputTokens,
-      hardMax: resolveRetryHardMaxOutputTokens(
-        currentMaxOutputTokens,
-        maxTokensFromEnv,
-      ),
-      tokensUsed,
-    });
-    if (retryTokens) {
-      automaticEscalationUsed = true;
-      const retryResult = await requestEnhancement({
-        apiKey,
-        folderId,
-        baseUrl,
-        modelName,
-        maxTokens: retryTokens,
-        timeoutMs: SINGLE_REQUEST_TIMEOUT_MS,
-        input: segments,
-        promptBuilder: (input, strictJsonMode) =>
-          buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
-        outputMode,
-      });
-      currentMaxOutputTokens = retryTokens;
-      envelope = retryResult.envelope;
-      outputText = retryResult.outputText;
-      tokensUsed = retryResult.tokensUsed;
-    }
-    if (!outputText) {
-      throw new Error(
-        `Yandex transcript enhancement returned empty model output (status=${String(envelope.status ?? "unknown")}).`,
-      );
-    }
-  }
-
-  let parsed = parseEnhancementPayload(outputText);
-  if (!parsed) {
-    const strictRetryTokens = automaticEscalationUsed
-      ? null
-      : resolveSingleEscalatedMaxOutputTokens({
-          currentCap: currentMaxOutputTokens,
-          hardMax: resolveRetryHardMaxOutputTokens(
-            currentMaxOutputTokens,
-            maxTokensFromEnv,
-          ),
-          tokensUsed,
-        });
-    if (strictRetryTokens) {
-      automaticEscalationUsed = true;
-      const strictRetry = await requestEnhancement({
-        apiKey,
-        folderId,
-        baseUrl,
-        modelName,
-        maxTokens: strictRetryTokens,
-        timeoutMs: SINGLE_REQUEST_TIMEOUT_MS,
-        input: segments,
-        promptBuilder: (input, strictJsonMode) =>
-          buildSinglePrompt(input as TranscriptEnhancementInputSegment[], strictJsonMode),
-        strictJsonMode: true,
-        outputMode,
-      });
-      currentMaxOutputTokens = strictRetryTokens;
-      outputText = strictRetry.outputText;
-      tokensUsed = strictRetry.tokensUsed;
-      parsed = parseEnhancementPayload(outputText);
-    }
-    if (!parsed) {
-      throw new Error("Yandex transcript enhancement returned invalid JSON payload.");
-    }
-  }
-
-  const finishedAt = Date.now();
-  const parsedByIndex = new Map(parsed.segments.map((segment) => [segment.index, segment]));
-  const mergedSegments = segments.map((segment) => {
-    const replacement = parsedByIndex.get(segment.index);
-    const cleanedText = replacement?.cleanedText?.trim() || segment.originalText;
-    return {
-      index: segment.index,
-      cleanedText,
-      changed: cleanedText.trim() !== segment.originalText.trim(),
-      changeCategory: replacement?.changeCategory ?? null,
-    };
-  });
-  const changedSegmentCount = mergedSegments.filter((segment) => segment.changed).length;
-  const originalText = getSegmentsText(segments);
-  const enhancedText = mergedSegments.map((segment) => segment.cleanedText).join(" ").trim();
-
-  return {
-    segments: mergedSegments,
-    globalWarnings: parsed.globalWarnings,
-    meta: {
-      mode: "single",
-      model: modelName,
-      outputMode,
-      structuredOutputEnabled: false,
-      schemaVersion: null,
-      schemaChunkCount: 0,
-      overallStatus: "COMPLETED",
-      startedAt: new Date(startedAt).toISOString(),
-      finishedAt: new Date(finishedAt).toISOString(),
-      totalLatencyMs: finishedAt - startedAt,
-      originalSegmentCount: segments.length,
-      originalCharacterCount: inputChars,
-      chunkCount: 1,
-      concurrency: 1,
-      successfulChunkCount: 1,
-      failedChunkCount: 0,
-      fallbackSegmentCount: 0,
-      changedSegmentCount,
-      unchangedSegmentCount: segments.length - changedSegmentCount,
-      retryCount: 0,
-      perChunk: [
-        {
-          chunkIndex: 0,
-          targetSegmentCount: segments.length,
-          targetSegmentStartIndex: segments[0]?.index ?? 0,
-          targetSegmentEndIndex: segments[segments.length - 1]?.index ?? 0,
-          inputChars,
-          queuedAt: new Date(startedAt).toISOString(),
-          startedAt: new Date(startedAt).toISOString(),
-          finishedAt: new Date(finishedAt).toISOString(),
-          latencyMs: finishedAt - startedAt,
-          status: "COMPLETED",
-          retryCount: 0,
-          errorCategory: null,
-        },
-      ],
-      originalWordCount: getWordCount(originalText),
-      enhancedWordCount: getWordCount(enhancedText),
-      addedWordEstimate: Math.max(0, getWordCount(enhancedText) - getWordCount(originalText)),
-      removedWordEstimate: Math.max(0, getWordCount(originalText) - getWordCount(enhancedText)),
-      maxOutputTokens: tokensUsed,
-      estimatedDurationMs,
-      inputChars,
-    },
-  };
-}
-
 async function runChunkedEnhancement(params: {
   segments: TranscriptEnhancementInputSegment[];
   apiKey: string;
   folderId: string;
   modelName: string;
   baseUrl: string;
+  options?: EnhanceTranscriptOptions;
 }): Promise<TranscriptEnhancementResult> {
-  const { segments, apiKey, folderId, modelName, baseUrl } = params;
+  const { segments, apiKey, folderId, modelName, baseUrl, options } = params;
   const outputMode = getTranscriptEnhancementOutputMode();
   const structuredOutputEnabled = outputMode === "json_schema";
   const startedAtMs = Date.now();
   const chunks = buildTranscriptEnhancementChunks(segments);
+  const configuredMode = getTranscriptEnhancementMode();
   const maxConcurrency = Math.max(1, getTranscriptEnhancementMaxConcurrency());
   const perChunkTimeoutMs = getTranscriptEnhancementChunkTimeoutMs();
   const chunkResults: ChunkExecutionResult[] = new Array(chunks.length);
@@ -1597,7 +1513,11 @@ async function runChunkedEnhancement(params: {
   let workerCursor = 0;
   const workerCount = Math.min(maxConcurrency, chunks.length);
 
-  async function processChunk(chunk: EnhancementChunk): Promise<ChunkExecutionResult> {
+  async function processChunk(
+    chunk: EnhancementChunk,
+    attempt: ProviderChunkAttempt,
+  ): Promise<ChunkExecutionResult> {
+    const providerAttemptNumber = Math.max(1, Math.round(attempt.attemptNumber));
     const { maxOutputTokens } = resolveDynamicMaxOutputTokens(chunk.targets);
     const strictRetryMaxTokens = resolveSingleEscalatedMaxOutputTokens({
       currentCap: maxOutputTokens,
@@ -1658,9 +1578,21 @@ async function runChunkedEnhancement(params: {
               ]
             : []),
         ];
-    const boundedPlan = attemptPlan.slice(0, EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK);
+    // Exactly one POST per invocation. The D1 retry owner decides whether a
+    // second attempt happens and which flavor it uses.
+    const availablePlan = attemptPlan.slice(0, EMPTY_OUTPUT_MAX_ATTEMPTS_PER_CHUNK);
+    const strictEntry = availablePlan.find((entry) => entry.attemptType === "primary_strict_retry");
+    const primaryEntry = availablePlan[0]!;
+    const selectedEntry =
+      providerAttemptNumber >= 2 && attempt.flavor === "strict_json"
+        ? strictEntry ?? { ...primaryEntry, strictJsonMode: true }
+        : primaryEntry;
+    const boundedPlan = [selectedEntry];
 
     const attempts: NonNullable<ChunkExecutionResult["attempts"]> = [];
+    let lastRetryable = false;
+    let lastHttpStatus: number | null = null;
+    let lastRetryAfterHeader: string | null = null;
     const firstAttemptStartedAt = new Date();
     const firstAttemptStartedAtMs = Date.now();
     let lastErrorCategory: string | null = null;
@@ -1670,6 +1602,15 @@ async function runChunkedEnhancement(params: {
     let modelUsed = modelName;
     let fallbackTriggered = false;
     let fallbackReason: string | null = null;
+    let lastUsage: Pick<
+      ChunkExecutionResult,
+      "usageInputTokens" | "usageOutputTokens" | "usageTotalTokens" | "usageClassification"
+    > = {
+      usageInputTokens: null,
+      usageOutputTokens: null,
+      usageTotalTokens: null,
+      usageClassification: null,
+    };
 
     for (let i = 0; i < boundedPlan.length; i += 1) {
       const plan = boundedPlan[i];
@@ -1701,10 +1642,16 @@ async function runChunkedEnhancement(params: {
               }
             : undefined,
         });
+        lastUsage = {
+          usageInputTokens: requestResult.usage.inputTokens,
+          usageOutputTokens: requestResult.usage.outputTokens,
+          usageTotalTokens: requestResult.usage.totalTokens ?? requestResult.tokensUsed,
+          usageClassification: requestResult.usageClassification,
+        };
 
         if (!requestResult.outputText) {
           attempts.push({
-            attemptNumber: i + 1,
+            attemptNumber: providerAttemptNumber,
             attemptType: plan.attemptType,
             modelUsed: plan.model,
             maxOutputTokens: plan.maxTokens,
@@ -1737,7 +1684,7 @@ async function runChunkedEnhancement(params: {
           const parsedSchema = parseSchemaEnhancementPayload(requestResult.outputText);
           if (!parsedSchema) {
             attempts.push({
-              attemptNumber: i + 1,
+              attemptNumber: providerAttemptNumber,
               attemptType: plan.attemptType,
               modelUsed: plan.model,
               maxOutputTokens: plan.maxTokens,
@@ -1779,7 +1726,7 @@ async function runChunkedEnhancement(params: {
               lastExtraKeyCount = validated.extraKeys.length;
               lastEmptyValueCount = validated.emptyKeys.length;
               attempts.push({
-                attemptNumber: i + 1,
+                attemptNumber: providerAttemptNumber,
                 attemptType: plan.attemptType,
                 modelUsed: plan.model,
                 maxOutputTokens: plan.maxTokens,
@@ -1818,7 +1765,7 @@ async function runChunkedEnhancement(params: {
             }
 
             attempts.push({
-              attemptNumber: i + 1,
+              attemptNumber: providerAttemptNumber,
               attemptType: plan.attemptType,
               modelUsed: plan.model,
               maxOutputTokens: plan.maxTokens,
@@ -1846,7 +1793,11 @@ async function runChunkedEnhancement(params: {
             return {
               chunkIndex: chunk.chunkIndex,
               enhancedByIndex: validated.enhancedByIndex,
-              retryCount: Math.max(0, i),
+              retryCount: providerAttemptNumber - 1,
+              attemptNumber: providerAttemptNumber,
+              retryableFailure: false,
+              httpStatus: null,
+              retryAfterHeader: null,
               modelUsed: plan.model,
               fallbackTriggered,
               fallbackReason,
@@ -1869,6 +1820,7 @@ async function runChunkedEnhancement(params: {
               missingKeyCount: lastMissingKeyCount,
               extraKeyCount: lastExtraKeyCount,
               emptyValueCount: lastEmptyValueCount,
+              ...lastUsage,
             };
           } catch (validationError) {
             const category =
@@ -1876,7 +1828,7 @@ async function runChunkedEnhancement(params: {
                 ? validationError.category
                 : classifyChunkError(validationError).category;
             attempts.push({
-              attemptNumber: i + 1,
+              attemptNumber: providerAttemptNumber,
               attemptType: plan.attemptType,
               modelUsed: plan.model,
               maxOutputTokens: plan.maxTokens,
@@ -1908,7 +1860,7 @@ async function runChunkedEnhancement(params: {
         const parsed = parseEnhancementPayload(requestResult.outputText);
         if (!parsed) {
           attempts.push({
-            attemptNumber: i + 1,
+            attemptNumber: providerAttemptNumber,
             attemptType: plan.attemptType,
             modelUsed: plan.model,
             maxOutputTokens: plan.maxTokens,
@@ -1942,7 +1894,7 @@ async function runChunkedEnhancement(params: {
             parsed,
           });
           attempts.push({
-            attemptNumber: i + 1,
+            attemptNumber: providerAttemptNumber,
             attemptType: plan.attemptType,
             modelUsed: plan.model,
             maxOutputTokens: plan.maxTokens,
@@ -1970,7 +1922,11 @@ async function runChunkedEnhancement(params: {
           return {
             chunkIndex: chunk.chunkIndex,
             enhancedByIndex: validated.enhancedByIndex,
-            retryCount: Math.max(0, i),
+            retryCount: providerAttemptNumber - 1,
+            attemptNumber: providerAttemptNumber,
+            retryableFailure: false,
+            httpStatus: null,
+            retryAfterHeader: null,
             modelUsed: plan.model,
             fallbackTriggered,
             fallbackReason,
@@ -1984,6 +1940,7 @@ async function runChunkedEnhancement(params: {
             fallbackModel: null,
             attempts,
             outputMode,
+            ...lastUsage,
           };
         } catch (validationError) {
           const category =
@@ -1991,7 +1948,7 @@ async function runChunkedEnhancement(params: {
               ? validationError.category
               : classifyChunkError(validationError).category;
           attempts.push({
-            attemptNumber: i + 1,
+            attemptNumber: providerAttemptNumber,
             attemptType: plan.attemptType,
             modelUsed: plan.model,
             maxOutputTokens: plan.maxTokens,
@@ -2020,7 +1977,7 @@ async function runChunkedEnhancement(params: {
       } catch (error) {
         const classified = classifyChunkError(error);
         attempts.push({
-          attemptNumber: i + 1,
+              attemptNumber: providerAttemptNumber,
           attemptType: plan.attemptType,
           modelUsed: plan.model,
           maxOutputTokens: plan.maxTokens,
@@ -2045,13 +2002,23 @@ async function runChunkedEnhancement(params: {
           errorCategory: classified.category,
         });
         lastErrorCategory = classified.category;
+        lastRetryable = classified.retryable;
+        if (error instanceof TranscriptEnhancementProviderHttpError) {
+          lastHttpStatus = error.httpStatus;
+          lastRetryAfterHeader = error.retryAfterHeader;
+        }
+        // No provider-internal backoff: the D1 retry owner schedules delays.
       }
     }
 
     return {
       chunkIndex: chunk.chunkIndex,
       enhancedByIndex: new Map<number, string>(),
-      retryCount: Math.max(0, boundedPlan.length - 1),
+      retryCount: providerAttemptNumber - 1,
+      attemptNumber: providerAttemptNumber,
+      retryableFailure: lastRetryable || isRetryableProviderCategory(lastErrorCategory),
+      httpStatus: lastHttpStatus,
+      retryAfterHeader: lastRetryAfterHeader,
       modelUsed,
       fallbackTriggered,
       fallbackReason: fallbackTriggered ? fallbackReason ?? "empty_output" : null,
@@ -2080,15 +2047,86 @@ async function runChunkedEnhancement(params: {
       missingKeyCount: structuredOutputEnabled ? lastMissingKeyCount : undefined,
       extraKeyCount: structuredOutputEnabled ? lastExtraKeyCount : undefined,
       emptyValueCount: structuredOutputEnabled ? lastEmptyValueCount : undefined,
+      ...lastUsage,
     };
   }
 
+  const schedulingAbort: { reason: EnhancementChunkStartRejectionReason | null } = {
+    reason: null,
+  };
+  const schedulingStopped = () => schedulingAbort.reason != null;
+  const recordStartRejection = (reason: EnhancementChunkStartRejectionReason) => {
+    if (isAbortingChunkStartRejection(reason)) {
+      schedulingAbort.reason = reason;
+    }
+  };
+
   const workers = Array.from({ length: workerCount }, async () => {
-    while (workerCursor < chunks.length) {
+    while (true) {
+      if (schedulingStopped()) break;
       const currentIndex = workerCursor;
       workerCursor += 1;
+      if (currentIndex >= chunks.length) break;
       const chunk = chunks[currentIndex];
-      chunkResults[currentIndex] = await processChunk(chunk);
+      if (options?.skipChunkIndexes?.has(chunk.chunkIndex)) {
+        const restored = new Map<number, string>();
+        for (const target of chunk.targets) {
+          const text = options.restoredEnhancedByIndex?.get(target.sourceIndex);
+          if (typeof text === "string") {
+            restored.set(target.sourceIndex, text);
+          }
+        }
+        chunkResults[currentIndex] = {
+          chunkIndex: chunk.chunkIndex,
+          enhancedByIndex: restored,
+          retryCount: 0,
+          modelUsed: modelName,
+          fallbackTriggered: false,
+          fallbackReason: null,
+          startedAt: null,
+          finishedAt: null,
+          latencyMs: 0,
+          status: "COMPLETED",
+          errorCategory: null,
+          warnings: [],
+          primaryModel: modelName,
+          fallbackModel: null,
+          attempts: [],
+          outputMode,
+        };
+        continue;
+      }
+      const attempt = options?.attemptByChunkIndex?.get(chunk.chunkIndex) ?? {
+        attemptNumber: 1,
+        flavor: "same_request" as const,
+      };
+      // 1. abort check (no slot)
+      // 2. acquire DB provider slot (withProviderSlot waits without Transcript lock)
+      // 3. authoritative start checkpoint
+      // 4. REJECTED: release slot, no attempt increment, no HTTP
+      // 5. ACCEPTED: attemptCount already persisted; one HTTP POST
+      // 6/7. release slot in finally
+      const run = async () => {
+        if (schedulingStopped()) {
+          throw new ChunkStartRejectedError(schedulingAbort.reason ?? "JOB_TERMINAL");
+        }
+        const decision = await options?.onChunkStart?.(chunk);
+        if (decision && decision.status === "REJECTED") {
+          throw new ChunkStartRejectedError(decision.reason);
+        }
+        return processChunk(chunk, attempt);
+      };
+      try {
+        const result = options?.withProviderSlot ? await options.withProviderSlot(run) : await run();
+        chunkResults[currentIndex] = result;
+        await options?.onChunkFinish?.(result, chunk);
+      } catch (error) {
+        if (error instanceof ChunkStartRejectedError) {
+          recordStartRejection(error.reason);
+          continue;
+        }
+        throw error;
+      }
     }
   });
   await Promise.all(workers);
@@ -2102,6 +2140,7 @@ async function runChunkedEnhancement(params: {
   const fallbackReasons = new Set<string>();
 
   for (const result of chunkResults) {
+    if (!result) continue;
     totalRetryCount += result.retryCount;
     fallbackTriggeredAny = fallbackTriggeredAny || result.fallbackTriggered;
     if (result.fallbackReason) {
@@ -2165,7 +2204,7 @@ async function runChunkedEnhancement(params: {
     segments: mergedSegments,
     globalWarnings: Array.from(new Set(warnings)),
     meta: {
-      mode: "chunked",
+      mode: configuredMode === "single" && chunks.length === 1 ? "single" : "chunked",
       model: modelName,
       primaryModel: modelName,
       fallbackModel: null,
@@ -2247,6 +2286,7 @@ async function runChunkedEnhancement(params: {
 
 export async function enhanceTranscriptWithYandexAi(
   segments: TranscriptEnhancementInputSegment[],
+  options?: EnhanceTranscriptOptions,
 ): Promise<TranscriptEnhancementResult> {
   const startedAt = Date.now();
   const mode = getTranscriptEnhancementMode();
@@ -2295,33 +2335,12 @@ export async function enhanceTranscriptWithYandexAi(
   const modelName = getYandexTranscriptEnhancementModel();
   const baseUrl = getYandexAiBaseUrl();
 
-  const singleRequestFitsConfiguredBounds =
-    segments.length <= getTranscriptEnhancementChunkMaxSegments() &&
-    segments.reduce(
-      (total, segment) => total + segment.originalText.length,
-      0,
-    ) <= getTranscriptEnhancementChunkMaxChars() &&
-    segments.every(
-      (segment) =>
-        segment.originalText.length <=
-        getTranscriptEnhancementChunkMaxChars(),
-    );
-
-  if (mode === "single" && singleRequestFitsConfiguredBounds) {
-    return runSingleShotEnhancement({
-      segments,
-      apiKey,
-      folderId,
-      modelName,
-      baseUrl,
-    });
-  }
-
   return runChunkedEnhancement({
     segments,
     apiKey,
     folderId,
     modelName,
     baseUrl,
+    options,
   });
 }

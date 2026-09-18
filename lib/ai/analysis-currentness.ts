@@ -101,6 +101,109 @@ export function shouldPresentAnalysisFromOlderTranscript(input: {
   return input.isFacilitator && input.analysisCurrent && input.analysisOutdated;
 }
 
+export type RecipientPublishedReportCurrentnessInput = {
+  hasValidPublicationGrant: boolean;
+  analysisCurrent: boolean;
+  publicationAiAnalysisId?: string | null;
+  currentAnalysisId?: string | null;
+  publicationAnalysisVersion?: number | null;
+  currentAnalysisVersion?: number | null;
+  transcriptionActive?: boolean;
+};
+
+export function isPublishedAnalysisIdentityCurrent(input: {
+  publicationAiAnalysisId?: string | null;
+  currentAnalysisId?: string | null;
+}): boolean {
+  return (
+    typeof input.publicationAiAnalysisId === "string" &&
+    input.publicationAiAnalysisId.length > 0 &&
+    input.publicationAiAnalysisId === input.currentAnalysisId
+  );
+}
+
+/**
+ * A recipient grant authorizes one published analysis version. Missing or
+ * mismatched `analysisVersion` fails closed; it never implies current.
+ */
+export function isPublishedAnalysisVersionCurrent(input: {
+  publicationAnalysisVersion?: number | null;
+  currentAnalysisVersion?: number | null;
+}): boolean {
+  return (
+    Number.isInteger(input.publicationAnalysisVersion) &&
+    Number.isInteger(input.currentAnalysisVersion) &&
+    input.publicationAnalysisVersion === input.currentAnalysisVersion
+  );
+}
+
+/**
+ * Recipient-safe published-report currentness. This is not facilitator
+ * draft/private analysis currentness: a viewer without an active grant
+ * never gets true, and unpublished analysis is not treated as current
+ * for participants/observers. A grant for publication v1 does not
+ * authorize a later private analysis v2.
+ */
+export function evaluateRecipientPublishedReportCurrentness(
+  input: RecipientPublishedReportCurrentnessInput,
+): boolean {
+  if (!input.hasValidPublicationGrant) {
+    return false;
+  }
+  if (input.transcriptionActive) {
+    return false;
+  }
+  if (!input.analysisCurrent) {
+    return false;
+  }
+  if (
+    !isPublishedAnalysisIdentityCurrent({
+      publicationAiAnalysisId: input.publicationAiAnalysisId,
+      currentAnalysisId: input.currentAnalysisId,
+    })
+  ) {
+    return false;
+  }
+  if (
+    !isPublishedAnalysisVersionCurrent({
+      publicationAnalysisVersion: input.publicationAnalysisVersion,
+      currentAnalysisVersion: input.currentAnalysisVersion,
+    })
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Materials/status projection for analysis currentness fields.
+ * Facilitators receive `analysisCurrent`; recipients receive
+ * `publishedReportCurrent` only. Missing facilitator `analysisCurrent`
+ * must not be interpreted as recipient currentness.
+ */
+export function projectMaterialsAiViewerCurrentnessFields(
+  input: RecipientPublishedReportCurrentnessInput & {
+    isFacilitator: boolean;
+  },
+): {
+  analysisCurrent: boolean | undefined;
+  publishedReportCurrent: boolean | undefined;
+} {
+  const publishedReportCurrent = evaluateRecipientPublishedReportCurrentness({
+    hasValidPublicationGrant: input.hasValidPublicationGrant,
+    analysisCurrent: input.analysisCurrent,
+    publicationAiAnalysisId: input.publicationAiAnalysisId,
+    currentAnalysisId: input.currentAnalysisId,
+    publicationAnalysisVersion: input.publicationAnalysisVersion,
+    currentAnalysisVersion: input.currentAnalysisVersion,
+    transcriptionActive: input.transcriptionActive,
+  });
+  return {
+    analysisCurrent: input.isFacilitator ? input.analysisCurrent : undefined,
+    publishedReportCurrent: input.isFacilitator ? undefined : publishedReportCurrent,
+  };
+}
+
 /**
  * Legacy compatibility upgrade at a facilitator material-write boundary.
  *

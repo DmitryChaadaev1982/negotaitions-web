@@ -8,8 +8,6 @@ import {
 } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
-import { ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE } from "@/lib/transcription/processing-metadata";
-import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
 
 export const runtime = "nodejs";
 
@@ -61,22 +59,6 @@ export async function POST(request: Request, context: RouteContext) {
   const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
   if (!participant || participant.type !== ParticipantType.FACILITATOR) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
-  const existingTranscript = await prisma.transcript.findUnique({
-    where: { sessionId },
-    select: { id: true, processingMetadata: true },
-  });
-  if (
-    existingTranscript &&
-    (await isAuthoritativeEnhancementLockActive({
-      transcriptId: existingTranscript.id,
-    }))
-  ) {
-    return NextResponse.json(
-      { error: ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE },
-      { status: 409 },
-    );
   }
 
   const change = await applyFacilitatorMaterialInputChange({

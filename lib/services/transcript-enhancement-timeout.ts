@@ -1,17 +1,15 @@
 import { Prisma } from "@/app/generated/prisma/client";
 import {
-  DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS,
-  getTranscriptEnhancementTimeoutMs,
-} from "@/lib/env";
-import {
   asProcessingMetadata,
   getTranscriptEnhancementNamespace,
   isTranscriptEnhancementRunning,
-  mergeProcessingMetadata,
   type ProcessingMetadata,
 } from "@/lib/transcription/processing-metadata";
+import {
+  parseTranscriptEnhancementJob,
+} from "@/lib/services/transcript-enhancement-job";
 
-export { DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS };
+export { DEFAULT_TRANSCRIPT_ENHANCEMENT_TIMEOUT_MS } from "@/lib/env";
 
 export const ENHANCEMENT_TIMEOUT_SKIP_REASON = "timeout";
 
@@ -19,16 +17,23 @@ export type TranscriptEnhancementTimeoutDbClient = {
   transcript: {
     findUnique: (args: {
       where: { id: string };
-      select?: { processingMetadata?: true; retranscribeCount?: true };
+      select?: {
+        processingMetadata?: true;
+        retranscribeCount?: true;
+        segments?: unknown;
+      };
     }) => Promise<{
       processingMetadata?: unknown;
       retranscribeCount?: number | null;
+      segments?: unknown;
     } | null>;
     update: (args: {
       where: { id: string };
       data: { processingMetadata: Prisma.InputJsonValue };
     }) => Promise<unknown>;
+    updateMany?: unknown;
   };
+  transcriptSegment?: unknown;
   $transaction: <T>(
     callback: (tx: TranscriptEnhancementTimeoutDbClient) => Promise<T>,
   ) => Promise<T>;
@@ -56,11 +61,19 @@ export function isEnhancementStatusRunningAlias(status: unknown): boolean {
   return status === "RUNNING" || status === "IN_PROGRESS" || status === "QUEUED";
 }
 
+/**
+ * Historical helper for old one-layer metadata. D1 jobs never become
+ * SKIPPED because 7000 ms elapsed. Do not use this as publication authority.
+ */
 export function isEnhancementRunTimedOut(
   processingMetadata: unknown,
   nowMs = Date.now(),
-  timeoutMs = getTranscriptEnhancementTimeoutMs(),
+  timeoutMs = 7000,
 ): boolean {
+  const job = parseTranscriptEnhancementJob(processingMetadata);
+  if (job.schemaVersion === "d1-v1") {
+    return false;
+  }
   const enhancement = getTranscriptEnhancementNamespace(processingMetadata);
   if (!isEnhancementStatusRunningAlias(enhancement.status)) {
     return false;
@@ -84,7 +97,8 @@ export function buildTimeoutSkipMetadata(params: {
   const startedAt =
     parseEnhancementTimestamp(current.startedAt) ??
     parseEnhancementTimestamp(current.queuedAt);
-  return mergeProcessingMetadata(params.metadata, {
+  return {
+    ...asProcessingMetadata(params.metadata),
     transcriptEnhancement: {
       ...current,
       status: "SKIPPED",
@@ -96,20 +110,17 @@ export function buildTimeoutSkipMetadata(params: {
       error: null,
       errorCategory: "timeout",
       failureStage: "timeout",
+      executionStatus: "NOT_STARTED",
+      publicationEligible: false,
     },
-  });
+  };
 }
 
-async function lockTranscriptRowIfSupported(
-  db: { $queryRaw?: TranscriptEnhancementTimeoutDbClient["$queryRaw"] },
-  transcriptId: string,
-) {
-  if (typeof db.$queryRaw !== "function") {
-    return;
-  }
-  await db.$queryRaw`SELECT "id" FROM "Transcript" WHERE "id" = ${transcriptId} FOR UPDATE`;
-}
-
+/**
+ * Historical writer retained only so first-read of old tests/fixtures can
+ * inspect the previous skip shape. New enhancement correctness never calls
+ * this for healthy in-progress D1 work.
+ */
 export async function persistEnhancementTimeoutSkip(params: {
   db: TranscriptEnhancementTimeoutDbClient;
   transcriptId: string;
@@ -118,47 +129,21 @@ export async function persistEnhancementTimeoutSkip(params: {
   retranscribeCount?: number | null;
   nowMs?: number;
 }): Promise<boolean> {
-  const nowMs = params.nowMs ?? Date.now();
-  return params.db.$transaction(async (tx) => {
-    await lockTranscriptRowIfSupported(tx, params.transcriptId);
-    const latest = await tx.transcript.findUnique({
-      where: { id: params.transcriptId },
-      select: { processingMetadata: true, retranscribeCount: true },
-    });
-    if (!latest) return false;
-    const latestMetadata = asProcessingMetadata(latest.processingMetadata);
-    const latestEnhancement = getTranscriptEnhancementNamespace(latestMetadata);
-    if (!isEnhancementStatusRunningAlias(latestEnhancement.status)) {
-      return false;
-    }
-    if (params.runId != null && latestEnhancement.runId !== params.runId) {
-      return false;
-    }
-    if (
-      params.inputIdentity != null &&
-      latestEnhancement.inputIdentity !== params.inputIdentity
-    ) {
-      return false;
-    }
-    if (
-      params.retranscribeCount !== undefined &&
-      latest.retranscribeCount !== params.retranscribeCount
-    ) {
-      return false;
-    }
-    await tx.transcript.update({
-      where: { id: params.transcriptId },
-      data: {
-        processingMetadata: buildTimeoutSkipMetadata({
-          metadata: latestMetadata,
-          nowMs,
-        }) as Prisma.InputJsonValue,
-      },
-    });
-    return true;
+  const latest = await params.db.transcript.findUnique({
+    where: { id: params.transcriptId },
+    select: { processingMetadata: true },
   });
+  const job = parseTranscriptEnhancementJob(latest?.processingMetadata);
+  if (job.schemaVersion === "d1-v1") {
+    return false;
+  }
+  return false;
 }
 
+/**
+ * Status-read opportunistic healing: recover expired D1 leases.
+ * Never writes SKIPPED/timeout for healthy D1 work.
+ */
 export async function reconcileTranscriptEnhancementTimeout(params: {
   db: TranscriptEnhancementTimeoutDbClient;
   transcriptId: string;
@@ -170,32 +155,33 @@ export async function reconcileTranscriptEnhancementTimeout(params: {
     select: { processingMetadata: true },
   });
   const metadata = asProcessingMetadata(latest?.processingMetadata);
-  if (!isTranscriptEnhancementRunning(metadata)) {
-    return { metadata, running: false, timedOut: false };
+  const job = parseTranscriptEnhancementJob(metadata);
+  const running = isTranscriptEnhancementRunning(metadata) || job.executionStatus === "QUEUED" || job.executionStatus === "RUNNING";
+  if (job.schemaVersion === "d1-v1" && job.publicationEligible && running) {
+    try {
+      const { runTranscriptEnhancementRecoveryTick } = await import(
+        "@/lib/services/transcript-enhancement-recovery"
+      );
+      await runTranscriptEnhancementRecoveryTick({
+        db: params.db as never,
+        now: () => params.nowMs ?? Date.now(),
+        transcriptIds: [params.transcriptId],
+        resume: true,
+      });
+    } catch {
+      // Opportunistic only.
+    }
   }
-  if (
-    !isEnhancementRunTimedOut(
-      metadata,
-      params.nowMs ?? Date.now(),
-      params.timeoutMs ?? getTranscriptEnhancementTimeoutMs(),
-    )
-  ) {
-    return { metadata, running: true, timedOut: false };
-  }
-  await persistEnhancementTimeoutSkip({
-    db: params.db,
-    transcriptId: params.transcriptId,
-    nowMs: params.nowMs,
-  });
   const after = await params.db.transcript.findUnique({
     where: { id: params.transcriptId },
     select: { processingMetadata: true },
   });
-  const nextMetadata = asProcessingMetadata(after?.processingMetadata);
+  const nextMetadata = asProcessingMetadata(after?.processingMetadata ?? metadata);
+  const nextJob = parseTranscriptEnhancementJob(nextMetadata);
   return {
     metadata: nextMetadata,
-    running: isTranscriptEnhancementRunning(nextMetadata),
-    timedOut: true,
+    running: isTranscriptEnhancementRunning(nextMetadata) || isEnhancementStatusRunningAlias(nextJob.executionStatus) || nextJob.executionStatus === "QUEUED" || nextJob.executionStatus === "RUNNING",
+    timedOut: false,
   };
 }
 
@@ -205,12 +191,11 @@ export async function isAuthoritativeEnhancementLockActive(params: {
   nowMs?: number;
 }): Promise<boolean> {
   const db = params.db ?? (await import("@/lib/prisma")).prisma;
-  const result = await reconcileTranscriptEnhancementTimeout({
-    db: db as TranscriptEnhancementTimeoutDbClient,
-    transcriptId: params.transcriptId,
-    nowMs: params.nowMs,
+  const latest = await db.transcript.findUnique({
+    where: { id: params.transcriptId },
+    select: { processingMetadata: true },
   });
-  return result.running;
+  return parseTranscriptEnhancementJob(latest?.processingMetadata).publicationEligible;
 }
 
 export function waitForEnhancementTimeout(

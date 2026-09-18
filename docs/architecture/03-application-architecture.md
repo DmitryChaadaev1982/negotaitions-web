@@ -56,6 +56,13 @@
 - Provider-specific room implementation:
   - `components/video-room-page.tsx` (LiveKit).
   - `components/voximplant-negotiation-room-page.tsx` (Voximplant).
+- Post-processing Facilitator Lab (`POST_TRANSCRIPTION_LAB=1`) still mounts
+  the real room pages and materials APIs, but does not open LiveKit/Vox
+  signaling. `RestrictedControlBar` treats a missing `lk-user-choices`
+  localStorage key as LiveKit's normal first-visit defaults. The suppression is
+  non-production only: `lib/test-mode.ts` returns `true` from
+  `shouldConnectBrowserRealtimeTransport()` whenever `NODE_ENV=production`, so
+  the flag can never disable LiveKit or Voximplant in production.
 
 ## Dashboard Selection
 

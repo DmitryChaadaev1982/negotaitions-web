@@ -54,3 +54,28 @@ export function resolveSpeakerMappingStatusDescriptionKey(params: {
 
   return null;
 }
+
+export type AutoAppliedMappingSurface =
+  | "hidden"
+  | "notice_with_review_action"
+  | "notice_with_editor";
+
+/**
+ * AUTO_SUGGESTED stays compact, but must still offer the real mapping editor.
+ * Enhancement RUNNING is not a mapping lock.
+ */
+export function resolveAutoAppliedMappingSurface(input: {
+  speakerMappingStatus: string | null | undefined;
+  aiAdmissionCompleted?: boolean;
+  mappingLocked: boolean;
+  readOnly: boolean;
+  mappingEditorVisible: boolean;
+}): AutoAppliedMappingSurface {
+  if (input.speakerMappingStatus !== "AUTO_SUGGESTED" || input.aiAdmissionCompleted) {
+    return "hidden";
+  }
+  if (input.readOnly || input.mappingLocked) {
+    return "hidden";
+  }
+  return input.mappingEditorVisible ? "notice_with_editor" : "notice_with_review_action";
+}

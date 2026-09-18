@@ -132,16 +132,17 @@ export const LAB_VISUAL_TWO_PARTY_TRANSCRIPT: LabVisualTranscriptTurn[] = [
   },
 ];
 
-/** Visible completed-enhancement marker for Checkpoint B E05. */
+/** Must never appear in Lab or Product lexical transcript text. */
 export const LAB_ENHANCED_LEXICAL_MARKER = "[ИИ-уточнение]";
 
+/**
+ * Completed Lab enhancement is represented by D1 COMPLETED job metadata,
+ * not by mutating spoken transcript prose.
+ */
 export function applyLabCompletedEnhancementToTurns(
   turns: LabVisualTranscriptTurn[],
 ): LabVisualTranscriptTurn[] {
-  return turns.map((turn) => ({
-    ...turn,
-    text: `${turn.text} ${LAB_ENHANCED_LEXICAL_MARKER}`,
-  }));
+  return turns.map((turn) => ({ ...turn }));
 }
 
 export function formatLabVisualTranscriptText(

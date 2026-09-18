@@ -50,17 +50,20 @@
       "evalType": "MOUNTED_TRANSITION",
       "fixtureType": "UNIT",
       "expectedDomainResult": "Successive materials/status payloads project RUNNING then COMPLETED.",
-      "expectedUiResult": "Rail and expanded transcript section on the same mounted tree both show COMPLETED.",
+      "expectedUiResult": "The same RecordingTranscriptionSection instance (recordingId:transcriptId key, data-mount-id) shows COMPLETED in place; mapping draft and notes survive; no page-level loading.",
       "automation": "AUTOMATED",
       "transitionKind": "MOUNTED_TRANSITION",
       "historicalCohort": null,
-      "requirements": ["S316A-RET-001", "PT-05"],
+      "requirements": ["S316A-RET-001", "PT-05", "TE-UX-001", "TE-UX-002", "INV-TE-06"],
       "providerCalls": false,
       "productionSafe": true,
       "evidence": [
-        "lib/post-processing/enhancement-live-transition.test.ts"
+        "lib/post-processing/enhancement-live-transition.test.ts",
+        "lib/post-processing/enhancement-mounted-transition.test.ts",
+        "lib/transcription/transcription-section-key.test.ts",
+        "tests/e2e/post-transcription-lab.spec.ts"
       ],
-      "coverageStatus": "PARTIAL"
+      "coverageStatus": "COVERED"
     },
     {
       "id": "EVAL-AI-HIST-NULL-READ",
@@ -393,7 +396,7 @@
       "evalType": "TRANSITION",
       "fixtureType": "UNIT",
       "expectedDomainResult": "No concurrent successful owners; timeout/failure leaves the current usable transcript terminal and non-authoritative for overwrite.",
-      "expectedUiResult": "Visible workflow is not blocked beyond the enhancement UX latency budget (default 7000ms).",
+      "expectedUiResult": "Visible workflow is not blocked by a 7000ms skip; Continue and publicationEligible control readiness while enhancement runs.",
       "automation": "AUTOMATED",
       "transitionKind": "TRANSITION",
       "historicalCohort": null,
@@ -609,11 +612,11 @@
     },
     {
       "id": "EVAL-PP-ENH-RUNNING-BLOCKS-MATERIAL-EDIT",
-      "invariant": "Transcript/material edit that can conflict with enhancement is blocked while enhancement is RUNNING, on both client and server.",
+      "invariant": "Lexical transcript edits fence an eligible enhancement so a late result cannot overwrite human text; speaker mapping remains writable during RUNNING.",
       "risk": "HIGH",
       "evalType": "TRANSITION",
       "fixtureType": "MIXED",
-      "expectedDomainResult": "View remains allowed; transcript/mapping/manual-attribution writes return 409 while enhancement is RUNNING.",
+      "expectedDomainResult": "View remains allowed; mapping writes succeed during RUNNING; lexical save revokes publicationEligible then persists. AI stays blocked only while publicationEligible.",
       "expectedUiResult": "Edit/save controls are blocked or explain the in-progress enhancement.",
       "automation": "MIXED",
       "transitionKind": "TRANSITION",
@@ -623,6 +626,7 @@
       "productionSafe": true,
       "evidence": [
         "lib/post-processing/enhancement-live-transition.test.ts",
+        "lib/services/transcript-enhancement-pipeline.test.ts",
         "tests/e2e/helpers/post-transcription-lab-catalog.ts"
       ],
       "coverageStatus": "COVERED"

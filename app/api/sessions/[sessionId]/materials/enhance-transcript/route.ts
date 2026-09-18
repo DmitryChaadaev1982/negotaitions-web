@@ -12,6 +12,7 @@ import { isAiAnalysisRunLeaseActive } from "@/lib/ai/analysis-operation";
 import { prisma } from "@/lib/prisma";
 import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
 import { executeTranscriptEnhancement } from "@/lib/services/transcript-enhancement-orchestration";
+import { parseTranscriptEnhancementJob } from "@/lib/services/transcript-enhancement-job";
 import { reconcileTranscriptEnhancementTimeout } from "@/lib/services/transcript-enhancement-timeout";
 
 export const runtime = "nodejs";
@@ -129,11 +130,8 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const enhancementStatus = asMetadata(metadata.transcriptEnhancement).status;
-  if (
-    !reconciled.timedOut &&
-    (enhancementStatus === "IN_PROGRESS" || enhancementStatus === "RUNNING")
-  ) {
+  const enhancementJob = parseTranscriptEnhancementJob(metadata);
+  if (enhancementJob.publicationEligible && (enhancementJob.executionStatus === "QUEUED" || enhancementJob.executionStatus === "RUNNING")) {
     return NextResponse.json(
       { error: "Transcript enhancement is already in progress." },
       { status: 409 },
@@ -141,10 +139,14 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const triggerSource =
-    enhancementStatus === "COMPLETED" ||
-    enhancementStatus === "PARTIAL" ||
-    enhancementStatus === "FAILED" ||
-    enhancementStatus === "SKIPPED"
+    enhancementJob.executionStatus === "COMPLETED" ||
+    enhancementJob.executionStatus === "FAILED" ||
+    enhancementJob.executionStatus === "CANCELLED_FOR_PUBLICATION" ||
+    enhancementJob.status === "COMPLETED" ||
+    enhancementJob.status === "PARTIAL" ||
+    enhancementJob.status === "FAILED" ||
+    enhancementJob.status === "SKIPPED" ||
+    enhancementJob.skipReason === "timeout"
       ? "manual_reenhancement"
       : "manual";
 
@@ -158,6 +160,22 @@ export async function POST(request: Request, context: RouteContext) {
   if (runResult.outcome === "already_running") {
     return NextResponse.json(
       { error: "Transcript enhancement is already in progress." },
+      { status: 409 },
+    );
+  }
+
+  if (runResult.outcome === "conflict") {
+    if (runResult.reason === "skipped_ai_in_progress") {
+      return NextResponse.json(
+        {
+          error: MATERIAL_CHANGE_AI_RUNNING_MESSAGE,
+          errorCode: MATERIAL_CHANGE_AI_RUNNING,
+        },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Transcript must be completed before enhancement can start." },
       { status: 409 },
     );
   }

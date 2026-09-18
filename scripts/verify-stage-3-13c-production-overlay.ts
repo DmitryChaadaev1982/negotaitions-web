@@ -617,6 +617,9 @@ async function main() {
     assert.ok(preexistingTables.length > 0);
 
     await insertSyntheticLegacyRows(client);
+    await client.query(
+      'ALTER TABLE "AiAnalysis" ADD COLUMN IF NOT EXISTS "progressJson" JSONB',
+    );
     const legacyNames = LEGACY_PRODUCTION_MIGRATIONS.map(
       (migration) => migration.migrationName,
     );
@@ -633,6 +636,7 @@ async function main() {
       repoRoot,
       mode: "status",
       databaseUrl,
+      expectedReleasePendingMigrations: EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
       stdout: sink,
       stderr: sink,
     });
@@ -651,6 +655,7 @@ async function main() {
       mode: "deploy",
       confirmed: true,
       databaseUrl,
+      expectedReleasePendingMigrations: EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
       stdout: sink,
       stderr: sink,
     });
@@ -679,6 +684,7 @@ async function main() {
       repoRoot,
       mode: "status",
       databaseUrl,
+      expectedReleasePendingMigrations: EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
       stdout: sink,
       stderr: sink,
     });

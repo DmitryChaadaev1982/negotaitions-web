@@ -20,10 +20,7 @@ import {
   type TelemetryHealthReport,
 } from "@/lib/transcription/auto-speaker-mapping";
 import { loadCanonicalSpeakerMappingCandidates } from "@/lib/transcription/speaker-mapping-candidate-load";
-import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
-import {
-  mergeProcessingMetadata,
-} from "@/lib/transcription/processing-metadata";
+import { persistMappingOwnedTranscriptUpdate } from "@/lib/transcription/mapping-persistence";
 import {
   applySpeakerMapping,
   getDisplaySpeakerLabel,
@@ -37,44 +34,27 @@ async function writeTranscriptMappingSuggestion(
     mappingSuggestion: AutoMappingTriggerDiagnostics;
     speakerMapping?: Prisma.InputJsonValue | typeof Prisma.JsonNull;
     speakerMappingStatus?: string;
-    diarizedText?: string;
   },
   expectedRetranscribeCount?: number,
 ) {
   await prisma.$transaction(async (tx) => {
-    const latest = await tx.transcript.findUnique({
-      where: { id: transcriptId },
-      select: { processingMetadata: true, retranscribeCount: true },
-    });
-    if (
-      expectedRetranscribeCount != null &&
-      latest?.retranscribeCount !== expectedRetranscribeCount
-    ) {
-      return;
-    }
-    const mutation = await tx.transcript.updateMany({
-      where: {
-        id: transcriptId,
-        ...(expectedRetranscribeCount != null
-          ? { retranscribeCount: expectedRetranscribeCount }
-          : {}),
+    await persistMappingOwnedTranscriptUpdate({
+      tx,
+      transcriptId,
+      expectedTranscriptId: transcriptId,
+      expectedRetranscribeCount,
+      patch: {
+        mappingSuggestion: data.mappingSuggestion,
+        speakerMapping:
+          data.speakerMapping === Prisma.JsonNull
+            ? Prisma.JsonNull
+            : data.speakerMapping
+              ? (data.speakerMapping as SpeakerMapping)
+              : undefined,
+        speakerMappingStatus: data.speakerMappingStatus,
       },
-      data: {
-        ...(data.speakerMapping !== undefined
-          ? { speakerMapping: data.speakerMapping }
-          : {}),
-        ...(data.speakerMappingStatus
-          ? { speakerMappingStatus: data.speakerMappingStatus }
-          : {}),
-        ...(data.diarizedText !== undefined ? { diarizedText: data.diarizedText } : {}),
-        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
-          mappingSuggestion: data.mappingSuggestion,
-        }) as Prisma.InputJsonValue,
-      },
+      rebuildDiarizedText: false,
     });
-    if (mutation.count !== 1) {
-      return;
-    }
   });
 }
 
@@ -309,7 +289,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
       {
         mappingSuggestion: diag,
       },
-      options?.expectedRetranscribeCount,
+      options?.expectedRetranscribeCount ?? transcript.retranscribeCount,
     );
   };
 
@@ -532,7 +512,7 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
         speakerMapping: Prisma.JsonNull,
         speakerMappingStatus: nonAppliedStatus,
       },
-      options?.expectedRetranscribeCount,
+      options?.expectedRetranscribeCount ?? transcript.retranscribeCount,
     );
     return diag;
   }
@@ -556,11 +536,6 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     orderIndex: segment.orderIndex,
   }));
   const mappedSegments = applySpeakerMapping(normalizedSegments, sanitizedMapping);
-  const diarizedText = buildCanonicalDiarizedText({
-    segments: normalizedSegments,
-    speakerMapping: sanitizedMapping,
-    participants: participantDisplayInfo,
-  });
 
   const diag: AutoMappingTriggerDiagnostics = {
     strategy: suggestion.strategy,
@@ -614,55 +589,38 @@ export async function autoTriggerSpeakerMappingAfterTranscription(
     candidateParticipantIds: participantPoolIds,
   };
 
+  let persistRejected = false;
   await prisma.$transaction(async (tx) => {
-    const latest = await tx.transcript.findUnique({
-      where: { id: transcript.id },
-      select: { processingMetadata: true, retranscribeCount: true },
-    });
-    if (
-      options?.expectedRetranscribeCount != null &&
-      latest?.retranscribeCount !== options.expectedRetranscribeCount
-    ) {
-      return;
-    }
-    const mutation = await tx.transcript.updateMany({
-      where: {
-        id: transcript.id,
-        ...(options?.expectedRetranscribeCount != null
-          ? { retranscribeCount: options.expectedRetranscribeCount }
-          : {}),
-      },
-      data: {
-        speakerMapping: sanitizedMapping as Prisma.InputJsonValue,
+    const persisted = await persistMappingOwnedTranscriptUpdate({
+      tx,
+      transcriptId: transcript.id,
+      expectedTranscriptId: transcript.id,
+      expectedRetranscribeCount: options?.expectedRetranscribeCount ?? transcript.retranscribeCount,
+      patch: {
+        speakerMapping: sanitizedMapping,
         speakerMappingStatus: "AUTO_SUGGESTED",
-        diarizedText,
-        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
-          mappingSuggestion: diag,
-        }) as Prisma.InputJsonValue,
+        mappingSuggestion: diag,
       },
+      rebuildDiarizedText: true,
+      participants: participantDisplayInfo,
+      segmentUpdates: mappedSegments.map((segment) => ({
+        orderIndex: segment.orderIndex,
+        mappedParticipantId: segment.mappedParticipantId,
+        mappingSource: "MIC_ACTIVITY",
+        mappingConfidence:
+          segment.speakerLabel && typeof suggestion.confidence[segment.speakerLabel] === "number"
+            ? suggestion.confidence[segment.speakerLabel]
+            : null,
+        skipIfLocked: true,
+      })),
     });
-    if (mutation.count !== 1) {
-      return;
-    }
-
-    for (const segment of mappedSegments) {
-      const dbSegment = transcript.segments.find(
-        (item) => item.orderIndex === segment.orderIndex,
-      );
-      if (!dbSegment || dbSegment.mappingLocked) continue;
-      await tx.transcriptSegment.update({
-        where: { id: dbSegment.id },
-        data: {
-          mappedParticipantId: segment.mappedParticipantId,
-          mappingSource: "MIC_ACTIVITY",
-          mappingConfidence:
-            segment.speakerLabel && typeof suggestion.confidence[segment.speakerLabel] === "number"
-              ? suggestion.confidence[segment.speakerLabel]
-              : null,
-        },
-      });
+    if (!persisted.ok) {
+      persistRejected = true;
     }
   });
+  if (persistRejected) {
+    return notAttempted("generation_mismatch");
+  }
 
   return diag;
 }

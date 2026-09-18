@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -13,26 +13,45 @@ import {
   createTemporaryOverlayDirectory,
   copyFileBytePreserving,
   executeProductionOverlay,
+  BUG02_PROVIDER_SLOT_MIGRATION,
   EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
+  EXPECTED_RELEASE_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
+  EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
+  PRODUCTION_FIRST_DEPLOY_SEQUENCE,
+  assertArchiveDirectorySetExact,
+  assertManifestDeclaredSetExact,
+  evaluateReleasePendingSet,
   isExpectedPendingStatusOutput,
+  isSuccessfulArchivedMigrationRow,
   LEGACY_PRODUCTION_MIGRATIONS,
+  LEGACY_PRODUCTION_SCHEMA_EFFECTS,
   listActiveMigrationNames,
+  listLegacyArchiveMigrationNames,
   loadLegacyManifest,
   PrismaProductionOverlayError,
+  prismaMigrationArtifactChecksum,
+  readActiveMigrationArtifactChecksum,
+  readCurrentReleaseArtifactChecksums,
   readMigrationHistoryFromDatabase,
+  readObservedSchemaColumns,
   redactSensitiveOutput,
   removeTemporaryOverlayDirectory,
   REQUIRED_PRODUCTION_BASELINE,
   runPrismaMigrationCommand,
   sha256File,
+  validateLegacySchemaEffects,
   validateMigrationHistoryRows,
   verifyLegacyArchiveHashes,
+  type LegacyManifest,
+  type LegacySchemaColumnFact,
   type MigrationHistoryRow,
+  type ObservedSchemaColumn,
   type OverlayRefusalCode,
+  type ReleasePendingAuthorityInput,
 } from "@/lib/prisma-production-migration-overlay";
 
 const ACTIVE_MIGRATIONS = [
@@ -56,6 +75,7 @@ function successfulRow(
     finished_at: new Date("2026-08-04T08:00:00.000Z"),
     rolled_back_at: null,
     applied_steps_count: 1,
+    logs: null,
   };
 }
 
@@ -93,6 +113,58 @@ function historyWithOnlyTheseActiveMigrationsPending(
       successfulRow(name),
     ),
   ];
+}
+
+function preDeployHistoryRows(): MigrationHistoryRow[] {
+  return historyWithOnlyTheseActiveMigrationsPending([
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+}
+
+function releaseAuthority(
+  overrides: Partial<ReleasePendingAuthorityInput> &
+    Pick<ReleasePendingAuthorityInput, "actualPending">,
+): ReleasePendingAuthorityInput {
+  return {
+    historyRows: preDeployHistoryRows(),
+    activeArtifactChecksums: {},
+    ...overrides,
+  };
+}
+
+async function currentReleaseArtifactChecksum(): Promise<string> {
+  return readActiveMigrationArtifactChecksum(
+    process.cwd(),
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  );
+}
+
+async function postDeployAuthority(options?: {
+  rowPatch?: Partial<MigrationHistoryRow>;
+  checksumOverride?: string;
+  extraRows?: MigrationHistoryRow[];
+  omitArtifactChecksum?: boolean;
+}): Promise<ReleasePendingAuthorityInput> {
+  const artifactChecksum = await currentReleaseArtifactChecksum();
+  const rows = historyWithOnlyTheseActiveMigrationsPending([]).map((row) => {
+    if (row.migration_name !== BUG02_PROVIDER_SLOT_MIGRATION) return row;
+    return {
+      ...row,
+      checksum: artifactChecksum,
+      ...options?.rowPatch,
+    };
+  });
+  if (options?.extraRows) rows.push(...options.extraRows);
+  return {
+    actualPending: [],
+    historyRows: rows,
+    activeArtifactChecksums: options?.omitArtifactChecksum
+      ? {}
+      : {
+          [BUG02_PROVIDER_SLOT_MIGRATION]:
+            options?.checksumOverride ?? artifactChecksum,
+        },
+  };
 }
 
 function assertRefusal(
@@ -154,9 +226,22 @@ class MemoryWritable extends Writable {
   }
 }
 
+const AI_ANALYSIS_PROGRESS_MIGRATION =
+  "20260810120000_add_ai_analysis_progress";
+
+function patchRowByName(
+  rows: MigrationHistoryRow[],
+  migrationName: string,
+  patch: Partial<MigrationHistoryRow>,
+): MigrationHistoryRow[] {
+  return rows.map((row) =>
+    row.migration_name === migrationName ? { ...row, ...patch } : row,
+  );
+}
+
 test("manifest parsing and archive SHA verification use exact legacy evidence", async () => {
   const manifest = await loadLegacyManifest(process.cwd());
-  assert.equal(manifest.migrations.length, 2);
+  assert.equal(manifest.migrations.length, 3);
   const hashes = await verifyLegacyArchiveHashes(process.cwd(), manifest);
   for (const migration of LEGACY_PRODUCTION_MIGRATIONS) {
     assert.equal(hashes.get(migration.migrationName), migration.expectedSha256);
@@ -237,7 +322,7 @@ test("failed migration history is refused", () => {
   );
 });
 
-test("exact approved Stage 3.13C/3.13D/3.13E/3.15A sequence is accepted", () => {
+test("exact approved Stage 3.13C/3.13D/3.13E/3.15A/3.25A sequence is accepted", () => {
   const result = validateMigrationHistoryRows(
     preApprovedProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
@@ -251,6 +336,7 @@ test("exact approved Stage 3.13C/3.13D/3.13E/3.15A sequence is accepted", () => 
     ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
+    ...EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
   ]);
   assert.deepEqual(
     result.recognizedLegacyMigrations,
@@ -258,7 +344,7 @@ test("exact approved Stage 3.13C/3.13D/3.13E/3.15A sequence is accepted", () => 
   );
 });
 
-test("current production baseline accepts only approved Stage 3.13D/3.13E/3.15A migrations pending", () => {
+test("current production baseline accepts only approved Stage 3.13D/3.13E/3.15A/3.25A migrations pending", () => {
   const result = validateMigrationHistoryRows(
     currentProductionHistoryRows(),
     ACTIVE_MIGRATIONS,
@@ -269,6 +355,7 @@ test("current production baseline accepts only approved Stage 3.13D/3.13E/3.15A 
       ...EXPECTED_STAGE_3_13D_PENDING_MIGRATIONS,
       ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
       ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
+      ...EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
     ],
   );
   assert.deepEqual(
@@ -325,6 +412,219 @@ test("Stage 3.15A inputFingerprint migration is filesystem-present and explicitl
       ),
     "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
   );
+});
+
+test("MIG-01 exactly the BUG02 provider-slot migration pending is allowed", async () => {
+  const activeMigrationNames = await listActiveMigrationNames(process.cwd());
+  assert.ok(activeMigrationNames.includes(BUG02_PROVIDER_SLOT_MIGRATION));
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(result.pendingActiveMigrations, [BUG02_PROVIDER_SLOT_MIGRATION]);
+  assert.deepEqual(EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS, [
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+});
+
+test("MIG-02 BUG02 migration plus an unexpected pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+        [...ACTIVE_MIGRATIONS, "20260916090001_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("MIG-03 policy expects BUG02 migration but the filesystem artifact is missing", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([]),
+        ACTIVE_MIGRATIONS.filter((name) => name !== BUG02_PROVIDER_SLOT_MIGRATION),
+      ),
+    "REFUSE_EXPECTED_MIGRATION_MISSING",
+  );
+});
+
+test("MIG-04 BUG02 migration already applied is accepted with no pending refusal", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.ok(result.appliedActiveMigrations.includes(BUG02_PROVIDER_SLOT_MIGRATION));
+  assert.equal(result.pendingActiveMigrations.includes(BUG02_PROVIDER_SLOT_MIGRATION), false);
+});
+
+test("LEGACY-AIP-01 known historical AI-progress row with exact checksum is admitted", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+    ACTIVE_MIGRATIONS,
+  );
+  const expected = LEGACY_PRODUCTION_MIGRATIONS.find(
+    (migration) => migration.migrationName === AI_ANALYSIS_PROGRESS_MIGRATION,
+  );
+  assert.ok(expected);
+  const row = result.rows.find(
+    (entry) => entry.migration_name === AI_ANALYSIS_PROGRESS_MIGRATION,
+  );
+  assert.ok(row);
+  assert.equal(row.checksum, expected.expectedSha256);
+  assert.ok(row.finished_at);
+  assert.equal(row.rolled_back_at, null);
+  assert.ok(
+    result.recognizedLegacyMigrations.includes(AI_ANALYSIS_PROGRESS_MIGRATION),
+  );
+});
+
+test("LEGACY-AIP-02 AI-progress row with the wrong checksum is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { checksum: "bad-ai-progress-checksum" },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_CHECKSUM_MISMATCH",
+  );
+});
+
+test("LEGACY-AIP-03 AI-progress row in failed or incomplete state is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { finished_at: null },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_UNFINISHED",
+  );
+});
+
+test("LEGACY-AIP-04 AI-progress row marked rolled back is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { rolled_back_at: new Date("2026-08-10T12:00:00.000Z") },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_ROLLED_BACK",
+  );
+});
+
+test("LEGACY-AIP-05 three known historical rows plus BUG02 pending is allowed", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.deepEqual(result.recognizedLegacyMigrations, [
+    "20260625090944_add_two_pass_transcription_quality_enhancement",
+    "20260625120000_squash_and_diarization_fields",
+    AI_ANALYSIS_PROGRESS_MIGRATION,
+  ]);
+  assert.deepEqual(result.pendingActiveMigrations, [
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+});
+
+test("LEGACY-AIP-06 known history plus an extra unknown successful DB-only row is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        [
+          ...historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          successfulRow("20260820120000_unknown_successful_db_only"),
+        ],
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_UNKNOWN_LEGACY_DIVERGENCE",
+  );
+});
+
+test("LEGACY-AIP-07 known history plus an unexpected second repo-pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([
+          BUG02_PROVIDER_SLOT_MIGRATION,
+        ]),
+        [...ACTIVE_MIGRATIONS, "20260916090001_unreviewed_second_pending"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("LEGACY-AIP-08 known history expects BUG02 pending but the artifact is missing", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        historyWithOnlyTheseActiveMigrationsPending([
+          BUG02_PROVIDER_SLOT_MIGRATION,
+        ]),
+        ACTIVE_MIGRATIONS.filter(
+          (name) => name !== BUG02_PROVIDER_SLOT_MIGRATION,
+        ),
+      ),
+    "REFUSE_EXPECTED_MIGRATION_MISSING",
+  );
+});
+
+test("MIG-05 first-deploy sequence inspects provider slots only after migration", async () => {
+  assert.deepEqual(
+    [...PRODUCTION_FIRST_DEPLOY_SEQUENCE],
+    [
+      "pre_migration_checks_without_provider_slot_table",
+      "guarded_migration_overlay_status",
+      "apply_admitted_migration",
+      "verify_migration_state",
+      "inspect_provider_slot_rows_post_migration_only",
+      "continue_normal_deployment_readiness",
+    ],
+  );
+  const inspectIndex = PRODUCTION_FIRST_DEPLOY_SEQUENCE.indexOf(
+    "inspect_provider_slot_rows_post_migration_only",
+  );
+  const applyIndex = PRODUCTION_FIRST_DEPLOY_SEQUENCE.indexOf("apply_admitted_migration");
+  assert.ok(applyIndex >= 0 && inspectIndex > applyIndex);
+
+  const runbook = await readFile(
+    path.join(process.cwd(), "docs", "operations", "deployment-runbook.md"),
+    "utf8",
+  );
+  const architecture = await readFile(
+    path.join(process.cwd(), "docs", "architecture", "11-deployment-architecture.md"),
+    "utf8",
+  );
+  const slotQueryIndex = runbook.indexOf('FROM "TranscriptEnhancementProviderSlot"');
+  const postMigrationLabelIndex = runbook.indexOf("POST-MIGRATION ONLY");
+  const deployIndex = runbook.indexOf("npm run prisma:production:deploy");
+  assert.ok(slotQueryIndex >= 0);
+  assert.ok(postMigrationLabelIndex >= 0);
+  assert.ok(postMigrationLabelIndex < slotQueryIndex);
+  assert.ok(deployIndex >= 0);
+  assert.ok(deployIndex < slotQueryIndex);
+  assert.match(architecture, /POST-MIGRATION ONLY/);
+  assert.match(architecture, /do not query `TranscriptEnhancementProviderSlot` before/);
 });
 
 test("Wave C publication-grant migration is filesystem-present and explicitly admitted", async () => {
@@ -503,6 +803,13 @@ test("Prisma status accepts singular and plural expected-pending output", () => 
     ),
     false,
   );
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      `Following migrations have not yet been applied:\n${BUG02_PROVIDER_SLOT_MIGRATION}\n20260916999999_extra\n\nTo apply migrations in production`,
+      [BUG02_PROVIDER_SLOT_MIGRATION],
+    ),
+    false,
+  );
 });
 
 test("empty disposable PostgreSQL database is refused by the DB guard", async (t) => {
@@ -559,5 +866,746 @@ test("empty disposable PostgreSQL database is refused by the DB guard", async (t
   await assertRejectsWithCode(
     () => readMigrationHistoryFromDatabase(databaseUrl),
     "REFUSE_EMPTY_OR_NO_HISTORY",
+  );
+});
+
+function cloneManifest(manifest: LegacyManifest): LegacyManifest {
+  return structuredClone(manifest);
+}
+
+function expectedSchemaColumns(): ObservedSchemaColumn[] {
+  return Object.values(LEGACY_PRODUCTION_SCHEMA_EFFECTS).flatMap((facts) =>
+    facts.map((fact) => ({
+      schema: fact.schema,
+      table: fact.table,
+      column: fact.column,
+      dataType: fact.dataType,
+      nullable: fact.nullable,
+    })),
+  );
+}
+
+test("SCHEMA-LEGACY-01 known legacy row plus expected schema is admitted", () => {
+  const result = validateMigrationHistoryRows(
+    historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+    ACTIVE_MIGRATIONS,
+  );
+  assert.ok(
+    result.recognizedLegacyMigrations.includes(AI_ANALYSIS_PROGRESS_MIGRATION),
+  );
+  for (const migration of LEGACY_PRODUCTION_MIGRATIONS) {
+    validateLegacySchemaEffects(migration.migrationName, expectedSchemaColumns());
+  }
+});
+
+test("SCHEMA-LEGACY-02 AUTH-SCHEMA-01 AI-progress row without progressJson is refused", () => {
+  const observed = expectedSchemaColumns().filter(
+    (column) => column.column !== "progressJson",
+  );
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_MISSING",
+  );
+});
+
+test("SCHEMA-LEGACY-03 progressJson with the wrong type is refused", () => {
+  const observed = expectedSchemaColumns().map((column) =>
+    column.column === "progressJson"
+      ? { ...column, dataType: "text" }
+      : column,
+  );
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_MISMATCH",
+  );
+});
+
+test("SCHEMA-LEGACY-04 missing schema evidence definition is refused", () => {
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, expectedSchemaColumns(), {
+        [AI_ANALYSIS_PROGRESS_MIGRATION]: [],
+      }),
+    "REFUSE_LEGACY_SCHEMA_EVIDENCE_UNDEFINED",
+  );
+});
+
+test("SCHEMA-ID-01 missing schemaEffectId is refused", async () => {
+  const manifest = cloneManifest(await loadLegacyManifest(process.cwd()));
+  delete manifest.migrations[2]!.schemaEffectId;
+  assertRefusal(
+    () => assertManifestDeclaredSetExact(manifest),
+    "REFUSE_MANIFEST_SCHEMA_EFFECT_ID_MISSING",
+  );
+});
+
+test("SCHEMA-ID-02 empty schemaEffectId is refused", async () => {
+  const manifest = cloneManifest(await loadLegacyManifest(process.cwd()));
+  manifest.migrations[2]!.schemaEffectId = "   ";
+  assertRefusal(
+    () => assertManifestDeclaredSetExact(manifest),
+    "REFUSE_MANIFEST_SCHEMA_EFFECT_ID_EMPTY",
+  );
+});
+
+test("SCHEMA-ID-03 unknown schemaEffectId is refused", async () => {
+  const manifest = cloneManifest(await loadLegacyManifest(process.cwd()));
+  manifest.migrations[2]!.schemaEffectId = "not-a-catalog-id";
+  assertRefusal(
+    () => assertManifestDeclaredSetExact(manifest),
+    "REFUSE_MANIFEST_SCHEMA_EFFECT_ID_UNKNOWN",
+  );
+});
+
+test("SCHEMA-QUERY-01 information_schema query failure is refused closed", async () => {
+  const facts: LegacySchemaColumnFact[] = [
+    LEGACY_PRODUCTION_SCHEMA_EFFECTS[AI_ANALYSIS_PROGRESS_MIGRATION]![0]!,
+  ];
+  await assertRejectsWithCode(
+    () =>
+      readObservedSchemaColumns(
+        "postgresql://overlay-schema-query-test/unused",
+        facts,
+        async () => {
+          const error = new Error(
+            "permission denied for table information_schema.columns",
+          );
+          (error as { code?: string }).code = "42501";
+          throw error;
+        },
+      ),
+    "REFUSE_LEGACY_SCHEMA_QUERY_FAILED",
+  );
+});
+
+test("SCHEMA-NULL-01 nullability mismatch is refused", () => {
+  const observed = expectedSchemaColumns().map((column) =>
+    column.column === "progressJson"
+      ? { ...column, nullable: false }
+      : column,
+  );
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_MISMATCH",
+  );
+});
+
+function progressJsonObservation(): ObservedSchemaColumn {
+  return expectedSchemaColumns().find(
+    (column) => column.column === "progressJson",
+  )!;
+}
+
+test("SCHEMA-DUP-01 zero matching observations is refused missing", () => {
+  const observed = expectedSchemaColumns().filter(
+    (column) => column.column !== "progressJson",
+  );
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_MISSING",
+  );
+});
+
+test("SCHEMA-DUP-02 exactly one valid observation is admitted", () => {
+  validateLegacySchemaEffects(
+    AI_ANALYSIS_PROGRESS_MIGRATION,
+    expectedSchemaColumns(),
+  );
+});
+
+test("SCHEMA-DUP-03 two identical matching observations are refused ambiguous", () => {
+  const match = progressJsonObservation();
+  const observed = [...expectedSchemaColumns(), { ...match }];
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_AMBIGUOUS",
+  );
+});
+
+test("SCHEMA-DUP-04 two conflicting matching observations are refused ambiguous", () => {
+  const match = progressJsonObservation();
+  const observed = [
+    ...expectedSchemaColumns(),
+    { ...match, dataType: "text", nullable: false },
+  ];
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, observed),
+    "REFUSE_LEGACY_SCHEMA_EFFECT_AMBIGUOUS",
+  );
+});
+
+test("SCHEMA-DUP-05 one valid match plus unrelated observations is admitted", () => {
+  validateLegacySchemaEffects(AI_ANALYSIS_PROGRESS_MIGRATION, [
+    ...expectedSchemaColumns(),
+    {
+      schema: "public",
+      table: "UnrelatedTable",
+      column: "unrelatedColumn",
+      dataType: "text",
+      nullable: true,
+    },
+  ]);
+});
+
+test("MANIFEST-EXACT-01 manifest exactly matches the intended archive", async () => {
+  const manifest = await loadLegacyManifest(process.cwd());
+  assertManifestDeclaredSetExact(manifest);
+  const archiveNames = await listLegacyArchiveMigrationNames(process.cwd());
+  assertArchiveDirectorySetExact({
+    declaredNames: LEGACY_PRODUCTION_MIGRATIONS.map(
+      (migration) => migration.migrationName,
+    ),
+    archiveNames,
+    activeNames: await listActiveMigrationNames(process.cwd()),
+  });
+  assert.deepEqual(
+    archiveNames,
+    LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName).sort(),
+  );
+});
+
+test("MANIFEST-EXACT-02 AUTH-MANIFEST-01 extra undeclared archive entry is refused", async () => {
+  const manifest = cloneManifest(await loadLegacyManifest(process.cwd()));
+  const activeNames = await listActiveMigrationNames(process.cwd());
+  assertRefusal(
+    () =>
+      assertArchiveDirectorySetExact({
+        declaredNames: manifest.migrations.map(
+          (migration) => migration.migrationName,
+        ),
+        archiveNames: [
+          ...manifest.migrations.map((migration) => migration.migrationName),
+          "20260916999999_undeclared_archive",
+        ],
+        activeNames,
+      }),
+    "REFUSE_UNDECLARED_ARCHIVE_ENTRY",
+  );
+  manifest.migrations.push({
+    ...manifest.migrations[0]!,
+    migrationName: "20260916999999_undeclared_archive",
+    schemaEffectId: "20260916999999_undeclared_archive",
+  });
+  assertRefusal(
+    () => assertManifestDeclaredSetExact(manifest),
+    "REFUSE_MANIFEST_INVALID",
+  );
+});
+
+test("MANIFEST-EXACT-03 manifest entry missing its archive artifact is refused", async () => {
+  const manifest = await loadLegacyManifest(process.cwd());
+  const activeNames = await listActiveMigrationNames(process.cwd());
+  assertRefusal(
+    () =>
+      assertArchiveDirectorySetExact({
+        declaredNames: manifest.migrations.map(
+          (migration) => migration.migrationName,
+        ),
+        archiveNames: manifest.migrations
+          .map((migration) => migration.migrationName)
+          .filter((name) => name !== AI_ANALYSIS_PROGRESS_MIGRATION),
+        activeNames,
+      }),
+    "REFUSE_ARCHIVE_ARTIFACT_MISSING",
+  );
+});
+
+test("MANIFEST-EXACT-04 archive name colliding with the active chain is refused", async () => {
+  const manifest = await loadLegacyManifest(process.cwd());
+  const declaredNames = manifest.migrations.map(
+    (migration) => migration.migrationName,
+  );
+  assertRefusal(
+    () =>
+      assertArchiveDirectorySetExact({
+        declaredNames,
+        archiveNames: declaredNames,
+        activeNames: [AI_ANALYSIS_PROGRESS_MIGRATION],
+      }),
+    "REFUSE_ARCHIVE_ACTIVE_NAME_COLLISION",
+  );
+});
+
+test("PENDING-EXACT-01 AUTH-PENDING-01 actual pending exactly BUG02 is allowed", () => {
+  assert.deepEqual([...EXPECTED_RELEASE_PENDING_MIGRATIONS], [
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+  assert.equal(
+    evaluateReleasePendingSet(
+      releaseAuthority({
+        actualPending: [BUG02_PROVIDER_SLOT_MIGRATION],
+      }),
+    ),
+    "PRE_DEPLOY_ALLOW",
+  );
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      `Following migration have not yet been applied:\n${BUG02_PROVIDER_SLOT_MIGRATION}\n\nTo apply migrations in production`,
+      [BUG02_PROVIDER_SLOT_MIGRATION],
+    ),
+    true,
+  );
+});
+
+test("PENDING-EXACT-02 BUG02 plus an extra pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      evaluateReleasePendingSet(
+        releaseAuthority({
+          actualPending: [BUG02_PROVIDER_SLOT_MIGRATION, "20260916999999_extra"],
+        }),
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+  assert.equal(
+    isExpectedPendingStatusOutput(
+      `Following migrations have not yet been applied:\n${BUG02_PROVIDER_SLOT_MIGRATION}\n20260916999999_extra\n\nTo apply migrations in production`,
+      [BUG02_PROVIDER_SLOT_MIGRATION],
+    ),
+    false,
+  );
+});
+
+test("PENDING-EXACT-03 empty pending without a successful current row is refused", () => {
+  assertRefusal(
+    () =>
+      evaluateReleasePendingSet(
+        releaseAuthority({
+          actualPending: [],
+          activeArtifactChecksums: {
+            [BUG02_PROVIDER_SLOT_MIGRATION]: "unused-without-row",
+          },
+        }),
+      ),
+    "REFUSE_MISSING_EXPECTED_PENDING",
+  );
+});
+
+test("PENDING-EXACT-04 only an unexpected pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      evaluateReleasePendingSet(
+        releaseAuthority({
+          actualPending: ["20260916999999_extra"],
+        }),
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("ROW-SUCCESS-01 AUTH-ROW-01 finished valid steps and no failure logs are admitted", () => {
+  const rows = historyWithOnlyTheseActiveMigrationsPending([
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+  const squash = rows.find(
+    (row) =>
+      row.migration_name === "20260625120000_squash_and_diarization_fields",
+  );
+  assert.ok(squash);
+  squash.applied_steps_count = 0;
+  squash.logs = "";
+  const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.ok(isSuccessfulArchivedMigrationRow(squash));
+  assert.ok(
+    result.recognizedLegacyMigrations.includes(
+      "20260625120000_squash_and_diarization_fields",
+    ),
+  );
+});
+
+test("ROW-SUCCESS-02 finished_at NULL is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { finished_at: null },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_UNFINISHED",
+  );
+});
+
+test("ROW-SUCCESS-03 rolled_back_at present is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { rolled_back_at: new Date("2026-08-10T12:00:00.000Z") },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_ROLLED_BACK",
+  );
+});
+
+test("ROW-SUCCESS-04 invalid applied_steps_count is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { applied_steps_count: -1 },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_APPLIED_STEPS_INVALID",
+  );
+});
+
+test("ROW-SUCCESS-05 failure logs inconsistent with success are refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { logs: "Error: P3009 migration failed" },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_FAILURE_LOGS",
+  );
+});
+
+test("POSTSAFE-01 valid current migration row plus exact artifact checksum is safe", async () => {
+  const artifactChecksum = await currentReleaseArtifactChecksum();
+  const sqlPath = path.join(
+    process.cwd(),
+    "prisma",
+    "migrations",
+    BUG02_PROVIDER_SLOT_MIGRATION,
+    "migration.sql",
+  );
+  assert.equal(artifactChecksum, await sha256File(sqlPath));
+  assert.equal(
+    artifactChecksum,
+    prismaMigrationArtifactChecksum(await readFile(sqlPath)),
+  );
+  assert.equal(
+    evaluateReleasePendingSet(await postDeployAuthority()),
+    "POST_DEPLOY_SAFE",
+  );
+});
+
+test("POSTSAFE-02 current release row absent is refused", async () => {
+  const artifactChecksum = await currentReleaseArtifactChecksum();
+  assertRefusal(
+    () =>
+      evaluateReleasePendingSet(
+        releaseAuthority({
+          actualPending: [],
+          activeArtifactChecksums: {
+            [BUG02_PROVIDER_SLOT_MIGRATION]: artifactChecksum,
+          },
+        }),
+      ),
+    "REFUSE_MISSING_EXPECTED_PENDING",
+  );
+});
+
+test("POSTSAFE-03 finished_at NULL is refused", async () => {
+  const authority = await postDeployAuthority({
+    rowPatch: { finished_at: null },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_LEGACY_UNFINISHED",
+  );
+});
+
+test("POSTSAFE-04 rolled_back_at present is refused", async () => {
+  const authority = await postDeployAuthority({
+    rowPatch: { rolled_back_at: new Date("2026-09-16T12:00:00.000Z") },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_LEGACY_ROLLED_BACK",
+  );
+});
+
+test("POSTSAFE-05 invalid applied_steps_count is refused", async () => {
+  const authority = await postDeployAuthority({
+    rowPatch: { applied_steps_count: -1 },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_LEGACY_APPLIED_STEPS_INVALID",
+  );
+});
+
+test("POSTSAFE-06 failure or P30xx logs are refused", async () => {
+  const authority = await postDeployAuthority({
+    rowPatch: { logs: "Error: P3009 failed to apply migration" },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_LEGACY_FAILURE_LOGS",
+  );
+});
+
+test("POSTSAFE-07 wrong checksum is refused", async () => {
+  const authority = await postDeployAuthority({
+    rowPatch: { checksum: "0".repeat(64) },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_RELEASE_MIGRATION_CHECKSUM_MISMATCH",
+  );
+});
+
+test("POSTSAFE-08 correct BUG02 row plus unknown divergence is refused", async () => {
+  const authority = await postDeployAuthority({
+    extraRows: [successfulRow("20260916999999_unknown_divergence")],
+  });
+  assertRefusal(
+    () => validateMigrationHistoryRows(authority.historyRows, ACTIVE_MIGRATIONS),
+    "REFUSE_UNKNOWN_LEGACY_DIVERGENCE",
+  );
+});
+
+test("POSTSAFE-09 correct BUG02 row but active current artifact missing is refused", async () => {
+  const authority = await postDeployAuthority();
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        authority.historyRows,
+        ACTIVE_MIGRATIONS.filter(
+          (name) => name !== BUG02_PROVIDER_SLOT_MIGRATION,
+        ),
+      ),
+    "REFUSE_EXPECTED_MIGRATION_MISSING",
+  );
+  const missingArtifact = await postDeployAuthority({
+    omitArtifactChecksum: true,
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(missingArtifact),
+    "REFUSE_EXPECTED_MIGRATION_MISSING",
+  );
+});
+
+const BUG02_ARTIFACT_RELATIVE_PATH = path.join(
+  "prisma",
+  "migrations",
+  BUG02_PROVIDER_SLOT_MIGRATION,
+  "migration.sql",
+);
+
+async function withTemporaryArtifactRepo<T>(
+  fn: (tempRoot: string) => Promise<T>,
+): Promise<T> {
+  const tempRoot = await mkdtemp(
+    path.join(os.tmpdir(), "bug02-artifact-fs-"),
+  );
+  try {
+    return await fn(tempRoot);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function writeExactBug02Artifact(tempRoot: string): Promise<string> {
+  const destination = path.join(tempRoot, BUG02_ARTIFACT_RELATIVE_PATH);
+  await copyFileBytePreserving(
+    path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH),
+    destination,
+  );
+  return destination;
+}
+
+async function writeBug02MigrationDirectory(tempRoot: string): Promise<string> {
+  const directory = path.join(
+    tempRoot,
+    "prisma",
+    "migrations",
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  );
+  await mkdir(directory, { recursive: true });
+  return directory;
+}
+
+test("ARTIFACT-FS-01 temporary repo with exact active BUG02 artifact resolves checksum", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    await writeExactBug02Artifact(tempRoot);
+    const checksum = await readActiveMigrationArtifactChecksum(
+      tempRoot,
+      BUG02_PROVIDER_SLOT_MIGRATION,
+    );
+    assert.equal(checksum, await currentReleaseArtifactChecksum());
+    assert.deepEqual(await readCurrentReleaseArtifactChecksums(tempRoot), {
+      [BUG02_PROVIDER_SLOT_MIGRATION]: checksum,
+    });
+    await stat(path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH));
+  });
+});
+
+test("ARTIFACT-FS-02 temporary repo with BUG02 directory but missing migration.sql is refused", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    await writeBug02MigrationDirectory(tempRoot);
+    await assertRejectsWithCode(
+      () =>
+        readActiveMigrationArtifactChecksum(
+          tempRoot,
+          BUG02_PROVIDER_SLOT_MIGRATION,
+        ),
+      "REFUSE_EXPECTED_MIGRATION_MISSING",
+    );
+    await assertRejectsWithCode(
+      () => readCurrentReleaseArtifactChecksums(tempRoot),
+      "REFUSE_EXPECTED_MIGRATION_MISSING",
+    );
+    await stat(path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH));
+  });
+});
+
+test("ARTIFACT-FS-03 temporary repo lacking the BUG02 directory is refused", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    await mkdir(path.join(tempRoot, "prisma", "migrations"), {
+      recursive: true,
+    });
+    await assertRejectsWithCode(
+      () =>
+        readActiveMigrationArtifactChecksum(
+          tempRoot,
+          BUG02_PROVIDER_SLOT_MIGRATION,
+        ),
+      "REFUSE_EXPECTED_MIGRATION_MISSING",
+    );
+    await assertRejectsWithCode(
+      () => readCurrentReleaseArtifactChecksums(tempRoot),
+      "REFUSE_EXPECTED_MIGRATION_MISSING",
+    );
+    await stat(path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH));
+  });
+});
+
+test("ARTIFACT-FS-04 altered temporary artifact checksum does not match the DB row", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    const destination = await writeExactBug02Artifact(tempRoot);
+    await writeFile(
+      destination,
+      Buffer.concat([
+        await readFile(destination),
+        Buffer.from("\n-- artifact-fs-altered\n"),
+      ]),
+    );
+    const artifactChecksums = await readCurrentReleaseArtifactChecksums(
+      tempRoot,
+    );
+    const dbChecksum = await currentReleaseArtifactChecksum();
+    assert.notEqual(
+      artifactChecksums[BUG02_PROVIDER_SLOT_MIGRATION],
+      dbChecksum,
+    );
+    const authority = {
+      ...(await postDeployAuthority()),
+      activeArtifactChecksums: artifactChecksums,
+    };
+    assertRefusal(
+      () => evaluateReleasePendingSet(authority),
+      "REFUSE_RELEASE_MIGRATION_CHECKSUM_MISMATCH",
+    );
+    assert.equal(
+      await currentReleaseArtifactChecksum(),
+      dbChecksum,
+    );
+  });
+});
+
+test("ARTIFACT-FS-05 full POST_DEPLOY_SAFE authority with exact temporary artifact", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    await writeExactBug02Artifact(tempRoot);
+    const artifactChecksums = await readCurrentReleaseArtifactChecksums(
+      tempRoot,
+    );
+    const authority = {
+      ...(await postDeployAuthority()),
+      activeArtifactChecksums: artifactChecksums,
+    };
+    assert.equal(evaluateReleasePendingSet(authority), "POST_DEPLOY_SAFE");
+  });
+});
+
+test("ARTIFACT-FS-06 full authority refuses when the temporary artifact is absent", async () => {
+  await withTemporaryArtifactRepo(async (tempRoot) => {
+    await mkdir(path.join(tempRoot, "prisma", "migrations"), {
+      recursive: true,
+    });
+    await assertRejectsWithCode(async () => {
+      const artifactChecksums =
+        await readCurrentReleaseArtifactChecksums(tempRoot);
+      return evaluateReleasePendingSet({
+        ...(await postDeployAuthority()),
+        activeArtifactChecksums: artifactChecksums,
+      });
+    }, "REFUSE_EXPECTED_MIGRATION_MISSING");
+    await stat(path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH));
+  });
+});
+
+test("POSTSAFE-10 correct BUG02 row plus pending BUG02 is inconsistent and refused", async () => {
+  const authority = await postDeployAuthority();
+  assertRefusal(
+    () =>
+      evaluateReleasePendingSet({
+        ...authority,
+        actualPending: [BUG02_PROVIDER_SLOT_MIGRATION],
+      }),
+    "REFUSE_RELEASE_MIGRATION_INCONSISTENT",
+  );
+});
+
+test("production-history docs do not claim a stale complete pending allowlist", async () => {
+  const repair = await readFile(
+    path.join(
+      process.cwd(),
+      "docs",
+      "operations",
+      "prisma-production-history-repair-20260804.md",
+    ),
+    "utf8",
+  );
+  const architecture = await readFile(
+    path.join(
+      process.cwd(),
+      "docs",
+      "architecture",
+      "11-deployment-architecture.md",
+    ),
+    "utf8",
+  );
+  assert.doesNotMatch(repair, /The complete pending-migration allowlist is:/);
+  assert.match(repair, /EXPECTED_RELEASE_PENDING_MIGRATIONS/);
+  assert.match(repair, /20260916090000_add_transcript_enhancement_provider_slots/);
+  assert.match(repair, /`PRE_DEPLOY_ALLOW` is evidence only/);
+  assert.match(architecture, /EXPECTED_RELEASE_PENDING_MIGRATIONS/);
+  assert.match(
+    architecture,
+    /20260916090000_add_transcript_enhancement_provider_slots/,
+  );
+  assert.match(architecture, /successful-row predicate/);
+  assert.doesNotMatch(
+    architecture,
+    /already present is `POST_DEPLOY_SAFE`/,
   );
 });

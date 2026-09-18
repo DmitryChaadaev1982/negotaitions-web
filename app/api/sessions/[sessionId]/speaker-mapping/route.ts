@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
+import { ParticipantType } from "@/app/generated/prisma/client";
 import { applyFacilitatorMaterialInputChange, materialChangeGuardErrorBody } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import {
@@ -9,20 +9,16 @@ import {
   resolveRoomParticipantFromQuery,
 } from "@/lib/room-participant-resolver";
 import {
-  applySpeakerMapping,
   getUniqueSpeakerLabels,
   getDisplaySpeakerLabel,
   type SpeakerMapping,
 } from "@/lib/transcription/speaker-labels";
-import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
-import {
-  ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE,
-  mergeProcessingMetadata,
-} from "@/lib/transcription/processing-metadata";
-import { isAuthoritativeEnhancementLockActive } from "@/lib/services/transcript-enhancement-timeout";
+import { persistMappingOwnedTranscriptUpdate, mappingGenerationMismatchBody, MappingGenerationMismatchError, MappingIncompleteError } from "@/lib/transcription/mapping-persistence";
 import { deriveSpeakerMappingStatus, resolveSpeakerMappingForUi } from "@/lib/transcription/speaker-mapping-state";
 import { suggestSpeakerMapping } from "@/lib/transcription/auto-speaker-mapping";
 import { loadCanonicalSpeakerMappingCandidates } from "@/lib/transcription/speaker-mapping-candidate-load";
+import { resolveSegmentEnhancementProvenance } from "@/lib/post-processing/enhancement-ux-presentation";
+import { parseTranscriptEnhancementPublication } from "@/lib/services/transcript-enhancement-publication";
 
 export const runtime = "nodejs";
 type RouteContext = {
@@ -115,6 +111,7 @@ export async function GET(request: Request, context: RouteContext) {
 
   return NextResponse.json({
     transcriptId: transcript.id,
+    retranscribeCount: transcript.retranscribeCount ?? 0,
     speakerMappingStatus: transcript.speakerMappingStatus,
     speakerMappingConfirmedAt: transcript.speakerMappingConfirmedAt?.toISOString() ?? null,
     speakerMappingConfirmedBy: transcript.speakerMappingConfirmedBy ?? null,
@@ -131,7 +128,8 @@ export async function GET(request: Request, context: RouteContext) {
 const speakerMappingSchema = z.object({
   joinToken: z.string().trim().min(1).optional(),
   participantId: z.string().trim().min(1).optional(),
-  transcriptId: z.string().optional(),
+  transcriptId: z.string().trim().min(1),
+  expectedRetranscribeCount: z.number().int().nonnegative(),
   mapping: z.record(z.string(), z.string().nullable()).optional().default({}),
   confirm: z.boolean().optional().default(false),
   applyToTranscript: z.boolean().optional().default(true),
@@ -177,6 +175,8 @@ export async function POST(request: Request, context: RouteContext) {
     suggestAutomatically,
     forceOverrideLocked,
     confirmRewindPublication,
+    transcriptId: requestedTranscriptId,
+    expectedRetranscribeCount,
   } = parsed.data;
 
   const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
@@ -203,12 +203,11 @@ export async function POST(request: Request, context: RouteContext) {
   if (!transcript) {
     return NextResponse.json({ error: "Transcript not found." }, { status: 404 });
   }
-
-  if (await isAuthoritativeEnhancementLockActive({ transcriptId: transcript.id })) {
-    return NextResponse.json(
-      { error: ENHANCEMENT_RUNNING_MATERIAL_LOCK_MESSAGE },
-      { status: 409 },
-    );
+  if (
+    requestedTranscriptId !== transcript.id ||
+    expectedRetranscribeCount !== (transcript.retranscribeCount ?? 0)
+  ) {
+    return NextResponse.json(mappingGenerationMismatchBody(), { status: 409 });
   }
 
   const sessionParticipants = await getSpeakerMappingCandidates(sessionId);
@@ -216,26 +215,36 @@ export async function POST(request: Request, context: RouteContext) {
   // ── Suggest automatically ────────────────────────────────────────────────
   if (suggestAutomatically) {
     const suggestion = await suggestSpeakerMapping(sessionId, transcript);
-    const latest = await prisma.transcript.findUnique({
-      where: { id: transcript.id },
-      select: { processingMetadata: true },
-    });
-    await prisma.transcript.update({
-      where: { id: transcript.id },
-      data: {
-        processingMetadata: mergeProcessingMetadata(latest?.processingMetadata, {
-          mappingSuggestion: {
-            candidateMapping: suggestion.mapping,
-            confidence: suggestion.confidence,
-            reason: suggestion.available
-              ? "auto_suggested"
-              : `unavailable:${suggestion.unavailableReason ?? "unknown"}`,
-            unavailableReason: suggestion.unavailableReason,
-            telemetryQuality: suggestion.telemetryQuality,
+    try {
+      await prisma.$transaction(async (tx) => {
+        const persisted = await persistMappingOwnedTranscriptUpdate({
+          tx,
+          transcriptId: transcript.id,
+          expectedTranscriptId: requestedTranscriptId,
+          expectedRetranscribeCount,
+          patch: {
+            mappingSuggestion: {
+              candidateMapping: suggestion.mapping,
+              confidence: suggestion.confidence,
+              reason: suggestion.available
+                ? "auto_suggested"
+                : `unavailable:${suggestion.unavailableReason ?? "unknown"}`,
+              unavailableReason: suggestion.unavailableReason,
+              telemetryQuality: suggestion.telemetryQuality,
+            },
           },
-        }) as Prisma.InputJsonValue,
-      },
-    });
+          rebuildDiarizedText: false,
+        });
+        if (!persisted.ok) {
+          throw new MappingGenerationMismatchError();
+        }
+      });
+    } catch (error) {
+      if (error instanceof MappingGenerationMismatchError) {
+        return NextResponse.json(mappingGenerationMismatchBody(), { status: 409 });
+      }
+      throw error;
+    }
 
     return NextResponse.json({
       suggestedMapping: suggestion.mapping,
@@ -286,40 +295,12 @@ export async function POST(request: Request, context: RouteContext) {
     forceOverrideLocked,
   });
 
-  const normalizedSegments = transcript.segments.map((segment) => ({
-    speakerLabel: segment.speakerLabel,
-    displaySpeakerLabel: segment.speakerLabel
-      ? getDisplaySpeakerLabel(segment.speakerLabel, labelOrder)
-      : null,
-    startSeconds: segment.startSeconds,
-    endSeconds: segment.endSeconds,
-    text: segment.text,
-    orderIndex: segment.orderIndex,
-  }));
-
-  const mappedSegments = applySpeakerMapping(
-    normalizedSegments,
-    applyOnly
-      ? ((transcript.speakerMapping as SpeakerMapping | null) ?? {})
-      : sanitizedMapping,
-  );
-
-  const effectiveMapping = applyOnly
-    ? ((transcript.speakerMapping as SpeakerMapping | null) ?? {})
-    : sanitizedMapping;
-
   const participantDisplayInfo = sessionParticipants.map((p) => ({
     id: p.sessionParticipantId,
     displayName: p.displayName,
     type: p.participantType,
     roleName: p.roleName,
   }));
-
-  const diarizedText = buildCanonicalDiarizedText({
-    segments: normalizedSegments,
-    speakerMapping: effectiveMapping,
-    participants: participantDisplayInfo,
-  });
 
   const statusDecision = deriveSpeakerMappingStatus({
     hasSpeakerDiarization: transcript.hasSpeakerDiarization,
@@ -364,45 +345,47 @@ export async function POST(request: Request, context: RouteContext) {
         : participant.id
       : null;
 
-  const change = await applyFacilitatorMaterialInputChange({
+  const change = await (async () => {
+    try {
+      return await applyFacilitatorMaterialInputChange({
     sessionId,
     confirmRewindPublication,
+    fenceEnhancementPublication: false,
     mutate: async (tx) => {
-      if (!applyOnly) {
-        await tx.transcript.update({
-          where: { id: transcript.id },
-          data: {
-            speakerMapping: sanitizedMapping,
-            diarizedText: applyToTranscript ? diarizedText : undefined,
-            speakerMappingStatus: newMappingStatus,
-            speakerMappingConfirmedAt: confirmedAt,
-            speakerMappingConfirmedBy: confirmedBy,
-          },
-        });
-
-        for (const segment of mappedSegments) {
-          const dbSegment = transcript.segments.find(
-            (item) => item.orderIndex === segment.orderIndex,
-          );
-          if (!dbSegment) continue;
-
-          // Skip locked segments unless facilitator explicitly requests override
-          if (dbSegment.mappingLocked && !forceOverrideLocked) continue;
-
-          await tx.transcriptSegment.update({
-            where: { id: dbSegment.id },
-            data: {
-              mappedParticipantId: segment.mappedParticipantId,
-              mappingSource: "CLUSTER_MAPPING",
-              mappingLocked: false,
+      const persistParams = {
+        tx,
+        transcriptId: transcript.id,
+        expectedTranscriptId: requestedTranscriptId,
+        expectedRetranscribeCount,
+        rebuildDiarizedText: applyToTranscript || Boolean(applyOnly),
+        participants: participantDisplayInfo.map((item) => ({
+          id: item.id,
+          displayName: item.displayName,
+          type: item.type,
+          roleName: item.roleName,
+        })),
+      } as const;
+      const persisted = applyOnly
+        ? await persistMappingOwnedTranscriptUpdate({
+            ...persistParams,
+            patch: {},
+          })
+        : await persistMappingOwnedTranscriptUpdate({
+            ...persistParams,
+            patch: {
+              speakerMappingStatus: newMappingStatus,
+              speakerMappingConfirmedAt: confirmedAt,
+              speakerMappingConfirmedBy: confirmedBy,
             },
+            requestedMapping: mapping,
+            requireCompleteMapping: confirm,
+            forceOverrideLocked,
           });
+      if (!persisted.ok) {
+        if (persisted.reason === "incomplete_mapping") {
+          throw new MappingIncompleteError();
         }
-      } else {
-        await tx.transcript.update({
-          where: { id: transcript.id },
-          data: { diarizedText },
-        });
+        throw new MappingGenerationMismatchError();
       }
 
       return tx.transcript.findUniqueOrThrow({
@@ -412,7 +395,26 @@ export async function POST(request: Request, context: RouteContext) {
         },
       });
     },
-  });
+      });
+    } catch (error) {
+      if (error instanceof MappingGenerationMismatchError) {
+        return { ok: false as const, mismatch: true as const };
+      }
+      if (error instanceof MappingIncompleteError) {
+        return { ok: false as const, incomplete: true as const };
+      }
+      throw error;
+    }
+  })();
+  if ("mismatch" in change && change.mismatch) {
+    return NextResponse.json(mappingGenerationMismatchBody(), { status: 409 });
+  }
+  if ("incomplete" in change && change.incomplete) {
+    return NextResponse.json(
+      { error: "Assign all detected speakers before confirming mapping." },
+      { status: 400 },
+    );
+  }
   if (!change.ok) {
     return NextResponse.json(materialChangeGuardErrorBody(change), {
       status: change.status,
@@ -430,6 +432,8 @@ export async function POST(request: Request, context: RouteContext) {
     confirm,
   });
 
+  const publication = parseTranscriptEnhancementPublication(updated.processingMetadata);
+  const currentRetranscribeCount = updated.retranscribeCount ?? 0;
   return NextResponse.json({
     transcript: {
       id: updated.id,
@@ -442,6 +446,7 @@ export async function POST(request: Request, context: RouteContext) {
       speakerMapping: (updated.speakerMapping as SpeakerMapping | null) ?? null,
       speakerMappingStatus: updated.speakerMappingStatus,
       speakerMappingConfirmedAt: updated.speakerMappingConfirmedAt?.toISOString() ?? null,
+      retranscribeCount: currentRetranscribeCount,
       updatedAt: updated.updatedAt.toISOString(),
       segments: updated.segments.map((segment) => ({
         id: segment.id,
@@ -454,6 +459,13 @@ export async function POST(request: Request, context: RouteContext) {
         mappingSource: segment.mappingSource ?? null,
         mappingLocked: segment.mappingLocked,
         mappingConfidence: segment.mappingConfidence ?? null,
+        enhancementProvenance: resolveSegmentEnhancementProvenance({
+          publication,
+          currentRetranscribeCount,
+          orderIndex: segment.orderIndex,
+          publishedText: segment.text,
+          rawText: segment.qualityText,
+        }),
       })),
     },
     confirmed: confirm,
