@@ -21,10 +21,26 @@ export const ACTIVE_MIGRATIONS_DIR = "prisma/migrations";
 export const CONFIRM_LEGACY_PRODUCTION_HISTORY_FLAG =
   "--confirm-legacy-production-history";
 
+export type LegacyLineageAdmission =
+  | "required_on_every_admitted_lineage"
+  | "progress_lineage_variant";
+
+export const ADMITTED_LEGACY_HISTORY_LINEAGES = [
+  "LEGACY_PROGRESS_APPLIED",
+  "LEGACY_PROGRESS_NEVER_APPLIED",
+] as const;
+
+export type AdmittedLegacyHistoryLineage =
+  (typeof ADMITTED_LEGACY_HISTORY_LINEAGES)[number];
+
+export const AI_ANALYSIS_PROGRESS_MIGRATION =
+  "20260810120000_add_ai_analysis_progress";
+
 /**
- * Explicit successful legacy production rows archived outside the active
- * chain. Historical DB-only migrations are admitted only when listed here
- * with verified checksum evidence. Unknown successful rows still fail closed.
+ * Known archived legacy production artifacts. `lineageAdmission` distinguishes
+ * globally required rows from explicitly admitted historical variants. A known
+ * archive artifact is not automatically a required row on every production
+ * lineage. Unknown successful rows still fail closed.
  */
 export const LEGACY_PRODUCTION_MIGRATIONS = [
   {
@@ -34,6 +50,7 @@ export const LEGACY_PRODUCTION_MIGRATIONS = [
       "ea6930e3c7149c7fcdbf614a81d8e14558ea1208e56c943ef96030114da1e8de",
     sourceCommit: "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
     sourceBlob: "4ecaef8fb11e8ab7c0e0a830cada34689b4be61e",
+    lineageAdmission: "required_on_every_admitted_lineage",
   },
   {
     migrationName: "20260625120000_squash_and_diarization_fields",
@@ -41,18 +58,35 @@ export const LEGACY_PRODUCTION_MIGRATIONS = [
       "892a0be5d1ae18c87e3c7b0da218e0d87ffdb179da3f8ac3dbed67ef91794fc3",
     sourceCommit: "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
     sourceBlob: "cc418b3f010e2fa0a1539e68e1eeca2ecaf90303",
+    lineageAdmission: "required_on_every_admitted_lineage",
   },
   {
-    migrationName: "20260810120000_add_ai_analysis_progress",
+    migrationName: AI_ANALYSIS_PROGRESS_MIGRATION,
     expectedSha256:
       "a5b48e99f2d978b83c7c36aec06abcfe97451a693a8cde224ed4cb63772d76c0",
     sourceCommit: "5877ea340c2a46ed6c38d1d6223c47b1dc19858b",
     sourceBlob: "e4f752028a6166bac8562fd8e57ffc4e7918fbf5",
+    lineageAdmission: "progress_lineage_variant",
   },
 ] as const;
 
 export const REQUIRED_PRODUCTION_BASELINE =
   "20260627_production_initial_baseline";
+
+export function isRequiredOnEveryAdmittedLineage(
+  migration: (typeof LEGACY_PRODUCTION_MIGRATIONS)[number],
+): boolean {
+  return migration.lineageAdmission === "required_on_every_admitted_lineage";
+}
+
+export function overlayLegacyMigrationNamesForLineage(
+  lineage: AdmittedLegacyHistoryLineage,
+): string[] {
+  return LEGACY_PRODUCTION_MIGRATIONS.filter((migration) => {
+    if (isRequiredOnEveryAdmittedLineage(migration)) return true;
+    return lineage === "LEGACY_PROGRESS_APPLIED";
+  }).map((migration) => migration.migrationName);
+}
 
 /**
  * The Stage 3.13C migrations explicitly approved for the production overlay.
@@ -157,6 +191,7 @@ export type OverlayRefusalCode =
   | "REFUSE_LEGACY_SCHEMA_EFFECT_MISMATCH"
   | "REFUSE_LEGACY_SCHEMA_EFFECT_AMBIGUOUS"
   | "REFUSE_LEGACY_SCHEMA_EVIDENCE_UNDEFINED"
+  | "REFUSE_LEGACY_LINEAGE_INCONSISTENT"
   | "REFUSE_BASELINE_MISSING"
   | "REFUSE_BASELINE_UNSUCCESSFUL"
   | "REFUSE_FAILED_MIGRATION_HISTORY"
@@ -353,6 +388,7 @@ export interface ManifestMigration {
   sourceCommit: string;
   sourceBlob: string;
   schemaEffectId?: string;
+  lineageAdmission: LegacyLineageAdmission;
   purpose: string;
   productionStatus: string;
   emptyDatabaseSafety: string;
@@ -366,10 +402,11 @@ export interface LegacyManifest {
 }
 
 export interface HistoryGuardResult {
-  rows: MigrationHistoryRow[];
+  rows: readonly MigrationHistoryRow[];
   pendingActiveMigrations: string[];
   appliedActiveMigrations: string[];
   recognizedLegacyMigrations: string[];
+  admittedLegacyLineage: AdmittedLegacyHistoryLineage;
   releasePendingDecision?: ReleasePendingDecision;
 }
 
@@ -675,7 +712,8 @@ export function assertManifestDeclaredSetExact(
       !entry ||
       normalizeSha(entry.expectedSha256) !== expected.expectedSha256 ||
       entry.sourceCommit !== expected.sourceCommit ||
-      entry.sourceBlob !== expected.sourceBlob
+      entry.sourceBlob !== expected.sourceBlob ||
+      entry.lineageAdmission !== expected.lineageAdmission
     ) {
       throw new PrismaProductionOverlayError(
         "REFUSE_MANIFEST_INVALID",
@@ -766,6 +804,58 @@ export function validateLegacySchemaEffects(
         `${migrationName} expected ${fact.schema}.${fact.table}.${fact.column} ${fact.dataType} nullable=${fact.nullable}.`,
       );
     }
+  }
+}
+
+export function validateLegacySchemaEffectsAbsent(
+  migrationName: string,
+  observed: readonly ObservedSchemaColumn[],
+  catalog: Readonly<Record<string, readonly LegacySchemaColumnFact[]>> = LEGACY_PRODUCTION_SCHEMA_EFFECTS,
+): void {
+  const expected = catalog[migrationName];
+  if (!expected || expected.length === 0) {
+    throw new PrismaProductionOverlayError(
+      "REFUSE_LEGACY_SCHEMA_EVIDENCE_UNDEFINED",
+      `${migrationName} has no trusted schema-effect definition.`,
+    );
+  }
+  for (const fact of expected) {
+    const matches = observed.filter(
+      (column) =>
+        column.schema === fact.schema &&
+        column.table === fact.table &&
+        column.column === fact.column,
+    );
+    if (matches.length > 0) {
+      throw new PrismaProductionOverlayError(
+        "REFUSE_LEGACY_LINEAGE_INCONSISTENT",
+        `${migrationName} is absent from history but ${fact.schema}.${fact.table}.${fact.column} is present.`,
+      );
+    }
+  }
+}
+
+export function assertAdmittedLegacyLineageSchema(
+  lineage: AdmittedLegacyHistoryLineage,
+  observed: readonly ObservedSchemaColumn[],
+  catalog: Readonly<
+    Record<string, readonly LegacySchemaColumnFact[]>
+  > = LEGACY_PRODUCTION_SCHEMA_EFFECTS,
+): void {
+  for (const migration of LEGACY_PRODUCTION_MIGRATIONS) {
+    if (isRequiredOnEveryAdmittedLineage(migration)) {
+      validateLegacySchemaEffects(migration.migrationName, observed, catalog);
+      continue;
+    }
+    if (lineage === "LEGACY_PROGRESS_APPLIED") {
+      validateLegacySchemaEffects(migration.migrationName, observed, catalog);
+      continue;
+    }
+    validateLegacySchemaEffectsAbsent(
+      migration.migrationName,
+      observed,
+      catalog,
+    );
   }
 }
 
@@ -959,8 +1049,8 @@ export async function listActiveMigrationNames(
 }
 
 export function validateMigrationHistoryRows(
-  rows: MigrationHistoryRow[],
-  activeMigrationNames: string[],
+  rows: readonly MigrationHistoryRow[],
+  activeMigrationNames: readonly string[],
 ): HistoryGuardResult {
   if (rows.length === 0) {
     throw new PrismaProductionOverlayError(
@@ -983,10 +1073,13 @@ export function validateMigrationHistoryRows(
   for (const expected of LEGACY_PRODUCTION_MIGRATIONS) {
     const row = byName.get(expected.migrationName);
     if (!row) {
-      throw new PrismaProductionOverlayError(
-        "REFUSE_LEGACY_ROW_MISSING",
-        `${expected.migrationName} is not present in target migration history.`,
-      );
+      if (isRequiredOnEveryAdmittedLineage(expected)) {
+        throw new PrismaProductionOverlayError(
+          "REFUSE_LEGACY_ROW_MISSING",
+          `${expected.migrationName} is not present in target migration history.`,
+        );
+      }
+      continue;
     }
     if (normalizeSha(row.checksum) !== expected.expectedSha256) {
       throw new PrismaProductionOverlayError(
@@ -1069,13 +1162,21 @@ export function validateMigrationHistoryRows(
     );
   }
 
+  const recognizedLegacyMigrations = LEGACY_PRODUCTION_MIGRATIONS.filter(
+    (migration) => byName.has(migration.migrationName),
+  ).map((migration) => migration.migrationName);
+  const admittedLegacyLineage = recognizedLegacyMigrations.includes(
+    AI_ANALYSIS_PROGRESS_MIGRATION,
+  )
+    ? "LEGACY_PROGRESS_APPLIED"
+    : "LEGACY_PROGRESS_NEVER_APPLIED";
+
   return {
     rows,
     pendingActiveMigrations,
     appliedActiveMigrations,
-    recognizedLegacyMigrations: LEGACY_PRODUCTION_MIGRATIONS.map(
-      (migration) => migration.migrationName,
-    ),
+    recognizedLegacyMigrations,
+    admittedLegacyLineage,
   };
 }
 
@@ -1168,6 +1269,7 @@ export async function readObservedSchemaColumns(
 
 export async function assertLegacySchemaEffectsInDatabase(
   databaseUrl: string | undefined = process.env.DATABASE_URL,
+  lineage: AdmittedLegacyHistoryLineage,
   catalog: Readonly<
     Record<string, readonly LegacySchemaColumnFact[]>
   > = LEGACY_PRODUCTION_SCHEMA_EFFECTS,
@@ -1184,9 +1286,7 @@ export async function assertLegacySchemaEffectsInDatabase(
     allFacts.push(...facts);
   }
   const observed = await readObservedSchemaColumns(databaseUrl, allFacts);
-  for (const migration of LEGACY_PRODUCTION_MIGRATIONS) {
-    validateLegacySchemaEffects(migration.migrationName, observed, catalog);
-  }
+  assertAdmittedLegacyLineageSchema(lineage, observed, catalog);
 }
 
 export async function runHistoryGuard(
@@ -1199,7 +1299,10 @@ export async function runHistoryGuard(
   const activeMigrationNames = await listActiveMigrationNames(repoRoot);
   const rows = await readMigrationHistoryFromDatabase(databaseUrl);
   const result = validateMigrationHistoryRows(rows, activeMigrationNames);
-  await assertLegacySchemaEffectsInDatabase(databaseUrl);
+  await assertLegacySchemaEffectsInDatabase(
+    databaseUrl,
+    result.admittedLegacyLineage,
+  );
   const activeArtifactChecksums = await readCurrentReleaseArtifactChecksums(
     repoRoot,
     options.expectedReleasePendingMigrations ??
@@ -1232,6 +1335,7 @@ async function copyMigrationDirectory(
 export async function createTemporaryOverlayDirectory(
   repoRoot: string,
   manifest: LegacyManifest,
+  options: { copyLegacyMigrationNames?: readonly string[] } = {},
 ): Promise<OverlayDirectory> {
   const rootDir = await mkdtemp(
     path.join(os.tmpdir(), `prisma-production-overlay-${randomUUID()}-`),
@@ -1260,7 +1364,36 @@ export async function createTemporaryOverlayDirectory(
   );
 
   assertManifestDeclaredSetExact(manifest);
+  const knownLegacyNames = new Set<string>(
+    LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
+  );
+  const copyLegacyMigrationNames: string[] = options.copyLegacyMigrationNames
+    ? [...options.copyLegacyMigrationNames]
+    : LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName);
+  const unknownCopyNames = copyLegacyMigrationNames.filter(
+    (name) => !knownLegacyNames.has(name),
+  );
+  if (unknownCopyNames.length > 0) {
+    throw new PrismaProductionOverlayError(
+      "REFUSE_UNKNOWN_LEGACY_DIVERGENCE",
+      `Temporary overlay cannot copy undeclared legacy archives: ${unknownCopyNames.join(", ")}`,
+    );
+  }
+  const missingRequiredCopies = LEGACY_PRODUCTION_MIGRATIONS.filter(
+    (migration) =>
+      isRequiredOnEveryAdmittedLineage(migration) &&
+      !copyLegacyMigrationNames.includes(migration.migrationName),
+  ).map((migration) => migration.migrationName);
+  if (missingRequiredCopies.length > 0) {
+    throw new PrismaProductionOverlayError(
+      "REFUSE_LEGACY_ROW_MISSING",
+      `Temporary overlay is missing globally required legacy archives: ${missingRequiredCopies.join(", ")}`,
+    );
+  }
   for (const migration of LEGACY_PRODUCTION_MIGRATIONS) {
+    if (!copyLegacyMigrationNames.includes(migration.migrationName)) {
+      continue;
+    }
     await copyMigrationDirectory(
       path.join(repoRoot, LEGACY_PRODUCTION_HISTORY_DIR, migration.migrationName),
       path.join(migrationsDir, migration.migrationName),
@@ -1423,7 +1556,18 @@ export async function executeProductionOverlay(options: {
     });
   }
 
-  const overlay = await createTemporaryOverlayDirectory(repoRoot, manifest);
+  if (mode !== "verify" && !guardResult) {
+    throw new PrismaProductionOverlayError(
+      "REFUSE_EMPTY_OR_NO_HISTORY",
+      "Production overlay status/deploy requires an admitted history lineage.",
+    );
+  }
+
+  const overlay = await createTemporaryOverlayDirectory(repoRoot, manifest, {
+    copyLegacyMigrationNames: guardResult
+      ? guardResult.recognizedLegacyMigrations
+      : LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
+  });
   try {
     if (mode === "verify") {
       options.stdout?.write(
@@ -1431,6 +1575,9 @@ export async function executeProductionOverlay(options: {
       );
       return null;
     }
+    options.stdout?.write(
+      `Admitted legacy history lineage: ${guardResult?.admittedLegacyLineage}\n`,
+    );
     options.stdout?.write(
       `Legacy rows recognized: ${guardResult?.recognizedLegacyMigrations.join(", ")}\n`,
     );

@@ -327,7 +327,7 @@ Canonical production sequence remains:
 `npm ci` → migrate deploy (installed Prisma / production overlay below) →
 `npm run prisma:generate` → `npm run build` → service restart.
 
-The existing Yandex POC production database has legitimate historical DB-only migration rows archived outside `prisma/migrations`. Historical DB-only migrations are accepted only when explicitly archived with verified checksum/evidence; unknown successful rows still fail closed. The June pre-squash pair and `20260810120000_add_ai_analysis_progress` are documented in `docs/operations/prisma-production-history-repair-20260804.md`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay:
+The existing Yandex POC production database has legitimate historical DB-only migration rows archived outside `prisma/migrations`. Known archived artifacts are not automatically required on every production lineage. Historical DB-only migrations are accepted only as explicitly admitted lineages with verified checksum and schema-effect evidence; unknown successful rows and unknown lineage combinations still fail closed. The June pre-squash pair is required on every admitted lineage. `20260810120000_add_ai_analysis_progress` is a known lineage variant documented in `docs/operations/prisma-production-history-repair-20260804.md`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay:
 
 - `npm run prisma:production:status`
 - `npm run prisma:production:deploy -- --confirm-legacy-production-history`

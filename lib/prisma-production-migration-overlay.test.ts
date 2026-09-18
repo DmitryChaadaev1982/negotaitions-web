@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -14,6 +14,7 @@ import {
   copyFileBytePreserving,
   executeProductionOverlay,
   BUG02_PROVIDER_SLOT_MIGRATION,
+  AI_ANALYSIS_PROGRESS_MIGRATION,
   EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
   EXPECTED_RELEASE_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_13C_PENDING_MIGRATIONS,
@@ -23,6 +24,7 @@ import {
   EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
   PRODUCTION_FIRST_DEPLOY_SEQUENCE,
   assertArchiveDirectorySetExact,
+  assertAdmittedLegacyLineageSchema,
   assertManifestDeclaredSetExact,
   evaluateReleasePendingSet,
   isExpectedPendingStatusOutput,
@@ -32,6 +34,7 @@ import {
   listActiveMigrationNames,
   listLegacyArchiveMigrationNames,
   loadLegacyManifest,
+  overlayLegacyMigrationNamesForLineage,
   PrismaProductionOverlayError,
   prismaMigrationArtifactChecksum,
   readActiveMigrationArtifactChecksum,
@@ -44,6 +47,7 @@ import {
   runPrismaMigrationCommand,
   sha256File,
   validateLegacySchemaEffects,
+  validateLegacySchemaEffectsAbsent,
   validateMigrationHistoryRows,
   verifyLegacyArchiveHashes,
   type LegacyManifest,
@@ -85,6 +89,15 @@ function legacyRows(): MigrationHistoryRow[] {
   );
 }
 
+function requiredLegacyRows(): MigrationHistoryRow[] {
+  return LEGACY_PRODUCTION_MIGRATIONS.filter(
+    (migration) =>
+      migration.lineageAdmission === "required_on_every_admitted_lineage",
+  ).map((migration) =>
+    successfulRow(migration.migrationName, migration.expectedSha256),
+  );
+}
+
 function preApprovedProductionHistoryRows(): MigrationHistoryRow[] {
   const preStageRows = ACTIVE_MIGRATIONS.filter(
     (name) => !EXPECTED_PRODUCTION_PENDING_MIGRATIONS.includes(
@@ -109,6 +122,18 @@ function historyWithOnlyTheseActiveMigrationsPending(
   const pending = new Set(pendingMigrationNames);
   return [
     ...legacyRows(),
+    ...ACTIVE_MIGRATIONS.filter((name) => !pending.has(name)).map((name) =>
+      successfulRow(name),
+    ),
+  ];
+}
+
+function neverAppliedHistoryWithPending(
+  pendingMigrationNames: readonly string[],
+): MigrationHistoryRow[] {
+  const pending = new Set(pendingMigrationNames);
+  return [
+    ...requiredLegacyRows(),
     ...ACTIVE_MIGRATIONS.filter((name) => !pending.has(name)).map((name) =>
       successfulRow(name),
     ),
@@ -225,9 +250,6 @@ class MemoryWritable extends Writable {
     callback();
   }
 }
-
-const AI_ANALYSIS_PROGRESS_MIGRATION =
-  "20260810120000_add_ai_analysis_progress";
 
 function patchRowByName(
   rows: MigrationHistoryRow[],
@@ -543,6 +565,7 @@ test("LEGACY-AIP-05 three known historical rows plus BUG02 pending is allowed", 
   assert.deepEqual(result.pendingActiveMigrations, [
     BUG02_PROVIDER_SLOT_MIGRATION,
   ]);
+  assert.equal(result.admittedLegacyLineage, "LEGACY_PROGRESS_APPLIED");
 });
 
 test("LEGACY-AIP-06 known history plus an extra unknown successful DB-only row is refused", () => {
@@ -885,6 +908,12 @@ function expectedSchemaColumns(): ObservedSchemaColumn[] {
   );
 }
 
+function neverAppliedSchemaColumns(): ObservedSchemaColumn[] {
+  return expectedSchemaColumns().filter(
+    (column) => column.column !== "progressJson",
+  );
+}
+
 test("SCHEMA-LEGACY-01 known legacy row plus expected schema is admitted", () => {
   const result = validateMigrationHistoryRows(
     historyWithOnlyTheseActiveMigrationsPending([BUG02_PROVIDER_SLOT_MIGRATION]),
@@ -1067,6 +1096,19 @@ test("MANIFEST-EXACT-01 manifest exactly matches the intended archive", async ()
   assert.deepEqual(
     archiveNames,
     LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName).sort(),
+  );
+});
+
+test("MANIFEST-LINEAGE-01 progress artifact cannot be declared globally required", async () => {
+  const manifest = cloneManifest(await loadLegacyManifest(process.cwd()));
+  const progress = manifest.migrations.find(
+    (migration) => migration.migrationName === AI_ANALYSIS_PROGRESS_MIGRATION,
+  );
+  assert.ok(progress);
+  progress.lineageAdmission = "required_on_every_admitted_lineage";
+  assertRefusal(
+    () => assertManifestDeclaredSetExact(manifest),
+    "REFUSE_MANIFEST_INVALID",
   );
 });
 
@@ -1575,6 +1617,224 @@ test("POSTSAFE-10 correct BUG02 row plus pending BUG02 is inconsistent and refus
   );
 });
 
+async function neverAppliedPostDeployAuthority(options?: {
+  rowPatch?: Partial<MigrationHistoryRow>;
+  extraRows?: MigrationHistoryRow[];
+}): Promise<ReleasePendingAuthorityInput> {
+  const artifactChecksum = await currentReleaseArtifactChecksum();
+  const rows = neverAppliedHistoryWithPending([]).map((row) => {
+    if (row.migration_name !== BUG02_PROVIDER_SLOT_MIGRATION) return row;
+    return {
+      ...row,
+      checksum: artifactChecksum,
+      ...options?.rowPatch,
+    };
+  });
+  if (options?.extraRows) rows.push(...options.extraRows);
+  return {
+    actualPending: [],
+    historyRows: rows,
+    activeArtifactChecksums: {
+      [BUG02_PROVIDER_SLOT_MIGRATION]: artifactChecksum,
+    },
+  };
+}
+
+test("HIST-VAR-01 rehearsal lineage with archived progress migration present is admitted", async () => {
+  const rows = historyWithOnlyTheseActiveMigrationsPending([
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+  const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.equal(result.admittedLegacyLineage, "LEGACY_PROGRESS_APPLIED");
+  assert.ok(result.recognizedLegacyMigrations.includes(AI_ANALYSIS_PROGRESS_MIGRATION));
+  assertAdmittedLegacyLineageSchema(
+    result.admittedLegacyLineage,
+    expectedSchemaColumns(),
+  );
+  assert.deepEqual(
+    overlayLegacyMigrationNamesForLineage(result.admittedLegacyLineage),
+    LEGACY_PRODUCTION_MIGRATIONS.map((migration) => migration.migrationName),
+  );
+  const overlay = await createTemporaryOverlayDirectory(
+    process.cwd(),
+    await loadLegacyManifest(process.cwd()),
+    {
+      copyLegacyMigrationNames: overlayLegacyMigrationNamesForLineage(
+        result.admittedLegacyLineage,
+      ),
+    },
+  );
+  try {
+    const copied = await readdir(overlay.migrationsDir);
+    assert.ok(copied.includes(AI_ANALYSIS_PROGRESS_MIGRATION));
+  } finally {
+    await removeTemporaryOverlayDirectory(overlay);
+  }
+});
+
+test("HIST-VAR-02 real-production lineage with archived progress absent is admitted", async () => {
+  const rows = neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]);
+  const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.equal(result.admittedLegacyLineage, "LEGACY_PROGRESS_NEVER_APPLIED");
+  assert.equal(
+    result.recognizedLegacyMigrations.includes(AI_ANALYSIS_PROGRESS_MIGRATION),
+    false,
+  );
+  assertAdmittedLegacyLineageSchema(
+    result.admittedLegacyLineage,
+    neverAppliedSchemaColumns(),
+  );
+  assert.deepEqual(
+    overlayLegacyMigrationNamesForLineage(result.admittedLegacyLineage),
+    requiredLegacyRows().map((row) => row.migration_name),
+  );
+  const overlay = await createTemporaryOverlayDirectory(
+    process.cwd(),
+    await loadLegacyManifest(process.cwd()),
+    {
+      copyLegacyMigrationNames: overlayLegacyMigrationNamesForLineage(
+        result.admittedLegacyLineage,
+      ),
+    },
+  );
+  try {
+    const copied = await readdir(overlay.migrationsDir);
+    assert.equal(copied.includes(AI_ANALYSIS_PROGRESS_MIGRATION), false);
+    assert.ok(
+      copied.includes(
+        "20260625090944_add_two_pass_transcription_quality_enhancement",
+      ),
+    );
+    assert.ok(copied.includes("20260625120000_squash_and_diarization_fields"));
+  } finally {
+    await removeTemporaryOverlayDirectory(overlay);
+  }
+});
+
+test("HIST-VAR-03 absent progress row with leftover progressJson is refused", () => {
+  const rows = neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]);
+  const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.equal(result.admittedLegacyLineage, "LEGACY_PROGRESS_NEVER_APPLIED");
+  assertRefusal(
+    () =>
+      assertAdmittedLegacyLineageSchema(
+        result.admittedLegacyLineage,
+        expectedSchemaColumns(),
+      ),
+    "REFUSE_LEGACY_LINEAGE_INCONSISTENT",
+  );
+  assertRefusal(
+    () =>
+      validateLegacySchemaEffectsAbsent(
+        AI_ANALYSIS_PROGRESS_MIGRATION,
+        expectedSchemaColumns(),
+      ),
+    "REFUSE_LEGACY_LINEAGE_INCONSISTENT",
+  );
+});
+
+test("HIST-VAR-04 progress row present with bad checksum is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        patchRowByName(
+          historyWithOnlyTheseActiveMigrationsPending([
+            BUG02_PROVIDER_SLOT_MIGRATION,
+          ]),
+          AI_ANALYSIS_PROGRESS_MIGRATION,
+          { checksum: "bad-ai-progress-checksum" },
+        ),
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_LEGACY_CHECKSUM_MISMATCH",
+  );
+});
+
+test("HIST-VAR-05 unknown extra legacy row is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        [
+          ...neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+          successfulRow("20260820120000_unknown_successful_db_only"),
+        ],
+        ACTIVE_MIGRATIONS,
+      ),
+    "REFUSE_UNKNOWN_LEGACY_DIVERGENCE",
+  );
+});
+
+test("HIST-VAR-06 unexpected missing unrelated applied migration is refused", () => {
+  const rows = neverAppliedHistoryWithPending([
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]).filter((row) => row.migration_name !== "20260630120000_add_app_setting");
+  assertRefusal(
+    () => validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("HIST-VAR-07 real-production pre-deploy pending set is exactly BUG02", () => {
+  const rows = neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]);
+  const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.deepEqual(result.pendingActiveMigrations, [
+    BUG02_PROVIDER_SLOT_MIGRATION,
+  ]);
+  assertAdmittedLegacyLineageSchema(
+    result.admittedLegacyLineage,
+    neverAppliedSchemaColumns(),
+  );
+  assert.equal(
+    evaluateReleasePendingSet(
+      releaseAuthority({
+        actualPending: result.pendingActiveMigrations,
+        historyRows: rows,
+      }),
+    ),
+    "PRE_DEPLOY_ALLOW",
+  );
+});
+
+test("HIST-VAR-08 extra pending migration is refused", () => {
+  assertRefusal(
+    () =>
+      validateMigrationHistoryRows(
+        neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]),
+        [...ACTIVE_MIGRATIONS, "20260916090001_unreviewed_migration"],
+      ),
+    "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
+  );
+});
+
+test("HIST-VAR-09 simulated real-production post-deploy state is POST_DEPLOY_SAFE", async () => {
+  const rows = neverAppliedHistoryWithPending([]);
+  const history = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
+  assert.equal(history.admittedLegacyLineage, "LEGACY_PROGRESS_NEVER_APPLIED");
+  assertAdmittedLegacyLineageSchema(
+    history.admittedLegacyLineage,
+    neverAppliedSchemaColumns(),
+  );
+  assert.equal(
+    evaluateReleasePendingSet(await neverAppliedPostDeployAuthority()),
+    "POST_DEPLOY_SAFE",
+  );
+  const artifactChecksum = await currentReleaseArtifactChecksum();
+  assert.equal(
+    artifactChecksum,
+    "9e9cd2d3a193015fa5b2f928839279fb6500032f8941263d3edcea5c841ad5f4",
+  );
+});
+
+test("HIST-VAR-10 BUG02 migration checksum mismatch is refused", async () => {
+  const authority = await neverAppliedPostDeployAuthority({
+    rowPatch: { checksum: "0".repeat(64) },
+  });
+  assertRefusal(
+    () => evaluateReleasePendingSet(authority),
+    "REFUSE_RELEASE_MIGRATION_CHECKSUM_MISMATCH",
+  );
+});
+
 test("production-history docs do not claim a stale complete pending allowlist", async () => {
   const repair = await readFile(
     path.join(
@@ -1604,6 +1864,11 @@ test("production-history docs do not claim a stale complete pending allowlist", 
     /20260916090000_add_transcript_enhancement_provider_slots/,
   );
   assert.match(architecture, /successful-row predicate/);
+  assert.match(architecture, /LEGACY_PROGRESS_APPLIED/);
+  assert.match(architecture, /LEGACY_PROGRESS_NEVER_APPLIED/);
+  assert.match(repair, /LEGACY_PROGRESS_APPLIED/);
+  assert.match(repair, /LEGACY_PROGRESS_NEVER_APPLIED/);
+  assert.match(repair, /known archived artifact is not automatically a required row/);
   assert.doesNotMatch(
     architecture,
     /already present is `POST_DEPLOY_SAFE`/,

@@ -1,7 +1,7 @@
 {
   "purpose": "Archive exact legacy production Prisma migration files that are already recorded as applied in production but are intentionally outside the active clean-install migration chain.",
   "emptyDatabaseSafety": "These SQL files must never execute on an empty database. Use only the production migration overlay after database history guards verify the exact legacy applied rows.",
-  "productionHistoryPolicy": "_prisma_migrations is evidence and must not be manually edited. prisma migrate resolve must not be used to conceal this divergence. Historical DB-only migrations are accepted only when explicitly archived with verified checksum/evidence; unknown successful rows fail closed.",
+  "productionHistoryPolicy": "_prisma_migrations is evidence and must not be manually edited. prisma migrate resolve must not be used to conceal this divergence. Known archived artifacts are not automatically required on every production lineage. Historical DB-only migrations are accepted only as explicitly admitted lineages with verified checksum and schema-effect evidence; unknown successful rows and unknown lineage combinations fail closed.",
   "migrations": [
     {
       "migrationName": "20260625090944_add_two_pass_transcription_quality_enhancement",
@@ -9,6 +9,7 @@
       "sourceCommit": "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
       "sourceBlob": "4ecaef8fb11e8ab7c0e0a830cada34689b4be61e",
       "schemaEffectId": "20260625090944_add_two_pass_transcription_quality_enhancement",
+      "lineageAdmission": "required_on_every_admitted_lineage",
       "purpose": "Production history evidence for an already-applied migration row retained in production.",
       "productionStatus": "Already applied successfully in production.",
       "emptyDatabaseSafety": "Must never execute on an empty database."
@@ -19,6 +20,7 @@
       "sourceCommit": "c86f3abeb6da53ca95dbb4f58ee7b1d36aecd898",
       "sourceBlob": "cc418b3f010e2fa0a1539e68e1eeca2ecaf90303",
       "schemaEffectId": "20260625120000_squash_and_diarization_fields",
+      "lineageAdmission": "required_on_every_admitted_lineage",
       "purpose": "Production history evidence for an already-applied migration row retained in production.",
       "productionStatus": "Already applied successfully in production.",
       "emptyDatabaseSafety": "Must never execute on an empty database."
@@ -29,8 +31,9 @@
       "sourceCommit": "5877ea340c2a46ed6c38d1d6223c47b1dc19858b",
       "sourceBlob": "e4f752028a6166bac8562fd8e57ffc4e7918fbf5",
       "schemaEffectId": "20260810120000_add_ai_analysis_progress",
-      "purpose": "Production history evidence for an already-applied additive AiAnalysis.progressJson column. Directory later left the active chain; production kept the successful row. Archive bytes are the apply-time CRLF form of the recovered Git SQL so the Prisma checksum matches.",
-      "productionStatus": "Already applied successfully in production.",
+      "lineageAdmission": "progress_lineage_variant",
+      "purpose": "Known historical artifact for one admitted production lineage. Adds leftover nullable AiAnalysis.progressJson JSONB. Directory later left the active chain; no later migration drops the column. Archive bytes are the apply-time CRLF form of the recovered Git SQL so the Prisma checksum matches when the row is present.",
+      "productionStatus": "Lineage variant: required with matching leftover progressJson when the successful row is present (LEGACY_PROGRESS_APPLIED); absent-by-design when both the row and leftover column are absent (LEGACY_PROGRESS_NEVER_APPLIED).",
       "emptyDatabaseSafety": "Must never execute on an empty database."
     }
   ]

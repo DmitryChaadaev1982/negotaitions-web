@@ -2,20 +2,25 @@
 
 ## Root Cause
 
-Production contains successful historical Prisma migration rows whose directories were later deleted from the repository. Historical DB-only migrations are accepted only when explicitly archived with verified checksum/evidence. Unknown successful rows still fail closed.
+Production contains successful historical Prisma migration rows whose directories were later deleted from the repository. Known archived artifacts are not automatically required rows on every production lineage. Historical DB-only migrations are accepted only as explicitly admitted lineages with verified checksum and schema-effect evidence. Unknown successful rows and unknown lineage combinations still fail closed.
 
-The original pre-squash pair:
+The original pre-squash pair is required on every admitted lineage:
 
 - `20260625090944_add_two_pass_transcription_quality_enhancement`
 - `20260625120000_squash_and_diarization_fields`
 
 Those directories were removed when the repository introduced the later squashed production baseline `20260627_production_initial_baseline`. Production kept the real `_prisma_migrations` rows, so Prisma correctly reported missing migration directories when Stage 3.13B deployment reached migration status/deploy.
 
-A later post-baseline row is archived the same way:
+A later post-baseline artifact is archived as a lineage variant, not as a globally required row:
 
 - `20260810120000_add_ai_analysis_progress`
 
-That directory was added, applied in production, then removed from the active chain when speculative `AiAnalysis.progressJson` persistence was withdrawn. Production kept the successful row and the leftover nullable JSONB column.
+That directory adds leftover nullable `AiAnalysis.progressJson` JSONB and was later withdrawn from the active chain. No later migration drops the column. Two internally consistent lineages are admitted:
+
+- `LEGACY_PROGRESS_APPLIED` — the successful archive row is present and leftover `progressJson` is present.
+- `LEGACY_PROGRESS_NEVER_APPLIED` — the archive row is absent and leftover `progressJson` is absent.
+
+A known archived artifact is not automatically a required row. Missing-row admission without the matching negative schema evidence is refused (`REFUSE_LEGACY_LINEAGE_INCONSISTENT`). Real Yandex POC production is the never-applied lineage; the prod-derived local rehearsal database is the applied lineage.
 
 ## Production Evidence
 
@@ -39,7 +44,8 @@ The historical SQL files were recovered from Git object history, not reconstruct
 - source blob: `e4f752028a6166bac8562fd8e57ffc4e7918fbf5`
 - production checksum: `a5b48e99f2d978b83c7c36aec06abcfe97451a693a8cde224ed4cb63772d76c0`
 - recovered Git SQL adds nullable `AiAnalysis.progressJson JSONB`
-- archive bytes are the apply-time CRLF form of that SQL so the Prisma checksum matches the production row; the Git blob itself is LF-normalized
+- archive bytes are the apply-time CRLF form of that SQL so the Prisma checksum matches a `LEGACY_PROGRESS_APPLIED` history row; the Git blob itself is LF-normalized
+- this artifact is absent-by-design on the `LEGACY_PROGRESS_NEVER_APPLIED` lineage, including current Yandex POC production
 
 Production also has `20260627_production_initial_baseline` and later pre-email migrations successfully applied. Stage 3.13B email migrations were not applied before this repair.
 
@@ -76,7 +82,7 @@ Package scripts:
 - `npm run prisma:production:deploy -- --confirm-legacy-production-history`
 - `npm run prisma:production:overlay:verify`
 
-The tool creates a randomized temporary directory, copies `prisma/schema.prisma`, copies active migrations, copies the archived legacy migrations with their original names, copies `migration_lock.toml`, writes a temporary Prisma config pointing at that overlay, verifies legacy SHA256 values, invokes Prisma against the temporary schema/config, then deletes the temporary directory in `finally` and verifies cleanup.
+The tool creates a randomized temporary directory, copies `prisma/schema.prisma`, copies active migrations, copies only the archived legacy migrations that belong to the admitted lineage, copies `migration_lock.toml`, writes a temporary Prisma config pointing at that overlay, verifies legacy SHA256 values, invokes Prisma against the temporary schema/config, then deletes the temporary directory in `finally` and verifies cleanup. The progress-variant archive is copied only for `LEGACY_PROGRESS_APPLIED`. Copying it into the overlay for `LEGACY_PROGRESS_NEVER_APPLIED` would make Prisma treat it as pending and is refused by lineage copy selection.
 
 The tool does not copy `.env`, does not put credentials in command-line arguments, and redacts database URLs from subprocess output.
 
@@ -90,14 +96,21 @@ all conditions hold:
 - the archive manifest and `prisma/legacy-production-history/` directories
   agree exactly with `LEGACY_PRODUCTION_MIGRATIONS` — extra archive entries
   and extra manifest rows are not authority;
-- every explicitly archived legacy row exists by exact name and checksum;
-- every archived legacy row satisfies the strict successful-row predicate
-  (`finished_at` set, `rolled_back_at` null, `applied_steps_count` a
-  non-negative integer, logs free of failure evidence);
+- every manifest entry declares `lineageAdmission`; a known archived
+  artifact is not automatically a required row;
+- every globally required archived legacy row exists by exact name and
+  checksum;
+- the progress-variant archive is admitted only as one of the two explicit
+  lineages: `LEGACY_PROGRESS_APPLIED` or `LEGACY_PROGRESS_NEVER_APPLIED`;
+- every recognized archived legacy row satisfies the strict successful-row
+  predicate (`finished_at` set, `rolled_back_at` null, `applied_steps_count`
+  a non-negative integer, logs free of failure evidence);
 - every archived legacy migration has an explicit `schemaEffectId` and a
-  trusted schema-effect definition, and that effect is present in the
-  target database; missing, empty, or unknown ids are refused and are
-  never defaulted from the migration name;
+  trusted schema-effect definition; missing, empty, or unknown ids are
+  refused and are never defaulted from the migration name;
+- globally required schema effects are present; the progress-variant effect
+  is present on `LEGACY_PROGRESS_APPLIED` and absent on
+  `LEGACY_PROGRESS_NEVER_APPLIED`;
 - `information_schema` query failure or a nullability/type mismatch
   fails closed;
 - each expected schema/table/column fact has exactly one matching
@@ -106,7 +119,7 @@ all conditions hold:
 - `20260627_production_initial_baseline` is successfully applied;
 - no migration row is unfinished/failed;
 - no migration row exists outside the active migration set plus the
-  explicitly archived legacy evidence rows;
+  known archived legacy evidence names;
 - at the current release preflight boundary, the actual pending active
   set equals `EXPECTED_RELEASE_PENDING_MIGRATIONS` exactly, or the
   post-deploy already-applied empty pending set.
@@ -121,6 +134,7 @@ Refusal codes are explicit, including `REFUSE_EMPTY_OR_NO_HISTORY`,
 `REFUSE_LEGACY_SCHEMA_EFFECT_MISSING`, `REFUSE_LEGACY_SCHEMA_EFFECT_MISMATCH`,
 `REFUSE_LEGACY_SCHEMA_EFFECT_AMBIGUOUS`,
 `REFUSE_LEGACY_SCHEMA_EVIDENCE_UNDEFINED`, `REFUSE_LEGACY_SCHEMA_QUERY_FAILED`,
+`REFUSE_LEGACY_LINEAGE_INCONSISTENT`,
 `REFUSE_MANIFEST_SCHEMA_EFFECT_ID_MISSING`,
 `REFUSE_MANIFEST_SCHEMA_EFFECT_ID_EMPTY`,
 `REFUSE_MANIFEST_SCHEMA_EFFECT_ID_UNKNOWN`,
@@ -157,8 +171,10 @@ Distinguish these four sets. Do not treat this document as an independent
 complete list:
 
 - **Archived legacy** — `LEGACY_PRODUCTION_MIGRATIONS` and
-  `prisma/legacy-production-history/manifest.json`. Already applied in
-  production; never executed on an empty database.
+  `prisma/legacy-production-history/manifest.json`. Known artifacts and
+  lineage admission metadata. The June pair is required on every admitted
+  lineage; the progress archive is a variant, never executed on an empty
+  database, and not a global production requirement.
 - **Active chain** — directories under `prisma/migrations`.
 - **Current release authorized pending** —
   `EXPECTED_RELEASE_PENDING_MIGRATIONS` in

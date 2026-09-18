@@ -155,21 +155,27 @@ preflight predicates and rollback steps are in
 ## Constraints
 
 - No Prisma schema/migration changes are part of architecture-doc updates alone.
-- Historical DB-only Prisma migrations are accepted only when explicitly
-  archived under `prisma/legacy-production-history` with verified
-  checksum, successful-row, and trusted schema-effect evidence. Unknown
-  successful `_prisma_migrations` rows still fail closed
-  (`REFUSE_UNKNOWN_LEGACY_DIVERGENCE`). The archive manifest and archive
-  directories must match `LEGACY_PRODUCTION_MIGRATIONS` exactly; an extra
-  file under the archive directory is not authority. Every archived entry
-  that requires schema-effect authority must declare an explicit
-  `schemaEffectId`; missing, empty, or unknown ids are refused and are
-  never defaulted from the migration name. The current archived
-  production evidence is the June pre-squash pair plus
-  `20260810120000_add_ai_analysis_progress`. Admission also requires the
-  leftover `public."AiAnalysis"."progressJson"` JSONB nullable column and
-  the trusted leftover two-pass/diarization columns for the June pair.
-  Each expected schema/table/column fact requires exactly one matching
+- Historical DB-only Prisma migrations are accepted only when they belong to
+  an explicitly admitted production lineage. Known artifacts under
+  `prisma/legacy-production-history` are not automatically required rows on
+  every lineage. Each admitted lineage needs positive history and trusted
+  schema-effect evidence. Unknown successful `_prisma_migrations` rows and
+  unknown lineage combinations still fail closed
+  (`REFUSE_UNKNOWN_LEGACY_DIVERGENCE`, `REFUSE_LEGACY_LINEAGE_INCONSISTENT`).
+  The archive manifest and archive directories must match
+  `LEGACY_PRODUCTION_MIGRATIONS` exactly; an extra file under the archive
+  directory is not authority. Every archived entry that requires
+  schema-effect authority must declare an explicit `schemaEffectId` and a
+  `lineageAdmission`; missing, empty, or unknown ids are refused and are
+  never defaulted from the migration name. The current known archive is the
+  June pre-squash pair, required on every admitted lineage, plus
+  `20260810120000_add_ai_analysis_progress` as a lineage variant. Variant
+  `LEGACY_PROGRESS_APPLIED` requires that successful row and the leftover
+  `public."AiAnalysis"."progressJson"` JSONB nullable column. Variant
+  `LEGACY_PROGRESS_NEVER_APPLIED` requires the row and leftover column both
+  to be absent. Both variants also require the trusted leftover
+  two-pass/diarization columns for the June pair. Each expected
+  schema/table/column fact requires exactly one matching
   `information_schema` observation: zero matches refuse missing, and
   identical or conflicting duplicates refuse ambiguous. First-match
   selection is not authority. Code/manifest own this truth; this
