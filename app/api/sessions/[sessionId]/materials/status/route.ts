@@ -59,6 +59,12 @@ import {
   projectPostNegotiationParticipantPreparationNotes,
   resolveDebriefVisibleNotes,
 } from "@/lib/debrief-visible-notes";
+import {
+  authorizeSessionMaterialsAccess,
+  decideAuthorizedMaterialsContinuation,
+  loadFacilitatorParticipantForManagerView,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -135,34 +141,43 @@ function sanitizeTranscriptErrorMessage(message: string | null): string | null {
 export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(request.url);
-  const joinToken = url.searchParams.get("joinToken");
-  const participantId = url.searchParams.get("participantId");
-
-  if (!joinToken && !participantId) {
-    return NextResponse.json({ error: "joinToken is required." }, { status: 400 });
+  const authorization = await authorizeSessionMaterialsAccess(
+    sessionId,
+    sessionAuthTokensFrom(url),
+  );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
-  const { resolveRoomParticipantFromQuery } = await import("@/lib/room-participant-resolver");
-  const participant = await resolveRoomParticipantFromQuery(url, sessionId);
-  if (!participant) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  let participant = authorization.participant;
+  if (!participant && authorization.canManage) {
+    participant = await loadFacilitatorParticipantForManagerView(sessionId);
+  }
+  const continuation = decideAuthorizedMaterialsContinuation({
+    canManage: authorization.canManage,
+    participantPresent: Boolean(participant),
+  });
+  if (!continuation.allowed) {
+    return NextResponse.json({ error: "Forbidden." }, { status: continuation.status });
   }
 
-  const isFacilitator = participant.type === ParticipantType.FACILITATOR;
-  const isObserver = participant.type === ParticipantType.OBSERVER;
+  const isFacilitator = authorization.projection.isManagerProjection;
+  const isObserver =
+    !isFacilitator && participant?.type === ParticipantType.OBSERVER;
   const isEventHostOwner = Boolean(
-    participant.userId &&
-      participant.session.eventId &&
-      (
-        await prisma.eventParticipant.findFirst({
-          where: {
-            eventId: participant.session.eventId,
-            userId: participant.userId,
-            isHost: true,
-          },
-          select: { id: true },
-        })
-      )?.id,
+    authorization.access?.isEventHostOwner ||
+      (participant?.userId &&
+        participant.session.eventId &&
+        (
+          await prisma.eventParticipant.findFirst({
+            where: {
+              eventId: participant.session.eventId,
+              userId: participant.userId,
+              isHost: true,
+            },
+            select: { id: true },
+          })
+        )?.id),
   );
 
   try {
@@ -270,8 +285,8 @@ export async function GET(request: Request, context: RouteContext) {
               publishedBy: true,
               grants: {
                 where: {
-                  sessionParticipantId: participant.id,
-                  userId: participant.userId ?? "",
+                  sessionParticipantId: participant?.id ?? "",
+                  userId: participant?.userId ?? "",
                   revokedAt: null,
                 },
                 select: {
@@ -386,8 +401,9 @@ export async function GET(request: Request, context: RouteContext) {
   const viewerGrant = activePublication?.grants[0] ?? null;
   const hasValidPublicationGrant = Boolean(
     viewerGrant &&
-      participant.userId &&
+      participant?.userId &&
       viewerGrant.userId === participant.userId &&
+      participant.type &&
       isGrantProjectionCompatibleWithParticipant(viewerGrant.projection, participant.type),
   );
 
@@ -615,10 +631,12 @@ export async function GET(request: Request, context: RouteContext) {
     hasFileKey: Boolean(recording?.fileKey),
   });
 
-  const sessionRoleRecord = await prisma.sessionRole.findUnique({
-    where: { id: participant.sessionRoleId ?? "" },
-    select: { name: true },
-  });
+  const sessionRoleRecord = participant?.sessionRoleId
+    ? await prisma.sessionRole.findUnique({
+        where: { id: participant.sessionRoleId },
+        select: { name: true },
+      })
+    : null;
   const participantRole = !isObserver ? (sessionRoleRecord?.name ?? null) : null;
 
   const presentCurrentAnalysis = isFacilitator
@@ -637,10 +655,12 @@ export async function GET(request: Request, context: RouteContext) {
     : presentCurrentAnalysis
       ? viewerGrant?.projection === AiAnalysisPublicationProjection.OBSERVER
         ? getAnalysisForObserver(sharedAnalysisJson)
-        : getAnalysisForParticipant(sharedAnalysisJson, {
-            participantId: participant.id,
-            displayName: participant.displayName,
-          }, session.participants)
+        : participant
+          ? getAnalysisForParticipant(sharedAnalysisJson, {
+              participantId: participant.id,
+              displayName: participant.displayName,
+            }, session.participants)
+          : null
       : null;
 
   const executiveSummaryForUser = isFacilitator
@@ -735,8 +755,11 @@ export async function GET(request: Request, context: RouteContext) {
       resolveDebriefVisibleNotes({
         roomLifecycle: session.roomLifecycle,
         negotiationState: session.negotiationState,
-        viewerParticipantId: participant.id,
-        viewerType: participant.type,
+        viewerParticipantId: participant?.id ?? "",
+        viewerType:
+          authorization.projection.viewerType ??
+          participant?.type ??
+          ParticipantType.FACILITATOR,
         participants: notesRoster,
       }),
     ),
@@ -753,7 +776,8 @@ export async function GET(request: Request, context: RouteContext) {
       eventTitle: session.event?.title ?? null,
       caseTitle: session.snapshotCaseTitle,
       participantRole,
-      participantType: participant.type,
+      participantType:
+        authorization.projection.viewerType ?? participant?.type ?? null,
     },
     permissions: {
       canViewRecording,

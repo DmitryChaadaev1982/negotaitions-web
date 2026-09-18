@@ -15,6 +15,8 @@ import {
   type SessionListItem,
   type SessionOverviewStats,
 } from "@/lib/session-overview-shared";
+import { computeSessionListCanManage } from "@/lib/session-management-auth";
+import { resolveSessionOwnerFacilitatorDisplay } from "@/lib/session-overview-people";
 import { activeSessionWhere } from "@/lib/soft-delete";
 import { sessionVisibilityWhere } from "@/lib/visibility";
 
@@ -204,6 +206,12 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       })),
     });
 
+    const people = resolveSessionOwnerFacilitatorDisplay({
+      facilitatorId: session.facilitatorId,
+      facilitatorName: session.facilitator?.name ?? null,
+      facilitatorEmail: session.facilitator?.email ?? null,
+    });
+
     return {
       id: session.id,
       title: session.title,
@@ -220,17 +228,17 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
         }
         return null;
       })(),
-      canManage: Boolean(
-        user &&
-          (isAdmin(user) ||
-            session.event?.hostUserId === user.id ||
-            session.event?.facilitatorUserId === user.id ||
-            session.participants.some(
-              (participant) =>
-                participant.userId === user.id &&
-                participant.type === "FACILITATOR",
-            )),
-      ),
+      canManage: computeSessionListCanManage({
+        isAdmin: Boolean(user && isAdmin(user)),
+        userId: user?.id ?? null,
+        facilitatorId: session.facilitatorId,
+        eventHostUserId: session.event?.hostUserId ?? null,
+        eventFacilitatorUserId: session.event?.facilitatorUserId ?? null,
+        participantType: user
+          ? (session.participants.find((participant) => participant.userId === user.id)
+              ?.type ?? null)
+          : null,
+      }),
       caseTitle: session.snapshotCaseTitle,
       eventId: session.event?.id ?? null,
       eventTitle: session.event?.title ?? null,
@@ -263,8 +271,10 @@ export async function getSessionsForUser(user: AuthUser | null): Promise<Session
       aiVisibility: session.aiAnalysis?.visibility ?? "FACILITATOR_ONLY",
       roomUrl: `/room/${session.id}`,
       materialsUrl: `/sessions/${session.id}/materials`,
-      ownerLabel: session.facilitator?.name ?? session.facilitator?.email ?? null,
-      ownerUserId: session.facilitatorId,
+      ownerLabel: people.displayLabel,
+      ownerUserId: people.ownerUserId,
+      facilitatorLabel: people.facilitatorLabel,
+      ownerFacilitatorMissing: people.missing,
     };
   });
 }

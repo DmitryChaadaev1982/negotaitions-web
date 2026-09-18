@@ -15,10 +15,13 @@ import {
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
 import {
   buildSegmentEnhancementUpdates,
+  resolveEnhancementOriginalText,
   shouldPersistEnhancedText,
 } from "@/lib/services/transcript-enhancement-persistence";
+import { resolveEnhancementPublicationTexts } from "@/lib/services/yandex-transcript-enhancement";
 import {
   chunkKey,
+  collectDurableEnhancementPieces,
   computeEnhancementProgress,
   computePublicationEligible,
   deriveEnhancementTerminalQuality,
@@ -31,6 +34,8 @@ import {
   parseTranscriptEnhancementJob,
   reconcileIllegalInFlightIneligibleJob,
   terminalizeEnhancementJob,
+  unpublishedCoversOwnedSourceIndexes,
+  withPreservedTargetPieces,
   type TranscriptEnhancementCancelReason,
   type TranscriptEnhancementDurableChunk,
   type TranscriptEnhancementJob,
@@ -213,10 +218,12 @@ export async function checkpointEnhancementChunk(params: {
       if (!isExecutionInFlight(job.executionStatus)) {
         return null;
       }
-      const chunks = { ...job.chunks, [chunkKey(params.chunk.chunkIndex)]: params.chunk };
+      const existing = job.chunks[chunkKey(params.chunk.chunkIndex)];
+      const nextChunk = withPreservedTargetPieces(params.chunk, existing);
+      const chunks = { ...job.chunks, [chunkKey(nextChunk.chunkIndex)]: nextChunk };
       const unpublishedByOrderIndex = { ...job.unpublishedByOrderIndex };
-      if (params.chunk.status === "COMPLETED") {
-        Object.assign(unpublishedByOrderIndex, params.chunk.unpublishedByOrderIndex);
+      if (nextChunk.status === "COMPLETED") {
+        Object.assign(unpublishedByOrderIndex, nextChunk.unpublishedByOrderIndex);
       }
       const progress = computeEnhancementProgress(chunks);
       if (progress.permanentFailedChunks > 0) {
@@ -312,7 +319,8 @@ export async function authorizeEnhancementChunkStart(params: {
       return null;
     }
 
-    const chunks = { ...job.chunks, [chunkKey(params.chunk.chunkIndex)]: params.chunk };
+    const nextChunk = withPreservedTargetPieces(params.chunk, existing);
+    const chunks = { ...job.chunks, [chunkKey(nextChunk.chunkIndex)]: nextChunk };
     const progress = computeEnhancementProgress(chunks);
     const publicationEligible = computePublicationEligible({
       executionStatus: job.executionStatus === "QUEUED" ? "RUNNING" : job.executionStatus,
@@ -580,16 +588,54 @@ export async function publishEnhancementIfEligible(params: {
       };
     }
 
-    const byIndex = new Map<number, string>();
+    const ownedIndexes = [
+      ...new Set(Object.values(job.chunks).flatMap((chunk) => chunk.targetIndexes)),
+    ];
+    const rawByIndex = new Map<number, string>();
     for (const [key, text] of Object.entries(job.unpublishedByOrderIndex)) {
       const index = Number(key);
-      if (Number.isFinite(index)) {
-        byIndex.set(index, text);
+      if (Number.isFinite(index) && typeof text === "string") {
+        rawByIndex.set(index, text);
       }
     }
-    const ownedIndexes = new Set(
-      Object.values(job.chunks).flatMap((chunk) => chunk.targetIndexes),
-    );
+
+    let byIndex: Map<number, string>;
+    if (unpublishedCoversOwnedSourceIndexes(job.unpublishedByOrderIndex, ownedIndexes)) {
+      byIndex = rawByIndex;
+    } else {
+      const sourceSegments = latest.segments.map((segment) => ({
+        index: segment.orderIndex,
+        speakerLabel: segment.speakerLabel ?? "Speaker",
+        startMs:
+          segment.startSeconds !== null ? Math.round(segment.startSeconds * 1000) : null,
+        endMs:
+          segment.endSeconds !== null ? Math.round(segment.endSeconds * 1000) : null,
+        originalText: resolveEnhancementOriginalText(segment),
+        segmentId: segment.id,
+        mappedParticipantId: segment.mappedParticipantId,
+      }));
+      const resolution = resolveEnhancementPublicationTexts({
+        sourceSegments,
+        unpublishedByOrderIndex: job.unpublishedByOrderIndex,
+        persistedPieces: collectDurableEnhancementPieces(job.chunks),
+      });
+      if (!resolution.ok) {
+        const failed = terminalizeEnhancementJob({
+          job: { ...job, progress },
+          nowMs: params.nowMs ?? Date.now(),
+          cancelReason: job.cancelReason ?? "permanent_chunk_failure",
+        });
+        await tx.transcript.update({
+          where: { id: params.transcriptId },
+          data: {
+            processingMetadata: mergeEnhancementJobIntoMetadata(metadata, failed) as Prisma.InputJsonValue,
+          },
+        });
+        return { published: false, outcome: "partial_not_published", job: failed };
+      }
+      byIndex = resolution.textBySourceIndex;
+    }
+
     for (const index of ownedIndexes) {
       if (!byIndex.has(index)) {
         const failed = terminalizeEnhancementJob({

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
 import { applyFacilitatorMaterialInputChange, materialChangeGuardErrorBody } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
 import {
-  resolveRoomParticipantFromParsedBody,
-  resolveRoomParticipantFromQuery,
-} from "@/lib/room-participant-resolver";
+  authorizeSessionManagementAccess,
+  authorizeSessionMaterialsAccess,
+  resolveSessionManagerActorId,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import {
   getUniqueSpeakerLabels,
   getDisplaySpeakerLabel,
@@ -47,19 +48,15 @@ async function getSpeakerMappingCandidates(sessionId: string) {
 export async function GET(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(request.url);
-  const joinToken = url.searchParams.get("joinToken");
-  const participantId = url.searchParams.get("participantId");
-
-  if (!joinToken && !participantId) {
-    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
+  const authorization = await authorizeSessionMaterialsAccess(
+    sessionId,
+    sessionAuthTokensFrom(url),
+  );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
-  const participant = await resolveRoomParticipantFromQuery(url, sessionId);
-  if (!participant) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
-  const isFacilitator = participant.type === ParticipantType.FACILITATOR;
+  const isFacilitator = authorization.projection.isManagerProjection;
 
   const transcript = await prisma.transcript.findUnique({
     where: { sessionId },
@@ -139,8 +136,6 @@ const speakerMappingSchema = z.object({
   /** Legacy: applyOnly means re-apply existing saved mapping, not save new one */
   applyOnly: z.boolean().optional(),
   confirmRewindPublication: z.boolean().optional(),
-}).refine((data) => Boolean(data.joinToken || data.participantId), {
-  message: "joinToken or participantId is required",
 });
 
 export async function POST(request: Request, context: RouteContext) {
@@ -179,9 +174,12 @@ export async function POST(request: Request, context: RouteContext) {
     expectedRetranscribeCount,
   } = parsed.data;
 
-  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
-  if (!participant || participant.type !== ParticipantType.FACILITATOR) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  const authorization = await authorizeSessionManagementAccess(
+    sessionId,
+    sessionAuthTokensFrom(parsed.data),
+  );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
   const session = await prisma.session.findFirst({
@@ -342,7 +340,11 @@ export async function POST(request: Request, context: RouteContext) {
     !applyOnly && newMappingStatus === "CONFIRMED"
       ? keepExistingConfirmation
         ? transcript.speakerMappingConfirmedBy
-        : participant.id
+        : resolveSessionManagerActorId({
+            participantId: authorization.participant?.id,
+            userId: authorization.user?.id,
+            fallbackDisplayName: authorization.actorDisplayName,
+          })
       : null;
 
   const change = await (async () => {

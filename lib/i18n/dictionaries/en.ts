@@ -502,6 +502,7 @@ export const en = {
     facilitatorOwnerLabel: "Facilitator/owner",
     facilitatorOwnerHint: "For sessions, the facilitator is the owner and manages access to the private session.",
     facilitatorOwnerDisplay: "Facilitator/owner: {name}",
+    facilitatorOwnerUnknown: "Not recorded",
     // Role management panel (Phase 6.11B)
     participantRoles: "Participant roles",
     compactRoleManagement: "Compact role management",

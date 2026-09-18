@@ -55,6 +55,8 @@ export type SessionListItem = {
   materialsUrl: string;
   ownerLabel?: string | null;
   ownerUserId: string | null;
+  facilitatorLabel?: string | null;
+  ownerFacilitatorMissing?: boolean;
 };
 
 export function isSessionActiveForPresence(session: {

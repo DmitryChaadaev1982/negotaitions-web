@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType, Prisma, TranscriptSource } from "@/app/generated/prisma/client";
+import { Prisma, TranscriptSource } from "@/app/generated/prisma/client";
 import { applyFacilitatorMaterialInputChange, materialChangeGuardErrorBody } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
-import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  resolveSessionManagerActorId,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import { buildCanonicalDiarizedText } from "@/lib/transcription/canonical-diarized-text";
 import type { SpeakerMapping } from "@/lib/transcription/speaker-labels";
 import { resolveSegmentEnhancementProvenance } from "@/lib/post-processing/enhancement-ux-presentation";
@@ -47,8 +51,6 @@ const schema = z.object({
   participantId: z.string().trim().min(1).optional(),
   turns: z.array(turnSchema).min(1, "At least one turn is required"),
   confirmRewindPublication: z.boolean().optional(),
-}).refine((data) => Boolean(data.joinToken || data.participantId), {
-  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -75,10 +77,18 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { turns, confirmRewindPublication } = parsed.data;
 
-  const facilitator = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
-  if (!facilitator || facilitator.type !== ParticipantType.FACILITATOR) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  const authorization = await authorizeSessionManagementAccess(
+    sessionId,
+    sessionAuthTokensFrom(parsed.data),
+  );
+  if (!authorization.ok) {
+    return authorization.response;
   }
+  const confirmedBy = resolveSessionManagerActorId({
+    participantId: authorization.participant?.id,
+    userId: authorization.user?.id,
+    fallbackDisplayName: authorization.actorDisplayName,
+  });
 
   const session = await prisma.session.findFirst({
     where: { id: sessionId },
@@ -199,7 +209,7 @@ export async function POST(request: Request, context: RouteContext) {
         speakerMapping: mapping,
         speakerMappingStatus: "CONFIRMED",
         speakerMappingConfirmedAt: new Date(),
-        speakerMappingConfirmedBy: facilitator.id,
+        speakerMappingConfirmedBy: confirmedBy,
         processingMetadata,
       },
       update: {
@@ -211,7 +221,7 @@ export async function POST(request: Request, context: RouteContext) {
         speakerMapping: mapping,
         speakerMappingStatus: "CONFIRMED",
         speakerMappingConfirmedAt: new Date(),
-        speakerMappingConfirmedBy: facilitator.id,
+        speakerMappingConfirmedBy: confirmedBy,
         processingMetadata,
       },
     });

@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
 import { refreshRecordingStatus } from "@/lib/livekit-egress";
 import { prisma } from "@/lib/prisma";
-import { getSessionParticipantByJoinToken } from "@/lib/session-participant-auth";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  joinToken: z.string().trim().min(1, "Join token is required"),
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
 });
 
 type RouteContext = {
@@ -34,13 +37,12 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const participant = await getSessionParticipantByJoinToken(
-    parsed.data.joinToken,
+  const authorization = await authorizeSessionManagementAccess(
     sessionId,
+    sessionAuthTokensFrom(parsed.data),
   );
-
-  if (!participant || participant.type !== ParticipantType.FACILITATOR) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
   const recording = await prisma.recording.findUnique({

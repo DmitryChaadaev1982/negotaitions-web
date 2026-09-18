@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { ParticipantType, Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getOptionalCurrentUser } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth/admin";
-import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import { revokeActiveAiAnalysisPublicationInTransaction } from "@/lib/ai-publication-revoke";
 import {
   isAiPublicationSerializationConflict,
@@ -30,38 +31,12 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { joinToken, participantId } = body;
 
-  if (!joinToken && !participantId) {
-    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
-  }
-
-  let adminUser = false;
-  let isEventHostOwner = false;
-  if (participantId) {
-    const user = await getOptionalCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-    }
-    adminUser = isAdmin(user);
-    const session = await prisma.session.findUnique({
-      where: { id: sessionId },
-      select: { event: { select: { hostUserId: true } } },
-    });
-    isEventHostOwner = session?.event?.hostUserId === user.id;
-  }
-
-  const participant = await resolveRoomParticipantFromParsedBody(
-    { joinToken: joinToken ?? null, participantId: participantId ?? null },
+  const authorization = await authorizeSessionManagementAccess(
     sessionId,
+    sessionAuthTokensFrom({ joinToken, participantId }),
   );
-  if (!participant) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
-  if (participant.type !== ParticipantType.FACILITATOR && !adminUser && !isEventHostOwner) {
-    return NextResponse.json(
-      { error: "Only facilitators can change AI analysis visibility." },
-      { status: 403 },
-    );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
   let result;

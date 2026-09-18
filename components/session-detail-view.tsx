@@ -275,13 +275,11 @@ export function SessionDetailView({
           </div>
         }
       />
-      {/* Phase 6.11B: Facilitator/owner display — always visible on detail page */}
-      {session.facilitatorLabel ? (
-        <p className="text-sm text-slate-400" data-testid="session-facilitator-owner-label">
-          <span className="font-medium text-slate-300">{t("sessions.facilitatorOwnerLabel")}:</span>{" "}
-          {session.facilitatorLabel}
-        </p>
-      ) : null}
+      {/* Facilitator and owner are the same Session.facilitatorId relation. */}
+      <p className="text-sm text-slate-400" data-testid="session-facilitator-owner-label">
+        <span className="font-medium text-slate-300">{t("sessions.facilitatorOwnerLabel")}:</span>{" "}
+        {session.facilitatorLabel ?? t("sessions.facilitatorOwnerUnknown")}
+      </p>
 
       {session.linkedEvent ? (
         <GlassCard elevated>
@@ -505,16 +503,17 @@ export function SessionDetailView({
         </CardContent>
       </Card>
 
-      {session.facilitatorParticipant ? (
-        <SessionPostProcessingPanel
-          sessionId={session.id}
-          roomAuth={{ type: "account", participantId: session.facilitatorParticipant.id }}
-          readOnly={isReadOnly}
-          autoTranscribeEnabled={autoTranscribeEnabled}
-          variant="page"
-          participantType="FACILITATOR"
-        />
-      ) : null}
+      <SessionPostProcessingPanel
+        sessionId={session.id}
+        roomAuth={{
+          type: "account",
+          participantId: session.facilitatorParticipant?.id ?? "",
+        }}
+        readOnly={isReadOnly}
+        autoTranscribeEnabled={autoTranscribeEnabled}
+        variant="page"
+        participantType="FACILITATOR"
+      />
 
       {session.participants.length > 0 ? (
         <Card>

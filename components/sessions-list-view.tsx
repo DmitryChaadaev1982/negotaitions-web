@@ -80,6 +80,8 @@ type SessionRow = {
   roomUrl: string;
   materialsUrl: string;
   ownerLabel?: string | null;
+  facilitatorLabel?: string | null;
+  ownerFacilitatorMissing?: boolean;
 };
 
 type SessionsListViewProps = {
@@ -582,11 +584,12 @@ export function SessionsListView({ sessions: initialSessions }: SessionsListView
                         <VisibilityBadge visibility={session.visibility} showLabel={false} />
                       ) : null}
                     </div>
-                    {session.visibility === "PRIVATE" && session.ownerLabel ? (
-                      <p className="mt-0.5 text-xs text-slate-500" data-testid="session-owner-label">
-                        {t("sessions.facilitatorOwnerLabel")}: {session.ownerLabel}
-                      </p>
-                    ) : null}
+                    <p className="mt-0.5 text-xs text-slate-500" data-testid="session-owner-label">
+                      {t("sessions.facilitatorOwnerLabel")}:{" "}
+                      {session.ownerLabel ??
+                        session.facilitatorLabel ??
+                        t("sessions.facilitatorOwnerUnknown")}
+                    </p>
                   </DataTableCell>
                   <DataTableCell className="px-1.5 py-1 align-top text-xs">
                     <p className="line-clamp-3 leading-5 text-slate-200">{session.caseTitle}</p>

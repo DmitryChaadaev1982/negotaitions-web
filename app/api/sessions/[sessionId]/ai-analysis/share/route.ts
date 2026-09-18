@@ -6,9 +6,10 @@ import {
   Prisma,
 } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getOptionalCurrentUser } from "@/lib/auth";
-import { isAdmin } from "@/lib/auth/admin";
-import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import type { NegotiationAnalysisOutput } from "@/lib/ai/negotiation-analysis";
 import { sanitizeSharedAiAnalysisForParticipant } from "@/lib/privacy/serializers";
 import { evaluateAiAnalysisCurrentness } from "@/lib/ai/analysis-currentness";
@@ -74,45 +75,14 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  if (!joinToken && !participantId) {
-    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
-  }
-
-  let participant: Awaited<ReturnType<typeof resolveRoomParticipantFromParsedBody>> | null = null;
-  let isEventHostOwner = false;
-  let adminUser = false;
-
-  if (participantId) {
-    // Account mode: verify cookie ownership
-    const user = await getOptionalCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-    }
-    adminUser = isAdmin(user);
-    // Check if user is event host (can manage even without FACILITATOR participant type)
-    const session = await prisma.session.findUnique({
-      where: { id: sessionId },
-      select: { event: { select: { hostUserId: true } } },
-    });
-    isEventHostOwner = session?.event?.hostUserId === user.id;
-  }
-
-  participant = await resolveRoomParticipantFromParsedBody(
-    { joinToken: joinToken ?? null, participantId: participantId ?? null },
+  const authorization = await authorizeSessionManagementAccess(
     sessionId,
+    sessionAuthTokensFrom({ joinToken, participantId }),
   );
-
-  if (!participant) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  if (!authorization.ok) {
+    return authorization.response;
   }
-
-  const isFacilitatorType = participant.type === ParticipantType.FACILITATOR;
-  if (!isFacilitatorType && !isEventHostOwner && !adminUser) {
-    return NextResponse.json(
-      { error: "Only facilitators can share AI analysis." },
-      { status: 403 },
-    );
-  }
+  const publishedBy = authorization.actorDisplayName;
 
   let publication;
   try {
@@ -232,7 +202,7 @@ export async function POST(request: Request, context: RouteContext) {
                 sharedAnalysisJson: sanitized ?? Prisma.JsonNull,
                 sharedExecutiveSummary: aiAnalysis.executiveSummary,
                 publishedAt,
-                publishedBy: participant.displayName,
+                publishedBy,
               },
               select: {
                 id: true,
@@ -271,7 +241,7 @@ export async function POST(request: Request, context: RouteContext) {
           sharedAnalysisJson: sanitized ?? Prisma.JsonNull,
           sharedExecutiveSummary: aiAnalysis.executiveSummary,
           sharedAt: targetPublication.publishedAt,
-          sharedBy: participant.displayName,
+          sharedBy: publishedBy,
           unsharedAt: null,
         },
         select: {

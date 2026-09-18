@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType, TranscriptStatus } from "@/app/generated/prisma/client";
+import { TranscriptStatus } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { resolveRoomParticipantFromBody } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import {
   isTranscriptionActive,
   MANUAL_TRANSCRIPTION_STOP_SENTINEL,
@@ -11,14 +14,10 @@ import {
 
 export const runtime = "nodejs";
 
-const stopSchema = z
-  .object({
-    joinToken: z.string().trim().min(1).optional(),
-    participantId: z.string().trim().min(1).optional(),
-  })
-  .refine((data) => Boolean(data.joinToken || data.participantId), {
-    message: "Authentication token is required.",
-  });
+const stopSchema = z.object({
+  joinToken: z.string().trim().min(1).optional(),
+  participantId: z.string().trim().min(1).optional(),
+});
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -42,19 +41,12 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const participant = await resolveRoomParticipantFromBody(
-    parsed.data as Record<string, unknown>,
+  const authorization = await authorizeSessionManagementAccess(
     sessionId,
+    sessionAuthTokensFrom(parsed.data),
   );
-  if (!participant) {
-    return NextResponse.json({ error: "Invalid auth token." }, { status: 404 });
-  }
-
-  if (participant.type !== ParticipantType.FACILITATOR) {
-    return NextResponse.json(
-      { error: "Only facilitators can stop transcription." },
-      { status: 403 },
-    );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
   const transcript = await prisma.transcript.findUnique({

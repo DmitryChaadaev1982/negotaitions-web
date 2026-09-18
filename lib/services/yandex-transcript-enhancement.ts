@@ -1247,6 +1247,112 @@ export function reconstructTranscriptEnhancementCoverage(params: {
   return { textBySourceIndex, fallbackSourceIndexes };
 }
 
+export type EnhancementPublicationTextResolution =
+  | { ok: true; textBySourceIndex: Map<number, string> }
+  | {
+      ok: false;
+      reason: "incomplete_piece_coverage" | "missing_source";
+      fallbackSourceIndexes: number[];
+      missingSourceIndexes: number[];
+    };
+
+function durablePiecesToPacked(
+  pieces: Array<{
+    index: number;
+    sourceIndex: number;
+    pieceIndex: number;
+    pieceCount: number;
+    prefixText: string;
+    separatorAfter: string;
+  }>,
+  sourceByIndex: Map<number, TranscriptEnhancementInputSegment>,
+): PackedTranscriptEnhancementSegment[] {
+  return pieces.map((piece) => {
+    const source = sourceByIndex.get(piece.sourceIndex);
+    return {
+      index: piece.index,
+      speakerLabel: source?.speakerLabel ?? "",
+      startMs: source?.startMs ?? null,
+      endMs: source?.endMs ?? null,
+      originalText: source?.originalText ?? "",
+      sourceIndex: piece.sourceIndex,
+      pieceIndex: piece.pieceIndex,
+      pieceCount: piece.pieceCount,
+      prefixText: piece.prefixText,
+      separatorAfter: piece.separatorAfter,
+    };
+  });
+}
+
+/**
+ * Map provider piece-index output back to Session segment orderIndex.
+ * Split oversized sources use synthetic piece indexes; publication must
+ * never treat those as extra/missing source identities.
+ */
+export function resolveEnhancementPublicationTexts(params: {
+  sourceSegments: TranscriptEnhancementInputSegment[];
+  unpublishedByOrderIndex: Record<string, string>;
+  persistedPieces?: Array<{
+    index: number;
+    sourceIndex: number;
+    pieceIndex: number;
+    pieceCount: number;
+    prefixText: string;
+    separatorAfter: string;
+  }> | null;
+  maxCharsPerPiece?: number;
+}): EnhancementPublicationTextResolution {
+  const sourceByIndex = new Map(
+    params.sourceSegments.map((segment) => [segment.index, segment]),
+  );
+  const persisted = params.persistedPieces ?? [];
+  const targetPieces =
+    persisted.length > 0
+      ? durablePiecesToPacked(persisted, sourceByIndex)
+      : buildTranscriptEnhancementTargetPieces(
+          params.sourceSegments,
+          params.maxCharsPerPiece ?? getTranscriptEnhancementChunkMaxChars(),
+        );
+  const enhancedByIndex = new Map<number, string>();
+  for (const [key, text] of Object.entries(params.unpublishedByOrderIndex)) {
+    const index = Number(key);
+    if (Number.isFinite(index) && typeof text === "string" && text.trim()) {
+      enhancedByIndex.set(index, text);
+    }
+  }
+  const reconstructed = reconstructTranscriptEnhancementCoverage({
+    sourceSegments: params.sourceSegments,
+    targetPieces,
+    enhancedByIndex,
+  });
+  const fallbackSourceIndexes = [...reconstructed.fallbackSourceIndexes].sort(
+    (left, right) => left - right,
+  );
+  const missingSourceIndexes = params.sourceSegments
+    .map((segment) => segment.index)
+    .filter((index) => !reconstructed.textBySourceIndex.has(index));
+  if (fallbackSourceIndexes.length > 0) {
+    return {
+      ok: false,
+      reason: "incomplete_piece_coverage",
+      fallbackSourceIndexes,
+      missingSourceIndexes,
+    };
+  }
+  if (missingSourceIndexes.length > 0) {
+    return {
+      ok: false,
+      reason: "missing_source",
+      fallbackSourceIndexes,
+      missingSourceIndexes,
+    };
+  }
+  return {
+    ok: true,
+    textBySourceIndex: reconstructed.textBySourceIndex,
+  };
+}
+
 export function getTranscriptEnhancementChunkSourceCharLimit(
   maxTargetChars: number,
   contextNeighbors = CHUNK_CONTEXT_NEIGHBORS,

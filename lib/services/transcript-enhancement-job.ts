@@ -52,10 +52,20 @@ export type TranscriptEnhancementProgress = {
   permanentFailedChunks: number;
 };
 
+export type TranscriptEnhancementDurablePiece = {
+  index: number;
+  sourceIndex: number;
+  pieceIndex: number;
+  pieceCount: number;
+  prefixText: string;
+  separatorAfter: string;
+};
+
 export type TranscriptEnhancementDurableChunk = {
   chunkIndex: number;
   status: TranscriptEnhancementChunkStatus;
   targetIndexes: number[];
+  targetPieces?: TranscriptEnhancementDurablePiece[];
   attemptCount: number;
   unpublishedByOrderIndex: Record<string, string>;
   lastErrorClass: string | null;
@@ -348,6 +358,41 @@ export function mirrorLegacyStatus(job: Pick<
   return job.status ?? "NOT_STARTED";
 }
 
+function parseTargetPieces(raw: unknown): TranscriptEnhancementDurablePiece[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const pieces: TranscriptEnhancementDurablePiece[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const index = asFiniteNumber(record.index);
+    const sourceIndex = asFiniteNumber(record.sourceIndex);
+    const pieceIndex = asFiniteNumber(record.pieceIndex);
+    const pieceCount = asFiniteNumber(record.pieceCount);
+    if (
+      index == null ||
+      sourceIndex == null ||
+      pieceIndex == null ||
+      pieceCount == null
+    ) {
+      continue;
+    }
+    pieces.push({
+      index,
+      sourceIndex,
+      pieceIndex,
+      pieceCount,
+      prefixText: typeof record.prefixText === "string" ? record.prefixText : "",
+      separatorAfter:
+        typeof record.separatorAfter === "string" ? record.separatorAfter : "",
+    });
+  }
+  return pieces;
+}
+
 function parseChunk(raw: unknown, fallbackIndex: number): TranscriptEnhancementDurableChunk {
   const record = asProcessingMetadata(raw);
   const chunkIndex = asFiniteNumber(record.chunkIndex) ?? fallbackIndex;
@@ -364,6 +409,7 @@ function parseChunk(raw: unknown, fallbackIndex: number): TranscriptEnhancementD
     chunkIndex,
     status,
     targetIndexes: asNumberArray(record.targetIndexes),
+    targetPieces: parseTargetPieces(record.targetPieces),
     attemptCount: asFiniteNumber(record.attemptCount) ?? 0,
     unpublishedByOrderIndex: asStringRecord(record.unpublishedByOrderIndex),
     lastErrorClass: asIsoString(record.lastErrorClass) ?? asIsoString(record.errorClass),
@@ -569,6 +615,62 @@ export function projectTranscriptEnhancementStatus(
     cancelReason: job.cancelReason,
     skipReason: job.skipReason,
   };
+}
+
+export function toDurableEnhancementPieces(
+  targets: Array<{
+    index: number;
+    sourceIndex: number;
+    pieceIndex: number;
+    pieceCount: number;
+    prefixText: string;
+    separatorAfter: string;
+  }>,
+): TranscriptEnhancementDurablePiece[] {
+  return targets.map((target) => ({
+    index: target.index,
+    sourceIndex: target.sourceIndex,
+    pieceIndex: target.pieceIndex,
+    pieceCount: target.pieceCount,
+    prefixText: target.prefixText,
+    separatorAfter: target.separatorAfter,
+  }));
+}
+
+export function collectDurableEnhancementPieces(
+  chunks: Record<string, TranscriptEnhancementDurableChunk>,
+): TranscriptEnhancementDurablePiece[] {
+  return Object.values(chunks).flatMap((chunk) => chunk.targetPieces ?? []);
+}
+
+export function unpublishedCoversOwnedSourceIndexes(
+  unpublishedByOrderIndex: Record<string, string>,
+  ownedSourceIndexes: Iterable<number>,
+): boolean {
+  const present = new Set<number>();
+  for (const key of Object.keys(unpublishedByOrderIndex)) {
+    const index = Number(key);
+    if (Number.isFinite(index)) {
+      present.add(index);
+    }
+  }
+  for (const index of ownedSourceIndexes) {
+    if (!present.has(index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function withPreservedTargetPieces(
+  incoming: TranscriptEnhancementDurableChunk,
+  existing?: TranscriptEnhancementDurableChunk | null,
+): TranscriptEnhancementDurableChunk {
+  const incomingPieces = incoming.targetPieces ?? [];
+  if (incomingPieces.length > 0 || !existing?.targetPieces?.length) {
+    return incoming;
+  }
+  return { ...incoming, targetPieces: existing.targetPieces };
 }
 
 export function serializeEnhancementJob(job: TranscriptEnhancementJob): ProcessingMetadata {

@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ParticipantType, TranscriptSource } from "@/app/generated/prisma/client";
+import { TranscriptSource } from "@/app/generated/prisma/client";
 import {
   applyFacilitatorMaterialInputChange,
   materialChangeGuardErrorBody,
 } from "@/lib/ai/material-input-invalidation";
 import { prisma } from "@/lib/prisma";
-import { resolveRoomParticipantFromParsedBody } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 
 export const runtime = "nodejs";
 
@@ -16,8 +19,6 @@ const transcriptSchema = z.object({
   participantId: z.string().trim().min(1).optional(),
   text: z.string(),
   confirmRewindPublication: z.boolean().optional(),
-}).refine((data) => Boolean(data.joinToken || data.participantId), {
-  message: "joinToken or participantId is required",
 });
 
 type RouteContext = {
@@ -56,9 +57,12 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  const participant = await resolveRoomParticipantFromParsedBody(parsed.data, sessionId);
-  if (!participant || participant.type !== ParticipantType.FACILITATOR) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  const authorization = await authorizeSessionManagementAccess(
+    sessionId,
+    sessionAuthTokensFrom(parsed.data),
+  );
+  if (!authorization.ok) {
+    return authorization.response;
   }
 
   const change = await applyFacilitatorMaterialInputChange({

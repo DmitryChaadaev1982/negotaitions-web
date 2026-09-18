@@ -15,6 +15,19 @@
   unrelated callers receive `404` so Session existence stays hidden.
   Admin, Event host, Event facilitator, and Session facilitator follow
   `canManageSession` exactly.
+- Post-session materials management (recording/transcript status,
+  retranscription, enhancement, speaker mapping, manual attribution, and
+  AI-analysis management) uses the same `canManageSession` contract through
+  `authorizeSessionManagementAccess` / `authorizeSessionMaterialsAccess`.
+  Owning a facilitator `SessionParticipant` row is not required. After
+  `authorizeSessionMaterialsAccess` succeeds, `materials/status` must not
+  return Forbidden merely because no facilitator `SessionParticipant`
+  exists to project through. Participant membership may enrich the
+  payload; it is not a second hidden gate for ADMIN. The
+  management page may send another session's facilitator `participantId`;
+  server-side cookie identity plus `canManageSession` is the authority.
+  Ordinary Case owner, participant, or observer membership is not
+  management authority. Session owner remains `Session.facilitatorId`.
 - Session/event runtime authorization resolves participant access by account or token-based paths where supported.
 - New registration writes `UserConsent` records from
   `getCurrentLegalRelease()` (`TERMS_PRIVACY_ACK_V2`,

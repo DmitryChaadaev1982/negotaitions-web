@@ -37,7 +37,9 @@ export function roomAuthBody(
   const base: Record<string, string> =
     auth.type === "joinToken"
       ? { joinToken: auth.value }
-      : { participantId: auth.participantId };
+      : auth.participantId.trim()
+        ? { participantId: auth.participantId }
+        : {};
   if (!extras?.connectionId && !extras?.claimLease) {
     return base;
   }
@@ -54,14 +56,14 @@ type RoomAuthQueryOptions = {
 };
 
 function appendExtraQuery(params: string, options?: RoomAuthQueryOptions) {
-  let next = params;
+  const parts = params ? [params] : [];
   if (options?.connectionId) {
-    next = `${next}&connectionId=${encodeURIComponent(options.connectionId)}`;
+    parts.push(`connectionId=${encodeURIComponent(options.connectionId)}`);
   }
   if (options?.claimLease) {
-    next = `${next}&claimLease=1`;
+    parts.push("claimLease=1");
   }
-  return next;
+  return parts.join("&");
 }
 
 /**
@@ -74,6 +76,9 @@ export function roomAuthQuery(auth: RoomAuthToken, options?: RoomAuthQueryOption
       `joinToken=${encodeURIComponent(auth.value)}`,
       options,
     );
+  }
+  if (!auth.participantId.trim()) {
+    return appendExtraQuery("", options);
   }
   return appendExtraQuery(
     `participantId=${encodeURIComponent(auth.participantId)}`,

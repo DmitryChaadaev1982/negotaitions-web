@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { ParticipantType } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { resolveRoomParticipantFromQuery } from "@/lib/room-participant-resolver";
+import {
+  authorizeSessionManagementAccess,
+  sessionAuthTokensFrom,
+} from "@/lib/session-management-auth";
 import {
   getDisplaySpeakerLabel,
   getUniqueSpeakerLabels,
@@ -27,18 +29,13 @@ function asMetadata(value: unknown): Record<string, unknown> {
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const url = new URL(_request.url);
-  const joinToken = url.searchParams.get("joinToken")?.trim();
-  const participantId = url.searchParams.get("participantId")?.trim();
-
-  if (!joinToken && !participantId) {
-    return NextResponse.json({ error: "joinToken or participantId is required." }, { status: 400 });
-  }
-
   try {
-    const participant = await resolveRoomParticipantFromQuery(url, sessionId);
-
-    if (!participant || participant.type !== ParticipantType.FACILITATOR) {
-      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    const authorization = await authorizeSessionManagementAccess(
+      sessionId,
+      sessionAuthTokensFrom(url),
+    );
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
     const session = await prisma.session.findFirst({

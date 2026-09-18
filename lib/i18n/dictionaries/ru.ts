@@ -506,6 +506,7 @@ export const ru: Dictionary = {
     facilitatorOwnerLabel: "Фасилитатор/владелец",
     facilitatorOwnerHint: "Для сессий фасилитатор является владельцем и управляет доступом к приватной сессии.",
     facilitatorOwnerDisplay: "Фасилитатор/владелец: {name}",
+    facilitatorOwnerUnknown: "Не указан",
     // Role management panel (Phase 6.11B)
     participantRoles: "Роли участников",
     compactRoleManagement: "Компактное управление ролями",

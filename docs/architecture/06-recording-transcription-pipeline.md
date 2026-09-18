@@ -149,6 +149,12 @@
   Materials and room Debrief. A completed historical recording with a storage
   key is transcription-ready; clients must not invent “waiting for recording”
   when this API is unavailable.
+- Management mutations and facilitator-level materials projection are
+  authorized by `canManageSession` (ADMIN, Session facilitator, Event host,
+  Event facilitator). A caller who can open `/sessions/{id}` but is not the
+  facilitator `SessionParticipant` still receives recording, transcript, and
+  enhancement state. Absence of any `SessionParticipant` row is not Forbidden
+  for an authorized manager. Non-managers keep the existing role projection.
 - The Prisma client for `materials/status` reads nullable
   `AiAnalysis.inputFingerprint`. That additive column must exist in the
   database the client is using. A missing column is schema drift and 500s
@@ -535,8 +541,12 @@
   - durable job/chunk state lives in `Transcript.processingMetadata` (D1).
     There is no `TranscriptEnhancementJob` / `TranscriptEnhancementChunk` table.
     Writers reread under `FOR UPDATE` and merge via `mergeProcessingMetadata`;
-  - unpublished lexical checkpoints are stored by deterministic `orderIndex`
-    and are not user-visible until atomic publication;
+  - unpublished lexical checkpoints are stored by the provider piece index
+    used in the chunk request. Oversized sources may be split into synthetic
+    piece indexes. Durable chunks persist `targetPieces` so publication can
+    reconstruct source `orderIndex` texts. Publication never treats synthetic
+    piece indexes as extra or missing sources. Incomplete piece coverage is
+    a permanent publication failure; mixed raw/enhanced text is not published;
   - enhanced text is persisted into `Transcript.text`, `Transcript.diarizedText`,
     and `TranscriptSegment.text` only on all-success `terminalQuality=COMPLETED`.
     Terminal `PARTIAL` does not publish mixed enhanced+raw text;
