@@ -16,12 +16,12 @@ function mediaStreamWithTrack(kind: "audio" | "video", enabled: boolean): MediaS
     return {
       getAudioTracks: () => [track],
       getVideoTracks: () => [],
-    } as MediaStream;
+    } as unknown as MediaStream;
   }
   return {
     getAudioTracks: () => [],
     getVideoTracks: () => [track],
-  } as MediaStream;
+  } as unknown as MediaStream;
 }
 
 test("assigned participant without endpoint stays non-connected", () => {
@@ -101,6 +101,25 @@ test("observer reconnects muted as muted icon and red border input", () => {
   });
   assert.equal(model.micStatus, "off");
   assert.equal(canShowSpeakingHighlight({ ...model, isSpeaking: true }), false);
+});
+
+test("ended tracks are not treated as usable media", () => {
+  const ended = {
+    enabled: true,
+    kind: "video",
+    readyState: "ended",
+  } as MediaStreamTrack;
+  const stream = {
+    getAudioTracks: () => [],
+    getVideoTracks: () => [ended],
+  } as unknown as MediaStream;
+  const model = normalizeParticipantPresenceMedia({
+    displayName: "Remote",
+    connectedSignal: true,
+    videoStream: stream,
+    allowConnectedWithoutMediaTile: false,
+  });
+  assert.equal(model.cameraStatus, "unknown");
 });
 
 test("observer reconnects enabled and can show speaking", () => {

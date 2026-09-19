@@ -12,6 +12,15 @@
 - Provider-focused specs (Voximplant room/lobby/layout/recording diagnostics).
 - Diagnostics and environment checks.
 
+BUG04 Slice A Layer-3 Vox session-room recovery is covered by deterministic
+unit tests (`lib/voximplant/session-room-recovery.bug04.test.ts`,
+`lib/voximplant/layer3-media-connectivity.test.ts`,
+`lib/voximplant/media-liveness.test.ts`,
+`lib/voximplant/conference-callback-ownership.test.ts`,
+`lib/voximplant/provider-disconnect-recovery.test.ts`, and the existing
+Stage 3.19B recovery suite). Do not call real Vox providers for that
+candidate. Full peer/endpoint convergence remains Slice B.
+
 ## Default Execution Model
 
 - Mock external services by default for stable and cost-safe runs.

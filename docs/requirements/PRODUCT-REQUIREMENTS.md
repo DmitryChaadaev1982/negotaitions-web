@@ -42,6 +42,23 @@ The product must provide:
 - Multi-session training events with lobby assignment.
 - Live room runtime with explicit provider selection (`livekit` or
   `voximplant`). There is no application default provider.
+- For Vox session rooms, recoverable network/media degradation is Layer-3
+  connectivity, not logical Leave. SDK reconnect owns first-line transport
+  recovery. A provider 408 log alone must not rejoin. Terminal conference
+  Failed/Disconnected recovery must keep the same logical `connectionId`
+  and heartbeat. A terminal disconnect during SDK reconnect is deferred, not
+  lost. If SDK reconnect begins after terminal recovery has already started
+  but before the new Conference joins, the same bounded attempt pauses and
+  later resumes; it must not fail merely because recovery is already in
+  flight. Old-generation Conference callbacks and released state watchers
+  must not mutate current runtime or Layer-3 projection. `RemoteMediaRemoved`
+  disposes that stream's liveness binding so a late ended callback cannot
+  affect replacement media. SDK reconnect completion is edge-triggered and
+  must not treat ordinary healthy SDK state callbacks as recovery or mark the
+  room degraded solely because no remote endpoints exist. Usable live remote
+  media must render immediately; recovery logic must not add blocking work on
+  that path. Full peer/endpoint convergence across browsers remains a later
+  Slice B remainder.
 - Recording → raw transcription → optional enhancement → speaker mapping →
   AI analysis.
 - Session materials with role-specific privacy projections.

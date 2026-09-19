@@ -35,11 +35,50 @@ import type {
   VoxLifecyclePhase,
 } from "@/lib/voximplant/provider-error-classification";
 import {
+  createLayer3State,
+  decide408Action,
+  fenceGeneration,
+  isLocalEndedDisconnectReason,
+  isTerminalConferenceIncident,
+  isTerminalConferenceState,
+  layer3AfterMediaDegraded,
+  layer3AfterSdkReconnectSettled,
+  layer3AfterSdkReconnecting,
+  layer3AfterTerminalRecoveryFailed,
+  layer3AfterUsableRemoteMedia,
+  layer3BannerKind,
+  layer3DuringTerminalRecovery,
+  observeSdkReconnectTransition,
+  shouldDeferTerminalRecovery,
+  type Layer3ConnectivityState,
+} from "@/lib/voximplant/layer3-media-connectivity";
+import {
+  shouldApplyConferenceCallback,
+  isAuthoritativeConferenceStateWatcher,
+} from "@/lib/voximplant/conference-callback-ownership";
+import {
+  bindEndpointStreamLiveness,
+  createEndpointStreamLivenessRegistry,
+  disposeAllEndpointStreamLiveness,
+  disposeEndpointStreamLiveness,
+  disposeEndpointStreamLivenessBinding,
+  isAutomaticStopReceivingReason,
+  mediaStreamFromLiveVoxStream,
+  pruneMissingEndpointStreamLiveness,
+  selectLiveVoxStream,
+  VOX_STREAM_EVENT_ENDED,
+  type EndpointStreamLivenessRegistry,
+} from "@/lib/voximplant/media-liveness";
+import {
   classifyProviderDisconnect,
   createBoundedProviderRejoin,
   isLocalMediaDeviceClassification,
   isMediaRecoveryClassification,
   isSessionOperableForProviderRejoin,
+  retainPendingTerminalIncident,
+  shouldCancelPendingTerminalIncident,
+  takePendingTerminalIncident,
+  type PendingTerminalRecoveryIncident,
   type ProviderDisconnectIntent,
   type ProviderRecoveryStatus,
 } from "@/lib/voximplant/provider-disconnect-recovery";
@@ -89,11 +128,21 @@ type VoxStream = {
   track?: MediaStreamTrack;
   sourceStream?: MediaStream;
   close?: () => void;
+  addEventListener?: (
+    eventName: "ENDED",
+    listener: (event: { payload?: { streamId?: string } }) => void,
+  ) => void;
+  removeEventListener?: (
+    eventName: "ENDED",
+    listener: (event: { payload?: { streamId?: string } }) => void,
+  ) => void;
 };
 
 type VoxEndpointMediaEvent = {
   payload?: {
     stream?: VoxStream;
+    streamId?: string;
+    reason?: string;
   };
 };
 
@@ -102,11 +151,23 @@ type VoxEndpoint = {
   userName: string;
   displayName: string;
   addEventListener: (
-    eventName: "RemoteMediaAdded" | "RemoteMediaRemoved",
+    eventName:
+      | "RemoteMediaAdded"
+      | "RemoteMediaRemoved"
+      | "StartReceivingVideoStream"
+      | "StopReceivingVideoStream"
+      | "StartReceivingAudioStream"
+      | "StopReceivingAudioStream",
     listener: (event: VoxEndpointMediaEvent) => void,
   ) => void;
   removeEventListener: (
-    eventName: "RemoteMediaAdded" | "RemoteMediaRemoved",
+    eventName:
+      | "RemoteMediaAdded"
+      | "RemoteMediaRemoved"
+      | "StartReceivingVideoStream"
+      | "StopReceivingVideoStream"
+      | "StartReceivingAudioStream"
+      | "StopReceivingAudioStream",
     listener: (event: VoxEndpointMediaEvent) => void,
   ) => void;
   getAnyAudioStreams: () => VoxStream[];
@@ -146,6 +207,7 @@ type VoxConference = {
   muteMicrophone: () => void;
   unmuteMicrophone: () => void;
   endpoints: VoxWatchable<Map<string, VoxEndpoint>>;
+  state?: VoxWatchable<string>;
   /**
    * Sends a text message to the VoxEngine scenario via the Voximplant SDK
    * messaging channel. Used to relay recording_control messages.
@@ -177,6 +239,7 @@ type VoxCore = {
     disconnect: () => Promise<unknown>;
     requestOneTimeKey: (options: { username: string }) => Promise<string>;
     loginOneTimeKey: (options: { username: string; hash: string }) => Promise<unknown>;
+    state?: VoxWatchable<string>;
   };
 };
 
@@ -352,6 +415,14 @@ type UseVoximplantRoomResult = {
   transportRecovery: SessionTransportRecoveryState;
   /** Client-only bounded provider rejoin: idle | recovering | recovered | failed. */
   providerRecovery: ProviderRecoveryStatus;
+  /**
+   * Authoritative Layer-3 Vox/media connectivity. Independent of logical
+   * presence (heartbeat) and roomLifecycle.
+   */
+  layer3: Layer3ConnectivityState;
+  layer3Banner: "reconnecting" | "degraded" | "failed" | null;
+  /** True after first successful room entry; keeps SharedRoomShell mounted. */
+  hasEnteredRoom: boolean;
   /** True when conference.sendMessage() is available on the current SDK object. */
   sendMessageAvailable: boolean;
 };
@@ -363,6 +434,9 @@ type RuntimeState = {
   core: VoxCore;
   /** Retained so toggles can create new streams after joining. */
   streamModule: VoxStreamModule;
+  conferenceManager: VoxConferenceManager;
+  conferenceName: string;
+  muteAudio: boolean;
   /** VideoQuality enum value from the SDK used for new camera streams. */
   videoQuality: unknown;
   conference: VoxConference | null;
@@ -389,8 +463,14 @@ type RuntimeState = {
       generation: number;
       onAdded: (event: VoxEndpointMediaEvent) => void;
       onRemoved: (event: VoxEndpointMediaEvent) => void;
+      onStopVideo?: (event: VoxEndpointMediaEvent) => void;
+      onStartVideo?: (event: VoxEndpointMediaEvent) => void;
     }
   >;
+  streamLivenessByEndpoint: EndpointStreamLivenessRegistry;
+  conferenceStateWatcherEpoch: number;
+  unwatchClientState: (() => void) | null;
+  unwatchConferenceState: (() => void) | null;
   conferenceListeners: {
     onConnected: (event: VoxConferenceEvent) => void;
     onFailed: (event: VoxConferenceEvent) => void;
@@ -567,6 +647,10 @@ function streamToMediaStream(stream: VoxStream | null): MediaStream | null {
   return null;
 }
 
+function liveRemoteMediaStream(stream: VoxStream | null): MediaStream | null {
+  return mediaStreamFromLiveVoxStream(stream);
+}
+
 function getAudioTrack(stream: VoxStream | null): MediaStreamTrack | null {
   return streamToMediaStream(stream)?.getAudioTracks()[0] ?? null;
 }
@@ -657,10 +741,27 @@ export function useVoximplantRoom({
     isSessionOperableRef.current = isSessionOperable;
   }, [isSessionOperable]);
   const resyncEndpointsRef = useRef<(generation: number) => void>(() => {});
-  const [joinEpoch, setJoinEpoch] = useState(0);
   const [providerRecovery, setProviderRecovery] =
     useState<ProviderRecoveryStatus>("idle");
+  const [layer3, setLayer3] = useState<Layer3ConnectivityState>(() =>
+    createLayer3State({ status: "connected", hasEnteredRoom: false }),
+  );
+  const [hasEnteredRoom, setHasEnteredRoom] = useState(false);
   const isUnmountingRef = useRef(false);
+  const sdkClientStateRef = useRef<string | null>(null);
+  const sdkConferenceStateRef = useRef<string | null>(null);
+  const sdkReconnectingRef = useRef(false);
+  const pendingTerminalRecoveryRef = useRef<PendingTerminalRecoveryIncident | null>(null);
+  const recoverTerminalConferenceRef = useRef<
+    (failedGeneration: number, reason: string) => void
+  >(() => {});
+  const bindConferenceRef = useRef<
+    (conference: VoxConference, runtime: RuntimeState, generation: number) => void
+  >(() => {});
+  const layer3Ref = useRef(layer3);
+  useEffect(() => {
+    layer3Ref.current = layer3;
+  }, [layer3]);
 
   const invalidateGeneration = useCallback((reason: VoxLifecycleAbortReason) => {
     generationRef.current += 1;
@@ -680,6 +781,25 @@ export function useVoximplantRoom({
     resetVoxSdkLogDedupe();
     generationRef.current += 1;
     return generationRef.current;
+  }, []);
+
+  const fenceCurrentGeneration = useCallback((reason: string) => {
+    const current = generationRef.current;
+    const { fencedGeneration, nextGeneration } = fenceGeneration(current);
+    generationRef.current = nextGeneration;
+    logProviderRecovery({
+      surface: "session-room",
+      sessionId,
+      generation: fencedGeneration,
+      event: "generation_fenced",
+      reason,
+    });
+    return { fencedGeneration, nextGeneration };
+  }, [sessionId]);
+
+  const publishLayer3 = useCallback((next: Layer3ConnectivityState) => {
+    layer3Ref.current = next;
+    if (mountedRef.current) setLayer3(next);
   }, []);
 
   const [transportRecovery, setTransportRecovery] =
@@ -727,6 +847,56 @@ export function useVoximplantRoom({
             runtime?.conferenceConnected &&
             runtime.generation === generationRef.current
           ) {
+            logProviderRecovery({
+              surface: "session-room",
+              sessionId,
+              generation: runtime.generation,
+              event: "endpoint_resync",
+              classification: "RECOVERABLE_TRANSIENT",
+              reason: classification.reason,
+            });
+            resyncEndpointsRef.current(runtime.generation);
+          }
+          return;
+        }
+        if (
+          classification.reason === "transport_unavailable:408" ||
+          classification.reason.startsWith("transport_unavailable:408")
+        ) {
+          const runtime = runtimeRef.current;
+          const mediaUsable = remoteParticipantsRef.current.some((remote) => {
+            const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
+            const audio = remote.audioStream
+              ?.getTracks()
+              .some((track) => track.readyState !== "ended");
+            return Boolean(video || audio);
+          });
+          const action = decide408Action({
+            sdkReconnecting: sdkReconnectingRef.current,
+            mediaUsable,
+            conferenceTerminal:
+              runtime?.conference == null && layer3Ref.current.status === "failed",
+          });
+          if (action === "observe_sdk") {
+            publishLayer3(
+              layer3AfterSdkReconnecting({
+                ...layer3Ref.current,
+                hasEnteredRoom: layer3Ref.current.hasEnteredRoom,
+              }),
+            );
+            return;
+          }
+          if (action === "keep") {
+            return;
+          }
+          if (
+            action === "resync" &&
+            runtime &&
+            runtime.generation === generationRef.current
+          ) {
+            publishLayer3(
+              layer3AfterMediaDegraded(layer3Ref.current, classification.reason),
+            );
             resyncEndpointsRef.current(runtime.generation);
           }
           return;
@@ -743,7 +913,7 @@ export function useVoximplantRoom({
       transportRecoveryRef.current = null;
       releaseSink();
     };
-  }, [isTransportOwnerCurrent]);
+  }, [isTransportOwnerCurrent, publishLayer3, sessionId]);
 
   /**
    * Replays the captured gateway-close log line through the real SDK log
@@ -801,6 +971,7 @@ export function useVoximplantRoom({
   const handleStaleConnection = useCallback(() => {
     if (staleLifecycleRef.current) return;
     disconnectIntentRef.current = "stale_connection";
+    pendingTerminalRecoveryRef.current = null;
     invalidateGeneration("stale_connection");
     if (!staleNotifiedRef.current) {
       staleNotifiedRef.current = true;
@@ -836,6 +1007,21 @@ export function useVoximplantRoom({
   const [conferenceName, setConferenceName] = useState("");
   const [localParticipant, setLocalParticipant] = useState<VoxRoomParticipant | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<VoxRoomParticipant[]>([]);
+  const remoteParticipantsRef = useRef<VoxRoomParticipant[]>([]);
+  const commitRemoteParticipants = useCallback(
+    (
+      next:
+        | VoxRoomParticipant[]
+        | ((current: VoxRoomParticipant[]) => VoxRoomParticipant[]),
+    ) => {
+      setRemoteParticipants((current) => {
+        const resolved = typeof next === "function" ? next(current) : next;
+        remoteParticipantsRef.current = resolved;
+        return resolved;
+      });
+    },
+    [],
+  );
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [cameraUnavailable, setCameraUnavailable] = useState(false);
@@ -948,7 +1134,7 @@ export function useVoximplantRoom({
   );
 
   const upsertRemote = useCallback((next: UpsertRemoteParticipantInput) => {
-    setRemoteParticipants((current) => {
+    commitRemoteParticipants((current) => {
       const index = current.findIndex((item) => item.id === next.id);
       if (index === -1) {
         return [
@@ -976,7 +1162,7 @@ export function useVoximplantRoom({
       };
       return copy;
     });
-  }, []);
+  }, [commitRemoteParticipants]);
 
   // ── Remote audio attachment ───────────────────────────────────────────────
 
@@ -991,7 +1177,7 @@ export function useVoximplantRoom({
       if (!isRuntimeActive(rt, generation)) return;
       if (!rt) return;
 
-      const ms = streamToMediaStream(voxStream);
+      const ms = liveRemoteMediaStream(voxStream);
       if (!ms) return;
 
       const key = `${endpointId}-${voxStream.id}`;
@@ -1030,6 +1216,18 @@ export function useVoximplantRoom({
     },
     [isRuntimeActive, upsertRemote],
   );
+
+  /** Pause and remove one remote audio element for a specific stream. */
+  const detachRemoteAudioStream = useCallback((endpointId: string, streamId: string) => {
+    const rt = runtimeRef.current;
+    if (!rt) return;
+    const key = `${endpointId}-${streamId}`;
+    const audio = rt.remoteAudioElements.get(key);
+    if (!audio) return;
+    audio.pause();
+    rt.remoteAudioElements.delete(key);
+    setRemoteAudioElementCount(rt.remoteAudioElements.size);
+  }, []);
 
   /** Pause and remove all audio elements associated with an endpoint. */
   const detachRemoteAudioStreams = useCallback((endpointId: string) => {
@@ -1092,17 +1290,24 @@ export function useVoximplantRoom({
 
   const removeRemoteById = useCallback(
     (endpointId: string) => {
-      setRemoteParticipants((current) => current.filter((item) => item.id !== endpointId));
+      commitRemoteParticipants((current) => current.filter((item) => item.id !== endpointId));
       detachRemoteAudioStreams(endpointId);
     },
-    [detachRemoteAudioStreams],
+    [commitRemoteParticipants, detachRemoteAudioStreams],
   );
 
   const unsubscribeEndpoint = useCallback((runtime: RuntimeState, endpointId: string) => {
+    disposeEndpointStreamLiveness(runtime.streamLivenessByEndpoint, endpointId);
     const subscription = runtime.endpointSubscriptions.get(endpointId);
     if (!subscription) return;
     subscription.endpoint.removeEventListener("RemoteMediaAdded", subscription.onAdded);
     subscription.endpoint.removeEventListener("RemoteMediaRemoved", subscription.onRemoved);
+    if (subscription.onStopVideo) {
+      subscription.endpoint.removeEventListener("StopReceivingVideoStream", subscription.onStopVideo);
+    }
+    if (subscription.onStartVideo) {
+      subscription.endpoint.removeEventListener("StartReceivingVideoStream", subscription.onStartVideo);
+    }
     runtime.endpointSubscriptions.delete(endpointId);
     detachRemoteAudioStreams(endpointId);
   }, [detachRemoteAudioStreams]);
@@ -1117,42 +1322,22 @@ export function useVoximplantRoom({
       clearRemoteAudioElements(runtime.remoteAudioElements);
       runtime.remoteAudioElements.clear();
     }
-    setRemoteParticipants(remotesAfterProviderDisconnect());
+    commitRemoteParticipants(remotesAfterProviderDisconnect());
     setRemoteAudioElementCount(0);
     setRemotePlaybackBlocked(false);
-  }, [unsubscribeEndpoint]);
+  }, [commitRemoteParticipants, unsubscribeEndpoint]);
 
-  const requestBoundedRejoin = useCallback(
-    (failedGeneration: number, disconnectKind: string) => {
-      if (rejoinInProgressRef.current) return;
-      rejoinInProgressRef.current = true;
-      disconnectIntentRef.current = "recovery_teardown";
-      boundedRejoinRef.current.begin();
-      setProviderRecovery("recovering");
-      logProviderRecovery({
-        surface: "session-room",
-        sessionId,
-        generation: failedGeneration,
-        event: "recovery_started",
-        reason: disconnectKind,
-      });
-      setJoinEpoch((current) => current + 1);
-    },
-    [sessionId],
-  );
-
-  /** Refresh the remote video stream for an endpoint. */
   const applyRemoteVideoStream = useCallback(
     (endpoint: VoxEndpoint, generation: number) => {
       if (generationRef.current !== generation || staleLifecycleRef.current) return;
-      const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
-      const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
+      const liveVideo = selectLiveVoxStream(endpoint.getAnyVideoStreams());
+      const liveAudio = selectLiveVoxStream(endpoint.getAnyAudioStreams());
       upsertRemote({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
         endpointUsername: endpoint.userName ?? null,
-        stream: streamToMediaStream(videoStream),
-        audioStream: streamToMediaStream(audioStream),
+        stream: liveRemoteMediaStream(liveVideo),
+        audioStream: liveRemoteMediaStream(liveAudio),
       });
     },
     [upsertRemote],
@@ -1164,7 +1349,7 @@ export function useVoximplantRoom({
     sdkUsernameRef.current = null;
     if (!mountedRef.current) return;
     setJoined(false);
-    setRemoteParticipants([]);
+    commitRemoteParticipants([]);
     setLocalParticipant(null);
     setIsMicMuted(false);
     setIsCameraOn(false);
@@ -1177,7 +1362,7 @@ export function useVoximplantRoom({
     setRemotePlaybackBlocked(false);
     setSendMessageAvailable(false);
     setAudioProcessingEnabled(true);
-  }, []);
+  }, [commitRemoteParticipants]);
 
   useEffect(() => {
     return () => {
@@ -1197,6 +1382,9 @@ export function useVoximplantRoom({
     ) => {
       // Allow a new lifecycle to start immediately after invalidation/teardown trigger.
       isJoiningRef.current = false;
+      pendingTerminalRecoveryRef.current = null;
+      boundedRejoinRef.current.cancel();
+      rejoinInProgressRef.current = false;
 
       if (cleanupPromiseRef.current) {
         return cleanupPromiseRef.current;
@@ -1254,6 +1442,12 @@ export function useVoximplantRoom({
           window.clearInterval(runtimeSnapshot.endpointSyncIntervalId);
           runtimeSnapshot.endpointSyncIntervalId = null;
         }
+        disposeAllEndpointStreamLiveness(runtimeSnapshot.streamLivenessByEndpoint);
+        runtimeSnapshot.unwatchConferenceState?.();
+        runtimeSnapshot.unwatchConferenceState = null;
+        runtimeSnapshot.conferenceStateWatcherEpoch += 1;
+        runtimeSnapshot.unwatchClientState?.();
+        runtimeSnapshot.unwatchClientState = null;
 
         // Unsubscribe endpoint listeners.
         for (const { endpoint, onAdded, onRemoved } of runtimeSnapshot.endpointSubscriptions.values()) {
@@ -1345,6 +1539,9 @@ export function useVoximplantRoom({
   const leave = useCallback(async () => {
     if (isLeaving) return;
     disconnectIntentRef.current = "explicit_leave";
+    pendingTerminalRecoveryRef.current = null;
+    boundedRejoinRef.current.cancel();
+    rejoinInProgressRef.current = false;
     setIsLeaving(true);
     await cleanup("invalidated_generation");
     if (!mountedRef.current) return;
@@ -1361,7 +1558,59 @@ export function useVoximplantRoom({
       if (!runtime) return;
 
       const existing = runtime.endpointSubscriptions.get(endpoint.id);
+
+      const attachStreamLiveness = (voxStream: VoxStream) => {
+        const streamId = voxStream.id;
+        if (!streamId) return;
+        const track = voxStream.track ?? voxStream.sourceStream?.getTracks()[0];
+        bindEndpointStreamLiveness({
+          registry: runtime.streamLivenessByEndpoint,
+          endpointId: endpoint.id,
+          streamId,
+          addStreamEndedListener: (handler) => {
+            voxStream.addEventListener?.(VOX_STREAM_EVENT_ENDED, handler);
+          },
+          removeStreamEndedListener: (handler) => {
+            voxStream.removeEventListener?.(VOX_STREAM_EVENT_ENDED, handler);
+          },
+          addTrackEndedListener: track
+            ? (handler) => {
+                track.addEventListener("ended", handler);
+              }
+            : undefined,
+          removeTrackEndedListener: track
+            ? (handler) => {
+                track.removeEventListener("ended", handler);
+              }
+            : undefined,
+          onEnded: () => {
+            if (generationRef.current !== generation || staleLifecycleRef.current) return;
+            if (!runtime.endpointSubscriptions.has(endpoint.id)) return;
+            if (voxStream.type === "audio") {
+              detachRemoteAudioStream(endpoint.id, streamId);
+            }
+            applyRemoteVideoStream(endpoint, generation);
+            const stillUsable = remoteParticipantsRef.current.some((remote) => {
+              const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
+              const audio = remote.audioStream
+                ?.getTracks()
+                .some((track) => track.readyState !== "ended");
+              return Boolean(video || audio);
+            });
+            if (!stillUsable) {
+              publishLayer3(layer3AfterMediaDegraded(layer3Ref.current, "stream_ended"));
+            }
+          },
+        });
+      };
+
       if (existing?.endpoint === endpoint) {
+        for (const audioStream of endpoint.getAnyAudioStreams()) {
+          attachStreamLiveness(audioStream);
+        }
+        for (const videoStream of endpoint.getAnyVideoStreams()) {
+          attachStreamLiveness(videoStream);
+        }
         return;
       }
       if (existing) {
@@ -1372,28 +1621,94 @@ export function useVoximplantRoom({
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
         if (!event.payload?.stream) return;
         const stream = event.payload.stream;
+        attachStreamLiveness(stream);
         if (stream.type === "audio") {
           attachRemoteAudioStream(endpoint.id, stream, generation);
         } else {
           applyRemoteVideoStream(endpoint, generation);
         }
+        if (layer3Ref.current.status === "degraded" || layer3Ref.current.reason) {
+          publishLayer3(
+            layer3AfterUsableRemoteMedia(layer3Ref.current, sdkReconnectingRef.current),
+          );
+        }
       };
-      const onRemoved = () => {
+      const onRemoved = (event: VoxEndpointMediaEvent) => {
+        if (generationRef.current !== generation || staleLifecycleRef.current) return;
+        const removedStream = event.payload?.stream;
+        const removedStreamId = removedStream?.id ?? event.payload?.streamId;
+        if (removedStreamId) {
+          disposeEndpointStreamLivenessBinding(
+            runtime.streamLivenessByEndpoint,
+            endpoint.id,
+            removedStreamId,
+          );
+          if (removedStream?.type === "audio") {
+            detachRemoteAudioStream(endpoint.id, removedStreamId);
+          }
+        } else {
+          const present = new Set<string>();
+          for (const stream of endpoint.getAnyAudioStreams()) {
+            if (stream.id) present.add(stream.id);
+          }
+          for (const stream of endpoint.getAnyVideoStreams()) {
+            if (stream.id) present.add(stream.id);
+          }
+          pruneMissingEndpointStreamLiveness(
+            runtime.streamLivenessByEndpoint,
+            endpoint.id,
+            present,
+          );
+        }
+        applyRemoteVideoStream(endpoint, generation);
+      };
+      const onStopVideo = (event: VoxEndpointMediaEvent) => {
+        if (generationRef.current !== generation || staleLifecycleRef.current) return;
+        if (!isAutomaticStopReceivingReason(event.payload?.reason)) return;
+        upsertRemote({
+          id: endpoint.id,
+          displayName: endpoint.displayName || endpoint.userName || endpoint.id,
+          stream: null,
+        });
+        publishLayer3(layer3AfterMediaDegraded(layer3Ref.current, "stop_receiving_automatic"));
+      };
+      const onStartVideo = () => {
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
         applyRemoteVideoStream(endpoint, generation);
       };
 
       endpoint.addEventListener("RemoteMediaAdded", onAdded);
       endpoint.addEventListener("RemoteMediaRemoved", onRemoved);
-      runtime.endpointSubscriptions.set(endpoint.id, { endpoint, generation, onAdded, onRemoved });
+      endpoint.addEventListener("StopReceivingVideoStream", onStopVideo);
+      endpoint.addEventListener("StartReceivingVideoStream", onStartVideo);
+      runtime.endpointSubscriptions.set(endpoint.id, {
+        endpoint,
+        generation,
+        onAdded,
+        onRemoved,
+        onStopVideo,
+        onStartVideo,
+      });
 
       // Apply any streams already present on this endpoint.
       applyRemoteVideoStream(endpoint, generation);
       for (const audioStream of endpoint.getAnyAudioStreams()) {
+        attachStreamLiveness(audioStream);
         attachRemoteAudioStream(endpoint.id, audioStream, generation);
       }
+      for (const videoStream of endpoint.getAnyVideoStreams()) {
+        attachStreamLiveness(videoStream);
+      }
     },
-    [applyRemoteVideoStream, attachRemoteAudioStream, isRuntimeActive, unsubscribeEndpoint],
+    [
+      applyRemoteVideoStream,
+      attachRemoteAudioStream,
+      detachRemoteAudioStream,
+      isRuntimeActive,
+      publishLayer3,
+      unsubscribeEndpoint,
+      upsertRemote,
+    ],
   );
 
   // ── Microphone toggle ─────────────────────────────────────────────────────
@@ -1634,6 +1949,380 @@ export function useVoximplantRoom({
       }
     })();
   }, [isCameraOn, addMediaWarning, removeMediaWarningsByKeyword]);
+
+  const teardownConferenceOnly = useCallback(
+    (runtime: RuntimeState, options?: { hangup: boolean }) => {
+      disposeAllEndpointStreamLiveness(runtime.streamLivenessByEndpoint);
+      for (const endpointId of Array.from(runtime.endpointSubscriptions.keys())) {
+        unsubscribeEndpoint(runtime, endpointId);
+      }
+      if (runtime.conference && runtime.conferenceListeners) {
+        runtime.conference.removeEventListener("Connected", runtime.conferenceListeners.onConnected);
+        runtime.conference.removeEventListener("Failed", runtime.conferenceListeners.onFailed);
+        runtime.conference.removeEventListener("Disconnected", runtime.conferenceListeners.onDisconnected);
+        runtime.conference.removeEventListener("EndpointAdded", runtime.conferenceListeners.onEndpointAdded);
+        runtime.conference.removeEventListener("EndpointRemoved", runtime.conferenceListeners.onEndpointRemoved);
+        runtime.conferenceListeners = null;
+      }
+      runtime.unwatchConferenceState?.();
+      runtime.unwatchConferenceState = null;
+      runtime.conferenceStateWatcherEpoch += 1;
+      if (options?.hangup !== false && runtime.conference && !sdkReconnectingRef.current) {
+        try { runtime.conference.hangup(); } catch { /* ignore */ }
+      }
+      runtime.conference = null;
+      runtime.conferenceConnected = false;
+      clearRemoteAudioElements(runtime.remoteAudioElements);
+      runtime.remoteAudioElements.clear();
+      if (mountedRef.current) {
+        commitRemoteParticipants([]);
+        setRemoteAudioElementCount(0);
+        setSendMessageAvailable(false);
+      }
+    },
+    [commitRemoteParticipants, unsubscribeEndpoint],
+  );
+
+  const watchSdkStates = useCallback(
+    (runtime: RuntimeState, generation: number) => {
+      const handleChange = () => {
+        if (staleLifecycleRef.current) return;
+        const currentGeneration = generationRef.current;
+        if (runtimeRef.current?.generation !== currentGeneration) return;
+        const observation = observeSdkReconnectTransition({
+          wasReconnecting: sdkReconnectingRef.current,
+          clientState: sdkClientStateRef.current,
+          conferenceState: sdkConferenceStateRef.current,
+        });
+        sdkReconnectingRef.current = observation.reconnecting;
+        if (observation.episodeStarted) {
+          publishLayer3(
+            layer3AfterSdkReconnecting({
+              ...layer3Ref.current,
+              sdkClientState: sdkClientStateRef.current,
+              sdkConferenceState: sdkConferenceStateRef.current,
+            }),
+          );
+          logProviderRecovery({
+            surface: "session-room",
+            sessionId,
+            generation: currentGeneration,
+            event: "sdk_reconnecting",
+          });
+          return;
+        }
+        if (!observation.episodeSettled) {
+          return;
+        }
+        logProviderRecovery({
+          surface: "session-room",
+          sessionId,
+          generation: currentGeneration,
+          event: "sdk_reconnected",
+        });
+        if (
+          shouldCancelPendingTerminalIncident({
+            stale: staleLifecycleRef.current,
+            mounted: mountedRef.current,
+            intent: disconnectIntentRef.current,
+            sessionOperable:
+              isSessionOperableRef.current?.() ??
+              isSessionOperableForProviderRejoin({ isClosed: false }),
+          })
+        ) {
+          pendingTerminalRecoveryRef.current = null;
+          boundedRejoinRef.current.cancel();
+          rejoinInProgressRef.current = false;
+          return;
+        }
+        const { incident, remaining } = takePendingTerminalIncident(
+          pendingTerminalRecoveryRef.current,
+        );
+        pendingTerminalRecoveryRef.current = remaining;
+        if (incident) {
+          recoverTerminalConferenceRef.current(incident.generation, incident.reason);
+          return;
+        }
+        if (isTerminalConferenceState(sdkConferenceStateRef.current)) {
+          return;
+        }
+        publishLayer3(
+          layer3AfterSdkReconnectSettled({
+            ...layer3Ref.current,
+            sdkClientState: sdkClientStateRef.current,
+            sdkConferenceState: sdkConferenceStateRef.current,
+          }),
+        );
+        queueMicrotask(() => {
+          if (generationRef.current !== currentGeneration || staleLifecycleRef.current) return;
+          resyncEndpointsRef.current(currentGeneration);
+        });
+      };
+
+      if (!runtime.unwatchClientState && runtime.core.client.state?.watch) {
+        runtime.unwatchClientState = runtime.core.client.state.watch((next) => {
+          sdkClientStateRef.current = next;
+          handleChange();
+        });
+        sdkClientStateRef.current = runtime.core.client.state.value ?? sdkClientStateRef.current;
+      }
+      runtime.unwatchConferenceState?.();
+      if (runtime.conference?.state?.watch) {
+        const watchedConference = runtime.conference;
+        const watcherEpoch = runtime.conferenceStateWatcherEpoch + 1;
+        runtime.conferenceStateWatcherEpoch = watcherEpoch;
+        runtime.unwatchConferenceState = runtime.conference.state.watch((next) => {
+          if (
+            !isAuthoritativeConferenceStateWatcher({
+              watcherConference: watchedConference,
+              currentConference: runtime.conference,
+              watcherEpoch,
+              currentEpoch: runtime.conferenceStateWatcherEpoch,
+            })
+          ) {
+            return;
+          }
+          sdkConferenceStateRef.current = next;
+          handleChange();
+        });
+        sdkConferenceStateRef.current = runtime.conference.state.value ?? null;
+      }
+      void generation;
+    },
+    [publishLayer3, sessionId],
+  );
+
+  const pauseTerminalRecoveryAttempt = useCallback(
+    (ownerGeneration: number, reason: string) => {
+      if (boundedRejoinRef.current.getStatus() === "recovering") {
+        boundedRejoinRef.current.pause();
+        logProviderRecovery({
+          surface: "session-room",
+          sessionId,
+          generation: ownerGeneration,
+          event: "recovery_paused",
+          reason,
+        });
+      }
+      pendingTerminalRecoveryRef.current = retainPendingTerminalIncident(
+        pendingTerminalRecoveryRef.current,
+        { generation: ownerGeneration, reason },
+      );
+      publishLayer3(layer3AfterSdkReconnecting(layer3Ref.current));
+    },
+    [publishLayer3, sessionId],
+  );
+
+  const continueTerminalRecoveryJoin = useCallback(
+    (ownerGeneration: number, reason: string) => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+      void (async () => {
+        try {
+          if (generationRef.current !== ownerGeneration || staleLifecycleRef.current) return;
+          if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+            pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+            return;
+          }
+          let conference = runtime.conference;
+          if (!conference) {
+            if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+              pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+              return;
+            }
+            conference = runtime.conferenceManager.createConference({
+              conferenceName: runtime.conferenceName,
+              muteAudio: runtime.muteAudio,
+              reportStats: false,
+            });
+            runtime.conference = conference;
+            bindConferenceRef.current(conference, runtime, ownerGeneration);
+            watchSdkStates(runtime, ownerGeneration);
+          }
+          if (runtime.localAudioStream && !runtime.audioStreamAdded) {
+            runtime.audioStreamAdded = await safeAddStream(conference, runtime.localAudioStream);
+          }
+          if (generationRef.current !== ownerGeneration || staleLifecycleRef.current) return;
+          if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+            pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+            return;
+          }
+          if (runtime.localVideoStream && !runtime.videoStreamAdded) {
+            runtime.videoStreamAdded = await safeAddStream(conference, runtime.localVideoStream);
+          }
+          if (generationRef.current !== ownerGeneration || staleLifecycleRef.current) return;
+          if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+            pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+            return;
+          }
+          await conference.join();
+          if (generationRef.current !== ownerGeneration || staleLifecycleRef.current) return;
+          if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+            if (!runtime.conferenceConnected) {
+              pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+            }
+            return;
+          }
+          runtime.conferenceConnected = true;
+          if (mountedRef.current) {
+            setSendMessageAvailable(typeof conference.sendMessage === "function");
+          }
+        } catch (joinError) {
+          if (generationRef.current !== ownerGeneration) return;
+          if (
+            shouldDeferTerminalRecovery(sdkReconnectingRef.current) ||
+            boundedRejoinRef.current.isPaused()
+          ) {
+            pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+            return;
+          }
+          boundedRejoinRef.current.fail();
+          rejoinInProgressRef.current = false;
+          setProviderRecovery("failed");
+          publishLayer3(
+            layer3AfterTerminalRecoveryFailed(
+              layer3Ref.current,
+              toErrorMessage(joinError),
+            ),
+          );
+          logProviderRecovery({
+            surface: "session-room",
+            sessionId,
+            generation: ownerGeneration,
+            event: "recovery_failed",
+            reason: toErrorMessage(joinError),
+          });
+        }
+      })();
+    },
+    [pauseTerminalRecoveryAttempt, publishLayer3, sessionId, watchSdkStates],
+  );
+
+  const recoverTerminalConference = useCallback(
+    (ownerGeneration: number, reason: string) => {
+      const cancelAttempt = () => {
+        pendingTerminalRecoveryRef.current = null;
+        boundedRejoinRef.current.cancel();
+        rejoinInProgressRef.current = false;
+      };
+      if (!mountedRef.current || staleLifecycleRef.current) {
+        cancelAttempt();
+        return;
+      }
+      if (
+        disconnectIntentRef.current === "explicit_leave" ||
+        disconnectIntentRef.current === "stale_connection" ||
+        disconnectIntentRef.current === "unmount" ||
+        disconnectIntentRef.current === "auth_denied"
+      ) {
+        cancelAttempt();
+        return;
+      }
+      if (generationRef.current !== ownerGeneration) {
+        return;
+      }
+      const sessionOperable =
+        isSessionOperableRef.current?.() ??
+        isSessionOperableForProviderRejoin({ isClosed: false });
+      if (!sessionOperable) {
+        cancelAttempt();
+        return;
+      }
+
+      if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+        pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+        return;
+      }
+
+      if (boundedRejoinRef.current.resume()) {
+        logProviderRecovery({
+          surface: "session-room",
+          sessionId,
+          generation: ownerGeneration,
+          event: "recovery_resumed",
+          reason,
+        });
+        continueTerminalRecoveryJoin(ownerGeneration, reason);
+        return;
+      }
+
+      if (boundedRejoinRef.current.getStatus() === "recovering") {
+        return;
+      }
+
+      const kind = classifyProviderDisconnect({
+        intent: disconnectIntentRef.current === "recovery_teardown" ? "none" : disconnectIntentRef.current,
+        eventGeneration: ownerGeneration,
+        currentGeneration: ownerGeneration,
+        mounted: mountedRef.current,
+        stale: staleLifecycleRef.current,
+        sessionOperable,
+      });
+      const decision = boundedRejoinRef.current.decide(kind);
+      if (!decision.shouldRejoin) {
+        if (kind === "unexpected" && decision.reason !== "already_in_flight") {
+          boundedRejoinRef.current.fail();
+          setProviderRecovery("failed");
+          publishLayer3(
+            layer3AfterTerminalRecoveryFailed(layer3Ref.current, decision.reason),
+          );
+        }
+        return;
+      }
+
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+
+      disconnectIntentRef.current = "recovery_teardown";
+      boundedRejoinRef.current.begin();
+      rejoinInProgressRef.current = true;
+      runtime.audioStreamAdded = false;
+      runtime.videoStreamAdded = false;
+      setProviderRecovery("recovering");
+      publishLayer3(layer3DuringTerminalRecovery(layer3Ref.current, reason));
+      logProviderRecovery({
+        surface: "session-room",
+        sessionId,
+        generation: ownerGeneration,
+        event: "recovery_started",
+        reason,
+      });
+      if (mountedRef.current) {
+        setError(null);
+        setJoined(false);
+        setHasEnteredRoom(true);
+      }
+
+      teardownConferenceOnly(runtime, { hangup: !sdkReconnectingRef.current });
+      runtime.generation = ownerGeneration;
+
+      if (shouldDeferTerminalRecovery(sdkReconnectingRef.current)) {
+        pauseTerminalRecoveryAttempt(ownerGeneration, reason);
+        return;
+      }
+
+      const conference = runtime.conferenceManager.createConference({
+        conferenceName: runtime.conferenceName,
+        muteAudio: runtime.muteAudio,
+        reportStats: false,
+      });
+      runtime.conference = conference;
+      bindConferenceRef.current(conference, runtime, ownerGeneration);
+      watchSdkStates(runtime, ownerGeneration);
+      continueTerminalRecoveryJoin(ownerGeneration, reason);
+    },
+    [
+      continueTerminalRecoveryJoin,
+      pauseTerminalRecoveryAttempt,
+      publishLayer3,
+      sessionId,
+      teardownConferenceOnly,
+      watchSdkStates,
+    ],
+  );
+  useEffect(() => {
+    recoverTerminalConferenceRef.current = recoverTerminalConference;
+  }, [recoverTerminalConference]);
 
   // ── Join effect ───────────────────────────────────────────────────────────
 
@@ -1894,6 +2583,9 @@ export function useVoximplantRoom({
           generation: joinGeneration,
           core,
           streamModule,
+          conferenceManager,
+          conferenceName: roomName,
+          muteAudio: isSilentAudio,
           videoQuality,
           conference,
           conferenceConnected: false,
@@ -1905,6 +2597,10 @@ export function useVoximplantRoom({
           audioOpPending: false,
           videoOpPending: false,
           endpointSubscriptions: new Map(),
+          streamLivenessByEndpoint: createEndpointStreamLivenessRegistry(),
+          conferenceStateWatcherEpoch: 0,
+          unwatchClientState: null,
+          unwatchConferenceState: null,
           conferenceListeners: null,
           analyserNode: null,
           analyserCtx: null,
@@ -1915,98 +2611,199 @@ export function useVoximplantRoom({
         };
         runtimeRef.current = runtimeState;
 
-        const onConnected = () => {
-          runtimeState.conferenceConnected = true;
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          lifecyclePhaseRef.current = "connected";
-          disconnectIntentRef.current = "none";
-          setJoined(true);
-          setStatus("Подключено к переговорной комнате.");
-          if (boundedRejoinRef.current.getStatus() === "recovering") {
-            boundedRejoinRef.current.succeed();
-            rejoinInProgressRef.current = false;
-            setProviderRecovery("recovered");
+        const bindConferenceSession = (
+          liveConference: VoxConference,
+          runtime: RuntimeState,
+          generation: number,
+        ) => {
+          const onConnected = () => {
+            if (
+              !shouldApplyConferenceCallback({
+                eventGeneration: generation,
+                currentGeneration: generationRef.current,
+                callbackConference: liveConference,
+                currentConference: runtimeRef.current?.conference ?? runtime.conference,
+                stale: staleLifecycleRef.current,
+                mounted: mountedRef.current,
+              })
+            ) {
+              return;
+            }
+            runtime.conferenceConnected = true;
+            lifecyclePhaseRef.current = "connected";
+            disconnectIntentRef.current = "none";
+            setJoined(true);
+            setHasEnteredRoom(true);
+            setStatus("Подключено к переговорной комнате.");
+            publishLayer3({
+              ...layer3Ref.current,
+              status: "connected",
+              hasEnteredRoom: true,
+              keepShellMounted: true,
+              keepHeartbeatActive: true,
+              reason: null,
+            });
+            if (boundedRejoinRef.current.getStatus() === "recovering") {
+              boundedRejoinRef.current.succeed();
+              rejoinInProgressRef.current = false;
+              setProviderRecovery("recovered");
+              logProviderRecovery({
+                surface: "session-room",
+                sessionId,
+                generation,
+                event: "recovery_succeeded",
+              });
+            }
+          };
+          const onFailed = (event: VoxConferenceEvent) => {
+            if (
+              !shouldApplyConferenceCallback({
+                eventGeneration: generation,
+                currentGeneration: generationRef.current,
+                callbackConference: liveConference,
+                currentConference: runtimeRef.current?.conference ?? runtime.conference,
+                stale: staleLifecycleRef.current,
+                mounted: mountedRef.current,
+              })
+            ) {
+              return;
+            }
+            runtime.conferenceConnected = false;
+            const reason = event.payload?.reason ?? "conference_failed";
+            const sessionOperable =
+              isSessionOperableRef.current?.() ??
+              isSessionOperableForProviderRejoin({ isClosed: false });
+            const kind = classifyProviderDisconnect({
+              intent: disconnectIntentRef.current,
+              eventGeneration: generation,
+              currentGeneration: generationRef.current,
+              mounted: mountedRef.current,
+              stale: staleLifecycleRef.current,
+              sessionOperable,
+            });
+            if (kind !== "unexpected") return;
+            const { nextGeneration } = fenceCurrentGeneration(reason);
+            runtime.generation = nextGeneration;
+            recoverTerminalConferenceRef.current(nextGeneration, reason);
+          };
+          const onDisconnected = (event: VoxConferenceEvent) => {
+            if (
+              !shouldApplyConferenceCallback({
+                eventGeneration: generation,
+                currentGeneration: generationRef.current,
+                callbackConference: liveConference,
+                currentConference: runtimeRef.current?.conference ?? runtime.conference,
+                stale: staleLifecycleRef.current,
+                mounted: mountedRef.current,
+              })
+            ) {
+              return;
+            }
+            runtime.conferenceConnected = false;
+            const reason = event.payload?.reason ?? "Отключено.";
             logProviderRecovery({
               surface: "session-room",
               sessionId,
-              generation: joinGeneration,
-              event: "recovery_succeeded",
+              generation,
+              event: "provider_disconnect",
+              reason,
             });
-          }
-        };
-        const onFailed = (event: VoxConferenceEvent) => {
-          runtimeState.conferenceConnected = false;
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          const reason = event.payload?.reason ?? "Неизвестная ошибка конференции.";
-          setError(`Ошибка подключения к конференции: ${reason}`);
-        };
-        const onDisconnected = (event: VoxConferenceEvent) => {
-          runtimeState.conferenceConnected = false;
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          const reason = event.payload?.reason ?? "Отключено.";
-          setJoined(false);
-          setStatus(`Отключено: ${reason}`);
-          clearLiveRemoteState(joinGeneration);
-          logProviderRecovery({
-            surface: "session-room",
-            sessionId,
-            generation: joinGeneration,
-            event: "provider_disconnect",
-            reason,
-          });
-
-          const sessionOperable =
-            isSessionOperableRef.current?.() ??
-            isSessionOperableForProviderRejoin({ isClosed: false });
-          const kind = classifyProviderDisconnect({
-            intent: disconnectIntentRef.current,
-            eventGeneration: joinGeneration,
-            currentGeneration: generationRef.current,
-            mounted: mountedRef.current,
-            stale: staleLifecycleRef.current,
-            sessionOperable,
-          });
-          const decision = boundedRejoinRef.current.decide(kind);
-          if (!decision.shouldRejoin) {
-            if (
-              kind === "unexpected" &&
-              (decision.reason === "already_consumed" ||
-                decision.reason === "already_in_flight")
-            ) {
-              setProviderRecovery(boundedRejoinRef.current.getStatus());
+            const sessionOperable =
+              isSessionOperableRef.current?.() ??
+              isSessionOperableForProviderRejoin({ isClosed: false });
+            const kind = classifyProviderDisconnect({
+              intent: disconnectIntentRef.current,
+              eventGeneration: generation,
+              currentGeneration: generationRef.current,
+              mounted: mountedRef.current,
+              stale: staleLifecycleRef.current,
+              sessionOperable,
+            });
+            if (kind !== "unexpected") {
+              pendingTerminalRecoveryRef.current = null;
+              boundedRejoinRef.current.cancel();
+              rejoinInProgressRef.current = false;
+              setJoined(false);
+              setStatus(`Отключено: ${reason}`);
+              clearLiveRemoteState(generation);
+              return;
             }
-            return;
-          }
-          requestBoundedRejoin(joinGeneration, decision.reason);
-        };
-        const onEndpointAdded = (event: VoxConferenceEvent) => {
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          const endpointId = event.payload?.newEndpointId;
-          if (!endpointId) return;
-          const endpoint = conference.endpoints.value.get(endpointId);
-          if (!endpoint) return;
-          subscribeEndpoint(endpoint, joinGeneration);
-        };
-        const onEndpointRemoved = (event: VoxConferenceEvent) => {
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          const endpointId = event.payload?.removedEndpointId;
-          if (!endpointId) return;
-          unsubscribeEndpoint(runtimeState, endpointId);
-          removeRemoteById(endpointId);
-        };
+            if (isLocalEndedDisconnectReason(reason)) {
+              setJoined(false);
+              setStatus(`Отключено: ${reason}`);
+              clearLiveRemoteState(generation);
+              return;
+            }
+            const terminal = isTerminalConferenceIncident({
+              kind: "disconnected",
+              disconnectReason: reason,
+            });
+            if (!terminal) {
+              if (sdkReconnectingRef.current) {
+                publishLayer3(layer3AfterSdkReconnecting(layer3Ref.current));
+              }
+              return;
+            }
+            const { nextGeneration } = fenceCurrentGeneration(reason);
+            runtime.generation = nextGeneration;
+            setJoined(false);
+            setStatus(`Отключено: ${reason}`);
+            recoverTerminalConferenceRef.current(nextGeneration, reason);
+          };
+          const onEndpointAdded = (event: VoxConferenceEvent) => {
+            if (
+              !shouldApplyConferenceCallback({
+                eventGeneration: generation,
+                currentGeneration: generationRef.current,
+                callbackConference: liveConference,
+                currentConference: runtimeRef.current?.conference ?? runtime.conference,
+                stale: staleLifecycleRef.current,
+                mounted: mountedRef.current,
+              })
+            ) {
+              return;
+            }
+            const endpointId = event.payload?.newEndpointId;
+            if (!endpointId) return;
+            const endpoint = liveConference.endpoints.value.get(endpointId);
+            if (!endpoint) return;
+            subscribeEndpoint(endpoint, generation);
+          };
+          const onEndpointRemoved = (event: VoxConferenceEvent) => {
+            if (
+              !shouldApplyConferenceCallback({
+                eventGeneration: generation,
+                currentGeneration: generationRef.current,
+                callbackConference: liveConference,
+                currentConference: runtimeRef.current?.conference ?? runtime.conference,
+                stale: staleLifecycleRef.current,
+                mounted: mountedRef.current,
+              })
+            ) {
+              return;
+            }
+            const endpointId = event.payload?.removedEndpointId;
+            if (!endpointId) return;
+            unsubscribeEndpoint(runtime, endpointId);
+            removeRemoteById(endpointId);
+          };
 
-        conference.addEventListener("Connected", onConnected);
-        conference.addEventListener("Failed", onFailed);
-        conference.addEventListener("Disconnected", onDisconnected);
-        conference.addEventListener("EndpointAdded", onEndpointAdded);
-        conference.addEventListener("EndpointRemoved", onEndpointRemoved);
-        runtimeState.conferenceListeners = {
-          onConnected,
-          onFailed,
-          onDisconnected,
-          onEndpointAdded,
-          onEndpointRemoved,
+          liveConference.addEventListener("Connected", onConnected);
+          liveConference.addEventListener("Failed", onFailed);
+          liveConference.addEventListener("Disconnected", onDisconnected);
+          liveConference.addEventListener("EndpointAdded", onEndpointAdded);
+          liveConference.addEventListener("EndpointRemoved", onEndpointRemoved);
+          runtime.conferenceListeners = {
+            onConnected,
+            onFailed,
+            onDisconnected,
+            onEndpointAdded,
+            onEndpointRemoved,
+          };
         };
+        bindConferenceRef.current = bindConferenceSession;
+        bindConferenceSession(conference, runtimeState, joinGeneration);
+        watchSdkStates(runtimeState, joinGeneration);
 
         // Step 6 — add streams to conference (each type added at most once).
         runtimeState.audioStreamAdded = await safeAddStream(conference, localAudioStream);
@@ -2022,6 +2819,13 @@ export function useVoximplantRoom({
         await conference.join();
         runtimeState.conferenceConnected = true;
         assertGenerationCurrent(joinGeneration);
+        setHasEnteredRoom(true);
+        publishLayer3({
+          ...layer3Ref.current,
+          hasEnteredRoom: true,
+          keepShellMounted: true,
+          keepHeartbeatActive: true,
+        });
 
         // Detect conference.sendMessage() availability for recording relay.
         if (mountedRef.current && generationRef.current === joinGeneration) {
@@ -2071,7 +2875,7 @@ export function useVoximplantRoom({
             applyRemoteVideoStream(endpoint, generation);
           }
           const endpointIds = new Set(Array.from(liveConference.endpoints.value.keys()));
-          setRemoteParticipants((current) =>
+          commitRemoteParticipants((current) =>
             reconcileRemoteParticipantsFromSnapshot({
               current,
               snapshotIds: endpointIds,
@@ -2080,20 +2884,12 @@ export function useVoximplantRoom({
           );
         };
         resyncEndpointsRef.current = (generation) => {
-          if (!runtimeState.conferenceConnected) return;
-          logProviderRecovery({
-            surface: "session-room",
-            sessionId,
-            generation,
-            event: "endpoint_resync",
-            classification: "RECOVERABLE_TRANSIENT",
-            reason: "media_recovery_failed",
-          });
           resyncEndpoints(generation);
         };
         runtimeState.endpointSyncIntervalId = window.setInterval(() => {
-          if (generationRef.current !== joinGeneration || staleLifecycleRef.current) return;
-          resyncEndpoints(joinGeneration);
+          const generation = generationRef.current;
+          if (staleLifecycleRef.current) return;
+          resyncEndpoints(generation);
         }, 1000);
       } catch (joinError) {
         if (isVoxLifecycleAbortError(joinError)) {
@@ -2104,21 +2900,13 @@ export function useVoximplantRoom({
           });
           return;
         }
+        if (generationRef.current !== joinGeneration) {
+          // Failed/Disconnected already fenced this generation for in-place recovery.
+          return;
+        }
         const message = toErrorMessage(joinError);
         setError(message);
         setStatus("Не удалось подключиться к Voximplant.");
-        if (boundedRejoinRef.current.getStatus() === "recovering") {
-          boundedRejoinRef.current.fail();
-          rejoinInProgressRef.current = false;
-          setProviderRecovery("failed");
-          logProviderRecovery({
-            surface: "session-room",
-            sessionId,
-            generation: joinGeneration,
-            event: "recovery_failed",
-            reason: message,
-          });
-        }
         await cleanup("invalidated_generation");
       } finally {
         if (mountedRef.current) {
@@ -2133,11 +2921,10 @@ export function useVoximplantRoom({
     return () => {
       isJoiningRef.current = false;
       if (rejoinInProgressRef.current && !isUnmountingRef.current) {
-        disconnectIntentRef.current = "recovery_teardown";
-        void cleanup("invalidated_generation", { preserveStatus: true });
         return;
       }
       disconnectIntentRef.current = "unmount";
+      pendingTerminalRecoveryRef.current = null;
       invalidateGeneration("component_unmounted");
       void cleanup("component_unmounted", { preserveStatus: true });
     };
@@ -2147,15 +2934,17 @@ export function useVoximplantRoom({
     beginJoinGeneration,
     cleanup,
     clearLiveRemoteState,
+    commitRemoteParticipants,
     disableInitialCamera,
     disableInitialMic,
     broadcastTakeoverClaimed,
     connectionId,
     handleStaleConnection,
     invalidateGeneration,
-    joinEpoch,
+    fenceCurrentGeneration,
+    publishLayer3,
+    watchSdkStates,
     removeRemoteById,
-    requestBoundedRejoin,
     sessionId,
     skipRealtimeConnect,
     startMicLevelMeter,
@@ -2207,6 +2996,18 @@ export function useVoximplantRoom({
       sendMessageAvailable,
       providerRecovery,
       transportRecovery,
+      layer3,
+      layer3Banner: layer3BannerKind({
+        status: layer3.status,
+        mediaUsable: remoteParticipants.some((remote) => {
+          const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
+          const audio = remote.audioStream
+            ?.getTracks()
+            .some((track) => track.readyState !== "ended");
+          return Boolean(video || audio);
+        }),
+      }),
+      hasEnteredRoom,
     }),
     [
       conferenceName,
@@ -2240,6 +3041,8 @@ export function useVoximplantRoom({
       toggleCamera,
       toggleMic,
       transportRecovery,
+      layer3,
+      hasEnteredRoom,
       unlockAudioPlayback,
     ],
   );

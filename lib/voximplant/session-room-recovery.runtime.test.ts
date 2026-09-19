@@ -69,7 +69,7 @@ test("U04 Session non-operable does not rejoin", () => {
   assert.deepEqual(room.getState().remotes, []);
 });
 
-test("U05 unexpected disconnect + operable Session starts exactly one rejoin", () => {
+test("U05 unexpected disconnect + operable Session starts exactly one rejoin per incident", () => {
   let rejoinCalls = 0;
   const { room, generation } = seededRoom({
     getCloseState: () => ({ isClosed: false }),
@@ -89,8 +89,8 @@ test("U05 unexpected disconnect + operable Session starts exactly one rejoin", (
     displayName: "New",
   });
   const second = room.applyDisconnect(recoveredGeneration, "none");
-  assert.equal(second.rejoined, false);
-  assert.equal(rejoinCalls, 1);
+  assert.equal(second.rejoined, true);
+  assert.equal(rejoinCalls, 2);
 });
 
 test("U06 rejoin success makes the new generation authoritative", () => {

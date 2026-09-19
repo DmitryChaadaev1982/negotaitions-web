@@ -284,12 +284,12 @@
     },
     {
       "id": "EVAL-S319B-BOUNDED-REJOIN",
-      "invariant": "Unexpected provider disconnect while the Session remains operable starts exactly one bounded access/join rejoin; Leave, unmount, stale lease, and non-operable Session never auto-rejoin; failed rejoin does not loop.",
+      "invariant": "Unexpected terminal conference Failed/Disconnected while the Session remains operable starts one bounded new-Conference join per terminal incident; Leave, unmount, stale lease, and non-operable Session never auto-rejoin; a failed incident does not loop; a later independent incident after success may recover again.",
       "risk": "HIGH",
       "evalType": "TRANSITION",
       "fixtureType": "UNIT",
-      "expectedDomainResult": "Client-only idle→recovering→recovered|failed; one attempt per mounted instance; remotes stay cleared on failure.",
-      "expectedUiResult": "Existing provider warning/error UI remains after failed recovery; manual page recovery still works.",
+      "expectedDomainResult": "Client-only idle→recovering→recovered|failed; one attempt per terminal incident; remotes stay cleared on failure; connectionId preserved.",
+      "expectedUiResult": "Recoverable/terminal-recovering media failure keeps the room shell mounted; after exhausted recovery a terminal in-shell state remains appropriate.",
       "automation": "AUTOMATED",
       "transitionKind": "TRANSITION",
       "historicalCohort": null,
@@ -298,8 +298,10 @@
       "productionSafe": true,
       "evidence": [
         "lib/voximplant/provider-disconnect-recovery.ts",
+        "lib/voximplant/layer3-media-connectivity.ts",
         "lib/voximplant/session-room-recovery.runtime.test.ts",
-        "lib/voximplant/session-room-recovery.e2e-mock.test.ts"
+        "lib/voximplant/session-room-recovery.e2e-mock.test.ts",
+        "lib/voximplant/session-room-recovery.bug04.test.ts"
       ],
       "coverageStatus": "COVERED"
     },
@@ -319,8 +321,10 @@
       "productionSafe": true,
       "evidence": [
         "lib/voximplant/provider-disconnect-recovery.ts",
+        "lib/voximplant/layer3-media-connectivity.ts",
         "lib/voximplant/session-room-recovery.runtime.test.ts",
-        "lib/voximplant/session-room-recovery.mounted.test.ts"
+        "lib/voximplant/session-room-recovery.mounted.test.ts",
+        "lib/voximplant/session-room-recovery.bug04.test.ts"
       ],
       "coverageStatus": "COVERED"
     },
@@ -386,6 +390,60 @@
         "lib/voximplant/session-room-recovery.runtime.test.ts",
         "components/event-lobby-voximplant-room.tsx",
         "components/event-lobby-voximplant-room.recovery.test.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-BUG04-LAYER3-SDK-RECONNECT",
+      "invariant": "While ClientState or ConferenceState is RECONNECTING the session-room app must not connect/join/hangup/disconnect; Layer 3 is reconnecting; heartbeat and SharedRoomShell survive; a 408 log alone never rejoins.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "SDK-first reconnect; 408 with usable media or SDK RECONNECTING is observe/keep/resync only; terminal Failed/CONNECTION_LOST is membership-terminal even during SDK RECONNECTING (deferred, not lost) and creates a new Conference with the same connectionId after fencing generation N; a terminal recovery attempt already in flight pauses/resumes across a later SDK RECONNECTING episode instead of failing as already_in_flight; old-generation Conference callbacks and released state watchers are inert before any current-state mutation; SDK reconnect completion is RECONNECTING→settled only; zero remotes is not itself DEGRADED; stream-scoped liveness listeners are disposed on RemoteMediaRemoved and all endpoint-owned listeners are disposed on EndpointRemoved.",
+      "expectedUiResult": "Tiny signalling blips with live media do not flash; ordinary healthy SDK state is not a recovery banner; recoverable media failure does not become the fatal unable-to-join full page.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/layer3-media-connectivity.ts",
+        "lib/voximplant/layer3-media-connectivity.test.ts",
+        "lib/voximplant/media-liveness.ts",
+        "lib/voximplant/media-liveness.test.ts",
+        "lib/voximplant/conference-callback-ownership.ts",
+        "lib/voximplant/conference-callback-ownership.test.ts",
+        "lib/voximplant/provider-disconnect-recovery.ts",
+        "lib/voximplant/provider-disconnect-recovery.test.ts",
+        "lib/voximplant/session-room-recovery.runtime.ts",
+        "lib/voximplant/session-room-recovery.bug04.test.ts",
+        "lib/voximplant/use-voximplant-room.ts",
+        "components/voximplant-negotiation-room-page.tsx"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-BUG04-HEALTHY-FAST-PATH",
+      "invariant": "Usable live RemoteMediaAdded updates remote participant state and tile eligibility with no new recovery await, server round trip, or mandatory reconciliation poll before the media state update.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Order is usable_media → remote_state_update → tile_eligible; Conference Connected is not a render gate for an already-usable live track.",
+      "expectedUiResult": "Live remote tiles appear from the event path without waiting for Layer-3 recovery.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/session-room-recovery.bug04.test.ts",
+        "lib/voximplant/layer3-media-connectivity.test.ts",
+        "lib/voximplant/use-voximplant-room.ts",
+        "lib/voximplant/media-liveness.ts",
+        "lib/voximplant/media-liveness.test.ts",
+        "lib/voximplant/conference-callback-ownership.ts"
       ],
       "coverageStatus": "COVERED"
     },

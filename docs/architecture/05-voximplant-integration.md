@@ -242,16 +242,35 @@ switching application versions.
 
 ## Provider Disconnect Recovery
 
-Application-side contract for an actual Vox conference/call disconnect. The
-application tolerates provider `408 Request Timeout`; it does not try to
-prevent Vox from emitting it. Recorded production incident:
+Application-side contract for Vox conference/call disconnect and Layer-3
+media connectivity. The application tolerates provider `408 Request Timeout`;
+it does not try to prevent Vox from emitting it, and a 408 log by itself is
+never a rejoin trigger. Recorded production incident:
 `cmt8lfu7w0000w9m1xq6hlfpj`.
 
-- **Stale remotes.** When the current provider generation receives an actual
-  conference disconnect, `joined` and conference-connected become false and
-  `remoteParticipants` plus remote stream / endpoint-subscription / VAD maps
-  are cleared at the provider-state layer
-  (`lib/voximplant/use-voximplant-room.ts`). A disconnected current client
+Layer 1 (logical presence / `SessionRoomConnection` heartbeat) and Layer 2
+(`roomLifecycle`) stay independent of Layer 3 (Vox/media health). Recoverable
+or bounded-terminal media failure must not write Leave, expire the lease, or
+unmount `SharedRoomShell` while the participant is still on the Session room
+surface.
+
+Installed `@voximplant/websdk` 5.1.0 `ConnectionOptions.autoReconnect`
+defaults to **true**. `ClientState.RECONNECTING` and
+`ConferenceState.RECONNECTING` are owned by the SDK. While either is
+reconnecting the app must not call `client.connect()`, `conference.join()`,
+`conference.hangup()`, or `client.disconnect()`, and must not spend an
+application rejoin merely because a 408/log occurred. Usable live media is
+not cleared merely because signalling is reconnecting.
+
+- **Authoritative Layer-3 state.** Session-room connectivity is
+  `connected | reconnecting | degraded | recovering | failed` in
+  `lib/voximplant/layer3-media-connectivity.ts`, projected from the room hook
+  as `layer3` (with `providerRecovery` as the terminal-incident substatus).
+  Tiny signalling blips that still have usable media do not flash a banner.
+- **Stale remotes.** When the current provider generation receives a terminal
+  conference Failed or unexpected Disconnected, remotes plus remote stream /
+  endpoint-subscription / VAD maps are cleared at the provider-state layer
+  **after** the old generation is fenced. A disconnected current conference
   cannot keep old remotes as live tiles. Layout
   (`components/voximplant-video-layout.tsx`) additionally requires `joined`
   for remote `connectedSignal` (defense-in-depth only).
@@ -261,25 +280,89 @@ prevent Vox from emitting it. Recorded production incident:
   or organizer close does not rejoin. Debrief after a normal FINISH
   (`closeMessageKey === "join.sessionFinishedMessage"`) still occupies the
   room and remains operable. Vox disconnect alone is not a Session Leave.
-- **One bounded rejoin.** An unexpected current-generation disconnect while
-  the user is still on the Session room surface attempts exactly one provider
-  rejoin through the existing access/join path, with a new local generation.
-  Status is client-only: `idle → recovering → recovered | failed`. After a
-  failed attempt the client stays disconnected, remotes stay cleared, and the
-  existing provider error/warning UI plus manual page recovery apply. There
-  is no retry loop, heartbeat retry, or second automatic attempt on that
-  mount.
+  `LOCAL_ENDED` / `REMOTE_ENDED` are not application terminal-recovery
+  triggers. `CONNECTION_LOST` (and other unexpected membership disconnects)
+  are terminal Conference events even while the SDK is `RECONNECTING`: the
+  incident is **deferred, not lost**. The app must not join/connect/hangup/
+  disconnect until SDK reconnect settles, then it executes exactly one bounded
+  new-Conference recovery for that incident. If SDK `RECONNECTING` begins
+  after that attempt has already started but before the new Conference
+  successfully joins, the **same** attempt is paused and later resumed
+  exactly once. The app must not treat that pause as a second incident or as
+  a failed `already_in_flight` result, and must not join/connect/hangup/
+  disconnect while the SDK is reconnecting. Explicit Leave, stale takeover,
+  unmount, or a non-operable Session cancels a pending or paused attempt.
+- **SDK reconnect observation is edge-triggered.** Only a real
+  `RECONNECTING` → settled transition is a reconnect episode. Ordinary
+  `CREATED` / `CONNECTING` / `CONNECTED` / `LOGGED_IN` callbacks are not
+  treated as `sdk_reconnected`, must not promote `hasEnteredRoom`, and must
+  not classify Layer 3 as `degraded` merely because the remote roster is
+  empty. A healthy single-user room is a valid connected state. After a real
+  reconnect settle, signaling returns to connected unless an explicit media-
+  liveness reason (`stream_ended`, native `ended`, automatic StopReceiving)
+  is still attached.
+- **Bounded terminal recovery, per incident.** `ConferenceEvent.Failed` treats
+  the current Conference object as terminal. Unexpected
+  `ConferenceEvent.Disconnected` with an unrecoverable reason such as
+  `CONNECTION_LOST` is the same membership-terminal class; if SDK reconnect
+  is still in progress the join is deferred as above, otherwise the app
+  fences generation N synchronously, tears down that Conference only, creates
+  a **new** Conference, and `join()`s the same provider room with the **same**
+  logical `connectionId` / lease. It does not remount the logical participant,
+  does not claim a new connectionId, and does not run recording START/STOP.
+  Budget is **one attempt per terminal incident**. Successful recovery resets
+  the budget so a later independent incident may recover; a failed incident
+  does not loop. This is not a one-shot-forever mount budget.
 - **Generation fencing.** Each join/rejoin owns a monotonically increasing
-  local generation token (not persisted). Asynchronous callbacks that mutate
-  joined, remotes, streams, or media maps ignore stale generations. A
-  disconnect from generation N cannot clear a recovered generation N+1.
+  local generation token (not persisted). Once generation N is declared
+  terminal, no callback from N may mutate state that belongs to N+1.
+  Ownership (generation + Conference object identity) is validated **before**
+  any shared-state mutation, including `runtime.conferenceConnected` and the
+  Conference `state.watch` projection. A late callback from a fenced
+  Conference must not write `sdkConferenceState`, flip `sdkReconnecting`,
+  flush pending recovery, or publish Layer 3. Fence happens **before**
+  destructive reset/rejoin, not only in React effect cleanup. Covered
+  callbacks include Connected, Disconnected, Failed, EndpointAdded/Removed,
+  RemoteMediaAdded/Removed, Stream Ended, native track ended, SDK state
+  watchers, and background endpoint reconciliation. While a terminal
+  incident is still pending and no newer Conference is authoritative, the
+  still-current Conference watcher may observe the legitimate SDK reconnect
+  settle so the incident can flush exactly once.
+- **408 policy.** `TransportTimeoutError` / `transport_unavailable:408` feeds
+  Layer-3. If the SDK is RECONNECTING, the SDK owns recovery. If media remains
+  usable, do not rejoin. If media is unusable but the conference is
+  non-terminal, only the liveness/resync path runs. Terminal provider state
+  uses the conference recovery path. There is no guessed 30-second application
+  timeout and no 408→immediate rejoin.
+- **Healthy fast path.** First usable live remote media updates remote
+  participant state and tile eligibility synchronously/event-driven. Recovery
+  must not insert an extra await, occupancy/media-status request, mandatory
+  endpoint reconciliation cycle, 1-second poll, peer acknowledgement, or
+  SDK-state confirmation between usable media and render. Conference Connected
+  is not a render gate for an already-usable live track. Background
+  reconciliation stays off that path.
+- **Remote media liveness.** A stream object existing is not sufficient.
+  Render/select only media whose underlying track is usable (`readyState` not
+  `ended`). `RemoteMediaRemoved`, `StreamEvent.Ended`, and native `ended`
+  hide that media without Leave or full rejoin. Stream ENDED and native
+  track-ended listeners are **owned by endpointId + streamId**.
+  `RemoteMediaRemoved` disposes that exact stream-scoped binding and
+  re-projects remaining live streams on the endpoint so a late ENDED /
+  native `ended` from the removed stream cannot degrade or suppress a
+  replacement stream. `EndpointRemoved` / unsubscribe / terminal teardown
+  still dispose every binding for that endpoint. Duplicate observation of the
+  same stream (initial `getAny*Streams()`, `RemoteMediaAdded`, background
+  reconciliation) must not register a second listener. `StopReceivingVideoStream`
+  reason `Automatic` is recoverable media degradation: hide video, do not
+  rejoin; `StartReceivingVideoStream` or a new live stream restores
+  immediately. Full cross-browser peer/endpoint convergence remains Slice B.
 - **ReInvite / IceRestart timeout.** Production-shaped WebSDK JSON
   `"actionName":"IceRestartAction"` plus `Action run failed to timeout` is a
   recoverable media/signalling degradation, not `TERMINAL_PROVIDER_FAILURE`
   and not proof the call hung up. While the current call remains connected,
   the hook performs one generation-fenced endpoint resync. It does not
-  full-rejoin. An actual later `Disconnected` owns the bounded rejoin path.
-  Gateway websocket close remains the only trigger for
+  full-rejoin. An actual later terminal Failed/Disconnected owns conference
+  recovery. Gateway websocket close remains the only trigger for
   `createSessionTransportRecovery`.
 - **Local camera device failure.** StreamManager `NotReadableError: Device
   in use` is `local_media_device_failure` (non-terminal). It does not clear
@@ -287,20 +370,29 @@ prevent Vox from emitting it. Recorded production incident:
   camera-unavailable / audio-only join behavior is unchanged. The application
   does not steal another application's camera.
 - **Endpoint snapshot.** The existing 1s local SDK map loop uses
-  `lib/voximplant/endpoint-reconciliation.ts`. A transient empty snapshot
-  while the current call is still connected does not erase known remotes.
-  `EndpointRemoved`, actual disconnect, and a non-empty authoritative
-  snapshot that omits a previously known id remain safe removal evidence.
+  `lib/voximplant/endpoint-reconciliation.ts` as a **background** safety net.
+  A transient empty snapshot while the current call is still connected does
+  not erase known remotes. `EndpointRemoved`, actual disconnect, and a
+  non-empty authoritative snapshot that omits a previously known id remain
+  safe removal evidence.
 - **Event lobby.** Lobby shares classification, conservative snapshot
   reconcile, and remotes-cleared-on-disconnect. It does **not** copy Session
-  bounded rejoin; lobby already recovers through `createProviderConnectRunner`.
+  bounded terminal conference recovery; lobby already recovers through
+  `createProviderConnectRunner`. Event child sessions and standalone sessions
+  share the Session room hook.
 - **Unchanged.** SessionRoomConnection lease TTL, Session heartbeat cadence,
-  Vox Scenario, Prisma/migrations, recording, and Session lifecycle policy.
+  Vox Scenario, Prisma/migrations, recording/transcription/enhancement
+  semantics, and Session lifecycle policy. Media recovery must not auto-send
+  recording START or STOP.
 
-Helpers: `lib/voximplant/provider-disconnect-recovery.ts`,
+Helpers: `lib/voximplant/layer3-media-connectivity.ts`,
+`lib/voximplant/media-liveness.ts`,
+`lib/voximplant/conference-callback-ownership.ts`,
+`lib/voximplant/provider-disconnect-recovery.ts`,
 `lib/voximplant/endpoint-reconciliation.ts`,
 `lib/voximplant/provider-recovery-log.ts` (sanitized transition logs only;
-no tokens, access URLs, secrets, raw SDP, or credentials).
+no tokens, access URLs, secrets, raw SDP, or credentials),
+`lib/voximplant/session-room-recovery.runtime.ts`.
 
 ## ng_u_* orphan-user cleanup (operator tool)
 
@@ -444,6 +536,8 @@ record it fails to resolve arrive in one message.
 - `lib/client/connection-id.ts`
 - `lib/client/stale-connection.ts`
 - `lib/voximplant/use-voximplant-room.ts`
+- `lib/voximplant/layer3-media-connectivity.ts`
+- `lib/voximplant/media-liveness.ts`
 - `lib/voximplant/provider-disconnect-recovery.ts`
 - `lib/voximplant/endpoint-reconciliation.ts`
 - `lib/voximplant/lobby-join-authority.ts`

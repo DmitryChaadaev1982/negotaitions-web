@@ -92,3 +92,23 @@ For documentation-only Change Units, deterministic checks are:
 - focused unit tests that assert documentation contracts, if any
 
 Do not call real Yandex/Voximplant providers. Do not mutate production.
+
+## BUG04 Slice A (session-room Layer-3 media recovery)
+
+Acceptance for the Vox session-room recovery candidate:
+
+- SDK `RECONNECTING` is observational; the app does not connect/join/hangup/disconnect then.
+- A terminal Conference disconnect (`CONNECTION_LOST` / unexpected membership disconnect) that arrives while SDK reconnect is active is deferred, not lost; after SDK settle it recovers exactly once unless Leave/stale/unmount cancelled it.
+- If SDK `RECONNECTING` begins after terminal recovery has already started but before the new Conference joins, the same attempt is paused and resumed after settle. It must not become a second attempt or a failed `already_in_flight` result.
+- Old-generation Conference Connected/Failed/Disconnected/Endpoint callbacks and released Conference state watchers must not mutate current `conferenceConnected`, SDK reconnect projection, or Layer 3. A still-current watcher may observe a legitimate reconnect settle so a pending incident can flush exactly once.
+- SDK reconnect completion is edge-triggered (`RECONNECTING` → settled). Ordinary `CREATED` / `CONNECTING` / `CONNECTED` / `LOGGED_IN` callbacks are not recovery and must not promote `hasEnteredRoom` or flash DEGRADED merely because there are zero remotes.
+- Stream ENDED / native `ended` listeners are owned by `endpointId + streamId`. `RemoteMediaRemoved` disposes that exact binding; `EndpointRemoved` still disposes every binding for the endpoint. A late callback from a removed stream cannot degrade or suppress replacement media.
+- 408 log-alone does not rejoin.
+- Terminal Failed / `CONNECTION_LOST` fences generation N before reset, then joins a new Conference with the same `connectionId`.
+- Successful recovery may handle a later independent terminal incident; a failed incident does not loop.
+- Explicit Leave and stale/superseded connections never auto-rejoin.
+- Recoverable media failure keeps `SharedRoomShell` / heartbeat mounted.
+- Recording START/STOP is not dispatched by media recovery.
+- Healthy live `RemoteMediaAdded` remains synchronous: no new await, server round trip, Connected-state render gate, or reconciliation poll before usable media state update.
+
+Peer/endpoint duplicate convergence is out of Slice A.

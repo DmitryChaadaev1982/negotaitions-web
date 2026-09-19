@@ -135,6 +135,35 @@ Severity:
 - **RECOMMENDED FUTURE CHANGE UNIT:** Remove or document as unused, or
   wire it if a distinct edit contract is required.
 
+## P2
+
+### FIND-08 — BUG04 Slice B peer/endpoint convergence remains open
+
+- **CLASS:** PRODUCT_GAP (deferred slice)
+- **PRODUCT REQUIREMENT / INTENT:** Unstable-network session rooms should
+  recover Layer-3 media without losing Layer-1 presence, and remote tiles
+  should converge on live tracks when endpoints replace each other.
+- **IMPLEMENTATION REALITY:** BUG04 Slice A implements Layer-3 connectivity
+  state, SDK-first reconnect observation (edge-triggered RECONNECTING→settled
+  only; ordinary healthy SDK callbacks are not recovery), deferred terminal
+  disconnect while SDK reconnects (not lost), pause/resume of the same
+  in-flight terminal recovery across a later SDK RECONNECTING episode,
+  408-log-alone no-rejoin, terminal Failed / CONNECTION_LOST recovery with
+  generation fencing and old-generation callback inertness before mutation,
+  stream-scoped media liveness disposal on RemoteMediaRemoved plus
+  endpoint-wide disposal on EndpointRemoved, and SharedRoomShell/heartbeat
+  preservation. Zero remote endpoints is not itself a media-degradation
+  signal. Duplicate endpoint overlap for the same username, stale endpoint
+  candidate selection across endpoint IDs, and remote-browser convergence
+  when replacement is incomplete remain Slice B.
+- **EVIDENCE:** `docs/architecture/05-voximplant-integration.md`;
+  `lib/voximplant/use-voximplant-room.ts`;
+  `lib/voximplant/media-liveness.ts`.
+- **RISK:** After Slice A, a remote browser may still show a stale or
+  duplicate tile until Slice B live-track-first selection.
+- **RECOMMENDED FUTURE CHANGE UNIT:** BUG04 Slice B. Do not treat Slice A
+  as full peer-convergence.
+
 ## P3
 
 ### FIND-07 — `/api/livekit/sidebar` name versus dual-provider use
@@ -164,6 +193,9 @@ Severity:
 
 ## Out of scope
 
-- BUG04 and later product defects
+- BUG04 Slice B remainder: duplicate endpoint overlap, stale endpoint
+  candidate selection across endpoint IDs, and remote-browser convergence
+  when endpoint replacement is incomplete. Slice A Layer-3 recovery is in
+  the current candidate and is no longer “out of baseline scope.”
 - Reopening BUG02 / session-admin enhancement implementation
 - Production mutations, real-provider calls, Yandex/Vox UAT

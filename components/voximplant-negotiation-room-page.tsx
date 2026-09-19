@@ -265,6 +265,9 @@ export default function VoximplantNegotiationRoomPage(
     sendConferenceMessage,
     sendMessageAvailable,
     transportRecovery,
+    layer3,
+    layer3Banner,
+    hasEnteredRoom,
   } = useVoximplantRoom({
     sessionId: props.sessionId,
     connectionId: roomConnectionId ?? undefined,
@@ -1127,8 +1130,14 @@ export default function VoximplantNegotiationRoomPage(
   // ── Loading / error states ─────────────────────────────────────────────────
   const isLoading = mediaLoading || businessLoading;
   const error = mediaError ?? businessError;
+  const keepRoomSurface =
+    hasEnteredRoom &&
+    Boolean(sidebar) &&
+    Boolean(controlState) &&
+    !staleConnection &&
+    !businessError;
 
-  if (isLoading) {
+  if (isLoading && !keepRoomSurface) {
     return (
       <div className="flex h-dvh items-center justify-center bg-slate-950 text-white">
         <p className="text-sm text-slate-300">
@@ -1138,7 +1147,7 @@ export default function VoximplantNegotiationRoomPage(
     );
   }
 
-  if (error || !sidebar || !controlState) {
+  if (!keepRoomSurface && (error || !sidebar || !controlState)) {
     const friendlyError = t("room.unableToJoinRoom");
     const lobbyUrl = sidebar?.event?.lobbyUrl ?? null;
     return (
@@ -1175,11 +1184,24 @@ export default function VoximplantNegotiationRoomPage(
     );
   }
 
+  if (!sidebar || !controlState) {
+    return null;
+  }
+
+  const layer3BannerKindValue =
+    layer3Banner ??
+    (transportRecovery.status === "lost"
+      ? "failed"
+      : transportRecovery.status === "recovering"
+        ? "reconnecting"
+        : null);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div
+      <div
       className="flex h-dvh flex-col overflow-hidden bg-slate-950"
       data-testid="session-room-page"
+      data-layer3-status={layer3.status}
     >
       <SharedRoomShell
         sessionId={props.sessionId}
@@ -1247,7 +1269,8 @@ export default function VoximplantNegotiationRoomPage(
                 {leaveError}
               </div>
             ) : null}
-            {transportRecovery.status === "recovering" ? (
+            {transportRecovery.status === "recovering" ||
+            layer3BannerKindValue === "reconnecting" ? (
               <div
                 className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
                 data-testid="room-transport-reconnecting"
@@ -1255,7 +1278,15 @@ export default function VoximplantNegotiationRoomPage(
                 {t("room.transportReconnecting")}
               </div>
             ) : null}
-            {transportRecovery.status === "lost" ? (
+            {layer3BannerKindValue === "degraded" ? (
+              <div
+                className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+                data-testid="room-layer3-degraded"
+              >
+                {t("room.transportReconnecting")}
+              </div>
+            ) : null}
+            {transportRecovery.status === "lost" || layer3BannerKindValue === "failed" ? (
               <div
                 className="flex shrink-0 items-center gap-3 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
                 data-testid="room-transport-degraded"

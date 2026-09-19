@@ -352,6 +352,11 @@ reconciliation cadence are not business timeouts.
   The Session room lease stays the 120-second reconnect/network-loss
   window; Event Lobby freshness stays 12 seconds; no `pagehide` /
   `sendBeacon` fast path is required; no new status is added.
+  Layer-3 Vox/media degradation or bounded conference recovery must not
+  write Leave or stop the Session room heartbeat. Recoverable media failure
+  keeps `SharedRoomShell` mounted so logical presence can continue. Only
+  existing Layer-1 lease/explicit-Leave rules may mark the participant
+  disconnected.
 - Rejoin/same-user takeover supersedes the older lease; logical presence and
   Event `In Sessions` counts deduplicate the user.
 

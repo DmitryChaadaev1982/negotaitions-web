@@ -50,8 +50,9 @@ function inferTrackStatus(
 ): ParticipantMediaStatus {
   if (!stream) return "unknown";
   const tracks = kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
-  if (tracks.length === 0) return "unknown";
-  return tracks.some((track) => track.enabled) ? "on" : "off";
+  const liveTracks = tracks.filter((track) => track.readyState !== "ended");
+  if (liveTracks.length === 0) return "unknown";
+  return liveTracks.some((track) => track.enabled) ? "on" : "off";
 }
 
 export function canShowSpeakingHighlight(input: {

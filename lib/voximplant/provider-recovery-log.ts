@@ -6,9 +6,14 @@
 export type ProviderRecoveryLogEvent =
   | "provider_disconnect"
   | "recovery_started"
+  | "recovery_paused"
+  | "recovery_resumed"
   | "recovery_succeeded"
   | "recovery_failed"
-  | "endpoint_resync";
+  | "endpoint_resync"
+  | "generation_fenced"
+  | "sdk_reconnecting"
+  | "sdk_reconnected";
 
 export type ProviderRecoveryLogFields = {
   surface: string;
