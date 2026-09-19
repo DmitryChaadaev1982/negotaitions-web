@@ -443,7 +443,38 @@
         "lib/voximplant/use-voximplant-room.ts",
         "lib/voximplant/media-liveness.ts",
         "lib/voximplant/media-liveness.test.ts",
+        "lib/voximplant/participant-media-selection.ts",
+        "lib/voximplant/peer-media-selection-runtime.ts",
+        "lib/voximplant/remote-audio-playback.ts",
         "lib/voximplant/conference-callback-ownership.ts"
+      ],
+      "coverageStatus": "COVERED"
+    },
+    {
+      "id": "EVAL-BUG04-PEER-CONVERGENCE",
+      "invariant": "When multiple Vox endpoints map to one logical participant (normalized Vox username), remote browsers select current usable live media without Refresh. Video tiles and remote audio playback share one authoritative selected endpoint. Actual HTMLAudioElement playback is further limited to that endpoint's current projected audio stream; an obsolete same-endpoint stream is paused immediately. A stale/ended stream object cannot beat a live candidate. Selection is synchronous. Event lobby does not copy this selector. Remote audio resumes immediately when an endpoint becomes selected.",
+      "risk": "HIGH",
+      "evalType": "TRANSITION",
+      "fixtureType": "UNIT",
+      "expectedDomainResult": "Live-track-first helper selects the recovered endpoint in the same update turn; EndpointRemoved is not required for convergence; old-generation live claims cannot reclaim a current-generation live tile.",
+      "expectedUiResult": "One logical participant tile; recovered remote media appears without F5.",
+      "automation": "AUTOMATED",
+      "transitionKind": "TRANSITION",
+      "historicalCohort": null,
+      "requirements": [],
+      "providerCalls": false,
+      "productionSafe": true,
+      "evidence": [
+        "lib/voximplant/participant-media-selection.ts",
+        "lib/voximplant/participant-media-selection.test.ts",
+        "lib/voximplant/peer-media-selection-runtime.ts",
+        "lib/voximplant/peer-media-selection-runtime.test.ts",
+        "lib/voximplant/remote-audio-playback.ts",
+        "lib/voximplant/remote-audio-playback.test.ts",
+        "lib/voximplant/endpoint-reconciliation.ts",
+        "lib/voximplant/use-voximplant-room.ts",
+        "components/voximplant-video-layout.tsx",
+        "components/voximplant-video-layout.test.ts"
       ],
       "coverageStatus": "COVERED"
     },

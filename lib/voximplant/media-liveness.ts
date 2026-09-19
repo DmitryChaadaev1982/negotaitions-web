@@ -1,9 +1,9 @@
 /**
  * Event-driven remote media liveness for Vox WebSDK 5.1.0.
  *
- * A stream object existing is not enough to call media usable. Slice A uses
- * these primitives on the session-room path; full peer-endpoint convergence
- * remains Slice B.
+ * A stream object existing is not enough to call media usable. Session-room
+ * peer selection (`participant-media-selection.ts`) uses these primitives so
+ * live tracks beat stale stream objects.
  */
 
 export const VOX_STREAM_EVENT_ENDED = "ENDED";

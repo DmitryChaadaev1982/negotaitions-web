@@ -247,6 +247,7 @@ export default function VoximplantNegotiationRoomPage(
     localDisplayName,
     localParticipant,
     remoteParticipants,
+    selectedPeerEndpointIds,
     isMicMuted,
     isCameraOn,
     cameraUnavailable,
@@ -1318,6 +1319,7 @@ export default function VoximplantNegotiationRoomPage(
           <VoximplantVideoLayout
             localParticipant={localParticipant}
             remoteParticipants={remoteParticipants}
+            selectedPeerEndpointIds={selectedPeerEndpointIds}
             roster={sidebar.roster}
             currentParticipantId={sidebar.currentParticipantId}
             controlState={{

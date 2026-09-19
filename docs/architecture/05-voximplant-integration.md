@@ -138,7 +138,7 @@ switching application versions.
   - `micStatus`: `on | off | unknown`
   - `cameraStatus`: `on | off | unknown`
   - `shouldRenderActiveTile`: gate for active video-tile rendering.
-- Active tiles in `components/voximplant-video-layout.tsx` are rendered only for participants with real connected endpoint/media state (`shouldRenderActiveTile=true`), not just DB assignment.
+- Active tiles in `components/voximplant-video-layout.tsx` are rendered only for participants with real connected endpoint/media state (`shouldRenderActiveTile=true`), not just DB assignment. When multiple Vox endpoints map to the same normalized username, the session-room hook owns **one** selected endpoint id per logical participant (`lib/voximplant/peer-media-selection-runtime.ts`). Layout consumes that id set through `selectedRemotesByLogicalIdentity`; it does not rank candidates independently. Quality is live-track-first; stale stream objects do not win. Remote HTMLAudioElement playback uses that selected endpoint's current projected audio stream only.
 - Assigned but not connected users remain visible in roster/sidebar data, but no longer appear as active room tiles.
 - Mic/camera indicators in room/lobby tiles are icon-based and use a shared semantic mapping:
   - Connected + ON = green
@@ -355,7 +355,44 @@ not cleared merely because signalling is reconnecting.
   reconciliation) must not register a second listener. `StopReceivingVideoStream`
   reason `Automatic` is recoverable media degradation: hide video, do not
   rejoin; `StartReceivingVideoStream` or a new live stream restores
-  immediately. Full cross-browser peer/endpoint convergence remains Slice B.
+  immediately. Cross-browser peer/endpoint convergence uses the same
+  live-track-first helper described below; it is not a second recovery
+  owner.
+- **Peer media convergence.** Logical participant identity is the
+  normalized Vox username (trim, lowercase, domain-stripped). Vox endpoint
+  id is transport/media-instance identity only. One logical participant may
+  temporarily have overlapping endpoints (old/stale/degraded plus
+  new/recovered/live). Session-room layout still renders **one** tile.
+  `lib/voximplant/participant-media-selection.ts` is the shared synchronous
+  ranking helper. `lib/voximplant/peer-media-selection-runtime.ts` is the
+  single previous-selection owner for the session-room hook. The hook
+  publishes `selectedPeerEndpointIds` from that owner; video tiles,
+  speaking/media projection, and HTMLAudioElement playback all consume the
+  same selected endpoint ids. Layout does not keep a second previous-
+  selection map. Quality order is live usable video, then live usable
+  audio, then endpoint present without live media, then ended/stale/unusable.
+  A MediaStream object whose tracks are `readyState === "ended"` cannot beat a
+  live candidate. Equal-quality candidates keep the previously selected
+  endpoint when it is still in the group **for both video and audio**;
+  otherwise lexicographic endpoint id (stable tie-break only, not a Vox
+  recency signal). Actual remote HTMLAudioElement playback has two ownership
+  levels: one selected endpoint per logical participant, then one current
+  audio stream for that endpoint (`remote.audioStream.id`). Unselected
+  endpoints are paused; an obsolete/replaced stream on a still-selected
+  endpoint is paused immediately, without waiting for `RemoteMediaRemoved`.
+  An endpoint that becomes selected resumes its current stream immediately
+  via `lib/voximplant/remote-audio-playback.ts`; manual unlock plays only the
+  currently selected endpoint's current audio stream. A newly attached remote
+  audio stream is inserted into the candidate snapshot synchronously before the
+  play/pause decision; React `setState` updater timing is not the selection
+  authority. Higher conference generation with live media suppresses
+  older-generation candidates so a stale callback cannot reclaim the tile or
+  the audio element. Background 1s SDK-map reconciliation may prune endpoint
+  ids that the snapshot no longer lists; it does not run before first live
+  render and does not use a different selection policy. Refresh is not
+  required. Event lobby does not copy this session-room selector.
+  Recording/transcription identity stays on the logical participant, not the
+  transient endpoint id.
 - **ReInvite / IceRestart timeout.** Production-shaped WebSDK JSON
   `"actionName":"IceRestartAction"` plus `Action run failed to timeout` is a
   recoverable media/signalling degradation, not `TERMINAL_PROVIDER_FAILURE`
@@ -387,6 +424,9 @@ not cleared merely because signalling is reconnecting.
 
 Helpers: `lib/voximplant/layer3-media-connectivity.ts`,
 `lib/voximplant/media-liveness.ts`,
+`lib/voximplant/participant-media-selection.ts`,
+`lib/voximplant/peer-media-selection-runtime.ts`,
+`lib/voximplant/remote-audio-playback.ts`,
 `lib/voximplant/conference-callback-ownership.ts`,
 `lib/voximplant/provider-disconnect-recovery.ts`,
 `lib/voximplant/endpoint-reconciliation.ts`,
@@ -538,6 +578,9 @@ record it fails to resolve arrive in one message.
 - `lib/voximplant/use-voximplant-room.ts`
 - `lib/voximplant/layer3-media-connectivity.ts`
 - `lib/voximplant/media-liveness.ts`
+- `lib/voximplant/participant-media-selection.ts`
+- `lib/voximplant/peer-media-selection-runtime.ts`
+- `lib/voximplant/remote-audio-playback.ts`
 - `lib/voximplant/provider-disconnect-recovery.ts`
 - `lib/voximplant/endpoint-reconciliation.ts`
 - `lib/voximplant/lobby-join-authority.ts`

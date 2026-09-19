@@ -56,8 +56,11 @@ test("remote speaking input can carry reconnect generation and mic state", () =>
 test("repeated reconnect deduplicates remote tile by stable username", () => {
   const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
   assert.match(source, /remoteByVoxUsername/);
-  assert.match(source, /collapsedDuplicates/);
-  assert.match(source, /normalized Vox username/);
+  assert.match(source, /selectedRemotesByLogicalIdentity/);
+  assert.match(source, /selectedPeerEndpointIds/);
+  assert.match(source, /live-track-first selection/);
+  assert.doesNotMatch(source, /projectSelectedPeerEndpoints\(/);
+  assert.doesNotMatch(source, /existingHasStream = Boolean\(existing\.stream\)/);
 });
 
 test("muted border takes precedence over active-speaker border", () => {

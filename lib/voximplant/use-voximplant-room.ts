@@ -86,6 +86,17 @@ import {
   reconcileRemoteParticipantsFromSnapshot,
   remotesAfterProviderDisconnect,
 } from "@/lib/voximplant/endpoint-reconciliation";
+import {
+  createPeerMediaSelectionOwner,
+  upsertVoxRoomRemoteParticipant,
+} from "@/lib/voximplant/peer-media-selection-runtime";
+import {
+  findRemoteAudioElementKey,
+  isRemoteAudioAutoplayBlock,
+  reconcileRemoteAudioPlayback,
+  remoteAudioElementKey,
+  type RemoteAudioElementOwnership,
+} from "@/lib/voximplant/remote-audio-playback";
 import { logProviderRecovery } from "@/lib/voximplant/provider-recovery-log";
 import {
   GATEWAY_WEBSOCKET_CLOSE_SDK_LOG,
@@ -283,6 +294,7 @@ type VoxRoomParticipant = {
   id: string;
   displayName: string;
   endpointUsername?: string | null;
+  conferenceGeneration?: number;
   stream: MediaStream | null;
   audioStream?: MediaStream | null;
 };
@@ -324,6 +336,7 @@ type UpsertRemoteParticipantInput = {
   id: string;
   displayName: string;
   endpointUsername?: string | null;
+  conferenceGeneration?: number;
   stream?: MediaStream | null;
   audioStream?: MediaStream | null;
 };
@@ -399,7 +412,12 @@ type UseVoximplantRoomResult = {
   /** True when at least one remote audio element's play() was blocked by autoplay policy. */
   remotePlaybackBlocked: boolean;
   lastRemoteAudioError: string | null;
-  /** Call this after a user gesture to unblock all remote audio playback. */
+  /**
+   * Authoritative selected Vox endpoint ids for the current remote candidate
+   * snapshot. Video tiles and remote-audio playback share this set.
+   */
+  selectedPeerEndpointIds: ReadonlySet<string>;
+  /** Call this after a user gesture to unblock selected remote audio playback. */
   unlockAudioPlayback: () => void;
   /**
    * Send a text message to the VoxEngine scenario via conference.sendMessage().
@@ -485,8 +503,10 @@ type RuntimeState = {
   /** Timestamp of last micLevel state update (throttles to ~15fps). */
   lastMicLevelTs: number;
   // ── Remote audio elements ──
-  /** Keyed by `${endpointId}-${streamId}`. */
+  /** Keyed by remoteAudioElementKey(endpointId, projected audioStream.id). */
   remoteAudioElements: Map<string, HTMLAudioElement>;
+  /** Structured ownership; never parse concatenated element keys. */
+  remoteAudioOwnership: Map<string, RemoteAudioElementOwnership>;
   /** Poll fallback for endpoint media status sync. */
   endpointSyncIntervalId: number | null;
 };
@@ -759,6 +779,7 @@ export function useVoximplantRoom({
     (conference: VoxConference, runtime: RuntimeState, generation: number) => void
   >(() => {});
   const layer3Ref = useRef(layer3);
+  const peerMediaOwnerRef = useRef(createPeerMediaSelectionOwner<VoxRoomParticipant>());
   useEffect(() => {
     layer3Ref.current = layer3;
   }, [layer3]);
@@ -864,7 +885,7 @@ export function useVoximplantRoom({
           classification.reason.startsWith("transport_unavailable:408")
         ) {
           const runtime = runtimeRef.current;
-          const mediaUsable = remoteParticipantsRef.current.some((remote) => {
+          const mediaUsable = peerMediaOwnerRef.current.remotes.some((remote) => {
             const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
             const audio = remote.audioStream
               ?.getTracks()
@@ -1007,20 +1028,8 @@ export function useVoximplantRoom({
   const [conferenceName, setConferenceName] = useState("");
   const [localParticipant, setLocalParticipant] = useState<VoxRoomParticipant | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<VoxRoomParticipant[]>([]);
-  const remoteParticipantsRef = useRef<VoxRoomParticipant[]>([]);
-  const commitRemoteParticipants = useCallback(
-    (
-      next:
-        | VoxRoomParticipant[]
-        | ((current: VoxRoomParticipant[]) => VoxRoomParticipant[]),
-    ) => {
-      setRemoteParticipants((current) => {
-        const resolved = typeof next === "function" ? next(current) : next;
-        remoteParticipantsRef.current = resolved;
-        return resolved;
-      });
-    },
-    [],
+  const [selectedPeerEndpointIds, setSelectedPeerEndpointIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -1133,36 +1142,96 @@ export function useVoximplantRoom({
     [stopMicLevelMeter],
   );
 
-  const upsertRemote = useCallback((next: UpsertRemoteParticipantInput) => {
-    commitRemoteParticipants((current) => {
-      const index = current.findIndex((item) => item.id === next.id);
-      if (index === -1) {
-        return [
-          ...current,
-          {
-            id: next.id,
-            displayName: next.displayName,
-            endpointUsername: next.endpointUsername ?? null,
-            stream: next.stream ?? null,
-            audioStream: next.audioStream ?? null,
-          },
-        ];
+  const applyRemoteAudioPlayResults = useCallback(
+    (playResults: Array<{ result: Promise<void> }>, generation?: number) => {
+      for (const { result } of playResults) {
+        void result
+          .then(() => {
+            if (
+              mountedRef.current &&
+              (generation === undefined || generationRef.current === generation)
+            ) {
+              setRemotePlaybackBlocked(false);
+            }
+          })
+          .catch((err: unknown) => {
+            if (!mountedRef.current) return;
+            if (generation !== undefined && generationRef.current !== generation) return;
+            if (isRemoteAudioAutoplayBlock(err)) {
+              setRemotePlaybackBlocked(true);
+            } else {
+              setLastRemoteAudioError(
+                `Воспроизведение удалённого звука: ${toErrorMessage(err)}`,
+              );
+            }
+          });
       }
-      const copy = [...current];
-      copy[index] = {
-        ...copy[index],
-        displayName: next.displayName,
-        endpointUsername:
-          next.endpointUsername === undefined
-            ? copy[index].endpointUsername ?? null
-            : next.endpointUsername,
-        stream: next.stream === undefined ? copy[index].stream : next.stream,
-        audioStream:
-          next.audioStream === undefined ? copy[index].audioStream ?? null : next.audioStream,
-      };
-      return copy;
-    });
-  }, [commitRemoteParticipants]);
+    },
+    [],
+  );
+
+  const reconcileSelectedRemoteAudioPlayback = useCallback(
+    (input: {
+      remotes: VoxRoomParticipant[];
+      selectedEndpointIds: ReadonlySet<string>;
+      previouslySelectedEndpointIds: ReadonlySet<string>;
+      previousRemotes?: readonly VoxRoomParticipant[];
+      newlyAttachedAudioKeys?: ReadonlySet<string>;
+      unlock?: boolean;
+      generation?: number;
+    }) => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+      const outcome = reconcileRemoteAudioPlayback({
+        remotes: input.remotes,
+        selectedEndpointIds: input.selectedEndpointIds,
+        previouslySelectedEndpointIds: input.previouslySelectedEndpointIds,
+        previousRemotes: input.previousRemotes,
+        newlyAttachedKeys: input.newlyAttachedAudioKeys,
+        unlock: input.unlock,
+        elements: runtime.remoteAudioElements,
+        elementOwnership: runtime.remoteAudioOwnership,
+      });
+      applyRemoteAudioPlayResults(outcome.playResults, input.generation);
+    },
+    [applyRemoteAudioPlayResults],
+  );
+
+  const commitRemoteParticipants = useCallback(
+    (
+      next:
+        | VoxRoomParticipant[]
+        | ((current: VoxRoomParticipant[]) => VoxRoomParticipant[]),
+      playback?: { newlyAttachedAudioKeys?: ReadonlySet<string> },
+    ) => {
+      const previousRemotes = [...peerMediaOwnerRef.current.remotes];
+      const { remotes, projection, previouslySelectedEndpointIds } =
+        peerMediaOwnerRef.current.commit(next);
+      setRemoteParticipants(remotes);
+      setSelectedPeerEndpointIds(projection.selectedIds);
+      reconcileSelectedRemoteAudioPlayback({
+        remotes,
+        selectedEndpointIds: projection.selectedIds,
+        previouslySelectedEndpointIds,
+        previousRemotes,
+        newlyAttachedAudioKeys: playback?.newlyAttachedAudioKeys,
+        generation: generationRef.current,
+      });
+    },
+    [reconcileSelectedRemoteAudioPlayback],
+  );
+
+  const upsertRemote = useCallback(
+    (next: UpsertRemoteParticipantInput) => {
+      commitRemoteParticipants((current) =>
+        upsertVoxRoomRemoteParticipant(current, {
+          ...next,
+          conferenceGeneration: next.conferenceGeneration ?? generationRef.current,
+        }),
+      );
+    },
+    [commitRemoteParticipants],
+  );
 
   // ── Remote audio attachment ───────────────────────────────────────────────
 
@@ -1170,6 +1239,9 @@ export function useVoximplantRoom({
    * Create an HTMLAudioElement for a remote audio VoxStream and start playback.
    * Handles autoplay blocking by setting remotePlaybackBlocked state.
    * Safe to call multiple times for the same key (idempotent).
+   * The audio element is registered before the candidate snapshot is committed
+   * so selection definitely includes this media and does not wait on React
+   * setState flushing.
    */
   const attachRemoteAudioStream = useCallback(
     (endpointId: string, voxStream: VoxStream, generation: number) => {
@@ -1180,52 +1252,44 @@ export function useVoximplantRoom({
       const ms = liveRemoteMediaStream(voxStream);
       if (!ms) return;
 
-      const key = `${endpointId}-${voxStream.id}`;
-      if (rt.remoteAudioElements.has(key)) return;
+      const streamId = ms.id || voxStream.id;
+      if (!streamId) return;
+      const voxStreamId = voxStream.id || streamId;
+      if (findRemoteAudioElementKey(rt.remoteAudioOwnership, endpointId, voxStreamId)) return;
+      if (findRemoteAudioElementKey(rt.remoteAudioOwnership, endpointId, streamId)) return;
 
+      const key = remoteAudioElementKey(endpointId, streamId);
       const audio = new Audio();
       audio.srcObject = ms;
       audio.autoplay = true;
-      upsertRemote({
-        id: endpointId,
-        displayName: endpointId,
-        audioStream: ms,
-      });
       rt.remoteAudioElements.set(key, audio);
+      rt.remoteAudioOwnership.set(key, { endpointId, streamId, voxStreamId });
       setRemoteAudioElementCount(rt.remoteAudioElements.size);
-
-      audio.play().then(() => {
-        if (mountedRef.current && generationRef.current === generation) {
-          setRemotePlaybackBlocked(false);
-        }
-      }).catch((err: unknown) => {
-        if (!mountedRef.current || generationRef.current !== generation) return;
-        const msg = toErrorMessage(err);
-        const isAutoplayBlock =
-          (err instanceof Error && err.name === "NotAllowedError") ||
-          msg.toLowerCase().includes("interact") ||
-          msg.toLowerCase().includes("user gesture") ||
-          msg.toLowerCase().includes("autoplay") ||
-          msg.toLowerCase().includes("play()");
-        if (isAutoplayBlock) {
-          setRemotePlaybackBlocked(true);
-        } else {
-          setLastRemoteAudioError(`Воспроизведение удалённого звука: ${msg}`);
-        }
-      });
+      commitRemoteParticipants(
+        (current) =>
+          upsertVoxRoomRemoteParticipant(current, {
+            id: endpointId,
+            displayName: endpointId,
+            conferenceGeneration: generation,
+            audioStream: ms,
+          }),
+        { newlyAttachedAudioKeys: new Set([key]) },
+      );
     },
-    [isRuntimeActive, upsertRemote],
+    [commitRemoteParticipants, isRuntimeActive],
   );
 
   /** Pause and remove one remote audio element for a specific stream. */
   const detachRemoteAudioStream = useCallback((endpointId: string, streamId: string) => {
     const rt = runtimeRef.current;
     if (!rt) return;
-    const key = `${endpointId}-${streamId}`;
+    const key = findRemoteAudioElementKey(rt.remoteAudioOwnership, endpointId, streamId);
+    if (!key) return;
     const audio = rt.remoteAudioElements.get(key);
     if (!audio) return;
     audio.pause();
     rt.remoteAudioElements.delete(key);
+    rt.remoteAudioOwnership.delete(key);
     setRemoteAudioElementCount(rt.remoteAudioElements.size);
   }, []);
 
@@ -1233,40 +1297,43 @@ export function useVoximplantRoom({
   const detachRemoteAudioStreams = useCallback((endpointId: string) => {
     const rt = runtimeRef.current;
     if (!rt) return;
-    const prefix = `${endpointId}-`;
     const toDelete: string[] = [];
-    for (const [key, audio] of rt.remoteAudioElements) {
-      if (key.startsWith(prefix)) {
-        audio.pause();
-        // srcObject cleared in cleanup; element is removed from map and will be GC'd.
-        toDelete.push(key);
-      }
+    for (const [key, ownership] of rt.remoteAudioOwnership) {
+      if (ownership.endpointId !== endpointId) continue;
+      rt.remoteAudioElements.get(key)?.pause();
+      toDelete.push(key);
     }
-    for (const key of toDelete) rt.remoteAudioElements.delete(key);
+    for (const key of toDelete) {
+      rt.remoteAudioElements.delete(key);
+      rt.remoteAudioOwnership.delete(key);
+    }
     if (toDelete.length > 0) setRemoteAudioElementCount(rt.remoteAudioElements.size);
     if (toDelete.length > 0) {
       upsertRemote({
         id: endpointId,
         displayName: endpointId,
+        conferenceGeneration: generationRef.current,
         audioStream: null,
       });
     }
   }, [upsertRemote]);
 
-  /** Attempt to play all paused remote audio elements (call after user gesture). */
+  /** Attempt to play paused audio for the authoritative selected endpoint + current stream only. */
   const unlockAudioPlayback = useCallback(() => {
     const rt = runtimeRef.current;
     if (!rt) return;
-    for (const audio of rt.remoteAudioElements.values()) {
-      if (audio.paused) {
-        audio.play().then(() => {
-          if (mountedRef.current) setRemotePlaybackBlocked(false);
-        }).catch(() => {
-          // Still blocked — user may need to interact more explicitly.
-        });
-      }
-    }
-  }, []);
+    const remotes = [...peerMediaOwnerRef.current.remotes];
+    reconcileSelectedRemoteAudioPlayback({
+      remotes,
+      selectedEndpointIds: peerMediaOwnerRef.current.selectedEndpointIds(),
+      previouslySelectedEndpointIds: new Set(
+        peerMediaOwnerRef.current.previouslySelectedByIdentity.values(),
+      ),
+      previousRemotes: remotes,
+      unlock: true,
+      generation: generationRef.current,
+    });
+  }, [reconcileSelectedRemoteAudioPlayback]);
 
   /**
    * Send a text message to the VoxEngine scenario via conference.sendMessage().
@@ -1320,7 +1387,7 @@ export function useVoximplantRoom({
         unsubscribeEndpoint(runtime, endpointId);
       }
       clearRemoteAudioElements(runtime.remoteAudioElements);
-      runtime.remoteAudioElements.clear();
+      runtime.remoteAudioOwnership.clear();
     }
     commitRemoteParticipants(remotesAfterProviderDisconnect());
     setRemoteAudioElementCount(0);
@@ -1336,6 +1403,7 @@ export function useVoximplantRoom({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
         endpointUsername: endpoint.userName ?? null,
+        conferenceGeneration: generation,
         stream: liveRemoteMediaStream(liveVideo),
         audioStream: liveRemoteMediaStream(liveAudio),
       });
@@ -1438,6 +1506,7 @@ export function useVoximplantRoom({
 
         // Release remote audio elements.
         clearRemoteAudioElements(runtimeSnapshot.remoteAudioElements);
+        runtimeSnapshot.remoteAudioOwnership.clear();
         if (runtimeSnapshot.endpointSyncIntervalId !== null) {
           window.clearInterval(runtimeSnapshot.endpointSyncIntervalId);
           runtimeSnapshot.endpointSyncIntervalId = null;
@@ -1590,7 +1659,7 @@ export function useVoximplantRoom({
               detachRemoteAudioStream(endpoint.id, streamId);
             }
             applyRemoteVideoStream(endpoint, generation);
-            const stillUsable = remoteParticipantsRef.current.some((remote) => {
+            const stillUsable = peerMediaOwnerRef.current.remotes.some((remote) => {
               const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
               const audio = remote.audioStream
                 ?.getTracks()
@@ -1668,6 +1737,7 @@ export function useVoximplantRoom({
         upsertRemote({
           id: endpoint.id,
           displayName: endpoint.displayName || endpoint.userName || endpoint.id,
+          conferenceGeneration: generation,
           stream: null,
         });
         publishLayer3(layer3AfterMediaDegraded(layer3Ref.current, "stop_receiving_automatic"));
@@ -1973,7 +2043,7 @@ export function useVoximplantRoom({
       runtime.conference = null;
       runtime.conferenceConnected = false;
       clearRemoteAudioElements(runtime.remoteAudioElements);
-      runtime.remoteAudioElements.clear();
+      runtime.remoteAudioOwnership.clear();
       if (mountedRef.current) {
         commitRemoteParticipants([]);
         setRemoteAudioElementCount(0);
@@ -2607,6 +2677,7 @@ export function useVoximplantRoom({
           animFrameId: null,
           lastMicLevelTs: 0,
           remoteAudioElements: new Map(),
+          remoteAudioOwnership: new Map(),
           endpointSyncIntervalId: null,
         };
         runtimeRef.current = runtimeState;
@@ -2991,6 +3062,7 @@ export function useVoximplantRoom({
       remoteAudioElementCount,
       remotePlaybackBlocked,
       lastRemoteAudioError,
+      selectedPeerEndpointIds,
       unlockAudioPlayback,
       sendConferenceMessage,
       sendMessageAvailable,
@@ -3032,6 +3104,7 @@ export function useVoximplantRoom({
       participantType,
       remoteAudioElementCount,
       remoteParticipants,
+      selectedPeerEndpointIds,
       remotePlaybackBlocked,
       role,
       sendConferenceMessage,

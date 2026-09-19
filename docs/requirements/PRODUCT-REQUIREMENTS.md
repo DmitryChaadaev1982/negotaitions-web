@@ -57,8 +57,15 @@ The product must provide:
   must not treat ordinary healthy SDK state callbacks as recovery or mark the
   room degraded solely because no remote endpoints exist. Usable live remote
   media must render immediately; recovery logic must not add blocking work on
-  that path. Full peer/endpoint convergence across browsers remains a later
-  Slice B remainder.
+  that path. When multiple Vox endpoints map to one logical participant
+  (normalized Vox username), remote browsers must select current usable
+  live media without Refresh. A stale stream object must not beat a live
+  track. Video tiles and remote audio playback share one selected endpoint
+  per logical participant; equal-quality overlap keeps the previously
+  selected endpoint for both. Actual remote HTMLAudioElement playback is
+  further limited to that endpoint's current projected audio stream
+  (`remote.audioStream`); an obsolete same-endpoint stream is not playback
+  eligible. Layer-1 presence remains independent of endpoint media health.
 - Recording → raw transcription → optional enhancement → speaker mapping →
   AI analysis.
 - Session materials with role-specific privacy projections.

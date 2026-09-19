@@ -10,6 +10,10 @@ import type { SessionRosterEntry } from "@/lib/room-sidebar-types";
 import { REMOTE_SPEAKING_LEVEL_THRESHOLD } from "@/lib/telemetry/speaking-activity-config";
 import { useRemoteSpeaking } from "@/lib/voximplant/remote-speaking";
 import {
+  normalizeParticipantMediaIdentity,
+  selectedRemotesByLogicalIdentity,
+} from "@/lib/voximplant/participant-media-selection";
+import {
   resolveRosterVisualRoles,
   shouldRenderObserverRailTile,
 } from "@/lib/voximplant/room-layout-model";
@@ -28,6 +32,7 @@ type VoxTileParticipant = {
   id: string;
   displayName: string;
   endpointUsername?: string | null;
+  conferenceGeneration?: number | null;
   stream: MediaStream | null;
   audioStream?: MediaStream | null;
 };
@@ -57,13 +62,6 @@ type ObserverRailScrollState = {
   canScrollLeft: boolean;
   canScrollRight: boolean;
 };
-
-function normalizeEndpointUsername(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  return normalized.includes("@") ? normalized.split("@")[0] ?? null : normalized;
-}
 
 function RoleSection({
   title,
@@ -105,6 +103,7 @@ function getMediaStreamId(stream: MediaStream | null | undefined): string | null
 export default function VoximplantVideoLayout({
   localParticipant,
   remoteParticipants,
+  selectedPeerEndpointIds,
   roster,
   currentParticipantId,
   controlState,
@@ -125,6 +124,7 @@ export default function VoximplantVideoLayout({
 }: {
   localParticipant: VoxTileParticipant | null;
   remoteParticipants: VoxTileParticipant[];
+  selectedPeerEndpointIds: ReadonlySet<string>;
   roster: SessionRosterEntry[];
   currentParticipantId: string;
   controlState: ControlState;
@@ -151,37 +151,20 @@ export default function VoximplantVideoLayout({
     micLevel > REMOTE_SPEAKING_LEVEL_THRESHOLD;
 
   const remoteByVoxUsername = useMemo(() => {
-    const map = new Map<string, VoxTileParticipant>();
-    let collapsedDuplicates = 0;
-    for (const participant of remoteParticipants) {
-      const normalized = normalizeEndpointUsername(participant.endpointUsername);
-      if (!normalized) {
-        continue;
-      }
-      // Bug 2 mitigation: quick leave/re-enter can briefly surface two remote
-      // endpoints for the same login. Render only one tile per stable identity
-      // (normalized Vox username), preferring a connected (streamed) endpoint
-      // and otherwise the most recent entry. This hides the stale endpoint
-      // instead of rendering a duplicate tile.
-      const existing = map.get(normalized);
-      if (!existing) {
-        map.set(normalized, participant);
-        continue;
-      }
-      collapsedDuplicates += 1;
-      const existingHasStream = Boolean(existing.stream);
-      const candidateHasStream = Boolean(participant.stream);
-      if (candidateHasStream || !existingHasStream) {
-        map.set(normalized, participant);
-      }
-    }
-    if (collapsedDuplicates > 0 && process.env.NODE_ENV !== "production") {
+    const map = selectedRemotesByLogicalIdentity(
+      remoteParticipants,
+      selectedPeerEndpointIds,
+    );
+    const suppressedCount = remoteParticipants.filter(
+      (participant) => !selectedPeerEndpointIds.has(participant.id),
+    ).length;
+    if (suppressedCount > 0 && process.env.NODE_ENV !== "production") {
       console.debug(
-        `[vox-layout] collapsed ${collapsedDuplicates} duplicate remote endpoint(s) by stable identity`,
+        `[vox-layout] suppressed ${suppressedCount} stale remote endpoint(s) by live-track-first selection`,
       );
     }
     return map;
-  }, [remoteParticipants]);
+  }, [remoteParticipants, selectedPeerEndpointIds]);
 
   const visualRolesByRosterId = useMemo(
     () => resolveRosterVisualRoles(roster),
@@ -191,7 +174,7 @@ export default function VoximplantVideoLayout({
   const resolvedRosterTiles = useMemo<ResolvedRosterTile[]>(() => {
     return roster.map((entry) => {
       const isLocal = entry.id === currentParticipantId;
-      const remoteKey = normalizeEndpointUsername(entry.voximplantProviderUsername);
+      const remoteKey = normalizeParticipantMediaIdentity(entry.voximplantProviderUsername);
       const matchedRemote = remoteKey ? remoteByVoxUsername.get(remoteKey) : null;
       const participant: VoxTileParticipant = isLocal
         ? {

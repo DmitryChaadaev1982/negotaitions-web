@@ -112,3 +112,17 @@ Acceptance for the Vox session-room recovery candidate:
 - Healthy live `RemoteMediaAdded` remains synchronous: no new await, server round trip, Connected-state render gate, or reconciliation poll before usable media state update.
 
 Peer/endpoint duplicate convergence is out of Slice A.
+
+## BUG04 Slice B (peer media convergence)
+
+Acceptance for remote-browser endpoint overlap after Slice A:
+
+- Logical participant identity is normalized Vox username; Vox endpoint id is transport/media-instance identity.
+- One logical participant tile is rendered when endpoint IDs overlap during recovery.
+- Selection is live-track-first: live video, then live audio, then media absent/degraded, then ended/unusable. A stream object with `readyState !== live` cannot beat a live candidate.
+- Equal-quality candidates keep the previously selected endpoint when still present; otherwise lexicographic endpoint id (stable tie-break, not Vox recency). Video tiles and remote audio playback consume the same session-room selected-endpoint set; layout does not rank independently.
+- Remote HTMLAudioElement playback is selected-endpoint and selected-current-stream only. Unselected endpoints stay paused. An obsolete/replaced audio stream on a still-selected endpoint is paused immediately, without waiting for `RemoteMediaRemoved`. An endpoint that becomes selected has its current stream resumed immediately. Manual unlock plays only the currently selected endpoint's current audio stream and does not replay suppressed or obsolete audio. Newly attached audio is represented in the selection snapshot before the play/pause decision, without waiting for React `setState` flushing.
+- Background snapshot reconciliation feeds the same helper and must not run before first live media render.
+- Observer browsers converge on recovered live media without Refresh and without requiring `EndpointRemoved` as the only repair.
+- Event lobby does not copy session-room peer selection. Recording/transcription identity stays on the logical participant.
+- The selection helper is synchronous: no await, fetch, poll, SDK-state wait, or peer acknowledgement before selecting a live candidate. HEALTHY_FAST_PATH remains no-regression.

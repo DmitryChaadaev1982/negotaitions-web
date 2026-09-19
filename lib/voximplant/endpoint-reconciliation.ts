@@ -5,7 +5,13 @@
  * still connected. That must not wipe React remotes. Safe removal requires
  * EndpointRemoved, an actual provider disconnect, or a non-empty authoritative
  * snapshot that no longer lists a previously known id.
+ *
+ * Overlapping endpoints for one logical participant are not collapsed here.
+ * Event and background paths keep the endpoint-keyed candidate list; live-
+ * track-first selection lives in `participant-media-selection.ts`.
  */
+
+import { normalizeParticipantMediaIdentity } from "@/lib/voximplant/participant-media-selection";
 
 export type ReconcileRemoteIdentity = {
   id: string;
@@ -67,10 +73,7 @@ export function remotesAfterEndpointRemoved<T extends ReconcileRemoteIdentity>(
 }
 
 export function normalizeLobbyProviderUsername(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  return normalized.includes("@") ? (normalized.split("@")[0] ?? null) : normalized;
+  return normalizeParticipantMediaIdentity(value);
 }
 
 export function isCurrentLobbySelfEndpoint(input: {

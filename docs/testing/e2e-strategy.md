@@ -12,14 +12,20 @@
 - Provider-focused specs (Voximplant room/lobby/layout/recording diagnostics).
 - Diagnostics and environment checks.
 
-BUG04 Slice A Layer-3 Vox session-room recovery is covered by deterministic
-unit tests (`lib/voximplant/session-room-recovery.bug04.test.ts`,
+BUG04 Slice A Layer-3 Vox session-room recovery and Slice B peer-media
+convergence are covered by deterministic unit tests
+(`lib/voximplant/session-room-recovery.bug04.test.ts`,
 `lib/voximplant/layer3-media-connectivity.test.ts`,
 `lib/voximplant/media-liveness.test.ts`,
 `lib/voximplant/conference-callback-ownership.test.ts`,
-`lib/voximplant/provider-disconnect-recovery.test.ts`, and the existing
-Stage 3.19B recovery suite). Do not call real Vox providers for that
-candidate. Full peer/endpoint convergence remains Slice B.
+`lib/voximplant/provider-disconnect-recovery.test.ts`,
+`lib/voximplant/participant-media-selection.test.ts`,
+`lib/voximplant/peer-media-selection-runtime.test.ts`,
+`lib/voximplant/remote-audio-playback.test.ts`,
+and the existing Stage 3.19B recovery suite). Slice B remote audio playback
+is selected-endpoint and selected-current-stream only; same-endpoint stream
+replacement is covered in `remote-audio-playback.test.ts`. Do not call real
+Vox providers for that candidate.
 
 ## Default Execution Model
 

@@ -137,32 +137,32 @@ Severity:
 
 ## P2
 
-### FIND-08 — BUG04 Slice B peer/endpoint convergence remains open
+### FIND-08 — BUG04 Slice B peer/endpoint convergence is implemented
 
-- **CLASS:** PRODUCT_GAP (deferred slice)
+- **CLASS:** RESOLVED (BUG04 Slice B)
 - **PRODUCT REQUIREMENT / INTENT:** Unstable-network session rooms should
   recover Layer-3 media without losing Layer-1 presence, and remote tiles
   should converge on live tracks when endpoints replace each other.
-- **IMPLEMENTATION REALITY:** BUG04 Slice A implements Layer-3 connectivity
-  state, SDK-first reconnect observation (edge-triggered RECONNECTING→settled
-  only; ordinary healthy SDK callbacks are not recovery), deferred terminal
-  disconnect while SDK reconnects (not lost), pause/resume of the same
-  in-flight terminal recovery across a later SDK RECONNECTING episode,
-  408-log-alone no-rejoin, terminal Failed / CONNECTION_LOST recovery with
-  generation fencing and old-generation callback inertness before mutation,
-  stream-scoped media liveness disposal on RemoteMediaRemoved plus
-  endpoint-wide disposal on EndpointRemoved, and SharedRoomShell/heartbeat
-  preservation. Zero remote endpoints is not itself a media-degradation
-  signal. Duplicate endpoint overlap for the same username, stale endpoint
-  candidate selection across endpoint IDs, and remote-browser convergence
-  when replacement is incomplete remain Slice B.
+- **IMPLEMENTATION REALITY:** Slice A remains Layer-3 recovery. Slice B
+  adds `lib/voximplant/participant-media-selection.ts` plus a single
+  session-room selection owner
+  (`lib/voximplant/peer-media-selection-runtime.ts`): logical identity is
+  normalized Vox username; endpoint id is transport identity; live-track-first
+  selection is shared by the session-room event path, background snapshot
+  reconcile, video tiles, and remote-audio playback. Equal-quality overlap
+  retains the previously selected endpoint for both video and audio.
+  Remote HTMLAudioElement playback is selected-endpoint and
+  selected-current-stream only (`lib/voximplant/remote-audio-playback.ts`):
+  an obsolete same-endpoint stream is not playback-eligible. Refresh is not
+  required. Event lobby does not copy session-room peer selection.
 - **EVIDENCE:** `docs/architecture/05-voximplant-integration.md`;
-  `lib/voximplant/use-voximplant-room.ts`;
-  `lib/voximplant/media-liveness.ts`.
-- **RISK:** After Slice A, a remote browser may still show a stale or
-  duplicate tile until Slice B live-track-first selection.
-- **RECOMMENDED FUTURE CHANGE UNIT:** BUG04 Slice B. Do not treat Slice A
-  as full peer-convergence.
+  `lib/voximplant/participant-media-selection.ts`;
+  `lib/voximplant/peer-media-selection-runtime.ts`;
+  `lib/voximplant/remote-audio-playback.ts`;
+  `components/voximplant-video-layout.tsx`;
+  `lib/voximplant/use-voximplant-room.ts`.
+- **RISK:** None remaining for the Slice B peer-convergence contract.
+- **RECOMMENDED FUTURE CHANGE UNIT:** None for this gap.
 
 ## P3
 
@@ -193,9 +193,5 @@ Severity:
 
 ## Out of scope
 
-- BUG04 Slice B remainder: duplicate endpoint overlap, stale endpoint
-  candidate selection across endpoint IDs, and remote-browser convergence
-  when endpoint replacement is incomplete. Slice A Layer-3 recovery is in
-  the current candidate and is no longer “out of baseline scope.”
 - Reopening BUG02 / session-admin enhancement implementation
 - Production mutations, real-provider calls, Yandex/Vox UAT
