@@ -1407,6 +1407,8 @@ export const ru: Dictionary = {
     slotParticipantAEmpty: "Слот участника A пуст.",
     slotParticipantBEmpty: "Слот участника B пуст.",
     slotFacilitatorEmpty: "Слот фасилитатора пуст.",
+    mediaReconnecting: "Переподключение…",
+    videoTemporarilyUnavailable: "Видео временно недоступно",
     observersNotConnected: "Наблюдатели пока не подключены",
     diagnosticsUnknownEndpoints: "Диагностика / неизвестные endpoint",
     unknownEndpoint: "Неизвестный endpoint",

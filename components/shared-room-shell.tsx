@@ -24,7 +24,7 @@
  *   - audioRenderer    — LiveKit RoomAudioRenderer (null for Voximplant)
  *   - micEnforcement   — LiveKit MicEnforcement (null for Voximplant)
  *   - speakingTracker  — LiveKit SpeakingActivityTracker (null for Voximplant)
- *   - providerBanner   — LiveKit reconnect banner (null for Voximplant)
+ *   - providerBanner   — overlay reconnect/status chrome (must not displace room geometry)
  *   - mediaWarnings    — non-fatal device warnings
  *   - autoplayUnlockBanner — Voximplant autoplay unlock (null for LiveKit)
  *   - debugPanel       — Voximplant AudioDiagnosticsPanel (null for LiveKit)
@@ -824,8 +824,14 @@ export function SharedRoomShell({
 
       {/* ── Main content area ───────────────────────────────────────────────── */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        {/* Provider-specific reconnect/status banner (LiveKit reconnect banner) */}
-        {providerBanner}
+        {providerBanner ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-20"
+            data-testid="room-provider-banner-overlay"
+          >
+            <div className="pointer-events-auto w-full">{providerBanner}</div>
+          </div>
+        ) : null}
 
         {/* Left column: video + controls */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

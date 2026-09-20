@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+test("event lobby Stop/Start receive-state stays peer-local", () => {
+  const source = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
+  assert.match(source, /StopReceivingVideoStream/);
+  assert.match(source, /StartReceivingVideoStream/);
+  assert.match(source, /isAutomaticStopReceivingReason/);
+  assert.match(source, /videoReceiveByEndpoint/);
+  assert.match(source, /videoTemporarilyUnavailable/);
+  assert.match(source, /isReceiving\?: VoxWatchable<boolean>/);
+  assert.doesNotMatch(source, /layer3AfterMediaDegraded/);
+  assert.doesNotMatch(source, /noteTransportLoss/);
+});
+
 test("event lobby shares conservative snapshot reconcile and clears remotes on disconnect", () => {
   const source = readFileSync("components/event-lobby-voximplant-room.tsx", "utf-8");
   assert.match(source, /reconcileRemoteParticipantsFromSnapshot/);

@@ -89,8 +89,9 @@ export type ObserverRosterPriorityInput = {
 };
 
 export function getObserverRosterPriorityBucket(
-  _item: ObserverRosterPriorityInput,
+  item: ObserverRosterPriorityInput,
 ): number {
+  void item;
   return 0;
 }
 
@@ -100,6 +101,31 @@ export function orderObserverRosterItems<T extends ObserverRosterPriorityInput>(
   // Observer media state is displayed inside each tile. Visual order remains
   // stable roster order so existing observers do not move as media changes.
   return [...items].sort((a, b) => a.stableRosterIndex - b.stableRosterIndex);
+}
+
+export type RoleSlotPresentationKind = "media" | "media_unavailable" | "empty";
+
+export type RoleSlotPresentation<T> =
+  | { kind: "media"; tile: T }
+  | { kind: "media_unavailable"; tile: T }
+  | { kind: "empty" };
+
+/**
+ * Role-slot UI: logical presence and current Vox endpoint are independent.
+ * A logically-present participant without a current endpoint is reconnecting /
+ * media-unavailable, not an empty slot and not a healthy tile.
+ */
+export function resolveRoleSlotPresentation<T>(input: {
+  activeTile?: T | null;
+  logicallyPresentTile?: T | null;
+}): RoleSlotPresentation<T> {
+  if (input.activeTile) {
+    return { kind: "media", tile: input.activeTile };
+  }
+  if (input.logicallyPresentTile) {
+    return { kind: "media_unavailable", tile: input.logicallyPresentTile };
+  }
+  return { kind: "empty" };
 }
 
 export function shouldRenderObserverRailTile(params: {

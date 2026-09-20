@@ -14,6 +14,7 @@ import {
   selectedRemotesByLogicalIdentity,
 } from "@/lib/voximplant/participant-media-selection";
 import {
+  resolveRoleSlotPresentation,
   resolveRosterVisualRoles,
   shouldRenderObserverRailTile,
 } from "@/lib/voximplant/room-layout-model";
@@ -35,12 +36,41 @@ type VoxTileParticipant = {
   conferenceGeneration?: number | null;
   stream: MediaStream | null;
   audioStream?: MediaStream | null;
+  videoReceiving?: boolean;
 };
 
 function NoVideoPlaceholder({ message }: { message: string }) {
   return (
     <div className="flex aspect-video items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-2 text-center text-sm text-slate-400">
       {message}
+    </div>
+  );
+}
+
+function MediaUnavailablePlaceholder({
+  title,
+  subtitle,
+  status,
+}: {
+  title: string;
+  subtitle?: string;
+  status: string;
+}) {
+  return (
+    <div
+      className="flex aspect-video flex-col items-center justify-center rounded-xl border border-dashed border-slate-600 bg-slate-900/50 p-3 text-center"
+      data-testid="vox-slot-media-unavailable"
+    >
+      <span className="truncate text-sm text-slate-100">{title}</span>
+      {subtitle ? (
+        <span className="mt-0.5 truncate text-xs text-slate-300">{subtitle}</span>
+      ) : null}
+      <span
+        className="mt-2 text-sm text-slate-300"
+        data-testid="vox-slot-media-unavailable-status"
+      >
+        {status}
+      </span>
     </div>
   );
 }
@@ -183,6 +213,7 @@ export default function VoximplantVideoLayout({
             endpointUsername: localParticipant?.endpointUsername ?? null,
             stream: localParticipant?.stream ?? null,
             audioStream: localParticipant?.audioStream ?? null,
+            videoReceiving: undefined,
           }
         : {
             id: matchedRemote?.id ?? entry.id,
@@ -190,6 +221,7 @@ export default function VoximplantVideoLayout({
             endpointUsername: matchedRemote?.endpointUsername ?? entry.voximplantProviderUsername,
             stream: matchedRemote?.stream ?? null,
             audioStream: matchedRemote?.audioStream ?? null,
+            videoReceiving: matchedRemote?.videoReceiving,
           };
 
       const visual = visualRolesByRosterId.get(entry.id) ?? {
@@ -217,7 +249,7 @@ export default function VoximplantVideoLayout({
           : Boolean(joined && matchedRemote) && !isLogicallyAbsent,
         allowConnectedWithoutMediaTile: true,
         lastSeenAt: entry.lastSeenAt ?? null,
-        videoStream: participant.stream,
+        videoStream: participant.videoReceiving === false ? null : participant.stream,
         audioStream: isLocal ? participant.audioStream : (participant.audioStream ?? participant.stream),
         micSignal: isLocal
           ? localMicSystemMuted
@@ -316,6 +348,22 @@ export default function VoximplantVideoLayout({
   }, [resolvedRosterTiles]);
   const participantATiles = activeTiles.filter((tile) => tile.zone === "participant_a");
   const participantBTiles = activeTiles.filter((tile) => tile.zone === "participant_b");
+  const firstLogicallyPresentInZone = (zone: ResolvedRosterTile["zone"]) =>
+    resolvedRosterTiles.find(
+      (tile) => tile.zone === zone && tile.rosterEntry.isLogicallyPresent === true,
+    ) ?? null;
+  const participantASlot = resolveRoleSlotPresentation({
+    activeTile: participantATiles[0] ?? null,
+    logicallyPresentTile: firstLogicallyPresentInZone("participant_a"),
+  });
+  const participantBSlot = resolveRoleSlotPresentation({
+    activeTile: participantBTiles[0] ?? null,
+    logicallyPresentTile: firstLogicallyPresentInZone("participant_b"),
+  });
+  const facilitatorSlot = resolveRoleSlotPresentation({
+    activeTile: facilitatorTiles[0] ?? null,
+    logicallyPresentTile: firstLogicallyPresentInZone("facilitator"),
+  });
   const observerRailRef = useRef<HTMLDivElement | null>(null);
   const observerRailContentRef = useRef<HTMLDivElement | null>(null);
   const [observerRailScrollState, setObserverRailScrollState] =
@@ -501,8 +549,13 @@ export default function VoximplantVideoLayout({
         data-observer-id={options?.observerCompact ? tile.rosterEntry.id : undefined}
       >
         <VoximplantParticipantTile
-          stream={tile.participant.stream}
+          stream={tile.participant.videoReceiving === false ? null : tile.participant.stream}
           muted={tile.isLocal}
+          videoUnavailableLabel={
+            !tile.isLocal && tile.participant.videoReceiving === false
+              ? t("room.videoTemporarilyUnavailable")
+              : undefined
+          }
           title={tile.isLocal ? `${tile.rosterEntry.displayName} (${t("common.you")})` : tile.rosterEntry.displayName}
           subtitle={subtitle}
           connectionStatus={tile.mediaModel.connectionStatus}
@@ -523,6 +576,31 @@ export default function VoximplantVideoLayout({
         />
       </div>
     );
+  };
+
+  const renderRoleSlot = (
+    slot: typeof participantASlot,
+    emptyMessage: string,
+  ) => {
+    if (slot.kind === "media") return renderRosterTile(slot.tile);
+    if (slot.kind === "media_unavailable") {
+      const subtitle =
+        slot.tile.zone === "participant_a" || slot.tile.zone === "participant_b"
+          ? (slot.tile.rosterEntry.caseRoleName ?? undefined)
+          : undefined;
+      return (
+        <MediaUnavailablePlaceholder
+          title={
+            slot.tile.isLocal
+              ? `${slot.tile.rosterEntry.displayName} (${t("common.you")})`
+              : slot.tile.rosterEntry.displayName
+          }
+          subtitle={subtitle}
+          status={t("room.mediaReconnecting")}
+        />
+      );
+    }
+    return <NoVideoPlaceholder message={emptyMessage} />;
   };
 
   return (
@@ -617,39 +695,43 @@ export default function VoximplantVideoLayout({
           data-testid="vox-zone-main-desktop"
         >
           <RoleSection title={t("room.participantA")} testId="vox-zone-participant-a" className="min-h-0 min-w-0">
-            {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
+            {renderRoleSlot(participantASlot, t("room.slotParticipantAEmpty"))}
           </RoleSection>
 
           <div className="flex min-h-0 min-w-0 flex-col justify-center gap-2" data-testid="vox-zone-center">
             <RoleSection title={t("room.timer")} testId="vox-zone-timer" className="shrink-0">
               <RoomTimerPanel controlState={controlState} />
             </RoleSection>
-            {facilitatorTiles.length > 0 ? (
+            {facilitatorSlot.kind === "media" ? (
               <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 min-w-0">
                 {facilitatorTiles.map((tile) => renderRosterTile(tile))}
+              </RoleSection>
+            ) : facilitatorSlot.kind === "media_unavailable" ? (
+              <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator" className="min-h-0 min-w-0">
+                {renderRoleSlot(facilitatorSlot, t("room.slotFacilitatorEmpty"))}
               </RoleSection>
             ) : null}
           </div>
 
           <RoleSection title={t("room.participantB")} testId="vox-zone-participant-b" className="min-h-0 min-w-0">
-            {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
+            {renderRoleSlot(participantBSlot, t("room.slotParticipantBEmpty"))}
           </RoleSection>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto xl:hidden" data-testid="vox-zone-main-mobile">
           <RoleSection title={t("room.participants")} testId="vox-zone-participants-mobile">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {participantATiles[0] ? renderRosterTile(participantATiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantAEmpty")} />}
-              {participantBTiles[0] ? renderRosterTile(participantBTiles[0]) : <NoVideoPlaceholder message={t("room.slotParticipantBEmpty")} />}
+              {renderRoleSlot(participantASlot, t("room.slotParticipantAEmpty"))}
+              {renderRoleSlot(participantBSlot, t("room.slotParticipantBEmpty"))}
             </div>
           </RoleSection>
           <RoleSection title={t("room.timer")} testId="vox-zone-timer-mobile" className="my-auto shrink-0">
             <RoomTimerPanel controlState={controlState} />
           </RoleSection>
           <RoleSection title={t("room.facilitator")} testId="vox-zone-facilitator-mobile">
-            {facilitatorTiles.length > 0
+            {facilitatorSlot.kind === "media"
               ? facilitatorTiles.map((tile) => renderRosterTile(tile))
-              : <NoVideoPlaceholder message={t("room.slotFacilitatorEmpty")} />}
+              : renderRoleSlot(facilitatorSlot, t("room.slotFacilitatorEmpty"))}
           </RoleSection>
         </div>
 

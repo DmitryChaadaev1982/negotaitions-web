@@ -36,6 +36,7 @@ export function VoximplantParticipantTile({
   cameraLabel,
   micLevel,
   isSpeaking,
+  videoUnavailableLabel,
   className,
 }: {
   stream: MediaStream | null;
@@ -49,6 +50,7 @@ export function VoximplantParticipantTile({
   cameraLabel: string;
   micLevel?: number;
   isSpeaking?: boolean;
+  videoUnavailableLabel?: string;
   className?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -80,6 +82,14 @@ export function VoximplantParticipantTile({
         muted={muted}
         className="aspect-video h-full w-full bg-slate-950 object-cover"
       />
+      {videoUnavailableLabel ? (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-slate-950/70 px-3 text-center text-sm text-slate-200"
+          data-testid="vox-tile-video-unavailable"
+        >
+          {videoUnavailableLabel}
+        </div>
+      ) : null}
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
         <div className="min-w-0">
           <span className="block truncate text-sm text-slate-100">{title}</span>

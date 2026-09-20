@@ -9,6 +9,7 @@
  */
 
 import { isLiveMediaTrack, liveTracksOfKind } from "@/lib/voximplant/media-liveness";
+import { isUsableRemoteVideo } from "@/lib/voximplant/remote-media-receive-state";
 
 export const PARTICIPANT_MEDIA_TIE_BREAK =
   "Equal-quality candidates keep the previously selected endpoint when it is still in the group; otherwise lexicographic endpoint id. Endpoint id order is a stable tie-break only, not a Vox recency signal.";
@@ -41,6 +42,11 @@ export type ParticipantMediaCandidate = {
   /** Used when no MediaStream is present (recovery-runtime flags). */
   videoLive?: boolean;
   audioLive?: boolean;
+  /**
+   * SDK inbound video receive state. `false` is PAUSED and cannot rank as
+   * live_video even when the native track remains live.
+   */
+  videoReceiving?: boolean;
 };
 
 export type ParticipantMediaSelectionResult = {
@@ -90,6 +96,7 @@ export function participantMediaCandidateFromRemote(remote: {
   audioStream?: MediaStream | null;
   streamLive?: boolean;
   audioLive?: boolean;
+  videoReceiving?: boolean;
 }): ParticipantMediaCandidate {
   return {
     endpointId: remote.id,
@@ -99,6 +106,7 @@ export function participantMediaCandidateFromRemote(remote: {
     audioStream: remote.audioStream,
     videoLive: remote.streamLive,
     audioLive: remote.audioLive,
+    videoReceiving: remote.videoReceiving,
   };
 }
 
@@ -107,10 +115,14 @@ function hasExplicitStreams(candidate: ParticipantMediaCandidate): boolean {
 }
 
 export function candidateHasLiveVideo(candidate: ParticipantMediaCandidate): boolean {
-  if (candidate.videoStream) {
-    return liveTracksOfKind(candidate.videoStream, "video").length > 0;
-  }
-  return candidate.videoLive === true;
+  const trackLive = candidate.videoStream
+    ? liveTracksOfKind(candidate.videoStream, "video").length > 0
+    : candidate.videoLive === true;
+  return isUsableRemoteVideo({
+    currentGeneration: true,
+    trackLive,
+    isReceiving: candidate.videoReceiving,
+  });
 }
 
 export function candidateHasLiveAudio(candidate: ParticipantMediaCandidate): boolean {
@@ -311,6 +323,7 @@ export function projectSelectedPeerEndpoints<
     audioStream?: MediaStream | null;
     streamLive?: boolean;
     audioLive?: boolean;
+    videoReceiving?: boolean;
   },
 >(
   remotes: readonly T[],

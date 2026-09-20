@@ -1402,6 +1402,8 @@ export const en = {
     slotParticipantAEmpty: "Participant A slot is empty.",
     slotParticipantBEmpty: "Participant B slot is empty.",
     slotFacilitatorEmpty: "Facilitator slot is empty.",
+    mediaReconnecting: "Reconnecting…",
+    videoTemporarilyUnavailable: "Video temporarily unavailable",
     observersNotConnected: "Observers are not connected yet",
     diagnosticsUnknownEndpoints: "Diagnostics / Unknown Endpoints",
     unknownEndpoint: "Unknown endpoint",

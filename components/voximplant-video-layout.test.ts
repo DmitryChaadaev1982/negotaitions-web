@@ -33,6 +33,25 @@ test("remote connected signal is gated by logical room presence", () => {
   );
 });
 
+test("logically present missing-endpoint slots render reconnecting, not empty copy", () => {
+  const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+  assert.match(source, /resolveRoleSlotPresentation/);
+  assert.match(source, /MediaUnavailablePlaceholder/);
+  assert.match(source, /room\.mediaReconnecting/);
+  assert.match(source, /data-testid="vox-slot-media-unavailable"/);
+  assert.match(source, /room\.slotParticipantAEmpty/);
+});
+
+test("paused remote video uses peer-local unavailable copy, not reconnecting", () => {
+  const source = readFileSync("components/voximplant-video-layout.tsx", "utf-8");
+  assert.match(source, /videoReceiving === false/);
+  assert.match(source, /room\.videoTemporarilyUnavailable/);
+  assert.doesNotMatch(
+    source,
+    /videoReceiving === false[\s\S]{0,180}room\.mediaReconnecting/,
+  );
+});
+
 test("remote speaking input can carry reconnect generation and mic state", () => {
   const audioStream = {
     id: "audio-current",

@@ -15,10 +15,10 @@ import {
   layer3AfterSdkReconnectSettled,
   layer3AfterSdkReconnecting,
   layer3AfterTerminalRecoveryFailed,
-  layer3AfterUsableRemoteMedia,
   layer3BannerKind,
   layer3DuringTerminalRecovery,
   observeSdkReconnectTransition,
+  sessionRoomProviderBannerKind,
   permittedProviderMutations,
   shouldDeferTerminalRecovery,
   upsertLiveRemoteMedia,
@@ -62,6 +62,10 @@ import {
   isAutomaticStopReceivingReason,
   pruneMissingEndpointStreamLiveness,
 } from "@/lib/voximplant/media-liveness";
+import {
+  isUsableRemoteVideo,
+  shouldApplyRemoteReceiveEvent,
+} from "@/lib/voximplant/remote-media-receive-state";
 
 export type RuntimeRemote = {
   id: string;
@@ -70,6 +74,8 @@ export type RuntimeRemote = {
   generation: number;
   streamLive?: boolean;
   audioLive?: boolean;
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
 };
 
 export type SessionRoomRecoveryRuntime = {
@@ -100,6 +106,7 @@ export type SessionRoomRecoveryRuntime = {
   pendingTerminalRecovery: boolean;
   sdkReconnectSettledCount: number;
   sdkReconnectedLogCount: number;
+  transportRecoveryStatus: "stable" | "recovering" | "lost";
   streamLivenessCount: number;
   healthyFastPathSteps: string[];
   recoveryAttempt: TerminalRecoveryAttemptPhase;
@@ -182,6 +189,7 @@ export function createSessionRoomRecoveryRuntime(options: {
     mediaUsable: true,
     sdkReconnectSettledCount: 0,
     sdkReconnectedLogCount: 0,
+    transportRecoveryStatus: "stable",
     healthyFastPathSteps: [],
   };
 
@@ -367,6 +375,8 @@ export function createSessionRoomRecoveryRuntime(options: {
             generation: state.generation,
             streamLive: true,
             audioLive: true,
+            videoStreamId: `${endpointId}:video`,
+            videoReceiving: true,
           },
         });
       },
@@ -648,6 +658,7 @@ export function createSessionRoomRecoveryRuntime(options: {
     });
     if (observation.episodeStarted) {
       note("sdk_reconnecting");
+      state.transportRecoveryStatus = "recovering";
       publishLayer3(layer3AfterSdkReconnecting(layer3));
       logProviderRecovery({
         surface,
@@ -676,6 +687,7 @@ export function createSessionRoomRecoveryRuntime(options: {
     if (isTerminalConferenceState(state.sdkConferenceState)) {
       return;
     }
+    state.transportRecoveryStatus = "stable";
     publishLayer3(layer3AfterSdkReconnectSettled(layer3));
     if (state.conferenceConnected) {
       state.lastResyncCount += 1;
@@ -702,10 +714,17 @@ export function createSessionRoomRecoveryRuntime(options: {
       return { ...layer3 };
     },
     getBannerKind() {
-      return layer3BannerKind({
-        status: layer3.status,
-        mediaUsable: state.mediaUsable,
+      return sessionRoomProviderBannerKind({
+        layer3Status: layer3.status,
+        layer3Banner: layer3BannerKind({
+          status: layer3.status,
+          mediaUsable: state.mediaUsable,
+        }),
+        transportRecoveryStatus: state.transportRecoveryStatus,
       });
+    },
+    markTransportLost() {
+      state.transportRecoveryStatus = "lost";
     },
     beginGeneration,
     markJoined(generation: number) {
@@ -715,6 +734,7 @@ export function createSessionRoomRecoveryRuntime(options: {
       }
       state.joined = true;
       state.conferenceConnected = true;
+      state.transportRecoveryStatus = "stable";
       state.mediaUsable = state.remotes.some(
         (remote) => remote.streamLive !== false || remote.audioLive !== false,
       )
@@ -740,9 +760,12 @@ export function createSessionRoomRecoveryRuntime(options: {
     },
     upsertRemote(generation: number, remote: Omit<RuntimeRemote, "generation">) {
       if (ignore(generation) || !state.joined) return;
+      const existing = state.remotes.find((item) => item.id === remote.id);
       const next = {
         streamLive: true,
         audioLive: true,
+        videoReceiving: true,
+        videoStreamId: existing?.videoStreamId ?? remote.videoStreamId ?? `${remote.id}:video`,
         ...remote,
         generation,
       };
@@ -761,9 +784,15 @@ export function createSessionRoomRecoveryRuntime(options: {
         state.healthyFastPathSteps.push("ignored_fenced_generation");
         return;
       }
+      const existing = state.remotes.find((item) => item.id === remote.id);
       const next = {
         streamLive: true,
         audioLive: remote.audioLive ?? true,
+        videoReceiving: remote.videoReceiving ?? true,
+        videoStreamId:
+          remote.videoStreamId ??
+          existing?.videoStreamId ??
+          `${remote.id}:video`,
         ...remote,
         generation,
       };
@@ -775,14 +804,6 @@ export function createSessionRoomRecoveryRuntime(options: {
       state.mediaUsable = true;
       state.healthyFastPathSteps.push("remote_state_update");
       state.healthyFastPathSteps.push("tile_eligible");
-      if (layer3.status === "degraded" || layer3.status === "reconnecting") {
-        publishLayer3(
-          layer3AfterUsableRemoteMedia(
-            layer3,
-            isSdkReconnecting(state.sdkClientState, state.sdkConferenceState),
-          ),
-        );
-      }
     },
     applyUnexpectedDisconnect(eventGeneration: number) {
       return this.applyDisconnect(eventGeneration, intent());
@@ -857,6 +878,9 @@ export function createSessionRoomRecoveryRuntime(options: {
     },
     applyConnectionLost(eventGeneration: number) {
       return this.applyDisconnect(eventGeneration, intent(), "CONNECTION_LOST");
+    },
+    applyRemoteEnded(eventGeneration: number) {
+      return this.applyDisconnect(eventGeneration, intent(), "REMOTE_ENDED");
     },
     observeSdkClientState(next: string) {
       const wasReconnecting = isSdkReconnecting(state.sdkClientState, state.sdkConferenceState);
@@ -1062,6 +1086,10 @@ export function createSessionRoomRecoveryRuntime(options: {
           ...remote,
           streamLive: options.remainingStreamLive ?? remote.streamLive,
           audioLive: options.remainingAudioLive ?? remote.audioLive,
+          videoReceiving:
+            options.remainingStreamLive === false ? false : remote.videoReceiving,
+          videoStreamId:
+            options.remainingStreamLive === false ? null : remote.videoStreamId,
         };
       });
       state.mediaUsable = state.remotes.some(
@@ -1076,9 +1104,6 @@ export function createSessionRoomRecoveryRuntime(options: {
       state.mediaUsable = state.remotes.some(
         (remote) => remote.streamLive === true || remote.audioLive === true,
       );
-      if (!state.mediaUsable) {
-        publishLayer3(layer3AfterMediaDegraded(layer3, "stream_ended"));
-      }
     },
     applyNativeTrackEnded(eventGeneration: number, endpointId: string) {
       if (ignore(eventGeneration)) return;
@@ -1088,23 +1113,105 @@ export function createSessionRoomRecoveryRuntime(options: {
       state.mediaUsable = state.remotes.some(
         (remote) => remote.streamLive === true || remote.audioLive === true,
       );
-      if (!state.mediaUsable) {
-        publishLayer3(layer3AfterMediaDegraded(layer3, "native_track_ended"));
-      }
     },
-    applyAutomaticStopReceiving(eventGeneration: number, endpointId: string, reason = "Automatic") {
+    applyAutomaticStopReceiving(
+      eventGeneration: number,
+      endpointId: string,
+      reason = "Automatic",
+      streamId?: string,
+    ) {
       if (ignore(eventGeneration)) return { fullRejoin: false };
       if (!isAutomaticStopReceivingReason(reason)) {
         return { fullRejoin: false };
       }
-      state.remotes = state.remotes.map((remote) =>
-        remote.id === endpointId ? hideRemoteMediaFields(remote, "video") : remote,
-      );
+      state.remotes = state.remotes.map((remote) => {
+        if (remote.id !== endpointId) return remote;
+        const videoStreamId = streamId ?? remote.videoStreamId ?? `${endpointId}:video`;
+        return {
+          ...remote,
+          videoStreamId,
+          videoReceiving: false,
+          streamLive: false,
+        };
+      });
       state.mediaUsable = state.remotes.some(
         (remote) => remote.streamLive === true || remote.audioLive === true,
       );
-      publishLayer3(layer3AfterMediaDegraded(layer3, "stop_receiving_automatic"));
       return { fullRejoin: false, resync: false };
+    },
+    applyStartReceivingVideo(
+      eventGeneration: number,
+      endpointId: string,
+      options?: {
+        streamLive?: boolean;
+        audioLive?: boolean;
+        audioPublished?: boolean;
+        videoStreamId?: string;
+        videoReceiving?: boolean;
+      },
+    ) {
+      if (ignore(eventGeneration)) return;
+      const remote = state.remotes.find((item) => item.id === endpointId);
+      const videoReceiving = options?.videoReceiving ?? true;
+      const liveVideo = isUsableRemoteVideo({
+        currentGeneration: shouldApplyRemoteReceiveEvent({
+          eventGeneration,
+          currentGeneration: state.generation,
+        }),
+        trackLive: options?.streamLive ?? true,
+        isReceiving: videoReceiving,
+      });
+      const liveAudio = options?.audioLive ?? remote?.audioLive === true;
+      void options?.audioPublished;
+      void liveAudio;
+      state.remotes = state.remotes.map((item) =>
+        item.id === endpointId
+          ? {
+              ...item,
+              videoStreamId: options?.videoStreamId ?? item.videoStreamId ?? `${endpointId}:video`,
+              videoReceiving,
+              streamLive: liveVideo,
+            }
+          : item,
+      );
+      state.mediaUsable = state.remotes.some(
+        (item) => item.streamLive === true || item.audioLive === true,
+      );
+    },
+    reconcileRemoteVideoFromSdk(
+      eventGeneration: number,
+      endpointId: string,
+      options: {
+        streamId?: string;
+        trackLive: boolean;
+        sdkIsReceiving?: boolean;
+      },
+    ) {
+      if (ignore(eventGeneration)) return;
+      const remote = state.remotes.find((item) => item.id === endpointId);
+      if (!remote) return;
+      const videoStreamId = options.streamId ?? remote.videoStreamId ?? `${endpointId}:video`;
+      const overlayReceiving = remote.videoStreamId === videoStreamId
+        ? remote.videoReceiving
+        : undefined;
+      const isReceiving = overlayReceiving !== undefined
+        ? overlayReceiving
+        : options.sdkIsReceiving;
+      const usable = isUsableRemoteVideo({
+        currentGeneration: eventGeneration === state.generation,
+        trackLive: options.trackLive,
+        isReceiving,
+      });
+      state.remotes = state.remotes.map((item) =>
+        item.id === endpointId
+          ? {
+              ...item,
+              videoStreamId,
+              videoReceiving: isReceiving !== false,
+              streamLive: usable,
+            }
+          : item,
+      );
     },
     requestRecordingStart() {
       if (layer3.status === "recovering" || layer3.status === "reconnecting") return;

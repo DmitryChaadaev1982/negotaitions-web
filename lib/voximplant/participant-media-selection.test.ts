@@ -182,6 +182,19 @@ test("B03 late E1 EndpointRemoved leaves selected E2 stable", () => {
   );
 });
 
+test("paused receiving=false video with a live track is not live_video", () => {
+  const paused = inspectParticipantMediaCandidate(
+    candidate("E1", {
+      videoStream: liveVideo("paused"),
+      audioStream: liveAudio(),
+      videoReceiving: false,
+    }),
+  );
+  assert.equal(paused.quality, "live_audio");
+  assert.equal(paused.liveVideo, false);
+  assert.equal(paused.liveAudio, true);
+});
+
 test("B04 E1 remaining with ended tracks cannot beat live E2", () => {
   assert.equal(
     selectedEndpoint([

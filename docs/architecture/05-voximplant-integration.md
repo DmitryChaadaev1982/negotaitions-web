@@ -139,6 +139,13 @@ switching application versions.
   - `cameraStatus`: `on | off | unknown`
   - `shouldRenderActiveTile`: gate for active video-tile rendering.
 - Active tiles in `components/voximplant-video-layout.tsx` are rendered only for participants with real connected endpoint/media state (`shouldRenderActiveTile=true`), not just DB assignment. When multiple Vox endpoints map to the same normalized username, the session-room hook owns **one** selected endpoint id per logical participant (`lib/voximplant/peer-media-selection-runtime.ts`). Layout consumes that id set through `selectedRemotesByLogicalIdentity`; it does not rank candidates independently. Quality is live-track-first; stale stream objects do not win. Remote HTMLAudioElement playback uses that selected endpoint's current projected audio stream only.
+- Connectivity is four independent domains. They must not implicitly drive each other:
+  1. **Local transport** — this browser's Vox Client / gateway connectivity.
+  2. **Local Conference membership** — this browser's membership in the current Conference object.
+  3. **Remote participant presence** — whether a remote endpoint is currently in the Conference.
+  4. **Remote media receive state** — whether this browser is currently receiving a specific remote video stream (`isReceiving` / StopReceiving / StartReceiving).
+- Server logical presence (`SessionRoomConnection` / `isLogicallyPresent`) is authoritative for whether the participant still belongs to the logical room. Current Vox endpoint membership is authoritative for whether provider/media membership currently exists. Those layers can diverge: a logically-present participant with no current matched endpoint is **not** an empty role slot and is **not** a healthy media tile. Role slots (Participant A/B, Facilitator) render a compact reconnecting / media-unavailable identity placeholder (`room.mediaReconnecting`) until a current endpoint returns. Empty-slot copy is valid only when logical presence is false or unknown. `lib/voximplant/room-layout-model.ts` `resolveRoleSlotPresentation` owns that choice.
+- Remote video receive state is a fourth, peer-local domain. Automatic `StopReceivingVideoStream` (`reason=Automatic`, Vox WebSDK 5.1.0) pauses inbound **video** for one `endpointId` + `streamId`. It does not prove Client loss, Conference loss, membership loss, or endpoint removal. The same RemoteStream identity stays published; `usableRemoteVideo` requires current generation, a live track, and application `isReceiving !== false`. WebSDK `RemoteStream.isReceiving` is a `Watchable<boolean>`; application code normalizes `isReceiving.value` to `true | false | undefined` and never treats the Watchable object as the boolean. A paused tile uses `room.videoTemporarilyUnavailable` (`vox-tile-video-unavailable`). That copy is not the missing-endpoint reconnect placeholder and is not the global reconnect banner.
 - Assigned but not connected users remain visible in roster/sidebar data, but no longer appear as active room tiles.
 - Mic/camera indicators in room/lobby tiles are icon-based and use a shared semantic mapping:
   - Connected + ON = green
@@ -249,10 +256,12 @@ never a rejoin trigger. Recorded production incident:
 `cmt8lfu7w0000w9m1xq6hlfpj`.
 
 Layer 1 (logical presence / `SessionRoomConnection` heartbeat) and Layer 2
-(`roomLifecycle`) stay independent of Layer 3 (Vox/media health). Recoverable
-or bounded-terminal media failure must not write Leave, expire the lease, or
-unmount `SharedRoomShell` while the participant is still on the Session room
-surface.
+(`roomLifecycle`) stay independent of Layer 3. Layer 3 is **this browser's
+local** Vox Client / Conference connectivity and recovery only. Remote
+participant presence and remote video receive state must not drive it.
+Recoverable or bounded-terminal local media failure must not write Leave,
+expire the lease, or unmount `SharedRoomShell` while the participant is still
+on the Session room surface.
 
 Installed `@voximplant/websdk` 5.1.0 `ConnectionOptions.autoReconnect`
 defaults to **true**. `ClientState.RECONNECTING` and
@@ -262,11 +271,29 @@ reconnecting the app must not call `client.connect()`, `conference.join()`,
 application rejoin merely because a 408/log occurred. Usable live media is
 not cleared merely because signalling is reconnecting.
 
-- **Authoritative Layer-3 state.** Session-room connectivity is
+- **Authoritative Layer-3 state.** Session-room Layer 3 is local Client /
+  Conference connectivity only:
   `connected | reconnecting | degraded | recovering | failed` in
   `lib/voximplant/layer3-media-connectivity.ts`, projected from the room hook
   as `layer3` (with `providerRecovery` as the terminal-incident substatus).
-  Tiny signalling blips that still have usable media do not flash a banner.
+  The global top reconnect banner / compact overlay
+  (`room-provider-banner-overlay` in `SharedRoomShell`) is owned only by this
+  browser's local Vox transport or Conference recovery
+  (`sessionRoomProviderBannerKind`). Remote Automatic StopReceiving, remote
+  stream pause, remote `EndpointRemoved`, and peer media absence must not
+  start `createSessionTransportRecovery` or raise that banner. The overlay
+  must not participate in the main row flex, must not stretch to the content
+  height, and must not push the participant grid, timer, observer rail, or
+  side panel. Tiny signalling blips still must not change session geometry.
+  After a real SDK reconnect settle, Layer 3 returns to `connected` and the
+  overlay clears even if `createSessionTransportRecovery` is still in its
+  quiet period or has exhausted its budget. Remote media-liveness reasons
+  (`stream_ended`, native `ended`, Automatic StopReceiving) are not Layer 3
+  reasons and cannot keep Layer 3 degraded after settle. Gateway websocket
+  closes during SDK `autoReconnect` extend one quiet period; they are not a
+  second incident and must not declare transport `lost` while the SDK still
+  owns reconnect. `noteRecovered` runs on the SDK reconnect-settled edge and
+  on Conference Connected.
 - **Stale remotes.** When the current provider generation receives a terminal
   conference Failed or unexpected Disconnected, remotes plus remote stream /
   endpoint-subscription / VAD maps are cleared at the provider-state layer
@@ -280,13 +307,23 @@ not cleared merely because signalling is reconnecting.
   or organizer close does not rejoin. Debrief after a normal FINISH
   (`closeMessageKey === "join.sessionFinishedMessage"`) still occupies the
   room and remains operable. Vox disconnect alone is not a Session Leave.
-  `LOCAL_ENDED` / `REMOTE_ENDED` are not application terminal-recovery
-  triggers. `CONNECTION_LOST` (and other unexpected membership disconnects)
-  are terminal Conference events even while the SDK is `RECONNECTING`: the
-  incident is **deferred, not lost**. The app must not join/connect/hangup/
-  disconnect until SDK reconnect settles, then it executes exactly one bounded
-  new-Conference recovery for that incident. If SDK `RECONNECTING` begins
-  after that attempt has already started but before the new Conference
+  `LOCAL_ENDED` (`ConferenceDisconnectReason.LocalEnded`) is an explicit local
+  hangup and is not an application terminal-recovery trigger.
+  `REMOTE_ENDED` is **not** `EndpointRemoved`, Stream `Ended`, or a 408 log:
+  it is `ConferenceEvent.Disconnected` with
+  `ConferenceDisconnectReason.RemoteEnded` on the **local** Conference object
+  (installed `@voximplant/websdk` 5.1.0). That is a conference-level
+  membership-loss candidate: the existing Conference can no longer restore
+  SFU membership via `resyncEndpoints`, so recovery must create a **new**
+  Conference and `join()` after SDK reconnect ownership has settled.
+  `CONNECTION_LOST` remains the same membership-terminal class. These
+  incidents are **deferred, not lost** while the SDK is `RECONNECTING`. The
+  app must not join/connect/hangup/disconnect until SDK reconnect settles,
+  then it executes exactly one bounded new-Conference recovery for that
+  incident. Ordinary remote `EndpointRemoved`, a remote participant leave,
+  `StreamEvent.Ended`, native track `ended`, and stream replacement stay
+  peer/media lifecycle and must not local-rejoin. If SDK `RECONNECTING`
+  begins after that attempt has already started but before the new Conference
   successfully joins, the **same** attempt is paused and later resumed
   exactly once. The app must not treat that pause as a second incident or as
   a failed `already_in_flight` result, and must not join/connect/hangup/
@@ -298,21 +335,23 @@ not cleared merely because signalling is reconnecting.
   treated as `sdk_reconnected`, must not promote `hasEnteredRoom`, and must
   not classify Layer 3 as `degraded` merely because the remote roster is
   empty. A healthy single-user room is a valid connected state. After a real
-  reconnect settle, signaling returns to connected unless an explicit media-
-  liveness reason (`stream_ended`, native `ended`, automatic StopReceiving)
-  is still attached.
+  reconnect settle, local signaling returns to `connected`. Remote stream
+  pause, ended tracks, and Automatic StopReceiving must not keep Layer 3
+  degraded.
 - **Bounded terminal recovery, per incident.** `ConferenceEvent.Failed` treats
   the current Conference object as terminal. Unexpected
-  `ConferenceEvent.Disconnected` with an unrecoverable reason such as
-  `CONNECTION_LOST` is the same membership-terminal class; if SDK reconnect
-  is still in progress the join is deferred as above, otherwise the app
-  fences generation N synchronously, tears down that Conference only, creates
-  a **new** Conference, and `join()`s the same provider room with the **same**
-  logical `connectionId` / lease. It does not remount the logical participant,
-  does not claim a new connectionId, and does not run recording START/STOP.
-  Budget is **one attempt per terminal incident**. Successful recovery resets
-  the budget so a later independent incident may recover; a failed incident
-  does not loop. This is not a one-shot-forever mount budget.
+  `ConferenceEvent.Disconnected` with `CONNECTION_LOST` or `REMOTE_ENDED` is
+  the same membership-terminal class; if SDK reconnect is still in progress
+  the join is deferred as above, otherwise the app fences generation N
+  synchronously, tears down that Conference only, creates a **new**
+  Conference, attaches current local audio/video, and `join()`s the same
+  provider room with the **same** logical `connectionId` / lease. It does not
+  remount the logical participant, does not claim a new connectionId, and
+  does not run recording START/STOP. Budget is **one attempt per terminal
+  incident**. Duplicate membership-loss signals for the same incident do not
+  start a second Conference. Successful recovery resets the budget so a later
+  independent incident may recover; a failed incident does not loop. This is
+  not a one-shot-forever mount budget.
 - **Generation fencing.** Each join/rejoin owns a monotonically increasing
   local generation token (not persisted). Once generation N is declared
   terminal, no callback from N may mutate state that belongs to N+1.
@@ -341,23 +380,45 @@ not cleared merely because signalling is reconnecting.
   SDK-state confirmation between usable media and render. Conference Connected
   is not a render gate for an already-usable live track. Background
   reconciliation stays off that path.
-- **Remote media liveness.** A stream object existing is not sufficient.
-  Render/select only media whose underlying track is usable (`readyState` not
-  `ended`). `RemoteMediaRemoved`, `StreamEvent.Ended`, and native `ended`
-  hide that media without Leave or full rejoin. Stream ENDED and native
-  track-ended listeners are **owned by endpointId + streamId**.
+- **Remote media liveness and receive state.** A stream object existing is
+  not sufficient. Render/select only media whose underlying track is usable
+  (`readyState` not `ended`) **and**, for video, currently receiving.
+  `lib/voximplant/remote-media-receive-state.ts` owns that projection:
+  `usableRemoteVideo = currentGeneration && trackLive && isReceiving !== false`.
+  `track.readyState !== "ended"` is not evidence that the SDK is receiving
+  video. WebSDK 5.1.0 `RemoteStream.isReceiving` is a `Watchable<boolean>`.
+  `readSdkIsReceiving()` is the Vox boundary that reads `isReceiving.value`
+  and normalizes it to application receive-state `true | false | undefined`.
+  The Watchable object itself is never treated as the boolean. Overlay from
+  `StopReceivingVideoStream` / `StartReceivingVideoStream` wins when present;
+  otherwise the normalized SDK `isReceiving.value` is used.
+  The overlay registry is written only by those Stop/Start events (plus
+  removal cleanup). `RemoteMediaAdded` and the 1s endpoint reconcile must
+  not initialize overlay to `true`, or they would mask an SDK
+  `isReceiving.value === false` pause. `RemoteMediaRemoved`, `StreamEvent.Ended`, and
+  native `ended` hide that media without Leave or full rejoin. Stream ENDED
+  and native track-ended listeners are **owned by endpointId + streamId**.
   `RemoteMediaRemoved` disposes that exact stream-scoped binding and
   re-projects remaining live streams on the endpoint so a late ENDED /
   native `ended` from the removed stream cannot degrade or suppress a
   replacement stream. `EndpointRemoved` / unsubscribe / terminal teardown
   still dispose every binding for that endpoint. Duplicate observation of the
   same stream (initial `getAny*Streams()`, `RemoteMediaAdded`, background
-  reconciliation) must not register a second listener. `StopReceivingVideoStream`
-  reason `Automatic` is recoverable media degradation: hide video, do not
-  rejoin; `StartReceivingVideoStream` or a new live stream restores
-  immediately. Cross-browser peer/endpoint convergence uses the same
-  live-track-first helper described below; it is not a second recovery
-  owner.
+  reconciliation) must not register a second listener. Automatic
+  `StopReceivingVideoStream` (`StreamReceiveStopReason.Automatic`) is a
+  peer-local inbound **video pause** on the same stream identity: hide
+  video, keep the stream published, do not mutate Layer 3, do not start
+  `transportRecovery`, and do not raise the global reconnect banner.
+  Resume is `StartReceivingVideoStream` on that same stream, not
+  `RemoteMediaAdded`. A new live `RemoteMediaAdded` stream remains the
+  replacement-stream restore path and becomes usable from current SDK
+  receive state. Remaining live audio during Automatic StopReceiving is
+  expected and is not a Layer 3 recovery signal. Background 1s endpoint
+  resync must respect overlay / normalized SDK `isReceiving.value` and must
+  not resurrect a paused stream as `live_video`. Old-generation Stop/Start cannot mutate
+  the current generation. Cross-browser peer/endpoint convergence uses the
+  same live-track-first helper described below, now gated by receive state;
+  it is not a second recovery owner.
 - **Peer media convergence.** Logical participant identity is the
   normalized Vox username (trim, lowercase, domain-stripped). Vox endpoint
   id is transport/media-instance identity only. One logical participant may
@@ -369,10 +430,11 @@ not cleared merely because signalling is reconnecting.
   publishes `selectedPeerEndpointIds` from that owner; video tiles,
   speaking/media projection, and HTMLAudioElement playback all consume the
   same selected endpoint ids. Layout does not keep a second previous-
-  selection map. Quality order is live usable video, then live usable
+  selection map.   Quality order is live usable video, then live usable
   audio, then endpoint present without live media, then ended/stale/unusable.
-  A MediaStream object whose tracks are `readyState === "ended"` cannot beat a
-  live candidate. Equal-quality candidates keep the previously selected
+  A paused receiving=false video stream, even with a live track, cannot win
+  `live_video`. A MediaStream object whose tracks are `readyState === "ended"`
+  cannot beat a live candidate. Equal-quality candidates keep the previously selected
   endpoint when it is still in the group **for both video and audio**;
   otherwise lexicographic endpoint id (stable tie-break only, not a Vox
   recency signal). Actual remote HTMLAudioElement playback has two ownership
@@ -400,7 +462,9 @@ not cleared merely because signalling is reconnecting.
   the hook performs one generation-fenced endpoint resync. It does not
   full-rejoin. An actual later terminal Failed/Disconnected owns conference
   recovery. Gateway websocket close remains the only trigger for
-  `createSessionTransportRecovery`.
+  `createSessionTransportRecovery`. Extra closes while SDK autoReconnect is
+  in progress extend that controller's quiet period; SDK reconnect settle
+  (`noteRecovered`) is the success signal and clears a stale `lost` verdict.
 - **Local camera device failure.** StreamManager `NotReadableError: Device
   in use` is `local_media_device_failure` (non-terminal). It does not clear
   remotes, mark the conference dead, or start provider rejoin. Existing
@@ -413,16 +477,19 @@ not cleared merely because signalling is reconnecting.
   non-empty authoritative snapshot that omits a previously known id remain
   safe removal evidence.
 - **Event lobby.** Lobby shares classification, conservative snapshot
-  reconcile, and remotes-cleared-on-disconnect. It does **not** copy Session
-  bounded terminal conference recovery; lobby already recovers through
-  `createProviderConnectRunner`. Event child sessions and standalone sessions
-  share the Session room hook.
+  reconcile, remotes-cleared-on-disconnect, and the same Stop/Start remote
+  video receive-state model (`projectRemoteVideoStream`, overlay written only
+  by Automatic Stop / StartReceiving). It does **not** copy Session Layer 3,
+  `createSessionTransportRecovery`, or bounded terminal conference recovery;
+  lobby already recovers through `createProviderConnectRunner`. Event child
+  sessions and standalone sessions share the Session room hook.
 - **Unchanged.** SessionRoomConnection lease TTL, Session heartbeat cadence,
   Vox Scenario, Prisma/migrations, recording/transcription/enhancement
   semantics, and Session lifecycle policy. Media recovery must not auto-send
   recording START or STOP.
 
 Helpers: `lib/voximplant/layer3-media-connectivity.ts`,
+`lib/voximplant/remote-media-receive-state.ts`,
 `lib/voximplant/media-liveness.ts`,
 `lib/voximplant/participant-media-selection.ts`,
 `lib/voximplant/peer-media-selection-runtime.ts`,

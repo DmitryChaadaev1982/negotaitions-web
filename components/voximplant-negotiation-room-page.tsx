@@ -265,7 +265,6 @@ export default function VoximplantNegotiationRoomPage(
     // Stage 5.4: recording relay
     sendConferenceMessage,
     sendMessageAvailable,
-    transportRecovery,
     layer3,
     layer3Banner,
     hasEnteredRoom,
@@ -1189,13 +1188,7 @@ export default function VoximplantNegotiationRoomPage(
     return null;
   }
 
-  const layer3BannerKindValue =
-    layer3Banner ??
-    (transportRecovery.status === "lost"
-      ? "failed"
-      : transportRecovery.status === "recovering"
-        ? "reconnecting"
-        : null);
+  const layer3BannerKindValue = layer3Banner;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -1270,10 +1263,9 @@ export default function VoximplantNegotiationRoomPage(
                 {leaveError}
               </div>
             ) : null}
-            {transportRecovery.status === "recovering" ||
-            layer3BannerKindValue === "reconnecting" ? (
+            {layer3BannerKindValue === "reconnecting" ? (
               <div
-                className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+                className="w-full border-b border-amber-700/40 bg-amber-950/90 px-4 py-2 text-xs text-amber-200"
                 data-testid="room-transport-reconnecting"
               >
                 {t("room.transportReconnecting")}
@@ -1281,15 +1273,15 @@ export default function VoximplantNegotiationRoomPage(
             ) : null}
             {layer3BannerKindValue === "degraded" ? (
               <div
-                className="shrink-0 border-b border-amber-700/40 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+                className="w-full border-b border-amber-700/40 bg-amber-950/90 px-4 py-2 text-xs text-amber-200"
                 data-testid="room-layer3-degraded"
               >
                 {t("room.transportReconnecting")}
               </div>
             ) : null}
-            {transportRecovery.status === "lost" || layer3BannerKindValue === "failed" ? (
+            {layer3BannerKindValue === "failed" ? (
               <div
-                className="flex shrink-0 items-center gap-3 border-b border-rose-700/40 bg-rose-950/40 px-4 py-2 text-xs text-rose-200"
+                className="flex w-full items-center gap-3 border-b border-rose-700/40 bg-rose-950/90 px-4 py-2 text-xs text-rose-200"
                 data-testid="room-transport-degraded"
               >
                 <span>{t("room.transportDegraded")}</span>

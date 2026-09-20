@@ -18,6 +18,12 @@
  * to the existing {@link createProviderConnectRunner}, so there is one retry
  * engine in the codebase rather than two.
  *
+ * SDK autoReconnect is the authoritative first response. Extra gateway closes
+ * during that reconnect extend the same quiet period; they must not consume the
+ * attempt budget or declare the link lost. An explicit SDK reconnect-settled
+ * edge ({@link SessionTransportRecovery.noteRecovered}) marks the incident
+ * stable immediately.
+ *
  * The `SessionRoomConnection` heartbeat, the recording lifecycle and the
  * `OPEN -> DEBRIEF_OPEN -> CLOSED` transitions are all independent of this
  * controller and are deliberately left alone: a client-side socket blip is not
@@ -69,6 +75,11 @@ export type SessionTransportRecoveryOptions = {
 export type SessionTransportRecovery = {
   /** Report a classified, recoverable transport closure. Idempotent per incident. */
   noteTransportLoss: (classification: VoxClassification) => void;
+  /**
+   * SDK reconnect settled (or Conference Connected). Clears a stale recovering
+   * or lost verdict without connect/join/hangup/disconnect.
+   */
+  noteRecovered: () => void;
   cancel: () => void;
   getState: () => SessionTransportRecoveryState;
 };
@@ -94,6 +105,11 @@ export function createSessionTransportRecovery(
 
   let cancelled = false;
   let lossSeq = 0;
+  let recoveredSeq = 0;
+  let settledBySdk = false;
+  let pendingRestart = false;
+  let startNextIncident = () => {};
+  let wakeQuiet: (() => void) | null = null;
   let lastClassification: VoxClassification | null = null;
 
   let state: SessionTransportRecoveryState = {
@@ -109,11 +125,32 @@ export function createSessionTransportRecovery(
     options.onState(state);
   };
 
+  const waitQuiet = (ms: number, isDone: () => boolean): Promise<void> =>
+    new Promise((resolve) => {
+      if (isDone()) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        wakeQuiet = null;
+        resolve();
+      };
+      wakeQuiet = finish;
+      void delay(ms, isDone).then(finish);
+    });
+
   const onRunnerState = (connect: ProviderConnectState) => {
     if (cancelled) return;
     // A cancelled runner belongs to an unmounted or superseded owner; it has
     // nothing to say about the transport.
     if (connect.status === "cancelled") return;
+    // SDK settle already published stable; a late quiet-period fail/abort from
+    // the same incident must not reopen recovering/lost chrome. A later
+    // noteTransportLoss clears this latch.
+    if (settledBySdk && connect.status !== "connected") return;
 
     if (connect.status === "connected") {
       publish({
@@ -123,6 +160,10 @@ export function createSessionTransportRecovery(
         reason: null,
         canRetryManually: false,
       });
+      if (pendingRestart) {
+        pendingRestart = false;
+        queueMicrotask(() => startNextIncident());
+      }
       return;
     }
 
@@ -155,17 +196,34 @@ export function createSessionTransportRecovery(
     // sink. Reclassifying here would emit a duplicate diagnostic for one event.
     classify: () => lastClassification!,
     attempt: async ({ isCancelled }) => {
-      const observedLossSeq = lossSeq;
-      await delay(quietPeriodMs, isCancelled);
+      const myRecoveredSeq = recoveredSeq;
+      const done = () =>
+        isCancelled() ||
+        cancelled ||
+        recoveredSeq !== myRecoveredSeq ||
+        !options.isOwnerCurrent();
 
-      if (isCancelled() || !options.isOwnerCurrent()) {
-        return { outcome: "aborted" };
+      while (!done()) {
+        const seqAtWaitStart = lossSeq;
+        await waitQuiet(quietPeriodMs, done);
+        if (recoveredSeq !== myRecoveredSeq) {
+          return { outcome: "connected" };
+        }
+        if (isCancelled() || cancelled || !options.isOwnerCurrent()) {
+          return { outcome: "aborted" };
+        }
+        if (lossSeq !== seqAtWaitStart) {
+          // Another SDK autoReconnect close: extend this attempt's quiet period.
+          continue;
+        }
+        break;
       }
-      if (lossSeq !== observedLossSeq) {
-        return {
-          outcome: "failed",
-          error: new Error("gateway socket closed again during recovery"),
-        };
+
+      if (recoveredSeq !== myRecoveredSeq) {
+        return { outcome: "connected" };
+      }
+      if (isCancelled() || cancelled || !options.isOwnerCurrent()) {
+        return { outcome: "aborted" };
       }
       if (!options.isConferenceConnected()) {
         return {
@@ -176,27 +234,46 @@ export function createSessionTransportRecovery(
       return { outcome: "connected" };
     },
   });
+  startNextIncident = () => {
+    void runner.retryNow();
+  };
 
   return {
     noteTransportLoss: (classification) => {
       if (cancelled || !options.isOwnerCurrent()) return;
       lossSeq += 1;
+      const wasSettled = settledBySdk;
+      settledBySdk = false;
       lastClassification = classification;
 
-      // `start` returns the in-flight run when one is already going, so several
-      // close callbacks arriving together extend the same bounded sequence
-      // instead of racing two of them.
       const runnerStatus = runner.getState().status;
-      if (runnerStatus === "connected" || runnerStatus === "terminal") {
-        // A previous incident already settled; this is a new one.
-        void runner.retryNow();
+      if (wasSettled || runnerStatus === "connected" || runnerStatus === "terminal") {
+        if (runnerStatus === "connecting" || runnerStatus === "degraded") {
+          pendingRestart = true;
+          return;
+        }
+        queueMicrotask(() => startNextIncident());
         return;
       }
       void runner.start();
     },
+    noteRecovered: () => {
+      if (cancelled || !options.isOwnerCurrent()) return;
+      recoveredSeq += 1;
+      settledBySdk = true;
+      publish({
+        status: "stable",
+        attempt: state.attempt,
+        maxAttempts: state.maxAttempts,
+        reason: null,
+        canRetryManually: false,
+      });
+      wakeQuiet?.();
+    },
     cancel: () => {
       if (cancelled) return;
       cancelled = true;
+      wakeQuiet?.();
       runner.cancel();
     },
     getState: () => state,

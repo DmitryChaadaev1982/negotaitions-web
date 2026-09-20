@@ -1,9 +1,10 @@
 /**
- * Session-room Layer-3 Vox/media connectivity.
+ * Session-room Layer-3 LOCAL Vox transport / Conference connectivity.
  *
  * Layer 1 (logical presence / SessionRoomConnection heartbeat) and Layer 2
- * (session/roomLifecycle) are independent. Layer-3 degradation must not write
- * Leave, expire the lease, or change roomLifecycle.
+ * (session/roomLifecycle) are independent. Layer-3 client-wide state is only
+ * this browser's local Client/Conference connectivity and recovery. Remote
+ * participant presence and remote media receive state must not drive it.
  *
  * Installed SDK @voximplant/websdk 5.1.0: ConnectionOptions.autoReconnect
  * defaults to true, so ClientState.RECONNECTING / ConferenceState.RECONNECTING
@@ -112,8 +113,11 @@ export function isRemoteEndedDisconnectReason(
 /**
  * Membership-terminal classification is independent of SDK RECONNECTING.
  * Failed is always terminal for that Conference object. Unexpected
- * Disconnected (including CONNECTION_LOST) is a terminal membership event.
- * LOCAL_ENDED / REMOTE_ENDED are not application terminal-recovery triggers.
+ * Disconnected is a terminal membership candidate when the local Conference
+ * ended: CONNECTION_LOST, or REMOTE_ENDED
+ * (`ConferenceEvent.Disconnected` + `ConferenceDisconnectReason.RemoteEnded`).
+ * LOCAL_ENDED remains an explicit local hangup and must not auto-recover.
+ * Ordinary remote EndpointRemoved / Stream Ended are different events.
  * SDK RECONNECTING defers *execution* of recovery; it must not drop the incident.
  */
 export function isTerminalConferenceIncident(input: {
@@ -122,7 +126,6 @@ export function isTerminalConferenceIncident(input: {
 }): boolean {
   if (input.kind === "failed") return true;
   if (isLocalEndedDisconnectReason(input.disconnectReason)) return false;
-  if (isRemoteEndedDisconnectReason(input.disconnectReason)) return false;
   return true;
 }
 
@@ -153,20 +156,6 @@ export function observeSdkReconnectTransition(input: {
     episodeStarted: reconnecting && !input.wasReconnecting,
     episodeSettled: !reconnecting && input.wasReconnecting,
   };
-}
-
-const REMOTE_MEDIA_LIVENESS_DEGRADATION_REASONS = new Set([
-  "stream_ended",
-  "native_track_ended",
-  "stop_receiving_automatic",
-]);
-
-/** Empty remote roster is not media degradation. Only explicit liveness reasons are. */
-export function hasRemoteMediaLivenessDegradation(
-  state: Pick<Layer3ConnectivityState, "status" | "reason">,
-): boolean {
-  if (!state.reason) return false;
-  return REMOTE_MEDIA_LIVENESS_DEGRADATION_REASONS.has(state.reason);
 }
 
 export function appMustNotMutateProvider(input: {
@@ -237,24 +226,27 @@ export function layer3AfterSdkReconnecting(
 }
 
 /**
- * After a real RECONNECTING → settled edge, signaling is healthy again.
- * Do not infer DEGRADED from an empty remote roster. Preserve degraded only
- * when a prior media-liveness reason is still attached.
+ * After a real RECONNECTING → settled edge, local signaling is healthy again.
+ * Remote stream pause / ended / receive-state must not keep Layer 3 degraded.
+ * A healthy single-user room is a valid connected state.
  */
 export function layer3AfterSdkReconnectSettled(
   current: Layer3ConnectivityState,
 ): Layer3ConnectivityState {
-  const preserveDegraded = hasRemoteMediaLivenessDegradation(current);
   return {
     ...current,
-    status: preserveDegraded ? "degraded" : "connected",
-    reason: preserveDegraded ? current.reason : null,
+    status: "connected",
+    reason: null,
     keepShellMounted: current.hasEnteredRoom,
     keepHeartbeatActive: current.hasEnteredRoom,
   };
 }
 
-/** Usable live remote media clears liveness degradation immediately. */
+/**
+ * Local-only helper. Remote StartReceiving / RemoteMediaAdded must not call
+ * this to "heal" Layer 3. Local SDK reconnect settle uses
+ * {@link layer3AfterSdkReconnectSettled}.
+ */
 export function layer3AfterUsableRemoteMedia(
   current: Layer3ConnectivityState,
   sdkReconnecting: boolean,
@@ -293,6 +285,11 @@ export function layer3AfterTerminalRecoveryFailed(
   };
 }
 
+/**
+ * Local transport / provider degradation only (for example 408 resync).
+ * Remote StopReceiving, remote stream ended, and peer media pause must not
+ * call this.
+ */
 export function layer3AfterMediaDegraded(
   current: Layer3ConnectivityState,
   reason: string | null,
@@ -310,17 +307,41 @@ export function layer3AfterMediaDegraded(
 }
 
 /**
- * Tiny signaling blips with still-usable media must not flash a banner.
- * No timer is applied on the media-render path; this is UI projection only.
+ * Layer-3 chrome from LOCAL connectivity only. Remote media usability must
+ * not change a reconnecting status into "degraded". Tiny signaling blips
+ * still do not flash from this helper; {@link sessionRoomProviderBannerKind}
+ * owns the compact overlay.
  */
 export function layer3BannerKind(input: {
   status: Layer3ConnectivityStatus;
-  mediaUsable: boolean;
+  mediaUsable?: boolean;
 }): Layer3BannerKind {
+  void input.mediaUsable;
   if (input.status === "failed") return "failed";
   if (input.status === "recovering") return "reconnecting";
   if (input.status === "degraded") return "degraded";
-  if (input.status === "reconnecting" && !input.mediaUsable) return "degraded";
+  return null;
+}
+
+export type SessionTransportRecoveryUiStatus = "stable" | "recovering" | "lost";
+
+/**
+ * Authoritative session-room reconnect chrome. Layer-3 `connected` wins over a
+ * stale gateway-quiet `lost`/`recovering` verdict. SDK reconnecting still shows
+ * a compact overlay even when some live tracks remain.
+ */
+export function sessionRoomProviderBannerKind(input: {
+  layer3Status: Layer3ConnectivityStatus;
+  layer3Banner: Layer3BannerKind;
+  transportRecoveryStatus: SessionTransportRecoveryUiStatus;
+}): Layer3BannerKind {
+  if (input.layer3Status === "connected") return null;
+  if (input.layer3Banner) return input.layer3Banner;
+  if (input.layer3Status === "reconnecting" || input.layer3Status === "recovering") {
+    return "reconnecting";
+  }
+  if (input.transportRecoveryStatus === "lost") return "failed";
+  if (input.transportRecoveryStatus === "recovering") return "reconnecting";
   return null;
 }
 
@@ -359,13 +380,27 @@ export function upsertLiveRemoteMedia<T extends { id: string }>(
 }
 
 export function hideRemoteMediaFields<
-  T extends { id: string; stream?: unknown; audioStream?: unknown; streamLive?: boolean; audioLive?: boolean },
+  T extends {
+    id: string;
+    stream?: unknown;
+    audioStream?: unknown;
+    streamLive?: boolean;
+    audioLive?: boolean;
+    videoStreamId?: string | null;
+    videoReceiving?: boolean;
+  },
 >(remote: T, kind: "video" | "audio" | "both"): T {
   if (kind === "audio") {
     return { ...remote, audioStream: null, audioLive: false };
   }
   if (kind === "video") {
-    return { ...remote, stream: null, streamLive: false };
+    return {
+      ...remote,
+      stream: null,
+      streamLive: false,
+      videoStreamId: null,
+      videoReceiving: false,
+    };
   }
   return {
     ...remote,
@@ -373,5 +408,7 @@ export function hideRemoteMediaFields<
     audioStream: null,
     streamLive: false,
     audioLive: false,
+    videoStreamId: null,
+    videoReceiving: false,
   };
 }

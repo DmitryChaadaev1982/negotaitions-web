@@ -45,10 +45,10 @@ import {
   layer3AfterSdkReconnectSettled,
   layer3AfterSdkReconnecting,
   layer3AfterTerminalRecoveryFailed,
-  layer3AfterUsableRemoteMedia,
   layer3BannerKind,
   layer3DuringTerminalRecovery,
   observeSdkReconnectTransition,
+  sessionRoomProviderBannerKind,
   shouldDeferTerminalRecovery,
   type Layer3ConnectivityState,
 } from "@/lib/voximplant/layer3-media-connectivity";
@@ -69,6 +69,16 @@ import {
   VOX_STREAM_EVENT_ENDED,
   type EndpointStreamLivenessRegistry,
 } from "@/lib/voximplant/media-liveness";
+import {
+  applyAutomaticStopReceivingOverlay,
+  applyStartReceivingOverlay,
+  createRemoteVideoReceiveRegistry,
+  deleteRemoteVideoReceiving,
+  overlayMapForEndpoint,
+  projectRemoteVideoStream,
+  resolveAffectedVideoStreamId,
+  type RemoteVideoReceiveRegistry,
+} from "@/lib/voximplant/remote-media-receive-state";
 import {
   classifyProviderDisconnect,
   createBoundedProviderRejoin,
@@ -136,6 +146,7 @@ type VoxWatchable<T> = {
 type VoxStream = {
   id: string;
   type: string;
+  isReceiving?: VoxWatchable<boolean>;
   track?: MediaStreamTrack;
   sourceStream?: MediaStream;
   close?: () => void;
@@ -297,6 +308,8 @@ type VoxRoomParticipant = {
   conferenceGeneration?: number;
   stream: MediaStream | null;
   audioStream?: MediaStream | null;
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
 };
 
 type VoxTabTakeoverMessage = {
@@ -339,6 +352,8 @@ type UpsertRemoteParticipantInput = {
   conferenceGeneration?: number;
   stream?: MediaStream | null;
   audioStream?: MediaStream | null;
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
 };
 
 // ─── Hook options & result ────────────────────────────────────────────────────
@@ -486,6 +501,7 @@ type RuntimeState = {
     }
   >;
   streamLivenessByEndpoint: EndpointStreamLivenessRegistry;
+  videoReceiveByEndpoint: RemoteVideoReceiveRegistry;
   conferenceStateWatcherEpoch: number;
   unwatchClientState: (() => void) | null;
   unwatchConferenceState: (() => void) | null;
@@ -1365,6 +1381,7 @@ export function useVoximplantRoom({
 
   const unsubscribeEndpoint = useCallback((runtime: RuntimeState, endpointId: string) => {
     disposeEndpointStreamLiveness(runtime.streamLivenessByEndpoint, endpointId);
+    deleteRemoteVideoReceiving(runtime.videoReceiveByEndpoint, endpointId);
     const subscription = runtime.endpointSubscriptions.get(endpointId);
     if (!subscription) return;
     subscription.endpoint.removeEventListener("RemoteMediaAdded", subscription.onAdded);
@@ -1397,15 +1414,27 @@ export function useVoximplantRoom({
   const applyRemoteVideoStream = useCallback(
     (endpoint: VoxEndpoint, generation: number) => {
       if (generationRef.current !== generation || staleLifecycleRef.current) return;
-      const liveVideo = selectLiveVoxStream(endpoint.getAnyVideoStreams());
+      const runtime = runtimeRef.current;
+      const existing = peerMediaOwnerRef.current.remotes.find((remote) => remote.id === endpoint.id);
+      const videoStreams = endpoint.getAnyVideoStreams();
+      const projected = projectRemoteVideoStream({
+        streams: videoStreams,
+        currentGeneration: generationRef.current === generation,
+        overlayByStreamId: runtime
+          ? overlayMapForEndpoint(runtime.videoReceiveByEndpoint, endpoint.id)
+          : undefined,
+        preferredStreamId: existing?.videoStreamId,
+      });
       const liveAudio = selectLiveVoxStream(endpoint.getAnyAudioStreams());
       upsertRemote({
         id: endpoint.id,
         displayName: endpoint.displayName || endpoint.userName || endpoint.id,
         endpointUsername: endpoint.userName ?? null,
         conferenceGeneration: generation,
-        stream: liveRemoteMediaStream(liveVideo),
+        stream: projected.stream ? liveRemoteMediaStream(projected.stream) : existing?.stream ?? null,
         audioStream: liveRemoteMediaStream(liveAudio),
+        videoStreamId: projected.streamId,
+        videoReceiving: projected.stream ? projected.isReceiving : false,
       });
     },
     [upsertRemote],
@@ -1519,9 +1548,15 @@ export function useVoximplantRoom({
         runtimeSnapshot.unwatchClientState = null;
 
         // Unsubscribe endpoint listeners.
-        for (const { endpoint, onAdded, onRemoved } of runtimeSnapshot.endpointSubscriptions.values()) {
-          endpoint.removeEventListener("RemoteMediaAdded", onAdded);
-          endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
+        for (const subscription of runtimeSnapshot.endpointSubscriptions.values()) {
+          subscription.endpoint.removeEventListener("RemoteMediaAdded", subscription.onAdded);
+          subscription.endpoint.removeEventListener("RemoteMediaRemoved", subscription.onRemoved);
+          if (subscription.onStopVideo) {
+            subscription.endpoint.removeEventListener("StopReceivingVideoStream", subscription.onStopVideo);
+          }
+          if (subscription.onStartVideo) {
+            subscription.endpoint.removeEventListener("StartReceivingVideoStream", subscription.onStartVideo);
+          }
         }
         runtimeSnapshot.endpointSubscriptions.clear();
 
@@ -1659,16 +1694,6 @@ export function useVoximplantRoom({
               detachRemoteAudioStream(endpoint.id, streamId);
             }
             applyRemoteVideoStream(endpoint, generation);
-            const stillUsable = peerMediaOwnerRef.current.remotes.some((remote) => {
-              const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
-              const audio = remote.audioStream
-                ?.getTracks()
-                .some((track) => track.readyState !== "ended");
-              return Boolean(video || audio);
-            });
-            if (!stillUsable) {
-              publishLayer3(layer3AfterMediaDegraded(layer3Ref.current, "stream_ended"));
-            }
           },
         });
       };
@@ -1680,6 +1705,7 @@ export function useVoximplantRoom({
         for (const videoStream of endpoint.getAnyVideoStreams()) {
           attachStreamLiveness(videoStream);
         }
+        applyRemoteVideoStream(endpoint, generation);
         return;
       }
       if (existing) {
@@ -1696,11 +1722,6 @@ export function useVoximplantRoom({
         } else {
           applyRemoteVideoStream(endpoint, generation);
         }
-        if (layer3Ref.current.status === "degraded" || layer3Ref.current.reason) {
-          publishLayer3(
-            layer3AfterUsableRemoteMedia(layer3Ref.current, sdkReconnectingRef.current),
-          );
-        }
       };
       const onRemoved = (event: VoxEndpointMediaEvent) => {
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
@@ -1712,6 +1733,7 @@ export function useVoximplantRoom({
             endpoint.id,
             removedStreamId,
           );
+          deleteRemoteVideoReceiving(runtime.videoReceiveByEndpoint, endpoint.id, removedStreamId);
           if (removedStream?.type === "audio") {
             detachRemoteAudioStream(endpoint.id, removedStreamId);
           }
@@ -1734,16 +1756,48 @@ export function useVoximplantRoom({
       const onStopVideo = (event: VoxEndpointMediaEvent) => {
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
         if (!isAutomaticStopReceivingReason(event.payload?.reason)) return;
+        const existing = peerMediaOwnerRef.current.remotes.find((remote) => remote.id === endpoint.id);
+        const streamId = resolveAffectedVideoStreamId({
+          eventStreamId: event.payload?.streamId,
+          eventStream: event.payload?.stream,
+          currentVideoStreamId: existing?.videoStreamId,
+          availableStreamIds: endpoint.getAnyVideoStreams().map((stream) => stream.id).filter(Boolean),
+        });
+        if (!streamId) return;
+        applyAutomaticStopReceivingOverlay({
+          registry: runtime.videoReceiveByEndpoint,
+          eventGeneration: generation,
+          currentGeneration: generationRef.current,
+          endpointId: endpoint.id,
+          streamId,
+        });
         upsertRemote({
           id: endpoint.id,
           displayName: endpoint.displayName || endpoint.userName || endpoint.id,
+          endpointUsername: endpoint.userName ?? null,
           conferenceGeneration: generation,
-          stream: null,
+          videoStreamId: streamId,
+          videoReceiving: false,
         });
-        publishLayer3(layer3AfterMediaDegraded(layer3Ref.current, "stop_receiving_automatic"));
       };
-      const onStartVideo = () => {
+      const onStartVideo = (event: VoxEndpointMediaEvent) => {
         if (generationRef.current !== generation || staleLifecycleRef.current) return;
+        const existing = peerMediaOwnerRef.current.remotes.find((remote) => remote.id === endpoint.id);
+        const streamId = resolveAffectedVideoStreamId({
+          eventStreamId: event.payload?.streamId,
+          eventStream: event.payload?.stream,
+          currentVideoStreamId: existing?.videoStreamId,
+          availableStreamIds: endpoint.getAnyVideoStreams().map((stream) => stream.id).filter(Boolean),
+        });
+        if (streamId) {
+          applyStartReceivingOverlay({
+            registry: runtime.videoReceiveByEndpoint,
+            eventGeneration: generation,
+            currentGeneration: generationRef.current,
+            endpointId: endpoint.id,
+            streamId,
+          });
+        }
         applyRemoteVideoStream(endpoint, generation);
       };
 
@@ -1761,7 +1815,6 @@ export function useVoximplantRoom({
       });
 
       // Apply any streams already present on this endpoint.
-      applyRemoteVideoStream(endpoint, generation);
       for (const audioStream of endpoint.getAnyAudioStreams()) {
         attachStreamLiveness(audioStream);
         attachRemoteAudioStream(endpoint.id, audioStream, generation);
@@ -1769,13 +1822,13 @@ export function useVoximplantRoom({
       for (const videoStream of endpoint.getAnyVideoStreams()) {
         attachStreamLiveness(videoStream);
       }
+      applyRemoteVideoStream(endpoint, generation);
     },
     [
       applyRemoteVideoStream,
       attachRemoteAudioStream,
       detachRemoteAudioStream,
       isRuntimeActive,
-      publishLayer3,
       unsubscribeEndpoint,
       upsertRemote,
     ],
@@ -2116,6 +2169,7 @@ export function useVoximplantRoom({
         if (isTerminalConferenceState(sdkConferenceStateRef.current)) {
           return;
         }
+        transportRecoveryRef.current?.noteRecovered();
         publishLayer3(
           layer3AfterSdkReconnectSettled({
             ...layer3Ref.current,
@@ -2668,6 +2722,7 @@ export function useVoximplantRoom({
           videoOpPending: false,
           endpointSubscriptions: new Map(),
           streamLivenessByEndpoint: createEndpointStreamLivenessRegistry(),
+          videoReceiveByEndpoint: createRemoteVideoReceiveRegistry(),
           conferenceStateWatcherEpoch: 0,
           unwatchClientState: null,
           unwatchConferenceState: null,
@@ -2706,6 +2761,7 @@ export function useVoximplantRoom({
             setJoined(true);
             setHasEnteredRoom(true);
             setStatus("Подключено к переговорной комнате.");
+            transportRecoveryRef.current?.noteRecovered();
             publishLayer3({
               ...layer3Ref.current,
               status: "connected",
@@ -2805,6 +2861,9 @@ export function useVoximplantRoom({
               clearLiveRemoteState(generation);
               return;
             }
+            // REMOTE_ENDED is ConferenceEvent.Disconnected +
+            // ConferenceDisconnectReason.RemoteEnded on this local Conference.
+            // Classify it as a terminal membership candidate; do not early-return.
             const terminal = isTerminalConferenceIncident({
               kind: "disconnected",
               disconnectReason: reason,
@@ -3069,15 +3128,19 @@ export function useVoximplantRoom({
       providerRecovery,
       transportRecovery,
       layer3,
-      layer3Banner: layer3BannerKind({
-        status: layer3.status,
-        mediaUsable: remoteParticipants.some((remote) => {
-          const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
-          const audio = remote.audioStream
-            ?.getTracks()
-            .some((track) => track.readyState !== "ended");
-          return Boolean(video || audio);
+      layer3Banner: sessionRoomProviderBannerKind({
+        layer3Status: layer3.status,
+        layer3Banner: layer3BannerKind({
+          status: layer3.status,
+          mediaUsable: remoteParticipants.some((remote) => {
+            const video = remote.stream?.getTracks().some((track) => track.readyState !== "ended");
+            const audio = remote.audioStream
+              ?.getTracks()
+              .some((track) => track.readyState !== "ended");
+            return Boolean(video || audio);
+          }),
         }),
+        transportRecoveryStatus: transportRecovery.status,
       }),
       hasEnteredRoom,
     }),

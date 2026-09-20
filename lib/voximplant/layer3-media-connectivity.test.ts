@@ -3,10 +3,11 @@ import test from "node:test";
 
 import {
   createLayer3State,
+  isRemoteEndedDisconnectReason,
   isTerminalConferenceIncident,
   layer3AfterSdkReconnectSettled,
-  layer3AfterUsableRemoteMedia,
   observeSdkReconnectTransition,
+  sessionRoomProviderBannerKind,
   shouldDeferTerminalRecovery,
 } from "@/lib/voximplant/layer3-media-connectivity";
 
@@ -22,7 +23,7 @@ test("CONNECTION_LOST is a terminal membership event even while SDK is reconnect
   assert.equal(shouldDeferTerminalRecovery(false), false);
 });
 
-test("LOCAL_ENDED and REMOTE_ENDED are not terminal membership events", () => {
+test("LOCAL_ENDED is not a terminal membership event", () => {
   assert.equal(
     isTerminalConferenceIncident({
       kind: "disconnected",
@@ -30,14 +31,19 @@ test("LOCAL_ENDED and REMOTE_ENDED are not terminal membership events", () => {
     }),
     false,
   );
+  assert.equal(isTerminalConferenceIncident({ kind: "failed" }), true);
+});
+
+test("REMOTE_ENDED is a conference-level terminal membership candidate", () => {
+  assert.equal(isRemoteEndedDisconnectReason("REMOTE_ENDED"), true);
   assert.equal(
     isTerminalConferenceIncident({
       kind: "disconnected",
       disconnectReason: "REMOTE_ENDED",
     }),
-    false,
+    true,
   );
-  assert.equal(isTerminalConferenceIncident({ kind: "failed" }), true);
+  assert.equal(shouldDeferTerminalRecovery(true), true);
 });
 
 test("ordinary SDK states are not a reconnect episode", () => {
@@ -91,16 +97,40 @@ test("SDK settle does not infer DEGRADED from empty remotes", () => {
   assert.equal(settled.hasEnteredRoom, true);
 });
 
-test("SDK settle preserves explicit media-liveness degradation until usable media", () => {
+test("SDK settle does not preserve remote media-liveness reasons on Layer 3", () => {
   const degraded = createLayer3State({
     status: "reconnecting",
     hasEnteredRoom: true,
     reason: "stream_ended",
   });
   const settled = layer3AfterSdkReconnectSettled(degraded);
-  assert.equal(settled.status, "degraded");
-  assert.equal(settled.reason, "stream_ended");
-  const restored = layer3AfterUsableRemoteMedia(settled, false);
-  assert.equal(restored.status, "connected");
-  assert.equal(restored.reason, null);
+  assert.equal(settled.status, "connected");
+  assert.equal(settled.reason, null);
+});
+
+test("R10 Layer-3 connected suppresses stale transport-recovery lost chrome", () => {
+  assert.equal(
+    sessionRoomProviderBannerKind({
+      layer3Status: "connected",
+      layer3Banner: null,
+      transportRecoveryStatus: "lost",
+    }),
+    null,
+  );
+  assert.equal(
+    sessionRoomProviderBannerKind({
+      layer3Status: "connected",
+      layer3Banner: null,
+      transportRecoveryStatus: "recovering",
+    }),
+    null,
+  );
+  assert.equal(
+    sessionRoomProviderBannerKind({
+      layer3Status: "reconnecting",
+      layer3Banner: null,
+      transportRecoveryStatus: "recovering",
+    }),
+    "reconnecting",
+  );
 });

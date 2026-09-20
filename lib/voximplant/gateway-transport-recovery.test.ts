@@ -384,7 +384,57 @@ test("recovery observes the link and never touches the connection or media", () 
   assert.deepEqual(Object.keys(recovery).sort(), [
     "cancel",
     "getState",
+    "noteRecovered",
     "noteTransportLoss",
   ]);
   assert.ok(!calls.includes("connect"));
+});
+
+test("R10 extra gateway closes during SDK reconnect extend quiet period instead of declaring lost", async () => {
+  const { recovery, harness } = createHarness();
+
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  await harness.tick();
+  assert.equal(recovery.getState().status, "recovering");
+  await harness.tick();
+  assert.equal(recovery.getState().status, "stable");
+  assert.equal(recovery.getState().canRetryManually, false);
+});
+
+test("R10 SDK reconnect settle clears recovering and lost without Refresh", async () => {
+  const connected = false;
+  const { recovery, harness } = createHarness({
+    isConferenceConnected: () => connected,
+  });
+
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(recovery.getState().status, "recovering");
+  recovery.noteRecovered();
+  assert.equal(recovery.getState().status, "stable");
+  for (let i = 0; i < 12; i += 1) {
+    await harness.tick();
+  }
+  assert.equal(recovery.getState().status, "stable");
+  assert.equal(recovery.getState().canRetryManually, false);
+});
+
+test("R14 a later independent gateway close can recover after noteRecovered", async () => {
+  const { recovery, harness } = createHarness();
+
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  recovery.noteRecovered();
+  assert.equal(recovery.getState().status, "stable");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  recovery.noteTransportLoss(RECOVERABLE_CLOSE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(recovery.getState().status, "recovering");
+  await harness.tick();
+  assert.equal(recovery.getState().status, "stable");
 });

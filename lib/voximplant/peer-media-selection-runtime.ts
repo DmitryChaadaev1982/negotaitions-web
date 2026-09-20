@@ -20,6 +20,8 @@ export type PeerMediaRemote = {
   conferenceGeneration?: number | null;
   stream?: MediaStream | null;
   audioStream?: MediaStream | null;
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
 };
 
 export type PeerMediaUpsertInput = {
@@ -29,6 +31,8 @@ export type PeerMediaUpsertInput = {
   conferenceGeneration?: number | null;
   stream?: MediaStream | null;
   audioStream?: MediaStream | null;
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
 };
 
 export function upsertVoxRoomRemoteParticipant<T extends PeerMediaRemote>(
@@ -46,6 +50,8 @@ export function upsertVoxRoomRemoteParticipant<T extends PeerMediaRemote>(
         conferenceGeneration: next.conferenceGeneration ?? undefined,
         stream: next.stream ?? null,
         audioStream: next.audioStream ?? null,
+        videoStreamId: next.videoStreamId ?? null,
+        videoReceiving: next.videoReceiving,
       } as T,
     ];
   }
@@ -62,6 +68,10 @@ export function upsertVoxRoomRemoteParticipant<T extends PeerMediaRemote>(
     stream: next.stream === undefined ? existing.stream : next.stream,
     audioStream:
       next.audioStream === undefined ? existing.audioStream ?? null : next.audioStream,
+    videoStreamId:
+      next.videoStreamId === undefined ? existing.videoStreamId ?? null : next.videoStreamId,
+    videoReceiving:
+      next.videoReceiving === undefined ? existing.videoReceiving : next.videoReceiving,
   };
   return copy;
 }

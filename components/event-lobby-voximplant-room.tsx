@@ -57,6 +57,17 @@ import {
   reconcileRemoteParticipantsFromSnapshot,
   remotesAfterProviderDisconnect,
 } from "@/lib/voximplant/endpoint-reconciliation";
+import { isAutomaticStopReceivingReason } from "@/lib/voximplant/media-liveness";
+import {
+  applyAutomaticStopReceivingOverlay,
+  applyStartReceivingOverlay,
+  createRemoteVideoReceiveRegistry,
+  deleteRemoteVideoReceiving,
+  overlayMapForEndpoint,
+  projectRemoteVideoStream,
+  resolveAffectedVideoStreamId,
+  type RemoteVideoReceiveRegistry,
+} from "@/lib/voximplant/remote-media-receive-state";
 import {
   reduceLobbyJoinAuthority,
   releaseLobbyRemoteAudioElements,
@@ -73,6 +84,7 @@ type VoxWatchable<T> = {
 type VoxStream = {
   id: string;
   type: string;
+  isReceiving?: VoxWatchable<boolean>;
   track?: MediaStreamTrack;
   sourceStream?: MediaStream;
   close?: () => void;
@@ -81,6 +93,8 @@ type VoxStream = {
 type VoxEndpointMediaEvent = {
   payload?: {
     stream?: VoxStream;
+    streamId?: string;
+    reason?: string;
   };
 };
 
@@ -89,11 +103,19 @@ type VoxEndpoint = {
   userName: string;
   displayName: string;
   addEventListener: (
-    eventName: "RemoteMediaAdded" | "RemoteMediaRemoved",
+    eventName:
+      | "RemoteMediaAdded"
+      | "RemoteMediaRemoved"
+      | "StartReceivingVideoStream"
+      | "StopReceivingVideoStream",
     listener: (event: VoxEndpointMediaEvent) => void,
   ) => void;
   removeEventListener: (
-    eventName: "RemoteMediaAdded" | "RemoteMediaRemoved",
+    eventName:
+      | "RemoteMediaAdded"
+      | "RemoteMediaRemoved"
+      | "StartReceivingVideoStream"
+      | "StopReceivingVideoStream",
     listener: (event: VoxEndpointMediaEvent) => void,
   ) => void;
   getAnyAudioStreams: () => VoxStream[];
@@ -169,6 +191,8 @@ type VoxLobbyParticipant = {
   stream: MediaStream | null;
   micState: "on" | "off" | "unknown";
   cameraState: "on" | "off" | "unknown";
+  videoStreamId?: string | null;
+  videoReceiving?: boolean;
   firstSeenAtMs: number;
   updatedAtMs: number;
 };
@@ -225,8 +249,11 @@ type RuntimeState = {
       endpoint: VoxEndpoint;
       onAdded: (event: VoxEndpointMediaEvent) => void;
       onRemoved: (event: VoxEndpointMediaEvent) => void;
+      onStopVideo?: (event: VoxEndpointMediaEvent) => void;
+      onStartVideo?: (event: VoxEndpointMediaEvent) => void;
     }
   >;
+  videoReceiveByEndpoint: RemoteVideoReceiveRegistry;
   endpointIdentityIndex: Map<string, string>;
   remoteAudioElements: Map<string, HTMLAudioElement>;
   endpointSyncIntervalId: number | null;
@@ -374,10 +401,11 @@ function EventLobbyVoxVideoTile({
   explicitCameraEnabled: boolean | null;
 }) {
   const { t } = useI18n();
+  const videoUnavailable = participant.videoReceiving === false;
   const model = normalizeParticipantPresenceMedia({
     displayName: participant.displayName,
     connectedSignal: true,
-    videoStream: participant.stream,
+    videoStream: videoUnavailable ? null : participant.stream,
     micSignal:
       explicitMicEnabled === null
         ? participant.micState
@@ -393,10 +421,11 @@ function EventLobbyVoxVideoTile({
   });
   return (
     <VoximplantParticipantTile
-      stream={participant.stream}
+      stream={videoUnavailable ? null : participant.stream}
       muted={muted}
       title={participant.displayName}
       subtitle={subtitle}
+      videoUnavailableLabel={videoUnavailable ? t("room.videoTemporarilyUnavailable") : undefined}
       connectionStatus={model.connectionStatus}
       micStatus={model.micStatus}
       cameraStatus={model.cameraStatus}
@@ -614,11 +643,18 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         }
         micUnknownTimerByParticipantRef.current.clear();
 
-        for (const { endpoint, onAdded, onRemoved } of runtime.endpointSubscriptions.values()) {
-          endpoint.removeEventListener("RemoteMediaAdded", onAdded);
-          endpoint.removeEventListener("RemoteMediaRemoved", onRemoved);
+        for (const subscription of runtime.endpointSubscriptions.values()) {
+          subscription.endpoint.removeEventListener("RemoteMediaAdded", subscription.onAdded);
+          subscription.endpoint.removeEventListener("RemoteMediaRemoved", subscription.onRemoved);
+          if (subscription.onStopVideo) {
+            subscription.endpoint.removeEventListener("StopReceivingVideoStream", subscription.onStopVideo);
+          }
+          if (subscription.onStartVideo) {
+            subscription.endpoint.removeEventListener("StartReceivingVideoStream", subscription.onStartVideo);
+          }
         }
         runtime.endpointSubscriptions.clear();
+        runtime.videoReceiveByEndpoint.clear();
 
         if (runtime.conference && runtime.conferenceListeners) {
           runtime.conference.removeEventListener("Connected", runtime.conferenceListeners.onConnected);
@@ -963,6 +999,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
           audioAdded: false,
           videoAdded: false,
           endpointSubscriptions: new Map(),
+          videoReceiveByEndpoint: createRemoteVideoReceiveRegistry(),
           endpointIdentityIndex: new Map(),
           remoteAudioElements: new Map(),
           endpointSyncIntervalId: null,
@@ -1028,11 +1065,19 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
 
         const applyRemoteVideo = (endpoint: VoxEndpoint) => {
           if (isSelfLobbyEndpoint(endpoint)) return;
-          const videoStream = endpoint.getAnyVideoStreams()[0] ?? null;
+          const runtimeState = runtimeRef.current;
+          const videoStreams = endpoint.getAnyVideoStreams();
+          const projected = projectRemoteVideoStream({
+            streams: videoStreams,
+            currentGeneration: true,
+            overlayByStreamId: runtimeState
+              ? overlayMapForEndpoint(runtimeState.videoReceiveByEndpoint, endpoint.id)
+              : undefined,
+          });
+          const videoStream = projected.stream;
           const audioStream = endpoint.getAnyAudioStreams()[0] ?? null;
           const hasAudio = audioStream !== null;
           const audioEnabled = getTrackEnabled(audioStream, "audio");
-          const videoEnabled = getTrackEnabled(videoStream, "video");
           const now = Date.now();
           if (!hasAudio) {
             scheduleUnknownMicResolution(endpoint.id);
@@ -1047,9 +1092,11 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
             identityKey,
             endpointUsername: endpoint.userName ?? null,
             displayName: endpoint.displayName || endpoint.userName || endpoint.id,
-            stream: streamToMediaStream(videoStream),
+            stream: videoStream ? streamToMediaStream(videoStream) : null,
             micState: hasAudio ? (audioEnabled === false ? "off" : "on") : "unknown",
-            cameraState: videoStream ? (videoEnabled === false ? "off" : "on") : "off",
+            cameraState: projected.usable ? "on" : "off",
+            videoStreamId: projected.streamId,
+            videoReceiving: projected.stream ? projected.isReceiving : false,
             firstSeenAtMs: now,
             updatedAtMs: now,
           });
@@ -1081,7 +1128,20 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
                   "RemoteMediaRemoved",
                   previousSubscription.onRemoved,
                 );
+                if (previousSubscription.onStopVideo) {
+                  previousSubscription.endpoint.removeEventListener(
+                    "StopReceivingVideoStream",
+                    previousSubscription.onStopVideo,
+                  );
+                }
+                if (previousSubscription.onStartVideo) {
+                  previousSubscription.endpoint.removeEventListener(
+                    "StartReceivingVideoStream",
+                    previousSubscription.onStartVideo,
+                  );
+                }
                 runtime.endpointSubscriptions.delete(previousEndpointId);
+                deleteRemoteVideoReceiving(runtime.videoReceiveByEndpoint, previousEndpointId);
               }
               detachRemoteAudioStreams(previousEndpointId);
               clearUnknownMicTimer(previousEndpointId);
@@ -1098,15 +1158,67 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
                 applyRemoteVideo(endpoint);
               }
             };
-            const onRemoved = () => {
+            const onRemoved = (event: VoxEndpointMediaEvent) => {
+              const removedStreamId = event.payload?.stream?.id ?? event.payload?.streamId;
+              if (removedStreamId) {
+                deleteRemoteVideoReceiving(
+                  runtime.videoReceiveByEndpoint,
+                  endpoint.id,
+                  removedStreamId,
+                );
+              }
+              applyRemoteVideo(endpoint);
+            };
+            const onStopVideo = (event: VoxEndpointMediaEvent) => {
+              if (!isAutomaticStopReceivingReason(event.payload?.reason)) return;
+              const streamId = resolveAffectedVideoStreamId({
+                eventStreamId: event.payload?.streamId,
+                eventStream: event.payload?.stream,
+                availableStreamIds: endpoint
+                  .getAnyVideoStreams()
+                  .map((stream) => stream.id)
+                  .filter(Boolean),
+              });
+              if (!streamId) return;
+              applyAutomaticStopReceivingOverlay({
+                registry: runtime.videoReceiveByEndpoint,
+                eventGeneration: 1,
+                currentGeneration: 1,
+                endpointId: endpoint.id,
+                streamId,
+              });
+              applyRemoteVideo(endpoint);
+            };
+            const onStartVideo = (event: VoxEndpointMediaEvent) => {
+              const streamId = resolveAffectedVideoStreamId({
+                eventStreamId: event.payload?.streamId,
+                eventStream: event.payload?.stream,
+                availableStreamIds: endpoint
+                  .getAnyVideoStreams()
+                  .map((stream) => stream.id)
+                  .filter(Boolean),
+              });
+              if (streamId) {
+                applyStartReceivingOverlay({
+                  registry: runtime.videoReceiveByEndpoint,
+                  eventGeneration: 1,
+                  currentGeneration: 1,
+                  endpointId: endpoint.id,
+                  streamId,
+                });
+              }
               applyRemoteVideo(endpoint);
             };
             endpoint.addEventListener("RemoteMediaAdded", onAdded);
             endpoint.addEventListener("RemoteMediaRemoved", onRemoved);
+            endpoint.addEventListener("StopReceivingVideoStream", onStopVideo);
+            endpoint.addEventListener("StartReceivingVideoStream", onStartVideo);
             runtime.endpointSubscriptions.set(endpoint.id, {
               endpoint,
               onAdded,
               onRemoved,
+              onStopVideo,
+              onStartVideo,
             });
           }
           applyKnownEndpointMedia(endpoint);
@@ -1135,6 +1247,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         };
         const onDisconnected = (event: VoxConferenceEvent) => {
           applyJoinAuthority("disconnected");
+          runtime.videoReceiveByEndpoint.clear();
           setRemoteParticipants(remotesAfterProviderDisconnect());
           const runtimeState = runtimeRef.current;
           if (runtimeState) {
@@ -1159,6 +1272,7 @@ export const EventLobbyVoximplantRoom = memo(function EventLobbyVoximplantRoom({
         const onEndpointRemoved = (event: VoxConferenceEvent) => {
           const endpointId = event.payload?.removedEndpointId;
           if (!endpointId) return;
+          deleteRemoteVideoReceiving(runtime.videoReceiveByEndpoint, endpointId);
           for (const [identityKey, trackedEndpointId] of runtime.endpointIdentityIndex) {
             if (trackedEndpointId === endpointId) {
               runtime.endpointIdentityIndex.delete(identityKey);
