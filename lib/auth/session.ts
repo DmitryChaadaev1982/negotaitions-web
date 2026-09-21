@@ -35,6 +35,7 @@ type UserSessionCookieWriter = (params: {
 }) => Promise<void>;
 
 let userSessionCookieWriterForTests: UserSessionCookieWriter | null = null;
+let userSessionTokenReaderForTests: (() => string | null) | null = null;
 
 export type AuthUser = {
   id: string;
@@ -133,6 +134,28 @@ export function clearUserSessionCookieWriterForTests(): void {
   userSessionCookieWriterForTests = null;
 }
 
+/** Test-only session-token read. Production continues to read the auth cookie. */
+export function setUserSessionTokenReaderForTests(
+  reader: () => string | null,
+): void {
+  if (parseServerRuntimeSetting("NODE_ENV") === "production") {
+    throw new Error("Session cookie test hook is unavailable in production.");
+  }
+  userSessionTokenReaderForTests = reader;
+}
+
+export function clearUserSessionTokenReaderForTests(): void {
+  userSessionTokenReaderForTests = null;
+}
+
+async function readCurrentSessionToken(): Promise<string | undefined> {
+  if (userSessionTokenReaderForTests) {
+    return userSessionTokenReaderForTests() ?? undefined;
+  }
+  const cookieStore = await cookies();
+  return cookieStore.get(COOKIE_NAME)?.value;
+}
+
 /**
  * Create a session only when the credential generation observed during
  * password verification is still current. Prevents stale login after reset.
@@ -149,8 +172,8 @@ export async function createUserSession(
 }
 
 export async function destroyUserSession(): Promise<void> {
+  const token = await readCurrentSessionToken();
   const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
 
   if (token) {
     const tokenHash = hashSessionToken(token);
@@ -163,14 +186,12 @@ export async function destroyUserSession(): Promise<void> {
 }
 
 export async function getCurrentSessionTokenHash(): Promise<string | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
+  const token = await readCurrentSessionToken();
   return token ? hashSessionToken(token) : null;
 }
 
 export async function getOptionalCurrentUser(): Promise<AuthUser | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
+  const token = await readCurrentSessionToken();
 
   if (!token) return null;
 

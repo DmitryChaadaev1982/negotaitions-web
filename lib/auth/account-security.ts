@@ -11,12 +11,15 @@ import {
 } from "@/lib/auth/credential-concurrency";
 import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
 import {
-  enqueuePasswordChangedEmail,
   enqueuePasswordResetEmail,
   enqueueRecoveryDeniedEmail,
 } from "@/lib/email/account-security";
 import { prisma } from "@/lib/prisma";
 
+import {
+  applyPasswordCredentialMutation,
+  assertCredentialMutationEmailConfig,
+} from "./credential-mutation";
 import { hashPassword } from "./crypto";
 import { getPasswordResetConfig } from "./password-reset-config";
 import { consumePasswordResetAttempt } from "./password-reset-rate-limit";
@@ -287,6 +290,7 @@ export async function resetPasswordWithToken(params: {
 
   // 5. Fence dispatch, then atomically claim token / update password / bump
   //    generation / wipe sessions while holding the User row lock.
+  assertCredentialMutationEmailConfig();
   try {
     await withCredentialDispatchFence(eligible.userId, async () => {
       await withSerializableRetry(async (tx) => {
@@ -344,34 +348,17 @@ export async function resetPasswordWithToken(params: {
 
         await runBeforePasswordUpdateHook();
 
-        const updated = await tx.user.updateMany({
-          where: {
-            id: token.userId,
-            status: "ACTIVE",
-            credentialGeneration: locked.credentialGeneration,
-          },
-          data: {
-            passwordHash,
-            credentialGeneration: { increment: 1 },
-          },
-        });
-        if (updated.count !== 1) throw new InvalidResetTokenError();
-
-        await tx.passwordResetToken.updateMany({
-          where: {
-            userId: token.userId,
-            id: { not: token.id },
-            usedAt: null,
-            revokedAt: null,
-          },
-          data: { revokedAt: now },
-        });
-        await tx.userSession.deleteMany({ where: { userId: token.userId } });
-        await enqueuePasswordChangedEmail({
-          user: token.user,
+        // The consumed token is already marked used, so outstanding-token
+        // revocation leaves it in place and revokes unused siblings.
+        await applyPasswordCredentialMutation(tx, {
+          userId: token.userId,
+          newPasswordHash: passwordHash,
+          expectedCredentialGeneration: locked.credentialGeneration,
           changedAt: now,
+          sessionRevocation: { kind: "all" },
+          rejectError: new InvalidResetTokenError(),
+          notificationUser: token.user,
           idempotencyKey: `password-changed:reset:${token.id}`,
-          tx,
         });
       });
     });

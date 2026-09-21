@@ -129,6 +129,16 @@
   user. Success updates the bcrypt hash, consumes the token, revokes siblings,
   deletes all account `UserSession` rows, and queues a security alert in one
   transaction.
+- Authenticated self-service password change verifies the current password,
+  stores a new bcrypt cost-12 hash, increments `credentialGeneration` once,
+  revokes outstanding reset tokens, deletes other `UserSession` rows, keeps the
+  current session, and queues `PASSWORD_CHANGED` in that same transaction.
+  Minimum length remains 8 characters. Existing bcrypt cost-10 hashes still
+  verify. New hashes stay bcrypt cost 12. The canonical owners are
+  `lib/auth/password-policy.ts`, `lib/auth/crypto.ts`,
+  `lib/auth/session-revocation.ts`, and `lib/auth/credential-mutation.ts`.
+  Administrator BLOCKED and REJECTED transitions do not delete `UserSession`
+  rows.
 - The reset page uses a no-referrer policy. Local message preview is
   development-only, fake-provider-only, exact-local-origin-only, and
   ACTIVE-admin-only.

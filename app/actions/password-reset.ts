@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { resetPasswordWithToken } from "@/lib/auth/account-security";
+import { validateNewPassword } from "@/lib/auth/password-policy";
 import { passwordResetErrorKey } from "@/lib/auth/account-security-error-messages";
 import { consumePasswordResetFinalizeAttempt } from "@/lib/auth/password-reset-rate-limit";
 import {
@@ -22,10 +23,14 @@ export async function resetPassword(
   const password = String(formData.get("password") ?? "");
   const confirmation = String(formData.get("confirmPassword") ?? "");
 
-  if (!password || password.length < 8) {
+  const policy = validateNewPassword({
+    password,
+    confirmation,
+  });
+  if (!policy.ok && policy.codes.includes("too_short")) {
     return { error: "auth.passwordTooShort" };
   }
-  if (password !== confirmation) {
+  if (!policy.ok && policy.codes.includes("mismatch")) {
     return { error: "auth.passwordMismatch" };
   }
   if (!isPasswordResetTokenShape(token)) {

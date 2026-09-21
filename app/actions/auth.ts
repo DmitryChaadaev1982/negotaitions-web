@@ -21,6 +21,7 @@ import {
   runAfterPasswordVerifiedHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
+import { validateNewPassword } from "@/lib/auth/password-policy";
 import { createRegisteredUserWithConsents } from "@/lib/auth/registration";
 import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { consentFieldName } from "@/lib/consent/user-consent";
@@ -56,10 +57,18 @@ export async function registerUser(
   if (!rawPassword) errors.password = ["auth.passwordRequired"];
   if (!rawConfirm) errors.confirmPassword = ["auth.confirmPasswordRequired"];
 
-  if (rawPassword && rawPassword.length < 8)
-    errors.password = ["auth.passwordTooShort"];
-  if (rawPassword && rawConfirm && rawPassword !== rawConfirm)
-    errors.confirmPassword = ["auth.passwordMismatch"];
+  if (rawPassword) {
+    const policy = validateNewPassword({
+      password: rawPassword,
+      confirmation: rawConfirm ? rawConfirm : undefined,
+    });
+    if (!policy.ok && policy.codes.includes("too_short")) {
+      errors.password = ["auth.passwordTooShort"];
+    }
+    if (!policy.ok && policy.codes.includes("mismatch")) {
+      errors.confirmPassword = ["auth.passwordMismatch"];
+    }
+  }
 
   if (!acceptedAllCurrentAcknowledgements) {
     errors.consents = ["legal.consentRequired"];

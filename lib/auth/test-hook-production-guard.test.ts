@@ -14,7 +14,9 @@ import {
 } from "@/lib/auth/credential-dispatch-fence";
 import {
   clearUserSessionCookieWriterForTests,
+  clearUserSessionTokenReaderForTests,
   setUserSessionCookieWriterForTests,
+  setUserSessionTokenReaderForTests,
 } from "@/lib/auth/session";
 import { setSessionLifecycleConcurrencyHooksForTests } from "@/lib/session-lifecycle-concurrency-hooks";
 
@@ -85,6 +87,10 @@ test("session cookie test hook keeps its production refusal", async () => {
       () => setUserSessionCookieWriterForTests(async () => undefined),
       /unavailable in production/,
     );
+    assert.throws(
+      () => setUserSessionTokenReaderForTests(() => null),
+      /unavailable in production/,
+    );
   });
 });
 
@@ -107,6 +113,7 @@ test("test hooks install, run, and clear outside production", async () => {
   clearCredentialMutationHooksForTests();
   clearCredentialDispatchFenceHooksForTests();
   clearUserSessionCookieWriterForTests();
+  clearUserSessionTokenReaderForTests();
   await runAfterPasswordVerifiedHook();
   assert.equal(verified, 1);
   assert.equal(fenced, 0);
@@ -117,6 +124,7 @@ test("no production runtime path installs an account-security test hook", async 
     "setCredentialMutationHooksForTests",
     "setCredentialDispatchFenceHooksForTests",
     "setUserSessionCookieWriterForTests",
+    "setUserSessionTokenReaderForTests",
     "setSessionLifecycleConcurrencyHooksForTests",
   ];
   const repoRoot = process.cwd();

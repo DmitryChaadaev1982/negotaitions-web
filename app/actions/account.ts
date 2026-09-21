@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
+import { validateNewPassword } from "@/lib/auth/password-policy";
 import { authenticatedPasswordChangeErrorKey } from "@/lib/auth/account-security-error-messages";
 import { commitAuthenticatedPasswordChange } from "@/lib/auth/authenticated-password-change";
 import {
@@ -57,12 +58,16 @@ export async function updatePassword(
     return { error: "auth.passwordRequired" };
   }
 
-  if (newPassword.length < 8) {
-    return { error: "auth.passwordTooShort" };
-  }
-
-  if (newPassword !== confirmPassword) {
-    return { error: "auth.passwordMismatch" };
+  const policy = validateNewPassword({
+    password: newPassword,
+    confirmation: confirmPassword,
+  });
+  if (!policy.ok) {
+    return {
+      error: policy.codes.includes("too_short")
+        ? "auth.passwordTooShort"
+        : "auth.passwordMismatch",
+    };
   }
 
   // Fetch current credential state — never return it to the client.

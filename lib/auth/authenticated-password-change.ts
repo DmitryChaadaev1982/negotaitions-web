@@ -6,8 +6,11 @@ import {
   runBeforePasswordUpdateHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
+import {
+  applyPasswordCredentialMutation,
+  assertCredentialMutationEmailConfig,
+} from "@/lib/auth/credential-mutation";
 import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
-import { enqueuePasswordChangedEmail } from "@/lib/email/account-security";
 import { prisma } from "@/lib/prisma";
 
 export async function commitAuthenticatedPasswordChange(params: {
@@ -28,6 +31,8 @@ export async function commitAuthenticatedPasswordChange(params: {
     .digest("hex")
     .slice(0, 32);
 
+  assertCredentialMutationEmailConfig();
+
   await withCredentialDispatchFence(params.user.id, async () => {
     await prisma.$transaction(async (tx) => {
       // Global order: fence -> transaction -> User -> reset tokens ->
@@ -45,45 +50,19 @@ export async function commitAuthenticatedPasswordChange(params: {
       await runAfterUserRowLockedForCredentialMutationHook();
       await runBeforePasswordUpdateHook();
 
-      const updated = await tx.user.updateMany({
-        where: {
-          id: params.user.id,
-          status: "ACTIVE",
-          passwordHash: params.currentPasswordHash,
-          credentialGeneration: params.expectedCredentialGeneration,
-        },
-        data: {
-          passwordHash: params.newPasswordHash,
-          credentialGeneration: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) throw new StaleCredentialError();
-
-      await tx.passwordResetToken.updateMany({
-        where: {
-          userId: params.user.id,
-          usedAt: null,
-          revokedAt: null,
-        },
-        data: { revokedAt: params.changedAt },
-      });
-      await tx.userSession.deleteMany({
-        where: {
-          userId: params.user.id,
-          ...(params.currentSessionTokenHash
-            ? {
-                sessionTokenHash: {
-                  not: params.currentSessionTokenHash,
-                },
-              }
-            : {}),
-        },
-      });
-      await enqueuePasswordChangedEmail({
-        user: params.user,
+      await applyPasswordCredentialMutation(tx, {
+        userId: params.user.id,
+        newPasswordHash: params.newPasswordHash,
+        expectedCredentialGeneration: params.expectedCredentialGeneration,
+        currentPasswordHash: params.currentPasswordHash,
         changedAt: params.changedAt,
+        sessionRevocation: {
+          kind: "except-current",
+          currentSessionTokenHash: params.currentSessionTokenHash,
+        },
+        rejectError: new StaleCredentialError(),
+        notificationUser: params.user,
         idempotencyKey: `password-changed:account:${params.user.id}:${changeId}`,
-        tx,
       });
     });
   });

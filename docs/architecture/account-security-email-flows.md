@@ -196,6 +196,27 @@ Authenticated password change uses the same bcrypt policy and transactional
 other account sessions while preserving the current authenticated session.
 There is no administrator-initiated password-change path.
 
+Password policy, hashing, session revocation, and the shared credential write
+live in one place each:
+
+- `lib/auth/password-policy.ts` — server-side new-password rule. Minimum length
+  is 8 characters, and a supplied confirmation must match. Registration,
+  authenticated self-change, and email reset all call this owner.
+- `lib/auth/crypto.ts` — `hashPassword` / `verifyPassword`. New hashes are
+  bcrypt cost 12. Existing bcrypt hashes still verify, including cost 10.
+  Verification does not rehash or change `credentialGeneration`.
+- `lib/auth/session-revocation.ts` — delete every `UserSession` for a user, or
+  every session except the current one.
+- `lib/auth/credential-mutation.ts` — inside the caller's transaction, update
+  `passwordHash`, increment `credentialGeneration`, revoke outstanding reset
+  tokens, revoke sessions for the requested mode, and enqueue
+  `PASSWORD_CHANGED`. Self-change keeps the current session. Email reset
+  revokes every session. Authority stays separate: current-password proof
+  versus reset-token proof. Provider delivery stays outside the transaction.
+
+Administrator BLOCKED and REJECTED transitions revoke outstanding reset tokens
+and cancel claimable reset messages. They do not delete `UserSession` rows.
+
 ## Abuse controls
 
 Durable token/outbox timestamps enforce per-account cooldown and hourly limits.

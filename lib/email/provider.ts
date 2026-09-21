@@ -12,11 +12,26 @@ import type {
   EmailProviderSendResult,
 } from "@/lib/email/types";
 
+let emailProviderInvocationCountForTests = 0;
+
+export function resetEmailProviderInvocationCountForTests(): void {
+  emailProviderInvocationCountForTests = 0;
+}
+
+export function readEmailProviderInvocationCountForTests(): number {
+  return emailProviderInvocationCountForTests;
+}
+
+function recordEmailProviderInvocationForTests(): void {
+  emailProviderInvocationCountForTests += 1;
+}
+
 export class DisabledEmailProvider implements EmailProvider {
   readonly name = "disabled";
   readonly transport = "none";
 
   async send(): Promise<EmailProviderSendResult> {
+    recordEmailProviderInvocationForTests();
     return {
       ok: false,
       providerName: this.name,
@@ -34,6 +49,7 @@ export class FakeEmailProvider implements EmailProvider {
   readonly sent: EmailProviderSendInput[] = [];
 
   async send(input: EmailProviderSendInput): Promise<EmailProviderSendResult> {
+    recordEmailProviderInvocationForTests();
     this.sent.push(input);
     return {
       ok: true,
@@ -71,6 +87,7 @@ export class YandexPostboxEmailProvider implements EmailProvider {
   }
 
   async send(input: EmailProviderSendInput): Promise<EmailProviderSendResult> {
+    recordEmailProviderInvocationForTests();
     const payload: SendEmailCommandInput = {
       FromEmailAddress: input.fromAddress,
       Destination: { ToAddresses: [input.recipientEmail] },
@@ -138,6 +155,7 @@ export class YandexPostboxEmailProvider implements EmailProvider {
 }
 
 export function createEmailProvider(): EmailProvider {
+  recordEmailProviderInvocationForTests();
   const config = getEmailConfig();
   if (!config.deliveryEnabled || config.provider === "disabled") {
     return new DisabledEmailProvider();
