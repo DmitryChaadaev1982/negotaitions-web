@@ -4,10 +4,11 @@ import { useState, useTransition, useActionState } from "react";
 
 import { updateDisplayName, updatePassword } from "@/app/actions/account";
 import { updateUserPreferredLocale } from "@/app/actions/auth";
-import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
+import { PasswordRequirements } from "@/components/password-requirements";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type AccountSettingsViewProps = {
+  email: string;
   currentName: string;
   currentLocale: string;
 };
@@ -15,6 +16,7 @@ type AccountSettingsViewProps = {
 const emptyState = { success: false as boolean, error: undefined as string | undefined };
 
 export function AccountSettingsView({
+  email,
   currentName,
   currentLocale,
 }: AccountSettingsViewProps) {
@@ -32,6 +34,10 @@ export function AccountSettingsView({
   const [locale, setLocale] = useState(currentLocale);
   const [localeSaved, setLocaleSaved] = useState(false);
   const [localePending, startLocaleTransition] = useTransition();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [submittedPassword, setSubmittedPassword] = useState<string | null>(null);
 
   function handleLocaleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -43,6 +49,12 @@ export function AccountSettingsView({
 
   return (
     <div className="space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-slate-50">
+          {t("auth.accountSettings")}
+        </h1>
+        <p className="mt-1 text-sm text-slate-400">{email}</p>
+      </div>
       {/* Display name */}
       <section
         className="rounded-xl border border-slate-700/40 bg-slate-900/40 p-6"
@@ -145,7 +157,11 @@ export function AccountSettingsView({
         <h2 className="mb-4 text-lg font-semibold text-slate-50">
           {t("auth.changePassword")}
         </h2>
-        <form action={pwAction} className="space-y-4">
+        <form
+          action={pwAction}
+          className="space-y-4"
+          onSubmit={() => setSubmittedPassword(newPassword)}
+        >
           <div>
             <label
               htmlFor="settings-current-password"
@@ -159,6 +175,8 @@ export function AccountSettingsView({
               type="password"
               autoComplete="current-password"
               required
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
               data-testid="settings-current-password-input"
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500/40 focus:outline-none"
             />
@@ -175,8 +193,11 @@ export function AccountSettingsView({
               name="newPassword"
               type="password"
               autoComplete="new-password"
-              minLength={PASSWORD_MIN_LENGTH}
               required
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              aria-describedby="settings-password-requirements"
+              aria-invalid={pwState.error ? true : undefined}
               data-testid="settings-new-password-input"
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500/40 focus:outline-none"
             />
@@ -193,12 +214,23 @@ export function AccountSettingsView({
               name="confirmPassword"
               type="password"
               autoComplete="new-password"
-              minLength={PASSWORD_MIN_LENGTH}
               required
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              aria-describedby="settings-password-requirements"
+              aria-invalid={pwState.error ? true : undefined}
               data-testid="settings-confirm-password-input"
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500/40 focus:outline-none"
             />
           </div>
+          <PasswordRequirements
+            id="settings-password-requirements"
+            password={newPassword}
+            confirmation={confirmPassword}
+            submittedPassword={submittedPassword}
+            serverSuccess={pwState.success}
+            serverError={pwState.error}
+          />
           {pwState.success && (
             <p className="text-sm text-emerald-400" role="status" data-testid="settings-password-success">
               {t("auth.passwordUpdated")}

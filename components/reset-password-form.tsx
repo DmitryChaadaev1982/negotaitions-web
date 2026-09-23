@@ -4,9 +4,8 @@ import Link from "next/link";
 import { useActionState, useEffect, useState, startTransition } from "react";
 
 import { resetPassword } from "@/app/actions/password-reset";
-import { LanguageSwitcher } from "@/components/language-switcher";
+import { PasswordRequirements } from "@/components/password-requirements";
 import { parseResetTokenFragment } from "@/lib/auth/reset-fragment";
-import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 function scrubFragmentFromAddressBar(): void {
@@ -28,6 +27,9 @@ export function ResetPasswordForm({
   const { t } = useI18n();
   const [state, action, pending] = useActionState(resetPassword, {});
   const [token, setToken] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [submittedPassword, setSubmittedPassword] = useState<string | null>(null);
   // Query-token links are rejected without waiting for client bootstrap.
   const [bootstrapped, setBootstrapped] = useState(rejectQueryToken);
 
@@ -59,9 +61,6 @@ export function ResetPasswordForm({
 
   return (
     <div className="w-full max-w-sm">
-      <div className="mb-6 flex justify-end">
-        <LanguageSwitcher />
-      </div>
       <div className="mb-8 text-center">
         <h1 className="mb-1 text-2xl font-bold text-slate-50">
           {t("auth.resetPasswordTitle")}
@@ -79,7 +78,11 @@ export function ResetPasswordForm({
           {t("auth.passwordResetInvalid")}
         </div>
       ) : (
-        <form action={action} className="space-y-4">
+        <form
+          action={action}
+          className="space-y-4"
+          onSubmit={() => setSubmittedPassword(password)}
+        >
           <input type="hidden" name="token" value={token} />
           <div>
             <label
@@ -93,8 +96,12 @@ export function ResetPasswordForm({
               name="password"
               type="password"
               autoComplete="new-password"
-              minLength={PASSWORD_MIN_LENGTH}
               required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              aria-describedby="reset-password-requirements"
+              aria-invalid={state.error ? true : undefined}
+              data-testid="reset-password-input"
               className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </div>
@@ -110,14 +117,27 @@ export function ResetPasswordForm({
               name="confirmPassword"
               type="password"
               autoComplete="new-password"
-              minLength={PASSWORD_MIN_LENGTH}
               required
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              aria-describedby="reset-password-requirements"
+              aria-invalid={state.error ? true : undefined}
+              data-testid="reset-confirm-password-input"
               className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </div>
+          <PasswordRequirements
+            id="reset-password-requirements"
+            password={password}
+            confirmation={confirmPassword}
+            submittedPassword={submittedPassword}
+            serverError={state.error}
+          />
           {state.error && (
             <p
+              id="reset-password-error"
               role="alert"
+              data-testid="reset-password-error"
               className="rounded-lg border border-red-800/50 bg-red-950/40 px-3 py-2 text-sm text-red-400"
             >
               {t(state.error as Parameters<typeof t>[0])}

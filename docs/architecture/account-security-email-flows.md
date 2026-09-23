@@ -18,10 +18,13 @@ membership, and Voximplant state are outside this flow.
 - Unknown or any unrecognized status: no token and no account email are
   created.
 
-Every syntactically valid forgot-password request receives HTTP 200 with the
-same JSON shape and localization key. Account existence, status, enqueue
-outcome, suppression, cooldown, and hourly-limit decisions are not public.
-Malformed input may receive the common validation error.
+A syntactically valid same-origin forgot-password request receives HTTP 200
+with the same JSON shape and localization key. Account existence, status,
+enqueue outcome, suppression, cooldown, and hourly-limit decisions are not
+public. A cross-origin request is refused with HTTP 403 and that same public
+JSON shape before any account lookup, so the refusal does not reveal whether
+an account exists. Malformed same-origin input receives the common validation
+error (HTTP 400).
 
 ## Token lifecycle
 
@@ -211,7 +214,14 @@ Password policy, hashing, session revocation, and the shared credential write
 live in one place each:
 
 - `lib/auth/password-policy-constants.ts` — client-safe bounds. Minimum 10 and
-  maximum 128 Unicode code points. No blocklist.
+  maximum 128 Unicode code points. No blocklist. `components/password-requirements.tsx`
+  renders that projection, plus confirmation match, on registration, account
+  settings, and email reset. The same checklist includes the common-password
+  and previous-password rules. Those two stay unchecked until a server result
+  for the submitted password marks them passed, or marks the rejected rule
+  unmet. Length uses Unicode code points. The denylist and password history
+  are not sent to the browser. Server rejections use the localized `too_short`,
+  `too_long`, `common_password`, `password_reused`, and `mismatch` messages.
 - `lib/auth/password-policy.ts` — server-side new-password rule. It checks
   those bounds, a supplied confirmation, and the whole-password common-password
   denylist. Registration, authenticated self-change, and email reset all call

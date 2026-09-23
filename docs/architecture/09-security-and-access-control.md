@@ -137,7 +137,14 @@
   New passwords are 10 to 128 Unicode code points, with no composition rules.
   A whole-password common-password denylist rejects exact normalized matches.
   The new secret must differ from the current credential and the previous
-  five retired secrets. Existing bcrypt cost-10 and cost-12 hashes still
+  five retired secrets. Registration, authenticated self-change, and email
+  reset show one checklist for those length bounds, confirmation match, the
+  common-password rule, and the previous-password rule. Length and match
+  update as the user types and count Unicode code points. The common-password
+  and previous-password items stay unchecked until the server accepts the
+  submitted password or rejects it as common or reused. The browser does not
+  receive the denylist or password history. A rejection is a localized safe
+  error with no history slot or hash detail. Existing bcrypt cost-10 and cost-12 hashes still
   verify at login; login does not apply the new-password policy. New hashes
   are Argon2id (`m=19456,t=4,p=1`, 32-byte tag, 16-byte salt, PHC `v=19`).
   After a successful session commit, an eligible bcrypt or non-target
@@ -208,6 +215,32 @@ suppression, notification, and local-preview contracts.
   run-specific durable lease identifiers while exercising the production
   session advisory-lock key with separate PostgreSQL connections.
 
+## Development seed
+
+`prisma/seed.ts` (`npm run db:seed` and `npm run seed`) provisions the demo
+facilitator and refreshes that user's demo cases. Its authority is initial
+demo data.
+
+- The seed guard authorizes the host, port, and database that `pg` would use.
+  A query string or URL fragment is refused, because `pg` can replace the
+  host and port from query parameters. Process environment mode and
+  `E2E_ALLOW_REMOTE_DATABASE` are not inputs.
+- A target is accepted only when it is a PostgreSQL URI on a local host
+  (`localhost`, `127.0.0.1`, `::1`, or `0.0.0.0`) whose database name contains
+  the disposable marker `e2e`, `test`, or `testing`, and neither the host nor
+  the database name is production-like. Those marker and production patterns
+  are the same rules as E2E target safety. Remote hosts are refused.
+  Keyword/value DSNs and unparseable URLs are refused.
+- The canonical development database name `negotiations` is refused, including
+  preserved `localhost:5432/negotiations`.
+- A new demo user is checked with `assertNewPasswordPolicy` and stored with
+  `hashPassword` (current Argon2id). An existing `demo@example.com` row keeps
+  `passwordHash`, `credentialGeneration`, and the other account-security
+  columns. The fixture password is `DEMO_SEED_PASSWORD` in
+  `prisma/seed-demo.ts`. Seed logs the masked target and whether that user was
+  created or already present. It does not log the fixture password, a
+  verifier, or the connection string.
+
 ## Source Notes
 
 - `app/actions/events.ts`
@@ -238,6 +271,9 @@ suppression, notification, and local-preview contracts.
 - `app/api/auth/forgot-password/route.ts`
 - `app/api/admin/email-preview/route.ts`
 - `docs/architecture/account-security-email-flows.md`
+- `prisma/seed.ts`
+- `prisma/seed-demo.ts`
+- `lib/db/seed-target-safety.ts`
 
 Historical auth/cookie audits live under `docs/history/` and are not
 current-state authority.

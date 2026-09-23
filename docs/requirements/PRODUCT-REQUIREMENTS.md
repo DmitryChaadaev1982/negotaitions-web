@@ -255,7 +255,12 @@ Canonical architecture: `13-public-site-and-content.md`.
   The server rejects a whole-password match against the local common-password
   denylist. Self-service change and email reset also reject the current
   password and the previous five passwords. Login does not apply that policy
-  to an existing credential.
+  to an existing credential. Registration, account settings, and email reset
+  show the same checklist for length, confirmation match, common passwords,
+  and previous passwords. Length and match update while typing. The common
+  and previous-password items stay unchecked until the server accepts that
+  password or rejects the matching rule. The checklist does not expose or
+  pre-approve the denylist or password history.
 - There is no mass forced reset. `passwordChangeRequiredAt` is stored and not
   enforced. Administrator password reset is not available.
 - Business code enqueues `EmailMessage`; workers send. Sending is disabled

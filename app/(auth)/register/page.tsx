@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { Suspense, useActionState, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
 
 import { registerUser } from "@/app/actions/auth";
-import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
 import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { useI18n } from "@/lib/i18n/useI18n";
-import { LanguageSwitcher } from "@/components/language-switcher";
 import { LegalReleaseCheckboxes } from "@/components/legal-release-checkboxes";
+import { PasswordRequirements } from "@/components/password-requirements";
 
 function RegisterForm() {
   const { t, locale } = useI18n();
@@ -18,13 +16,12 @@ function RegisterForm() {
   const returnUrl = sanitizeReturnUrl(searchParams.get("returnUrl")) ?? "";
 
   const [state, action, pending] = useActionState(registerUser, {});
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [submittedPassword, setSubmittedPassword] = useState<string | null>(null);
 
   return (
     <div className="w-full max-w-sm">
-      <div className="mb-6 flex justify-end">
-        <LanguageSwitcher />
-      </div>
-
       <div className="mb-8 text-center">
         <h1 className="text-2xl font-bold text-slate-50 mb-1">
           {t("auth.registerTitle")}
@@ -32,7 +29,11 @@ function RegisterForm() {
         <p className="text-slate-400 text-sm">{t("auth.registerSubtitle")}</p>
       </div>
 
-      <form action={action} className="space-y-4">
+      <form
+        action={action}
+        className="space-y-4"
+        onSubmit={() => setSubmittedPassword(password)}
+      >
         <input type="hidden" name="returnUrl" value={returnUrl} />
 
         <div>
@@ -93,12 +94,20 @@ function RegisterForm() {
             name="password"
             type="password"
             autoComplete="new-password"
-            minLength={PASSWORD_MIN_LENGTH}
             required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            aria-describedby="register-password-requirements"
+            aria-invalid={state.errors?.password ? true : undefined}
+            data-testid="register-password-input"
             className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
           />
           {state.errors?.password && (
-            <p className="mt-1 text-xs text-red-400">
+            <p
+              id="register-password-error"
+              role="alert"
+              className="mt-1 text-xs text-red-400"
+            >
               {t(state.errors.password[0] as Parameters<typeof t>[0]) ??
                 state.errors.password[0]}
             </p>
@@ -117,18 +126,30 @@ function RegisterForm() {
             name="confirmPassword"
             type="password"
             autoComplete="new-password"
-            minLength={PASSWORD_MIN_LENGTH}
             required
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            aria-describedby="register-password-requirements"
+            aria-invalid={state.errors?.confirmPassword ? true : undefined}
+            data-testid="register-confirm-password-input"
             className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
           />
           {state.errors?.confirmPassword && (
-            <p className="mt-1 text-xs text-red-400">
+            <p id="register-confirm-password-error" role="alert" className="mt-1 text-xs text-red-400">
               {t(
                 state.errors.confirmPassword[0] as Parameters<typeof t>[0],
               ) ?? state.errors.confirmPassword[0]}
             </p>
           )}
         </div>
+
+        <PasswordRequirements
+          id="register-password-requirements"
+          password={password}
+          confirmation={confirmPassword}
+          submittedPassword={submittedPassword}
+          serverError={state.errors?.password?.[0] ?? null}
+        />
 
         {/* Preferred locale */}
         <div>

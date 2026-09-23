@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-import { LanguageSwitcher } from "@/components/language-switcher";
 import { useI18n, type TranslationKey } from "@/lib/i18n/useI18n";
 
 export default function ForgotPasswordPage() {
@@ -41,9 +40,6 @@ export default function ForgotPasswordPage() {
 
   return (
     <div className="w-full max-w-sm">
-      <div className="mb-6 flex justify-end">
-        <LanguageSwitcher />
-      </div>
       <div className="mb-8 text-center">
         <h1 className="mb-1 text-2xl font-bold text-slate-50">
           {t("auth.forgotPasswordTitle")}
