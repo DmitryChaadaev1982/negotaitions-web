@@ -4,8 +4,10 @@ Negotiation-training product: case-based sessions, event lobbies, recording,
 transcription, enhancement, and AI debrief. Public site and authenticated
 platform share one Next.js application.
 
-Current documentation baseline (this branch) starts from production candidate
-`308c1c74eb355724fd3377354c07d9821a0cb3f1`.
+The documentation baseline was reconciled from production candidate
+`308c1c74eb355724fd3377354c07d9821a0cb3f1`. That SHA is the baseline
+starting point. Current task navigation starts at
+[`docs/README.md`](docs/README.md).
 
 ## Start here
 
@@ -13,6 +15,7 @@ Current documentation baseline (this branch) starts from production candidate
 - Architecture: [`docs/architecture/README.md`](docs/architecture/README.md)
 - Code map: [`docs/architecture/code-map.md`](docs/architecture/code-map.md)
 - Documentation governance: [`docs/DOCUMENTATION-GOVERNANCE.md`](docs/DOCUMENTATION-GOVERNANCE.md)
+- Engineering change governance: [`docs/testing/engineering-workflow.md`](docs/testing/engineering-workflow.md)
 - Native agent routing: [`AGENTS.md`](AGENTS.md)
 
 Historical audits, stage manifests, and checkpoints:

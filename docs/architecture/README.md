@@ -42,9 +42,11 @@ load stage history as default context.
 | AI analysis, publication, recipient privacy, debrief | `08-ai-analysis-and-debrief.md` | `09-security-and-access-control.md`, `04-session-event-flow.md` |
 | Accounts, email, roles, authorization | `09-security-and-access-control.md`, `account-security-email-flows.md` | `email-delivery-foundation.md`, `email-runtime-and-yandex-cloud.md`, `email-retention-suppression.md` |
 | Data retention and database changes | `10-data-storage-and-retention.md` | `02-domain-model.md`, `11-deployment-architecture.md`, `docs/operations/personal-data-erasure-runbook.md` |
+| Database migration release and recovery | `11-deployment-architecture.md` | `docs/operations/deployment-runbook.md`, `10-data-storage-and-retention.md` |
 | Deployment and external services | `11-deployment-architecture.md`, `12-external-systems.md` | `docs/operations/deployment-runbook.md` |
 | Test selection and E2E fixtures | `docs/testing/validation-checklist.md`, `docs/testing/e2e-strategy.md` | `docs/testing/observer-test-execution-policy.md` |
-| Engineering workflow, evals, validation ladder | `docs/testing/engineering-workflow.md`, `docs/testing/validation-checklist.md` | `docs/testing/eval-registry.json` (`npm run eval:registry:check`), `.cursor/skills/validate-wave/SKILL.md`, `docs/testing/agent-model-routing.md`, `docs/requirements/QUALITY-AND-ACCEPTANCE.md` |
+| Engineering / agent change governance | `docs/testing/engineering-workflow.md` | `docs/DOCUMENTATION-GOVERNANCE.md`, `docs/testing/validation-checklist.md`, `docs/testing/agent-model-routing.md` |
+| Evals and validation commands | `docs/testing/validation-checklist.md`, `docs/testing/engineering-workflow.md` | `docs/testing/eval-registry.json` (`npm run eval:registry:check`), `.cursor/skills/validate-wave/SKILL.md`, `docs/requirements/QUALITY-AND-ACCEPTANCE.md` |
 
 Read `code-map.md` before changing source and follow its linked document/test
 entries.

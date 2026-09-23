@@ -15,6 +15,11 @@
   rehash does not write history. Nullable `User.passwordChangeRequiredAt` has
   no default and no backfill, so existing rows stay null, and the column is
   not enforced.
+- Local seed (`prisma/seed.ts`, `lib/db/seed-target-safety.ts`) provisions
+  disposable demo data only. It refuses remote targets, query or fragment
+  URI overrides, and the preserved `negotiations` database. The full
+  contract is in `09-security-and-access-control.md`. Seed is not password
+  reset authority.
 - Business entities: cases, sessions, events, participants.
 - Runtime artifacts: recordings, transcripts, transcript segments, AI analyses.
   `AiAnalysis.inputFingerprint` is a nullable SHA-256 of the canonical

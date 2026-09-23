@@ -7,14 +7,26 @@ Governance owner: [`DOCUMENTATION-GOVERNANCE.md`](DOCUMENTATION-GOVERNANCE.md).
 
 ## Where to start
 
-1. Product contract: [`requirements/PRODUCT-REQUIREMENTS.md`](requirements/PRODUCT-REQUIREMENTS.md)
-2. Architecture index: [`architecture/README.md`](architecture/README.md)
-3. Implementation navigation: [`architecture/code-map.md`](architecture/code-map.md)
-4. Quality and acceptance: [`requirements/QUALITY-AND-ACCEPTANCE.md`](requirements/QUALITY-AND-ACCEPTANCE.md)
-5. Governance: [`DOCUMENTATION-GOVERNANCE.md`](DOCUMENTATION-GOVERNANCE.md)
+Read this hub, then the rows for the task. Each row is navigation. The
+linked document owns the rule.
 
-Native engineering routing is [`AGENTS.md`](../AGENTS.md). It is not a
-second documentation owner.
+| Task | Canonical document |
+| --- | --- |
+| Product requirements | [`requirements/PRODUCT-REQUIREMENTS.md`](requirements/PRODUCT-REQUIREMENTS.md) |
+| Quality and acceptance | [`requirements/QUALITY-AND-ACCEPTANCE.md`](requirements/QUALITY-AND-ACCEPTANCE.md) |
+| System / application architecture | [`architecture/README.md`](architecture/README.md) |
+| Security / auth / account | [`architecture/09-security-and-access-control.md`](architecture/09-security-and-access-control.md), [`architecture/account-security-email-flows.md`](architecture/account-security-email-flows.md) |
+| Database / Prisma / migrations | [`architecture/10-data-storage-and-retention.md`](architecture/10-data-storage-and-retention.md), [`architecture/11-deployment-architecture.md`](architecture/11-deployment-architecture.md) |
+| Email / durable outbox | [`architecture/email-delivery-foundation.md`](architecture/email-delivery-foundation.md), [`architecture/account-security-email-flows.md`](architecture/account-security-email-flows.md), [`architecture/email-runtime-and-yandex-cloud.md`](architecture/email-runtime-and-yandex-cloud.md) |
+| Deploy / release / recovery | [`operations/deployment-runbook.md`](operations/deployment-runbook.md), [`architecture/11-deployment-architecture.md`](architecture/11-deployment-architecture.md) |
+| Environment / config | [`architecture/11-deployment-architecture.md`](architecture/11-deployment-architecture.md), [`architecture/email-runtime-and-yandex-cloud.md`](architecture/email-runtime-and-yandex-cloud.md) |
+| Code ownership | [`architecture/code-map.md`](architecture/code-map.md) |
+| Engineering / agent working contract | [`testing/engineering-workflow.md`](testing/engineering-workflow.md) |
+| Documentation ownership | [`DOCUMENTATION-GOVERNANCE.md`](DOCUMENTATION-GOVERNANCE.md) |
+
+Native engineering routing is [`AGENTS.md`](../AGENTS.md). It points here.
+It is not a second documentation owner. Temporary investigation notes and
+untracked local helpers are not canonical.
 
 ## Authority model
 
@@ -27,7 +39,7 @@ are used in `DOCUMENTATION-GOVERNANCE.md` and `architecture/README.md`.
 | **B. Current product requirement contract** | Active intended product and quality requirements | `requirements/PRODUCT-REQUIREMENTS.md`, `requirements/QUALITY-AND-ACCEPTANCE.md` |
 | **C. Navigation / traceability** | Maps requirements, architecture, code, and tests. Does not redefine behavior | This file, `architecture/README.md`, `architecture/code-map.md`, `DOCUMENTATION-GOVERNANCE.md` |
 | **D. Accepted decision rationale** | Explains **why** a decision was made. Does **not** override A or B | `decisions/`, `architecture/adr/` |
-| **E. Current supporting material** | Operations, testing, branding, unresolved findings, agent routing | `operations/`, `testing/`, `branding/`, `voximplant/` (scenario JS is a runtime artifact), `FINDINGS.md`, `AGENTS.md` |
+| **E. Current supporting material** | Operations, testing, engineering change governance, branding, unresolved findings, agent routing | `operations/`, `testing/` (`engineering-workflow.md` owns change governance), `branding/`, `voximplant/` (scenario JS is a runtime artifact), `FINDINGS.md`, `AGENTS.md` |
 | **F. Historical non-authoritative material** | Provenance only. Never required reading for current architecture | `history/**` |
 
 Current implementation does not automatically redefine a product
@@ -47,7 +59,8 @@ requirement. When A and B diverge, keep B and record the conflict in
 | Session/Event lifecycle | A | `architecture/04-session-event-flow.md` |
 | Recording/transcript/enhancement | A | `architecture/06-recording-transcription-pipeline.md` |
 | AI analysis and publication | A | `architecture/08-ai-analysis-and-debrief.md` |
-| Deployment/runtime | A / E | `architecture/11-deployment-architecture.md`, `operations/deployment-runbook.md` |
+| Deployment/runtime/recovery | A / E | `architecture/11-deployment-architecture.md`, `operations/deployment-runbook.md` |
+| Engineering change governance | E | `testing/engineering-workflow.md` |
 | Unresolved conflicts | E | `FINDINGS.md` |
 
 ## Historical (non-authoritative)

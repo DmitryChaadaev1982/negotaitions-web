@@ -153,14 +153,20 @@
   generation, revoke sessions, write history, or queue `PASSWORD_CHANGED`.
   A bcrypt candidate longer than 72 UTF-8 bytes is not upgraded, because
   bcrypt did not prove the suffix. Nullable `User.passwordChangeRequiredAt`
-  is still not enforced, and there is no administrator password reset.
-  The canonical owners are `lib/auth/password-policy.ts`,
+  is stored and not enforced. There is no administrator password reset.
+  Administrator BLOCKED and REJECTED transitions do not delete `UserSession`
+  rows. Those three behaviors are deferred, not current enforcement.
+
+  Credential authorities stay separate. An authenticated session, proof of
+  the current password, and a valid reset token do not substitute for one
+  another. Facilitator or admin authorization does not become password-reset
+  authority. Seed does not become either. The mutation owner is
+  `lib/auth/credential-mutation.ts`. Policy, hashing, history, and session
+  revocation owners are `lib/auth/password-policy.ts`,
   `lib/auth/password-policy-constants.ts`,
   `lib/auth/common-password-blocklist.ts`, `lib/auth/crypto.ts`,
-  `lib/auth/password-rehash.ts`, `lib/auth/password-history.ts`,
-  `lib/auth/session-revocation.ts`, and `lib/auth/credential-mutation.ts`.
-  Administrator BLOCKED and REJECTED transitions do not delete `UserSession`
-  rows.
+  `lib/auth/password-rehash.ts`, `lib/auth/password-history.ts`, and
+  `lib/auth/session-revocation.ts`.
 - The reset page uses a no-referrer policy. Local message preview is
   development-only, fake-provider-only, exact-local-origin-only, and
   ACTIVE-admin-only.
@@ -240,6 +246,11 @@ demo data.
   `prisma/seed-demo.ts`. Seed logs the masked target and whether that user was
   created or already present. It does not log the fixture password, a
   verifier, or the connection string.
+
+Tools that can mutate persistent state validate the target they will write.
+`NODE_ENV` is not that authorization. This seed guard is the current
+example. Other scripts are not required to copy
+`lib/db/seed-target-safety.ts`.
 
 ## Source Notes
 

@@ -39,7 +39,8 @@ the operator's actual project `.env` to set the canonical timeout:
 SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000
 ```
 
-Do not copy this into live production env from a documentation pass.
+The same value is required in both production env files. Changing those
+live files is a release action, not a documentation edit.
 Canonical wins over the legacy `DEBRIEF_AUTO_CLOSE_GRACE_MS` alias.
 
 ## Systemd Templates
@@ -102,11 +103,11 @@ The app can be rolled back without dropping Stage 3.10 additive schema objects.
   is reconstructed from current DB state on every sweep, including the first
   sweep after process or server return. `OnBootSec=15s` makes that first
   evaluation prompt after the timer is activated.
-- Stage 3.18A production deploy must set these three variables explicitly in
-  **both** `/var/www/negotaitions/app/.env.production` (application
-  request-driven reconciliation) and `/etc/negotaitions/env.production`
-  (this maintenance unit). Canonical wins over the legacy alias; do not
-  edit live env from this documentation pass:
+- Both production env files must set these three variables explicitly:
+  `/var/www/negotaitions/app/.env.production` (application) and
+  `/etc/negotaitions/env.production` (this maintenance unit). Canonical
+  wins over the legacy alias. Architecture owner:
+  `docs/architecture/11-deployment-architecture.md`.
   - `SESSION_DEBRIEF_EMPTY_CLOSE_MS=60000`
   - `SESSION_DEBRIEF_MAX_DURATION_MS=7200000`
   - `SESSION_ABANDONED_CLOSE_MS=10800000`

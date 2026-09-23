@@ -261,6 +261,23 @@ does not, because the secret did not change. Nullable
 accounts. Nothing in the current login, self-change, or reset flow reads it
 to force a rotation.
 
+## Password security status
+
+Implemented current state: Argon2id for new credentials at the locked
+profile above; bcrypt `$2a$` / `$2b$` / `$2y$` verification including cost
+10 and cost 12; length 10–128 Unicode code points; whole-password
+common-password rejection; history of the previous five verifiers;
+self-service change keeps the current session; email reset revokes every
+session. Owners are the modules listed above.
+
+Deferred, and not current behavior:
+
+- enforcement of `passwordChangeRequiredAt`;
+- administrator-initiated password reset;
+- deletion of active `UserSession` rows on administrator BLOCKED or
+  REJECTED transitions. Those transitions already revoke outstanding reset
+  tokens and cancel claimable reset messages.
+
 Administrator BLOCKED and REJECTED transitions revoke outstanding reset tokens
 and cancel claimable reset messages. They do not delete `UserSession` rows.
 

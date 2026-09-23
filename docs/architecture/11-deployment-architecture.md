@@ -55,6 +55,13 @@
   values must remain aligned. `EMAIL_PROVIDER` and `EMAIL_DELIVERY_ENABLED`
   are process-local delivery gates and may differ as documented in
   `email-runtime-and-yandex-cloud.md`.
+- Production environment files are authoritative. A release classifies each
+  required key as `KEEP`, `ADD`, `CHANGE`, or `RETIRE` and applies that
+  delta. `.env.example`, a developer `.env`, and a machine snapshot do not
+  replace production config. Development defaults, test configuration,
+  production runtime config, secrets, and provider credentials stay
+  separate. Local web-process email can stay safe with
+  `EMAIL_DELIVERY_ENABLED=false` and `EMAIL_PROVIDER=disabled`.
 - If normal admin-health assembly fails, its outer route catch returns a
   literal environment-independent unavailable contract; it never resolves or
   serializes endpoint, webhook override, parser, or exception details.
@@ -131,27 +138,118 @@ Durable operational rule. Operator procedures live in
   legacy-session terminal normalization CLI guard.
 - This document does not introduce new deploy commands; it captures current documented model only.
 
-### Recording attempt fencing rollout order
+## Database release governance
 
-RC4 is already active in Voximplant with build marker
-`main-room-recording-reconciliation-2026-08-12-rc4`. The remaining rollout is:
+Operator procedure: `docs/operations/deployment-runbook.md`. Executable
+guard: `lib/prisma-production-migration-overlay.ts` and
+`scripts/ops/prisma-production-migration-overlay.ts`. This section states
+the invariants. It does not add a second migrator.
 
-1. Preserve/export the active RC4 source/build and require zero active provider
-   or application processing work.
-2. Apply the additive nullable `Recording.recordingAttemptId` migration and its
-   unique index through the guarded production overlay.
-3. Deploy the application that persists attempt identity before dispatch,
-   accepts legacy RC2 callbacks only for legacy NULL-attempt rows, and supports
-   RC3/RC4 exact-attempt control.
-4. Confirm the existing scenario build marker and exact-attempt registration/status
-   telemetry before relying on reconciliation.
+**Database identity** is established before mutation: the host, port, and
+database name of the `DATABASE_URL` the command will use. The overlay
+refuses a missing URL without printing it (`REFUSE_DATABASE_URL_MISSING`)
+and refuses a database with no Prisma history
+(`REFUSE_EMPTY_OR_NO_HISTORY`). It has no separate production-name
+allowlist. Connecting to the wrong URL is an operator error the history
+guard does not fully replace.
 
-Do not upload Voximplant again in this rollout. RC4 retains the legacy RC2
-message, callback, and server-stop path used by application `601704...`, so a
-quiescent application rollback may leave RC4 active. Rollback keeps the
-nullable column/index; historical NULL-attempt rows remain legacy-only. Exact
-preflight predicates and rollback steps are in
-`docs/operations/deployment-runbook.md`.
+**Backup** is required before a material database deployment, and the
+backup must be verified (for a custom-format dump, a readable restore
+list). Yandex Managed PostgreSQL backup is the production mechanism. The
+overlay does not create or check that backup. An empty local `.dump`
+placeholder is not a backup.
+
+**History classification** uses these names. The overlay codes are the
+implementation:
+
+| Class | Meaning in this repository |
+| --- | --- |
+| `APPLIED_EXPECTED` | Active-chain migrations already present as successful history rows |
+| `PENDING_EXPECTED` | Actual pending equals `EXPECTED_RELEASE_PENDING_MIGRATIONS` and those names have no history row yet (`PRE_DEPLOY_ALLOW`) |
+| `LEGITIMATE_LEGACY_VARIANT` | Admitted lineage `LEGACY_PROGRESS_APPLIED` or `LEGACY_PROGRESS_NEVER_APPLIED`. The June pre-squash pair is required on every admitted lineage. A known archive file is not automatically a required row |
+| `UNKNOWN_DIVERGENCE` | Unrecognized migration-history or schema-lineage divergence. Overlay code `REFUSE_UNKNOWN_LEGACY_DIVERGENCE` (history rows outside the admitted lineage, duplicate history rows, or an undeclared legacy archive). Related lineage inconsistency is `REFUSE_LEGACY_LINEAGE_INCONSISTENT`. Stop normal deployment; recovery is separate |
+
+Other overlay `REFUSE_*` codes also stop normal deployment. They are not
+`UNKNOWN_DIVERGENCE`. Implemented examples include an unexpected or missing
+pending set (`REFUSE_UNEXPECTED_PENDING_MIGRATIONS`,
+`REFUSE_MISSING_EXPECTED_PENDING`), a checksum or artifact mismatch
+(`REFUSE_RELEASE_MIGRATION_CHECKSUM_MISMATCH`,
+`REFUSE_LEGACY_CHECKSUM_MISMATCH`, `REFUSE_ARCHIVE_HASH_MISMATCH`), missing
+required context (`REFUSE_DATABASE_URL_MISSING`,
+`REFUSE_EMPTY_OR_NO_HISTORY`), and an invalid release state
+(`REFUSE_DEPLOY_CONFIRMATION_REQUIRED`,
+`REFUSE_RELEASE_MIGRATION_INCONSISTENT`). Stop for that code. The overlay
+source is the code list; this paragraph is not a second taxonomy.
+
+**Exact pending set and checksum.** Each authorized migration release
+records the migration name, the raw `migration.sql` bytes, their SHA256,
+the expected schema effect, and the exact pending set. `POST_DEPLOY_SAFE`
+requires empty pending, the successful-row predicate (`finished_at` set,
+`rolled_back_at` null, valid `applied_steps_count`, logs free of
+failure/P30xx evidence), and a database checksum equal to the active
+artifact. Name presence is not authority.
+
+**Clean database and production-lineage rehearsal.** A clean database
+proves the active chain with repository-installed Prisma `migrate deploy`.
+When production lineage risk is material, also rehearse on a disposable
+clone that carries realistic production history, using the guarded overlay.
+A clean database can miss legacy-history failures. Leave the preserved
+reference database unchanged. A trivial migration with no lineage risk does
+not require the clone.
+
+**Normal command.** New, empty, CI, and other non-legacy databases use
+`npx --no-install prisma migrate deploy`. The Yandex POC production
+database uses `npm run prisma:production:status` and
+`npm run prisma:production:deploy -- --confirm-legacy-production-history`.
+That overlay then runs repository-installed Prisma `migrate deploy` for the
+admitted set. Routine production deployment does not use `prisma migrate
+reset`, `prisma db push`, ad-hoc `prisma migrate resolve`, manual
+`_prisma_migrations` edits, or arbitrary SQL lineage repair.
+
+**Normal deployment versus recovery.** Normal deployment has a known
+target, a known candidate, a known migration and environment delta, and an
+expected state. Unexpected history, schema divergence, candidate mismatch,
+authority mismatch, partial apply, or unknown state stops that path.
+Recovery is a separate task with its own evidence, scope, authority,
+validation, and recovery procedure.
+
+### Current release evidence
+
+This subsection is the current pending migration, not a permanent allowlist.
+When `EXPECTED_RELEASE_PENDING_MIGRATIONS` changes, update or archive it.
+
+`EXPECTED_RELEASE_PENDING_MIGRATIONS` is exactly
+`20260923065420_add_password_history_and_password_change_required_at`.
+Raw `prisma/migrations/20260923065420_add_password_history_and_password_change_required_at/migration.sql`
+SHA256:
+
+`bd71842795ec8e21b7de943a3f18b3dbf4a9e41e3d4c0d9b495708129bb9e885`
+
+Schema effect: create `PasswordHistory` and add nullable
+`User.passwordChangeRequiredAt`. No backfill. No change to
+`User.passwordHash`. `passwordChangeRequiredAt` stays unenforced. That hash
+identifies this artifact only.
+
+### Recording attempt fencing
+
+Current architecture: `Recording.recordingAttemptId` is the persisted attempt
+identity. Completed migration
+`20260812111000_add_recording_attempt_fencing` added the nullable column and
+unique index. RC4 is the active Voximplant scenario, build marker
+`main-room-recording-reconciliation-2026-08-12-rc4`. The application persists
+attempt identity before dispatch, accepts legacy RC2 callbacks only for
+legacy NULL-attempt rows, and uses RC3/RC4 exact-attempt control. RC4 retains
+the legacy RC2 message, callback, and server-stop path used by application
+`601704...`. A quiescent application rollback of that release may leave RC4
+active and leaves the nullable column and index in place. Historical
+NULL-attempt rows remain legacy-only.
+
+Historical note: that August 2026 rollout is completed. The point-in-time
+procedure, including its then-remaining order, is in
+[`docs/history/remediation/implementation/stage-3-13e-debrief-recording-reconciliation.md`](../history/remediation/implementation/stage-3-13e-debrief-recording-reconciliation.md).
+The Stage 3.13E example in
+[`docs/operations/deployment-runbook.md`](../operations/deployment-runbook.md)
+preserves the same completed order. Neither document is a current rollout.
 
 ## Constraints
 
@@ -188,6 +286,8 @@ preflight predicates and rollback steps are in
   The current release preflight compares pending migrations with
   `EXPECTED_RELEASE_PENDING_MIGRATIONS`, which is exactly
   `20260923065420_add_password_history_and_password_change_required_at`.
+  The raw artifact SHA256 for that file is recorded under **Current release
+  evidence** above and is not a checksum for later migrations.
   Pre-deploy pending must be exactly that password-security migration, and
   that migration must not already have a history row (`PRE_DEPLOY_ALLOW`).
   An extra pending migration, including a not-yet-applied historical
@@ -202,13 +302,13 @@ preflight predicates and rollback steps are in
   change `User.passwordHash`. After apply, explicit password changes write
   history; login rehash and policy behavior are specified in
   `09-security-and-access-control.md`. `passwordChangeRequiredAt` stays
-  unenforced. First-deploy order for the earlier provider-slot
-  migration remains: pre-migration checks that do not query the new table;
-  guarded overlay status; apply the admitted migration; verify migration
-  state; **POST-MIGRATION ONLY** inspect provider-slot rows/leases; then
-  continue normal readiness. On a database that has not yet applied that
-  historical migration, do not query `TranscriptEnhancementProviderSlot` before
-  the migration creates it.
+  unenforced. Historical first-deploy order for that completed provider-slot
+  migration, which is not Stage 3.13E and not the password-security migration:
+  pre-migration checks that do not query the new table; guarded overlay
+  status; apply that provider-slot migration; verify migration state;
+  **POST-MIGRATION ONLY** inspect provider-slot rows/leases; then continue
+  readiness. On a database that has not yet applied that migration,
+  do not query `TranscriptEnhancementProviderSlot` before the migration creates it.
 - Enhancement quiescence for a deployment hold is decided by current D1 state —
   `executionStatus`, `publicationEligible`, `runId` currentness, and
   `leaseExpiresAt` — plus unexpired `TranscriptEnhancementProviderSlot` leases.
@@ -254,6 +354,8 @@ resolution shim.
 - Historical Vox Yandex runbook: `docs/history/design-packets/voximplant/yandex-deployment-runbook.md`
 - `docs/architecture/10-data-storage-and-retention.md` (recording bucket
   lifecycle is operator Object Storage configuration, not a deploy script)
+- `lib/prisma-production-migration-overlay.ts`
+- `scripts/ops/prisma-production-migration-overlay.ts`
 - `scripts/ops/stage-3-10-maintenance.ts`
 - `deploy/systemd/negotiations-stage310-maintenance.service`
 - `deploy/systemd/negotiations-stage310-maintenance.timer`

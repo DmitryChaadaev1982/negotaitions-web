@@ -36,6 +36,10 @@ models, run formal validation, or progress a release. EO owns those.
    [`docs/requirements/PRODUCT-REQUIREMENTS.md`](docs/requirements/PRODUCT-REQUIREMENTS.md).
    Documentation ownership:
    [`docs/DOCUMENTATION-GOVERNANCE.md`](docs/DOCUMENTATION-GOVERNANCE.md).
+   For a non-trivial change, also read
+   [`docs/testing/engineering-workflow.md`](docs/testing/engineering-workflow.md).
+   It describes bounded change, review, and release evidence. It is not a
+   second lifecycle.
 3. Read [`docs/architecture/code-map.md`](docs/architecture/code-map.md), then
    inspect the mapped source and existing tests before proposing or changing
    behavior.

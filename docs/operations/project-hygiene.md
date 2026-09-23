@@ -7,7 +7,9 @@ This document defines durable repository hygiene rules for NegotAItions.
 Commit only durable source and documentation:
 - Application source code, tests, Prisma schema/migrations, and configuration under version control.
 - Durable docs under `docs/*`.
-- Sanitized templates (for example, `.env.example`).
+- Sanitized templates (for example, `.env.example`). `.env.example` is a
+  template. It is not production configuration. Production env authority is
+  `docs/architecture/11-deployment-architecture.md`.
 
 Do not commit generated, temporary, or one-off forensic outputs.
 

@@ -15,7 +15,7 @@ The same six roles are used in `docs/README.md` and
 | **B. Current product requirement contract** | Active intended product and quality requirements | `requirements/PRODUCT-REQUIREMENTS.md`, `requirements/QUALITY-AND-ACCEPTANCE.md` |
 | **C. Navigation / traceability** | Maps requirements, architecture, code, and tests. Does not redefine behavior | `docs/README.md`, `architecture/README.md`, `architecture/code-map.md`, this file |
 | **D. Accepted decision rationale** | Explains why a decision was made. Does **not** override A or B | `decisions/`, `architecture/adr/` |
-| **E. Current supporting material** | Operations, testing, branding, unresolved findings, agent routing | `operations/`, `testing/`, `branding/`, `voximplant/` scenario ops, `FINDINGS.md`, `AGENTS.md` |
+| **E. Current supporting material** | Operations, testing, engineering change governance, branding, unresolved findings, agent routing | `operations/`, `testing/` (change governance: `testing/engineering-workflow.md`), `branding/`, `voximplant/` scenario ops, `FINDINGS.md`, `AGENTS.md` |
 | **F. Historical non-authoritative material** | Provenance only | `history/**` |
 
 `architecture/adr/` lives next to architecture chapters for discoverability.
@@ -54,6 +54,8 @@ requirement. Record unresolved disagreement in `FINDINGS.md`.
 | Unresolved baseline findings | `FINDINGS.md` |
 | Operator procedures | `operations/deployment-runbook.md` and sibling runbooks |
 | Test strategy and command catalog | `testing/validation-checklist.md`, `testing/e2e-strategy.md` |
+| Engineering / agent change governance | `testing/engineering-workflow.md` |
+| Production release and recovery procedure | `operations/deployment-runbook.md` (architecture invariants: `architecture/11-deployment-architecture.md`) |
 
 The numbered architecture chapters are the adapted PRODUCT-ARCHITECTURE /
 RUNTIME-FLOWS / SECURITY / DATA / INTEGRATIONS / DEPLOYMENT topology.
@@ -104,6 +106,19 @@ Do not create parallel current documents with the same topic.
     again become required reading for understanding CURRENT architecture.
 
 12. Documentation changes must preserve valid internal links after moves.
+
+13. Durable requirements and architecture documents separate
+    **implemented current state** from **deferred**, **planned**,
+    **target**, and **future** behavior. Describe future design as future.
+    When a feature is intentionally deferred, keep that status explicit.
+    One concrete current case is password security in
+    `requirements/PRODUCT-REQUIREMENTS.md`,
+    `architecture/09-security-and-access-control.md`, and
+    `architecture/account-security-email-flows.md`: Argon2id, bcrypt
+    compatibility, the 10–128 policy, history depth five, and the common
+    password rule are implemented; `passwordChangeRequiredAt` enforcement,
+    administrator reset, and BLOCKED/REJECTED session revocation are
+    deferred.
 
 ## Repository-specific rules
 

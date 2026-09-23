@@ -8,7 +8,8 @@ It is not a lifecycle sequencer. Native Agent may run focused tests during
 implementation. EO owns formal validation timing after UAT and release
 validation. Do not invent another L1–L4 ladder.
 
-How humans think about change impact and eval classes is in
+How humans think about change impact, eval classes, evidence reuse, and
+review stop conditions is in
 [`engineering-workflow.md`](./engineering-workflow.md). That document is
 descriptive. EO is the executable authority.
 

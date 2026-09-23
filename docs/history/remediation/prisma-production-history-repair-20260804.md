@@ -1,5 +1,12 @@
 # Prisma Production History Repair - 2026-08-04
 
+**Status: historical evidence (role F).** This file records the 2026-08-04
+lineage repair and the later local BUG02 rehearsal. Statements here about
+"current release" mean that rehearsal's candidate. The live pending set is
+`EXPECTED_RELEASE_PENDING_MIGRATIONS` in
+`lib/prisma-production-migration-overlay.ts`, described in
+`docs/architecture/11-deployment-architecture.md`.
+
 ## Root Cause
 
 Production contains successful historical Prisma migration rows whose directories were later deleted from the repository. Known archived artifacts are not automatically required rows on every production lineage. Historical DB-only migrations are accepted only as explicitly admitted lineages with verified checksum and schema-effect evidence. Unknown successful rows and unknown lineage combinations still fail closed.

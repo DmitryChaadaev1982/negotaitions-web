@@ -327,15 +327,80 @@ Canonical production sequence remains:
 `npm ci` → migrate deploy (installed Prisma / production overlay below) →
 `npm run prisma:generate` → `npm run build` → service restart.
 
-The existing Yandex POC production database has legitimate historical DB-only migration rows archived outside `prisma/migrations`. Known archived artifacts are not automatically required on every production lineage. Historical DB-only migrations are accepted only as explicitly admitted lineages with verified checksum and schema-effect evidence; unknown successful rows and unknown lineage combinations still fail closed. The June pre-squash pair is required on every admitted lineage. `20260810120000_add_ai_analysis_progress` is a known lineage variant documented in `docs/operations/prisma-production-history-repair-20260804.md`. For that database only, do not block on ordinary Prisma history divergence. Use the guarded production overlay:
+The Yandex POC production database has legitimate historical migration rows whose directories now live in `prisma/legacy-production-history/`, outside the active `prisma/migrations` chain. Plain Prisma status on that database reports those archived directories as missing. That report is expected for an admitted lineage. It is not permission to ignore divergence. The overlay admits only the June pre-squash pair plus the explicit variant `20260810120000_add_ai_analysis_progress` (`LEGACY_PROGRESS_APPLIED` or `LEGACY_PROGRESS_NEVER_APPLIED`). Historical evidence: [`docs/history/remediation/prisma-production-history-repair-20260804.md`](../history/remediation/prisma-production-history-repair-20260804.md). Unknown successful rows and unknown lineage combinations fail closed. For that production database, use the guarded overlay:
 
 - `npm run prisma:production:status`
 - `npm run prisma:production:deploy -- --confirm-legacy-production-history`
 - `npm run prisma:production:status`
 
-The overlay must refuse empty, development, or mismatched databases. Do not manually edit `_prisma_migrations` and do not use `prisma migrate resolve` for this repair.
+The overlay refuses a missing `DATABASE_URL` without printing it, and refuses a database with no Prisma history. It does not authorize a development database that lacks the admitted legacy rows. Do not manually edit `_prisma_migrations` and do not use `prisma migrate resolve` for this repair.
 
-## Stage 3.13E deployment preflight and release order
+## Normal deployment and recovery
+
+Invariants: [`docs/architecture/11-deployment-architecture.md`](../architecture/11-deployment-architecture.md) (Database release governance). Change-governance summary: [`docs/testing/engineering-workflow.md`](../testing/engineering-workflow.md).
+
+Normal deployment has a known target, a known candidate SHA, a known migration and environment delta, an expected database state, and deterministic gates.
+
+Before a material database mutation, record database identity (host, port, and database name of the `DATABASE_URL` that will be used) and a verified backup. The overlay does not create that backup and does not print the URL. Yandex Managed PostgreSQL backup is the production mechanism. An empty local `.dump` placeholder is not a backup.
+
+Classify history before apply:
+
+- applied migrations that match the expected active chain;
+- the exact pending set (`PRE_DEPLOY_ALLOW` only when pending equals `EXPECTED_RELEASE_PENDING_MIGRATIONS`);
+- an admitted legacy lineage variant;
+- unknown migration-history or schema-lineage divergence (`REFUSE_UNKNOWN_LEGACY_DIVERGENCE`; related lineage inconsistency is `REFUSE_LEGACY_LINEAGE_INCONSISTENT`).
+
+Unknown divergence stops this procedure. Repair is a separate recovery task. It means an unrecognized migration-history or schema-lineage divergence, not every overlay refusal.
+
+Other overlay `REFUSE_*` results also stop normal deployment, for their own reason. They include an unexpected or missing pending set, a checksum or artifact mismatch, missing required evidence, and an invalid release state. The code in `lib/prisma-production-migration-overlay.ts` is the classification. This list is not a second taxonomy.
+
+Clean databases, development databases, CI, and new environments use repository-installed `npx --no-install prisma migrate deploy` and `npx --no-install prisma migrate status`. The Yandex POC production database uses the overlay above, which applies the admitted set through that same Prisma `migrate deploy`.
+
+Routine production deployment does not use `prisma migrate reset`, `prisma db push`, ad-hoc `prisma migrate resolve`, manual `_prisma_migrations` edits, or arbitrary SQL lineage repair.
+
+When production lineage risk is material, prove the migration on a clean database and rehearse it on a disposable clone of production lineage. Leave the preserved reference database unchanged. A trivial migration with no lineage risk does not require the clone.
+
+Recovery — unexpected history, schema divergence, candidate mismatch, authority mismatch, partial apply, or unknown state — has its own evidence, scope, authority, validation, and recovery steps.
+
+A release identifies the authorized target, candidate SHA, runtime delta, database delta, environment delta (`KEEP`, `ADD`, `CHANGE`, `RETIRE`), allowed and forbidden mutations, pre-deploy gate, deploy action, post-deploy gate, rollback or recovery boundary, and operator smoke. Approval of that envelope covers the commands inside it. It does not authorize a later unrelated production mutation.
+
+`POST_DEPLOY_SAFE` means the authorized migration is applied, the history checksum matches the active `migration.sql`, pending is empty, and the schema effect matches the architecture document.
+
+Production environment files are authoritative. Do not replace them from `.env.example`, a local `.env`, or a developer snapshot. Local email can run with `EMAIL_DELIVERY_ENABLED=false` and `EMAIL_PROVIDER=disabled`; see [`email-runtime-and-yandex-cloud.md`](../architecture/email-runtime-and-yandex-cloud.md).
+
+A documentation-only commit does not itself change runtime behavior. Deployment still names the exact Git SHA. Confirm runtime-affecting paths are unchanged between the accepted runtime candidate and a later documentation HEAD, or deploy the accepted runtime SHA.
+
+## Historical deployment examples
+
+Current deployment governance is **Normal deployment and recovery** above.
+`EXPECTED_RELEASE_PENDING_MIGRATIONS` in
+`lib/prisma-production-migration-overlay.ts` is current pending authority,
+recorded under Current release evidence in
+`docs/architecture/11-deployment-architecture.md`. The current migration is
+`20260923065420_add_password_history_and_password_change_required_at`
+(`PasswordHistory` and nullable `User.passwordChangeRequiredAt`). The
+examples below are completed history. They do not inherit today's pending
+set.
+
+### Stage 3.13E deployment preflight and release order
+
+Completed August 2026 stage. Commit `8a07354` (2026-08-12) added this order
+together with `20260812111000_add_recording_attempt_fencing`. The previous
+stage commit `c99b27d` (2026-08-11) added
+`20260811112000_stage_3_13e_session_sound_preference`.
+
+Schema effects of this stage:
+
+- `20260811112000_stage_3_13e_session_sound_preference` adds
+  `User.sessionSoundEnabled` boolean, backfills existing rows to true, then
+  sets default true and NOT NULL.
+- `20260812111000_add_recording_attempt_fencing` adds nullable
+  `Recording.recordingAttemptId` and unique index
+  `Recording_recordingAttemptId_key`. This preflight admitted that
+  recording-attempt migration.
+
+This stage does not create `TranscriptEnhancementProviderSlot` and does not
+create `PasswordHistory`. The rollback SHA below belongs to this stage.
 
 The active `neg-conf-main-room` Voximplant scenario is already RC4:
 
@@ -447,11 +512,10 @@ recovery, not to a deployment hold.
 compatibility configuration. It is not operational authority: an eligible job
 holding a valid lease is active work no matter how many seconds have elapsed.
 
-Do not inspect `TranscriptEnhancementProviderSlot` in this pre-migration
-block. On the first deploy of this candidate the table does not exist until
-`20260916090000_add_transcript_enhancement_provider_slots` is applied. That
-inventory query is **POST-MIGRATION ONLY** and appears after overlay deploy
-below.
+This Stage 3.13E preflight does not query
+`TranscriptEnhancementProviderSlot`. That table is created later by
+`20260916090000_add_transcript_enhancement_provider_slots`, in the completed
+provider-slot example after this stage.
 
 Active AI analysis execution:
 
@@ -494,37 +558,20 @@ Exact release order:
 5. Run `npm run prisma:production:status`.
 6. Run
    `npm run prisma:production:deploy -- --confirm-legacy-production-history`.
-   The overlay must explicitly admit exactly
-   `20260923065420_add_password_history_and_password_change_required_at`
-   (`EXPECTED_RELEASE_PENDING_MIGRATIONS`). The historical provider-slot
-   migration `20260916090000_add_transcript_enhancement_provider_slots` must
-   already be applied; any extra pending migration is refused. The overlay
-   must also refuse a missing expected pending set, undeclared archive/manifest
-   entries, unsuccessful archived rows, and missing or mismatched leftover
-   schema effects. After deploy, a later status check with the password-security
-   migration already applied and nothing pending is the safe no-op state.
+   This historical order admitted exactly
+   `20260812111000_add_recording_attempt_fencing`. It did not admit
+   `20260916090000_add_transcript_enhancement_provider_slots` and it did not
+   admit `20260923065420_add_password_history_and_password_change_required_at`.
 7. Run `npm run prisma:production:status` again and require up-to-date status.
-8. **POST-MIGRATION ONLY.** Inspect provider-slot inventory and live leases
-   only after the admitted migration has created the table:
-
-```sql
-SELECT "slotIndex", "jobId", "runId", "acquiredAt", "leaseExpiresAt"
-FROM "TranscriptEnhancementProviderSlot"
-WHERE "leaseExpiresAt" IS NOT NULL
-  AND "leaseExpiresAt" > NOW()
-ORDER BY "slotIndex";
-```
-
-Zero rows means no enhancement request is currently talking to the provider.
-Slot leases expire on their own, so a stale row is not an outage.
-
-9. Generate Prisma client and apply/check runtime permission normalization.
-10. Build/start the new application.
-11. Verify health, Session Debrief return/close behavior, and one disposable
+8. Generate Prisma client and apply/check runtime permission normalization.
+9. Build/start the new application.
+10. Verify health, Session Debrief return/close behavior, and one disposable
     room/recording/materials canary. Confirm the active Vox marker remains RC4.
 
-The migration is additive. Application rollback leaves it applied and leaves
-RC4 active. Stop the new runtime, repeat the transient-work preflight, restore
+`20260812111000_add_recording_attempt_fencing` is additive. Application
+rollback leaves it applied and leaves RC4 active. This rollback target is
+the Stage 3.13E application SHA, not the previous candidate for every later
+release. Stop the new runtime, repeat the transient-work preflight, restore
 application `601704bafde7da219fe1f1e37737e7769a09a6f9`, generate its Prisma
 client/build as required, normalize permissions, start it, and run the rollback
 canary. Do not reverse the migration or rewrite migration history. This is
@@ -537,6 +584,36 @@ does not block the rollback above because RC4 retains the RC2 protocol used by
 application `601704...`. It would be a rollback risk only if an RC3 scenario
 restore became mandatory; no exact RC3 artifact is currently recoverable.
 
+### Transcript enhancement provider slots (completed)
+
+September 2026 release, commit `4001238`. This is not Stage 3.13E and it is
+not the password-security release.
+
+`20260916090000_add_transcript_enhancement_provider_slots` creates
+`TranscriptEnhancementProviderSlot` and seeds slot indexes 0 through 9. On
+the first deploy of that candidate the table did not exist until that
+migration was applied. Databases that serve transcript enhancement already
+require it. It is not `EXPECTED_RELEASE_PENDING_MIGRATIONS`.
+
+Pre-migration checks for that candidate must not query
+`TranscriptEnhancementProviderSlot`. After
+`npm run prisma:production:deploy -- --confirm-legacy-production-history`
+admitted exactly that provider-slot migration:
+
+**POST-MIGRATION ONLY.** Inspect provider-slot inventory and live leases
+only after that migration has created the table:
+
+```sql
+SELECT "slotIndex", "jobId", "runId", "acquiredAt", "leaseExpiresAt"
+FROM "TranscriptEnhancementProviderSlot"
+WHERE "leaseExpiresAt" IS NOT NULL
+  AND "leaseExpiresAt" > NOW()
+ORDER BY "slotIndex";
+```
+
+Zero rows means no enhancement request is currently talking to the provider.
+Slot leases expire on their own, so a stale row is not an outage.
+
 ## Post-Deploy Checks
 
 - Verify service health via admin diagnostics and endpoint checks.
@@ -545,6 +622,10 @@ restore became mandatory; no exact RC3 artifact is currently recoverable.
 - For Stage 3.10 maintenance timer rollout: verify dry-run command first (`npm run maintenance:stage310 -- --task all --dry-run`) before enabling timer. That command is the raw `tsx` operational CLI (same ExecStart as the systemd unit), not a Next bundled server.
 
 ## Stage 3.10 Release Order (Exact)
+
+Historical Stage 3.10 order, including maintenance backfill and manual Vox
+scenario rollout. A current production release uses **Normal deployment and
+recovery** above.
 
 1. Confirm backups and rollback owner.
 2. Stage code at `/var/www/negotaitions/app` and install dependencies if the
@@ -591,11 +672,11 @@ Do not treat this as automatic deploy from app code. Existing facilitator relay 
 - `docs/operations/stage-3-10-maintenance-runbook.md`
 - `docs/history/checkpoints/testing/stage-3-10-session-lifecycle-coverage-gaps.md`
 
-## Future Stage 3.18A production env requirement
+## Session lifecycle env alignment
 
-Do not change live env files in this Cursor pass. At Stage 3.18A
-deployment, write the same three canonical variables into **both**
-independent runtime env files:
+Current requirement, owned architecturally by
+`docs/architecture/11-deployment-architecture.md`. Write the same three
+canonical variables into **both** independent runtime env files:
 
 | RUNTIME | ENV_SOURCE | REQUIRED |
 | --- | --- | --- |

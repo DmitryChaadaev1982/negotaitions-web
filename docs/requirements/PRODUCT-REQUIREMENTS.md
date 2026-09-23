@@ -1,8 +1,13 @@
 # Product Requirements
 
-This is the canonical **active product contract** for NegotAItions as of the
-documentation baseline at production candidate
-`308c1c74eb355724fd3377354c07d9821a0cb3f1`.
+This is the canonical **active product contract** for NegotAItions.
+
+Git commit `308c1c74eb355724fd3377354c07d9821a0cb3f1` is the
+documentation-baseline evidence anchor: the production candidate from which
+this contract was reconciled. It is a reference point. It does not freeze
+this contract to that commit. This document remains the authoritative
+product requirement contract after later commits. Update it when the product
+contract changes.
 
 It describes what the product must do. Current implementation is specified
 in `docs/architecture/`. When the two diverge, preserve the requirement
@@ -312,6 +317,11 @@ Canonical quality doc: `QUALITY-AND-ACCEPTANCE.md`.
 - Pause-filter calibration harness changing production defaults.
 - One-time `vox:orphan-cleanup` apply already executed; do not rerun
   without a new Change Unit.
+- Enforcement of stored `passwordChangeRequiredAt`.
+- Administrator-initiated password reset.
+- Deletion of active `UserSession` rows when an administrator sets
+  BLOCKED or REJECTED. Reset-token revocation on those transitions is
+  current behavior.
 
 ## Implementation anchors
 

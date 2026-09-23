@@ -12,9 +12,12 @@ requirements.
 Current truth:
 
 - Requirements (role B): [`docs/requirements/PRODUCT-REQUIREMENTS.md`](../requirements/PRODUCT-REQUIREMENTS.md)
-- Architecture (role A): [`docs/architecture/README.md`](../architecture/README.md)
+- Architecture contract (role A): numbered `docs/architecture/01`–`13` chapters and the email chapters listed in [`docs/architecture/README.md`](../architecture/README.md)
+- Architecture entrypoint (role C): [`docs/architecture/README.md`](../architecture/README.md)
 - Navigation (role C): [`docs/architecture/code-map.md`](../architecture/code-map.md)
 - Governance (role C): [`docs/DOCUMENTATION-GOVERNANCE.md`](../DOCUMENTATION-GOVERNANCE.md)
+- Engineering change governance (role E): [`docs/testing/engineering-workflow.md`](../testing/engineering-workflow.md)
+- Release procedure (role E): [`docs/operations/deployment-runbook.md`](../operations/deployment-runbook.md)
 
 Do not use files here as required reading for current architecture. They
 may explain why a decision was made. They cannot override a canonical

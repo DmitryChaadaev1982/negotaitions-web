@@ -15,6 +15,7 @@ These are architectural locations, not a second workflow:
 - Product contract: `docs/requirements/PRODUCT-REQUIREMENTS.md`
 - Quality/acceptance: `docs/requirements/QUALITY-AND-ACCEPTANCE.md`
 - Documentation ownership: `docs/DOCUMENTATION-GOVERNANCE.md`
+- Engineering and agent change governance: `docs/testing/engineering-workflow.md`
 
 ## Mapping
 
