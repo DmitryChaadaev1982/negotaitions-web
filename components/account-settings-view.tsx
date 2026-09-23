@@ -4,6 +4,7 @@ import { useState, useTransition, useActionState } from "react";
 
 import { updateDisplayName, updatePassword } from "@/app/actions/account";
 import { updateUserPreferredLocale } from "@/app/actions/auth";
+import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 type AccountSettingsViewProps = {
@@ -174,7 +175,7 @@ export function AccountSettingsView({
               name="newPassword"
               type="password"
               autoComplete="new-password"
-              minLength={8}
+              minLength={PASSWORD_MIN_LENGTH}
               required
               data-testid="settings-new-password-input"
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500/40 focus:outline-none"
@@ -192,7 +193,7 @@ export function AccountSettingsView({
               name="confirmPassword"
               type="password"
               autoComplete="new-password"
-              minLength={8}
+              minLength={PASSWORD_MIN_LENGTH}
               required
               data-testid="settings-confirm-password-input"
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500/40 focus:outline-none"

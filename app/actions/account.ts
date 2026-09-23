@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/auth/crypto";
-import { validateNewPassword } from "@/lib/auth/password-policy";
+import {
+  passwordPolicyFailureKey,
+  validateNewPassword,
+  PasswordPolicyError,
+} from "@/lib/auth/password-policy";
+import { PasswordReusedError } from "@/lib/auth/password-history";
 import { authenticatedPasswordChangeErrorKey } from "@/lib/auth/account-security-error-messages";
 import { commitAuthenticatedPasswordChange } from "@/lib/auth/authenticated-password-change";
 import {
@@ -64,9 +69,8 @@ export async function updatePassword(
   });
   if (!policy.ok) {
     return {
-      error: policy.codes.includes("too_short")
-        ? "auth.passwordTooShort"
-        : "auth.passwordMismatch",
+      error:
+        passwordPolicyFailureKey(policy.codes) ?? "auth.passwordChangeFailed",
     };
   }
 
@@ -94,13 +98,24 @@ export async function updatePassword(
   try {
     await commitAuthenticatedPasswordChange({
       user,
+      currentPassword,
       currentPasswordHash: dbUser.passwordHash,
       expectedCredentialGeneration,
+      newPassword,
       newPasswordHash: newHash,
       currentSessionTokenHash,
       changedAt,
     });
   } catch (error) {
+    if (error instanceof PasswordReusedError) {
+      return { error: "auth.passwordReused" };
+    }
+    if (error instanceof PasswordPolicyError) {
+      return {
+        error:
+          passwordPolicyFailureKey(error.codes) ?? "auth.passwordChangeFailed",
+      };
+    }
     if (error instanceof StaleCredentialError) {
       return { error: "auth.passwordChangeFailed" };
     }

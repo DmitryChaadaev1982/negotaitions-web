@@ -765,13 +765,14 @@ async function main(): Promise<void> {
           comment: null,
         });
       } else if (kind === "password-change") {
+        const nextPassword = `Changed-${randomBytes(12).toString("base64url")}!`;
         await commitAuthenticatedPasswordChange({
           user,
+          currentPassword: originalPassword,
           currentPasswordHash: user.passwordHash,
           expectedCredentialGeneration: user.credentialGeneration,
-          newPasswordHash: await hashPassword(
-            `Changed-${randomBytes(12).toString("base64url")}!`,
-          ),
+          newPassword: nextPassword,
+          newPasswordHash: await hashPassword(nextPassword),
           currentSessionTokenHash: null,
           changedAt: new Date(),
         });

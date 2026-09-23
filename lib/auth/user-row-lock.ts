@@ -4,6 +4,7 @@ export type LockedUserCredentialRow = {
   id: string;
   credentialGeneration: number;
   status: string;
+  passwordHash: string;
 };
 
 /**
@@ -15,7 +16,7 @@ export async function lockUserRowForUpdate(
   userId: string,
 ): Promise<LockedUserCredentialRow | null> {
   const rows = await tx.$queryRaw<LockedUserCredentialRow[]>`
-    SELECT id, "credentialGeneration", status
+    SELECT id, "credentialGeneration", status, "passwordHash"
     FROM "User"
     WHERE id = ${userId}
     FOR UPDATE

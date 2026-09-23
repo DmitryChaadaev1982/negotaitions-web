@@ -199,7 +199,10 @@ preflight predicates and rollback steps are in
   and no unrelated history divergence. Name presence is not authority. The
   password-security migration creates `PasswordHistory` and adds nullable
   `User.passwordChangeRequiredAt`. It does not backfill, and it does not
-  change `User.passwordHash`. First-deploy order for the earlier provider-slot
+  change `User.passwordHash`. After apply, explicit password changes write
+  history; login rehash and policy behavior are specified in
+  `09-security-and-access-control.md`. `passwordChangeRequiredAt` stays
+  unenforced. First-deploy order for the earlier provider-slot
   migration remains: pre-migration checks that do not query the new table;
   guarded overlay status; apply the admitted migration; verify migration
   state; **POST-MIGRATION ONLY** inspect provider-slot rows/leases; then

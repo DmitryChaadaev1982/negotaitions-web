@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 
 import { resetPasswordWithToken } from "@/lib/auth/account-security";
-import { validateNewPassword } from "@/lib/auth/password-policy";
+import { PasswordReusedError } from "@/lib/auth/password-history";
+import {
+  PasswordPolicyError,
+  passwordPolicyFailureKey,
+  validateNewPassword,
+} from "@/lib/auth/password-policy";
 import { passwordResetErrorKey } from "@/lib/auth/account-security-error-messages";
 import { consumePasswordResetFinalizeAttempt } from "@/lib/auth/password-reset-rate-limit";
 import {
@@ -27,11 +32,10 @@ export async function resetPassword(
     password,
     confirmation,
   });
-  if (!policy.ok && policy.codes.includes("too_short")) {
-    return { error: "auth.passwordTooShort" };
-  }
-  if (!policy.ok && policy.codes.includes("mismatch")) {
-    return { error: "auth.passwordMismatch" };
+  if (!policy.ok) {
+    return {
+      error: passwordPolicyFailureKey(policy.codes) ?? "auth.passwordResetInvalid",
+    };
   }
   if (!isPasswordResetTokenShape(token)) {
     return { error: "auth.passwordResetInvalid" };
@@ -50,6 +54,15 @@ export async function resetPassword(
     });
     if (!succeeded) return { error: "auth.passwordResetInvalid" };
   } catch (error) {
+    if (error instanceof PasswordReusedError) {
+      return { error: "auth.passwordReused" };
+    }
+    if (error instanceof PasswordPolicyError) {
+      return {
+        error:
+          passwordPolicyFailureKey(error.codes) ?? "auth.passwordResetInvalid",
+      };
+    }
     // A rolled-back reset transaction leaves the token unconsumed; invalid,
     // expired, consumed, and revoked tokens return false instead of throwing.
     return { error: passwordResetErrorKey(error) };

@@ -3,9 +3,17 @@ import { enqueuePasswordChangedEmail } from "@/lib/email/account-security";
 import { getEmailConfig } from "@/lib/email/config";
 
 import {
+  PASSWORD_HISTORY_DEPTH,
+  passwordMatchesAnyVerifier,
+  PasswordReusedError,
+  prunePasswordHistory,
+} from "./password-history";
+import {
   revokeAllUserSessions,
   revokeOtherUserSessions,
 } from "./session-revocation";
+
+export { PasswordReusedError } from "./password-history";
 
 type CredentialDb = Prisma.TransactionClient;
 
@@ -34,9 +42,12 @@ export function assertCredentialMutationEmailConfig(): void {
  *
  * The caller still owns authority: current-password proof or reset-token
  * proof, the credential-dispatch fence, and the User row lock. This helper
- * updates the hash, bumps credentialGeneration, revokes outstanding reset
- * tokens, revokes sessions for the requested mode, and enqueues
- * PASSWORD_CHANGED. Those writes commit or roll back together.
+ * rejects a candidate that matches the locked current verifier or any of the
+ * newest five history verifiers, records the locked verifier as history,
+ * updates the hash, bumps credentialGeneration once, revokes outstanding
+ * reset tokens, revokes sessions for the requested mode, enqueues
+ * PASSWORD_CHANGED, and prunes history to the newest five. Those writes
+ * commit or roll back together. A reuse rejection writes nothing.
  *
  * Email-reset callers must mark the consumed token used before calling this
  * helper. Outstanding-token revocation then leaves that consumed token in
@@ -46,10 +57,10 @@ export async function applyPasswordCredentialMutation(
   tx: CredentialDb,
   params: {
     userId: string;
+    /** Raw new password. Used only to compare with stored verifiers. */
+    newPassword: string;
     newPasswordHash: string;
     expectedCredentialGeneration: number;
-    /** Extra CAS for authenticated self-change. Email reset omits it. */
-    currentPasswordHash?: string;
     changedAt: Date;
     sessionRevocation: CredentialSessionRevocation;
     rejectError: Error;
@@ -62,14 +73,48 @@ export async function applyPasswordCredentialMutation(
     idempotencyKey: string;
   },
 ): Promise<void> {
+  const locked = await tx.user.findUnique({
+    where: { id: params.userId },
+    select: {
+      passwordHash: true,
+      credentialGeneration: true,
+      status: true,
+    },
+  });
+  if (
+    !locked ||
+    locked.status !== "ACTIVE" ||
+    locked.credentialGeneration !== params.expectedCredentialGeneration
+  ) {
+    throw params.rejectError;
+  }
+
+  const history = await tx.passwordHistory.findMany({
+    where: { userId: params.userId },
+    orderBy: { retiredCredentialGeneration: "desc" },
+    take: PASSWORD_HISTORY_DEPTH,
+    select: { passwordHash: true },
+  });
+  const reused = await passwordMatchesAnyVerifier(params.newPassword, [
+    locked.passwordHash,
+    ...history.map((row) => row.passwordHash),
+  ]);
+  if (reused) throw new PasswordReusedError();
+
+  await tx.passwordHistory.create({
+    data: {
+      userId: params.userId,
+      passwordHash: locked.passwordHash,
+      retiredCredentialGeneration: locked.credentialGeneration,
+    },
+  });
+
   const updated = await tx.user.updateMany({
     where: {
       id: params.userId,
       status: "ACTIVE",
-      credentialGeneration: params.expectedCredentialGeneration,
-      ...(params.currentPasswordHash !== undefined
-        ? { passwordHash: params.currentPasswordHash }
-        : {}),
+      credentialGeneration: locked.credentialGeneration,
+      passwordHash: locked.passwordHash,
     },
     data: {
       passwordHash: params.newPasswordHash,
@@ -106,4 +151,6 @@ export async function applyPasswordCredentialMutation(
     idempotencyKey: params.idempotencyKey,
     tx,
   });
+
+  await prunePasswordHistory(tx, params.userId);
 }

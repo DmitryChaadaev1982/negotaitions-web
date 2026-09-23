@@ -100,7 +100,8 @@ export function classifyPasswordVerifier(
  * True when the stored verifier is accepted but is not the locked Argon2id
  * profile. Bcrypt is legacy even when a later candidate is longer than 72
  * UTF-8 bytes. Transparent conversion of that case is refused separately by
- * isLegacyBcryptRehashEligible. Stage 2A does not perform the rehash.
+ * isLegacyBcryptRehashEligible. Login performs the upgrade in
+ * password-rehash.ts after the session commit.
  */
 export function needsPasswordRehash(encodedVerifier: string): boolean {
   const classification = classifyPasswordVerifier(encodedVerifier);
@@ -110,7 +111,7 @@ export function needsPasswordRehash(encodedVerifier: string): boolean {
 }
 
 /**
- * Future transparent bcrypt-to-Argon2id conversion may proceed only when the
+ * Transparent bcrypt-to-Argon2id conversion may proceed only when the
  * stored verifier is bcrypt and the submitted candidate's UTF-8 length is at
  * most 72 bytes. A longer candidate can verify under bcrypt's prefix semantics
  * without proving the suffix, so it must not be rebound to Argon2id.
@@ -146,7 +147,8 @@ export async function hashPassword(password: string): Promise<string> {
  * Verify a stored password hash.
  * Accepted forms are bcrypt $2a$/$2b$/$2y$ and PHC $argon2id$.
  * Unknown, empty, malformed, $argon2i$, and $argon2d$ verifiers fail closed.
- * A verifier exception also fails closed. Success does not rewrite the hash.
+ * A verifier exception also fails closed. Success does not itself rewrite
+ * the hash; opportunistic upgrade is a separate post-session step.
  */
 export async function verifyPassword(
   password: string,

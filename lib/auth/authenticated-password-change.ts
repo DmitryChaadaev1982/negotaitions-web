@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { verifyPassword } from "@/lib/auth/crypto";
 import { withCredentialDispatchFence } from "@/lib/auth/credential-dispatch-fence";
 import {
   runAfterUserRowLockedForCredentialMutationHook,
@@ -10,6 +11,7 @@ import {
   applyPasswordCredentialMutation,
   assertCredentialMutationEmailConfig,
 } from "@/lib/auth/credential-mutation";
+import { assertNewPasswordPolicy } from "@/lib/auth/password-policy";
 import { lockUserRowForUpdate } from "@/lib/auth/user-row-lock";
 import { prisma } from "@/lib/prisma";
 
@@ -20,8 +22,10 @@ export async function commitAuthenticatedPasswordChange(params: {
     name: string | null;
     preferredLocale: string;
   };
+  currentPassword: string;
   currentPasswordHash: string;
   expectedCredentialGeneration: number;
+  newPassword: string;
   newPasswordHash: string;
   currentSessionTokenHash: string | null;
   changedAt: Date;
@@ -31,6 +35,7 @@ export async function commitAuthenticatedPasswordChange(params: {
     .digest("hex")
     .slice(0, 32);
 
+  assertNewPasswordPolicy(params.newPassword);
   assertCredentialMutationEmailConfig();
 
   await withCredentialDispatchFence(params.user.id, async () => {
@@ -47,14 +52,26 @@ export async function commitAuthenticatedPasswordChange(params: {
         throw new StaleCredentialError();
       }
 
+      if (locked.passwordHash !== params.currentPasswordHash) {
+        // A transparent login rehash may replace the encoding without
+        // incrementing credentialGeneration. Re-verify the supplied current
+        // password against the locked verifier before treating that as a
+        // secret change.
+        const stillCurrent = await verifyPassword(
+          params.currentPassword,
+          locked.passwordHash,
+        );
+        if (!stillCurrent) throw new StaleCredentialError();
+      }
+
       await runAfterUserRowLockedForCredentialMutationHook();
       await runBeforePasswordUpdateHook();
 
       await applyPasswordCredentialMutation(tx, {
         userId: params.user.id,
+        newPassword: params.newPassword,
         newPasswordHash: params.newPasswordHash,
-        expectedCredentialGeneration: params.expectedCredentialGeneration,
-        currentPasswordHash: params.currentPasswordHash,
+        expectedCredentialGeneration: locked.credentialGeneration,
         changedAt: params.changedAt,
         sessionRevocation: {
           kind: "except-current",

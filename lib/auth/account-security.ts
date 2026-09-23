@@ -21,6 +21,7 @@ import {
   assertCredentialMutationEmailConfig,
 } from "./credential-mutation";
 import { hashPassword } from "./crypto";
+import { assertNewPasswordPolicy } from "./password-policy";
 import { getPasswordResetConfig } from "./password-reset-config";
 import { consumePasswordResetAttempt } from "./password-reset-rate-limit";
 import {
@@ -273,6 +274,8 @@ export async function resetPasswordWithToken(params: {
     return false;
   }
 
+  assertNewPasswordPolicy(params.newPassword);
+
   await runAfterPasswordVerifiedHook();
 
   // 4. Only then perform bcrypt.
@@ -352,6 +355,7 @@ export async function resetPasswordWithToken(params: {
         // revocation leaves it in place and revokes unused siblings.
         await applyPasswordCredentialMutation(tx, {
           userId: token.userId,
+          newPassword: params.newPassword,
           newPasswordHash: passwordHash,
           expectedCredentialGeneration: locked.credentialGeneration,
           changedAt: now,

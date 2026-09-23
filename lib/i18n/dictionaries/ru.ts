@@ -1814,7 +1814,7 @@ export const ru: Dictionary = {
     backToLogin: "Вернуться ко входу",
     resetPasswordTitle: "Новый пароль",
     resetPasswordSubtitle:
-      "Задайте новый пароль длиной не менее 8 символов.",
+      "Задайте новый пароль длиной не менее 10 символов.",
     resetPasswordButton: "Установить новый пароль",
     resettingPassword: "Обновление пароля...",
     passwordResetInvalid:
@@ -1828,7 +1828,10 @@ export const ru: Dictionary = {
     preferredLocaleEn: "English (EN)",
     invalidCredentials: "Неверный email или пароль.",
     emailTaken: "Аккаунт с таким email уже существует.",
-    passwordTooShort: "Пароль должен содержать не менее 8 символов.",
+    passwordTooShort: "Пароль должен содержать не менее 10 символов.",
+    passwordTooLong: "Пароль должен содержать не более 128 символов.",
+    passwordCommon: "Этот пароль слишком распространён. Выберите другой.",
+    passwordReused: "Этот пароль уже использовался. Выберите новый пароль.",
     passwordMismatch: "Пароли не совпадают.",
     emailRequired: "Email обязателен.",
     nameRequired: "Имя обязательно.",

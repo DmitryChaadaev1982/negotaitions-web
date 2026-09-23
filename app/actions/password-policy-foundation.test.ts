@@ -16,8 +16,8 @@ test("FOUND-02 registration uses the canonical policy owner", async () => {
   const mismatch = new FormData();
   mismatch.set("name", "Ada");
   mismatch.set("email", "ada-foundation@example.com");
-  mismatch.set("password", "12345678");
-  mismatch.set("confirmPassword", "12345679");
+  mismatch.set("password", "stage2b-ok-1");
+  mismatch.set("confirmPassword", "stage2b-ok-2");
   const mismatchResult = await registerUser({}, mismatch);
   assert.equal(mismatchResult.errors?.password, undefined);
   assert.deepEqual(mismatchResult.errors?.confirmPassword, [
@@ -25,8 +25,8 @@ test("FOUND-02 registration uses the canonical policy owner", async () => {
   ]);
 
   const longEnough = new FormData();
-  longEnough.set("password", "12345678");
-  longEnough.set("confirmPassword", "12345678");
+  longEnough.set("password", "stage2b-ok-1");
+  longEnough.set("confirmPassword", "stage2b-ok-1");
   const longEnoughResult = await registerUser({}, longEnough);
   assert.equal(
     longEnoughResult.errors?.password?.includes("auth.passwordTooShort") ??
@@ -47,9 +47,25 @@ test("FOUND-03 email reset uses the canonical policy owner", async () => {
 
   const mismatch = new FormData();
   mismatch.set("token", "not-a-real-token");
-  mismatch.set("password", "12345678");
-  mismatch.set("confirmPassword", "12345679");
+  mismatch.set("password", "stage2b-ok-1");
+  mismatch.set("confirmPassword", "stage2b-ok-2");
   assert.deepEqual(await resetPassword({}, mismatch), {
     error: "auth.passwordMismatch",
+  });
+
+  const common = new FormData();
+  common.set("token", "not-a-real-token");
+  common.set("password", "password123");
+  common.set("confirmPassword", "password123");
+  assert.deepEqual(await resetPassword({}, common), {
+    error: "auth.passwordCommon",
+  });
+
+  const tooLong = new FormData();
+  tooLong.set("token", "not-a-real-token");
+  tooLong.set("password", "x".repeat(129));
+  tooLong.set("confirmPassword", "x".repeat(129));
+  assert.deepEqual(await resetPassword({}, tooLong), {
+    error: "auth.passwordTooLong",
   });
 });

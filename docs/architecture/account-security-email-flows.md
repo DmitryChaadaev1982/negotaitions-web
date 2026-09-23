@@ -52,10 +52,12 @@ active tokens provides a second concurrency guard.
 Reset validates token syntax, hashes the token, cheaply checks eligibility,
 hashes the new password only after that gate, then acquires the credential
 dispatch fence and claims the token in a serializable transaction while holding
-`SELECT ... FOR UPDATE` on the `User` row. The claim increments
-`User.credentialGeneration`, stores a new Argon2id password hash, revokes sibling
-tokens, deletes every `UserSession`, and enqueues exactly one
-`PASSWORD_CHANGED`.
+`SELECT ... FOR UPDATE` on the `User` row. The claim records the locked
+verifier in `PasswordHistory`, increments `User.credentialGeneration`, stores
+a new Argon2id password hash, revokes sibling tokens, deletes every
+`UserSession`, prunes history to the newest five, and enqueues exactly one
+`PASSWORD_CHANGED`. A candidate that matches the current secret or one of
+those five is rejected and the transaction writes nothing.
 
 ### H-01R — session creation linearization
 
@@ -72,6 +74,13 @@ user/consent transaction, including bootstrap-admin ACTIVE registration. Then
 4. inserts `UserSession` while the lock is held;
 5. commits;
 6. only then sets the auth cookie.
+
+After that commit, login may best-effort replace an eligible legacy verifier
+with the locked Argon2id profile. The replacement hashes outside the User row
+lock and compare-and-sets the exact verified hash and credential generation.
+It does not increment generation, revoke the new session, write
+`PasswordHistory`, or enqueue `PASSWORD_CHANGED`. A failure leaves the login
+in place. Bcrypt candidates longer than 72 UTF-8 bytes stay on bcrypt.
 
 Password reset and authenticated password change serialize on the same `User`
 row lock. Safe order A (login then reset) creates a session that reset deletes.
@@ -194,38 +203,50 @@ restored, so refresh and copied current URLs contain no token. Any query-string
 Authenticated password change uses the same password policy and transactional
 `PASSWORD_CHANGED` notification. It revokes outstanding reset tokens and all
 other account sessions while preserving the current authenticated session.
+If a login rehash changed only the verifier encoding, self-change re-verifies
+the supplied current password against the locked verifier and then continues.
 There is no administrator-initiated password-change path.
 
 Password policy, hashing, session revocation, and the shared credential write
 live in one place each:
 
-- `lib/auth/password-policy.ts` — server-side new-password rule. Minimum length
-  is 8 characters, and a supplied confirmation must match. Registration,
-  authenticated self-change, and email reset all call this owner. History and
-  blocklist checks are not enforced.
+- `lib/auth/password-policy-constants.ts` — client-safe bounds. Minimum 10 and
+  maximum 128 Unicode code points. No blocklist.
+- `lib/auth/password-policy.ts` — server-side new-password rule. It checks
+  those bounds, a supplied confirmation, and the whole-password common-password
+  denylist. Registration, authenticated self-change, and email reset all call
+  this owner. The raw password is hashed without trim, lowercase, or NFKC.
+- `lib/auth/common-password-blocklist.ts` — server-only denylist loaded from
+  `lib/auth/data/`. Comparison is NFKC, lowercase, and outer trim of the whole
+  password. It is not part of the client bundle.
 - `lib/auth/crypto.ts` — `hashPassword` / `verifyPassword`. New hashes are
   Argon2id at the locked profile `m=19456,t=4,p=1`, version `v=19`, 32-byte
   tag, and a 16-byte salt inside the PHC string. There is no pepper. Existing
   bcrypt `$2a$`, `$2b$`, and `$2y$` hashes still verify, including cost 10 and
   cost 12. Unknown, empty, malformed, `$argon2i$`, and `$argon2d$` verifiers
-  fail closed. Verification does not rehash or change `credentialGeneration`.
-  A future transparent bcrypt conversion is eligible only when the candidate's
-  UTF-8 length is at most 72 bytes; longer candidates stay legacy because
-  bcrypt did not prove the suffix. Login does not perform that conversion.
+  fail closed.
+- `lib/auth/password-rehash.ts` — opportunistic post-session upgrade for an
+  eligible bcrypt or non-target Argon2id verifier. Bcrypt is eligible only
+  when the candidate is at most 72 UTF-8 bytes.
+- `lib/auth/password-history.ts` — depth of five, ordered by
+  `retiredCredentialGeneration` descending. `createdAt` is audit-only.
 - `lib/auth/session-revocation.ts` — delete every `UserSession` for a user, or
   every session except the current one.
-- `lib/auth/credential-mutation.ts` — inside the caller's transaction, update
-  `passwordHash`, increment `credentialGeneration`, revoke outstanding reset
-  tokens, revoke sessions for the requested mode, and enqueue
-  `PASSWORD_CHANGED`. Self-change keeps the current session. Email reset
-  revokes every session. Authority stays separate: current-password proof
-  versus reset-token proof. Provider delivery stays outside the transaction.
-  The mutation does not write `PasswordHistory` and does not set
+- `lib/auth/credential-mutation.ts` — inside the caller's transaction and User
+  row lock, reject reuse of the locked current verifier or the newest five
+  history verifiers, insert the locked verifier as history, update
+  `passwordHash`, increment `credentialGeneration` once, revoke outstanding
+  reset tokens, revoke sessions for the requested mode, enqueue
+  `PASSWORD_CHANGED`, and prune history to five. Self-change keeps the current
+  session. Email reset revokes every session. Authority stays separate:
+  current-password proof versus reset-token proof. Provider delivery stays
+  outside the transaction. The mutation does not set
   `passwordChangeRequiredAt`.
 
 `PasswordHistory` stores a retired hash and the credential generation it
 belonged to, with a cascade delete from `User` and a unique pair of user and
-retired generation. It is empty until a later slice writes it. Nullable
+retired generation. Explicit changes and resets write it. Transparent rehash
+does not, because the secret did not change. Nullable
 `User.passwordChangeRequiredAt` is null for existing and newly changed
 accounts. Nothing in the current login, self-change, or reset flow reads it
 to force a rotation.

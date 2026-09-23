@@ -251,6 +251,13 @@ Canonical architecture: `13-public-site-and-content.md`.
 
 - Cookie session `auth_session` / `UserSession`.
 - Forgot-password is anti-enumerating. Only ACTIVE users receive a token.
+- New passwords are 10 to 128 Unicode code points, with no composition rules.
+  The server rejects a whole-password match against the local common-password
+  denylist. Self-service change and email reset also reject the current
+  password and the previous five passwords. Login does not apply that policy
+  to an existing credential.
+- There is no mass forced reset. `passwordChangeRequiredAt` is stored and not
+  enforced. Administrator password reset is not available.
 - Business code enqueues `EmailMessage`; workers send. Sending is disabled
   by default until explicitly enabled.
 - Production Server Action origins are exactly `negotaitions.ru`.

@@ -1808,7 +1808,7 @@ export const en = {
     backToLogin: "Back to login",
     resetPasswordTitle: "Set a new password",
     resetPasswordSubtitle:
-      "Choose a new password with at least 8 characters.",
+      "Choose a new password with at least 10 characters.",
     resetPasswordButton: "Set new password",
     resettingPassword: "Updating password...",
     passwordResetInvalid:
@@ -1822,7 +1822,10 @@ export const en = {
     preferredLocaleEn: "English (EN)",
     invalidCredentials: "Invalid email or password.",
     emailTaken: "An account with this email already exists.",
-    passwordTooShort: "Password must be at least 8 characters.",
+    passwordTooShort: "Password must be at least 10 characters.",
+    passwordTooLong: "Password must be at most 128 characters.",
+    passwordCommon: "This password is too common. Choose a different password.",
+    passwordReused: "This password was used previously. Choose a new password.",
     passwordMismatch: "Passwords do not match.",
     emailRequired: "Email is required.",
     nameRequired: "Name is required.",

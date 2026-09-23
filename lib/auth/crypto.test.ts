@@ -135,16 +135,36 @@ test("bcrypt $2y$ verifies when the library accepts that prefix", async () => {
   assert.equal(await verifyPassword(`${SAMPLE}-no`, hash), false);
 });
 
-test("A2A-13 login does not opportunistically rehash or write a password hash", () => {
+test("A2A-13 login upgrades a verifier only after the session exists", () => {
   const source = readFileSync("app/actions/auth.ts", "utf8");
   const start = source.indexOf("export async function loginUser");
   const next = source.indexOf("export async function", start + 1);
   const login = source.slice(start, next === -1 ? undefined : next);
-  assert.ok(login.includes("verifyPassword"));
+  const verifyAt = login.indexOf("verifyPassword");
+  const sessionAt = login.indexOf("establishLoginSessionAndMaybeRehash");
+  assert.ok(verifyAt >= 0);
+  assert.ok(sessionAt > verifyAt);
   assert.equal(login.includes("hashPassword"), false);
-  assert.equal(login.includes("needsPasswordRehash"), false);
-  assert.equal(login.includes("isLegacyBcryptRehashEligible"), false);
-  assert.doesNotMatch(login, /data:\s*\{[^}]*passwordHash/u);
+  assert.equal(login.includes("passwordHistory"), false);
+  assert.equal(login.includes("PASSWORD_CHANGED"), false);
+  assert.doesNotMatch(login, /credentialGeneration:\s*\{\s*increment/);
+
+  const rehash = readFileSync("lib/auth/password-rehash.ts", "utf8");
+  const upgradeStart = rehash.indexOf("export async function upgradeVerifiedPasswordVerifier");
+  const upgradeEnd = rehash.indexOf(
+    "export async function establishLoginSessionAndMaybeRehash",
+  );
+  const upgrade = rehash.slice(upgradeStart, upgradeEnd);
+  assert.match(upgrade, /passwordHash:\s*params\.verifiedPasswordHash/);
+  assert.match(upgrade, /credentialGeneration:\s*params\.verifiedCredentialGeneration/);
+  assert.match(upgrade, /passwordHash:\s*newHash/);
+  assert.doesNotMatch(upgrade, /credentialGeneration:\s*\{\s*increment/);
+  assert.doesNotMatch(upgrade, /passwordHistory|PASSWORD_CHANGED|revoke/);
+  const establish = rehash.slice(upgradeEnd);
+  assert.ok(
+    establish.indexOf("createUserSession") <
+      establish.indexOf("upgradeVerifiedPasswordVerifier"),
+  );
 });
 
 test("A2A-14 a bcrypt candidate of at most 72 UTF-8 bytes is eligible", async () => {

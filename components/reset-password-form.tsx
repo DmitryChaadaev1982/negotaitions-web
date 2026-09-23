@@ -6,6 +6,7 @@ import { useActionState, useEffect, useState, startTransition } from "react";
 import { resetPassword } from "@/app/actions/password-reset";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { parseResetTokenFragment } from "@/lib/auth/reset-fragment";
+import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
 import { useI18n } from "@/lib/i18n/useI18n";
 
 function scrubFragmentFromAddressBar(): void {
@@ -92,7 +93,7 @@ export function ResetPasswordForm({
               name="password"
               type="password"
               autoComplete="new-password"
-              minLength={8}
+              minLength={PASSWORD_MIN_LENGTH}
               required
               className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
@@ -109,7 +110,7 @@ export function ResetPasswordForm({
               name="confirmPassword"
               type="password"
               autoComplete="new-password"
-              minLength={8}
+              minLength={PASSWORD_MIN_LENGTH}
               required
               className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-50 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />

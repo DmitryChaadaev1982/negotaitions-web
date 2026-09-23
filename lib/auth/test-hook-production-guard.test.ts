@@ -18,6 +18,10 @@ import {
   setUserSessionCookieWriterForTests,
   setUserSessionTokenReaderForTests,
 } from "@/lib/auth/session";
+import {
+  clearPasswordRehashHooksForTests,
+  setPasswordRehashHooksForTests,
+} from "@/lib/auth/password-rehash";
 import { setSessionLifecycleConcurrencyHooksForTests } from "@/lib/session-lifecycle-concurrency-hooks";
 
 // `process.env.NODE_ENV` is declared read-only, so mutate through the index
@@ -67,6 +71,19 @@ test("credential dispatch fence hooks refuse installation in production", async 
       /unavailable in production/,
     );
   });
+});
+
+test("password rehash hooks refuse installation in production", async () => {
+  await withProductionNodeEnv(() => {
+    assert.throws(
+      () =>
+        setPasswordRehashHooksForTests({
+          failWrite: true,
+        }),
+      /unavailable in production/,
+    );
+  });
+  clearPasswordRehashHooksForTests();
 });
 
 test("session lifecycle concurrency hooks refuse installation in production", async () => {
@@ -126,6 +143,7 @@ test("no production runtime path installs an account-security test hook", async 
     "setUserSessionCookieWriterForTests",
     "setUserSessionTokenReaderForTests",
     "setSessionLifecycleConcurrencyHooksForTests",
+    "setPasswordRehashHooksForTests",
   ];
   const repoRoot = process.cwd();
 

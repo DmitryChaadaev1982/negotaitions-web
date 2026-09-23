@@ -130,17 +130,27 @@
   revokes siblings, deletes all account `UserSession` rows, and queues a
   security alert in one transaction.
 - Authenticated self-service password change verifies the current password,
-  stores a new Argon2id hash, increments `credentialGeneration` once,
-  revokes outstanding reset tokens, deletes other `UserSession` rows, keeps the
+  stores a new Argon2id hash, records the previous verifier in
+  `PasswordHistory`, increments `credentialGeneration` once, revokes
+  outstanding reset tokens, deletes other `UserSession` rows, keeps the
   current session, and queues `PASSWORD_CHANGED` in that same transaction.
-  Minimum length remains 8 characters. Existing bcrypt cost-10 and cost-12
-  hashes still verify. New hashes are Argon2id (`m=19456,t=4,p=1`, 32-byte
-  tag, 16-byte salt, PHC `v=19`). Verification does not rehash. Bcrypt
-  verifiers whose candidate is longer than 72 UTF-8 bytes are not eligible
-  for a future transparent Argon2id conversion. `PasswordHistory` and nullable
-  `User.passwordChangeRequiredAt` exist and are unused: history is not
-  enforced, and a null timestamp does not force a change. The canonical
-  owners are `lib/auth/password-policy.ts`, `lib/auth/crypto.ts`,
+  New passwords are 10 to 128 Unicode code points, with no composition rules.
+  A whole-password common-password denylist rejects exact normalized matches.
+  The new secret must differ from the current credential and the previous
+  five retired secrets. Existing bcrypt cost-10 and cost-12 hashes still
+  verify at login; login does not apply the new-password policy. New hashes
+  are Argon2id (`m=19456,t=4,p=1`, 32-byte tag, 16-byte salt, PHC `v=19`).
+  After a successful session commit, an eligible bcrypt or non-target
+  Argon2id verifier is replaced in place by a compare-and-set on the verified
+  hash and `credentialGeneration`. That upgrade does not increment
+  generation, revoke sessions, write history, or queue `PASSWORD_CHANGED`.
+  A bcrypt candidate longer than 72 UTF-8 bytes is not upgraded, because
+  bcrypt did not prove the suffix. Nullable `User.passwordChangeRequiredAt`
+  is still not enforced, and there is no administrator password reset.
+  The canonical owners are `lib/auth/password-policy.ts`,
+  `lib/auth/password-policy-constants.ts`,
+  `lib/auth/common-password-blocklist.ts`, `lib/auth/crypto.ts`,
+  `lib/auth/password-rehash.ts`, `lib/auth/password-history.ts`,
   `lib/auth/session-revocation.ts`, and `lib/auth/credential-mutation.ts`.
   Administrator BLOCKED and REJECTED transitions do not delete `UserSession`
   rows.

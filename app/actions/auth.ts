@@ -21,7 +21,11 @@ import {
   runAfterPasswordVerifiedHook,
   StaleCredentialError,
 } from "@/lib/auth/credential-concurrency";
-import { validateNewPassword } from "@/lib/auth/password-policy";
+import { establishLoginSessionAndMaybeRehash } from "@/lib/auth/password-rehash";
+import {
+  passwordPolicyFailureKey,
+  validateNewPassword,
+} from "@/lib/auth/password-policy";
 import { createRegisteredUserWithConsents } from "@/lib/auth/registration";
 import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { consentFieldName } from "@/lib/consent/user-consent";
@@ -62,11 +66,14 @@ export async function registerUser(
       password: rawPassword,
       confirmation: rawConfirm ? rawConfirm : undefined,
     });
-    if (!policy.ok && policy.codes.includes("too_short")) {
-      errors.password = ["auth.passwordTooShort"];
-    }
-    if (!policy.ok && policy.codes.includes("mismatch")) {
-      errors.confirmPassword = ["auth.passwordMismatch"];
+    if (!policy.ok) {
+      const passwordKey = passwordPolicyFailureKey(
+        policy.codes.filter((code) => code !== "mismatch"),
+      );
+      if (passwordKey) errors.password = [passwordKey];
+      if (policy.codes.includes("mismatch")) {
+        errors.confirmPassword = ["auth.passwordMismatch"];
+      }
     }
   }
 
@@ -214,9 +221,12 @@ export async function loginUser(
     }
 
     const headersList = await headers();
-    await createUserSession(user.id, {
+    await establishLoginSessionAndMaybeRehash({
+      userId: user.id,
+      verifiedPassword: rawPassword,
+      verifiedPasswordHash: user.passwordHash,
+      verifiedCredentialGeneration: expectedCredentialGeneration,
       userAgent: headersList.get("user-agent") ?? undefined,
-      expectedCredentialGeneration,
     });
   } catch (error) {
     if (error instanceof StaleCredentialError) {

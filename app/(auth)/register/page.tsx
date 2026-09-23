@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 import { registerUser } from "@/app/actions/auth";
+import { PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy-constants";
 import { sanitizeReturnUrl } from "@/lib/auth/return-url";
 import { useI18n } from "@/lib/i18n/useI18n";
 import { LanguageSwitcher } from "@/components/language-switcher";
@@ -92,6 +93,7 @@ function RegisterForm() {
             name="password"
             type="password"
             autoComplete="new-password"
+            minLength={PASSWORD_MIN_LENGTH}
             required
             className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
           />
@@ -115,6 +117,7 @@ function RegisterForm() {
             name="confirmPassword"
             type="password"
             autoComplete="new-password"
+            minLength={PASSWORD_MIN_LENGTH}
             required
             className="w-full rounded-lg border border-slate-700 bg-slate-800/60 px-3.5 py-2.5 text-slate-50 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 text-sm"
           />
