@@ -109,6 +109,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1075.0",
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",
+    "@node-rs/argon2": "^2.2.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "@smithy/node-http-handler": "^4.9.13",

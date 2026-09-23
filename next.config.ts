@@ -22,7 +22,11 @@ const nextConfig: NextConfig = {
       ),
     },
   },
-  serverExternalPackages: ["ffmpeg-static", "fluent-ffmpeg"],
+  serverExternalPackages: [
+    "ffmpeg-static",
+    "fluent-ffmpeg",
+    "@node-rs/argon2",
+  ],
   turbopack: {
     root: projectRoot,
   },

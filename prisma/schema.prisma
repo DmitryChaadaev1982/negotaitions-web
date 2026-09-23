@@ -270,6 +270,10 @@ model User {
   // verification so login / password-change can CAS against reset.
   credentialGeneration Int @default(0)
 
+  // Null means this account is not required to rotate. Stage 2A stores the
+  // column and does not enforce it.
+  passwordChangeRequiredAt DateTime?
+
   lastLoginAt      DateTime?
   approvedAt       DateTime?
   approvedByUserId String?
@@ -294,6 +298,7 @@ model User {
   videoProviderIdentities VideoProviderIdentity[]
   userSessions        UserSession[]
   passwordResetTokens PasswordResetToken[]
+  passwordHistory     PasswordHistory[]
   adminActions        AdminActionLog[]     @relation("AdminActionActor")
   targetedAdminActions AdminActionLog[]    @relation("AdminActionTarget")
   userConsents        UserConsent[]
@@ -320,6 +325,18 @@ model UserSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model PasswordHistory {
+  id                          String   @id @default(cuid())
+  userId                      String
+  passwordHash                String
+  retiredCredentialGeneration Int
+  createdAt                   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, retiredCredentialGeneration])
 }
 
 model PasswordResetToken {

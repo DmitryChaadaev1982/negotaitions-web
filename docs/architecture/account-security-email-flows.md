@@ -53,14 +53,14 @@ Reset validates token syntax, hashes the token, cheaply checks eligibility,
 hashes the new password only after that gate, then acquires the credential
 dispatch fence and claims the token in a serializable transaction while holding
 `SELECT ... FOR UPDATE` on the `User` row. The claim increments
-`User.credentialGeneration`, updates the bcrypt password hash, revokes sibling
+`User.credentialGeneration`, stores a new Argon2id password hash, revokes sibling
 tokens, deletes every `UserSession`, and enqueues exactly one
 `PASSWORD_CHANGED`.
 
 ### H-01R — session creation linearization
 
 Login and registration hash or verify the password **outside** any transaction
-that locks `User` (bcrypt must not hold a DB lock). Every production session
+that locks `User` (password hashing must not hold a DB lock). Every production session
 creation call must supply the observed `credentialGeneration`; there is no
 unguarded overload. Registration uses the generation returned by the committed
 user/consent transaction, including bootstrap-admin ACTIVE registration. Then
@@ -191,7 +191,7 @@ empty, malformed, or unrelated fragment fields fail. The fragment is never
 restored, so refresh and copied current URLs contain no token. Any query-string
 `token` key, including an empty or duplicate value, is rejected server-side.
 
-Authenticated password change uses the same bcrypt policy and transactional
+Authenticated password change uses the same password policy and transactional
 `PASSWORD_CHANGED` notification. It revokes outstanding reset tokens and all
 other account sessions while preserving the current authenticated session.
 There is no administrator-initiated password-change path.
@@ -201,10 +201,17 @@ live in one place each:
 
 - `lib/auth/password-policy.ts` — server-side new-password rule. Minimum length
   is 8 characters, and a supplied confirmation must match. Registration,
-  authenticated self-change, and email reset all call this owner.
+  authenticated self-change, and email reset all call this owner. History and
+  blocklist checks are not enforced.
 - `lib/auth/crypto.ts` — `hashPassword` / `verifyPassword`. New hashes are
-  bcrypt cost 12. Existing bcrypt hashes still verify, including cost 10.
-  Verification does not rehash or change `credentialGeneration`.
+  Argon2id at the locked profile `m=19456,t=4,p=1`, version `v=19`, 32-byte
+  tag, and a 16-byte salt inside the PHC string. There is no pepper. Existing
+  bcrypt `$2a$`, `$2b$`, and `$2y$` hashes still verify, including cost 10 and
+  cost 12. Unknown, empty, malformed, `$argon2i$`, and `$argon2d$` verifiers
+  fail closed. Verification does not rehash or change `credentialGeneration`.
+  A future transparent bcrypt conversion is eligible only when the candidate's
+  UTF-8 length is at most 72 bytes; longer candidates stay legacy because
+  bcrypt did not prove the suffix. Login does not perform that conversion.
 - `lib/auth/session-revocation.ts` — delete every `UserSession` for a user, or
   every session except the current one.
 - `lib/auth/credential-mutation.ts` — inside the caller's transaction, update
@@ -213,6 +220,15 @@ live in one place each:
   `PASSWORD_CHANGED`. Self-change keeps the current session. Email reset
   revokes every session. Authority stays separate: current-password proof
   versus reset-token proof. Provider delivery stays outside the transaction.
+  The mutation does not write `PasswordHistory` and does not set
+  `passwordChangeRequiredAt`.
+
+`PasswordHistory` stores a retired hash and the credential generation it
+belonged to, with a cascade delete from `User` and a unique pair of user and
+retired generation. It is empty until a later slice writes it. Nullable
+`User.passwordChangeRequiredAt` is null for existing and newly changed
+accounts. Nothing in the current login, self-change, or reset flow reads it
+to force a rotation.
 
 Administrator BLOCKED and REJECTED transitions revoke outstanding reset tokens
 and cancel claimable reset messages. They do not delete `UserSession` rows.

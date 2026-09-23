@@ -275,12 +275,21 @@ test("FOUND-06 FOUND-07 FOUND-08 FOUND-09 FOUND-10 FOUND-11 FOUND-12 successful 
 
     const stored = await api.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
-      select: { credentialGeneration: true, passwordHash: true },
+      select: {
+        credentialGeneration: true,
+        passwordHash: true,
+        passwordChangeRequiredAt: true,
+      },
     });
     assert.equal(stored.credentialGeneration, user.credentialGeneration + 1);
     assert.equal(await api.verifyPassword(NEXT_PASSWORD, stored.passwordHash), true);
     assert.equal(await api.verifyPassword(CURRENT_PASSWORD, stored.passwordHash), false);
-    assert.equal(bcryptCost(stored.passwordHash), "12");
+    assert.match(stored.passwordHash, /^\$argon2id\$v=19\$m=19456,t=4,p=1\$/);
+    assert.equal(stored.passwordChangeRequiredAt, null);
+    assert.equal(
+      await api.prisma.passwordHistory.count({ where: { userId: user.id } }),
+      0,
+    );
 
     const sessions = await api.prisma.userSession.findMany({
       where: { userId: user.id },
@@ -463,11 +472,21 @@ test("FOUND-13 FOUND-14 email reset revokes every session and keeps token safety
 
     const stored = await api.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
-      select: { credentialGeneration: true, passwordHash: true },
+      select: {
+        credentialGeneration: true,
+        passwordHash: true,
+        passwordChangeRequiredAt: true,
+      },
     });
     assert.equal(stored.credentialGeneration, user.credentialGeneration + 1);
     assert.equal(await api.verifyPassword(NEXT_PASSWORD, stored.passwordHash), true);
+    assert.match(stored.passwordHash, /^\$argon2id\$v=19\$m=19456,t=4,p=1\$/);
+    assert.equal(stored.passwordChangeRequiredAt, null);
     assert.equal(await api.prisma.userSession.count({ where: { userId: user.id } }), 0);
+    assert.equal(
+      await api.prisma.passwordHistory.count({ where: { userId: user.id } }),
+      0,
+    );
 
     const tokens = await api.prisma.passwordResetToken.findMany({
       where: { userId: user.id },
@@ -539,8 +558,12 @@ test("FOUND-15 stored bcrypt cost 10 still changes through self-change", async (
       where: { id: user.id },
       select: { passwordHash: true },
     });
-    assert.equal(bcryptCost(stored.passwordHash), "12");
+    assert.match(stored.passwordHash, /^\$argon2id\$v=19\$m=19456,t=4,p=1\$/);
     assert.equal(await api.verifyPassword(NEXT_PASSWORD, stored.passwordHash), true);
+    assert.equal(
+      await api.prisma.passwordHistory.count({ where: { userId: user.id } }),
+      0,
+    );
   } finally {
     await cleanupUser(user.id);
   }

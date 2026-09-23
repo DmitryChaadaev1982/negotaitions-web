@@ -495,12 +495,14 @@ Exact release order:
 6. Run
    `npm run prisma:production:deploy -- --confirm-legacy-production-history`.
    The overlay must explicitly admit exactly
-   `20260916090000_add_transcript_enhancement_provider_slots`
-   (`EXPECTED_RELEASE_PENDING_MIGRATIONS`). It must refuse a missing expected
-   pending set, any extra pending migration, undeclared archive/manifest
+   `20260923065420_add_password_history_and_password_change_required_at`
+   (`EXPECTED_RELEASE_PENDING_MIGRATIONS`). The historical provider-slot
+   migration `20260916090000_add_transcript_enhancement_provider_slots` must
+   already be applied; any extra pending migration is refused. The overlay
+   must also refuse a missing expected pending set, undeclared archive/manifest
    entries, unsuccessful archived rows, and missing or mismatched leftover
-   schema effects. After deploy, a later status check with that migration
-   already applied and nothing pending is the safe no-op state.
+   schema effects. After deploy, a later status check with the password-security
+   migration already applied and nothing pending is the safe no-op state.
 7. Run `npm run prisma:production:status` again and require up-to-date status.
 8. **POST-MIGRATION ONLY.** Inspect provider-slot inventory and live leases
    only after the admitted migration has created the table:

@@ -2,7 +2,13 @@
 
 ## Main Aggregates
 
-- `User`, `UserSession`: account identity, status, and cookie-session auth.
+- `User`, `UserSession`, `PasswordHistory`: account identity, status, and
+  cookie-session auth. `User.passwordHash` remains the current verifier
+  (`TEXT`). New hashes are Argon2id; existing bcrypt cost-10 and cost-12
+  hashes still verify. `PasswordHistory` can store a retired verifier and its
+  credential generation, and deletes with the user. It is not written or
+  checked yet. Nullable `User.passwordChangeRequiredAt` is null unless a later
+  stage requires rotation; the column is not enforced.
   Access-control fields are `User.globalRole` (`USER` \| `ADMIN`) and
   `User.status`. `ADMIN_EMAILS` is a second admin grant. Legacy
   `User.role` (`FACILITATOR` \| `PARTICIPANT` \| `OBSERVER`) is seed/compat

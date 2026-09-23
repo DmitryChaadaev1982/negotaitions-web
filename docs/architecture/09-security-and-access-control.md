@@ -126,16 +126,21 @@
   bounded support-contact message without an internal status or rejection
   detail. Pending and unknown users receive no message.
 - Reset requires an unexpired, unused, unrevoked token linked to a still-ACTIVE
-  user. Success updates the bcrypt hash, consumes the token, revokes siblings,
-  deletes all account `UserSession` rows, and queues a security alert in one
-  transaction.
+  user. Success stores a new Argon2id password hash, consumes the token,
+  revokes siblings, deletes all account `UserSession` rows, and queues a
+  security alert in one transaction.
 - Authenticated self-service password change verifies the current password,
-  stores a new bcrypt cost-12 hash, increments `credentialGeneration` once,
+  stores a new Argon2id hash, increments `credentialGeneration` once,
   revokes outstanding reset tokens, deletes other `UserSession` rows, keeps the
   current session, and queues `PASSWORD_CHANGED` in that same transaction.
-  Minimum length remains 8 characters. Existing bcrypt cost-10 hashes still
-  verify. New hashes stay bcrypt cost 12. The canonical owners are
-  `lib/auth/password-policy.ts`, `lib/auth/crypto.ts`,
+  Minimum length remains 8 characters. Existing bcrypt cost-10 and cost-12
+  hashes still verify. New hashes are Argon2id (`m=19456,t=4,p=1`, 32-byte
+  tag, 16-byte salt, PHC `v=19`). Verification does not rehash. Bcrypt
+  verifiers whose candidate is longer than 72 UTF-8 bytes are not eligible
+  for a future transparent Argon2id conversion. `PasswordHistory` and nullable
+  `User.passwordChangeRequiredAt` exist and are unused: history is not
+  enforced, and a null timestamp does not force a change. The canonical
+  owners are `lib/auth/password-policy.ts`, `lib/auth/crypto.ts`,
   `lib/auth/session-revocation.ts`, and `lib/auth/credential-mutation.ts`.
   Administrator BLOCKED and REJECTED transitions do not delete `UserSession`
   rows.

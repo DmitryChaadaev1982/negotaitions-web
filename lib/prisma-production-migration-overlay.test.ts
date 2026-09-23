@@ -14,6 +14,7 @@ import {
   copyFileBytePreserving,
   executeProductionOverlay,
   BUG02_PROVIDER_SLOT_MIGRATION,
+  PASSWORD_SECURITY_MIGRATION,
   AI_ANALYSIS_PROGRESS_MIGRATION,
   EXPECTED_PRODUCTION_PENDING_MIGRATIONS,
   EXPECTED_RELEASE_PENDING_MIGRATIONS,
@@ -22,6 +23,7 @@ import {
   EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
   EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
+  EXPECTED_PASSWORD_SECURITY_PENDING_MIGRATIONS,
   PRODUCTION_FIRST_DEPLOY_SEQUENCE,
   assertArchiveDirectorySetExact,
   assertAdmittedLegacyLineageSchema,
@@ -142,7 +144,7 @@ function neverAppliedHistoryWithPending(
 
 function preDeployHistoryRows(): MigrationHistoryRow[] {
   return historyWithOnlyTheseActiveMigrationsPending([
-    BUG02_PROVIDER_SLOT_MIGRATION,
+    PASSWORD_SECURITY_MIGRATION,
   ]);
 }
 
@@ -160,7 +162,7 @@ function releaseAuthority(
 async function currentReleaseArtifactChecksum(): Promise<string> {
   return readActiveMigrationArtifactChecksum(
     process.cwd(),
-    BUG02_PROVIDER_SLOT_MIGRATION,
+    PASSWORD_SECURITY_MIGRATION,
   );
 }
 
@@ -172,7 +174,7 @@ async function postDeployAuthority(options?: {
 }): Promise<ReleasePendingAuthorityInput> {
   const artifactChecksum = await currentReleaseArtifactChecksum();
   const rows = historyWithOnlyTheseActiveMigrationsPending([]).map((row) => {
-    if (row.migration_name !== BUG02_PROVIDER_SLOT_MIGRATION) return row;
+    if (row.migration_name !== PASSWORD_SECURITY_MIGRATION) return row;
     return {
       ...row,
       checksum: artifactChecksum,
@@ -186,7 +188,7 @@ async function postDeployAuthority(options?: {
     activeArtifactChecksums: options?.omitArtifactChecksum
       ? {}
       : {
-          [BUG02_PROVIDER_SLOT_MIGRATION]:
+          [PASSWORD_SECURITY_MIGRATION]:
             options?.checksumOverride ?? artifactChecksum,
         },
   };
@@ -359,6 +361,7 @@ test("exact approved Stage 3.13C/3.13D/3.13E/3.15A/3.25A sequence is accepted", 
     ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
     ...EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
+    ...EXPECTED_PASSWORD_SECURITY_PENDING_MIGRATIONS,
   ]);
   assert.deepEqual(
     result.recognizedLegacyMigrations,
@@ -378,6 +381,7 @@ test("current production baseline accepts only approved Stage 3.13D/3.13E/3.15A/
       ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
       ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
       ...EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
+      ...EXPECTED_PASSWORD_SECURITY_PENDING_MIGRATIONS,
     ],
   );
   assert.deepEqual(
@@ -1174,41 +1178,41 @@ test("MANIFEST-EXACT-04 archive name colliding with the active chain is refused"
   );
 });
 
-test("PENDING-EXACT-01 AUTH-PENDING-01 actual pending exactly BUG02 is allowed", () => {
+test("PENDING-EXACT-01 known lineage plus the password-security migration pending is allowed", () => {
   assert.deepEqual([...EXPECTED_RELEASE_PENDING_MIGRATIONS], [
-    BUG02_PROVIDER_SLOT_MIGRATION,
+    PASSWORD_SECURITY_MIGRATION,
   ]);
   assert.equal(
     evaluateReleasePendingSet(
       releaseAuthority({
-        actualPending: [BUG02_PROVIDER_SLOT_MIGRATION],
+        actualPending: [PASSWORD_SECURITY_MIGRATION],
       }),
     ),
     "PRE_DEPLOY_ALLOW",
   );
   assert.equal(
     isExpectedPendingStatusOutput(
-      `Following migration have not yet been applied:\n${BUG02_PROVIDER_SLOT_MIGRATION}\n\nTo apply migrations in production`,
-      [BUG02_PROVIDER_SLOT_MIGRATION],
+      `Following migration have not yet been applied:\n${PASSWORD_SECURITY_MIGRATION}\n\nTo apply migrations in production`,
+      [PASSWORD_SECURITY_MIGRATION],
     ),
     true,
   );
 });
 
-test("PENDING-EXACT-02 BUG02 plus an extra pending migration is refused", () => {
+test("PENDING-EXACT-02 password-security migration plus an extra pending migration is refused", () => {
   assertRefusal(
     () =>
       evaluateReleasePendingSet(
         releaseAuthority({
-          actualPending: [BUG02_PROVIDER_SLOT_MIGRATION, "20260916999999_extra"],
+          actualPending: [PASSWORD_SECURITY_MIGRATION, "20260923999999_extra"],
         }),
       ),
     "REFUSE_UNEXPECTED_PENDING_MIGRATIONS",
   );
   assert.equal(
     isExpectedPendingStatusOutput(
-      `Following migrations have not yet been applied:\n${BUG02_PROVIDER_SLOT_MIGRATION}\n20260916999999_extra\n\nTo apply migrations in production`,
-      [BUG02_PROVIDER_SLOT_MIGRATION],
+      `Following migrations have not yet been applied:\n${PASSWORD_SECURITY_MIGRATION}\n20260923999999_extra\n\nTo apply migrations in production`,
+      [PASSWORD_SECURITY_MIGRATION],
     ),
     false,
   );
@@ -1221,7 +1225,7 @@ test("PENDING-EXACT-03 empty pending without a successful current row is refused
         releaseAuthority({
           actualPending: [],
           activeArtifactChecksums: {
-            [BUG02_PROVIDER_SLOT_MIGRATION]: "unused-without-row",
+            [PASSWORD_SECURITY_MIGRATION]: "unused-without-row",
           },
         }),
       ),
@@ -1335,7 +1339,7 @@ test("POSTSAFE-01 valid current migration row plus exact artifact checksum is sa
     process.cwd(),
     "prisma",
     "migrations",
-    BUG02_PROVIDER_SLOT_MIGRATION,
+    PASSWORD_SECURITY_MIGRATION,
     "migration.sql",
   );
   assert.equal(artifactChecksum, await sha256File(sqlPath));
@@ -1357,7 +1361,7 @@ test("POSTSAFE-02 current release row absent is refused", async () => {
         releaseAuthority({
           actualPending: [],
           activeArtifactChecksums: {
-            [BUG02_PROVIDER_SLOT_MIGRATION]: artifactChecksum,
+            [PASSWORD_SECURITY_MIGRATION]: artifactChecksum,
           },
         }),
       ),
@@ -1449,7 +1453,7 @@ test("POSTSAFE-09 correct BUG02 row but active current artifact missing is refus
 const BUG02_ARTIFACT_RELATIVE_PATH = path.join(
   "prisma",
   "migrations",
-  BUG02_PROVIDER_SLOT_MIGRATION,
+  PASSWORD_SECURITY_MIGRATION,
   "migration.sql",
 );
 
@@ -1491,11 +1495,11 @@ test("ARTIFACT-FS-01 temporary repo with exact active BUG02 artifact resolves ch
     await writeExactBug02Artifact(tempRoot);
     const checksum = await readActiveMigrationArtifactChecksum(
       tempRoot,
-      BUG02_PROVIDER_SLOT_MIGRATION,
+      PASSWORD_SECURITY_MIGRATION,
     );
     assert.equal(checksum, await currentReleaseArtifactChecksum());
     assert.deepEqual(await readCurrentReleaseArtifactChecksums(tempRoot), {
-      [BUG02_PROVIDER_SLOT_MIGRATION]: checksum,
+      [PASSWORD_SECURITY_MIGRATION]: checksum,
     });
     await stat(path.join(process.cwd(), BUG02_ARTIFACT_RELATIVE_PATH));
   });
@@ -1556,7 +1560,7 @@ test("ARTIFACT-FS-04 altered temporary artifact checksum does not match the DB r
     );
     const dbChecksum = await currentReleaseArtifactChecksum();
     assert.notEqual(
-      artifactChecksums[BUG02_PROVIDER_SLOT_MIGRATION],
+      artifactChecksums[PASSWORD_SECURITY_MIGRATION],
       dbChecksum,
     );
     const authority = {
@@ -1605,13 +1609,13 @@ test("ARTIFACT-FS-06 full authority refuses when the temporary artifact is absen
   });
 });
 
-test("POSTSAFE-10 correct BUG02 row plus pending BUG02 is inconsistent and refused", async () => {
+test("POSTSAFE-10 applied password-security row plus the same migration still pending is refused", async () => {
   const authority = await postDeployAuthority();
   assertRefusal(
     () =>
       evaluateReleasePendingSet({
         ...authority,
-        actualPending: [BUG02_PROVIDER_SLOT_MIGRATION],
+        actualPending: [PASSWORD_SECURITY_MIGRATION],
       }),
     "REFUSE_RELEASE_MIGRATION_INCONSISTENT",
   );
@@ -1623,7 +1627,7 @@ async function neverAppliedPostDeployAuthority(options?: {
 }): Promise<ReleasePendingAuthorityInput> {
   const artifactChecksum = await currentReleaseArtifactChecksum();
   const rows = neverAppliedHistoryWithPending([]).map((row) => {
-    if (row.migration_name !== BUG02_PROVIDER_SLOT_MIGRATION) return row;
+    if (row.migration_name !== PASSWORD_SECURITY_MIGRATION) return row;
     return {
       ...row,
       checksum: artifactChecksum,
@@ -1635,7 +1639,7 @@ async function neverAppliedPostDeployAuthority(options?: {
     actualPending: [],
     historyRows: rows,
     activeArtifactChecksums: {
-      [BUG02_PROVIDER_SLOT_MIGRATION]: artifactChecksum,
+      [PASSWORD_SECURITY_MIGRATION]: artifactChecksum,
     },
   };
 }
@@ -1774,12 +1778,17 @@ test("HIST-VAR-06 unexpected missing unrelated applied migration is refused", ()
   );
 });
 
-test("HIST-VAR-07 real-production pre-deploy pending set is exactly BUG02", () => {
-  const rows = neverAppliedHistoryWithPending([BUG02_PROVIDER_SLOT_MIGRATION]);
+test("HIST-VAR-07 known never-applied lineage with only the password-security migration pending is allowed", () => {
+  const rows = neverAppliedHistoryWithPending([PASSWORD_SECURITY_MIGRATION]);
   const result = validateMigrationHistoryRows(rows, ACTIVE_MIGRATIONS);
   assert.deepEqual(result.pendingActiveMigrations, [
-    BUG02_PROVIDER_SLOT_MIGRATION,
+    PASSWORD_SECURITY_MIGRATION,
   ]);
+  assert.equal(result.admittedLegacyLineage, "LEGACY_PROGRESS_NEVER_APPLIED");
+  assert.equal(
+    result.appliedActiveMigrations.includes(BUG02_PROVIDER_SLOT_MIGRATION),
+    true,
+  );
   assertAdmittedLegacyLineageSchema(
     result.admittedLegacyLineage,
     neverAppliedSchemaColumns(),
@@ -1819,13 +1828,28 @@ test("HIST-VAR-09 simulated real-production post-deploy state is POST_DEPLOY_SAF
     "POST_DEPLOY_SAFE",
   );
   const artifactChecksum = await currentReleaseArtifactChecksum();
+  const bug02Checksum = await sha256File(
+    path.join(
+      process.cwd(),
+      "prisma",
+      "migrations",
+      BUG02_PROVIDER_SLOT_MIGRATION,
+      "migration.sql",
+    ),
+  );
+  assert.equal(
+    bug02Checksum,
+    "9e9cd2d3a193015fa5b2f928839279fb6500032f8941263d3edcea5c841ad5f4",
+  );
   assert.equal(
     artifactChecksum,
-    "9e9cd2d3a193015fa5b2f928839279fb6500032f8941263d3edcea5c841ad5f4",
+    await sha256File(
+      path.join(process.cwd(), "prisma", "migrations", PASSWORD_SECURITY_MIGRATION, "migration.sql"),
+    ),
   );
 });
 
-test("HIST-VAR-10 BUG02 migration checksum mismatch is refused", async () => {
+test("HIST-VAR-10 password-security migration checksum mismatch is refused", async () => {
   const authority = await neverAppliedPostDeployAuthority({
     rowPatch: { checksum: "0".repeat(64) },
   });
@@ -1840,7 +1864,8 @@ test("production-history docs do not claim a stale complete pending allowlist", 
     path.join(
       process.cwd(),
       "docs",
-      "operations",
+      "history",
+      "remediation",
       "prisma-production-history-repair-20260804.md",
     ),
     "utf8",

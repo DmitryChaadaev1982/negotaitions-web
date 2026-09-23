@@ -143,11 +143,23 @@ export const EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS = [
 ] as const;
 
 /**
+ * The exact password-security additive migration approved for the current
+ * release preflight. It creates PasswordHistory and adds nullable
+ * User.passwordChangeRequiredAt. No backfill and no other DDL.
+ */
+export const PASSWORD_SECURITY_MIGRATION =
+  "20260923065420_add_password_history_and_password_change_required_at";
+
+export const EXPECTED_PASSWORD_SECURITY_PENDING_MIGRATIONS = [
+  PASSWORD_SECURITY_MIGRATION,
+] as const;
+
+/**
  * Exact active pending set authorized for the current production release
  * preflight. Not a historical union and not a subset allowlist.
  */
 export const EXPECTED_RELEASE_PENDING_MIGRATIONS = [
-  BUG02_PROVIDER_SLOT_MIGRATION,
+  PASSWORD_SECURITY_MIGRATION,
 ] as const;
 
 /**
@@ -174,6 +186,7 @@ export const EXPECTED_PRODUCTION_PENDING_MIGRATIONS = [
   ...EXPECTED_STAGE_3_13E_PENDING_MIGRATIONS,
   ...EXPECTED_STAGE_3_15A_PENDING_MIGRATIONS,
   ...EXPECTED_STAGE_3_25A_PENDING_MIGRATIONS,
+  ...EXPECTED_PASSWORD_SECURITY_PENDING_MIGRATIONS,
 ] as const;
 
 export type OverlayMode = "status" | "deploy" | "verify";

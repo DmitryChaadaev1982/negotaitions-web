@@ -182,28 +182,30 @@ preflight predicates and rollback steps are in
   selection is not authority. Code/manifest own this truth; this
   document is not a second allowlist.
 - The additive `20260916090000_add_transcript_enhancement_provider_slots`
-  migration must be applied on any database the new client reads, including the
-  local development database, before the application serves transcript
-  enhancement. It creates `TranscriptEnhancementProviderSlot` and seeds the
-  fixed inventory of 10 slot rows; provider admission fails closed without it.
-  Production apply uses the guarded overlay after exact pending-set equality
-  against `EXPECTED_RELEASE_PENDING_MIGRATIONS` (currently only
-  `20260916090000_add_transcript_enhancement_provider_slots`). Pre-deploy
-  pending must be exactly that set and the current release migration must
-  not already have a history row (`PRE_DEPLOY_ALLOW`). After apply,
-  `POST_DEPLOY_SAFE` requires empty pending, a successful-row predicate
-  match (`finished_at` set, `rolled_back_at` null, valid
-  `applied_steps_count`, logs free of failure/P30xx evidence), a DB
-  checksum that exactly matches the current active migration artifact
-  read from `prisma/migrations/<name>/migration.sql`, and
-  no unrelated history divergence. Name presence is not authority. The
-  migration is never applied by a
-  validation or UAT command. First-deploy order: pre-migration checks that
-  do not query the new table; guarded overlay status; apply the admitted
-  migration; verify migration state; **POST-MIGRATION ONLY** inspect
-  provider-slot rows/leases; then continue normal readiness. On first deploy,
-  do not query `TranscriptEnhancementProviderSlot` before the migration creates
-  it.
+  migration creates `TranscriptEnhancementProviderSlot` and seeds the fixed
+  inventory of 10 slot rows. Databases that serve transcript enhancement must
+  already have it applied. It is not the current release-pending migration.
+  The current release preflight compares pending migrations with
+  `EXPECTED_RELEASE_PENDING_MIGRATIONS`, which is exactly
+  `20260923065420_add_password_history_and_password_change_required_at`.
+  Pre-deploy pending must be exactly that password-security migration, and
+  that migration must not already have a history row (`PRE_DEPLOY_ALLOW`).
+  An extra pending migration, including a not-yet-applied historical
+  migration, is refused. After apply, `POST_DEPLOY_SAFE` requires empty
+  pending, a successful-row predicate match (`finished_at` set,
+  `rolled_back_at` null, valid `applied_steps_count`, logs free of
+  failure/P30xx evidence), a DB checksum that exactly matches the current
+  active migration artifact read from `prisma/migrations/<name>/migration.sql`,
+  and no unrelated history divergence. Name presence is not authority. The
+  password-security migration creates `PasswordHistory` and adds nullable
+  `User.passwordChangeRequiredAt`. It does not backfill, and it does not
+  change `User.passwordHash`. First-deploy order for the earlier provider-slot
+  migration remains: pre-migration checks that do not query the new table;
+  guarded overlay status; apply the admitted migration; verify migration
+  state; **POST-MIGRATION ONLY** inspect provider-slot rows/leases; then
+  continue normal readiness. On a database that has not yet applied that
+  historical migration, do not query `TranscriptEnhancementProviderSlot` before
+  the migration creates it.
 - Enhancement quiescence for a deployment hold is decided by current D1 state —
   `executionStatus`, `publicationEligible`, `runId` currentness, and
   `leaseExpiresAt` — plus unexpired `TranscriptEnhancementProviderSlot` leases.
